@@ -2382,7 +2382,8 @@ fn validate_frozen_values(
 /// Validate the shape-specific derive vocabulary without accepting duplicate selections or reflection on tuples.
 /// A tuple newtype carries only the automatic derives its checker proved for the underlying value; owning a native
 /// non-Clone value never requires a Clone selection. Named models retain their mandatory automatic derives. Serde and
-/// Copy selections fit either shape and remain subject to rustc's trait checks.
+/// Copy selections fit either shape and remain subject to rustc's trait checks. Qualified macro paths are checked
+/// selections from native dependency facts; rustc validates their derive namespace and expands them on the real type.
 fn valid_nominal_derives(derives: &[String], tuple: bool) -> bool {
     let required: &[&str] = if tuple {
         &[]
@@ -2396,7 +2397,7 @@ fn valid_nominal_derives(derives: &[String], tuple: bool) -> bool {
             "Debug" | "Clone" | "Eq" | "PartialEq" | "Hash" | "Ord" | "PartialOrd" | "Default" | "Display" => true,
             "serde::Serialize" | "serde::Deserialize" | "Copy" => true,
             "FieldInfo" | "IncanClass" => !tuple,
-            _ => false,
+            _ => derive.contains("::") && valid_library_item(derive),
         })
         && derives.iter().collect::<BTreeSet<_>>().len() == derives.len()
 }
@@ -2450,7 +2451,7 @@ fn validate_generic_models(plan: &Plan) -> Result<(), PlanError> {
                 !matches!(
                     name.as_str(),
                     "Clone" | "Debug" | "PartialEq" | "Eq" | "PartialOrd" | "Ord" | "Hash"
-                )
+                ) && !(name.contains("::") && valid_library_item(name))
             })
             || model.fields.iter().any(|field| {
                 !identifier(&field.name) || !fields.insert(&field.name) || !generic_field_type(&field.ty, &parameters)
@@ -2709,7 +2710,7 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
                 "serde::Serialize" | "serde::Deserialize" => {
                     !declaration.carrier.is_empty() || declaration.member_debug
                 }
-                _ => true,
+                _ => !(name.contains("::") && valid_library_item(name)),
             })
         {
             return Err(error());

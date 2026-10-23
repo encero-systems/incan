@@ -3618,10 +3618,16 @@ impl TypeChecker {
     /// including TOML bundles and aliases, instead of compensating for their source spellings in plan lowering.
     /// Descriptor checks structural snapshots but emits no Rust macro. A derive with no expansion stays named so
     /// the direct admission predicate refuses it rather than silently discarding behavior.
-    fn body_ir_model_derive_selection(&mut self, selection: &[String]) -> Vec<String> {
+    fn body_ir_native_derive_selection(&mut self, selection: &[String]) -> Vec<String> {
         let mut result = Vec::new();
         for name in selection {
             if name == "Descriptor" {
+                continue;
+            }
+            if derives::from_str(name).is_some() {
+                if !result.contains(name) {
+                    result.push(name.clone());
+                }
                 continue;
             }
             let mut paths = Vec::new();
@@ -3638,9 +3644,18 @@ impl TypeChecker {
                 }
             }
             if paths.is_empty() {
-                paths.push(name.clone());
+                let imported = self.rust_import_path_for_local_name(name);
+                let candidate = imported.as_deref().unwrap_or(name);
+                if let Some(path) = self.checked_native_derive_macro(candidate) {
+                    paths.push(path);
+                } else {
+                    paths.push(name.clone());
+                }
             }
             for path in paths {
+                if self.checked_native_derive_macro(&path).is_some() {
+                    self.type_info.derivations.native_macro_paths.insert(path.clone());
+                }
                 if !result.contains(&path) {
                     result.push(path);
                 }
@@ -3679,7 +3694,7 @@ impl TypeChecker {
                 .insert(model.name.clone());
         }
         let native_derives = self.native_derive_selection(&derives, declared);
-        let body_ir_derives = self.body_ir_model_derive_selection(&native_derives);
+        let body_ir_derives = self.body_ir_native_derive_selection(&native_derives);
         self.type_info
             .declarations
             .body_ir_model_derives
@@ -4169,7 +4184,15 @@ impl TypeChecker {
         self.validate_rust_derives(&class.decorators, "class", false, &class.traits);
         let derives = self.extract_derive_names(&class.decorators);
         // A class's adoption-implied serde derives are recorded separately, in `class_adoption_derives`.
-        let native_derives = self.native_derive_selection(&derives, Vec::new());
+        let mut declared = Vec::new();
+        if self.append_native_rust_derives(&class.name, &mut declared) {
+            self.type_info
+                .declarations
+                .rust_native_derive_types
+                .insert(class.name.clone());
+        }
+        let native_derives = self.native_derive_selection(&derives, declared);
+        let native_derives = self.body_ir_native_derive_selection(&native_derives);
         self.type_info
             .declarations
             .class_derives
@@ -4752,6 +4775,19 @@ impl TypeChecker {
         self.validate_descriptor_derive_attachment(&nt.decorators, "newtype");
         self.validate_rust_derives(&nt.decorators, "newtype", nt.is_rusttype, &nt.traits);
         let derives = self.extract_derive_names(&nt.decorators);
+        let mut selected = self.json_derive_selections(&derives);
+        Self::append_implied_derives(&mut selected);
+        if self.append_native_rust_derives(&nt.name, &mut selected) {
+            self.type_info
+                .declarations
+                .rust_native_derive_types
+                .insert(nt.name.clone());
+        }
+        let selected = self.body_ir_native_derive_selection(&selected);
+        self.type_info
+            .declarations
+            .body_ir_newtype_derives
+            .insert(nt.name.clone(), selected);
 
         // Check underlying type exists
         let underlying = self.resolve_type_checked(&nt.underlying);
@@ -5219,6 +5255,12 @@ impl TypeChecker {
         }
         if let Some(TypeInfo::Enum(info)) = self.lookup_type_info(&en.name).cloned() {
             let mut native_derives = self.json_derive_selections(&derives);
+            if self.append_native_rust_derives(&en.name, &mut native_derives) {
+                self.type_info
+                    .declarations
+                    .rust_native_derive_types
+                    .insert(en.name.clone());
+            }
             // A derive brings the derives it implies, as a model's does: a derived `Ord` needs `PartialOrd` natively.
             Self::append_implied_derives(&mut native_derives);
             for automatic in ["Debug", "Clone"] {
@@ -5229,6 +5271,7 @@ impl TypeChecker {
             if Self::enum_has_automatic_partial_eq(&info) && !native_derives.iter().any(|name| name == "PartialEq") {
                 native_derives.push("PartialEq".to_owned());
             }
+            let native_derives = self.body_ir_native_derive_selection(&native_derives);
             self.type_info
                 .declarations
                 .enum_derives

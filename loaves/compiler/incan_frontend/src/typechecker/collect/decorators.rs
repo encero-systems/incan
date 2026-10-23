@@ -99,6 +99,21 @@ pub(in crate::typechecker) fn positional_derive_names(
 }
 
 impl TypeChecker {
+    /// Select an exported derive macro only from a declared crate's inspected facts. Forwarding to rustc does not
+    /// predict its expansion or grant any generated methods, layout, or implementation to the checker.
+    pub(in crate::typechecker) fn checked_native_derive_macro(&self, path: &str) -> Option<String> {
+        if !self.rust_derive_path_has_declared_crate(path) {
+            return None;
+        }
+        let metadata = self.rust_item_metadata_for_path(path)?;
+        let derivable = match metadata.kind {
+            incan_lang::interop::RustItemKind::Macro(_) => true,
+            incan_lang::interop::RustItemKind::Trait(info) => info.derive_macro.is_some(),
+            _ => false,
+        };
+        derivable.then_some(metadata.canonical_path)
+    }
+
     /// Return whether the Loaf owning this resolved path declares it as an extern-backed decorator function.
     pub(in crate::typechecker) fn provider_declares_decorator_function(&self, resolved: &[String]) -> bool {
         let Some((function_name, module_path)) = resolved.split_last() else {
@@ -351,7 +366,7 @@ impl TypeChecker {
     }
 
     /// Return the Rust path imported for a local derive binding name.
-    fn rust_import_path_for_local_name(&self, name: &str) -> Option<String> {
+    pub(in crate::typechecker) fn rust_import_path_for_local_name(&self, name: &str) -> Option<String> {
         self.lookup_symbol(name).and_then(|symbol| match &symbol.kind {
             SymbolKind::RustItem(info) => Some(info.path.clone()),
             _ => None,
@@ -1820,7 +1835,10 @@ impl TypeChecker {
                             facts.rust_builtin_derives.push(derive);
                         }
                     }
-                    None if matches!(path.as_deref(), Some("serde::Serialize" | "serde::Deserialize")) => {}
+                    None if path.as_deref().is_some_and(|path| {
+                        matches!(path, "serde::Serialize" | "serde::Deserialize")
+                            || self.checked_native_derive_macro(path).is_some()
+                    }) => {}
                     None => facts.has_unclassified_rust_derive = true,
                 }
                 if let Some(path) = path
@@ -1856,14 +1874,19 @@ impl TypeChecker {
             ),
             _ => return None,
         };
-        if !Self::is_builtin_rust_derive(&leaf) {
+        Self::builtin_rust_derive_path(path.as_deref().unwrap_or(&leaf))
+    }
+
+    /// Classify a bare builtin or an exact standard Rust derive path without confusing a dependency's same-named macro.
+    pub(in crate::typechecker) fn builtin_rust_derive_path(path: &str) -> Option<derives::DeriveId> {
+        let path = path.strip_prefix("rust::").unwrap_or(path);
+        if path.contains("::") && !path.starts_with("std::") && !path.starts_with("core::") {
             return None;
         }
-        let from_rust_std = path.as_deref().is_none_or(|path| {
-            let path = path.strip_prefix("rust::").unwrap_or(path);
-            path.starts_with("std::") || path.starts_with("core::")
-        });
-        from_rust_std.then(|| derives::from_str(&leaf)).flatten()
+        let leaf = path.rsplit("::").next()?;
+        Self::is_builtin_rust_derive(leaf)
+            .then(|| derives::from_str(leaf))
+            .flatten()
     }
 
     /// Extract `@requires` constraints from decorators as `(name, type)` pairs.

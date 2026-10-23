@@ -756,6 +756,9 @@ impl TraitArtifacts {
 /// Derive expansion metadata imported from dependency modules and manifests.
 #[derive(Debug, Default, Clone)]
 pub struct DerivationArtifacts {
+    /// Exact exported derive macro paths inspected from declared native dependencies. These authorize forwarding
+    /// the macro to rustc, never an assumed layout change, generated method, or trait implementation.
+    pub native_macro_paths: HashSet<String>,
     /// RFC 024: Imported derivable modules keyed by source module path, such as `yaml` or `formats.yaml`.
     ///
     /// Values are the trait names listed in the module's `__derives__` metadata. Lowering consumes this so
@@ -1192,6 +1195,8 @@ pub struct DeclarationArtifacts {
     /// Body IR-only native derive paths after checked RFC 024 module and trait expansion. Descriptor is omitted
     /// because its checked structural opt-in has no native macro; legacy keeps consuming `model_derives` unchanged.
     pub body_ir_model_derives: HashMap<String, Vec<String>>,
+    /// Canonical explicit native derives selected for newtypes; automatic derives remain construction facts.
+    pub body_ir_newtype_derives: HashMap<String, Vec<String>>,
     /// The same native derive selection for source classes, whose automatic derives match a model's.
     pub class_derives: HashMap<String, Vec<String>>,
     /// Serde derives a source class's trait adoptions imply, directly or through a supertrait, keyed by class name.
@@ -1199,7 +1204,7 @@ pub struct DeclarationArtifacts {
     /// A class retains the plain native derives besides these; legacy emission forwards the same selection.
     pub class_adoption_derives: HashMap<String, Vec<String>>,
     /// Source types whose `@rust.derive(...)` decorators are completely covered by their retained native selections.
-    /// Builtins and the supported serde derives retain their canonical targets; arbitrary macro expansions are absent.
+    /// Builtins and inspected exported derive macros retain their canonical targets; expansion predictions are absent.
     pub rust_native_derive_types: HashSet<String>,
     /// Active source and package nominal bindings and their canonical carrier keys, retained by the checker before
     /// lexical context is discarded. Body IR copies this proof without rebuilding a name table.

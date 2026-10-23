@@ -3096,14 +3096,25 @@ impl TypeChecker {
                 Some(args.clone())
             }
             ResolvedType::Generic(name, args)
-                if RustCollectionFamily::for_canonical_path(rust_path)
+                if matches!(
+                    collection_type_id(name),
+                    Some(CollectionTypeId::Dict | CollectionTypeId::Set)
+                ) && RustCollectionFamily::for_canonical_path(rust_path)
                     .is_some_and(|family| RustCollectionFamily::for_type_name(name) == Some(family)) =>
             {
                 Some(args.clone())
             }
             // The receiver may name the owner through any re-export (`alloc::boxed::Box`, a prelude `Box`) while
             // the import spelled `std::boxed::Box`; every spelling of one item must yield its type arguments.
-            ResolvedType::Generic(_name, args) if Self::contextual_type_matches_rust_owner(receiver, rust_path) => {
+            ResolvedType::Generic(name, args)
+                if Self::contextual_type_matches_rust_owner(receiver, rust_path)
+                    || self
+                        .rust_canonical_path_for_nominal_receiver(name, None)
+                        .is_some_and(|path| {
+                            incan_lang::interop::ancestral_rust_path(&path)
+                                == incan_lang::interop::ancestral_rust_path(rust_path)
+                        }) =>
+            {
                 Some(args.clone())
             }
             ResolvedType::RustPath(display) => {
@@ -3399,7 +3410,9 @@ impl TypeChecker {
                 .copy_receivers
                 .insert((span.start, span.end), path.into());
         }
-        let result_item_path = self.rust_result_item_path(&render_resolved_type_as_rust_arg(&native_result), path);
+        let result_item_path = self
+            .rust_result_item_path(&render_resolved_type_as_rust_arg(&native_result), path)
+            .or_else(|| self.rust_result_item_path(&method.signature.return_type, path));
         self.type_info.rust.checked_calls.insert(
             (span.start, span.end),
             crate::typechecker::type_info::RustCheckedCall {
@@ -4350,6 +4363,7 @@ impl TypeChecker {
     }
 
     /// Resolve a source-defined method when its owner has exactly one direct implementation for the requested name.
+    /// An active Rust import never takes a source stub's method table; its native metadata remains authoritative.
     ///
     /// Ordinary method checking computes argument types before overload selection. That is useful for overloaded
     /// methods, but it is actively harmful for unambiguous source methods because collection literals can be checked
@@ -4376,6 +4390,12 @@ impl TypeChecker {
             ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name,
             _ => return None,
         };
+        if self
+            .lookup_symbol(type_name)
+            .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::RustItem(_)))
+        {
+            return None;
+        }
         if Self::compiler_builtin_method_identity(call.receiver_ty, call.method).is_some()
             && self.is_builtin_receiver_owner(type_name)
         {

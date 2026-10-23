@@ -319,7 +319,7 @@ impl TypeChecker {
 
     /// Normalize native defaults before projecting an ordinary collection shape, preserving the checked public
     /// owner path for storage. A nondefault allocator remains an exact native argument.
-    fn rust_inference_constructor(
+    pub(in crate::typechecker) fn rust_inference_constructor(
         &self,
         base: &str,
         arguments: &[ResolvedType],

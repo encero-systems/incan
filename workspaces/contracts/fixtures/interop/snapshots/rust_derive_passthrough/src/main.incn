@@ -1,0 +1,53 @@
+# behavior: exported Rust derives selected through a direct import or a rust.module facade compile on models and newtypes, including a nested value whose parent requires the generated implementation
+# expect-stdout:
+#   1
+#   2 3
+#   4 5
+
+from rust::serde import Serialize
+from native_macros import Serialize as JsonForm
+
+
+@derive(JsonForm)
+pub model FacadeKey:
+    """Select the dependency's exported derive through an aliased source facade."""
+    pub value: int
+
+
+@derive(JsonForm)
+pub type FacadeNumber = newtype int:
+    """Forward the same exported derive to a tuple newtype."""
+
+
+@derive(JsonForm)
+pub class FacadeClass:
+    """Forward the exported derive to a class's retained fields."""
+    pub value: int
+
+
+@derive(JsonForm)
+pub enum FacadeChoice:
+    """Forward the exported derive to a payload enum."""
+    Value(int)
+
+
+@rust.derive(Serialize, Default, Eq, Hash)
+pub model PayloadKey:
+    pub value: int
+
+
+@rust.derive(Serialize)
+pub model Nested:
+    """Require the implementations generated for both facade-selected declarations."""
+    pub key: FacadeKey
+    pub number: FacadeNumber
+    pub holder: FacadeClass
+    pub choice: FacadeChoice
+
+
+def main() -> None:
+    println(PayloadKey(value=1).value)
+    value = Nested(key=FacadeKey(value=2), number=FacadeNumber(3), holder=FacadeClass(value=4), choice=FacadeChoice.Value(5))
+    println(f"{value.key.value} {value.number.0}")
+    match value.choice:
+        FacadeChoice.Value(number) => println(f"{value.holder.value} {number}")

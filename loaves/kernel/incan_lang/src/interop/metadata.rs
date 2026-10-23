@@ -44,7 +44,7 @@ pub enum RustItemKind {
     },
     /// A `trait` definition and its associated items.
     Trait(RustTraitInfo),
-    /// A procedural derive macro and the exact trait implementations observed on its compiler-owned probe.
+    /// An exported derive macro, with any independently observed probe implementations.
     Macro(RustMacroInfo),
     /// Placeholder for Rust items not yet represented by a narrower metadata variant.
     Unsupported { description: String },
@@ -431,7 +431,8 @@ pub struct RustExpandedDeriveTrait {
     pub associated_type_bindings: Vec<RustAssociatedTypeBinding>,
 }
 
-/// Semantic output observed by expanding one procedural derive macro on a compiler-owned empty probe type.
+/// An exported procedural derive macro and optional semantic output observed on a compiler-owned probe type.
+/// An empty output list grants passthrough to rustc only, never an assumed implementation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustMacroInfo {
     /// Trait implementations observed from the macro expansion on the compiler-owned probe.

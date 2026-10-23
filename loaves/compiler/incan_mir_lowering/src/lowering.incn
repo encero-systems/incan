@@ -6456,11 +6456,22 @@ pub def display_plan_value(
     """
     Format a materialized scalar, as generic code formats it when its checked type is a type parameter.
 
-    A list, set or dictionary displays through its structure, as legacy's Debug spells it.
+    A list, set or dictionary displays through its structure, as legacy's Debug spells it. A shared scalar reference
+    retains its pointer once, then copies its numeric or boolean referent into the ordinary scalar formatter.
     """
     ty = operand_type(builder, operand)?
     match ty:
         PlanType.FrozenCollection(_name, _elements) => return debug_plan_operand(builder, operand, span)
+        PlanType.ScalarRef(elements) =>
+            if len(elements) != 1:
+                return Err("invalid Body IR scalar display reference arity")
+            referent = elements[0]
+            if not numeric_carrier(referent) and referent != PlanType.Bool:
+                return Err("unsupported Body IR referenced display type")
+            reference = temporary(builder, ty, span)
+            builder.emit(plan_assign(reference, RvalueKind.Use(operand), span))
+            value = Place(local=reference.local, projection=Projection.Deref(referent), span=span)
+            return display_plan_value(builder, read_place(value, false, span), span, type_parameter)
         _ => pass
     if type_parameter and (ty == PlanType.Float or ty == PlanType.F32 or ty == PlanType.F64):
         return type_parameter_display(builder, operand, span)

@@ -673,14 +673,14 @@ impl TypeChecker {
         }
     }
 
-    /// Append supported Rust derives selected by the local type's `@rust.derive(...)`, without duplicating an
-    /// automatic or explicit selection. Builtins use their native names; serde keeps its canonical macro path.
+    /// Append checked Rust derives selected by the local type's `@rust.derive(...)`, without duplicating an automatic
+    /// or explicit selection. Builtins use native names; dependency macros retain their inspected exported paths.
     ///
     /// Returns whether the selection now covers that decorator completely: `false` when it also names a derive macro
-    /// checking cannot classify, whose expansion no derive name describes, or when collection recorded no facts for
-    /// the type.
+    /// checking cannot resolve, or when collection recorded no facts for the type. This grants passthrough only;
+    /// no expansion-dependent trait implementation is inferred.
     pub(in crate::typechecker) fn append_native_rust_derives(
-        &self,
+        &mut self,
         type_name: &str,
         selected: &mut Vec<String>,
     ) -> bool {
@@ -695,7 +695,16 @@ impl TypeChecker {
         }
         if let Some(paths) = self.local_rust_derive_paths.get(type_name) {
             for path in paths {
-                if matches!(path.as_str(), "serde::Serialize" | "serde::Deserialize") && !selected.contains(path) {
+                if Self::builtin_rust_derive_path(path).is_some() {
+                    continue;
+                }
+                let native_macro = self.checked_native_derive_macro(path);
+                if native_macro.is_some() {
+                    self.type_info.derivations.native_macro_paths.insert(path.clone());
+                }
+                if (matches!(path.as_str(), "serde::Serialize" | "serde::Deserialize") || native_macro.is_some())
+                    && !selected.contains(path)
+                {
                     selected.push(path.clone());
                 }
             }

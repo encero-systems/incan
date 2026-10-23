@@ -11,10 +11,10 @@ use std::path::{Path, PathBuf};
 
 use incan_lang::interop::{
     RustAssociatedTypeBinding, RustFieldInfo, RustFunctionSig, RustImplementedTrait, RustItemKind, RustItemMetadata,
-    RustMethodSig, RustModuleChild, RustModuleChildKind, RustModuleInfo, RustParam, RustPayloadCarrier, RustTraitAssoc,
-    RustTraitBound, RustTraitInfo, RustTypeInfo, RustTypeShape, RustVariantInfo, RustVisibility,
+    RustMacroInfo, RustMethodSig, RustModuleChild, RustModuleChildKind, RustModuleInfo, RustParam, RustPayloadCarrier,
+    RustTraitAssoc, RustTraitBound, RustTraitInfo, RustTypeInfo, RustTypeShape, RustVariantInfo, RustVisibility,
 };
-use rustc_hir::def::DefKind;
+use rustc_hir::def::{DefKind, MacroKinds};
 use rustc_hir::def_id::DefId;
 use rustc_interface::interface;
 use rustc_middle::ty::{self, Ty, TyCtxt};
@@ -185,7 +185,7 @@ fn describe_paths(tcx: TyCtxt<'_>, paths: &BTreeSet<String>, depth: usize) -> BT
     let mut facts = BTreeMap::new();
     let mut pending = paths
         .iter()
-        .filter_map(|path| resolve(tcx, path).map(|def| (path.clone(), def)))
+        .filter_map(|path| resolve(tcx, path, false).map(|def| (path.clone(), def)))
         .collect::<Vec<_>>();
     for _ in 0..=depth {
         let mut named = HashSet::new();
@@ -257,6 +257,18 @@ fn describe_crates(tcx: TyCtxt<'_>, crates: &BTreeSet<String>) -> BTreeMap<Strin
             metadata.canonical_path = path.clone();
             let definition = visible_path(tcx, def);
             metadata.definition_path = (definition != path).then_some(definition);
+            if let RustItemKind::Trait(info) = &mut metadata.kind {
+                info.derive_macro = resolve(tcx, &path, true).map(|_| RustMacroInfo {
+                    expanded_traits: Vec::new(),
+                });
+            }
+            if matches!(metadata.kind, RustItemKind::Macro(_))
+                && facts
+                    .get(&path)
+                    .is_some_and(|existing: &RustItemMetadata| !matches!(existing.kind, RustItemKind::Macro(_)))
+            {
+                continue;
+            }
             facts.insert(path, metadata);
         }
     }
@@ -384,6 +396,7 @@ fn public_items(tcx: TyCtxt<'_>, root: DefId, name: &str) -> Vec<(String, DefId)
                 | DefKind::Fn
                 | DefKind::Const { .. }
                 | DefKind::Static { .. } => items.push((child_path, def)),
+                DefKind::Macro(kinds) if kinds.contains(MacroKinds::DERIVE) => items.push((child_path, def)),
                 _ => {}
             }
         }
@@ -407,8 +420,9 @@ fn enum_constructors(tcx: TyCtxt<'_>, owner: DefId, path: &str) -> Vec<(String, 
         .collect()
 }
 
-/// Resolve a path through its crate's public module children; the last segment prefers a type, then a value.
-fn resolve(tcx: TyCtxt<'_>, path: &str) -> Option<DefId> {
+/// Resolve a path through public module children. Ordinary lookup prefers types over values and macros; derive lookup
+/// selects only the macro namespace so a same-named trait and derive retain independent facts.
+fn resolve(tcx: TyCtxt<'_>, path: &str, derive_macro: bool) -> Option<DefId> {
     let mut segments = path.split("::").peekable();
     let root = segments.next()?;
     let mut current = crate::native_crates::root(tcx, root)?;
@@ -429,6 +443,10 @@ fn resolve(tcx: TyCtxt<'_>, path: &str) -> Option<DefId> {
             children
                 .iter()
                 .copied()
+                .filter(|child| {
+                    !derive_macro
+                        || matches!(tcx.def_kind(*child), DefKind::Macro(kinds) if kinds.contains(MacroKinds::DERIVE))
+                })
                 .min_by_key(|child| resolution_rank(tcx.def_kind(*child)))?
         } else {
             children
@@ -475,7 +493,18 @@ fn describe(tcx: TyCtxt<'_>, def: DefId, path: &str, named: &mut HashSet<DefId>)
                 type_display: display(tcx.type_of(def).instantiate_identity().skip_normalization()),
             }
         }
-        DefKind::Trait => RustItemKind::Trait(trait_info(tcx, def, named)),
+        DefKind::Trait => {
+            let mut info = trait_info(tcx, def, named);
+            if resolve(tcx, path, true).is_some() {
+                info.derive_macro = Some(RustMacroInfo {
+                    expanded_traits: Vec::new(),
+                });
+            }
+            RustItemKind::Trait(info)
+        }
+        DefKind::Macro(kinds) if kinds.contains(MacroKinds::DERIVE) => RustItemKind::Macro(RustMacroInfo {
+            expanded_traits: Vec::new(),
+        }),
         DefKind::Mod => RustItemKind::Module(module_info(tcx, def)),
         other => RustItemKind::Unsupported {
             description: format!("{other:?}"),
@@ -922,7 +951,7 @@ fn trait_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTr
     RustTraitInfo {
         bounds: trait_bounds(tcx, def),
         implementations: trait_implementations(tcx, def, named),
-        is_in_prelude: resolve(tcx, "std::prelude::rust_2024").is_some_and(|prelude| {
+        is_in_prelude: resolve(tcx, "std::prelude::rust_2024", false).is_some_and(|prelude| {
             tcx.module_children(prelude)
                 .iter()
                 .any(|child| child.res.opt_def_id() == Some(def))

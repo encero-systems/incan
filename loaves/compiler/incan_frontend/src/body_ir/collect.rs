@@ -1026,9 +1026,9 @@ fn collect_plain_newtype(
         }
         derives.push("Copy".to_owned());
     }
-    for selection in newtype_derives::checked_newtype_derives(newtype, type_info)? {
-        if !derives.contains(&selection) {
-            derives.push(selection);
+    for selection in type_info.declarations.body_ir_newtype_derives.get(&newtype.name)? {
+        if !derives.contains(selection) {
+            derives.push(selection.clone());
         }
     }
     let newtype_deserialize = match checked_deserialize {
