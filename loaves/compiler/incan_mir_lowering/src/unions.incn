@@ -1,6 +1,8 @@
 """Anonymous unions reuse native enum layouts and legacy's normalized payload order and names."""
 
 from rust::incan_semantics_core import IncanType as RustType
+from rust::std::collections import BTreeSet
+from rust::std::sync import Arc
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     Body,
@@ -35,57 +37,85 @@ from nominal_frames import declaration_storage
 pub def collect_unions(module: &BodyIrModule) -> list[RustType]:
     """Retain each union shape once across checked frame and declaration types."""
     mut unions: list[RustType] = []
+    mut added: BTreeSet[RustType] = BTreeSet.new()
+    empty: BTreeSet[RustType] = BTreeSet.new()
+    retained: Arc[BTreeSet[RustType]] = Arc.new(empty)
     for ty in declaration_storage(module):
-        retain_union(unions, ty)
+        retain_union(unions, retained.as_ref(), added, ty)
     for delegation in module.loaf_callables:
         if len(delegation.type_parameters) != 0:
             continue
         for parameter in delegation.parameters:
-            retain_union(unions, parameter)
-        retain_union(unions, delegation.return_type)
+            retain_union(unions, retained.as_ref(), added, parameter)
+        retain_union(unions, retained.as_ref(), added, delegation.return_type)
     for body in module.bodies:
-        retain_union(unions, body.return_type)
+        retain_union(unions, retained.as_ref(), added, body.return_type)
         for local in body.locals:
-            retain_union(unions, local.ty)
+            retain_union(unions, retained.as_ref(), added, local.ty)
     for declaration in module.nominal_declarations:
         for ty in declaration.field_types:
-            retain_union(unions, ty)
+            retain_union(unions, retained.as_ref(), added, ty)
     for declaration in module.enum_declarations:
         for variant in declaration.variants:
             for ty in variant.fields:
-                retain_union(unions, ty)
+                retain_union(unions, retained.as_ref(), added, ty)
     for declaration in module.static_declarations:
-        retain_union(unions, declaration.ty)
+        retain_union(unions, retained.as_ref(), added, declaration.ty)
         match declaration.initial:
-            StaticInitializer.Computed(body) => retain_body_unions(unions, body)
+            StaticInitializer.Computed(body) => retain_body_union_types(unions, retained.as_ref(), added, body)
             _ => pass
     return unions
 
 
-pub def retain_body_unions(mut unions: list[RustType], body: &Body) -> None:
-    """Append closed instance union shapes without changing the already retained owner slots."""
-    retain_union(unions, body.return_type)
+pub def union_index(unions: list[RustType]) -> Arc[BTreeSet[RustType]]:
+    """Index exact checked types once, independently of the list order that fixes native union slots."""
+    mut retained: BTreeSet[RustType] = BTreeSet.new()
+    for ty in unions:
+        retained.insert(ty.clone())
+    return Arc.new(retained)
+
+
+pub def retain_body_unions(mut unions: list[RustType], retained: &BTreeSet[RustType], body: &Body) -> None:
+    """Append only closed instance shapes absent from the shared program index, preserving every existing owner slot."""
+    mut added: BTreeSet[RustType] = BTreeSet.new()
+    retain_body_union_types(unions, retained, added, body)
+
+
+def retain_body_union_types(
+    mut unions: list[RustType],
+    retained: &BTreeSet[RustType],
+    mut added: BTreeSet[RustType],
+    body: &Body,
+) -> None:
+    """Visit a body's types against the caller's accumulated index, including computed statics during collection."""
+    retain_union(unions, retained, added, body.return_type)
     for local in body.locals:
-        retain_union(unions, local.ty)
+        retain_union(unions, retained, added, local.ty)
 
 
-def retain_union(mut unions: list[RustType], ty: &RustType) -> None:
-    """Collect checked nested union shapes without changing their retained member ordering or identity."""
+def retain_union(
+    mut unions: list[RustType],
+    retained: &BTreeSet[RustType],
+    mut added: BTreeSet[RustType],
+    ty: &RustType,
+) -> None:
+    """Test exact borrowed keys before copying a new union into its ordered slot and the instance's membership index."""
     match ty:
         RustType.Generic(base=base, args=arguments) =>
             for argument in arguments:
-                retain_union(unions, argument)
-            if str(base) == "Union" and ty.clone() not in unions:
+                retain_union(unions, retained, added, argument)
+            if str(base) == "Union" and not retained.contains(ty) and not added.contains(ty):
+                added.insert(ty.clone())
                 unions.append(ty.clone())
         RustType.Function(params=parameters, return_type=result) =>
             for parameter in parameters:
-                retain_union(unions, parameter.ty)
-            retain_union(unions, result)
+                retain_union(unions, retained, added, parameter.ty)
+            retain_union(unions, retained, added, result)
         RustType.Tuple(elements) =>
             for element in elements:
-                retain_union(unions, element)
-        RustType.Ref(inner) => retain_union(unions, inner)
-        RustType.RefMut(inner) => retain_union(unions, inner)
+                retain_union(unions, retained, added, element)
+        RustType.Ref(inner) => retain_union(unions, retained, added, inner)
+        RustType.RefMut(inner) => retain_union(unions, retained, added, inner)
         _ => pass
 
 

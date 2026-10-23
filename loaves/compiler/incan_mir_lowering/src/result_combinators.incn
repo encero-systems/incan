@@ -294,7 +294,7 @@ def call_callable_model(
     body = module.bodies[found[0]]
     if len(body.type_parameters) != 0 or len(body.params) != 2 or body.params[1].mutable:
         return Err("unsupported Body IR Result combinator callback __call__ shape")
-    receiver_type = frame_type(module, body.locals[0], builder.intrinsics)?
+    receiver_type = frame_type(builder.nominals, builder.enums, body.locals[0], builder.intrinsics)?
     match receiver_type:
         PlanType.ModelRef(_owner, _name) => pass
         _ => return Err("unsupported Body IR Result combinator callback __call__ receiver")

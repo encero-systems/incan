@@ -56,15 +56,28 @@ impl RustFactsScope {
 /// The compiler's rustc as a session's Rust facts source: the unit's own crates, read for the paths no ABI cache holds.
 #[derive(Debug)]
 pub struct RustcFacts {
+    /// Exact native generation that identifies a bounded fallback extraction cache.
+    pub unit: incan_driver::unit::UnitDescription,
     pub sysroot: PathBuf,
     pub externs: Vec<(String, PathBuf)>,
     pub search: Vec<PathBuf>,
 }
 
 impl incan_driver::session::RustFactsSource for RustcFacts {
-    /// Read uncovered paths from exactly the unit's declared native artifacts.
+    /// Reuse the exact bounded extraction for this request and native generation, after shipped ABI lookup.
     fn facts(&self, paths: &BTreeSet<String>) -> Result<BTreeMap<String, RustItemMetadata>, String> {
+        incan_driver::rust_abi::cached_path_facts(&self.unit, paths, || self.extract_paths(paths))
+            .map_err(|error| error.message)
+    }
+}
+
+impl RustcFacts {
+    /// Read uncovered paths from exactly the unit's declared native artifacts, retaining the existing depth bound
+    /// and missing-artifact refusals. Persistent storage must never broaden this extraction's scope.
+    fn extract_paths(&self, paths: &BTreeSet<String>) -> Result<BTreeMap<String, RustItemMetadata>, String> {
         let started = std::time::Instant::now();
+
+        // ---- Linked native paths ----
         let (linked, unavailable): (BTreeSet<_>, BTreeSet<_>) = paths.iter().cloned().partition(|path| {
             let root = path.split("::").next().unwrap_or(path);
             matches!(root, "std" | "core" | "alloc") || self.externs.iter().any(|(name, _)| name == root)
@@ -78,6 +91,7 @@ impl incan_driver::session::RustFactsSource for RustcFacts {
                 depth: 1,
             },
         })?;
+        // ---- Missing artifact diagnostics ----
         // Keep missing-artifact refusals at the imported item, so they do not mask independent source diagnostics.
         for path in unavailable {
             let root = path.split("::").next().unwrap_or(&path);
@@ -92,6 +106,7 @@ impl incan_driver::session::RustFactsSource for RustcFacts {
                 },
             );
         }
+        // ---- Optional extraction trace ----
         if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
             eprintln!(
                 "rust facts: {} uncovered paths, {} items in {:?}",

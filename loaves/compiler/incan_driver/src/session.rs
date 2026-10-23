@@ -33,8 +33,8 @@ pub const DEFAULT_PROFILE: &str = "debug";
 /// lowers from, and its portable semantic snapshot, which tooling reads.
 #[derive(Debug, Clone)]
 pub struct CompilationAnalysis {
-    type_info_by_path: BTreeMap<PathBuf, TypeCheckInfo>,
-    type_info_by_module_path: BTreeMap<Vec<String>, TypeCheckInfo>,
+    type_info_by_path: BTreeMap<PathBuf, Arc<TypeCheckInfo>>,
+    type_info_by_module_path: BTreeMap<Vec<String>, Arc<TypeCheckInfo>>,
     semantic_snapshots_by_path: BTreeMap<PathBuf, incan_semantics_core::SemanticModuleSnapshot>,
 }
 
@@ -60,14 +60,14 @@ impl CompilationAnalysis {
     /// Return the paired checked products for one collected source file.
     pub fn module_analysis_for_path(&self, path: &Path) -> Option<CompilationModuleAnalysis<'_>> {
         Some(CompilationModuleAnalysis {
-            type_info: self.type_info_by_path.get(path)?,
+            type_info: self.type_info_by_path.get(path)?.as_ref(),
             semantic_snapshot: self.semantic_snapshots_by_path.get(path)?,
         })
     }
 
     /// Return the checked facts of one collected source file.
     pub fn type_info_for_path(&self, path: &Path) -> Option<&TypeCheckInfo> {
-        self.type_info_by_path.get(path)
+        self.type_info_by_path.get(path).map(Arc::as_ref)
     }
 
     /// Return the checked facts of one compiler module identity.
@@ -75,7 +75,7 @@ impl CompilationAnalysis {
     /// Identity is distinct from a source file path because the test runner may create multiple compiler modules rooted
     /// at the same file.
     pub fn type_info_for_module_path(&self, path: &[String]) -> Option<&TypeCheckInfo> {
-        self.type_info_by_module_path.get(path)
+        self.type_info_by_module_path.get(path).map(Arc::as_ref)
     }
 
     /// Return portable HIR and semantic fact snapshots keyed by source path.
@@ -272,7 +272,8 @@ impl CompilationSession {
         let mut semantic_snapshots_by_path = BTreeMap::new();
         for (module, type_info) in modules.iter().zip(type_infos) {
             let snapshot = build_semantic_module_snapshot_v0(&module.ast, &module.path_segments, &type_info);
-            type_info_by_path.insert(module.file_path.clone(), type_info.clone());
+            let type_info = Arc::new(type_info);
+            type_info_by_path.insert(module.file_path.clone(), Arc::clone(&type_info));
             type_info_by_module_path.insert(module.path_segments.clone(), type_info);
             semantic_snapshots_by_path.insert(module.file_path.clone(), snapshot);
         }

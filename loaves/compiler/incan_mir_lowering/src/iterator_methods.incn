@@ -119,6 +119,6 @@ def poll_abi(
         Some(_gap) => return Ok(false)
         None => pass
     reference = PlanType.ModelMutRef(owner, str(module.nominal_declarations[owner].name))
-    if frame_type(module, body.locals[int(body.params[0].local.index())], intrinsics)? != reference:
+    if frame_type(list(module.nominal_declarations), list(module.enum_declarations), body.locals[int(body.params[0].local.index())], intrinsics)? != reference:
         return Ok(false)
     return Ok(body.return_type == generic("Option", [item.clone()]))

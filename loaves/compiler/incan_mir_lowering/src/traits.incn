@@ -21,8 +21,9 @@ from rust::incan_semantics_core::body_ir import (
     TraitTypeArgument,
     NominalDeclaration,
 )
-from pub::incan_mir_plan import Local, SourceSpan, PlanType, EnumDeclaration
-from body_index import BodyIndex
+from pub::incan_mir_plan import SourceSpan, PlanType
+from frame import Builder
+from program_context import body_at
 from classes import receiver_mode, frame_type
 from models import model_type, model_place, place_type
 from enums import enum_type
@@ -250,11 +251,9 @@ def concrete_self_type(owner: &CanonicalSymbolId, mut owners: list[NominalDeclar
 pub def receiver_fills_slot(
     module: &BodyIrModule,
     target: &MethodTarget,
-    locals: list[Local],
+    mut builder: Builder,
     argument: &ArgumentElement,
     span: SourceSpan,
-    unions: list[RustType],
-    mut intrinsics: list[EnumDeclaration],
 ) -> bool:
     """
     Whether a retained implementation record fills the selected slot for the receiver's concrete nominal.
@@ -262,7 +261,7 @@ pub def receiver_fills_slot(
     Such a slot dispatches to that body, ahead of any behavior a standard derive gives the slot, because the adopter's
     own method is what legacy calls. A receiver that is not a retained nominal has no record.
     """
-    match receiver_owner(module, locals, argument, span, unions, intrinsics):
+    match receiver_owner(module, builder, argument, span):
         Ok(owner) =>
             match owner_identity(module, owner):
                 Ok(identity) =>
@@ -277,14 +276,12 @@ pub def receiver_fills_slot(
 pub def receiver_fills_source_slot(
     module: &BodyIrModule,
     target: &MethodTarget,
-    locals: list[Local],
+    mut builder: Builder,
     argument: &ArgumentElement,
     span: SourceSpan,
-    unions: list[RustType],
-    mut intrinsics: list[EnumDeclaration],
 ) -> bool:
     """Keep a checked source adopter on its own slot even when its required published default is unavailable."""
-    match receiver_owner(module, locals, argument, span, unions, intrinsics):
+    match receiver_owner(module, builder, argument, span):
         Err(_error) => return false
         Ok(owner) =>
             match owner:
@@ -297,20 +294,18 @@ pub def receiver_fills_source_slot(
                     if library_enum_item(module.enum_declarations[index]) != "":
                         return false
                 _ => return false
-            return receiver_fills_slot(module, target, locals, argument, span, unions, intrinsics)
+            return receiver_fills_slot(module, target, builder, argument, span)
 
 
 pub def receiver_fills_retained_slot(
     module: &BodyIrModule,
     target: &MethodTarget,
-    locals: list[Local],
+    mut builder: Builder,
     argument: &ArgumentElement,
     span: SourceSpan,
-    unions: list[RustType],
-    mut intrinsics: list[EnumDeclaration],
 ) -> bool:
     """Prefer an adopter's checked implementation only when its executable body is retained in this program."""
-    match receiver_owner(module, locals, argument, span, unions, intrinsics):
+    match receiver_owner(module, builder, argument, span):
         Err(_error) => return false
         Ok(owner) =>
             match owner_identity(module, owner):
@@ -327,30 +322,25 @@ pub def receiver_fills_retained_slot(
 
 pub def method_index(
     module: &BodyIrModule,
-    bodies: BodyIndex,
     target: &MethodTarget,
-    locals: list[Local],
+    mut builder: Builder,
     argument: &ArgumentElement,
     span: SourceSpan,
-    unions: list[RustType],
-    mut intrinsics: list[EnumDeclaration],
 ) -> Result[int, str]:
     """Select the checked implementation using the concrete receiver's retained layout identity."""
-    owner = receiver_owner(module, locals, argument, span, unions, intrinsics)?
-    return owner_method_index(module, bodies, target, owner, intrinsics)
+    owner = receiver_owner(module, builder, argument, span)?
+    return owner_method_index(module, target, owner, builder)
 
 
 pub def receiver_method_identity(
     module: &BodyIrModule,
     target: &MethodTarget,
-    locals: list[Local],
+    mut builder: Builder,
     argument: &ArgumentElement,
     span: SourceSpan,
-    unions: list[RustType],
-    mut intrinsics: list[EnumDeclaration],
 ) -> Result[Option[CanonicalSymbolId], str]:
     """Use the same checked adopter selection for a compiled method and a retained executable body."""
-    match receiver_owner(module, locals, argument, span, unions, intrinsics):
+    match receiver_owner(module, builder, argument, span):
         Ok(owner) => return Ok(Some(owner_method_identity(module, target, owner)?))
         Err(_reason) => return Ok(target.canonical.clone())
 
@@ -396,22 +386,22 @@ def owner_method_identity(
 
 pub def owner_method_index(
     module: &BodyIrModule,
-    bodies: BodyIndex,
     target: &MethodTarget,
     owner: PlanType,
-    mut intrinsics: list[EnumDeclaration],
+    mut builder: Builder,
 ) -> Result[int, str]:
     """Find the selected body's exact receiver frame; a compiled Loaf implementation uses its callable record instead."""
     identity = owner_identity(module, owner)?
     selected_identity = owner_method_identity(module, target, owner)?
     canonical = Some(selected_identity)
-    candidate_indices = bodies.candidates(selected_identity)
+    candidate_indices = builder.program.body_indices.candidates(selected_identity)
+    bodies = builder.program.bodies.clone()
     mut selected_index = -1
     for index in candidate_indices:
-        body = module.bodies[index]
+        body = body_at(bodies.as_ref(), index)
         if body.canonical != canonical or len(body.params) == 0:
             continue
-        receiver = frame_type(module, body.locals[0], intrinsics)?
+        receiver = frame_type(builder.nominals, builder.enums, body.locals[0], builder.intrinsics)?
         if not receiver_matches(receiver, owner):
             continue
         match receiver_mode(body.locals[0].origin):
@@ -419,7 +409,7 @@ pub def owner_method_index(
             None => return Err("unsupported Body IR Method without receiver")
         if selected_index >= 0:
             # Repeated publication of the same checked body is harmless; differing executable facts are ambiguous.
-            if body != module.bodies[selected_index]:
+            if body != body_at(bodies.as_ref(), selected_index):
                 return Err("unsupported Body IR conflicting selected method executable bodies")
         else:
             selected_index = index
@@ -429,7 +419,7 @@ pub def owner_method_index(
     mut candidate_count = 0
     mut candidates = ""
     for index in candidate_indices:
-        body = module.bodies[index]
+        body = body_at(bodies.as_ref(), index)
         if body.canonical != canonical:
             continue
         candidate_count += 1
@@ -438,7 +428,7 @@ pub def owner_method_index(
         if len(body.locals) == 0:
             candidates += f"{body.name}(params={len(body.params)}, receiver=<no locals>); "
             continue
-        match frame_type(module, body.locals[0], intrinsics):
+        match frame_type(builder.nominals, builder.enums, body.locals[0], builder.intrinsics):
             Ok(receiver) =>
                 candidates += f"{body.name}(params={len(body.params)}, raw_receiver={body.locals[0].ty}, frame={receiver:?}); "
             Err(error) =>
@@ -451,14 +441,12 @@ pub def owner_method_index(
 pub def receiver_method_target(
     module: &BodyIrModule,
     target: &MethodTarget,
-    locals: list[Local],
+    mut builder: Builder,
     argument: &ArgumentElement,
     span: SourceSpan,
-    unions: list[RustType],
-    mut intrinsics: list[EnumDeclaration],
 ) -> Result[MethodTarget, str]:
     """Read an implementation target from a retained concrete receiver; nonnominal calls keep their original target."""
-    match receiver_owner(module, locals, argument, span, unions, intrinsics):
+    match receiver_owner(module, builder, argument, span):
         Ok(owner) => return implementation_target(module, target, owner)
         Err(_reason) => return Ok(target.clone())
 
@@ -504,31 +492,26 @@ def receiver_matches(receiver: PlanType, owner: PlanType) -> bool:
 
 def receiver_owner(
     module: &BodyIrModule,
-    locals: list[Local],
+    mut builder: Builder,
     argument: &ArgumentElement,
     span: SourceSpan,
-    unions: list[RustType],
-    mut intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
-    """Read the concrete model or source enum receiver from its native place, reporting the refused frame carrier."""
+    """Read the receiver against borrowed frame tables, retaining only the local-offset view needed by deferred defaults."""
     match argument.as_one():
         Some(value) =>
             match value:
                 RustOperand.Place(read) =>
-                    mut declarations = module.nominal_declarations
-                    mut enums = module.enum_declarations
-                    mut frame_locals = locals
-                    mut union_layouts = unions
+                    mut frame_locals = builder.locals[builder.local_offset:]
                     place = model_place(
-                        declarations,
+                        builder.nominals,
                         frame_locals,
                         read.place,
                         span,
-                        enums,
-                        union_layouts,
-                        intrinsics,
+                        builder.enums,
+                        builder.unions,
+                        builder.intrinsics,
                     )?
-                    actual = place_type(locals, place)
+                    actual = place_type(frame_locals, place)
                     match actual:
                         PlanType.Model(owner, name) => return Ok(PlanType.Model(owner, name))
                         PlanType.Enum(owner, name) =>

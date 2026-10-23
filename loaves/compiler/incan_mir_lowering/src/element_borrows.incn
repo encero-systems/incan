@@ -59,7 +59,7 @@ pub def element_method_receiver(
     span: SourceSpan,
 ) -> Result[Place, str]:
     """Borrow a list or dictionary element as the selected method's receiver: in place when `mut self` changes it."""
-    receiver_type = frame_type(module, module.bodies[index].locals[0], builder.intrinsics)?
+    receiver_type = frame_type(builder.nominals, builder.enums, module.bodies[index].locals[0], builder.intrinsics)?
     match argument.as_one():
         Some(RustOperand.Place(read)) =>
             # Body IR borrows every source receiver; the selected body's `mut self` decides the borrow's exclusivity.

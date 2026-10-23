@@ -15,31 +15,35 @@ from rust::incan_semantics_core::body_ir import (
     OwnershipFact,
     ArgumentElement as RustArgumentElement,
     NamedCallableTarget,
+    NominalDeclaration,
+    EnumDeclaration as RustEnumDeclaration,
 )
 from pub::incan_mir_plan import PlanType, Local, RvalueKind, SourceSpan, EnumDeclaration
 from models import model_place
 from ranges import range_value_local
-from unions import native_source_type, collect_unions
+from unions import native_source_type
 from symbols import symbol_component, type_component
 
 
 pub def frame_type(
-    module: &BodyIrModule,
+    mut nominals: list[NominalDeclaration],
+    mut enums: list[RustEnumDeclaration],
     local: &RustLocal,
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """
-    Turn only checker-retained receiver origins into borrowed native frame slots.
+    Turn only checker-retained receiver origins into borrowed native frame slots, borrowing the caller's cached declaration tables.
 
     A source enum's receiver is a shared reference; a `mut self` enum method would replace the value its caller holds,
     which no enum receiver frame retains, so it refuses.
+    Union storage is resolved from the already retained intrinsic declarations; a local never rediscovers program unions.
     """
     if range_value_local(local.ty, local.origin):
         return Ok(PlanType.RangeValue)
     ty = native_source_type(
-        list(module.nominal_declarations),
-        list(module.enum_declarations),
-        collect_unions(module),
+        nominals,
+        enums,
+        [],
         local.ty,
         intrinsics,
     )?
@@ -53,7 +57,7 @@ pub def frame_type(
                 PlanType.Enum(index, name) =>
                     if mutable:
                         return Err("unsupported Body IR mutable enum receiver")
-                    if index < len(module.enum_declarations):
+                    if index < len(enums):
                         return Ok(PlanType.EnumRef(index, name))
                 _ => pass
             return Err("unsupported Body IR nonnominal receiver")
@@ -220,15 +224,15 @@ def receiver_borrow(
 ) -> Result[tuple[PlanType, RvalueKind], str]:
     """Lower the checked receiver to a shared borrow or mutable reborrow without moving its owner."""
     body = module.bodies[index]
-    receiver_type = frame_type(module, body.locals[0], intrinsics)?
+    mut declarations = module.nominal_declarations
+    mut enums = module.enum_declarations
+    receiver_type = frame_type(declarations, enums, body.locals[0], intrinsics)?
     match value:
         RustOperand.Place(read) =>
             match read.fact:
                 OwnershipFact.Borrow => pass
                 OwnershipFact.MutBorrow => pass
                 _ => return Err("unsupported Body IR Method receiver ownership")
-            mut declarations = module.nominal_declarations
-            mut enums = module.enum_declarations
             mut frame_locals = locals
             mut union_layouts = unions
             mut receiver = model_place(

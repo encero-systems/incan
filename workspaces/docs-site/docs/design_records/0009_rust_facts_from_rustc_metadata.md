@@ -31,6 +31,7 @@ The checker needs Rust facts for `rust::` imports: types, generics, methods, fie
    - **Coverage:** the toolchain ships the cache of `std`, `core` and `alloc`. A compiled Rust unit carries its own cache, from incan.pub's bake or Oven's build.
    - **How they reach the compiler:** Oven passes the caches with the unit's native closure (`--rust-abi`).
 3. **Check-time extraction is the fallback.** Lookup is ordered: the Loaf's shipped ABI, caches, then the same extractor over the unit's crates; covered paths are never re-extracted. Selected public layouts include transitive records through Options and collections, while method-signature expansion is independently bounded.
+   Bounded fallback results may be retained in the same indexed layout for the exact request and native generation, including absent paths; they remain separate from shipped complete-crate caches and grant no crate-wide coverage.
 4. **Storage.**
    - **Layout:** a cache uses `.incnbody`'s layout. A version comes first, then a postcard index of each path's payload range, then one postcard payload per item.
    - **Reading:** a reader decodes the index once, and decodes an item only when checking asks for it.

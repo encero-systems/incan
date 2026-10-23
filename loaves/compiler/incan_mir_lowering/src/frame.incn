@@ -25,23 +25,15 @@ from pub::incan_mir_plan import (
 from pub::incan_mir_plan import assign as plan_assign, block as plan_block, place as plan_place
 from pub::incan_mir_plan import tuple_element_type
 from type_parameters import Instance
-from body_index import BodyIndex
+from program_context import ProgramContext
 from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId as RustCanonicalSymbolId
 from rust::incan_semantics_core::body_ir import (
     NominalDeclaration as RustNominalDeclaration,
     EnumDeclaration as RustEnumDeclaration,
-    StaticDeclaration as RustStaticDeclaration,
     ValueEnumDeclaration as RustValueEnumDeclaration,
     DecoratedBinding as RustDecoratedBinding,
     Body as RustBody,
 )
-
-
-pub model DisplayFunction:
-    """One validated shared-receiver source body or SDK item rendering a retained nominal as owned text."""
-
-    pub owner: int
-    pub callee: CalleeKind
 
 
 pub model Builder:
@@ -90,8 +82,8 @@ pub model Builder:
     # One unproven assignment closes a slot at every control-flow join, even if another assignment was scalar-only.
     pub unproven_closures: list[int]
     pub nominals: list[RustNominalDeclaration]
-    # Source frames share one program index; external-only synthetic frames never select a source body.
-    pub body_indices: BodyIndex
+    # Source frames share dispatch mappings and body positions; external-only synthetic frames have no source dispatch.
+    pub program: ProgramContext
     pub enums: list[RustEnumDeclaration]
     pub unions: list[RustType]
     # Deferred defaults reserve a declaration-local frame within the caller.
@@ -101,7 +93,6 @@ pub model Builder:
     # Only a closure with a retained consuming contract may transfer its zip into a capture-free generator step.
     pub consuming_closure_frame: bool
     pub intrinsics: list[EnumDeclaration]
-    pub statics: list[RustStaticDeclaration]
     pub generator_handle: int
     pub value_enums: list[RustValueEnumDeclaration]
     pub instances: list[Instance]
@@ -119,9 +110,6 @@ pub model Builder:
     pub iteration_locals: list[int] = []
     pub step_bindings: list[int] = []
     pub step_clauses: list[tuple[int, int, list[int]]] = []
-    pub display_functions: list[DisplayFunction] = []
-    # One validated comparison symbol frame per nominal, shared with the declaration's native ABI bridges.
-    pub comparison_functions: list[list[str]] = []
     # Lexical Body IR scopes identify owners that survive a loop body, including its enclosing result place.
     pub scoped_locals: list[tuple[int, int]] = []
     pub scope_parents: list[tuple[int, int]] = []

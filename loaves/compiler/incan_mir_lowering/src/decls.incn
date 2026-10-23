@@ -31,12 +31,13 @@ from string_conversion_contracts import conversion_name, conversion_trait
 from symbols import model_symbol
 
 
-pub def static_slot(declarations: list[StaticDeclaration], value: &GlobalPlace) -> Result[int, str]:
+pub def static_slot(declarations: &list[StaticDeclaration], value: &GlobalPlace) -> Result[int, str]:
     """Resolve global storage only by retained canonical identity and exact checked carrier."""
-    for slot in range(len(declarations)):
-        declaration = declarations[slot]
+    mut slot = 0
+    for declaration in declarations:
         if declaration.canonical == value.identity and declaration.ty == value.ty:
             return Ok(slot)
+        slot += 1
     return Err(f"unsupported Body IR unretained global storage `{value.identity.declaration_name}`")
 
 

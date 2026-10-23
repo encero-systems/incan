@@ -130,7 +130,7 @@ def poll_abi(
     if len(body.type_parameters) != 0 or len(body.params) != 1:
         return Ok(false)
     reference = PlanType.ModelMutRef(owner, str(module.nominal_declarations[owner].name))
-    if frame_type(module, body.locals[int(body.params[0].local.index())], intrinsics)? != reference:
+    if frame_type(list(module.nominal_declarations), list(module.enum_declarations), body.locals[int(body.params[0].local.index())], intrinsics)? != reference:
         return Ok(false)
     expected = generic("Result", [generic("Option", [arguments[0].clone()]), arguments[1].clone()])
     return Ok(body.return_type == expected)

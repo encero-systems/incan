@@ -532,7 +532,7 @@ def function_item_identity(
                     for declaration in module.loaf_callables:
                         if declaration.canonical == identity:
                             return loaf_item_signature(builder, parameters, declaration, span)
-                    index = imported_item_body(module, builder.body_indices, target)?
+                    index = imported_item_body(module, builder.program.body_indices, target)?
                     return item_signature(module, builder, parameters, module.bodies[index])
                 Some(body) =>
                     if target.direct_call_id != Some(body.direct_call_id) or str(target.name) != str(body.name):

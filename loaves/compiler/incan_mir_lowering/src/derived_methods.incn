@@ -282,7 +282,7 @@ def has_native_comparison(
                     mut count = 5
                     if operator == BinOp.Eq or operator == BinOp.Ne:
                         count = 1
-                    return Ok(len(builder.comparison_functions[owner]) >= count)
+                    return Ok(len(builder.program.comparison_functions.as_ref()[owner]) >= count)
                 _ => pass
         _ => pass
     return Ok(false)

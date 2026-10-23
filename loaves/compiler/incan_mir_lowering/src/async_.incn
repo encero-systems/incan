@@ -82,8 +82,10 @@ def capture_types(module: &BodyIrModule, body: &Body, mut intrinsics: list[EnumD
     """Retain owned captures and at most one nominal loan, whose lifetime the native boxing constructor preserves."""
     mut fields: list[PlanType] = []
     mut loans = 0
+    mut nominals = module.nominal_declarations
+    mut enums = module.enum_declarations
     for parameter in body.params:
-        ty = frame_type(module, body.locals[int(parameter.local.index())], intrinsics)?
+        ty = frame_type(nominals, enums, body.locals[int(parameter.local.index())], intrinsics)?
         match ty:
             PlanType.ModelRef(_owner, _name) => loans += 1
             PlanType.ModelMutRef(_owner, _name) => loans += 1

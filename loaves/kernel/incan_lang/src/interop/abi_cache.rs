@@ -95,6 +95,19 @@ impl RustAbiCache {
         postcard::from_bytes(&self.payload[offset..offset + length]).ok()
     }
 
+    /// Decode every retained item of a bounded fallback result. Shipped complete-crate caches should keep using
+    /// on-demand lookup; this consuming operation is for restoring a previously requested extraction exactly.
+    pub fn into_items(self) -> Result<BTreeMap<String, RustItemMetadata>, String> {
+        self.index
+            .into_iter()
+            .map(|(path, (offset, length))| {
+                postcard::from_bytes(&self.payload[offset..offset + length])
+                    .map(|metadata| (path, metadata))
+                    .map_err(|error| error.to_string())
+            })
+            .collect()
+    }
+
     /// Whether the cache holds `path`.
     pub fn contains(&self, path: &str) -> bool {
         self.index.contains_key(path)

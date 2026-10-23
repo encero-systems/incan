@@ -36,7 +36,7 @@ fn export(
     interface_path: Option<&String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let unit = UnitDescription::read(Path::new(unit_path)).map_err(|error| error.message)?;
-    let rust = crate::frontend::dependencies(&unit, &[])?.rust_facts(Path::new(sysroot));
+    let rust = crate::frontend::dependencies(&unit, &[])?.rust_facts(&unit, Path::new(sysroot));
     let (records, interface) =
         collect_codegraph_with_interface(&unit.source, std::slice::from_ref(&unit), true, Some(&rust))?;
     let note = unchecked_note(&records, &unit.project_root);

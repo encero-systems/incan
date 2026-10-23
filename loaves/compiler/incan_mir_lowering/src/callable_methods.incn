@@ -72,7 +72,9 @@ pub def callable_methods(
                         continue
                     receiver = body.locals[int(body.params[0].local.index())]
                     value = body.locals[int(body.params[1].local.index())]
-                    if frame_type(module, receiver, intrinsics)? != PlanType.ModelRef(owner, str(declaration.name)):
+                    mut nominals = module.nominal_declarations
+                    mut enums = module.enum_declarations
+                    if frame_type(nominals, enums, receiver, intrinsics)? != PlanType.ModelRef(owner, str(declaration.name)):
                         continue
                     result = native_source_type(
                         list(module.nominal_declarations),
@@ -81,7 +83,7 @@ pub def callable_methods(
                         body.return_type,
                         intrinsics,
                     )?
-                    if frame_type(module, value, intrinsics)? != signature[0] or result != signature[1]:
+                    if frame_type(nominals, enums, value, intrinsics)? != signature[0] or result != signature[1]:
                         return Err("unsupported Body IR native Callable1 source signature")
                     return Ok((function_name(module, body), signature))
     return Err("unsupported Body IR unavailable native Callable1 source body")

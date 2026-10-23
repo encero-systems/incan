@@ -193,7 +193,9 @@ from generator_adapters import is_generator_adapter, generator_adapter, iterator
 from pair_generators import pair_generator_locals, pair_generator_type
 from generator_consumers import is_generator_consumer, consumer_result, generator_consumer
 from project import project_context
-from body_index import BodyIndex, body_index
+from body_index import body_index
+from program_context import ProgramContext
+from rust::std::sync import Arc
 from nominal_instances import NominalInstance, specialize_nominals_with_instances, instance_arguments, template_base
 from checked_json import lower_checked_deserialize
 from string_conversion import lower_string_conversions, string_conversion_callee
@@ -270,6 +272,7 @@ from unions import (
     require_native_union_signature,
     native_source_type,
     collect_unions,
+    union_index,
     retain_body_unions,
     union_test_slots,
     test_union_tag,
@@ -2479,7 +2482,7 @@ def lifted_frame(mut builder: Builder, name: str, arguments: list[PlanType], res
         if local > builder.local_offset:
             scoped_locals.append((local - builder.local_offset + count, scope))
     mut lifted = Builder(
-        body_indices=builder.body_indices,
+        program=builder.program,
         locals=locals,
         parameter_count=count,
         blocks=[],
@@ -2502,7 +2505,6 @@ def lifted_frame(mut builder: Builder, name: str, arguments: list[PlanType], res
         unproven_closures=[],
         enums=builder.enums,
         intrinsics=builder.intrinsics,
-        statics=builder.statics,
         value_enums=builder.value_enums,
         local_offset=count,
         consuming_closure_frame=false,
@@ -2514,8 +2516,6 @@ def lifted_frame(mut builder: Builder, name: str, arguments: list[PlanType], res
         function_pointer_locals=pointer_locals,
         name=name,
         synthesized=[],
-        display_functions=builder.display_functions,
-        comparison_functions=builder.comparison_functions,
         scoped_locals=scoped_locals,
         scope_parents=builder.scope_parents,
         moved_tuple_fields=[],
@@ -3120,15 +3120,7 @@ def lower_value_enum_ordinal(
                 return Ok(false)
     if len(arguments) != 1:
         return Err("unsupported Body IR value enum ordinal bytes arguments")
-    if receiver_fills_retained_slot(
-        module,
-        target,
-        builder.locals[builder.local_offset:],
-        arguments[0],
-        span,
-        builder.unions,
-        builder.intrinsics,
-    ):
+    if receiver_fills_retained_slot(module, target, builder, arguments[0], span):
         return Ok(false)
     source = argument_place(builder, arguments, 0, span)?
     match ordinal_value_owner(builder, place_type(builder.locals, source)):
@@ -3499,7 +3491,7 @@ def lower_method_call(
     # A list or dictionary element receiver is reborrowed in its container; no native place names it.
     match element_method_owner(builder, arguments[0])?:
         Some(owner) =>
-            index = owner_method_index(module, builder.body_indices, target, owner, builder.intrinsics)?
+            index = owner_method_index(module, target, owner, builder)?
             reference = element_method_receiver(module, builder, index, arguments[0], span)?
             return call_method_body(module, builder, target, index, reference, arguments, destination, span)
         None => pass
@@ -3540,28 +3532,12 @@ def lower_compiled_method(
     implementation_only: bool,
 ) -> Result[bool, str]:
     """Call one checked compiled target. Selected overrides precede SDK dispatch; ordinary calls preserve source slots."""
-    selected = receiver_method_target(
-        module,
-        target,
-        builder.locals[builder.local_offset:],
-        arguments[0],
-        span,
-        builder.unions,
-        builder.intrinsics,
-    )?
+    selected = receiver_method_target(module, target, builder, arguments[0], span)?
     if implementation_only:
         if selected.canonical == target.canonical:
             return Ok(false)
     else:
-        if receiver_fills_source_slot(
-            module,
-            target,
-            builder.locals[builder.local_offset:],
-            arguments[0],
-            span,
-            builder.unions,
-            builder.intrinsics,
-        ):
+        if receiver_fills_source_slot(module, target, builder, arguments[0], span):
             return Ok(false)
     for callable in module.loaf_callables:
         match selected.canonical:
@@ -3609,26 +3585,9 @@ def concrete_iterator_collect(
                 return Err("unsupported Body IR opaque Iterator.collect with a nondefault implementation")
             matches += 1
             selected.canonical = Some(method.clone())
-    if matches != 1 or not receiver_fills_retained_slot(
-        module,
-        selected,
-        builder.locals[builder.local_offset:],
-        arguments[0],
-        span,
-        builder.unions,
-        builder.intrinsics,
-    ):
+    if matches != 1 or not receiver_fills_retained_slot(module, selected, builder, arguments[0], span):
         return Err("unsupported Body IR opaque Iterator.collect without one retained standard default")
-    index = method_index(
-        module,
-        builder.body_indices,
-        selected,
-        builder.locals[builder.local_offset:],
-        arguments[0],
-        span,
-        builder.unions,
-        builder.intrinsics,
-    )?
+    index = method_index(module, selected, builder, arguments[0], span)?
     if len(module.bodies[index].params) != 1:
         return Err("unsupported Body IR opaque Iterator.collect with ordinary parameters")
     return Ok(selected)
@@ -3655,15 +3614,7 @@ def retained_iterator_default(
                 return false
     if not target.has_valid_native_trait_selection():
         return false
-    return receiver_fills_retained_slot(
-        module,
-        target,
-        builder.locals[builder.local_offset:],
-        arguments[0],
-        span,
-        builder.unions,
-        builder.intrinsics,
-    )
+    return receiver_fills_retained_slot(module, target, builder, arguments[0], span)
 
 
 def lower_retained_method_call(
@@ -3676,16 +3627,7 @@ def lower_retained_method_call(
 ) -> Result[None, str]:
     """Borrow the concrete receiver and execute its selected body, naming the frame when its receiver is refused."""
     mut index = -1
-    match method_index(
-        module,
-        builder.body_indices,
-        target,
-        builder.locals[builder.local_offset:],
-        arguments[0],
-        span,
-        builder.unions,
-        builder.intrinsics,
-    ):
+    match method_index(module, target, builder, arguments[0], span):
         Ok(selected) => index = selected
         Err(error) => return Err(f"{error} for {target.name} in {builder.name}")
     receiver_type, borrow = method_receiver(
@@ -3717,15 +3659,7 @@ def lower_selected_library_method(
     match target.native_trait_delegation:
         None => return Ok(false)
         Some(selection) =>
-            if receiver_fills_source_slot(
-                module,
-                target,
-                builder.locals[builder.local_offset:],
-                arguments[0],
-                span,
-                builder.unions,
-                builder.intrinsics,
-            ):
+            if receiver_fills_source_slot(module, target, builder, arguments[0], span):
                 return Ok(false)
             match element_method_owner(builder, arguments[0])?:
                 Some(PlanType.Model(owner, _name)) =>
@@ -4023,15 +3957,7 @@ def lower_global_method(
         Some(RustOperand.Place(read)) =>
             match read.place.global():
                 Some(global) =>
-                    if not receiver_fills_retained_slot(
-                        module,
-                        target,
-                        builder.locals[builder.local_offset:],
-                        arguments[0],
-                        span,
-                        builder.unions,
-                        builder.intrinsics,
-                    ):
+                    if not receiver_fills_retained_slot(module, target, builder, arguments[0], span):
                         for callable in module.loaf_callables:
                             if Some(callable.canonical) == target.canonical:
                                 lower_static_sdk_method(
@@ -4073,8 +3999,8 @@ def lower_static_sdk_method(
             if len(bound) + 1 != len(arguments) or len(defaults) != 0:
                 return Err("unsupported Body IR SDK static method argument binding")
         _ => return Err("unsupported Body IR SDK static method unresolved argument binding")
-    slot = static_slot(builder.statics, global)?
-    if not is_computed_static(builder.statics[slot]):
+    slot = static_slot(builder.program.statics.as_ref(), global)?
+    if not is_computed_static(builder.program.statics.as_ref()[slot]):
         return Err("unsupported Body IR SDK noncomputed static method")
     owner = native_source_type(builder.nominals, builder.enums, builder.unions, global.ty, builder.intrinsics)?
     mut index = -1
@@ -4135,7 +4061,7 @@ def lower_static_sdk_method(
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=type_arguments, parameters=parameters, return_type=result, span=span),
     )
-    initialize_module_statics(builder, static_owner(builder.statics[slot]), span)
+    initialize_module_statics(builder, static_owner(builder.program.statics.as_ref()[slot]), span)
     output = call_destination(builder, destination, result, span)?
     return lower_callable_result(builder, CalleeKind.StaticMethod(slot, name), operands, output, result, span)
 
@@ -4214,17 +4140,17 @@ def lower_static_method_body(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Validate canonical storage, selected receiver passing and a nonescaping result before calling under its guard."""
-    slot = static_slot(builder.statics, global)?
-    if not is_computed_static(builder.statics[slot]):
+    slot = static_slot(builder.program.statics.as_ref(), global)?
+    if not is_computed_static(builder.program.statics.as_ref()[slot]):
         return Err("unsupported Body IR noncomputed global method receiver")
     owner = native_source_type(builder.nominals, builder.enums, builder.unions, global.ty, builder.intrinsics)?
     match owner:
         PlanType.Model(_owner, _name) => pass
         _ => return Err("unsupported Body IR nonmodel global method receiver")
     selected = computed_static_type(builder, read.place, global)?
-    index = owner_method_index(module, builder.body_indices, target, selected, builder.intrinsics)?
+    index = owner_method_index(module, target, selected, builder)?
     body = instantiated_method_body(module, builder, target, index, arguments, span)?
-    receiver = frame_type(module, body.locals[0], builder.intrinsics)?
+    receiver = frame_type(builder.nominals, builder.enums, body.locals[0], builder.intrinsics)?
     match receiver:
         PlanType.ModelMutRef(_owner, _name) =>
             if read.fact != OwnershipFact.MutBorrow:
@@ -4247,7 +4173,7 @@ def lower_static_method_body(
             (PlanType.Bool | PlanType.Unit | PlanType.String | PlanType.FunctionPointer(_) | PlanType.Model(_, _) | PlanType.List(_, _)) => pass
             _ => return Err("unsupported Body IR global method borrowed or unproven result")
     operands = method_ordinary_operands(module, builder, target, arguments, body, span)?
-    initialize_module_statics(builder, static_owner(builder.statics[slot]), span)
+    initialize_module_statics(builder, static_owner(builder.program.statics.as_ref()[slot]), span)
     mut symbol = source_method_symbol(module, builder, target, body, span)
     if len(read.place.projection) != 0:
         fields = field_path(
@@ -4593,12 +4519,11 @@ def lower_standard_slot(
     behavior in its place. A checked Serialize default that still names the protocol itself keeps the canonical JSON
     implementation; retaining that default is not an override.
     """
-    locals = builder.locals[builder.local_offset:]
     mut json_default = false
-    if receiver_fills_slot(module, target, locals, arguments[0], span, builder.unions, builder.intrinsics):
+    if receiver_fills_slot(module, target, builder, arguments[0], span):
         if not is_json_serialize_method(target):
             return Ok(false)
-        selected = receiver_method_identity(module, target, locals, arguments[0], span, builder.unions, builder.intrinsics)?
+        selected = receiver_method_identity(module, target, builder, arguments[0], span)?
         if selected != target.canonical:
             return Ok(false)
         # A retained default points at the protocol itself; only a distinct implementation overrides that slot.
@@ -4694,7 +4619,7 @@ def lower_named_target(
     match target.canonical:
         None => return Err("unsupported Body IR builtin or unproven NamedCallableTarget")
         Some(identity) =>
-            match builder.body_indices.unique(identity):
+            match builder.program.body_indices.unique(identity):
                 None => return lower_loaf_call(module, builder, target, arguments, destination, span)
                 Some(index) =>
                     body = module.bodies[index]
@@ -7229,6 +7154,18 @@ pub def unit_plan(
     return lowered_plan(modules, sources, files, entry, kind, tests, published)
 
 
+def program_context(module: &BodyIrModule, mut intrinsics: list[EnumDeclaration], unions: list[RustType]) -> Result[ProgramContext, str]:
+    """Freeze program dispatch mappings after layout admission, copying storage once from the still-borrowed checked module."""
+    return Ok(ProgramContext(
+        body_indices=body_index(module),
+        bodies=Arc.new(list(module.bodies)),
+        display_functions=Arc.new(display_functions(module, intrinsics)?),
+        statics=Arc.new(list(module.static_declarations)),
+        comparison_functions=Arc.new(comparison_functions(module, intrinsics)?),
+        union_types=union_index(unions),
+    ))
+
+
 def lowered_plan(
     modules: &list[BodyIrModule],
     sources: list[str],
@@ -7262,7 +7199,6 @@ def lowered_plan(
     if trace:
         println("lowering: specialize enums")
     context = specialize_enums(nominal_context)?
-    bodies = body_index(context)
     mut has_main = false
     mut declares_main = false
     for body in checked[entry].bodies:
@@ -7290,6 +7226,7 @@ def lowered_plan(
         println("lowering: enum declarations")
     mut enums = lower_enum_declarations(context, files[entry], intrinsics)?
     attach_enum_comparisons(context, enums, intrinsics)?
+    program = program_context(context, intrinsics, unions)?
     # Native comparison bridges call their checked slots without an ordinary source call to schedule them.
     mut bridge_bodies: list[str] = []
     for declaration in models:
@@ -7305,10 +7242,11 @@ def lowered_plan(
     for body in context.bodies:
         if is_lazy_method_body(context, body) and function_name(context, body) in bridge_bodies:
             instances.append(Instance(body=body.clone(), arguments=[], owned_callable_slots=[], original_callable=false))
-    for index in range(len(checked)):
-        owner = str(checked[index].module_id.path())
+    mut index = 0
+    for checked_module in checked:
+        checked_owner = str(checked_module.module_id.path())
         for body in context.bodies:
-            if body_module_identity(body)? != owner:
+            if body_module_identity(body)? != checked_owner:
                 continue
             if len(body.type_parameters) != 0:
                 continue
@@ -7320,7 +7258,7 @@ def lowered_plan(
                 println(f"lowering: body {body_module_identity(body)?} {body.name} {body.span.start}")
             function, runtime, pending, synthesized = lower_function(
                 context,
-                bodies,
+                program,
                 body,
                 unions,
                 sources[index],
@@ -7350,12 +7288,13 @@ def lowered_plan(
             append_async_entry(context, body, function, index == entry, tests, intrinsics, functions, externals)?
             append_generator_constructor(functions, context, body, sources[index], files[index], intrinsics)?
             _ = merge_externals(externals, runtime)?
+        index += 1
     mut owners: list[str] = []
     for module in checked:
         owners.append(str(module.module_id.path()))
     statics = lower_computed_statics(
         context,
-        bodies,
+        program,
         unions,
         sources,
         files,
@@ -7367,7 +7306,7 @@ def lowered_plan(
     )?
     if trace:
         println("lowering: generic instances")
-    _ = lower_instances(context, bodies, instances, unions, sources, files, owners, functions, externals, intrinsics)?
+    _ = lower_instances(context, program, instances, unions, sources, files, owners, functions, externals, intrinsics)?
     for declaration in intrinsics:
         enums.append(declaration)
     if kind == "library":
@@ -7541,7 +7480,7 @@ model EmittedFrames:
 
 def lower_computed_statics(
     module: &BodyIrModule,
-    bodies: BodyIndex,
+    program: ProgramContext,
     unions: list[RustType],
     sources: list[str],
     files: list[str],
@@ -7571,7 +7510,7 @@ def lower_computed_statics(
                     return Err("unsupported Body IR original callable without source provenance")
                 original, original_runtime, original_pending, original_synthesized = lower_function(
                     module,
-                    bodies,
+                    program,
                     binding.original_body,
                     unions,
                     sources[owner_index],
@@ -7600,7 +7539,7 @@ def lower_computed_statics(
                     return Err("unsupported Body IR computed static without source provenance")
                 function, runtime, pending, synthesized = lower_function(
                     module,
-                    bodies,
+                    program,
                     body,
                     unions,
                     sources[source_index],
@@ -7621,10 +7560,10 @@ def lower_computed_statics(
                 if initializer.return_type != ty:
                     return Err("invalid Body IR computed static initializer carrier")
                 cells.append(StaticCell(slot=slot, ty=ty, initializer=initializer.name, span=initializer.span))
-                key = module_static_key(module.static_declarations, owner)
+                key = module_static_key(program.statics.as_ref(), owner)
                 if key not in keys:
                     keys.append(key)
-                    functions.append(module_initializer(module.static_declarations, key, initializer.span))
+                    functions.append(module_initializer(program.statics.as_ref(), key, initializer.span))
                     _ = merge_externals(externals, module_initialization_externals(initializer.span))?
                 functions.append(initializer)
                 append_synthesized(functions, synthesized)?
@@ -7637,7 +7576,7 @@ def lower_computed_statics(
                         file = files[index]
                 if file == "":
                     return Err("unsupported Body IR literal dictionary without source provenance")
-                initializer, runtime = lower_literal_dictionary(module, bodies, slot, unions, intrinsics, file)?
+                initializer, runtime = lower_literal_dictionary(module, program, slot, unions, intrinsics, file)?
                 cells.append(StaticCell(slot=slot, ty=initializer.return_type, initializer=initializer.name, span=initializer.span))
                 functions.append(initializer)
                 _ = merge_externals(externals, runtime)?
@@ -7647,7 +7586,7 @@ def lower_computed_statics(
 
 def lower_literal_dictionary(
     module: &BodyIrModule,
-    bodies: BodyIndex,
+    program: ProgramContext,
     slot: int,
     unions: list[RustType],
     mut intrinsics: list[EnumDeclaration],
@@ -7659,7 +7598,7 @@ def lower_literal_dictionary(
     span = SourceSpan(file=file, line=1, column=1)
     name = static_initializer_name(slot)
     mut builder = Builder(
-        body_indices=bodies,
+        program=program,
         locals=[Local(ty=ty, span=span)],
         parameter_count=0,
         blocks=[],
@@ -7682,7 +7621,6 @@ def lower_literal_dictionary(
         unproven_closures=[],
         enums=module.enum_declarations,
         intrinsics=list(intrinsics),
-        statics=module.static_declarations,
         value_enums=module.value_enum_declarations,
         local_offset=0,
         consuming_closure_frame=false,
@@ -7745,7 +7683,6 @@ def body_refusals(
     closed_context = close_async_types(source_context)?
     nominal_context, nominal_instances = specialize_nominals_with_instances(closed_context)?
     context = specialize_enums(nominal_context)?
-    bodies = body_index(context)
     unions = collect_unions(context)
     mut intrinsics = intrinsic_declarations(context, files[entry])?
     checked_functions, checked_runtime, checked_instances = lower_checked_deserialize(
@@ -7757,6 +7694,7 @@ def body_refusals(
     conversion_functions, conversion_runtime = lower_string_conversions(context, files[entry], intrinsics)?
     _models = lower_model_declarations(context, files[entry], intrinsics, nominal_instances, false)?
     _enums = lower_enum_declarations(context, files[entry], intrinsics)?
+    program = program_context(context, intrinsics, unions)?
     mut refusals: list[str] = []
     mut selected_count = 0
     mut functions = checked_functions
@@ -7764,12 +7702,13 @@ def body_refusals(
     mut externals = checked_runtime
     merge_externals(externals, conversion_runtime)
     mut instances = checked_instances
-    for index in range(len(checked)):
-        module_owner = str(checked[index].module_id.path())
+    mut index = 0
+    for checked_module in checked:
+        checked_owner = str(checked_module.module_id.path())
         for body in context.bodies:
             match body_module_identity(body):
                 Ok(owner) =>
-                    if owner != module_owner:
+                    if owner != checked_owner:
                         continue
                 Err(error) =>
                     refusals.append(f"{body.name}: {error}")
@@ -7783,7 +7722,7 @@ def body_refusals(
                 println(f"census body: {body.name}")
             match lower_function(
                 context,
-                bodies,
+                program,
                 body,
                 unions,
                 sources[index],
@@ -7800,6 +7739,7 @@ def body_refusals(
                         Ok(_) => pass
                         Err(error) => refusals.append(f"{body.name}: {error}")
                 Err(error) => refusals.append(f"{body.name}: {error}")
+        index += 1
     if selection != "":
         if selected_count == 0:
             refusals.append(f"unsupported Body IR census selection without an ordinary body: {selection}")
@@ -7809,10 +7749,10 @@ def body_refusals(
     mut owners: list[str] = []
     for module in checked:
         owners.append(str(module.module_id.path()))
-    match lower_computed_statics(context, bodies, unions, sources, files, owners, intrinsics, functions, externals, instances):
+    match lower_computed_statics(context, program, unions, sources, files, owners, intrinsics, functions, externals, instances):
         Ok(_cells) => pass
         Err(error) => refusals.append(f"computed static: {error}")
-    match lower_instances(context, bodies, instances, unions, sources, files, owners, functions, externals, intrinsics):
+    match lower_instances(context, program, instances, unions, sources, files, owners, functions, externals, intrinsics):
         Ok(_lowered) => pass
         Err(error) => refusals.append(f"type-parameter instance: {error}")
     return Ok(refusals)
@@ -7856,7 +7796,7 @@ def append_generator_constructor(
 
 def retain_generic_decorator_frames(
     module: &BodyIrModule,
-    bodies: BodyIndex,
+    program: ProgramContext,
     instance: Instance,
     unions: list[RustType],
     source: str,
@@ -7882,7 +7822,7 @@ def retain_generic_decorator_frames(
                 original = instantiate(binding.original_body, instance.arguments, [])?
                 function, runtime, pending, synthesized = lower_function(
                     module,
-                    bodies,
+                    program,
                     original,
                     unions,
                     source,
@@ -7898,7 +7838,7 @@ def retain_generic_decorator_frames(
                 initializer = instantiate(template, instance.arguments, [])?
                 init_function, init_runtime, init_pending, init_synthesized = lower_function(
                     module,
-                    bodies,
+                    program,
                     initializer,
                     unions,
                     source,
@@ -7916,7 +7856,7 @@ def retain_generic_decorator_frames(
 
 def lower_instances(
     module: &BodyIrModule,
-    bodies: BodyIndex,
+    program: ProgramContext,
     mut instances: list[Instance],
     unions: list[RustType],
     sources: list[str],
@@ -7948,7 +7888,7 @@ def lower_instances(
         retain_body_carriers(module, intrinsics, body, files[source_index])?
         retain_generic_decorator_frames(
             module,
-            bodies,
+            program,
             instance,
             unions,
             sources[source_index],
@@ -7960,7 +7900,7 @@ def lower_instances(
         )?
         function, runtime, pending, synthesized = lower_function(
             module,
-            bodies,
+            program,
             body,
             unions,
             sources[source_index],
@@ -8058,7 +7998,7 @@ def entry_error(module: &BodyIrModule, ty: PlanType) -> bool:
 
 def lower_function(
     module: &BodyIrModule,
-    bodies: BodyIndex,
+    program: ProgramContext,
     body: &RustBody,
     unions: list[RustType],
     source: str,
@@ -8132,10 +8072,10 @@ def lower_function(
     parameters = frame_parameters(module, body, source, file, intrinsics)?
     names, bindings = body_type_bindings(module, body, type_arguments)?
     mut selected_unions = unions
-    retain_body_unions(selected_unions, body)
+    retain_body_unions(selected_unions, program.union_types.as_ref(), body)
     scoped_locals, scope_parents = frame_scopes(body)
     mut builder = Builder(
-        body_indices=bodies,
+        program=program,
         locals=frame_locals(module, body, unions, return_type, span, source, file, intrinsics)?,
         parameter_count=len(parameters),
         blocks=[],
@@ -8158,7 +8098,6 @@ def lower_function(
         unproven_closures=[],
         enums=module.enum_declarations,
         intrinsics=list(intrinsics),
-        statics=module.static_declarations,
         value_enums=module.value_enum_declarations,
         local_offset=0,
         async_source_body=primary_async_body(module, body),
@@ -8173,8 +8112,6 @@ def lower_function(
         name=selected_name,
         synthesized=[],
         iteration_locals=list_iterator_locals(body.block),
-        display_functions=display_functions(module, intrinsics)?,
-        comparison_functions=comparison_functions(module, intrinsics)?,
         scoped_locals=scoped_locals,
         scope_parents=scope_parents,
         moved_tuple_fields=[],
@@ -8271,8 +8208,10 @@ def producer_return_type(
     """A generator producer returns unit and holds only owned parameters; ordinary functions retain their declared result."""
     if not body.is_generator():
         return Ok(declared)
+    mut nominals = module.nominal_declarations
+    mut enums = module.enum_declarations
     for parameter in body.params:
-        capture = frame_type(module, body.locals[int(parameter.local.index())], intrinsics)?
+        capture = frame_type(nominals, enums, body.locals[int(parameter.local.index())], intrinsics)?
         if packed_input(capture, parameter.kind, parameter.mutable)? != capture:
             return Err("unsupported Body IR borrowed generator parameter")
         match capture:
@@ -8330,6 +8269,8 @@ def frame_locals(
     taking = taking_iterator_locals(body.block)
     pairs = pair_generator_locals(body)
     mut locals = [Local(ty=return_type, span=span)]
+    mut nominals = module.nominal_declarations
+    mut enums = module.enum_declarations
     for local in body.locals:
         if int(local.id.index()) + 1 != len(locals):
             return Err("Body IR local order disagrees with LocalId")
@@ -8338,7 +8279,7 @@ def frame_locals(
             Some(carrier) =>
                 ty = carrier
             None =>
-                ty = body_frame_type(module, body, local, intrinsics)?
+                ty = body_frame_type(nominals, enums, body, local, intrinsics)?
         index = int(local.id.index()) + 1
         ty = local_representation(body, index - 1, ty)
         if index in pairs:
@@ -8374,13 +8315,14 @@ def frame_locals(
 
 
 def body_frame_type(
-    module: &BodyIrModule,
+    mut nominals: list[RustNominalDeclaration],
+    mut enums: list[RustEnumDeclaration],
     body: &RustBody,
     local: &RustLocalDecl,
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
-    """Admit a checked frame local with its declaration and slot retained in every refusal."""
-    match frame_type(module, local, intrinsics):
+    """Resolve a local against the frame's borrowed declaration tables, retaining its declaration and slot in every refusal."""
+    match frame_type(nominals, enums, local, intrinsics):
         Ok(ty) => return Ok(ty)
         Err(reason) => return Err(f"{reason} in {body.name} frame local {int(local.id.index())} at source bytes {local.span.start}..{local.span.end}")
 
@@ -8394,11 +8336,13 @@ def frame_parameters(
 ) -> Result[list[Parameter], str]:
     """The frame's parameters, in declaration order; mutable model and frozen text parameters are refused."""
     mut parameters: list[Parameter] = []
+    mut nominals = module.nominal_declarations
+    mut enums = module.enum_declarations
     for parameter in body.params:
         ty = parameter_representation(
             body,
             int(parameter.local.index()),
-            body_frame_type(module, body, body.locals[int(parameter.local.index())], intrinsics)?,
+            body_frame_type(nominals, enums, body, body.locals[int(parameter.local.index())], intrinsics)?,
         )?
         if parameter.mutable and lacks_exclusive_parameter(ty):
             return Err("unsupported Body IR mutable tuple or iterator parameter")
@@ -11611,8 +11555,8 @@ def read_static(
     match read_generic_decorator(builder, value, global, span)?:
         Some(pointer) => return Ok(pointer)
         None => pass
-    slot = static_slot(builder.statics, global)?
-    if has_native_static_cell(builder.statics[slot]):
+    slot = static_slot(builder.program.statics.as_ref(), global)?
+    if has_native_static_cell(builder.program.statics.as_ref()[slot]):
         return read_computed_static(builder, value, global, slot, fact, span)
     ty = model_type(builder.nominals, global.ty)?
     if len(value.projection) != 0 and not is_owned_collection(ty):
@@ -11627,9 +11571,9 @@ def read_static(
     elif fact != OwnershipFact.Copy:
         return Err("unsupported Body IR static ownership")
     read_cell, _write_cell = static_accessors(ty)?
-    # The initializer reference must not point into the builder while materialization mutates that builder.
-    initializer = builder.statics[slot].initial.clone()
-    initial = static_initial_operand(builder, initializer, ty, span)?
+    # Keep the immutable initializer owner alive independently while materialization mutates the frame.
+    statics = builder.program.statics.clone()
+    initial = static_initial_operand(builder, statics.as_ref()[slot].initial, ty, span)?
     target = temporary(builder, ty, span)
     external_call(builder, read_cell, [PlanType.Int, ty], ty, [literal(Constant.Int(slot), span), initial], target, span)
     if not is_owned_collection(ty):
@@ -11743,7 +11687,7 @@ def read_guarded_static_field(
         _ => return Ok(None)
     name = f"{builder.name}__incan_static_field_{slot}_{len(builder.synthesized)}"
     builder.synthesized.append(static_field_reader(name, receiver, fields, result, reference, callee, span))
-    initialize_module_statics(builder, static_owner(builder.statics[slot]), span)
+    initialize_module_statics(builder, static_owner(builder.program.statics.as_ref()[slot]), span)
     output = temporary(builder, result, span)
     terminate_call(builder, CalleeKind.StaticMethod(slot, name), [], output, span)
     builder.owned.append(output.local)
@@ -11781,8 +11725,8 @@ def static_field_reader(
 
 def load_computed_static(mut builder: Builder, slot: int, ty: PlanType, span: SourceSpan) -> Place:
     """Load a guarded snapshot; only computed storage enters module initialization before the load."""
-    if is_computed_static(builder.statics[slot]):
-        initialize_module_statics(builder, static_owner(builder.statics[slot]), span)
+    if is_computed_static(builder.program.statics.as_ref()[slot]):
+        initialize_module_statics(builder, static_owner(builder.program.statics.as_ref()[slot]), span)
     snapshot = temporary(builder, ty, span)
     terminate_call(builder, CalleeKind.StaticLoad(slot), [], snapshot, span)
     if snapshot_owns(ty):
@@ -11801,8 +11745,8 @@ pub def computed_static_root(mut builder: Builder, value: &RustPlace, span: Sour
     """Select a native guarded static's projection inside a fresh snapshot, or return None for other storage."""
     match value.global():
         Some(global) =>
-            slot = static_slot(builder.statics, global)?
-            if not has_native_static_cell(builder.statics[slot]):
+            slot = static_slot(builder.program.statics.as_ref(), global)?
+            if not has_native_static_cell(builder.program.statics.as_ref()[slot]):
                 return Ok(None)
             ty = native_source_type(builder.nominals, builder.enums, builder.unions, global.ty, builder.intrinsics)?
             snapshot = load_computed_static(builder, slot, ty, span)
@@ -11933,8 +11877,9 @@ def read_text_constant(mut builder: Builder, global: &RustGlobalPlace, span: Sou
     """Own a copy of a read-only text constant's literal, as legacy's owned read of the constant does."""
     if global.write_policy != RustGlobalWritePolicy.ReadOnly:
         return Err("unsupported Body IR static ownership")
-    slot = static_slot(builder.statics, global)?
-    match builder.statics[slot].initial:
+    statics = builder.program.statics.clone()
+    slot = static_slot(statics.as_ref(), global)?
+    match statics.as_ref()[slot].initial:
         RustStaticInitializer.Literal(RustConstant.Str(text)) =>
             return Ok(read_place(owned_literal(builder, str(text), span), true, span))
         _ => return Err("unsupported Body IR static ownership")
@@ -11953,12 +11898,12 @@ def write_static(
         RustGlobalWritePolicy.Rebindable => pass
         _ => return Err("unsupported Body IR static write policy")
     mut ty = PlanType.Unit
-    if has_native_static_cell(builder.statics[static_slot(builder.statics, global)?]):
+    if has_native_static_cell(builder.program.statics.as_ref()[static_slot(builder.program.statics.as_ref(), global)?]):
         ty = native_source_type(builder.nominals, builder.enums, builder.unions, global.ty, builder.intrinsics)?
     else:
         ty = model_type(builder.nominals, global.ty)?
     if len(destination.projection) != 0:
-        if is_computed_static(builder.statics[static_slot(builder.statics, global)?]):
+        if is_computed_static(builder.program.statics.as_ref()[static_slot(builder.program.statics.as_ref(), global)?]):
             match ty:
                 PlanType.Model(_owner, _name) =>
                     return write_guarded_static_field(module, builder, destination, global, value, ty, span)
@@ -11995,7 +11940,7 @@ def write_guarded_static_field(
     root_reference = mutable_receiver_type(owner)?
     replacement = temporary(builder, selected, span)
     lower_local_assignment(module, builder, replacement, value, span)?
-    slot = static_slot(builder.statics, global)?
+    slot = static_slot(builder.program.statics.as_ref(), global)?
     name = f"{builder.name}__incan_static_write_{slot}_{len(builder.synthesized)}"
     path = "core::mem::replace"
     builder.externals.append(
@@ -12008,7 +11953,7 @@ def write_guarded_static_field(
         ),
     )
     synthesize(builder, static_field_writer(name, root_reference, fields, selected, reference, span))
-    initialize_module_statics(builder, static_owner(builder.statics[slot]), span)
+    initialize_module_statics(builder, static_owner(builder.program.statics.as_ref()[slot]), span)
     forget_owned(builder, replacement.local)
     output = temporary(builder, PlanType.Unit, span)
     terminate_call(builder, CalleeKind.StaticMethod(slot, name), [read_place(replacement, true, span)], output, span)
@@ -12100,10 +12045,10 @@ def persist_static_value(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Commit an evaluated primitive or collection replacement to its exact canonical storage slot."""
-    slot = static_slot(builder.statics, global)?
-    if has_native_static_cell(builder.statics[slot]):
+    slot = static_slot(builder.program.statics.as_ref(), global)?
+    if has_native_static_cell(builder.program.statics.as_ref()[slot]):
         return store_computed_static(builder, global, slot, target, span)
-    initialize_module_statics(builder, static_owner(builder.statics[slot]), span)
+    initialize_module_statics(builder, static_owner(builder.program.statics.as_ref()[slot]), span)
     ty = model_type(builder.nominals, global.ty)?
     if place_type(builder.locals, target) != ty:
         return Err("invalid Body IR static replacement carrier")
@@ -12135,8 +12080,8 @@ def store_computed_static(
     ty = native_source_type(builder.nominals, builder.enums, builder.unions, global.ty, builder.intrinsics)?
     if place_type(builder.locals, target) != ty:
         return Err("unsupported Body IR computed static replacement carrier")
-    if is_computed_static(builder.statics[slot]):
-        initialize_module_statics(builder, static_owner(builder.statics[slot]), span)
+    if is_computed_static(builder.program.statics.as_ref()[slot]):
+        initialize_module_statics(builder, static_owner(builder.program.statics.as_ref()[slot]), span)
     output = temporary(builder, PlanType.Unit, span)
     terminate_call(builder, CalleeKind.StaticStore(slot), [read_place(target, snapshot_owns(ty), span)], output, span)
     return Ok(None)
@@ -12665,7 +12610,7 @@ def require_sort_order(mut builder: Builder, element: PlanType) -> Result[None, 
     match element:
         PlanType.Model(owner, _name) =>
             if owner >= len(builder.nominals) or ("Ord" not in builder.nominals[owner].derives and len(
-                builder.comparison_functions[owner],
+                builder.program.comparison_functions.as_ref()[owner],
             ) != 5):
                 return Err("unsupported Body IR Sorted nominal without a retained Ord derive")
         PlanType.Tuple(elements) =>
@@ -12975,7 +12920,7 @@ def source_operand_type(mut builder: Builder, value: &RustOperand, span: SourceS
         RustOperand.Place(read) =>
             match read.place.global():
                 Some(global) =>
-                    if has_native_static_cell(builder.statics[static_slot(builder.statics, global)?]):
+                    if has_native_static_cell(builder.program.statics.as_ref()[static_slot(builder.program.statics.as_ref(), global)?]):
                         return computed_static_type(builder, read.place, global)
                     return model_type(builder.nominals, global.ty)
                 None => pass

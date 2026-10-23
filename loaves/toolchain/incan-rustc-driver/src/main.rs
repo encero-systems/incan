@@ -165,7 +165,7 @@ fn check(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         options => (DiagnosticOutputFormat::Text, options),
     };
     let unit = UnitDescription::read(Path::new(path)).map_err(|error| error.message)?;
-    let rust = frontend::dependencies(&unit, options)?.rust_facts(Path::new(sysroot));
+    let rust = frontend::dependencies(&unit, options)?.rust_facts(&unit, Path::new(sysroot));
     if let Err(error) = incan_cli::commands::check(&unit, &rust, format) {
         if !error.message.is_empty() {
             eprintln!("{}", error.message);

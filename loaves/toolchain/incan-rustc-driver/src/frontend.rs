@@ -178,7 +178,7 @@ fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup) -> Result<Chec
             &session,
             &modules,
             &analysis,
-            &bodies[loaf_modules..],
+            &mut bodies[loaf_modules..],
         );
         incan_codegraph::artifact::encode_graph(&records, &unit.project_root).map_err(|error| error.to_string())?
     } else {
@@ -929,11 +929,12 @@ pub(crate) struct Dependencies {
 }
 
 impl Dependencies {
-    /// The unit's Rust facts: its crates' ABI caches, then rustc's crate metadata for paths they leave uncovered.
-    pub(crate) fn rust_facts(&self, sysroot: &Path) -> RustFactsSetup {
+    /// Read shipped ABI caches first, retaining bounded fallback results under the installed native generation.
+    pub(crate) fn rust_facts(&self, unit: &UnitDescription, sysroot: &Path) -> RustFactsSetup {
         RustFactsSetup {
             caches: self.rust_abi.clone(),
             source: Some(std::sync::Arc::new(crate::rust_facts::RustcFacts {
+                unit: unit.clone(),
                 sysroot: sysroot.to_path_buf(),
                 externs: self.externs.clone(),
                 search: self.directories.clone(),
@@ -1009,7 +1010,7 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let loaves = unit.loaves.clone();
     let loaf_links: std::collections::BTreeSet<String> =
         unit.loaves.iter().map(|loaf| loaf.name.replace('-', "_")).collect();
-    let rust = dependencies.rust_facts(Path::new(&arguments[3]));
+    let rust = dependencies.rust_facts(&unit, Path::new(&arguments[3]));
     let parent = tracing::Span::current();
     let checked = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         let _parent = parent.enter();
