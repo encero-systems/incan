@@ -9,9 +9,119 @@ use super::TypeChecker;
 use crate::ast::{CallArg, ParamKind, Span};
 use crate::symbols::{CallableParam, ResolvedType};
 use crate::typechecker::helpers::render_resolved_type_as_rust_arg;
-use crate::typechecker::type_info::{ConstructorFieldBinding, RustCheckedLayout};
+use crate::typechecker::type_info::{ConstructorFieldBinding, RustCheckedCall, RustCheckedEnum, RustCheckedLayout};
 
 impl TypeChecker {
+    /// Select the checked public binding shared by native signatures, constructors, patterns and coverage. A
+    /// definition path never creates a second carrier when metadata already binds it through a public reexport.
+    pub(in crate::typechecker::check_expr) fn rust_public_type_path(&self, path: &str) -> String {
+        self.type_info
+            .rust
+            .item_public_paths
+            .get(path)
+            .map_or_else(|| path.to_owned(), Clone::clone)
+    }
+
+    /// Read a complete native enum template for both construction and matching. Exact field displays retain Box and
+    /// reference storage; named slots follow metadata order. Neither caller may invent a partial executable layout.
+    pub(in crate::typechecker::check_expr) fn checked_rust_enum_layout(
+        &self,
+        path: &str,
+        info: &RustTypeInfo,
+    ) -> Option<RustCheckedEnum> {
+        if info.variants.is_empty()
+            || info.variants.iter().any(|variant| {
+                variant.fields.len() != variant.field_type_displays.len()
+                    || (!variant.field_names.is_empty() && variant.fields.len() != variant.field_names.len())
+            })
+        {
+            return None;
+        }
+        Some(RustCheckedEnum {
+            type_parameters: info.type_params.clone(),
+            variants: info
+                .variants
+                .iter()
+                .map(|variant| {
+                    (
+                        variant.name.clone(),
+                        variant
+                            .field_type_displays
+                            .iter()
+                            .map(|field| self.native_rust_signature_type(field, path))
+                            .collect(),
+                        variant.field_names.clone(),
+                    )
+                })
+                .collect(),
+        })
+    }
+
+    /// Retain a metadata-selected native variant and its storage adaptations. The source payload signature stays
+    /// semantic, while boxed fields carry an explicit owned Box construction into Body IR's argument boundary.
+    pub(in crate::typechecker::check_expr) fn retain_rust_variant_construction(
+        &mut self,
+        path: &str,
+        variant: &str,
+        args: &[CallArg],
+        params: &[CallableParam],
+        span: Span,
+    ) {
+        let Some(metadata) = self.rust_item_metadata_for_complete_type(path) else {
+            return;
+        };
+        let incan_lang::interop::RustItemKind::Type(info) = metadata.kind else {
+            return;
+        };
+        let Some(layout) = self.checked_rust_enum_layout(path, &info) else {
+            return;
+        };
+        let ancestral = incan_lang::interop::ancestral_rust_path(path);
+        if matches!(ancestral.as_str(), "core::option::Option" | "core::result::Result") {
+            let Some(constructor) = incan_lang::lang::surface::constructors::from_str(variant) else {
+                return;
+            };
+            self.type_info.record_resolved_identity(
+                span,
+                crate::symbols::canonical_builtin_constructor_identity(constructor),
+            );
+        } else {
+            let public_path = self.rust_public_type_path(path);
+            let Some((identity, _)) = body_ir::native_enum_variant(&public_path, variant) else {
+                return;
+            };
+            self.type_info.record_resolved_identity(span, identity);
+            self.type_info.rust.checked_enums.insert(public_path, layout);
+        }
+        let Some(carriers) = self.rust_variant_payload_carriers(path, variant) else {
+            return;
+        };
+        for ((arg, param), carrier) in args.iter().zip(params).zip(carriers) {
+            if carrier != incan_lang::interop::RustPayloadCarrier::Boxed {
+                continue;
+            }
+            let CallArg::Positional(value) = arg else {
+                continue;
+            };
+            let storage = self.native_signature_storage_owner(ResolvedType::Generic(
+                "std::boxed::Box".into(),
+                vec![param.ty.clone()],
+            ));
+            self.type_info.rust.argument_adjustments.insert(
+                (value.span.start, value.span.end),
+                vec![RustCheckedCall {
+                    receiver_adjustments: Vec::new(),
+                    path: "std::boxed::Box::new".into(),
+                    type_arguments: vec![param.ty.clone()],
+                    parameters: vec![CallableParam::positional(param.ty.clone())],
+                    return_type: storage,
+                    result_item_path: Some("std::boxed::Box".into()),
+                    has_receiver: false,
+                }],
+            );
+        }
+    }
+
     /// Retain ordered public field templates once, keyed by their public native owner. No hidden-field access is
     /// inferred: the adapter must verify the complete native field count, visibility and instantiated types.
     pub(in crate::typechecker::check_expr) fn retain_rust_layout(&mut self, path: &str, info: &RustTypeInfo) {
@@ -41,6 +151,10 @@ impl TypeChecker {
         self.type_info.rust.checked_layouts.insert(
             path.to_owned(),
             RustCheckedLayout {
+                is_copy: self.derive_support(
+                    &ResolvedType::RustPath(path.into()),
+                    incan_lang::lang::derives::DeriveId::Copy,
+                ) == crate::typechecker::derive_requirements::DeriveSupport::Supported,
                 type_parameters: info.type_params.clone(),
                 fields,
                 field_identities,

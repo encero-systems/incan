@@ -2,3 +2,10 @@ pub model Record:
     pub count: int = 0
     pub label: str = "none"
     pub tags: list[str] = []
+
+
+pub model BufferedRecord:
+    """Declare a fresh collection default before a supplied field."""
+
+    pub tags: list[str] = []
+    pub label: str

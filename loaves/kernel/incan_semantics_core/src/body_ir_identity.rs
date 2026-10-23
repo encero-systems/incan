@@ -639,11 +639,12 @@ impl BodyIrModule {
                 })
     }
 
-    /// Validate the identity shape of a retained public native struct layout. Only ordered public fields and native
-    /// binders may extend the opaque declaration; rustc separately verifies completeness, visibility and exact types.
+    /// Validate the identity shape of a retained public native struct layout. Ordered public fields, native binders
+    /// and a Copy capability may extend the opaque declaration; rustc verifies fields, types and the Copy
+    /// implementation.
     fn is_well_formed_native_struct_layout(&self, declaration: &NominalDeclaration) -> bool {
         if !matches!(declaration.canonical.origin, crate::SymbolOrigin::RustCrate(_))
-            || declaration.fields.is_empty()
+            || (declaration.fields.is_empty() && declaration.derives != ["Copy"])
             || declaration.fields.len() != declaration.field_types.len()
             || declaration.fields.len() != declaration.field_identities.len()
             || declaration.field_public != vec![true; declaration.fields.len()]
@@ -674,6 +675,9 @@ impl BodyIrModule {
         opaque.field_identities = declaration.field_identities.clone();
         opaque.field_public = declaration.field_public.clone();
         opaque.type_parameters = declaration.type_parameters.clone();
+        if declaration.derives == ["Copy"] {
+            opaque.derives = declaration.derives.clone();
+        }
         opaque == *declaration
     }
 

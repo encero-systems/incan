@@ -1202,7 +1202,8 @@ impl TypeChecker {
 
     /// Select a native variant from complete metadata and retain its exact storage layout once. Positional payloads
     /// inherit the subject's reference binding mode; named payloads keep their native storage type for checked
-    /// copy/clone reads. Written field order and public reexport spellings never establish a second layout.
+    /// copy/clone reads. Signatures and patterns share the checked public owner, so written field order and reexport
+    /// spellings never establish a second layout or identity.
     fn rust_enum_constructor_payload_types(
         &mut self,
         expected_ty: &ResolvedType,
@@ -1226,36 +1227,9 @@ impl TypeChecker {
         let RustItemKind::Type(info) = metadata.kind else {
             return None;
         };
-        if info.variants.is_empty()
-            || info.variants.iter().any(|variant| {
-                variant.fields.len() != variant.field_type_displays.len()
-                    || (!variant.field_names.is_empty() && variant.fields.len() != variant.field_names.len())
-            })
-        {
-            return None;
-        }
-        let names = info
-            .variants
-            .iter()
-            .find(|selected| selected.name == variant)?
-            .field_names
-            .clone();
-        let variants = info
-            .variants
-            .iter()
-            .map(|variant| {
-                (
-                    variant.name.clone(),
-                    variant
-                        .field_type_displays
-                        .iter()
-                        .map(|field| self.native_rust_signature_type(field, &path))
-                        .collect::<Vec<_>>(),
-                    variant.field_names.clone(),
-                )
-            })
-            .collect::<Vec<_>>();
-        let fields = &variants.iter().find(|(name, _, _)| name == variant)?.1;
+        let layout = self.checked_rust_enum_layout(&path, &info)?;
+        let (_, fields, names) = layout.variants.iter().find(|(name, _, _)| name == variant)?;
+        let names = names.clone();
         let mut arguments = self.rust_owner_type_args(expected_ty, &path)?;
         if !self.complete_rust_owner_arguments(&info, &mut arguments) {
             return None;
@@ -1282,15 +1256,10 @@ impl TypeChecker {
             );
             return Some(RustEnumPatternResolution::payloads(fields));
         }
-        let (identity, _) = incan_semantics_core::body_ir::native_enum_variant(&path, variant)?;
+        let public_path = self.rust_public_type_path(&path);
+        let (identity, _) = incan_semantics_core::body_ir::native_enum_variant(&public_path, variant)?;
         self.type_info.record_resolved_identity(span, identity);
-        self.type_info.rust.checked_enums.insert(
-            path,
-            crate::typechecker::type_info::RustCheckedEnum {
-                type_parameters: info.type_params,
-                variants,
-            },
-        );
+        self.type_info.rust.checked_enums.insert(public_path, layout);
         Some(RustEnumPatternResolution::PayloadTypes { fields, names })
     }
 

@@ -251,7 +251,7 @@ from model_values import (
 )
 from enum_values import serialize_enum_operand
 from enums import lower_enum_declarations, enum_owner, variant_index, unit_variant
-from enum_display import display_enum_operand, native_enum_text
+from enum_display import display_enum_operand, native_enum_text, native_enum_owner
 from enums import validate_unit_comparison, validate_unit_ordering
 from value_enums import (
     value_variant,
@@ -891,7 +891,7 @@ def native_enum_equality(
     right: Place,
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
-    """Use a published enum's retained PartialEq or a native Option/Result implementation so payloads participate in equality."""
+    """Borrow native enums and Option/Result for their Rust equality implementation; published source enums retain their checked derives."""
     if operator != BinOp.Eq and operator != BinOp.Ne:
         return Ok(None)
     ty = place_type(builder.locals, left)
@@ -906,17 +906,18 @@ def native_enum_equality(
         _ => return Ok(None)
     if owner < 0:
         return Ok(None)
+    native = native_enum_owner(builder, owner)
     if owner < len(builder.enums):
         declaration = builder.enums[owner]
         if library_enum_item(declaration) == "":
             return Ok(None)
-        if "PartialEq" not in declaration.derives:
+        if not native and "PartialEq" not in declaration.derives:
             return Err("unsupported Body IR SDK enum comparison without retained PartialEq")
         mut payload = false
         for variant in declaration.variants:
             if len(variant.fields) != 0:
                 payload = true
-        if not payload:
+        if not payload and not native:
             return Ok(None)
     else:
         index = owner - len(builder.enums)
@@ -927,11 +928,13 @@ def native_enum_equality(
         borrowed = temporary(builder, reference, span)
         builder.emit(plan_assign(borrowed, RvalueKind.Borrow(source), span))
         operands.append(read_place(borrowed, false, span))
-    path = "core::cmp::PartialEq::eq"
+    mut path = "core::cmp::PartialEq::eq"
+    if native and operator == BinOp.Ne:
+        path = "core::cmp::PartialEq::ne"
     builder.externals.append(ExternalFunction(path=path, type_arguments=[ty, ty], parameters=[reference, reference], return_type=PlanType.Bool, span=span))
     output = temporary(builder, PlanType.Bool, span)
     terminate_call(builder, CalleeKind.Instantiated(path, [ty, ty]), operands, output, span)
-    if operator == BinOp.Ne:
+    if operator == BinOp.Ne and not native:
         negated = temporary(builder, PlanType.Bool, span)
         builder.emit(plan_assign(negated, RvalueKind.Unary(UnaryOp.Not, read_place(output, false, span)), span))
         return Ok(Some(read_place(negated, false, span)))
@@ -5216,19 +5219,14 @@ def shared_model_argument(
     ty: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Pass a checked nominal or enum by shared reference, retaining a reference already on its frame."""
+    """Borrow a checked nominal or enum, materializing collection elements once and retaining existing frame references."""
     match value:
         RustOperand.Place(read) =>
-            mut receiver = model_place(
-                builder.nominals,
-                builder.locals[builder.local_offset:],
-                read.place,
-                span,
-                builder.enums,
-                builder.unions,
-                builder.intrinsics,
-            )?
-            receiver.local += builder.local_offset
+            mut receiver = plan_place(0, span)
+            if is_element_place(builder, read.place)?:
+                receiver = materialized_receiver(builder, read.place, span)?
+            else:
+                receiver = scalar_place(builder, read.place, span)?
             source = place_type(builder.locals, receiver)
             if source == ty:
                 return Ok(read_place(receiver, false, span))
@@ -10991,7 +10989,7 @@ def enum_payload_read(
     fact: &OwnershipFact,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Preserve projected copy/borrow facts while materializing the source binding's owned value."""
+    """Preserve projected copy/borrow facts, copying stored shared references and materializing owned bindings."""
     if place_type(builder.locals, place) == PlanType.StrRef:
         owned = owned_slice_text(builder, read_place(place, false, span), span)
         return Ok(read_place(owned, true, span))
@@ -11006,6 +11004,7 @@ def enum_payload_read(
     payload_type = place_type(builder.locals, place)
     match payload_type:
         PlanType.ModelRef(_owner, _name) => return Ok(read_place(place, false, span))
+        PlanType.EnumRef(_owner, _name) => return Ok(read_place(place, false, span))
         PlanType.SliceRef(_elements) => return Ok(read_place(place, false, span))
         _ => pass
     if numeric_carrier(payload_type) or payload_type == PlanType.Bool or payload_type == PlanType.Unit:
@@ -12495,11 +12494,24 @@ def typed_carrier_operand(
     ty: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Materialize checked carrier and text conversions at a concrete call, return, or collection boundary."""
+    """Materialize checked carrier and text conversions at a concrete call, return, or collection boundary.
+
+    A checked native Copy read can dereference an explicit reference slot only for its matching owned carrier. Other
+    reference values retain the early reference-read boundary, and the adapter verifies the native Copy capability.
+    """
     if ty == PlanType.FrozenStr:
         return frozen_operand(builder, operand, span)
     match operand:
         RustOperand.Constant(RustConstant.None) => return none_operand(builder, ty, span)
+        _ => pass
+    match (ty, operand):
+        (PlanType.Model(owner, _name), RustOperand.Place(read)) =>
+            if read.fact == OwnershipFact.Copy and owner >= 0 and owner < len(builder.nominals):
+                declaration = builder.nominals[owner]
+                if declaration.native_item != "" and "Copy" in declaration.derives:
+                    source = scalar_place(builder, read.place, span)?
+                    if place_type(builder.locals, source) == ty:
+                        return target_read(builder, source, read.fact, span)
         _ => pass
     value = value_operand(builder, operand, span)?
     if ty == PlanType.String and operand_type(builder, value)? == PlanType.FrozenStr:

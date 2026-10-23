@@ -30,6 +30,16 @@ impl std::fmt::Display for Message {
     }
 }
 
+impl PartialEq for Message {
+    /// Treat Empty and Wrapped as one equivalence class, proving that native equality does not compare tags.
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Empty | Self::Wrapped(_), Self::Empty | Self::Wrapped(_)) => true,
+            _ => std::mem::discriminant(self) == std::mem::discriminant(other),
+        }
+    }
+}
+
 /// Supply a concrete foreign record without making construction part of the pattern contract.
 pub fn message() -> Message {
     Message::Record {
@@ -50,6 +60,13 @@ pub struct Envelope {
     pub message: Box<Message>,
 }
 
+impl Message {
+    /// Return a shared enum reference inside an optional native result.
+    pub fn borrowed_message(&self) -> Option<&Message> {
+        Some(self)
+    }
+}
+
 /// Supply the public native field without requiring native record construction in the consumer.
 pub fn message_envelope() -> Envelope {
     Envelope {
@@ -60,4 +77,45 @@ pub fn message_envelope() -> Envelope {
 /// Supply a named Box payload for a pattern that uses the native Box API.
 pub fn wrapped_message() -> Message {
     Message::NamedBox { inner: boxed_message() }
+}
+
+/// A Copy receiver whose Clone implementation exposes an accidental substitution of cloning for copying.
+#[derive(Copy)]
+pub struct CopyNumber {
+    /// Public scalar storage permits the native layout to be verified completely.
+    pub value: i64,
+}
+
+impl Clone for CopyNumber {
+    /// Make a wrong ownership adaptation observable without changing the copied value.
+    fn clone(&self) -> Self {
+        println!("unexpected Clone");
+        Self { value: self.value }
+    }
+}
+
+impl CopyNumber {
+    /// Read a Copy receiver by value while borrowed callers retain their original owner.
+    pub fn into_value(self) -> i64 {
+        self.value
+    }
+}
+
+/// The declaration path differs from the public path used by the consumer's pattern.
+pub mod category {
+    /// A fieldless native enum retained through a public re-export and an optional return type.
+    #[derive(Clone, Debug, PartialEq)]
+    pub enum Kind {
+        /// The first branch of the native function.
+        Present,
+        /// The other branch proves that both selected variants retain their identities.
+        Missing,
+    }
+}
+
+pub use category::Kind;
+
+/// Return the re-exported native carrier inside a structural Option.
+pub fn category(present: bool) -> Option<Kind> {
+    Some(if present { Kind::Present } else { Kind::Missing })
 }

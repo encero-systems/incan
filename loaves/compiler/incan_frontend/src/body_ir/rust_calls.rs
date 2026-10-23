@@ -98,7 +98,8 @@ impl BodyBuilder<'_, '_> {
         Some(self.lower_native_adjustment_value(expr, &steps, scope, out))
     }
 
-    /// Evaluate one checked native adjustment chain once, shared by borrowed arguments and public field bases.
+    /// Evaluate one checked native adjustment chain once. Reference parameters borrow the original place; owned
+    /// storage constructions consume their input instead of silently borrowing it.
     fn lower_native_adjustment_value(
         &mut self,
         expr: &ast::Spanned<ast::Expr>,
@@ -108,8 +109,14 @@ impl BodyBuilder<'_, '_> {
     ) -> Result<bir::Operand, String> {
         let mut value = self.lower_expr_to_operand(expr, scope, out);
         for step in steps {
-            if let bir::Operand::Place(read) = &mut value {
-                self.retain_argument_borrow(read, false);
+            if let bir::Operand::Place(read) = &mut value
+                && let Some(parameter) = step.parameters.first()
+            {
+                match parameter.ty {
+                    crate::symbols::ResolvedType::Ref(_) => self.retain_argument_borrow(read, false),
+                    crate::symbols::ResolvedType::RefMut(_) => self.retain_argument_borrow(read, true),
+                    _ => {}
+                }
             }
             let Some(adjusted) = self.emit_checked_rust_call(
                 step,
@@ -194,10 +201,19 @@ impl BodyBuilder<'_, '_> {
                 ..DeclaredSlot::from_checked_param(parameter)
             })
             .collect();
-        let (operands, binding) = match self.bind_declared_args(&call.path, Some(slots), &arguments, scope, out) {
+        let (mut operands, binding) = match self.bind_declared_args(&call.path, Some(slots), &arguments, scope, out) {
             Ok(bound) => bound,
             Err(reason) => return Some(self.unsupported_operand(reason, scope, hir_span(span), out)),
         };
+        if self.type_info.rust.copy_receivers.contains_key(&(span.start, span.end))
+            && let Some(bir::ArgumentElement::One(bir::Operand::Place(read))) = operands.first_mut()
+        {
+            read.fact = bir::OwnershipFact::Copy;
+            read.last_use = false;
+            if let Some(local) = read.place.local_id() {
+                self.moved_out.remove(&local);
+            }
+        }
         self.emit_checked_rust_call(&call, operands, binding, span, scope, out)
     }
 

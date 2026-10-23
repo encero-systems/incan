@@ -1,4 +1,4 @@
-# behavior: borrowed Rust enum payloads retain concrete methods and named fields retain declaration identities (#2256)
+# behavior: native enum payloads retain identities through borrowed fields, boxed construction and nested re-exported variants (#2256)
 # expect-stdout:
 #   checked
 #   7
@@ -10,9 +10,24 @@
 #   7
 #   native message
 #   Record { count: 7, text: "native", ready: false }
+#   Wrapped(Record { count: 7, text: "native", ready: false })
+#   category
+#   missing category
+#   7
+#   Record { count: 7, text: "native", ready: false }
+#   native result
+#   9
+#   9
+#   Empty
+#   true
+#   true
+#   Wrapped(Record { count: 7, text: "native", ready: false })
+#   7
 
-from rust::messages import Message, message, boxed_message, message_envelope, wrapped_message
+from rust::messages import CopyNumber, Message, category, message, boxed_message, message_envelope, wrapped_message
+from rust::messages::category import Kind as Category
 from rust::std::net import IpAddr
+from copying import borrowed_copy
 
 
 def loopback[T](value: &IpAddr, unused: T) -> bool:
@@ -51,6 +66,25 @@ def inspect_wrapped(value: &Message) -> None:
         _ => pass
 
 
+def constructed_result() -> Result[Message, str]:
+    """Retain a native enum identity when construction supplies a Result payload."""
+    return Ok(Message.Wrapped(message()))
+
+
+def inspect_positional(value: &Message) -> None:
+    """Borrow the exact Box stored in a positional native payload before borrowing its content."""
+    match value:
+        Message.Wrapped(inner) => inspect_count(inner.as_ref())
+        _ => pass
+
+
+def inspect_optional(values: &list[Message]) -> None:
+    """Resolve an indexed native method and copy its stored shared enum reference into the arm binding."""
+    match values[0].borrowed_message():
+        Some(value) => inspect_count(value)
+        None => println("missing message")
+
+
 def main() -> None:
     """Keep the native owner alive while its record payload is borrowed."""
     println("checked")
@@ -65,3 +99,27 @@ def main() -> None:
     inspect_wrapped(wrapped)
     println(value)
     println(f"{value:?}")
+    constructed = Message.Wrapped(message())
+    println(f"{constructed:?}")
+    match category(true):
+        Some(Category.Present) => println("category")
+        _ => println("wrong category")
+    match category(false):
+        Some(Category.Missing) => println("missing category")
+        _ => println("wrong category")
+    inspect_positional(constructed)
+    values: list[Message] = [message()]
+    copied = values[0].clone()
+    println(f"{copied:?}")
+    match constructed_result():
+        Ok(_value) => println("native result")
+        Err(error) => println(error)
+    number = CopyNumber(value=9)
+    println(borrowed_copy(number))
+    println(number.value)
+    empty = Message.Empty
+    println(f"{empty:?}")
+    println(empty == constructed)
+    println(empty != value)
+    println(f"{constructed:?}")
+    inspect_optional([message()])

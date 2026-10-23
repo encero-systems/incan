@@ -1,9 +1,51 @@
-# behavior: a row found while looping over a list of rows is returned inside Ok while the caller keeps the whole list, and a local returned inside Ok at its last use carries its value
+# behavior: loop values retain their result payloads and enclosing model owners survive repeated and nested reads (#2256)
 # expect-stdout:
 #   ["b", "2"]
 #   2
 #   ["fallback"]
 #   missing
+#   2
+#   6
+#   2
+
+
+model Label:
+    """Own text that is reused across loop back edges."""
+
+    pub text: str
+
+
+def width(value: Label) -> int:
+    """Read a model passed by value without changing the original owner."""
+    return len(value.text)
+
+
+def repeated_width(value: Label) -> int:
+    """Keep an enclosing parameter alive across a counting loop."""
+    mut total = 0
+    for index in range(2):
+        total += width(value)
+    return total
+
+
+def nested_width() -> int:
+    """Retain an outer iteration's value for inner iterations, then consume its final outer read."""
+    mut total = 0
+    for outer in range(2):
+        label = Label(text="n")
+        for inner in range(2):
+            total += width(label)
+        total += width(label)
+    return total
+
+
+def while_width(value: Label) -> int:
+    """Keep the parameter alive across both a repeated condition and body."""
+    mut total = 0
+    while width(value) > 0 and total < 2:
+        total += width(value)
+    return total
+
 
 def find(rows: list[list[str]], key: str) -> Result[list[str], str]:
     for row in rows:
@@ -31,3 +73,6 @@ def main() -> None:
     println(len(rows))
     show(first_or_fallback([]))
     show(find(rows, "z"))
+    println(repeated_width(Label(text="x")))
+    println(nested_width())
+    println(while_width(Label(text="x")))

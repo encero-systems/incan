@@ -7167,9 +7167,11 @@ impl TypeChecker {
         // can be decided before any call or body is checked (#1561).
         self.plan_closure_holding_callables(program);
 
-        // Direct-route call facts need the already collected native owners while checking their arguments and
-        // results. Keep this snapshot private; the ordinary nominal tables retain their final successful-check timing.
+        // Direct-route call and pattern facts need the already collected native owners and their public paths while
+        // checking arguments and results. Keep this snapshot private; ordinary nominal tables retain their final
+        // successful-check timing.
         self.type_info.declarations.body_ir_native_type_identities = self.checked_native_nominal_type_identities();
+        self.type_info.rust.item_public_paths = self.checked_rust_item_public_paths();
 
         // Second pass: check consts first so their resolved types are available to later checks.
         self.validate_source_type_names = true;

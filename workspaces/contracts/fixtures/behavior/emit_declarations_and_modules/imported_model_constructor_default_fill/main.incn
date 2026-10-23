@@ -1,9 +1,18 @@
-# behavior: a model imported from another module constructed with a subset of its named fields fills the omitted fields with their declared defaults
+# behavior: an imported model fills omitted fields with declared defaults, including a fresh collection before an evaluated supplied field (#2256)
 # expect-stdout:
 #   7 none 0
 #   0 named 1
+#   supplied
+#   supplied
+#   1 0 buffered
 
-from records import Record
+from records import BufferedRecord, Record
+
+
+def label() -> str:
+    """Observe supplied evaluation beside the effect-free omitted default."""
+    println("supplied")
+    return "buffered"
 
 
 def main() -> None:
@@ -11,3 +20,7 @@ def main() -> None:
     println(f"{first.count} {first.label} {len(first.tags)}")
     other = Record(label="named", tags=["a"])
     println(f"{other.count} {other.label} {len(other.tags)}")
+    mut buffered = BufferedRecord(label=label())
+    another = BufferedRecord(label=label())
+    buffered.tags.append("first")
+    println(f"{len(buffered.tags)} {len(another.tags)} {another.label}")

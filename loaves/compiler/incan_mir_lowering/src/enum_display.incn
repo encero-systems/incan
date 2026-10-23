@@ -67,7 +67,7 @@ pub def native_enum_text(
         _ => return Ok(None)
 
 
-def native_enum_owner(builder: Builder, owner: int) -> bool:
+pub def native_enum_owner(builder: Builder, owner: int) -> bool:
     """Require an authenticated Rust enum layout, independently of compiled source enum aliases and their derives."""
     if owner < 0 or owner >= len(builder.enums) or library_enum_item(builder.enums[owner]) == "":
         return false

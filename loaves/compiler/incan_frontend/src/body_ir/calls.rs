@@ -897,7 +897,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     }
 
     /// Refuse a supplied computation that would precede an observable omitted default. Canonically matched local
-    /// literal defaults and declaration-owned, statement-free copy constants have no source effect to reorder.
+    /// literal defaults and declaration-owned literal construction have no source effect to reorder.
     /// The checked local source or declaring frame supplies this evidence; absent or unproven defaults stay refused.
     fn construction_interleaves_default_effects(
         &self,
@@ -926,13 +926,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         && !(local_source.is_some() && self.field_default_is_literal(owner, prior))
                         && defaults
                             .and_then(|frame| frame.params.get(prior))
-                            .is_none_or(|parameter| {
-                                !parameter.ty.abi_v0_facts().ownership.is_trivially_copy()
-                                    || !matches!(&parameter.default,
-                                    bir::CallableParamDefault::Source(computation)
-                                        if computation.stmts.is_empty()
-                                            && matches!(computation.result, bir::Operand::Constant(_)))
-                            })
+                            .is_none_or(|parameter| !defaults::is_literal_default(&parameter.default))
                 })
         })
     }
@@ -1228,7 +1222,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return None;
         };
         if self.bindings.contains_key(enum_name)
-            || !matches!(self.type_info.ident_kind(base.span), Some(IdentKind::TypeName))
+            || !matches!(
+                self.type_info.ident_kind(base.span),
+                Some(IdentKind::TypeName | IdentKind::RustImport)
+            )
         {
             return None;
         }
@@ -1237,10 +1234,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .resolved_identity(variant_span)
             .filter(|identity| identity.kind == SemanticSourceTargetKind::Variant)?
             .clone();
+        let enum_canonical = match &variant_canonical.origin {
+            SymbolOrigin::RustCrate(path) => bir::rust_item_identity(&path.join("::")),
+            _ => self.type_info.resolved_identity(base.span).cloned(),
+        };
         Some(bir::EnumVariantTarget {
             enum_name: enum_name.clone(),
             variant_name: variant_canonical.declaration_name.clone(),
-            enum_canonical: self.type_info.resolved_identity(base.span).cloned(),
+            enum_canonical,
             variant_canonical,
             binding: bir::ArgumentBinding::resolved_positional(0),
         })
@@ -2308,6 +2309,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let Some(value) = self.lower_checked_rust_call(Some(recv), args, span, scope, out) {
             return value;
         }
+        if let Some(target) = self.checked_enum_variant_target(recv, name, span) {
+            return self.lower_enum_variant_call(target, args, span, scope, out);
+        }
         if self.type_info.resolved_builtin_call(span) == Some(BuiltinFnId::IsInstance) {
             return self.lower_checked_isinstance_call(type_args, args, span, scope, out);
         }
@@ -2785,9 +2789,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
-        if let Some(target) = self.checked_enum_variant_target(recv, name, span) {
-            return self.lower_enum_variant_call(target, args, span, scope, out);
-        }
         let spelling = match &recv.node {
             ast::Expr::Ident(owner) => format!("{owner}.{name}"),
             _ => name.to_string(),

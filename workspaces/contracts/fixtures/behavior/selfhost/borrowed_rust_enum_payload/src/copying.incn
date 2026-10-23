@@ -1,0 +1,8 @@
+"""A native Copy receiver selected independently from the module that constructs its public layout."""
+
+from rust::messages import CopyNumber
+
+
+pub def borrowed_copy(value: &CopyNumber) -> int:
+    """Copy a by-value native receiver without invoking its observable Clone implementation."""
+    return value.into_value()
