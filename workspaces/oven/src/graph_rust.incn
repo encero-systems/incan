@@ -3,7 +3,9 @@
 from rust::std::process import Command, id
 from std.fs import Path
 from features import FeatureRequest
-from graph_cache import GraphUnit, cache_file, compiler_digest, fingerprint, is_unchecked, publish_binary, publish_unchecked, tree_inputs
+from graph_cache import GraphUnit, cache_file, is_unchecked, publish_unchecked, tree_inputs
+from publication import publish_binary
+from unit_freshness import artifact_identity, fingerprint
 from graph_dependencies import prepare_graph
 from graph_loaves import registry_artifacts, registry_graphs, standard_graphs
 from loaf_local_graph import LocalFacet
@@ -18,11 +20,11 @@ pub def inspect_rust(root: Path, profile: str, features: FeatureRequest, substit
     mut paths = prepared.paths
     if len(paths) > 0:
         paths = paths + standard_graphs(root, profile, toolchain, paths)?
-    mut native = ["incan.codegraph.rust/4",compiler_digest(root, toolchain.driver)?, toolchain.sysroot]
+    mut native = ["incan.codegraph.rust/4",artifact_identity(Path(toolchain.driver))?, toolchain.sysroot]
     mut search = prepared.request.registry.search
     for key in sorted([key for key in prepared.built.keys()]):
         library = prepared.built[key]
-        native = native + [library.artifact, compiler_digest(root, library.artifact)?]
+        native = native + [library.artifact, artifact_identity(Path(library.artifact))?]
         search.append(library.directory)
     for directory in prepared.closure:
         native.append(directory)
@@ -30,7 +32,7 @@ pub def inspect_rust(root: Path, profile: str, features: FeatureRequest, substit
             search.append(directory)
     registry = registry_artifacts(prepared.facets, prepared.request)?
     for artifact in sorted([key for key in registry.keys()]):
-        native = native + [artifact, compiler_digest(root, artifact)?]
+        native = native + [artifact, artifact_identity(Path(artifact))?]
     paths = paths + registry_graphs(registry)
     for facet in prepared.facets:
         declared = rust_facet(facet.project, false)?

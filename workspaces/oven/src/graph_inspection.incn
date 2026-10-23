@@ -5,7 +5,9 @@ from rust::std::string import String as RustString
 from std.fs import Path
 from std.json import JsonValue, parse
 from features import FeatureRequest
-from graph_cache import GraphUnit, cache_file, compiler_digest, fingerprint, publish, read_graph, stamp_file, unchecked_note, unchecked_refusal, unchecked_warning
+from graph_cache import GraphUnit, cache_file, read_graph, stamp_file, unchecked_note, unchecked_refusal, unchecked_warning
+from publication import publish
+from unit_freshness import artifact_identity, fingerprint
 from graph_dependencies import prepare_graph, unit_natives, unit_loaves
 from graph_incan import inspect_incan
 from graph_loaves import registry_artifacts, registry_graphs, standard_graphs
@@ -126,7 +128,7 @@ def response(paths: list[GraphUnit], root: str, selected: GraphOptions, toolchai
     if selected.query == "imports":
         inputs.append("nonempty-import-labels/1")
     for unit in paths:
-        inputs = inputs + [unit.path.0, unit.root.0, unit.package, unit.version, compiler_digest(owner, stamp_file(unit).0)?]
+        inputs = inputs + [unit.path.0, unit.root.0, unit.package, unit.version, artifact_identity(stamp_file(unit))?]
     digest = fingerprint(inputs)?
     cached = Path(f"{cache_file(owner, digest)?.0}.answer")
     if cached.is_file():

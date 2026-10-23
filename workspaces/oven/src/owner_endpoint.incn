@@ -1,0 +1,247 @@
+"""
+Finding a project's resident owner, starting one when there is none, and asking it for an executable.
+
+An owner is identified by a generation: a digest of the protocol, this Oven executable's identity (so a rebuilt `incan`
+never talks to an older owner), the project, the home, the standard library and the toolchain description. Only
+semantic configuration is in it, so an incidental environment variable does not start another owner. Its socket,
+lock and readiness socket live in the private `owners` directory of the home.
+
+Starting is arbitrated: whoever finds no owner takes an exclusive lock, looks again, and only then starts one, so
+simultaneous commands start exactly one. A stale socket (nothing listens) is removed; a socket that something refuses
+or an ordinary file in its place is left alone and the command prepares its executable itself.
+"""
+
+from rust::std::env import current_exe
+from rust::std::fs import Permissions, metadata, set_permissions
+from rust::std::io import ErrorKind
+from rust::std::os::unix::fs import FileTypeExt, PermissionsExt
+from rust::std::os::unix::net import UnixStream
+from rust::std::os::unix::process import CommandExt
+from rust::std::process import Command, Stdio
+from rust::std::thread import sleep
+from rust::std::time import Duration
+from std.environ import get_or
+from std.fs import Path
+from std.json import JsonValue
+from home import home, owners_dir
+from observation import observe, relay
+from owner_protocol import Connection, PROTOCOL, Reply, Request, connection, dial, listen, reply_of
+from toolchain import toolchain_file
+from unit_freshness import artifact_identity, fingerprint
+
+
+# How long a started owner has to say it is listening, in 2 ms polls.
+const READINESS_POLLS: int = 7500
+# The seconds an owner may be idle before it retires, unless OVEN_OWNER_IDLE says otherwise.
+const DEFAULT_IDLE: int = 600
+
+
+pub model Endpoint:
+    """Where one owner lives."""
+
+    pub generation: str
+    pub directory: str
+    pub socket: str
+    pub lock: str
+    pub ready: str
+    # The file the owner's trace lines are collected in.
+    pub mailbox: str
+
+
+pub def endpoint_for(root: str) -> Result[Endpoint, str]:
+    """The endpoint of the owner of the project at `root` for this Oven, home and toolchain."""
+    exe = executable()?
+    configuration = [PROTOCOL, exe, observe(Path(exe))?.stamp, root, home()?.0, get_or("INCAN_STDLIB", ""), identity_of(toolchain_file()?)]
+    digest = fingerprint(configuration)?
+    generation = digest[0:16]
+    directory = owners_dir()?.0
+    socket = f"{directory}/{generation}.sock"
+    if len(socket) > 100:
+        return Err("the socket path would be too long for the system; set INCAN_HOME to a shorter directory")
+    return Ok(Endpoint(generation=generation, directory=directory, socket=socket, lock=f"{directory}/{generation}.lock", ready=f"{directory}/{generation}.ready", mailbox=f"{directory}/{generation}.trace"))
+
+
+def executable() -> Result[str, str]:
+    """The path of the running Oven."""
+    match current_exe():
+        Ok(path) => return Ok(f"{path.display()}")
+        Err(error) => return Err(f"cannot locate this executable: {error}")
+
+
+def identity_of(path: Path) -> str:
+    """A file's identity, or `absent`."""
+    match artifact_identity(path):
+        Ok(stamp) => return stamp
+        Err(_) => return "absent"
+
+
+pub def idle_seconds() -> int:
+    """How long an owner started by this command may stay idle."""
+    configured = get_or("OVEN_OWNER_IDLE", "")
+    if configured == "":
+        return DEFAULT_IDLE
+    for index in range(len(configured)):
+        if configured[index] not in "0123456789":
+            return DEFAULT_IDLE
+    seconds = int(configured)
+    if seconds < 4:
+        return 4
+    return seconds
+
+
+pub def timeout_for(command: str) -> u64:
+    """How long a client waits for a reply: lifecycle requests are bounded, preparing an executable is not, because a
+    build takes as long as it takes."""
+    if command in ["run", "build", "test"]:
+        return 0
+    return 5
+
+
+pub def connect(endpoint: Endpoint, start: bool) -> Result[Option[Connection], str]:
+    """A connection to the endpoint's owner. With `start`, one is started when none is running."""
+    match attach(endpoint)?:
+        Some(present) => return Ok(Some(present))
+        None => pass
+    if not start:
+        return Ok(None)
+    prepare_directory(f"{endpoint.directory}")?
+    arbitration = Path(endpoint.lock).lock_exclusive().map_err((error) => error.message())?
+    match attach(endpoint)?:
+        Some(started) => return Ok(Some(started))
+        None => pass
+    launch(endpoint)?
+    return attach(endpoint)
+
+
+pub def attach(endpoint: Endpoint) -> Result[Option[Connection], str]:
+    """Connect to a live owner. Nothing there is `None`; a socket nothing listens at is removed first; a live owner that
+    refuses us, or an ordinary file in the socket's place, is an error and is left as it is."""
+    if not Path(endpoint.socket).exists():
+        return Ok(None)
+    match metadata(f"{endpoint.socket}"):
+        Err(error) => return Err(f"{endpoint.socket}: {error}")
+        Ok(found) =>
+            if not found.file_type().is_socket():
+                return Err(f"{endpoint.socket} is not a socket")
+    match UnixStream.connect(f"{endpoint.socket}"):
+        Ok(stream) => return Ok(Some(connection(stream)))
+        Err(error) =>
+            if error.kind() == ErrorKind.ConnectionRefused or error.kind() == ErrorKind.NotFound:
+                removed = Path(endpoint.socket).unlink()
+                return Ok(None)
+            return Err(f"cannot connect to {endpoint.socket}: {error}")
+
+
+def prepare_directory(directory: str) -> Result[None, str]:
+    """Make the owners directory, private to the user, and refuse one that anyone else can enter."""
+    Path(directory).mkdir(true, true).map_err((error) => f"{directory}: {error.message()}")?
+    match set_permissions(f"{directory}", Permissions.from_mode(448)):
+        Ok(_) => pass
+        Err(error) => return Err(f"cannot restrict {directory}: {error}")
+    match metadata(f"{directory}"):
+        Err(error) => return Err(f"{directory}: {error}")
+        Ok(found) =>
+            if int(found.permissions().mode()) % 64 != 0:
+                return Err(f"{directory} is accessible to others")
+    return Ok(None)
+
+
+def launch(endpoint: Endpoint) -> Result[None, str]:
+    """Start an owner and wait for it to say it is listening."""
+    exe = executable()?
+    mut listener = listen(f"{endpoint.ready}", false)?
+    mut command = Command.new(exe)
+    command.arg("--internal-owner")
+    command.arg(f"{endpoint.socket}")
+    command.arg(f"{endpoint.generation}")
+    command.arg(f"{endpoint.ready}")
+    command.arg(str(idle_seconds()))
+    command.env("OVEN_TRACE", f"{endpoint.mailbox}")
+    command.stdin(Stdio.null())
+    command.stdout(Stdio.null())
+    command.stderr(Stdio.null())
+    command.process_group(0)
+    match command.spawn():
+        Err(error) =>
+            removed = Path(endpoint.ready).unlink()
+            return Err(f"cannot start an owner: {error}")
+        Ok(child) =>
+            mut started = child
+            for poll in range(READINESS_POLLS):
+                match listener.poll()?:
+                    Some(waiting) =>
+                        mut greeting = waiting
+                        greeting.wait_at_most(5)
+                        heard = greeting.receive()
+                        removed = Path(endpoint.ready).unlink()
+                        return greeted(heard, endpoint.generation)
+                    None => pass
+                match started.try_wait():
+                    Ok(finished) =>
+                        match finished:
+                            Some(_) =>
+                                removed = Path(endpoint.ready).unlink()
+                                return Err("the owner exited before it was ready")
+                            None => pass
+                    Err(_) => pass
+                sleep(Duration.from_millis(2))
+            killed = started.kill()
+            removed = Path(endpoint.ready).unlink()
+            return Err("the owner was not ready in time")
+
+
+pub def greeted(heard: Result[JsonValue, str], generation: str) -> Result[None, str]:
+    """Accept a readiness greeting only from an owner of this protocol and generation."""
+    match heard:
+        Err(reason) => return Err(f"the owner's greeting was unreadable: {reason}")
+        Ok(document) =>
+            reply = reply_of(document)?
+            if reply.status != "ready":
+                return Err(f"the owner greeted with `{reply.status}`")
+            if reply.generation != generation:
+                return Err("the owner is of another generation")
+            return Ok(None)
+
+
+pub def ask(endpoint: Endpoint, request: Request, start: bool) -> Result[Option[Reply], str]:
+    """Put a request to the owner and read its reply. `None` when there is no owner and none was to be started."""
+    match connect(endpoint, start)?:
+        None => return Ok(None)
+        Some(found) =>
+            mut owner = found
+            owner.wait_at_most(timeout_for(request.command))
+            owner.write_at_most(10)
+            owner.send(request.to_json())?
+            reply = reply_of(owner.receive()?)?
+            relay(reply.trace)
+            return Ok(Some(reply))
+
+
+pub def stop_owners() -> Result[int, str]:
+    """Stop every owner of this home. Returns how many answered."""
+    directory = owners_dir()?
+    if not directory.is_dir():
+        return Ok(0)
+    mut stopped = 0
+    for entry in directory.iterdir().map_err((error) => error.message())?:
+        if not entry.name().endswith(".sock"):
+            continue
+        generation = entry.name()[0:len(entry.name()) - 5]
+        match dial(entry.0):
+            Err(_) =>
+                if stale_socket(entry.0):
+                    removed = entry.unlink()
+            Ok(found) =>
+                mut owner = found
+                owner.wait_at_most(5)
+                sent = owner.send(Request(command="stop", generation=generation).to_json())
+                heard = owner.receive()
+                stopped += 1
+    return Ok(stopped)
+
+
+def stale_socket(path: str) -> bool:
+    """Whether nothing listens at a socket path."""
+    match UnixStream.connect(f"{path}"):
+        Ok(_) => return false
+        Err(error) => return error.kind() == ErrorKind.ConnectionRefused

@@ -1,0 +1,112 @@
+"""Owner lifecycle contracts: one writer starts it, stale state recovers, retained answers are guarded, and it retires."""
+
+from std.fs import Path
+from std.json import JsonValue
+from std.tempfile import TemporaryDirectory
+from owner_endpoint import Endpoint, attach, endpoint_for, greeted, timeout_for
+from owner_protocol import Connection, Reply, Request, listen
+from owner_state import Owner, unchanged, watch
+
+
+def endpoint_in(directory: Path) -> Endpoint:
+    """An endpoint whose files live in `directory`."""
+    return Endpoint(generation="g", directory=directory.0, socket=directory.joinpath("o.sock").0, lock=directory.joinpath("o.lock").0, ready=directory.joinpath("o.ready").0, mailbox=directory.joinpath("o.trace").0)
+
+
+def leave_stale(path: str) -> Result[None, str]:
+    """Bind a socket and let the listener go, as a crashed owner does: the socket file stays, nothing listens."""
+    listener = listen(path, true)?
+    return Ok(None)
+
+
+def absent(found: Result[Option[Connection], str]) -> bool:
+    """Whether an attempt to connect found no owner."""
+    match found:
+        Ok(none) =>
+            match none:
+                None => return true
+                Some(_) => return false
+        Err(_) => return false
+
+
+def refused_attach(found: Result[Option[Connection], str]) -> bool:
+    """Whether an attempt to connect was refused with an error."""
+    match found:
+        Err(_) => return true
+        Ok(_) => return false
+
+
+def refused_greeting(found: Result[None, str]) -> bool:
+    """Whether a readiness greeting was refused."""
+    match found:
+        Err(_) => return true
+        Ok(_) => return false
+
+
+pub def test_startup_is_arbitrated_and_stale_state_recovers() -> Result[None, str]:
+    """No owner is none; a socket nobody listens at is removed; a file in its place is refused and kept; one lock holder."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    endpoint = endpoint_in(scratch.path())
+    assert absent(attach(endpoint))
+    leave_stale(endpoint.socket)?
+    assert Path(endpoint.socket).exists()
+    assert absent(attach(endpoint))
+    assert not Path(endpoint.socket).exists()
+    Path(endpoint.socket).write_text("not a socket", "utf-8", "strict", None).map_err((error) => error.message())?
+    assert refused_attach(attach(endpoint))
+    assert Path(endpoint.socket).read_text("utf-8", "strict").map_err((error) => error.message())? == "not a socket"
+    Path(endpoint.socket).unlink().map_err((error) => error.message())?
+    mut listener = listen(endpoint.socket, true)?
+    assert not absent(attach(endpoint))
+    first = Path(endpoint.lock).try_lock_exclusive().map_err((error) => error.message())?
+    match first:
+        None => assert false, "the first starter did not get the lock"
+        Some(held) =>
+            second = Path(endpoint.lock).try_lock_exclusive().map_err((error) => error.message())?
+            match second:
+                Some(_) => assert false, "two starters held the lock at once"
+                None => pass
+    assert refused_greeting(greeted(Ok(Reply(status="ready", generation="other", pid=1).to_json()), "g"))
+    assert refused_greeting(greeted(Ok(Reply(status="done", generation="g", pid=1).to_json()), "g"))
+    assert refused_greeting(greeted(Err("closed"), "g"))
+    assert not refused_greeting(greeted(Ok(Reply(status="ready", generation="g", pid=1).to_json()), "g"))
+    assert timeout_for("run") == 0
+    assert timeout_for("stop") == 5
+    return Ok(None)
+
+
+pub def test_the_owner_serves_one_generation_and_retires() -> Result[None, str]:
+    """A request for another generation or a bad path is refused; stop retires; idle retires only when idle long enough."""
+    mut owner = Owner(generation="g", last_served=1000)
+    assert owner.handle(Request(command="status", generation="other"), 600).status == "refused"
+    assert owner.handle(Request(command="status", generation="g"), 600).status == "done"
+    assert owner.handle(Request(command="stop", generation="g"), 600).status == "retiring"
+    assert owner.handle(Request(command="idle", generation="g"), 600).status == "retiring"
+    owner.last_served = 99999999999
+    assert owner.handle(Request(command="idle", generation="g"), 600).status == "done"
+    assert owner.handle(Request(command="dance", generation="g"), 600).status == "refused"
+    relative = owner.handle(Request(command="run", generation="g", path="src/main.incn"), 600)
+    assert relative.status == "refused"
+    assert "absolute" in relative.reason
+    missing = owner.handle(Request(command="run", generation="g", path="/no/such/main.incn"), 600)
+    assert missing.status == "refused"
+    return Ok(None)
+
+
+pub def test_retained_answers_are_guarded_by_the_files_they_came_from() -> Result[None, str]:
+    """An edited, created or removed file ends a retained answer; an untouched one keeps it."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    manifest = scratch.path().joinpath("loaf.toml")
+    lock = scratch.path().joinpath("oven.lock")
+    manifest.write_text("[project]\nname = \"a\"\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    guard = watch([manifest.0, lock.0])
+    assert unchanged(guard)
+    manifest.write_text("[project]\nname = \"bb\"\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    assert not unchanged(guard)
+    renewed = watch([manifest.0, lock.0])
+    lock.write_text("", "utf-8", "strict", None).map_err((error) => error.message())?
+    assert not unchanged(renewed)
+    again = watch([manifest.0, lock.0])
+    lock.unlink().map_err((error) => error.message())?
+    assert not unchanged(again)
+    return Ok(None)

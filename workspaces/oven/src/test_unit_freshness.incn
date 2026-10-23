@@ -1,0 +1,242 @@
+"""Reuse contracts: an unchanged unit is keyed from metadata alone, and any relevant change is a different key."""
+
+from rust::std::fs import OpenOptions, metadata
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from incan_units import executable_outputs, install_executable, test_report
+from observation import load_ledger
+from toolchain import NativeCrate, Toolchain
+from unit import UnitDescription, UnitLoaf
+from unit_freshness import Key, artifact_files, compiler_fingerprint, reusable, source_fingerprint, staleness
+
+
+model Fixture:
+    """A project with one dependency Loaf, one standard Loaf and a toolchain, all under one scratch directory."""
+
+    unit: UnitDescription
+    toolchain: Toolchain
+    root: Path
+
+
+model Pass:
+    """One reconciliation of a unit: its key and the work it could not avoid."""
+
+    key: str
+    hashed: int
+    listed: int
+
+
+def write(path: Path, text: str) -> Result[None, str]:
+    """Create or replace a file, making its directory first."""
+    path.parent().mkdir(true, true).map_err((error) => error.message())?
+    path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
+    return Ok(None)
+
+
+def rewrite_in_place(path: Path, text: str) -> Result[None, str]:
+    """Replace a file's bytes where they are with `text`, then put its modification time back as it was."""
+    prefix = f"{path.0}: "
+    before = metadata(f"{path.0}").map_err((error) => f"{prefix}{error}")?.modified().map_err((error) => f"{prefix}{error}")?
+    path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
+    mut options = OpenOptions.new()
+    options.write(true)
+    file = options.open(f"{path.0}").map_err((error) => f"{prefix}{error}")?
+    file.set_modified(before).map_err((error) => f"{prefix}{error}")?
+    return Ok(None)
+
+
+def publish_loaf(directory: Path, name: str, text: str) -> Result[None, str]:
+    """Write the complete artifact set of a Loaf."""
+    for artifact in artifact_files(directory, name):
+        write(artifact, f"{text} {artifact.name()}")?
+    return Ok(None)
+
+
+def fixture(scratch: Path) -> Result[Fixture, str]:
+    """Lay out `project/` with a manifest and one source, a dependency under its target, and the toolchain's files."""
+    root = scratch.joinpath("project")
+    write(root.joinpath("loaf.toml"), "[project]\nname = \"app\"\nversion = \"0.1.0\"\n")?
+    write(root.joinpath("src").joinpath("main.incn"), "def main() -> None:\n    println(\"one\")\n")?
+    dependency = root.joinpath("target").joinpath("incan").joinpath("loaves").joinpath("dep").joinpath("debug")
+    standard = scratch.joinpath("home").joinpath("loaves").joinpath("std").joinpath("debug")
+    publish_loaf(dependency, "dep", "dependency")?
+    publish_loaf(standard, "std", "standard")?
+    write(scratch.joinpath("toolchain").joinpath("driver"), "driver one")?
+    write(scratch.joinpath("toolchain").joinpath("libruntime.rlib"), "runtime one")?
+    write(scratch.joinpath("toolchain").joinpath("std.rustabi"), "abi one")?
+    toolchain = Toolchain(
+        driver=scratch.joinpath("toolchain").joinpath("driver").0,
+        sysroot="/rust/1.98.0-aarch64-apple-darwin",
+        rust_abi=[scratch.joinpath("toolchain").joinpath("std.rustabi").0],
+        externs=[NativeCrate(name="runtime", path=scratch.joinpath("toolchain").joinpath("libruntime.rlib").0)],
+        search=[],
+        registry_units="",
+    )
+    unit = UnitDescription(
+        source=root.joinpath("src").joinpath("main.incn").0,
+        project_root=root.0,
+        source_root=root.joinpath("src").0,
+        package="app",
+        version="0.1.0",
+        profile="debug",
+        declared_features=[],
+        active_features=[],
+        loaves=[
+            UnitLoaf(key="dep", name="dep", dir=dependency.0, standard=false),
+            UnitLoaf(key="std", name="std", dir=standard.0, standard=true),
+        ],
+        rust_crates=[],
+        contract_models=[],
+        c_headers=[],
+        externs=toolchain.externs,
+        rust_abi=toolchain.rust_abi,
+    )
+    return Ok(Fixture(unit=unit, toolchain=toolchain, root=root))
+
+
+def reconcile(scratch: Path, setup: Fixture) -> Result[Pass, str]:
+    """Key the unit as a new process would: load its ledger, reconcile, save it. Settling is immediate."""
+    mut project = load_ledger(scratch.joinpath("ledgers").joinpath("project.json"), 0)
+    key = source_fingerprint(setup.unit, compiler_fingerprint(setup.toolchain)?, project)?.digest
+    project.save()?
+    return Ok(Pass(key=key, hashed=project.hashed, listed=project.listed))
+
+
+pub def test_unchanged_unit_is_keyed_without_reading_or_listing() -> Result[None, str]:
+    """A second pass over unchanged inputs yields the same key from metadata alone: no file hashed, no directory listed."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    setup = fixture(scratch.path())?
+    first = reconcile(scratch.path(), setup)?
+    assert first.hashed > 0
+    assert first.listed == 1
+    second = reconcile(scratch.path(), setup)?
+    assert second.key == first.key
+    assert second.hashed == 0
+    assert second.listed == 0
+    return Ok(None)
+
+
+pub def test_source_edit_rekeys_and_hashes_only_what_changed() -> Result[None, str]:
+    """An edited source changes the key and costs one hash; a new module also relists its directory."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    setup = fixture(scratch.path())?
+    first = reconcile(scratch.path(), setup)?
+    write(Path(setup.unit.source), "def main() -> None:\n    println(\"edited\")\n")?
+    edited = reconcile(scratch.path(), setup)?
+    assert edited.key != first.key
+    assert edited.hashed == 1
+    assert edited.listed == 0
+    write(setup.root.joinpath("src").joinpath("util.incn"), "pub def util() -> int:\n    return 1\n")?
+    added = reconcile(scratch.path(), setup)?
+    assert added.key != edited.key
+    assert added.listed == 1
+    # The same bytes written again change the metadata, which is a reason to recheck them and no reason to rebuild.
+    write(Path(setup.unit.source), "def main() -> None:\n    println(\"edited\")\n")?
+    rewritten = reconcile(scratch.path(), setup)?
+    assert rewritten.key == added.key
+    # Configuration is part of the key, and so are the siblings of an entry outside the source root (a test).
+    write(setup.root.joinpath("loaf.toml"), "[project]\nname = \"app\"\nversion = \"0.2.0\"\n")?
+    manifest = reconcile(scratch.path(), setup)?
+    assert manifest.key != rewritten.key
+    mut test_unit = setup.unit
+    test_unit.source = setup.root.joinpath("tests").joinpath("test_app.incn").0
+    write(Path(test_unit.source), "def test_app() -> None:\n    assert true\n")?
+    write(setup.root.joinpath("tests").joinpath("helpers.incn"), "pub def helper() -> int:\n    return 1\n")?
+    testing = Fixture(unit=test_unit, toolchain=setup.toolchain, root=setup.root)
+    before = reconcile(scratch.path(), testing)?
+    write(setup.root.joinpath("tests").joinpath("helpers.incn"), "pub def helper() -> int:\n    return 2\n")?
+    helper = reconcile(scratch.path(), testing)?
+    assert helper.key != before.key
+    return Ok(None)
+
+
+pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
+    """A rebuilt path dependency or standard package changes the key of everything that links it."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    setup = fixture(scratch.path())?
+    first = reconcile(scratch.path(), setup)?
+    write(artifact_files(Path(setup.unit.loaves[0].dir), "dep")[0], "dependency rebuilt with different code")?
+    rebuilt = reconcile(scratch.path(), setup)?
+    assert rebuilt.key != first.key
+    assert rebuilt.hashed == 0
+    write(artifact_files(Path(setup.unit.loaves[1].dir), "std")[1], "standard package recompiled")?
+    recompiled = reconcile(scratch.path(), setup)?
+    assert recompiled.key != rebuilt.key
+    return Ok(None)
+
+
+pub def test_toolchain_change_rekeys_every_unit() -> Result[None, str]:
+    """The driver, a native crate, a Rust ABI cache and the target each change the fingerprint, and nothing else does."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    setup = fixture(scratch.path())?
+    first = compiler_fingerprint(setup.toolchain)?
+    assert compiler_fingerprint(setup.toolchain)? == first
+    write(Path(setup.toolchain.driver), "driver two, a longer compiler")?
+    driver = compiler_fingerprint(setup.toolchain)?
+    assert driver != first
+    write(Path(setup.toolchain.externs[0].path), "runtime two, another interface")?
+    runtime = compiler_fingerprint(setup.toolchain)?
+    assert runtime != driver
+    write(Path(setup.toolchain.rust_abi[0]), "abi two, other facts")?
+    abi = compiler_fingerprint(setup.toolchain)?
+    assert abi != runtime
+    mut moved = setup.toolchain
+    moved.sysroot = "/rust/1.98.0-x86_64-unknown-linux-gnu"
+    assert compiler_fingerprint(moved)? != abi
+    # Rewriting the driver in place with the same length and putting its modification time back is still a change.
+    rewrite_in_place(Path(setup.toolchain.driver), "driver 2.., a longer compiler")?
+    assert compiler_fingerprint(setup.toolchain)? != driver
+    # A unit that links the replaced native crate is keyed differently too.
+    before = reconcile(scratch.path(), setup)?
+    write(Path(setup.toolchain.externs[0].path), "runtime three, once more different")?
+    assert reconcile(scratch.path(), setup)?.key != before.key
+    return Ok(None)
+
+
+pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
+    """Reuse needs a stamp for the key and the very outputs it recorded; every interruption leaves a rebuild, not a mix."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    bin = scratch.path().joinpath("bin")
+    output = bin.joinpath("app")
+    stamp = bin.joinpath("app.oven-inputs")
+    staged = bin.joinpath("app-4242")
+    one = Key(digest="key one", parts=["compiler c", "sources one"])
+    two = Key(digest="key two", parts=["compiler c", "sources two"])
+    three = Key(digest="key three", parts=["compiler c", "sources three"])
+    write(staged, "first build")?
+    # A build that was interrupted before installing leaves only its staged file.
+    assert not reusable([output], stamp, one)?
+    install_executable(staged, output, "program", stamp, one)?
+    assert reusable([output], stamp, one)?
+    assert not reusable([output], stamp, two)?
+    stale = staleness([output], stamp, two)?
+    assert stale == "sources changed", stale
+    assert not staged.is_file()
+    # A replacement in flight does not disturb the installed pair.
+    write(staged, "second build, still being linked")?
+    assert reusable([output], stamp, one)?
+    assert output.read_text("utf-8", "strict").map_err((error) => error.message())? == "first build"
+    # An installation that fails after the old stamp is withdrawn leaves no stamp to vouch for the old outputs.
+    staged.unlink().map_err((error) => error.message())?
+    match install_executable(staged, output, "program", stamp, two):
+        Ok(_) => assert false, "installing a missing build succeeded"
+        Err(_) => pass
+    assert not reusable([output], stamp, one)?
+    assert not reusable([output], stamp, two)?
+    assert staleness([output], stamp, two)? == "no stored build"
+    # An output replaced behind the stamp's back is not the output it recorded.
+    write(staged, "third build")?
+    install_executable(staged, output, "program", stamp, three)?
+    assert reusable([output], stamp, three)?
+    write(output, "someone else's binary")?
+    assert not reusable([output], stamp, three)?
+    # A test unit's report is installed and vouched for with its executable; without the report nothing is reused.
+    tests = scratch.path().joinpath("tests")
+    write(tests.joinpath("app-77"), "test executable")?
+    write(test_report(tests.joinpath("app-77")), "[]")?
+    install_executable(tests.joinpath("app-77"), tests.joinpath("app"), "test", tests.joinpath("app.oven-inputs"), one)?
+    outputs = executable_outputs("test", tests.joinpath("app"))
+    assert reusable(outputs, tests.joinpath("app.oven-inputs"), one)?
+    test_report(tests.joinpath("app")).unlink().map_err((error) => error.message())?
+    assert not reusable(outputs, tests.joinpath("app.oven-inputs"), one)?
+    return Ok(None)

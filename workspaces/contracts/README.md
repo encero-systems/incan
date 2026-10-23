@@ -36,7 +36,7 @@ workspaces/contracts/
 
 Every entry in an area is one of those shapes, and an empty area is refused. A family directory may hold a `README.md`; nothing else but areas. Hidden entries are skipped. Names are lowercase letters, digits and `_`, starting with a letter or `_`. A testing case is one file named `test_<subject>.incn`; it runs from the project's `tests/` directory. A library case is a project.
 
-The runner materializes each case as its own project in a scratch directory: a single-file or module case gets a minimal `loaf.toml` (`[project.scripts] main = "src/main.incn"`), a project case is copied as it is. The project is removed after the case, whatever its result.
+The runner materializes each case as its own project in a scratch directory: a single-file or module case gets a minimal `loaf.toml` (`[project.scripts] main = "src/main.incn"`), a project case is copied as it is. The project stays in the scratch directory, and a rerun over the same scratch directory writes only the files whose bytes differ and removes the files the fixture no longer has, so Oven reuses what it compiled for the case; the case itself executes afresh every time.
 
 ## Header
 
@@ -71,4 +71,4 @@ For `format`, the initial `--check` must exit 1 when the input differs from the 
 incan run workspaces/contracts/src/main.incn -- INCAN workspaces/contracts/fixtures [--scratch DIR] [SELECTOR...]
 ```
 
-A selector is `<family>`, `<family>/<area>` or `<family>/<area>/<name>`. The runner prints `PASS`, `FAIL` with each broken expectation, or `PEND` with its reason for every case, a summary per area and a total, and exits 1 when a case fails or a family cannot be read.
+A selector is `<family>`, `<family>/<area>` or `<family>/<area>/<name>`. The runner prints `PASS`, `FAIL` with each broken expectation, or `PEND` with its reason for every case, under it one `oven: unit <name> <kind>: reused` or `compiled (<why>)` line for each unit Oven prepared, a summary per area and a total, and exits 1 when a case fails or a family cannot be read.

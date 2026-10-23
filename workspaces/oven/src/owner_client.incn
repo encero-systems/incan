@@ -1,0 +1,72 @@
+"""
+A command asking its project's resident owner for the executable it needs.
+
+The command sends what it resolved (the command, the entry, the profile and the features), never a unit description, and
+the owner answers with the path of the completed executable; the command then becomes that program itself, or runs the
+tests itself. Whatever goes wrong with the owner (it cannot be reached, started or understood, or it does not serve the
+unit) is a reason to prepare the executable in the command's own process, exactly as before, and is traced.
+
+`OVEN_OWNER=off` never uses an owner. Disposable projects, such as a contract run's, set it.
+"""
+
+from rust::std::io import Write, stderr, stdout
+from rust::std::string import String as RustString
+from std.environ import get_or
+from std.fs import Path
+from observation import trace
+from owner_endpoint import ask, endpoint_for
+from owner_protocol import Reply, Request
+from unit import project_root_of
+
+
+pub def owned(command: str, entry: Path, profile: str, features: list[str], default_features: bool, all_features: bool) -> Option[Reply]:
+    """The owner's reply once it has made the executable (`reply.exit` says whether the compiler accepted the unit);
+    `None` when the command should make it itself."""
+    if get_or("OVEN_OWNER", "") == "off":
+        return None
+    match asked(command, entry, profile, features, default_features, all_features):
+        Ok(found) => return found
+        Err(reason) =>
+            trace(f"owner unavailable: {reason}")
+            return None
+
+
+def asked(command: str, entry: Path, profile: str, features: list[str], default_features: bool, all_features: bool) -> Result[Option[Reply], str]:
+    """Put the request to the project's owner. An owner is started only for a project an earlier command already prepared,
+    so a project that is built once (a contract case, a scratch file) never gets a resident process."""
+    absolute = entry.absolute().map_err((error) => f"{entry.0}: {error.message()}")?
+    mut root = absolute.parent()
+    match project_root_of(absolute):
+        Some(found) => root = found
+        None => pass
+    endpoint = endpoint_for(root.0)?
+    request = Request(command=command, generation=endpoint.generation, path=absolute.0, profile=profile, features=features, default_features=default_features, all_features=all_features)
+    seen = root.joinpath("target").joinpath("incan").joinpath("observations").is_dir()
+    match ask(endpoint, request, seen)?:
+        None => return Ok(None)
+        Some(reply) =>
+            if reply.status != "done":
+                trace(f"owner did not serve this ({reply.status}): {reply.reason}")
+                return Ok(None)
+            echo(reply.stdout, reply.stderr)
+            return Ok(Some(reply))
+
+
+def echo(printed: str, complained: str) -> None:
+    """Show what the compiler printed, on the streams it printed it to."""
+    if printed != "":
+        mut out = stdout()
+        written = out.write_all(RustString.from(printed).into_bytes())
+    if complained != "":
+        mut err = stderr()
+        written_errors = err.write_all(RustString.from(complained).into_bytes())
+
+
+pub def status_code(code: int) -> i32:
+    """An exit status as the process type. Incan has no conversion from `int` to `i32`; statuses are 0 to 255."""
+    if code < 0 or code > 255:
+        return 1
+    mut status: i32 = 0
+    for step in range(code):
+        status += 1
+    return status

@@ -22,10 +22,19 @@ pub model Outcome:
             None => return "none (ended by a signal)"
 
 
+pub def trace_file(project: Path) -> Path:
+    """Where Oven records, for commands run in `project`, which units it compiled and which it reused."""
+    return project.joinpath("target").joinpath("incan").joinpath("oven.trace")
+
+
 pub def invoke(incan: str, arguments: list[str], project: Path) -> Result[Outcome, str]:
     """Run `incan` with `arguments` in `project` and collect its stdout, stderr and exit code."""
     mut command = Command.new(incan)
+    trace = trace_file(project).0
     command.current_dir(project.0)
+    command.env("OVEN_TRACE", trace)
+    # A case's project is disposable and runs one command at a time: it gets no resident owner.
+    command.env("OVEN_OWNER", "off")
     for argument in arguments:
         command.arg(argument)
     match command.output():

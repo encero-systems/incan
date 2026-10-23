@@ -11,7 +11,7 @@ from std.encoding.hex import hexlify
 from home import TOOLCHAIN
 from toolchain import Toolchain, TOOLCHAIN_SCHEMA, load_toolchain, located, read_toolchain, toolchain_directory
 from rust_units import decoded, read_registry_units
-from unit_freshness import file_digest
+from observation import file_digest
 
 
 pub def toolchain_command(arguments: list[str]) -> Result[i32, str]:

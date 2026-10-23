@@ -1,0 +1,257 @@
+"""
+Metadata reconciliation: what a build learns about its input files without reading them again.
+
+A ledger retains, for each file, the metadata it had when its bytes were last hashed (device and inode, size, mode, and
+the nanosecond times of its last modification and last status change) with the digest of those bytes, and for each
+directory the metadata it had when it was last listed with its Incan sources and subdirectories. Reconciling observes
+metadata only. A file whose metadata is unchanged keeps its digest without being read; an unchanged directory is not
+listed; a changed file is a reason to hash its bytes again, and only a different digest changes what a build is keyed
+on.
+
+A write can leave a file's metadata exactly as it was recorded when it lands within the clock's granularity of the
+recording. An observation taken less than `settle` seconds after the file's last change is therefore stored unsettled,
+and the next reconciliation hashes it again.
+"""
+
+from rust::std::fs import metadata
+from rust::std::io import Write, stderr
+from rust::std::os::unix::fs import MetadataExt
+from rust::std::string import String as RustString
+from rust::std::time import SystemTime, UNIX_EPOCH
+from std.encoding.hex import hexlify
+from std.environ import get_or
+from std.fs import Path
+from std.hash import sha256
+from std.json import JsonValue, parse
+from json_fields import array, strings, text_field
+from publication import publish
+
+
+# How old a file's last change must be before its metadata can vouch for its bytes.
+pub const SETTLE_SECONDS: int = 2
+const LEDGER_SCHEMA: str = "incan.oven.observations/1"
+
+
+pub model Observation:
+    """The metadata a file or directory had when it was observed."""
+
+    pub stamp: str
+    # The second of its latest modification or status change.
+    pub newest: int
+
+
+model FileEntry:
+    """A file's metadata when its bytes were last hashed, and their digest; an empty stamp marks it unsettled."""
+
+    stamp: str
+    digest: str
+
+
+model DirectoryEntry:
+    """A directory's metadata when it was last listed, with the Incan sources and the subdirectories it held."""
+
+    stamp: str
+    files: list[str]
+    directories: list[str]
+
+
+pub model Ledger:
+    """The retained observations of one consumer, saved beside it and reconciled by each pass that asks for digests."""
+
+    pub location: Path
+    pub settle: int
+    # Files hashed and directories listed since the ledger was loaded: the work reconciliation could not avoid.
+    pub hashed: int = 0
+    pub listed: int = 0
+    changed: bool = false
+    files: Dict[str, FileEntry] = {}
+    directories: Dict[str, DirectoryEntry] = {}
+
+    def digest(mut self, path: Path) -> Result[str, str]:
+        """The digest of `path`'s bytes, read only when its metadata differs from the retained observation."""
+        observed = observe(path)?
+        if path.0 in self.files and self.files[path.0].stamp == observed.stamp:
+            return Ok(self.files[path.0].digest)
+        trace(f"hashing {path.0}")
+        content = file_digest(path)?
+        self.hashed += 1
+        self.changed = true
+        self.files[path.0] = FileEntry(stamp=retained(observed, self.settle), digest=content)
+        return Ok(content)
+
+    def sources(mut self, root: Path, recursive: bool) -> Result[list[str], str]:
+        """The Incan sources under `root`, sorted; only directories whose metadata changed are listed again.
+
+        The compiler's own collection rules apply: hidden directories, `target` and `node_modules` are not entered.
+        """
+        mut found: list[str] = []
+        mut pending = [root]
+        mut index = 0
+        while index < len(pending):
+            directory = pending[index]
+            index += 1
+            entry = self.listing(directory)?
+            for name in entry.files:
+                found.append(directory.joinpath(name).0)
+            if recursive:
+                for name in entry.directories:
+                    pending.append(directory.joinpath(name))
+        return Ok(sorted(found))
+
+    def listing(mut self, directory: Path) -> Result[DirectoryEntry, str]:
+        """A directory's retained children, listed again only when its metadata changed."""
+        observed = observe(directory)?
+        if directory.0 in self.directories and self.directories[directory.0].stamp == observed.stamp:
+            return Ok(self.directories[directory.0])
+        mut files: list[str] = []
+        mut directories: list[str] = []
+        for child in directory.iterdir().map_err((error) => f"{directory.0}: {error.message()}")?:
+            name = child.name()
+            if child.is_dir():
+                if not (name.startswith(".") or name == "target" or name == "node_modules"):
+                    directories.append(name)
+            elif child.is_file() and name.endswith(".incn"):
+                files.append(name)
+        entry = DirectoryEntry(stamp=retained(observed, self.settle), files=sorted(files), directories=sorted(directories))
+        trace(f"listing {directory.0}")
+        self.listed += 1
+        self.changed = true
+        self.directories[directory.0] = entry
+        return Ok(entry)
+
+    def read(mut self) -> Result[None, str]:
+        """Take the rows of the saved document; any malformed row refuses the whole document."""
+        text = self.location.read_text("utf-8", "strict").map_err((error) => error.message())?
+        document = parse(text).map_err((error) => error.message())?
+        if text_field(document, "schema", []).map_err(refusal)? != LEDGER_SCHEMA:
+            return Err("not a ledger of this version")
+        for row in rows(document, "files")?:
+            self.files[text_field(row, "path", []).map_err(refusal)?] = FileEntry(
+                stamp=text_field(row, "stamp", []).map_err(refusal)?,
+                digest=text_field(row, "digest", []).map_err(refusal)?,
+            )
+        for row in rows(document, "directories")?:
+            self.directories[text_field(row, "path", []).map_err(refusal)?] = DirectoryEntry(
+                stamp=text_field(row, "stamp", []).map_err(refusal)?,
+                files=names(row, "files")?,
+                directories=names(row, "directories")?,
+            )
+        return Ok(None)
+
+    def save(mut self) -> Result[None, str]:
+        """Publish the ledger atomically when this pass changed it, leaving out what no longer exists."""
+        if not self.changed:
+            return Ok(None)
+        mut files: list[JsonValue] = []
+        for path in sorted([key for key in self.files.keys()]):
+            if Path(path).is_file():
+                files.append(JsonValue.object({"path": JsonValue.string(path), "stamp": JsonValue.string(self.files[path].stamp), "digest": JsonValue.string(self.files[path].digest)}))
+        mut directories: list[JsonValue] = []
+        for path in sorted([key for key in self.directories.keys()]):
+            if Path(path).is_dir():
+                entry = self.directories[path]
+                directories.append(
+                    JsonValue.object({"path": JsonValue.string(path), "stamp": JsonValue.string(entry.stamp), "files": texts(entry.files), "directories": texts(entry.directories)}),
+                )
+        document = JsonValue.object(
+            {"schema": JsonValue.string(LEDGER_SCHEMA), "files": JsonValue.array(files), "directories": JsonValue.array(directories)},
+        )
+        self.location.parent().mkdir(true, true).map_err((error) => f"{self.location.parent().0}: {error.message()}")?
+        publish(self.location, document.to_json().map_err((error) => error.message())?)?
+        self.changed = false
+        return Ok(None)
+
+
+def texts(items: list[str]) -> JsonValue:
+    """A JSON array of strings."""
+    return JsonValue.array([JsonValue.string(item) for item in items])
+
+
+pub def file_digest(path: Path) -> Result[str, str]:
+    """Hash exact bytes, preserving read failures rather than treating them as unchanged inputs."""
+    content = path.read_bytes().map_err((error) => f"{path.0}: {error.message()}")?
+    return Ok(hexlify(sha256.digest(content)))
+
+
+pub def observe(path: Path) -> Result[Observation, str]:
+    """A file or directory's identity as the filesystem reports it, following symbolic links."""
+    prefix = f"{path.0}: "
+    info = metadata(path.0).map_err((error) => f"{prefix}{error}")?
+    stamp = f"{info.dev()}:{info.ino()}:{info.size()}:{info.mode()}:{info.mtime()}.{info.mtime_nsec()}:{info.ctime()}.{info.ctime_nsec()}"
+    mut newest = int(info.mtime())
+    if int(info.ctime()) > newest:
+        newest = int(info.ctime())
+    return Ok(Observation(stamp=stamp, newest=newest))
+
+
+def retained(observed: Observation, settle: int) -> str:
+    """The stamp to retain: the observed one once it is old enough to trust, else an empty one that never matches."""
+    match SystemTime.now().duration_since(UNIX_EPOCH):
+        Ok(now) =>
+            if int(now.as_secs()) >= observed.newest + settle:
+                return observed.stamp
+        Err(_) => pass
+    return ""
+
+
+pub def load_ledger(location: Path, settle: int) -> Ledger:
+    """The ledger saved at `location`; a missing or unreadable one is an empty ledger, since it only saves work."""
+    empty = Ledger(location=location, settle=settle)
+    if not location.is_file():
+        return empty
+    mut loaded = empty
+    match loaded.read():
+        Ok(_) => return loaded
+        Err(_) => return empty
+
+
+def rows(document: JsonValue, name: str) -> Result[list[JsonValue], str]:
+    """The rows of one table of a ledger document."""
+    match document.get(name):
+        Some(table) => return array(table, [name]).map_err(refusal)
+        None => return Err(f"no `{name}`")
+
+
+def names(row: JsonValue, name: str) -> Result[list[str], str]:
+    """The names listed under one key of a ledger row."""
+    match row.get(name):
+        Some(listed) => return strings(listed, [name]).map_err(refusal)
+        None => return Err(f"no `{name}`")
+
+
+def refusal(failed: list[str]) -> str:
+    """The field path that failed, as text."""
+    return ".".join(failed)
+
+
+pub def trace(message: str) -> None:
+    """Record a line of the build's reasoning where `OVEN_TRACE` says: stderr for `-`, else the file it names.
+
+    A file is appended to, so a caller can read what one command did without touching the command's own output.
+    Silent when unset.
+    """
+    relay([f"oven: {message}"])
+
+
+pub def relay(lines: list[str]) -> None:
+    """Record lines that are already traced, such as those a resident owner reports, where `OVEN_TRACE` says."""
+    destination = get_or("OVEN_TRACE", "")
+    if destination == "" or len(lines) == 0:
+        return
+    text = "\n".join(lines) + "\n"
+    if destination == "-":
+        mut err = stderr()
+        written = err.write_all(RustString.from(text).into_bytes())
+        return
+    match Path(destination).open("a"):
+        Ok(file) =>
+            mut sink = file
+            appended = sink.write(text)
+        Err(_) => pass
+
+
+pub def now_seconds() -> int:
+    """The current time in whole seconds since the Unix epoch."""
+    match SystemTime.now().duration_since(UNIX_EPOCH):
+        Ok(now) => return int(now.as_secs())
+        Err(_) => return 0

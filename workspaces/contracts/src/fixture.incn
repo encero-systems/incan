@@ -108,41 +108,80 @@ def check_name(entry: Path, name: str) -> Result[None, str]:
 
 
 pub def materialize(fixture: Fixture, scratch: Path) -> Result[Path, str]:
-    """Copy the fixture into a fresh project directory under `scratch` and return the project's root."""
+    """Bring the fixture's project directory under `scratch` to exactly the fixture's files, and return its root.
+
+    The directory is the same for every run of the case and is never removed, so what Oven prepared for it last time
+    is still there. A file is written only when its bytes differ, so an unchanged file keeps its modification time and
+    Oven can tell nothing changed; a file the fixture no longer has is removed. `target/` is Oven's and is left alone.
+    """
     project = scratch.joinpath(f"{fixture.family}-{fixture.area}-{fixture.name}")
-    if project.exists():
-        io(project.remove_tree(), project)?
+    desired = fixture_files(fixture)?
+    for relative in sorted([name for name in desired.keys()]):
+        write_if_different(project.joinpath(relative), desired[relative])?
+    prune(project, "", desired)?
+    return Ok(project)
+
+
+def fixture_files(fixture: Fixture) -> Result[Dict[str, bytes], str]:
+    """The project's files by path relative to its root: the fixture's own, and the manifest it runs under."""
+    mut files: Dict[str, bytes] = {}
     if fixture.shape == "project":
-        copied(fixture.entry.copy(project, false, false), project)?
-        return Ok(project)
+        collect(fixture.entry, "", files)?
+        return Ok(files)
     mut manifest = MINIMAL_MANIFEST.replace("{name}", fixture.name)
     if fixture.family == "testing":
         # A test file runs from the project's `tests/` directory; the project has no program of its own.
-        tests = project.joinpath("tests")
-        io(tests.mkdir(true, false), tests)?
-        copied(fixture.entry.copy(tests.joinpath(f"{fixture.name}.incn"), false, false), tests)?
+        collect(fixture.entry, f"tests/{fixture.name}.incn", files)?
         manifest = PROJECT_ONLY_MANIFEST.replace("{name}", fixture.name)
+    elif fixture.shape == "module":
+        collect(fixture.entry, "src", files)?
     else:
-        source = project.joinpath("src")
-        if fixture.shape == "module":
-            io(project.mkdir(true, false), project)?
-            copied(fixture.entry.copy(source, false, false), source)?
+        collect(fixture.entry, "src/main.incn", files)?
+    files["loaf.toml"] = manifest.encode("utf-8")
+    return Ok(files)
+
+
+def collect(source: Path, relative: str, mut files: Dict[str, bytes]) -> Result[None, str]:
+    """Add the file at `source`, or every file below the directory there, under `relative` (a prefix for a directory)."""
+    if source.is_file():
+        files[relative] = source.read_bytes().map_err((error) => f"{source.0}: {error.message()}")?
+        return Ok(None)
+    for entry in source.iterdir().map_err((error) => f"{source.0}: {error.message()}")?:
+        name = entry.name()
+        if relative == "":
+            collect(entry, name, files)?
         else:
-            io(source.mkdir(true, false), source)?
-            copied(fixture.entry.copy(source.joinpath("main.incn"), false, false), source)?
-    io(project.joinpath("loaf.toml").write_text(manifest, "utf-8", "strict", None), project)?
-    return Ok(project)
+            collect(entry, f"{relative}/{name}", files)?
+    return Ok(None)
+
+
+def write_if_different(path: Path, content: bytes) -> Result[None, str]:
+    """Write `content` to `path` unless it already holds exactly those bytes."""
+    if path.is_file() and path.read_bytes().map_err((error) => f"{path.0}: {error.message()}")? == content:
+        return Ok(None)
+    io(path.parent().mkdir(true, true), path.parent())?
+    io(path.write_bytes(content), path)?
+    return Ok(None)
+
+
+def prune(directory: Path, relative: str, desired: Dict[str, bytes]) -> Result[None, str]:
+    """Remove below `directory` every file the fixture does not have, and the directories that leaves empty."""
+    for entry in directory.iterdir().map_err((error) => f"{directory.0}: {error.message()}")?:
+        name = entry.name()
+        if relative == "" and name == "target":
+            continue
+        path = f"{relative}{name}"
+        if entry.is_dir():
+            prune(entry, f"{path}/", desired)?
+            if len(entry.iterdir().map_err((error) => f"{entry.0}: {error.message()}")?) == 0:
+                io(entry.rmdir(), entry)?
+        elif path not in desired:
+            io(entry.unlink(), entry)?
+    return Ok(None)
 
 
 def io(result: Result[None, IoError], path: Path) -> Result[None, str]:
     """An I/O result with its error named after `path`."""
-    match result:
-        Ok(_) => return Ok(None)
-        Err(error) => return Err(f"{path.0}: {error.message()}")
-
-
-def copied(result: Result[Path, IoError], path: Path) -> Result[None, str]:
-    """A copy result with its error named after `path`."""
     match result:
         Ok(_) => return Ok(None)
         Err(error) => return Err(f"{path.0}: {error.message()}")

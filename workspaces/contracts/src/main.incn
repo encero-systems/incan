@@ -5,10 +5,12 @@ The contract table runner.
 
 Runs every case of every family under FIXTURES_ROOT with the `incan` at INCAN, or only the cases a selector names
 (`<family>`, `<family>/<area>` or `<family>/<area>/<name>`). Each case is materialized as its own project under the
-scratch directory (a fresh temporary directory unless `--scratch` names one), run, compared and removed. The runner
-prints one line per case (`PASS`, `FAIL` with its reasons, `PEND` with what it waits for), one summary per area and
-one in total, and exits 1 when a case fails or a family cannot be read. A pending case that now holds fails: its
-`pending:` line is stale.
+scratch directory (a fresh temporary directory unless `--scratch` names one), run and compared. A project is kept: the
+next run over the same scratch directory rewrites only the files whose bytes differ and removes the files the fixture no
+longer has, so Oven can reuse what it compiled for the case, and every case still executes afresh. The runner prints
+one line per case (`PASS`, `FAIL` with its reasons, `PEND` with what it waits for), under it one `oven: unit` line for
+each unit Oven compiled or reused and why, one summary per area and one in total, and exits 1 when a case fails or a
+family cannot be read. A pending case that now holds fails: its `pending:` line is stale.
 """
 
 from rust::std::env import args
@@ -18,8 +20,8 @@ from std.tempfile import TemporaryDirectory
 from compare import compare
 from families import FAMILIES, admit, command
 from fixture import Fixture, discover_family, materialize
-from header import parse_header
-from run import invoke
+from header import Header, parse_header
+from run import invoke, trace_file
 from formatting import compare_format
 from graph import compare_graph
 
@@ -81,6 +83,8 @@ def main() -> None:
 def run_all(incan: str, root: Path, scratch: Path, selectors: list[str]) -> bool:
     """Run every selected case; whether all of them held."""
     mut total = Tally(passed=0, failed=0, pending=0)
+    mut compiled = 0
+    mut reused = 0
     mut refused = 0
     for family in FAMILIES:
         if not selected_family(family, selectors):
@@ -100,7 +104,8 @@ def run_all(incan: str, root: Path, scratch: Path, selectors: list[str]) -> bool
                             println(tally.line(f"area {family}/{area}"))
                         area = fixture.area
                         tally = Tally(passed=0, failed=0, pending=0)
-                    match run_case(incan, scratch, fixture):
+                    result = run_case(incan, scratch, fixture)
+                    match result.verdict:
                         Verdict.Pass =>
                             println(f"PASS {fixture.case_name()}")
                             tally.passed += 1
@@ -115,56 +120,101 @@ def run_all(incan: str, root: Path, scratch: Path, selectors: list[str]) -> bool
                                 println(indented(failure))
                             tally.failed += 1
                             total.failed += 1
+                    for note in result.notes:
+                        println(f"  {note}")
+                        if ": compiled" in note:
+                            compiled += 1
+                        elif ": reused" in note:
+                            reused += 1
                 if area != "":
                     println(tally.line(f"area {family}/{area}"))
     println(total.line("total"))
+    if compiled + reused > 0:
+        println(f"oven: {compiled} units compiled, {reused} reused")
     if refused > 0:
         println(f"{refused} families could not be read")
     return total.failed == 0 and refused == 0
 
 
-def run_case(incan: str, scratch: Path, fixture: Fixture) -> Verdict:
-    """Materialize, run and compare one case, then remove its project."""
+pub model CaseResult:
+    """What one case showed, and which units Oven compiled or reused to show it."""
+
+    pub verdict: Verdict
+    # One `oven: unit <name> <kind>: reused | compiled (<why>)` line per unit the case's commands prepared.
+    pub notes: list[str]
+
+
+def run_case(incan: str, scratch: Path, fixture: Fixture) -> CaseResult:
+    """Synchronize, run and compare one case. Its project stays where it is, so a rerun finds what Oven prepared."""
     match fixture.program.read_text("utf-8", "strict"):
-        Err(error) => return Verdict.Fail([f"{fixture.program.0}: {error.message()}"])
+        Err(error) => return refused(f"{fixture.program.0}: {error.message()}")
         Ok(source) =>
             match parse_header(source):
-                Err(reason) => return Verdict.Fail([f"{fixture.program.0}: {reason}"])
-                Ok(header) =>
-                    match admit(fixture, header):
-                        Err(reason) => return Verdict.Fail([f"{fixture.program.0}: {reason}"])
-                        Ok(_) => pass
-                    match materialize(fixture, scratch):
-                        Err(reason) => return Verdict.Fail([reason])
-                        Ok(project) =>
-                            mut failures: list[str] = []
-                            if fixture.family == "format":
-                                match compare_format(incan, project, header, source):
-                                    Err(reason) => failures.append(reason)
-                                    Ok(found) => failures = found
-                            elif fixture.family == "graph":
-                                match compare_graph(incan, project, header):
-                                    Err(reason) => failures.append(reason)
-                                    Ok(found) => failures = found
-                            else:
-                                match invoke(incan, command(fixture, header), project):
-                                    Err(reason) => failures.append(reason)
-                                    Ok(outcome) =>
-                                        failures = compare(fixture.family, header, outcome)
-                                        if len(failures) > 0 and outcome.stderr.strip() != "":
-                                            failures.append(f"stderr:\n{tail(outcome.stderr)}")
-                            match project.remove_tree():
-                                Err(error) => failures.append(f"cannot remove {project.0}: {error.message()}")
-                                Ok(_) => pass
-                            match header.pending:
-                                Some(reason) =>
-                                    if len(failures) == 0:
-                                        return Verdict.Fail([f"the case holds, so its `pending: {reason}` line is stale; remove it"])
-                                    return Verdict.Pend(reason)
-                                None => pass
-                            if len(failures) == 0:
-                                return Verdict.Pass
-                            return Verdict.Fail(failures)
+                Err(reason) => return refused(f"{fixture.program.0}: {reason}")
+                Ok(header) => return run_admitted(incan, scratch, fixture, source, header)
+
+
+def run_admitted(incan: str, scratch: Path, fixture: Fixture, source: str, header: Header) -> CaseResult:
+    """Run a case whose header parsed: admit it for its family, materialize its project and compare what it shows."""
+    match admit(fixture, header):
+        Err(reason) => return refused(f"{fixture.program.0}: {reason}")
+        Ok(_) => pass
+    match materialize(fixture, scratch):
+        Err(reason) => return refused(reason)
+        Ok(project) =>
+            trace = trace_file(project)
+            if trace.is_file():
+                removed = trace.unlink()
+            failures = compare_case(incan, fixture, source, header, project)
+            return CaseResult(verdict=judged(header, failures), notes=unit_notes(trace))
+
+
+def compare_case(incan: str, fixture: Fixture, source: str, header: Header, project: Path) -> list[str]:
+    """What the case's family found wrong with what its commands showed; nothing when it holds."""
+    mut failures: list[str] = []
+    if fixture.family == "format":
+        match compare_format(incan, project, header, source):
+            Err(reason) => failures.append(reason)
+            Ok(found) => failures = found
+    elif fixture.family == "graph":
+        match compare_graph(incan, project, header):
+            Err(reason) => failures.append(reason)
+            Ok(found) => failures = found
+    else:
+        match invoke(incan, command(fixture, header), project):
+            Err(reason) => failures.append(reason)
+            Ok(outcome) =>
+                failures = compare(fixture.family, header, outcome)
+                if len(failures) > 0 and outcome.stderr.strip() != "":
+                    failures.append(f"stderr:\n{tail(outcome.stderr)}")
+    return failures
+
+
+def judged(header: Header, failures: list[str]) -> Verdict:
+    """The verdict of a case with these failures: a pending case that holds is itself a failure."""
+    match header.pending:
+        Some(reason) =>
+            if len(failures) == 0:
+                return Verdict.Fail([f"the case holds, so its `pending: {reason}` line is stale; remove it"])
+            return Verdict.Pend(reason)
+        None => pass
+    if len(failures) == 0:
+        return Verdict.Pass
+    return Verdict.Fail(failures)
+
+
+def refused(reason: str) -> CaseResult:
+    """A case that could not be run at all."""
+    return CaseResult(verdict=Verdict.Fail([reason]), notes=[])
+
+
+def unit_notes(trace: Path) -> list[str]:
+    """The units Oven reports having compiled or reused for the commands a case ran, in the order it reported them."""
+    if not trace.is_file():
+        return []
+    match trace.read_text("utf-8", "strict"):
+        Err(_) => return []
+        Ok(text) => return [line for line in text.split("\n") if line.startswith("oven: unit ")]
 
 
 def selected_family(family: str, selectors: list[str]) -> bool:

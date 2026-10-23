@@ -5,7 +5,9 @@ from std import toml
 from std.json import JsonValue, parse
 from std.toml import TomlValue
 from features import FeatureRequest
-from graph_cache import GraphUnit, cache_file, compiler_digest, fingerprint, is_unchecked, publish, tree_inputs
+from graph_cache import GraphUnit, cache_file, is_unchecked, tree_inputs
+from publication import publish
+from unit_freshness import artifact_identity, fingerprint
 from graph_incan import inspect_incan, interface_directory
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
 from rust_activation import DependencyDomain
@@ -62,17 +64,17 @@ def native_units(root: Path, facets: list[LocalFacet], request: RustBuild, toolc
     """Cache native dependency preparation by source closure and exact supplied artifacts; never emit Incan code."""
     receipt = root.joinpath("target").joinpath("incan").joinpath("rust").joinpath(request.profile).joinpath("units.json")
     previous = libraries(receipt)?
-    mut inputs = ["incan.graph.native/2", compiler_digest(root, toolchain.driver)?, toolchain.sysroot, compiler_digest(root, toolchain.registry_units)?]
+    mut inputs = ["incan.graph.native/2", artifact_identity(Path(toolchain.driver))?, toolchain.sysroot, artifact_identity(Path(toolchain.registry_units))?]
     for facet in facets:
         inputs = inputs + [str(facet.features), facet.domain.value()] + tree_inputs(Path(facet.project))?
         for selected in facet.registry:
             loaf = selected.require("loaf").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
             requirement = selected.require("req").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
-            inputs.append(compiler_digest(root, request.registry.artifact(loaf, requirement, facet.domain.value(), registry_features(selected)?)?)?)
+            inputs.append(artifact_identity(Path(request.registry.artifact(loaf, requirement, facet.domain.value(), registry_features(selected)?)?))?)
     for name in sorted([key for key in previous.keys()]):
-        inputs = inputs + [name, previous[name].artifact, compiler_digest(root, previous[name].artifact)?]
+        inputs = inputs + [name, previous[name].artifact, artifact_identity(Path(previous[name].artifact))?]
     for native in toolchain.externs:
-        inputs = inputs + [native.name, native.path, compiler_digest(root, native.path)?]
+        inputs = inputs + [native.name, native.path, artifact_identity(Path(native.path))?]
     entry = Path(f"{cache_file(root, fingerprint(inputs)?)?.0}.native")
     if entry.is_file():
         return libraries(entry, true)

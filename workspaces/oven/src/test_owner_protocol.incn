@@ -1,0 +1,89 @@
+"""Owner protocol contracts: frames are bounded and self-checking, and a bad one never harms the next."""
+
+from rust::std::io import Write
+from rust::std::os::unix::net import UnixStream
+from std.json import JsonValue
+from std.tempfile import TemporaryDirectory
+from owner_protocol import MAX_FRAME, Reply, Request, dial, length_of, listen, padded, reply_of, request_of
+
+
+def raw(path: str, bytes_sent: bytes) -> Result[None, str]:
+    """Connect, write exactly these bytes and hang up, as a broken client does."""
+    match UnixStream.connect(path):
+        Err(error) => return Err(f"cannot connect: {error}")
+        Ok(stream) =>
+            mut open = stream
+            match open.write_all(bytes_sent):
+                Ok(_) => return Ok(None)
+                Err(error) => return Err(f"cannot write: {error}")
+
+
+def refuses(result: Result[int, str]) -> bool:
+    """Whether a frame length was refused."""
+    match result:
+        Ok(_) => return false
+        Err(_) => return true
+
+
+def refused_frame(result: Result[JsonValue, str]) -> bool:
+    """Whether reading a frame was refused."""
+    match result:
+        Ok(_) => return false
+        Err(_) => return true
+
+
+def refused_request(result: Result[Request, str]) -> bool:
+    """Whether a document was refused as a request."""
+    match result:
+        Ok(_) => return false
+        Err(_) => return true
+
+
+pub def test_frames_round_trip_and_stay_bounded() -> Result[None, str]:
+    """A document survives a frame in both directions; the bound is a refusal before any allocation."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    path = scratch.path().joinpath("o.sock").0
+    mut listener = listen(path, true)?
+    mut client = dial(path)?
+    mut server = listener.accept()?
+    request = Request(command="run", generation="abc", path="/p/src/main.incn", features=["a", "b"], default_features=false)
+    client.send(request.to_json())?
+    seen = request_of(server.receive()?)?
+    assert seen.command == "run"
+    assert seen.path == "/p/src/main.incn"
+    assert seen.features == ["a", "b"]
+    assert not seen.default_features
+    reply = Reply(status="done", exit=3, binary="/p/target/bin/p", stdout="out", stderr="err", trace=["oven: x"], pid=7)
+    server.send(reply.to_json())?
+    answer = reply_of(client.receive()?)?
+    assert answer.status == "done"
+    assert answer.exit == 3
+    assert answer.binary == "/p/target/bin/p"
+    assert answer.trace == ["oven: x"]
+    assert padded(42) == "00000042"
+    assert length_of(padded(MAX_FRAME).encode("utf-8"))? == MAX_FRAME
+    assert refuses(length_of(padded(MAX_FRAME + 1).encode("utf-8")))
+    assert refuses(length_of("12ab5678".encode("utf-8")))
+    assert refuses(length_of("123".encode("utf-8")))
+    return Ok(None)
+
+
+pub def test_a_broken_client_leaves_the_next_request_healthy() -> Result[None, str]:
+    """A cut-off payload, a junk header and a non-request each refuse one connection and nothing else."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    path = scratch.path().joinpath("o.sock").0
+    mut listener = listen(path, true)?
+    raw(path, "00000100{".encode("utf-8"))?
+    mut cut = listener.accept()?
+    assert refused_frame(cut.receive())
+    raw(path, "not-a-header".encode("utf-8"))?
+    mut junk = listener.accept()?
+    assert refused_frame(junk.receive())
+    raw(path, "00000002{}".encode("utf-8"))?
+    mut empty = listener.accept()?
+    assert refused_request(request_of(empty.receive()?))
+    mut client = dial(path)?
+    mut server = listener.accept()?
+    client.send(Request(command="status", generation="abc").to_json())?
+    assert request_of(server.receive()?)?.command == "status"
+    return Ok(None)

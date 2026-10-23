@@ -42,6 +42,9 @@ pub model Toolchain:
     pub externs: list[NativeCrate]
     pub search: list[str]
     pub registry_units: str
+    # When set, a path prefix: the compiler writes its standard output to `<prefix>.out` and its standard error to
+    # `<prefix>.err` instead of the caller's streams, so a resident owner can report them without owning a terminal.
+    pub console: str = ""
 
 
 pub def rust_compiler(toolchain: Toolchain) -> str:
@@ -111,3 +114,8 @@ def toolchain_of(document: JsonValue, directory: Path) -> Result[Toolchain, list
             registry_units=located(directory, text_field(document, "registry_units", [])?),
         ),
     )
+
+
+pub def toolchain_file() -> Result[Path, str]:
+    """Where this Oven's toolchain description lives in its home."""
+    return Ok(toolchain_directory()?.joinpath("toolchain.json"))

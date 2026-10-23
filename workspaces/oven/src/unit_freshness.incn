@@ -1,11 +1,32 @@
-"""Content fingerprints for prepared path libraries; a stamp is written only after all four artifacts exist."""
+"""
+Keys for compiled units, and the stamps that let outputs be reused while their key is unchanged.
+
+A unit's key covers everything its compilation reads: the compiler and its native closure, the unit's description
+(profile, features, kind and every directory and crate it names), its manifest and lock, every Incan source it can
+reach, the artifacts of every Loaf it links, and the native crates beyond the toolchain's own. The target is the
+toolchain's, which its sysroot names. Path dependencies enter through their artifacts: a dependency is prepared, and
+so keyed on its own sources, before its consumer is.
+
+Authored files are keyed by content, reconciled against retained observations (see `observation`), so an unchanged unit
+is keyed without reading a source or listing a directory. Installed and built artifacts (the driver, native crates,
+Rust ABI caches and every Loaf's artifacts) are large, so they are keyed by their filesystem identity (inode, size,
+nanosecond times of modification and status change) and never by their bytes, which cost seconds per command. A stamp
+binds a key to the identity of the outputs built for it.
+"""
 
 from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue
+from home import unit_ledger
+from loaf_local_graph import unique
+from observation import Ledger, SETTLE_SECONDS, load_ledger, observe, trace
+from publication import publish
 from toolchain import Toolchain
 from unit import UnitDescription
+
+
+const UNIT_DOMAIN: str = "incan.oven.unit/1"
 
 
 pub def artifact_files(directory: Path, package: str) -> list[Path]:
@@ -14,73 +35,170 @@ pub def artifact_files(directory: Path, package: str) -> list[Path]:
     return [directory.joinpath(name) for name in [f"lib{linked}.rlib", f"{package}.incnlib", f"{package}.incnbody", f"{package}.native.json", f"{package}.incngraph"]]
 
 
-pub def file_digest(path: Path) -> Result[str, str]:
-    """Hash exact bytes, preserving read failures rather than treating them as unchanged inputs."""
-    content = path.read_bytes().map_err((error) => f"{path.0}: {error.message()}")?
-    return Ok(hexlify(sha256.digest(content)))
+pub def artifact_identity(path: Path) -> Result[str, str]:
+    """Identify a published artifact by its filesystem identity, without reading its bytes.
+
+    That is its device and inode, size and mode, and the nanosecond times of its last modification and last status
+    change: replacing the file changes the inode, and rewriting it in place changes the status change time even when
+    the modification time is put back.
+    """
+    return Ok(observe(path)?.stamp)
+
+
+pub model Key:
+    """What a unit's outputs are valid for: one digest, and the digest of each kind of input beside it."""
+
+    pub digest: str
+    # One `kind digest` line per kind of input, in a fixed order, so that a changed key can name what changed.
+    pub parts: list[str]
+
+
+pub def unit_key(unit: UnitDescription, toolchain: Toolchain) -> Result[Key, str]:
+    """Reconcile every input of `unit` against the retained observations; the key its outputs are valid for."""
+    mut project = load_ledger(unit_ledger(unit.project_root, ledger_name(unit)), SETTLE_SECONDS)
+    return reconciled_key(unit, compiler_fingerprint(toolchain)?, description_digest(unit)?, project)
+
+
+pub def reconciled_key(unit: UnitDescription, compiler: str, described: str, mut project: Ledger) -> Result[Key, str]:
+    """The key of a unit against a ledger that may already hold what earlier requests observed; the ledger is saved when
+    this reconciliation changed it, and the work it could not avoid is traced."""
+    hashed = project.hashed
+    listed = project.listed
+    key = unit_key_with(unit, compiler, described, project)?
+    project.save()?
+    trace(f"{ledger_name(unit)}: key {key.digest[:12]}, hashed {project.hashed - hashed} files, listed {project.listed - listed} directories")
+    return Ok(key)
+
+
+pub def ledger_name(unit: UnitDescription) -> str:
+    """The name a unit's ledger is saved under: one per profile, kind and package, so units never share rows."""
+    mut name = unit.package
+    if name == "":
+        name = Path(unit.source).stem()
+    return f"{unit.profile}-{unit.kind}-{name}"
 
 
 pub def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
-    """Bind reuse to the driver and its installed native closure and Rust facts, once per preparation."""
-    mut inputs = [toolchain.driver, toolchain.sysroot, file_digest(Path(toolchain.driver))?]
+    """Bind reuse to the driver and its installed native closure and Rust facts.
+
+    The installed driver is named by its content digest, and its path is part of the fingerprint.
+    """
+    mut inputs = [toolchain.driver, toolchain.sysroot, artifact_identity(Path(toolchain.driver))?]
     for native in toolchain.externs:
         inputs.append(native.name)
         inputs.append(native.path)
-        inputs.append(file_digest(Path(native.path))?)
+        inputs.append(artifact_identity(Path(native.path))?)
     for cache in toolchain.rust_abi:
         inputs.append(cache)
-        inputs.append(file_digest(Path(cache))?)
+        inputs.append(artifact_identity(Path(cache))?)
     return fingerprint(inputs + toolchain.search)
 
 
-pub def source_fingerprint(unit: UnitDescription, compiler: str) -> Result[str, str]:
-    """Hash the description, manifest, source tree, metadata inputs and every reached library's artifacts.
+pub def description_digest(unit: UnitDescription) -> Result[str, str]:
+    """The digest of everything the unit's description says: profile, features, kind and every path and crate it names."""
+    return fingerprint([unit.to_json().to_json().map_err((error) => error.message())?])
 
-    Sorted paths make added, removed and renamed modules observable. Dependency artifacts bind consumers to rebuilt
-    providers, including transitive ones. Content rather than modification times allows unchanged repeats to reuse.
+
+pub def source_fingerprint(unit: UnitDescription, compiler: str, mut project: Ledger) -> Result[Key, str]:
+    """The key of a unit whose description has not been digested yet; see `unit_key_with`."""
+    return unit_key_with(unit, compiler, description_digest(unit)?, project)
+
+
+pub def unit_key_with(unit: UnitDescription, compiler: str, described: str, mut project: Ledger) -> Result[Key, str]:
+    """Hash everything authored that the compilation reads, and identify every artifact it links.
+
+    A caller that keeps the unit's description digest (it only changes with the description) passes it in. Sorted
+    paths make added, removed and renamed modules observable. Dependency artifacts bind consumers to rebuilt
+    providers, including transitive ones.
     """
-    description = unit.to_json().to_json().map_err((error) => error.message())?
-    mut inputs = ["incan.oven.path-library/1", compiler, description]
-    root = Path(unit.project_root)
-    mut paths = [root.joinpath("loaf.toml").0, unit.source]
-    for path in Path(unit.source_root).rglob("*.incn").map_err((error) => error.message())?:
-        if path.is_file():
-            paths.append(path.0)
-    for extra in unit.contract_models + unit.c_headers:
-        paths.append(root.joinpath(extra).0)
-    for path in sorted(paths):
-        inputs.append(path)
-        inputs.append(file_digest(Path(path))?)
+    mut sources: list[str] = []
+    for path in unit_files(unit, project)?:
+        sources.append(path)
+        sources.append(project.digest(Path(path))?)
+    mut artifacts: list[str] = []
     for loaf in unit.loaves:
         for path in artifact_files(Path(loaf.dir), loaf.name):
-            inputs.append(path.0)
-            if path.name().endswith(".incngraph") and not path.is_file():
-                inputs.append("legacy-without-graph")
-                continue
-            inputs.append(file_digest(path)?)
+            artifacts.append(path.0)
+            if not path.is_file():
+                artifacts.append("absent")
+            else:
+                artifacts.append(artifact_identity(path)?)
     for native in unit.externs:
-        inputs.append(native.name)
-        inputs.append(native.path)
-        inputs.append(file_digest(Path(native.path))?)
+        artifacts.append(native.name)
+        artifacts.append(native.path)
+        artifacts.append(artifact_identity(Path(native.path))?)
     for cache in unit.rust_abi:
-        inputs.append(cache)
-        inputs.append(file_digest(Path(cache))?)
-    return fingerprint(inputs)
+        artifacts.append(cache)
+        artifacts.append(artifact_identity(Path(cache))?)
+    authored = fingerprint(sources)?
+    linked = fingerprint(artifacts)?
+    digest = fingerprint([UNIT_DOMAIN, compiler, described, authored, linked])?
+    return Ok(Key(digest=digest, parts=[f"compiler {compiler}", f"description {described}", f"sources {authored}", f"artifacts {linked}"]))
 
 
-def fingerprint(inputs: list[str]) -> Result[str, str]:
+def unit_files(unit: UnitDescription, mut project: Ledger) -> Result[list[str], str]:
+    """The files a unit's compilation reads from its project: manifest, lock, entry, sources and metadata inputs.
+
+    Modules resolve from the source root and from the entry's own directory, so an entry outside the source root (a
+    test beside `src`) brings its directory with it; an entry in the project root brings only its own siblings.
+    """
+    root = Path(unit.project_root)
+    mut paths = [unit.source]
+    for name in ["loaf.toml", "oven.lock"]:
+        if root.joinpath(name).is_file():
+            paths.append(root.joinpath(name).0)
+    paths = paths + project.sources(Path(unit.source_root), true)?
+    entry_directory = Path(unit.source).parent()
+    if not unit.source.startswith(unit.source_root + "/"):
+        paths = paths + project.sources(entry_directory, entry_directory.0 != unit.project_root)?
+    for extra in unit.contract_models + unit.c_headers:
+        paths.append(root.joinpath(extra).0)
+    return Ok(unique(paths))
+
+
+pub def fingerprint(inputs: list[str]) -> Result[str, str]:
     """Frame every input independently before hashing so paths and contents cannot alias each other."""
     text = JsonValue.array([JsonValue.string(value) for value in inputs]).to_json().map_err((error) => error.message())?
     return Ok(hexlify(sha256.digest(text.encode("utf-8"))))
 
 
-pub def reusable(directory: Path, package: str, digest: str) -> Result[bool, str]:
-    """Require a complete artifact set and the last successful build's matching input digest."""
-    for path in artifact_files(directory, package):
-        if not path.is_file():
-            return Ok(false)
-    stamp = directory.joinpath(".oven-inputs.sha256")
+pub def reusable(outputs: list[Path], stamp: Path, key: Key) -> Result[bool, str]:
+    """Whether the stamp of a completed build vouches for `key` and for the very outputs it recorded."""
+    return Ok(staleness(outputs, stamp, key)? == "")
+
+
+pub def staleness(outputs: list[Path], stamp: Path, key: Key) -> Result[str, str]:
+    """Why the stored outputs cannot be kept for `key`; empty when they can."""
     if not stamp.is_file():
-        return Ok(false)
-    recorded = stamp.read_text("utf-8", "strict").map_err((error) => f"{stamp.0}: {error.message()}")?
-    return Ok(recorded == digest)
+        return Ok("no stored build")
+    recorded = stamp.read_text("utf-8", "strict").map_err((error) => f"{stamp.0}: {error.message()}")?.split("\n")
+    if recorded[0] != key.digest:
+        return Ok(f"{changed_kinds(recorded[1:], key.parts)} changed")
+    first = 1 + len(key.parts)
+    if len(recorded) != first + len(outputs):
+        return Ok("the stored build is incomplete")
+    for index in range(len(outputs)):
+        if not outputs[index].is_file():
+            return Ok("the stored build is missing")
+        if observe(outputs[index])?.stamp != recorded[first + index]:
+            return Ok("the stored build was replaced")
+    return Ok("")
+
+
+def changed_kinds(recorded: list[str], parts: list[str]) -> str:
+    """The kinds of input whose digest differs from the recorded one, as a list in words."""
+    mut kinds: list[str] = []
+    for part in parts:
+        if part not in recorded:
+            kinds.append(part.split(" ")[0])
+    if len(kinds) == 0:
+        return "inputs"
+    return ", ".join(kinds)
+
+
+pub def record(stamp: Path, key: Key, outputs: list[Path]) -> Result[None, str]:
+    """Publish the stamp of a completed build: its key, the digest of each kind of input, then each output's identity."""
+    mut lines = [key.digest] + key.parts
+    for output in outputs:
+        lines.append(observe(output)?.stamp)
+    return publish(stamp, "\n".join(lines))

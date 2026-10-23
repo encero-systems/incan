@@ -20,7 +20,7 @@ from loaf_local_graph import LocalDemand, LocalFacet, local_facets
 from rust_activation import CfgSnapshot, DependencyDomain, TargetConfiguration, version_matches
 from semver_req import compare_version_order, parse_version
 from json_fields import field, strings
-from graph_cache import publish
+from publication import publish
 from toolchain import load_toolchain, located
 
 

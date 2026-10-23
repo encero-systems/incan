@@ -7,12 +7,17 @@
     incan describe-unit PATH [UNIT OPTIONS]
     incan build PATH [--substitute NAME=DIR] [UNIT OPTIONS]
     incan fmt [--check] PATH...
+    incan owner stop
     incan inspect codegraph PATH [--format json|jsonl] [--query KIND TERM] [--limit N] [--strict]
     incan toolchain pack OUT
     incan toolchain install ARCHIVE
     incan --version
 
 UNIT OPTIONS are `--profile NAME`, `--features A,B`, `--no-default-features` and `--all-features`.
+
+`run`, `build` and `test` of a source ask the project's resident owner (a process this `incan` starts and keeps, see
+`owner_endpoint`) for the executable, and fall back to preparing it themselves; `OVEN_OWNER=off` never asks. `incan owner
+stop` stops the owners of this home.
 """
 
 from rust::std::env import args
@@ -23,11 +28,15 @@ from std.fs import Path
 from features import FeatureRequest
 from home import TOOLCHAIN, dependency_artifact_dir
 from unit_rust import describe_native
-from incan_units import check_unit, compile_unit, crate_name, run_program
+from incan_units import check_unit, compile_unit, crate_name, program_binary, run_program
 from rust_units import RustBuild, build_rust, read_registry_units
 from toolchain import load_toolchain, rust_compiler
 from formatting import format_paths
-from testing import run_tests
+from testing import run_collected, run_tests
+from owner_client import owned, status_code
+from owner_protocol import Reply
+from owner_endpoint import stop_owners
+from owner_service import serve_owner
 from graph_inspection import inspect_codegraph
 from toolchain_archive import toolchain_command
 
@@ -70,6 +79,12 @@ def main() -> None:
     if command == "fmt":
         finish("fmt", format_paths(rest))
         return
+    if command == "--internal-owner":
+        finish("owner", serve_owner(rest))
+        return
+    if command == "owner":
+        owner(rest)
+        return
     if command == "inspect":
         finish("inspect", inspect_codegraph(rest))
         return
@@ -81,7 +96,7 @@ def main() -> None:
 
 def usage() -> str:
     """The command line's usage."""
-    return "usage: incan run PATH [UNIT OPTIONS] [-- ARGS...]\n       incan check PATH [--format text|json] [UNIT OPTIONS]\n       incan test PATH [UNIT OPTIONS]\n       incan describe-unit PATH [UNIT OPTIONS]\n       incan build PATH [--substitute NAME=DIR] [UNIT OPTIONS]\n       incan fmt [--check] PATH...\nUNIT OPTIONS: --profile NAME, --features A,B, --no-default-features, --all-features"
+    return "usage: incan run PATH [UNIT OPTIONS] [-- ARGS...]\n       incan check PATH [--format text|json] [UNIT OPTIONS]\n       incan test PATH [UNIT OPTIONS]\n       incan describe-unit PATH [UNIT OPTIONS]\n       incan build PATH [--substitute NAME=DIR] [UNIT OPTIONS]\n       incan fmt [--check] PATH...\n       incan owner stop\nUNIT OPTIONS: --profile NAME, --features A,B, --no-default-features, --all-features"
 
 
 def fail(message: str, code: i32) -> None:
@@ -148,14 +163,28 @@ def run(arguments: list[str]) -> None:
 
 
 def ran(options: Options, passed: list[str]) -> Result[i32, str]:
-    """Compile the unit into its project's target directory and run it; a refused compile is the run's result."""
+    """Make the unit's executable, through its owner or in this process, and become it; a refused compile is the run's
+    result."""
+    match via_owner("run", options, Path(options.path)):
+        Some(reply) =>
+            if reply.exit != 0:
+                return Ok(status_code(reply.exit))
+            return run_program(Path(reply.binary), passed)
+        None => pass
     unit = describe_native(Path(options.path), options.profile, options.request)?
     toolchain = load_toolchain()?
-    binary = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath(options.profile).joinpath("bin").joinpath(crate_name(unit))
+    binary = program_binary(unit)
     compiled = compile_unit(unit, toolchain, binary)?
     if compiled != 0:
         return Ok(compiled)
     return run_program(binary, passed)
+
+
+def via_owner(command: str, options: Options, entry: Path) -> Option[Reply]:
+    """The reply of the project's resident owner, which has made the executable; `None` when this process should."""
+    if len(options.substitutes) > 0:
+        return None
+    return owned(command, entry, options.profile, options.request.features, options.request.default_features, options.request.all_features)
 
 
 def test(arguments: list[str]) -> None:
@@ -166,7 +195,13 @@ def test(arguments: list[str]) -> None:
 
 
 def tested(options: Options) -> Result[i32, str]:
-    """Prepare a test unit's exact native dependencies with the same profile and feature options as a program."""
+    """Make a test unit's executable, through its owner or in this process, and report each test's fresh outcome."""
+    match via_owner("test", options, Path(options.path)):
+        Some(reply) =>
+            if reply.exit != 0:
+                return Ok(status_code(reply.exit))
+            return run_collected(Path(reply.binary), Path(options.path).name())
+        None => pass
     mut unit = describe_native(Path(options.path), options.profile, options.request)?
     unit.kind = "test"
     return run_tests(unit, load_toolchain()?)
@@ -263,10 +298,23 @@ def build_source(path: Path) -> Option[Path]:
 
 def built(options: Options, source: Path) -> Result[i32, str]:
     """Build a source file or a project's conventional library or main program, preparing its path dependencies."""
-    mut unit = describe_native(source, options.profile, options.request)?
     library = source.name() == "lib.incn"
-    mut output = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath(unit.profile).joinpath("bin").joinpath(crate_name(unit))
+    if not library:
+        match via_owner("build", options, source):
+            Some(reply) => return Ok(status_code(reply.exit))
+            None => pass
+    mut unit = describe_native(source, options.profile, options.request)?
+    mut output = program_binary(unit)
     if library:
         unit.kind = "library"
         output = dependency_artifact_dir(unit.project_root, unit.package, unit.profile).joinpath(f"lib{crate_name(unit)}.rlib")
     return compile_unit(unit, load_toolchain()?, output)
+
+
+def owner(arguments: list[str]) -> None:
+    """`incan owner stop`: stop the resident owners of this home."""
+    if arguments != ["stop"]:
+        fail(f"incan owner: expected `stop`\n{usage()}", 2)
+    match stop_owners():
+        Err(reason) => fail(f"incan owner: {reason}", 1)
+        Ok(stopped) => println(f"stopped {stopped} owners")

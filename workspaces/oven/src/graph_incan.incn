@@ -3,7 +3,9 @@
 from rust::std::process import id
 from std.fs import Path
 from features import FeatureRequest
-from graph_cache import cache_file, compiler_digest, fingerprint, is_unchecked, publish, publish_binary, publish_unchecked, tree_inputs
+from graph_cache import cache_file, is_unchecked, publish_unchecked, tree_inputs
+from publication import publish, publish_binary
+from unit_freshness import artifact_identity, fingerprint
 from incan_units import crate_name, run_compiler, write_unit
 from toolchain import NativeCrate, Toolchain
 from unit import UnitLoaf, describe
@@ -41,11 +43,11 @@ pub def inspect_incan(source: Path, toolchain: Toolchain, built: Dict[str, Nativ
     mut cache_root = project
     if let Some(selected) = owner:
         cache_root = selected
-    mut inputs = ["incan.codegraph.incan/4", compiler_digest(cache_root, toolchain.driver)?, toolchain.sysroot, ready.to_json().to_json().map_err((error) => error.message())?]
+    mut inputs = ["incan.codegraph.incan/4", artifact_identity(Path(toolchain.driver))?, toolchain.sysroot, ready.to_json().to_json().map_err((error) => error.message())?]
     for native in ready.externs:
-        inputs = inputs + [native.name, native.path, compiler_digest(cache_root, native.path)?]
+        inputs = inputs + [native.name, native.path, artifact_identity(Path(native.path))?]
     for abi in toolchain.rust_abi:
-        inputs = inputs + [abi, compiler_digest(cache_root, abi)?]
+        inputs = inputs + [abi, artifact_identity(Path(abi))?]
     inputs = inputs + ready.search + tree_inputs(project)?
     for loaf in ready.loaves:
         inputs = inputs + tree_inputs(Path(loaf.dir))?

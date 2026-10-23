@@ -42,6 +42,10 @@ The compiler is the Rust code Oven calls. `incan-rustc-driver` compiles one unit
 
 Oven's decisions and the actions they lead to run in one program, so they share typed values rather than exchanging documents. The `incan.oven.*` wire schemas are removed. The unit description and the lock are the only formats that cross a boundary. A tool that runs outside Oven, such as the language server, asks for the description of the unit owning a file with `incan describe-unit PATH`.
 
+### A resident owner
+
+`incan run`, `build` and `test` may ask a resident Oven process for a unit's executable. That owner is the same Oven program in a service mode, serial per project and toolchain generation, reached over a private Unix socket with the `incan.owner/1` frames. It retains Oven's own objects (the toolchain, the prepared unit and its ledger), reconciles every input on each request exactly as a command does, and never runs a user's program: the command receives the executable's path and becomes it. A unit the owner does not serve is prepared in the command.
+
 ### Bootstrap
 
 Until a dev.8 toolchain builds itself, the frozen 0.6.0-dev.7 builder compiles Oven and the dev.8 compiler.
@@ -50,7 +54,7 @@ During bootstrap, `incan.toolchain/1` names the prepared registry closure in `re
 
 ## Consequences
 
-- `oven_rustc`, `oven_store`, `oven_interop`, the `oven` command (`oven-cli`) and `incan_oven_facet` are removed. So are the driver's completed-output selection, native plan selection, bake and publication, and the project owner process.
+- `oven_rustc`, `oven_store`, `oven_interop`, the `oven` command (`oven-cli`) and `incan_oven_facet` are removed. So are the driver's completed-output selection, native plan selection, bake and publication, and the Rust project owner process (the owner above is written in Incan and holds no store).
 - The compiler's manifest model (`oven_model::manifest`) and its project discovery are replaced by the unit description.
 - Oven's host functions (file observation, process execution, store writes) are written in Incan over the standard library and Rust interop (DD-0006).
 

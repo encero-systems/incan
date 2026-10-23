@@ -4,25 +4,38 @@ from rust::std::process import Command
 from rust::std::io import Write, stderr
 from std.fs import Path
 from std.json import JsonValue, parse
-from incan_units import compile_unit, crate_name
+from incan_units import compile_unit, crate_name, test_report
 from json_fields import array, text_field
 from toolchain import Toolchain
 from unit import UnitDescription
 
 
+pub def tests_binary(unit: UnitDescription) -> Path:
+    """Where a test unit's executable is stored in its project."""
+    return Path(unit.project_root).joinpath("target").joinpath("incan").joinpath(unit.profile).joinpath("tests").joinpath(crate_name(unit))
+
+
 pub def run_tests(unit: UnitDescription, toolchain: Toolchain) -> Result[i32, str]:
-    """Compile once and run each collected test in its own process, so one panic never hides a later test."""
-    binary = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath(unit.profile).joinpath("tests").joinpath(crate_name(unit))
+    """Compile once, unless the stored executable is current, and run the collected tests."""
+    binary = tests_binary(unit)
     compiled = compile_unit(unit, toolchain, binary)?
     if compiled != 0:
         return Ok(compiled)
-    report = Path(f"{binary.0}.tests.json")
+    return run_collected(binary, Path(unit.source).name())
+
+
+pub def run_collected(binary: Path, file: str) -> Result[i32, str]:
+    """Run each collected test of a compiled test unit in its own process, so one panic never hides a later test.
+
+    The tests always execute afresh; only their compilation is ever reused.
+    """
+    report = test_report(binary)
     text = report.read_text("utf-8", "strict").map_err((error) => error.message())?
     document = parse(text).map_err((error) => error.message())?
     tests = array(document, []).map_err((_) => "compiler test report must be an array")?
     mut failed = false
     for test in tests:
-        if not run_test(binary, Path(unit.source).name(), test)?:
+        if not run_test(binary, file, test)?:
             failed = true
     if failed:
         return Ok(1)
