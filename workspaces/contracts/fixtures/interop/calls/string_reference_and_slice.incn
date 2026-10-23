@@ -1,4 +1,4 @@
-# behavior: Rust generic references borrow owned text, literal str parameters receive its slice, and checked dereference chains retain shared String receivers
+# behavior: native text references retain their owners, checked dereferences preserve shared receivers, and source text indexing observes Unicode scalars through locals and fields
 # expect-stdout:
 #   true
 #   leaf
@@ -11,6 +11,15 @@ from rust::std::sync import Arc
 from rust::incan_std_core::strings import str_slice_byte_range
 
 
+model TextView:
+    """Keep text owned by a source receiver while reading individual Unicode scalars."""
+    value: str
+
+    def at(self, index: int) -> str:
+        """Read one scalar without consuming the receiver's text."""
+        return self.value[index]
+
+
 def main() -> None:
     """Keep the owner usable after both reference forms cross Rust boundaries."""
     text = "leaf"
@@ -20,3 +29,12 @@ def main() -> None:
     shared: Arc[str] = Arc.new(text)
     assert shared.as_str() == "leaf"
     assert shared.as_str() == "leaf"
+    assert text[0] == "l"
+    assert text[-1] == "f"
+    unicode_text = "Aé🙂"
+    assert unicode_text[1] == "é"
+    assert unicode_text[-1] == "🙂"
+    view = TextView(value=unicode_text)
+    assert view.at(1) == "é"
+    assert view.at(-1) == "🙂"
+    assert view.value == unicode_text

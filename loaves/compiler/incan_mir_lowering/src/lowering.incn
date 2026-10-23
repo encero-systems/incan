@@ -8370,7 +8370,7 @@ def read_indexed_element(
     slot: int,
     span: SourceSpan,
 ) -> Result[Place, str]:
-    """Read a checked tuple field, frozen item, or cloned collection element from the place earlier steps reached."""
+    """Read a checked tuple field, Unicode scalar, frozen item, or cloned collection element from the place earlier steps reached."""
     if is_tuple_type(place_type(builder.locals, place)):
         return read_element_field(builder, place, source.projection[slot], span)
     match place_type(builder.locals, place):
@@ -8384,7 +8384,27 @@ def read_indexed_element(
     if is_collection(place_type(builder.locals, place)):
         return read_dictionary_element(builder, place, source, slot, span)
     argument = list_index_operand(builder, source, slot, span)?
+    if place_type(builder.locals, place) == PlanType.String:
+        return read_text_element(builder, place, argument, span)
     return read_list_element(builder, place, argument, span)
+
+
+def read_text_element(mut builder: Builder, place: Place, index: Operand, span: SourceSpan) -> Result[Place, str]:
+    """Borrow retained String storage for the canonical Unicode-scalar index helper, preserving negative indices and IndexError behavior."""
+    reference = temporary(builder, PlanType.StringRef, span)
+    builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
+    output = temporary(builder, PlanType.String, span)
+    instantiated_external_call(
+        builder,
+        "incan_std_core::strings::str_index",
+        [PlanType.StringRef],
+        [PlanType.StringRef, PlanType.Int],
+        PlanType.String,
+        [read_place(reference, false, span), index],
+        output,
+        span,
+    )?
+    return Ok(output)
 
 
 pub def read_list_element(
@@ -8394,7 +8414,9 @@ pub def read_list_element(
     span: SourceSpan,
 ) -> Result[Place, str]:
     """Clone a projected element instead of moving caller or container-owned storage."""
-    leaf, depth = require_list_shape(place_type(builder.locals, place), "unsupported Body IR indexing non-list")?
+    ty = place_type(builder.locals, place)
+    site = f"{builder.file}:{span.line}:{span.column} in {builder.name}"
+    leaf, depth = require_list_shape(ty, f"unsupported Body IR indexing non-list at {site}; type {ty:?}; element read")?
     reference = list_borrow(builder, place, false, span)?
     element = list_element(leaf, depth)
     output = temporary(builder, element, span)
