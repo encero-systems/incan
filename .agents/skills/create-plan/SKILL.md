@@ -39,6 +39,7 @@ Before selecting files to edit, identify the local pattern that should govern th
 - Active area: parser, typechecker, lowering, emission, stdlib, CLI/tooling, docs, tests, or a named combination.
 - Precedents: 2-3 nearby files that already implement the same behavior shape. Prefer same-stage and same-domain examples.
 - Source of truth: the RFC, docs contract, diagnostics catalog, stdlib registry, ownership policy, CLI reference, or other boundary that owns the behavior.
+- For declaration and call relationships, use `incan inspect codegraph PATH --query defs TERM` or `--query callers TERM` before grep. Check Makefile targets and `workspaces/oven/src/main.incn` before naming commands.
 - Verification path: the narrow red test plus any broader proof needed to cover downstream stages or build modes.
 
 Plans should name these items explicitly. If there is no close precedent, say so and explain which boundary document or implementation shape is being used instead.
@@ -74,11 +75,13 @@ Plans for Incan work should include the checked capability evidence or explicitl
 
 ## TDD (default when tests exist)
 
-1. **Red**: Add a failing test that encodes the contract **before** production changes.
-   - Prefer the **narrowest** command + filter the repo already uses (`cargo test <filter>`, `make test`, `incan test`, etc.).
-   - Use a **behavioral assertion** when a golden/snapshot alone would not fail first (e.g. substring check on generated output).
+1. **Red**: Extend an existing case to encode the failing contract **before** production changes. Add a case only when no existing case in the same area can carry the behavior.
+   - For Incan, use the smallest contract selector (one case or area) from `workspaces/contracts/README.md`.
+   - Assert observable output, acceptance, or diagnostic codes; a case never names a route or build step.
 2. **Green**: Minimal change in the correct layer (parser vs typecheck vs lower vs emit vs library `.incn`—per repo docs).
-3. **Refine**: Update snapshots/goldens with the repo’s documented env flags or workflows (`INSTA_UPDATE`, etc.).
+3. **Refine**: Review expectations against the language contract and run the affected whole families at commit points.
+
+**Test budget:** the whole suite stays under about 3,000 tests, including contract cases, Rust unit tests, and Incan test functions. Never add a case per bug; name the guarded bug in its `# behavior:` line. A library case has one producer Loaf carrying every declaration it needs.
 
 **Pitfall**: Typecheck-only green is not enough for codegen pipelines; plan tests that exercise **lowering/emission** or end-to-end output when relevant.
 
@@ -93,6 +96,7 @@ When users or release notes should see the change:
 - **Release notes**: add a bullet in the repo’s current release notes file (path differs by project; find it under `docs/release_notes/` or `workspaces/docs-site/docs/release_notes/` or as documented in `CONTRIBUTING.md`). Match existing style (area prefix, one line, link `#issue`).
 
 - **Tutorials / reference**: smallest update under that repo’s `docs/` tree; for MkDocs sites, run **`mkdocs build --strict`** from the configured docs root when prose or nav changes.
+- **Design records**: change a record only when a decision changes, in a sentence or two. Keep the decision, boundaries, consequences, and non-goals under about 1,000 words; mechanism detail belongs in commit messages and rustdoc, never a paragraph per commit.
 
 If there is **no** user-visible delta, state **`docs: none`** in the plan.
 
@@ -115,12 +119,13 @@ From the Incan repo root:
 | Step | Command | Notes |
 |------|---------|--------|
 | Format | `make fmt` | Writes sources; `make fmt-check` for read-only. Nightly rustfmt required (see Makefile). |
-| Full gate | `make pre-commit` | Full local gate: full checks + `smoke-test-fast`. |
-| Smoke | `make smoke-test` | Runs tests again plus `smoke-test-core` (release build, canaries, example builds, scripts). |
+| Focused contracts | `incan run workspaces/contracts/src/main.incn -- INCAN workspaces/contracts/fixtures SELECTOR` | Replace `INCAN` with the compiler under test and `SELECTOR` with a family/area/name or family/area. |
+| Commit contracts | Same runner command with the affected family selectors | Run whole families at commit points; record counts and regressions. |
+| Spelling | `make us-english-check` | Required before every commit. |
+| Rustdoc | `make rustdoc-gate` | Changed Rust functions and methods need rustdoc. |
+| Fast gate | `make pre-commit-fast` | Formatting, spelling, rustdoc, and skill-table checks; does not run contracts. |
 
-**Typical one-liner after implementation:** `make fmt && make pre-commit`.
-
-Optional: `make smoke-test` when you explicitly want the full smoke suite after `pre-commit`.
+Run `make fmt` after Rust edits, the relevant contracts, then `make pre-commit-fast`. Oven builds and runs units; there is no Cargo project and no separate smoke target. Verify additional commands against the current Makefile and Oven CLI rather than guessing replacements.
 
 **Project rules:** no `.unwrap()` / `.expect()` in Incan (see `AGENTS.md`).
 
@@ -130,7 +135,7 @@ From the IncQL package root:
 
 | Step | Command |
 |------|---------|
-| CI-equivalent gate | `make ci` (or `make fmt-check`, `make build`, `make test` as listed in `AGENTS.md`) |
+| Repository gate | Exact commands verified in `IncQL/AGENTS.md` and its Makefile |
 
 Release notes and RFC alignment follow `IncQL/AGENTS.md` and `CONTRIBUTING.md`.
 

@@ -13,7 +13,7 @@ Replace bracketed sections. Remove sections that do not apply. Point **Gate** at
 
 ### 1. Red
 
-- [ ] Add failing test: [path or new file]
+- [ ] Extend an existing case: [path]; add one only if no area case can carry the behavior
 - [ ] Confirm failure with: `[repo test command + filter]`
 
 ### 2. Green
@@ -22,12 +22,14 @@ Replace bracketed sections. Remove sections that do not apply. Point **Gate** at
 
 ### 3. Refine
 
-- [ ] Update goldens/snapshots per repo docs (e.g. `INSTA_UPDATE=1 ...`)
+- [ ] Review observable expectations against the contract and run the affected whole families at commit points
+- [ ] Keep the suite under about 3,000 tests; name guarded bugs in `# behavior:` and use one producer Loaf per library case
 
 ## Documentation
 
 - [ ] Release notes: [path] — [section] bullet + #issue
 - [ ] Other docs: [path or none]
+- [ ] Design records, if a decision changed: decision, boundaries, consequences, non-goals; under about 1,000 words, no mechanism log
 - [ ] `mkdocs build --strict` from [docs root] if applicable
 
 ## Files to touch (expected)
@@ -41,8 +43,10 @@ Replace bracketed sections. Remove sections that do not apply. Point **Gate** at
 | Step | Command |
 |------|---------|
 | Format | `make fmt` (Incan) / `make fmt-check` (IncQL) / … |
-| Full gate | `make pre-commit` (Incan) / `make ci` (IncQL) / … |
-| Smoke | `make smoke-test` (Incan) / … |
+| Focused contracts | `incan run workspaces/contracts/src/main.incn -- INCAN workspaces/contracts/fixtures SELECTOR` (Incan; substitute compiler and case/area selector) |
+| Commit contracts | Same runner with affected whole-family selectors (Incan) |
+| Fast gate | `make pre-commit-fast` (Incan) / [verified target repo gate] |
+| Before every commit | `make us-english-check` (Incan) |
 
 ## Success criteria
 

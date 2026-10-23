@@ -107,6 +107,9 @@ Workers must be told:
 - they must not revert others' work
 - they must adapt to concurrent changes rather than overwrite them
 - they commit to their own branch as they go, but must not push or open a PR — the orchestrator publishes after integration
+- in Incan, they and the orchestrator run `make us-english-check` before every commit
+- Incan's whole suite stays under about 3,000 tests; extend an existing case before adding one, add only when no same-area case can carry the behavior, name guarded bugs in `# behavior:`, and use one producer Loaf carrying all declarations per library case
+- Incan design records change only when a decision changes, in a sentence or two; keep decisions, boundaries, consequences, and non-goals under about 1,000 words, with mechanisms in commit messages and rustdoc rather than a paragraph per commit
 
 ### Step 5: Keep orchestration disciplined
 

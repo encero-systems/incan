@@ -57,14 +57,25 @@ This requirement applies to contributors and automated implementation workflows 
 
 Keep updates to the evidence: what changed, what proves it, what is left, and the mechanism blocking anything that is. Do not narrate process.
 
+## Tests and design records
+
+These budgets hold for every contributor and every automated workflow.
+
+- **The whole test suite stays under about 3,000 tests** (#2255): contract cases, Rust unit tests and Incan test functions together.
+- **Extend before you add.** Add a contract case only when no existing case in the same area can carry the behavior. Otherwise, add the program lines and expectations to that case.
+- **No case per bug.** Name the bug a case guards in its `# behavior:` line instead.
+- **One producer per library case.** A library case's producer Loaf carries every declaration that case needs.
+- **Design records state decisions, not mechanisms.** A record holds the decision, its boundaries, its consequences and its non-goals, in under about 1,000 words. Change a record only when a decision changes, in a sentence or two. Mechanism detail belongs in commit messages and rustdoc. Never append a paragraph per commit.
+- **US English is checked.** Run `make us-english-check` before every commit. CI runs it on every PR.
+
 ## General Workflow
 
 1. **Branch from main**: Create a feature branch using the naming convention `<type>/<issue>-<slug>`, where type is `feature`, `chore`, or `bugfix`. Examples: `feature/165-implement-rfc-031-library-system-phase-1`, `chore/88-vocab-drift-guardrails`, `bugfix/42-fix-parser-crash`. Use the `/start-work` skill to automate this.
 2. **Follow RFCs**: RFCs in `workspaces/docs-site/docs/RFCs/` are the spec — implement exactly what they say.
-3. **Run tests**: `make test` must pass before considering work complete. Run targeted tests during development; run the full suite when you finish.
-4. **Update snapshots**: `INSTA_UPDATE=1 cargo test -p incan_emit --test codegen_snapshot_tests` to update changed snapshots.
+3. **Prove changes with the contract families**: `workspaces/contracts/README.md` defines the families and how to run them. During development, run the smallest selector that proves a change (one case, or one area). Run whole families at commit points. The repository has no Cargo project: never run `cargo`.
+4. **Respect the test and record budgets**: see [Tests and design records](#tests-and-design-records).
 5. **Boy Scout Rule**: Leave every file you touch in better shape than you found it — fix stale TODOs, missing doc comments, unused imports, misleading names.
-6. **Documentation gate (mandatory)**: Before finalizing any change, audit every touched Rust module and ensure rustdocs are present and accurate for all new/changed functions and methods in changed Rust source files. This is enforced mechanically by `scripts/check_changed_rustdocs.py` through `make pre-commit-fast` and `make pre-commit`.
+6. **Documentation gate (mandatory)**: Before finalizing any change, audit every touched Rust module and ensure rustdocs are present and accurate for all new/changed functions and methods in changed Rust source files. This is enforced mechanically by `scripts/check_changed_rustdocs.py` through `make pre-commit-fast`.
 
 ### Pattern intake before edits
 
@@ -91,26 +102,25 @@ Classify the root cause before editing: lifetime/borrow across boundary, trait b
 
 ### Common commands
 
-| Command                                                   | Purpose                                                               |
-| --------------------------------------------------------- | --------------------------------------------------------------------- |
-| `make build`                                              | Debug build (fast)                                                    |
-| `make release`                                            | Optimized build                                                       |
-| `make test`                                               | Run all tests                                                         |
-| `make fmt`                                                | Format Rust code (`cargo +nightly fmt`)                               |
-| `make lint`                                               | Run clippy                                                            |
-| `make check`                                              | Format check + clippy                                                 |
-| `make pre-commit-fast`                                    | Fast local gate (format check + `cargo check`)                        |
-| `make pre-commit`                                         | Full local gate (full checks + smoke-test-fast)                       |
-| `make smoke-tests`                                        | Full smoke test: tests + release canary + examples + benchmarks-incan |
-| `make examples`                                           | Smoke test all examples (requires release build)                      |
-| `INSTA_UPDATE=1 cargo test -p incan_emit --test codegen_snapshot_tests` | Update codegen snapshots                                              |
+The compiler is built and run through Oven: `incan run`, `check`, `build`, `test`, `fmt` and `inspect`. The repository has no Cargo project; never run `cargo`.
+
+| Command                  | Purpose                                                                                        |
+| ------------------------ | ---------------------------------------------------------------------------------------------- |
+| `make fmt`               | Format the workspace's Rust sources with nightly rustfmt (file-scoped)                         |
+| `make fmt-check`         | Check Rust formatting without writing                                                          |
+| `make us-english-check`  | Fail on UK spellings (run before every commit)                                                 |
+| `make rustdoc-gate`      | Require rustdoc on changed Rust functions and methods                                          |
+| `make agents-doc-sync`   | Check that this file's skill table matches `.agents/skills/`                                   |
+| `make pre-commit-fast`   | Fast local gate: formatting, spelling, rustdoc and the skill table                              |
+| `make docs-build`        | Build the docs site (MkDocs strict)                                                            |
+| `incan inspect codegraph PATH --query defs\|refs\|callers\|callees\|imports TERM` | Find declarations and their relationships across Incan and Rust (RFC 106) before reaching for grep |
 
 ## Docs-site Workflow (MkDocs Material)
 
 When making changes under `workspaces/docs-site/`:
 
 - **Apply Divio intent before writing**: choose the reader's task and the matching page type. Tutorials teach through a guided learning exercise; how-to guides solve a concrete task; references provide factual lookup; explanations develop understanding and rationale. Content must match its type, not merely live in the matching directory.
-- **References document the public contract**: inventory the relevant public surface and include exact signatures, parameter and return types, defaults, errors, constraints, and observable behavior. Organize by API or concept so a reader can look up one item independently. Small syntax examples are welcome, but a walkthrough, feature overview, or implementation narrative is not a substitute for a reference. A reference also states nothing beyond that contract; the checklist reviewers apply is *Reference pages state the contract only* in `.agents/skills/review-docs-claims/SKILL.md`, and `make reference-contract-check` enforces its lexical part. Touching a reference page means bringing the whole page to contract, and a true sentence taken off it moves to its how-to or explanation page in the same change.
+- **References document the public contract**: inventory the relevant public surface and include exact signatures, parameter and return types, defaults, errors, constraints, and observable behavior. Organize by API or concept so a reader can look up one item independently. Small syntax examples are welcome, but a walkthrough, feature overview, or implementation narrative is not a substitute for a reference. A reference also states nothing beyond that contract; the checklist reviewers apply is *Reference pages state the contract only* in `.agents/skills/review-docs-claims/SKILL.md`, and the separate `make reference-contract-check` target enforces its lexical part. Touching a reference page means bringing the whole page to contract, and a true sentence taken off it moves to its how-to or explanation page in the same change.
 - **Separate mixed intents with links**: move task procedures to how-to guides and design rationale to explanations when those need their own treatment. Do not create all four page types mechanically for every feature. Check the actual source and same-kind precedents; an existing page is not proof that its organization is correct.
 - **Build docs locally**: run `mkdocs build --strict` from `workspaces/docs-site` to catch broken links/anchors early.
 - **Review intent separately from the build**: a successful MkDocs build checks rendering and links, not Divio placement or reference completeness. Verify both before checking off documentation in a PR.
@@ -228,9 +238,9 @@ fn my_test() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### Clippy is mandatory
+### No Cargo tools
 
-Run `cargo clippy` and fix warnings before submitting.
+The repository has no Cargo project, so `cargo clippy`, `cargo test` and `cargo fmt` do not apply. Format Rust with `make fmt`, which runs nightly rustfmt file by file. Prove behavior with the contract families.
 
 ## Compiler Pipeline
 
@@ -350,10 +360,10 @@ Example: `- **Models**: Field aliases and metadata for schema-safe mapping ([RFC
 ## PR Checklist
 
 - [ ] PR description follows `.github/pull_request_template.md`
-- [ ] `cargo test` passes
-- [ ] `cargo clippy` clean
-- [ ] Snapshots updated if codegen changed
-- [ ] New tests added for new functionality
+- [ ] Smallest relevant contract selectors pass during development; affected whole families pass at commit points
+- [ ] `make pre-commit-fast` passes (formatting, spelling, rustdoc, and skill table)
+- [ ] Existing cases extended before adding cases; suite remains under about 3,000 tests
+- [ ] Guarded bugs named in `# behavior:`; one producer Loaf per library case
 - [ ] Docs updated (rustdoc + docs-site if user-facing)
 - [ ] AGENTS.md updated with learnings (if applicable)
 - [ ] Release notes updated if user-facing change

@@ -2,6 +2,14 @@
 
 The contract families say what `incan` must do, each case as a program that carries its own expectations. A table runner, written in Incan, runs every case against an `incan` and reports each one. Nothing in a case names a route, a backend or a build step: a case states what a user observes.
 
+## Budget
+
+The whole test suite stays under about 3,000 tests (#2255).
+- **New cases:** add one only when no existing case in the same area can carry the behavior. Otherwise, extend that case's program and expectations.
+- **Bugs:** a guarded bug is named in the case's `# behavior:` line. It never gets a case of its own when an area case can hold it.
+- **Library cases:** one producer Loaf per case, carrying every declaration the case needs.
+- **Folding:** passing cases in one area can be folded together without losing an expectation; failing and pending cases stay separate until they pass.
+
 ## Families
 
 | Family | Runs | Compares |

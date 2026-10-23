@@ -53,13 +53,13 @@ Two rules apply to every change that touches a reference page, and each break is
 - **Move, don't delete.** A true sentence taken off a reference page moves, in the same change, to the page it belongs on: advice and task steps to the matching how-to, rationale and mechanics to the matching explanation. Check every removed line of the diff for a new home.
 - **The whole page.** A change that touches a reference page brings the whole page to contract, not only the changed lines. Read the page end to end, not the diff.
 
-`make reference-contract-check` (part of `make pre-commit-fast` and CI) catches the lexical part of the list above on every reference page a change touches; it cannot judge meaning, so this review still reads each page.
+`make reference-contract-check` catches the lexical part of the list above on every reference page a change touches; it is a separate Makefile target, not part of `make pre-commit-fast`. It cannot judge meaning, so this review still reads each page.
 
 ## Workflow
 
 1. Review the touched user-facing `.md` files, CLI help surfaces, examples, and scaffolds assigned by the orchestrator.
    Identify each page's Divio intent using the repository's `AGENTS.md` docs rules: tutorial, how-to, reference, or explanation. Check the content against that intent, not just its directory. For a reference, compare its inventory against the relevant public source surface and verify signatures, parameters, returns, defaults, errors, constraints, and lookup structure. A walkthrough or overview under `reference/` is a finding even when every sentence is true and MkDocs passes. Then read every changed sentence of a reference page against *Reference pages state the contract only* below: completeness and truth are necessary but not enough. Small illustrative examples are allowed; do not require four separate pages for every feature.
-2. Check actual implementation against the docs. Prefer the current code and current tests over optimistic prose, stale assumptions, or superseded branch history.
+2. Check actual implementation against the docs. Prefer the current code and current tests over optimistic prose, stale assumptions, or superseded branch history. Use `incan inspect codegraph PATH --query defs TERM` or `--query callers TERM` for declaration and call relationships before grep. Check named commands against the Makefile and `workspaces/oven/src/main.incn`; Oven owns builds and execution, and Cargo commands are not supported.
 3. RFC text is still canonical, but if the current branch deliberately diverges and the divergence is explicitly documented with a coherent reason, report that as a documented deviation rather than blindly calling it fiction.
 4. Flag:
    - mixed or incorrect Divio intent, including task recipes or implementation narratives replacing API reference material
@@ -70,6 +70,8 @@ Two rules apply to every change that touches a reference page, and each break is
    - short-prosed or mechanically chopped markdown
    - stale release-note inventory for implemented user-facing work
 5. If behavior is out of scope, prefer correcting the docs rather than inventing implementation in the report.
+6. If design records are touched, check that they state decisions, boundaries, consequences, and non-goals in under about 1,000 words. Change a record only when a decision changes, in a sentence or two; mechanisms belong in commit messages and rustdoc, never a paragraph per commit.
+7. Verify behavior claims with the smallest relevant contract selector from `workspaces/contracts/README.md`; affected whole families run at commit points. Use `make docs-build` for docs-site changes and `make reference-contract-check` for reference pages. The fast local gate is `make pre-commit-fast` (formatting, spelling, rustdoc, and skill-table checks); it does not run contracts or build docs.
 
 ## Slice report shape
 
