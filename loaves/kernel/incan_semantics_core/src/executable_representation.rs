@@ -1225,6 +1225,7 @@ mod tests {
         BodyIrModule {
             decorated_bindings: Vec::new(),
             entrypoint_effects: Vec::new(),
+            program_entrypoints: Vec::new(),
             string_conversion_contract: crate::body_ir::StringConversionContract::Unselected,
             constant_declarations: Vec::new(),
             type_alias_declarations: Vec::new(),

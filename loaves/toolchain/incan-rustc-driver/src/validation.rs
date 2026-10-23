@@ -413,7 +413,7 @@ fn validate_declarations(plan: &Plan, library: bool) -> Result<(), PlanError> {
         }
     }
     // A library unit has no entry point; an executable must have exactly the binary main Rust accepts.
-    if !library {
+    if !library && plan.programs.is_empty() {
         let main = plan
             .functions
             .iter()
@@ -425,6 +425,21 @@ fn validate_declarations(plan: &Plan, library: bool) -> Result<(), PlanError> {
             return Err(invalid(
                 main,
                 "native binary main must take no parameters and return unit or a unit Result",
+            ));
+        }
+    }
+    for name in &plan.programs {
+        let entry = plan
+            .functions
+            .iter()
+            .find(|function| function.name == *name)
+            .ok_or_else(|| PlanError::UnknownCallee(name.clone()))?;
+        if !entry.parameters.is_empty()
+            || (scalar(&entry.return_type) != Scalar::Unit && !entry_result(plan, &entry.return_type))
+        {
+            return Err(invalid(
+                entry,
+                "selected program entry must take no parameters and return unit or a unit Result",
             ));
         }
     }

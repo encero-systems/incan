@@ -40,6 +40,8 @@ Library bytes must match the build-bound SHA-256 digest; installed drivers may r
 
 Proof reuse trusts toolchain-home ownership, offers no protection against forged proofs or filesystem metadata, and never bypasses the other identity checks.
 
+The complete compiler identity may also be reused for an unchanged canonical compiler executable under the same file-generation guards; a missing or invalid proof requires the full identity query again. Installed drivers retain the proof after successful verification, while uninstalled drivers keep full verification.
+
 ## Consequences
 
 The compiler's dependence on rustc's unstable interface is concentrated in one adapter. Each Rust upgrade requires verifying and, where necessary, updating that adapter. The front end remains usable independently for checking and editor analysis.

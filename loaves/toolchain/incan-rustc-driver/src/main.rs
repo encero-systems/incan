@@ -41,6 +41,7 @@ mod library_exports;
 mod native_attributes;
 mod native_crates;
 mod plan;
+mod program_entries;
 mod rust_codegraph;
 mod rust_facts;
 mod rust_graph_bodies;

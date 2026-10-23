@@ -18,6 +18,7 @@ UNIT OPTIONS are `--profile NAME`, `--features A,B`, `--no-default-features` and
 `run`, `build` and `test` of a source ask the project's resident owner (a process this `incan` starts and keeps, see
 `owner_endpoint`) for the executable, and fall back to preparing it themselves; `OVEN_OWNER=off` never asks. `incan owner
 stop` stops the owners of this home.
+Program run/build commands also accept repeatable `--program-entry PATH`; run accepts `--argv0 TEXT`.
 """
 
 from rust::std::env import args
@@ -48,6 +49,8 @@ pub model Options:
     pub profile: str = "debug"
     pub request: FeatureRequest = FeatureRequest()
     pub substitutes: Dict[str, str] = {}
+    pub program_entries: list[str] = []
+    pub argv0: Option[str] = None
 
 
 def main() -> None:
@@ -63,6 +66,9 @@ def main() -> None:
         return
     if command == "run":
         run(rest)
+        return
+    if command == "_run-built":
+        run_built(rest)
         return
     if command == "check":
         check(rest)
@@ -96,7 +102,7 @@ def main() -> None:
 
 def usage() -> str:
     """The command line's usage."""
-    return "usage: incan run PATH [UNIT OPTIONS] [-- ARGS...]\n       incan check PATH [--format text|json] [UNIT OPTIONS]\n       incan test PATH [UNIT OPTIONS]\n       incan describe-unit PATH [UNIT OPTIONS]\n       incan build PATH [--substitute NAME=DIR] [UNIT OPTIONS]\n       incan fmt [--check] PATH...\n       incan owner stop\nUNIT OPTIONS: --profile NAME, --features A,B, --no-default-features, --all-features"
+    return "usage: incan run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]\n       incan check PATH [--format text|json] [UNIT OPTIONS]\n       incan test PATH [UNIT OPTIONS]\n       incan describe-unit PATH [UNIT OPTIONS]\n       incan build PATH [--substitute NAME=DIR] [--program-entry PATH]... [UNIT OPTIONS]\n       incan fmt [--check] PATH...\n       incan owner stop\nUNIT OPTIONS: --profile NAME, --features A,B, --no-default-features, --all-features"
 
 
 def fail(message: str, code: i32) -> None:
@@ -112,11 +118,15 @@ def parse_options(arguments: list[str]) -> Result[Options, str]:
     mut index = 0
     while index < len(arguments):
         argument = arguments[index]
-        if argument == "--profile" or argument == "--features" or argument == "--substitute":
+        if argument in ["--profile", "--features", "--substitute", "--program-entry", "--argv0"]:
             if index + 1 >= len(arguments):
                 return Err(f"`{argument}` needs a value")
             value = arguments[index + 1]
-            if argument == "--substitute":
+            if argument == "--argv0":
+                options.argv0 = Some(value)
+            elif argument == "--program-entry":
+                options.program_entries.append(value)
+            elif argument == "--substitute":
                 parts = value.split("=")
                 if len(parts) != 2 or parts[0] == "" or parts[1] == "":
                     return Err(f"`--substitute` takes NAME=DIR, got `{value}`")
@@ -147,6 +157,14 @@ def parse_options(arguments: list[str]) -> Result[Options, str]:
 
 def run(arguments: list[str]) -> None:
     """Compile the program whose entry source is PATH and run it with the arguments after `--`."""
+    own, passed = program_arguments(arguments)
+    match parse_options(own):
+        Err(reason) => fail(f"incan run: {reason}\n{usage()}", 2)
+        Ok(options) => finish("run", ran(options, passed))
+
+
+def program_arguments(arguments: list[str]) -> tuple[list[str], list[str]]:
+    """Separate command options from the program's arguments without forwarding internal selectors."""
     mut own: list[str] = []
     mut passed: list[str] = []
     mut after = false
@@ -157,9 +175,18 @@ def run(arguments: list[str]) -> None:
             after = true
         else:
             own.append(argument)
+    return (own, passed)
+
+
+def run_built(arguments: list[str]) -> None:
+    """Execute a program the calling build just verified, through run's canonical process policy. This internal caller owns input freshness."""
+    own, passed = program_arguments(arguments)
     match parse_options(own):
-        Err(reason) => fail(f"incan run: {reason}\n{usage()}", 2)
-        Ok(options) => finish("run", ran(options, passed))
+        Err(reason) => fail(f"incan run: {reason}", 2)
+        Ok(options) =>
+            if len(options.program_entries) > 0:
+                fail("a built program already has its selected entries", 2)
+            finish("run", run_program(Path(options.path), passed, options.argv0))
 
 
 def ran(options: Options, passed: list[str]) -> Result[i32, str]:
@@ -169,20 +196,21 @@ def ran(options: Options, passed: list[str]) -> Result[i32, str]:
         Some(reply) =>
             if reply.exit != 0:
                 return Ok(status_code(reply.exit))
-            return run_program(Path(reply.binary), passed)
+            return run_program(Path(reply.binary), passed, options.argv0)
         None => pass
-    unit = describe_native(Path(options.path), options.profile, options.request)?
+    mut unit = describe_native(Path(options.path), options.profile, options.request)?
+    unit.program_entries = options.program_entries
     toolchain = load_toolchain()?
     binary = program_binary(unit)
     compiled = compile_unit(unit, toolchain, binary)?
     if compiled != 0:
         return Ok(compiled)
-    return run_program(binary, passed)
+    return run_program(binary, passed, options.argv0)
 
 
 def via_owner(command: str, options: Options, entry: Path) -> Option[Reply]:
     """The reply of the project's resident owner, which has made the executable; `None` when this process should."""
-    if len(options.substitutes) > 0:
+    if len(options.substitutes) > 0 or len(options.program_entries) > 0:
         return None
     return owned(command, entry, options.profile, options.request.features, options.request.default_features, options.request.all_features)
 
@@ -196,6 +224,7 @@ def test(arguments: list[str]) -> None:
 
 def tested(options: Options) -> Result[i32, str]:
     """Make a test unit's executable, through its owner or in this process, and report each test's fresh outcome."""
+    require_ordinary_unit(options)?
     match via_owner("test", options, Path(options.path)):
         Some(reply) =>
             if reply.exit != 0:
@@ -228,6 +257,7 @@ def check(arguments: list[str]) -> None:
 
 def checked(options: Options, format: str) -> Result[i32, str]:
     """Check the described unit with the toolchain's compiler."""
+    require_ordinary_unit(options)?
     unit = describe_native(Path(options.path), options.profile, options.request)?
     return check_unit(unit, load_toolchain()?, format)
 
@@ -239,11 +269,21 @@ def finish(command: str, result: Result[i32, str]) -> None:
         Ok(code) => exit(code)
 
 
+def require_ordinary_unit(options: Options) -> Result[None, str]:
+    """Refuse execution-only options instead of silently dropping a requested entry contract."""
+    if len(options.program_entries) > 0 or options.argv0 != None:
+        return Err("--program-entry requires run/build; --argv0 requires run")
+    return Ok(None)
+
+
 def describe_unit(arguments: list[str]) -> None:
     """Print the unit description of the unit whose entry source is PATH."""
     match parse_options(arguments):
         Err(reason) => fail(f"incan describe-unit: {reason}\n{usage()}", 2)
         Ok(options) =>
+            match require_ordinary_unit(options):
+                Err(reason) => fail(f"incan describe-unit: {reason}", 2)
+                Ok(_) => pass
             match describe_native(Path(options.path), options.profile, options.request):
                 Err(reason) => fail(f"incan describe-unit: {reason}", 1)
                 Ok(unit) =>
@@ -299,11 +339,14 @@ def build_source(path: Path) -> Option[Path]:
 def built(options: Options, source: Path) -> Result[i32, str]:
     """Build a source file or a project's conventional library or main program, preparing its path dependencies."""
     library = source.name() == "lib.incn"
+    if options.argv0 != None or (library and len(options.program_entries) > 0):
+        return Err("--argv0 requires run; program entries require a program unit")
     if not library:
         match via_owner("build", options, source):
             Some(reply) => return Ok(status_code(reply.exit))
             None => pass
     mut unit = describe_native(source, options.profile, options.request)?
+    unit.program_entries = options.program_entries
     mut output = program_binary(unit)
     if library:
         unit.kind = "library"

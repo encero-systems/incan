@@ -324,6 +324,7 @@ pub fn build_body_ir_module(
         string_conversion_contract: bir::StringConversionContract::Unselected,
         decorated_bindings,
         entrypoint_effects: entrypoint_effects::collect(program),
+        program_entrypoints: Vec::new(),
         constant_declarations,
         type_alias_declarations: collect::collect_type_aliases(program, type_info),
         trait_declarations: collect::collect_local_trait_declarations(program, type_info),

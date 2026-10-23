@@ -63,6 +63,18 @@ fn read_source_checked(file_path: &str) -> Result<String, SourceReadFailure> {
 
 /// Recursively collect authored `.incn` files without following directory symlinks.
 pub fn collect_incan_source_files(directory: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    collect_incan_source_files_with_directories(directory, files, &mut Vec::new(), &mut false)
+}
+
+/// Discover the same authored files while retaining traversed directories for source-graph generation guards.
+/// Directory observations detect transient added/removed import candidates even when the final file list agrees.
+pub(crate) fn collect_incan_source_files_with_directories(
+    directory: &Path,
+    files: &mut Vec<PathBuf>,
+    directories: &mut Vec<PathBuf>,
+    contains_symlinks: &mut bool,
+) -> std::io::Result<()> {
+    directories.push(directory.to_path_buf());
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
         let file_type = entry.file_type()?;
@@ -73,10 +85,12 @@ pub fn collect_incan_source_files(directory: &Path, files: &mut Vec<PathBuf>) ->
             // and user tools all place non-source state below hidden directories; treating that state as an Incan
             // module can emit invalid Rust such as `pub mod .incan;`.
             if !name.starts_with('.') && name != "target" && name != "node_modules" {
-                collect_incan_source_files(&entry.path(), files)?;
+                collect_incan_source_files_with_directories(&entry.path(), files, directories, contains_symlinks)?;
             }
         } else if file_type.is_file() && entry.path().extension().is_some_and(|extension| extension == "incn") {
             files.push(entry.path());
+        } else if file_type.is_symlink() {
+            *contains_symlinks = true;
         }
     }
     Ok(())

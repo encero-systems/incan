@@ -137,7 +137,7 @@ fn runtime_declarations(session: &CompilationSession) -> Vec<CanonicalSymbolId> 
 fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup) -> Result<CheckedProgram, String> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::checked_modules", input = %unit.source.display()).entered();
     let path = unit.source.canonicalize().map_err(|error| error.to_string())?;
-    let mut session = CompilationSession::new(unit)
+    let mut session = CompilationSession::for_native_program(unit)
         .and_then(|session| session.with_rust_facts(rust))
         .map_err(|error| error.to_string())?;
     let library = unit.kind == UnitKind::Library;
@@ -232,9 +232,11 @@ fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup) -> Result<Chec
         Vec::new()
     };
     sources.extend(modules.into_iter().map(|module| module.source));
+    let program_entrypoints = program_entrypoints(unit, &bodies, &files)?;
     let entry_module = bodies.get_mut(entry).ok_or("selected Body IR entry is missing")?;
+    entry_module.program_entrypoints = program_entrypoints;
     entry_module.string_conversion_contract = string_conversion_contract;
-    complete_dependency_context(
+    let program = complete_dependency_context(
         CheckedProgram {
             modules: bodies,
             sources,
@@ -248,7 +250,53 @@ fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup) -> Result<Chec
         session.loaves(),
         requested,
         package_identity,
-    )
+    )?;
+    session.retain_native_loaf_reachability();
+    Ok(program)
+}
+
+/// Resolve explicit program sources to checked main identities before joining module contexts. Ordinary imported
+/// functions named main remain ordinary calls; only these selected identities acquire program entry semantics.
+fn program_entrypoints(
+    unit: &UnitDescription,
+    bodies: &[BodyIrModule],
+    files: &[String],
+) -> Result<Vec<CanonicalSymbolId>, String> {
+    if !unit.program_entries.is_empty() && unit.kind != UnitKind::Program {
+        return Err("program entries require a program unit".into());
+    }
+    let mut entries = Vec::new();
+    for source in &unit.program_entries {
+        let path = unit
+            .project_root
+            .join(source)
+            .canonicalize()
+            .map_err(|error| error.to_string())?;
+        let index = files
+            .iter()
+            .position(|file| Path::new(file) == path)
+            .ok_or_else(|| format!("program entry {} is not a collected module", source.display()))?;
+        let body = bodies[index]
+            .bodies
+            .iter()
+            .find(|body| {
+                body.name == "main"
+                    && body
+                        .canonical
+                        .as_ref()
+                        .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Function)
+            })
+            .ok_or_else(|| format!("program entry {} has no main", source.display()))?;
+        let identity = body
+            .canonical
+            .clone()
+            .ok_or("program entry has no canonical identity")?;
+        if entries.contains(&identity) {
+            return Err(format!("duplicate program entry {}", source.display()));
+        }
+        entries.push(identity);
+    }
+    Ok(entries)
 }
 
 /// Project exact public package requirements reachable from accepted module facts, including private re-export calls.
@@ -515,7 +563,7 @@ fn native_union_layouts(
     use incan_frontend::library_manifest::resolved_type_from_manifest_type_ref;
     use incan_frontend::typechecker::semantic_type_from_resolved;
     loaves
-        .entries()
+        .native_union_entries()
         .flat_map(|entry| {
             entry
                 .artifact

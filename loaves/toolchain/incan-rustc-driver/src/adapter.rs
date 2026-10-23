@@ -346,6 +346,11 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
             }
             krate.items.push(item);
         }
+        if !self.plan.programs.is_empty() {
+            krate
+                .items
+                .push(crate::program_entries::dispatcher(&self.plan, krate.spans.inner_span));
+        }
         krate
             .items
             .extend(crate::shared_callables::items(&self.plan, krate.spans.inner_span));

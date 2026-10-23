@@ -663,6 +663,8 @@ pub model Plan:
     pub exports: list[PlanExport] = []
     # Collected test entry functions; the adapter registers these with rustc's native test harness.
     pub tests: list[str] = []
+    # Canonically lowered program entries; rustc applies Termination to the one selected for this process.
+    pub programs: list[str] = []
     # A library publishes each generic ADT once; concrete layouts alias its instantiations.
     pub generic_models: list[GenericModelDeclaration] = []
 

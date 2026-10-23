@@ -33,11 +33,11 @@ def argument_name(argument: &RustAttributeArgument) -> str:
 
 def attribute_value(value: &RustAttributeValue) -> AttributeValue:
     """One literal, or a list of them, in the plan's spelling."""
-    match value:
+    match value.clone():
         RustAttributeValue.Text(text) => return AttributeValue.Text(str(text))
-        RustAttributeValue.Int(number) => return AttributeValue.Int(int(number.clone()))
-        RustAttributeValue.Float(number) => return AttributeValue.Float(float(number.clone()))
-        RustAttributeValue.Bool(flag) => return AttributeValue.Bool(flag.clone())
+        RustAttributeValue.Int(number) => return AttributeValue.Int(int(number))
+        RustAttributeValue.Float(number) => return AttributeValue.Float(float(number))
+        RustAttributeValue.Bool(flag) => return AttributeValue.Bool(flag)
         RustAttributeValue.List(items) => return AttributeValue.List(attribute_values(items))
 
 

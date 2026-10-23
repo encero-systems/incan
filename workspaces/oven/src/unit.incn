@@ -56,6 +56,7 @@ pub model UnitDescription:
     pub search: list[str] = []
     pub rust_abi: list[str] = []
     pub kind: str = "program"
+    pub program_entries: list[str] = []
 
     def to_json(self) -> JsonValue:
         """The description as the compiler reads it."""
@@ -64,6 +65,7 @@ pub model UnitDescription:
                 "schema": JsonValue.string(UNIT_DESCRIPTION_SCHEMA),
                 "source": JsonValue.string(self.source),
                 "kind": JsonValue.string(self.kind),
+                "program_entries": texts(self.program_entries),
                 "project_root": JsonValue.string(self.project_root),
                 "source_root": JsonValue.string(self.source_root),
                 "package": JsonValue.string(self.package),

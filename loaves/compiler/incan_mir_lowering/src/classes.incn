@@ -93,6 +93,21 @@ pub def function_name(module: &BodyIrModule, body: &Body) -> str:
     return f"__incan_body_{body.span.start}"
 
 
+pub def is_program_entry(module: &BodyIrModule, body: &Body) -> bool:
+    """Read explicit checked entry identities; an ordinary imported main keeps ordinary function semantics."""
+    if str(body.name) != "main":
+        return false
+    if function_name(module, body) == "main":
+        return true
+    match body.canonical:
+        Some(identity) =>
+            for selected in module.program_entrypoints:
+                if selected.clone() == identity:
+                    return true
+        None => pass
+    return false
+
+
 def has_overloaded_name(module: &BodyIrModule, body: &Body, identity: &CanonicalSymbolId) -> bool:
     """Report whether another function of the same module declares this body's source name, as overloads do."""
     owner = canonical_module_identity(identity)

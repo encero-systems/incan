@@ -49,6 +49,9 @@ pub struct UnitDescription {
     /// The entry contract; descriptions predating explicit kinds describe programs.
     #[serde(default)]
     pub kind: UnitKind,
+    /// Additional program entry sources, in selector order. Each must be a collected source module with a main.
+    #[serde(default)]
+    pub program_entries: Vec<PathBuf>,
     /// The package's root directory, which package-relative paths are spelled against.
     pub project_root: PathBuf,
     /// The package's source root, which module paths are spelled against.

@@ -1,0 +1,43 @@
+"""Optional full-family partition hints; every hinted compilation is validated against current inputs."""
+
+from rust::std::env import var
+from rust::std::process import id
+from std.fs import Path
+
+
+pub def hint_path(root: Path, family: str) -> Option[Path]:
+    """Scope case-name partitions to the canonical corpus and an explicit absolute toolchain home."""
+    mut toolchain_home = ""
+    environment_key: str = "INCAN_HOME"
+    match var(environment_key):
+        Err(_) => return None
+        Ok(value) => toolchain_home = value
+    if not toolchain_home.startswith("/"):
+        return None
+    match root.resolve():
+        Err(_) => return None
+        Ok(canonical) =>
+            scope = canonical.0.replace("_", "_u").replace("/", "_s")
+            return Some(Path(toolchain_home).joinpath("cache").joinpath("contract-groups-v1").joinpath(f"{scope}-{family}.tsv"))
+
+
+pub def retain_hint(hint: Option[Path], partition: list[str]) -> None:
+    """Publish complete case-name rows atomically; optional storage failures leave per-scratch planning intact."""
+    match hint:
+        None => pass
+        Some(path) =>
+            match write_hint(path, "\n".join(partition) + "\n"):
+                Err(_) => pass
+                Ok(_) => pass
+
+
+def write_hint(path: Path, text: str) -> Result[None, str]:
+    """Keep concurrent readers on a complete old or new partition, without storing compilation or case results."""
+    path.parent().mkdir(true, true).map_err((error) => error.message())?
+    temporary = path.parent().joinpath(f".{path.name()}.{id()}.pending")
+    temporary.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
+    match temporary.replace(path):
+        Err(error) =>
+            temporary.unlink()
+            return Err(error.message())
+        Ok(_) => return Ok(None)

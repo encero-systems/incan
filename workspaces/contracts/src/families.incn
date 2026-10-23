@@ -12,7 +12,22 @@ The contract families: what each one runs and which expectations it admits.
 """
 
 from fixture import Fixture
-from header import Header
+from header import Header, parse_header
+
+
+pub model AdmittedProgram:
+    """A fixture's source and validated expectations, read through one intake boundary."""
+
+    pub source: str
+    pub header: Header
+
+
+pub def read_program(fixture: Fixture) -> Result[AdmittedProgram, str]:
+    """Read and admit one fixture, retaining its source path on every refusal."""
+    source = fixture.program.read_text("utf-8", "strict").map_err((error) => f"{fixture.program.0}: {error.message()}")?
+    header = parse_header(source).map_err((reason) => f"{fixture.program.0}: {reason}")?
+    admit(fixture, header).map_err((reason) => f"{fixture.program.0}: {reason}")?
+    return Ok(AdmittedProgram(source=source, header=header))
 
 
 pub const FAMILIES: FrozenList[str] = ["behavior", "check", "library", "interop", "testing", "project", "format", "graph"]

@@ -2,7 +2,6 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 mod library_proof;
 
@@ -104,14 +103,10 @@ pub fn verify(sysroot: &Path) -> Result<DriverIdentity, IdentityError> {
     let built_digest =
         option_env!("INCAN_DRIVER_LIBRARY_DIGEST").ok_or(IdentityError::Missing("INCAN_DRIVER_LIBRARY_DIGEST"))?;
     let root = fs::canonicalize(sysroot)?;
-    let output = Command::new(root.join("bin/rustc"))
-        .arg("-vV")
-        .env_remove("RUSTC_BOOTSTRAP")
-        .output()?;
-    let compiler = String::from_utf8_lossy(&output.stdout);
-    if !output.status.success()
-        || compiler.as_ref() != built_compiler
-        || !compiler.lines().any(|line| line == "release: 1.98.0")
+    let proof = proof_path();
+    let compiler_proof = proof.as_ref().map(|path| path.with_file_name("driver-compiler.proof"));
+    if !built_compiler.lines().any(|line| line == "release: 1.98.0")
+        || !library_proof::verify_compiler(&root.join("bin/rustc"), built_compiler, compiler_proof.as_deref())?
     {
         return Err(IdentityError::Mismatch(
             "rustc must match the complete pinned 1.98.0 build identity".into(),
@@ -128,20 +123,19 @@ pub fn verify(sysroot: &Path) -> Result<DriverIdentity, IdentityError> {
             "the process loaded a different rustc_driver shared library".into(),
         ));
     }
-    let proof = proof_path();
     if !library_proof::verify(&library, built_digest, proof.as_deref())? {
         return Err(IdentityError::Mismatch(
             "rustc_driver shared-library bytes differ from the build identity or its file state changed during verification"
                 .into(),
         ));
     }
-    let target = compiler
+    let target = built_compiler
         .lines()
         .find_map(|line| line.strip_prefix("host: ").map(str::to_owned))
         .ok_or_else(|| IdentityError::Mismatch("pinned compiler identity has no host target".into()))?;
     Ok(DriverIdentity {
         sysroot: root,
-        toolchain: compiler.into_owned(),
+        toolchain: built_compiler.to_owned(),
         target,
         _verified: (),
     })

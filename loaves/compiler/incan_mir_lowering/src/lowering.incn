@@ -157,6 +157,7 @@ from rust::incan_semantics_core::body_ir import EntrypointEffect as RustEntrypoi
 from classes import (
     frame_type,
     function_name,
+    is_program_entry,
     body_module_identity,
     body_type_bindings,
     method_receiver,
@@ -7198,6 +7199,7 @@ def lowered_plan(
         return Err("invalid Body IR project entry")
     if len(sources) != len(modules) or len(files) != len(modules):
         return Err("invalid Body IR project source provenance")
+    _selected_entries = validate_program_entry_selection(modules, entry)?
     _conversion_placement = validate_conversion_placement(modules, entry)?
     for module in modules:
         _ = validate_project_module(module, modules)?
@@ -7267,6 +7269,8 @@ def lowered_plan(
             if is_lazy_method_body(context, body):
                 continue
             if emitted_frames.contains(body):
+                continue
+            if len(context.program_entrypoints) > 0 and function_name(context, body) == "main":
                 continue
             if trace:
                 println(f"lowering: body {body_module_identity(body)?} {body.name} {body.span.start}")
@@ -7349,10 +7353,54 @@ def lowered_plan(
                 statics=statics,
                 exports=exports,
                 tests=test_entries,
+                programs=selected_program_entries(context)?,
                 generic_models=templates,
             ),
         ),
     )
+
+
+def validate_program_entry_selection(modules: &list[BodyIrModule], entry: int) -> Result[None, str]:
+    """Apply standalone entry naming in each selected body's original module, before project symbols are joined."""
+    for identity in modules[entry].program_entrypoints:
+        mut found = false
+        mut owner = ""
+        match canonical_module_identity(identity):
+            Some(path) => owner = path
+            None => return Err("selected program entry has no canonical module")
+        for module in modules:
+            if owner != module.module_id.path():
+                continue
+            found = validate_selected_entry_body(module, identity)?
+            break
+        if not found:
+            return Err("selected program entry has no owning module body")
+    return Ok(None)
+
+
+def validate_selected_entry_body(module: &BodyIrModule, identity: &RustCanonicalSymbolId) -> Result[bool, str]:
+    """Validate an entry against its owning module without copying the module's bodies across the boundary."""
+    for body in module.bodies:
+        if body.canonical == Some(identity.clone()):
+            if function_name(module, body) != "main":
+                return Err("selected program entry is not a standalone main")
+            return Ok(true)
+    return Ok(false)
+
+
+def selected_program_entries(context: &BodyIrModule) -> Result[list[str], str]:
+    """Keep the unit's checked selector order while resolving canonical entries to their native wrappers."""
+    mut entries: list[str] = []
+    for identity in context.program_entrypoints:
+        mut found = false
+        for body in context.bodies:
+            if body.canonical == Some(identity):
+                entries.append(function_name(context, body))
+                found = true
+                break
+        if not found:
+            return Err("selected program entry has no retained body")
+    return Ok(entries)
 
 
 def async_entry_name(context: &BodyIrModule, body: &RustBody, in_entry: bool, tests: list[str]) -> Option[str]:
@@ -7360,7 +7408,7 @@ def async_entry_name(context: &BodyIrModule, body: &RustBody, in_entry: bool, te
     if not body.is_async:
         return None
     native = function_name(context, body)
-    if native == "main":
+    if is_program_entry(context, body):
         return Some(native)
     if in_entry and str(body.name) in tests:
         return Some(async_test_name(native))
@@ -8084,12 +8132,12 @@ def lower_function(
             return Err(f"{reason} in {frame} return ABI")
     declared_type = return_representation(body, declared_carrier)?
     return_type = producer_return_type(module, body, declared_type, intrinsics)?
-    if function_name(module, body) == "main" and return_type != PlanType.Unit:
+    if is_program_entry(module, body) and return_type != PlanType.Unit:
         if (body.is_async or return_type != PlanType.Int) and not entry_result(module, return_type, intrinsics):
             return Err("unsupported Body IR non-unit native main")
         if len(body.params) != 0:
             return Err("unsupported Body IR non-unit native main parameters")
-    if body.is_async and function_name(module, body) == "main" and len(body.params) != 0:
+    if body.is_async and is_program_entry(module, body) and len(body.params) != 0:
         return Err("unsupported Body IR async entry signature")
     parameters = frame_parameters(module, body, source, file, intrinsics)?
     names, bindings = body_type_bindings(module, body, type_arguments)?
@@ -8190,8 +8238,8 @@ def lower_function(
                 producer_frame(function, builder.generator_handle, leaf, depth)
                 function.name = producer_name(function.name)
             None => return Err("unsupported Body IR generator return type")
-    if function_name(module, body) == "main" and return_type == PlanType.Int:
-        builder.synthesized.append(integer_entry(function))
+    if is_program_entry(module, body) and return_type == PlanType.Int:
+        builder.synthesized.append(integer_entry(function, function_name(module, body)))
     return Ok((function, builder.externals, builder.instances, builder.synthesized))
 
 

@@ -1,4 +1,4 @@
-//! Optional byte-equivalence proof for the loaded library's unchanged Unix file state.
+//! File-generation proofs for the complete compiler identity and its loaded library's byte equivalence.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -8,6 +8,7 @@ use std::os::unix::{
     fs::{MetadataExt, OpenOptionsExt},
 };
 use std::path::Path;
+use std::process::Command;
 
 use sha2::{Digest, Sha256};
 
@@ -15,7 +16,7 @@ use sha2::{Digest, Sha256};
 /// Proof storage is only an optimization: missing, malformed, unreadable, or unwritable records cannot bypass hashing.
 pub(super) fn verify(library: &Path, digest: &str, proof_path: Option<&Path>) -> io::Result<bool> {
     let mut file = File::open(library)?;
-    let before = state(library, &file.metadata()?, digest);
+    let before = state(library, &file.metadata()?, "library", digest);
     let cached = proof_path.is_some_and(|path| matches_proof(path, &before));
     tracing::debug!(target: "incan::invocation", cached, "loaded compiler library proof");
 
@@ -37,7 +38,8 @@ pub(super) fn verify(library: &Path, digest: &str, proof_path: Option<&Path>) ->
 
     // ---- Stable file state and proof publication ----
     // Check both the open descriptor and its path: a replacement must not inherit a proof for the old inode.
-    if before != state(library, &file.metadata()?, digest) || before != state(library, &fs::metadata(library)?, digest)
+    if before != state(library, &file.metadata()?, "library", digest)
+        || before != state(library, &fs::metadata(library)?, "library", digest)
     {
         return Ok(false);
     }
@@ -47,11 +49,39 @@ pub(super) fn verify(library: &Path, digest: &str, proof_path: Option<&Path>) ->
     Ok(true)
 }
 
-/// Encode an exact path and file state with the build-bound digest; ctime also invalidates restored-mtime edits.
+/// Reuse the complete compiler identity only for the exact executable generation previously queried.
+/// Missing or changed records take the original `rustc -vV` path; both the descriptor and path must remain stable.
+pub(super) fn verify_compiler(compiler: &Path, identity: &str, proof_path: Option<&Path>) -> io::Result<bool> {
+    let file = File::open(compiler)?;
+    let before = state(compiler, &file.metadata()?, "compiler", identity);
+    let cached = proof_path.is_some_and(|path| matches_proof(path, &before));
+    tracing::debug!(target: "incan::invocation", cached, "compiler identity proof");
+    if !cached {
+        let output = Command::new(compiler)
+            .arg("-vV")
+            .env_remove("RUSTC_BOOTSTRAP")
+            .output()?;
+        if !output.status.success() || output.stdout != identity.as_bytes() {
+            return Ok(false);
+        }
+    }
+    if before != state(compiler, &file.metadata()?, "compiler", identity)
+        || before != state(compiler, &fs::metadata(compiler)?, "compiler", identity)
+    {
+        return Ok(false);
+    }
+    if !cached && let Some(path) = proof_path {
+        let _ = write_proof(path, &before);
+    }
+    Ok(true)
+}
+
+/// Encode an exact path and file state with its build-bound expectation; ctime invalidates restored-mtime edits.
 #[cfg(unix)]
-fn state(path: &Path, metadata: &fs::Metadata, digest: &str) -> Vec<u8> {
+fn state(path: &Path, metadata: &fs::Metadata, kind: &str, expected: &str) -> Vec<u8> {
     serde_json::json!({
-        "schema": "incan.driver-library-proof/1",
+        "schema": "incan.driver-file-proof/1",
+        "kind": kind,
         "path": hex::encode(path.as_os_str().as_bytes()),
         "device": metadata.dev(),
         "inode": metadata.ino(),
@@ -60,7 +90,7 @@ fn state(path: &Path, metadata: &fs::Metadata, digest: &str) -> Vec<u8> {
         "mtime_ns": metadata.mtime_nsec(),
         "ctime": metadata.ctime(),
         "ctime_ns": metadata.ctime_nsec(),
-        "digest": digest,
+        "expected": expected,
     })
     .to_string()
     .into_bytes()
@@ -68,7 +98,7 @@ fn state(path: &Path, metadata: &fs::Metadata, digest: &str) -> Vec<u8> {
 
 /// Unsupported loader platforms cannot reuse a proof; loaded-library admission already refuses those platforms.
 #[cfg(not(unix))]
-fn state(_path: &Path, _metadata: &fs::Metadata, _digest: &str) -> Vec<u8> {
+fn state(_path: &Path, _metadata: &fs::Metadata, _kind: &str, _expected: &str) -> Vec<u8> {
     Vec::new()
 }
 

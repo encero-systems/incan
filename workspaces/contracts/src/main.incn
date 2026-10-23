@@ -1,16 +1,15 @@
 """
 The contract table runner.
 
-    contracts INCAN FIXTURES_ROOT [--scratch DIR] [SELECTOR...]
+    contracts INCAN FIXTURES_ROOT [--scratch DIR] [--isolated] [--no-group-hints] [--jobs N] [--timeout SECONDS] [SELECTOR...]
 
 Runs every case of every family under FIXTURES_ROOT with the `incan` at INCAN, or only the cases a selector names
-(`<family>`, `<family>/<area>` or `<family>/<area>/<name>`). Each case is materialized as its own project under the
-scratch directory (a fresh temporary directory unless `--scratch` names one), run and compared. A project is kept: the
-next run over the same scratch directory rewrites only the files whose bytes differ and removes the files the fixture no
-longer has, so Oven can reuse what it compiled for the case, and every case still executes afresh. The runner prints
-one line per case (`PASS`, `FAIL` with its reasons, `PEND` with what it waits for), under it one `oven: unit` line for
-each unit Oven compiled or reused and why, one summary per area and one in total, and exits 1 when a case fails or a
-family cannot be read. A pending case that now holds fails: its `pending:` line is stale.
+(`<family>`, `<family>/<area>` or `<family>/<area>/<name>`). Compatible programs share compilation unless `--isolated`
+is selected. Every case runs in its own process and working directory under scratch, with at most `--jobs` children
+(twelve by default). The runner
+prints one line per case (`PASS`, `FAIL` with its reasons, `PEND` with what it waits for), one summary per area and
+one in total, and exits 1 when a case fails or a family cannot be read. A pending case that now holds fails: its
+`pending:` line is stale.
 """
 
 from rust::std::env import args
@@ -18,12 +17,13 @@ from rust::std::process import exit
 from std.fs import Path
 from std.tempfile import TemporaryDirectory
 from compare import compare
-from families import FAMILIES, admit, command
+from families import AdmittedProgram, FAMILIES, command, read_program
 from fixture import Fixture, discover_family, materialize
-from header import Header, parse_header
-from run import invoke, trace_file
+from run import Outcome, clear_trace, invoke, set_timeout, trace_file, unit_notes
 from formatting import compare_format
 from graph import compare_graph
+from batch import run_batches, run_separate
+from group_hints import hint_path
 
 
 pub model Tally:
@@ -46,19 +46,71 @@ pub enum Verdict:
     Pend(str)
 
 
+pub model CaseResult:
+    """A case's verdict and the units Oven prepared for its commands."""
+
+    pub verdict: Verdict
+    pub notes: list[str]
+
+
 def main() -> None:
+    """Read invocation limits and selectors, then run the requested contract families."""
     mut arguments: list[str] = []
     for argument in args():
         arguments.append(argument)
     if len(arguments) < 3:
-        println("usage: contracts INCAN FIXTURES_ROOT [--scratch DIR] [SELECTOR...]")
+        println("usage: contracts INCAN FIXTURES_ROOT [--scratch DIR] [--isolated] [--no-group-hints] [--jobs N] [--timeout SECONDS] [SELECTOR...]")
         exit(2)
     incan = arguments[1]
     root = Path(arguments[2])
     mut scratch_dir = ""
     mut selectors: list[str] = []
+    mut isolated = false
+    mut use_hints = true
+    mut jobs = 12
     mut index = 3
     while index < len(arguments):
+        if arguments[index] == "--timeout":
+            if index + 1 >= len(arguments):
+                println("--timeout requires a nonnegative integer number of seconds")
+                exit(2)
+            value = arguments[index + 1]
+            if value == "" or len(value) > 18:
+                println("--timeout requires a nonnegative integer number of seconds")
+                exit(2)
+            for character in value:
+                if character not in "0123456789":
+                    println("--timeout requires a nonnegative integer number of seconds")
+                    exit(2)
+            set_timeout(int(value))
+            index += 2
+            continue
+        if arguments[index] == "--jobs":
+            if index + 1 >= len(arguments):
+                println("--jobs requires a positive integer")
+                exit(2)
+            value = arguments[index + 1]
+            if value == "" or len(value) > 4:
+                println("--jobs requires a positive integer up to 9999")
+                exit(2)
+            for character in value:
+                if character not in "0123456789":
+                    println("--jobs requires a positive integer")
+                    exit(2)
+            jobs = int(value)
+            if jobs < 1:
+                println("--jobs requires a positive integer")
+                exit(2)
+            index += 2
+            continue
+        if arguments[index] == "--isolated":
+            isolated = true
+            index += 1
+            continue
+        if arguments[index] == "--no-group-hints":
+            use_hints = false
+            index += 1
+            continue
         if arguments[index] == "--scratch" and index + 1 < len(arguments):
             scratch_dir = arguments[index + 1]
             index += 2
@@ -76,11 +128,11 @@ def main() -> None:
             mut scratch = temporary.path()
             if scratch_dir != "":
                 scratch = Path(scratch_dir)
-            if not run_all(incan, root, scratch, selectors):
+            if not run_all(incan, root, scratch, selectors, isolated, jobs, use_hints):
                 exit(1)
 
 
-def run_all(incan: str, root: Path, scratch: Path, selectors: list[str]) -> bool:
+def run_all(incan: str, root: Path, scratch: Path, selectors: list[str], isolated: bool, jobs: int, use_hints: bool) -> bool:
     """Run every selected case; whether all of them held."""
     mut total = Tally(passed=0, failed=0, pending=0)
     mut compiled = 0
@@ -94,17 +146,34 @@ def run_all(incan: str, root: Path, scratch: Path, selectors: list[str]) -> bool
                 println(f"REFUSED {family}: {reason}")
                 refused += 1
             Ok(fixtures) =>
+                selected = [fixture for fixture in fixtures if selected_case(fixture.case_name(), selectors)]
+                mut outcomes: dict[str, Result[Outcome, str]] = {}
+                if not isolated:
+                    mut hint: Option[Path] = None
+                    if use_hints and len(selected) == len(fixtures):
+                        hint = hint_path(root, family)
+                    batch = run_batches(incan, scratch, selected, jobs, hint)
+                    outcomes = batch.outcomes
+                    for note in batch.notes:
+                        println(f"  {note}")
+                        if ": compiled" in note:
+                            compiled += 1
+                        elif ": reused" in note:
+                            reused += 1
+                run_separate(incan, scratch, selected, outcomes, jobs)
                 mut area = ""
                 mut tally = Tally(passed=0, failed=0, pending=0)
-                for fixture in fixtures:
-                    if not selected_case(fixture.case_name(), selectors):
-                        continue
+                for case_index in range(len(selected)):
+                    fixture = selected[case_index]
                     if fixture.area != area:
                         if area != "":
                             println(tally.line(f"area {family}/{area}"))
                         area = fixture.area
                         tally = Tally(passed=0, failed=0, pending=0)
-                    result = run_case(incan, scratch, fixture)
+                    mut batched: Option[Result[Outcome, str]] = None
+                    if fixture.case_name() in outcomes:
+                        batched = Some(outcomes[fixture.case_name()])
+                    result = run_case(incan, scratch, fixture, batched)
                     match result.verdict:
                         Verdict.Pass =>
                             println(f"PASS {fixture.case_name()}")
@@ -136,44 +205,34 @@ def run_all(incan: str, root: Path, scratch: Path, selectors: list[str]) -> bool
     return total.failed == 0 and refused == 0
 
 
-pub model CaseResult:
-    """What one case showed, and which units Oven compiled or reused to show it."""
-
-    pub verdict: Verdict
-    # One `oven: unit <name> <kind>: reused | compiled (<why>)` line per unit the case's commands prepared.
-    pub notes: list[str]
-
-
-def run_case(incan: str, scratch: Path, fixture: Fixture) -> CaseResult:
-    """Synchronize, run and compare one case. Its project stays where it is, so a rerun finds what Oven prepared."""
-    match fixture.program.read_text("utf-8", "strict"):
-        Err(error) => return refused(f"{fixture.program.0}: {error.message()}")
-        Ok(source) =>
-            match parse_header(source):
-                Err(reason) => return refused(f"{fixture.program.0}: {reason}")
-                Ok(header) => return run_admitted(incan, scratch, fixture, source, header)
+def run_case(incan: str, scratch: Path, fixture: Fixture, batched: Option[Result[Outcome, str]]) -> CaseResult:
+    """Synchronize, execute and compare one case, retaining its project for the next invocation."""
+    match read_program(fixture):
+        Err(reason) => return CaseResult(verdict=Verdict.Fail([reason]), notes=[])
+        Ok(program) =>
+            match prepare_case(fixture, scratch, batched):
+                Err(reason) => return CaseResult(verdict=Verdict.Fail([reason]), notes=[])
+                Ok(project) =>
+                    verdict = run_project(incan, project, fixture, program, batched)
+                    return CaseResult(verdict=verdict, notes=unit_notes(trace_file(project)))
 
 
-def run_admitted(incan: str, scratch: Path, fixture: Fixture, source: str, header: Header) -> CaseResult:
-    """Run a case whose header parsed: admit it for its family, materialize its project and compare what it shows."""
-    match admit(fixture, header):
-        Err(reason) => return refused(f"{fixture.program.0}: {reason}")
-        Ok(_) => pass
-    match materialize(fixture, scratch):
-        Err(reason) => return refused(reason)
-        Ok(project) =>
-            trace = trace_file(project)
-            if trace.is_file():
-                removed = trace.unlink()
-            failures = compare_case(incan, fixture, source, header, project)
-            return CaseResult(verdict=judged(header, failures), notes=unit_notes(trace))
+def prepare_case(fixture: Fixture, scratch: Path, batched: Option[Result[Outcome, str]]) -> Result[Path, str]:
+    """Retain a prepared invocation's trace, or start a new trace before the case's commands."""
+    project = materialize(fixture, scratch)?
+    match batched:
+        None =>
+            clear_trace(project)?
+        Some(_) => pass
+    return Ok(project)
 
 
-def compare_case(incan: str, fixture: Fixture, source: str, header: Header, project: Path) -> list[str]:
-    """What the case's family found wrong with what its commands showed; nothing when it holds."""
+def run_project(incan: str, project: Path, fixture: Fixture, program: AdmittedProgram, batched: Option[Result[Outcome, str]]) -> Verdict:
+    """Compare an admitted case and apply its pending policy without discarding Oven's prepared outputs."""
+    header = program.header
     mut failures: list[str] = []
     if fixture.family == "format":
-        match compare_format(incan, project, header, source):
+        match compare_format(incan, project, header, program.source):
             Err(reason) => failures.append(reason)
             Ok(found) => failures = found
     elif fixture.family == "graph":
@@ -181,17 +240,16 @@ def compare_case(incan: str, fixture: Fixture, source: str, header: Header, proj
             Err(reason) => failures.append(reason)
             Ok(found) => failures = found
     else:
-        match invoke(incan, command(fixture, header), project):
+        mut result: Result[Outcome, str] = Err("case did not run")
+        match batched:
+            Some(outcome) => result = outcome
+            None => result = invoke(incan, command(fixture, header), project)
+        match result:
             Err(reason) => failures.append(reason)
             Ok(outcome) =>
                 failures = compare(fixture.family, header, outcome)
                 if len(failures) > 0 and outcome.stderr.strip() != "":
                     failures.append(f"stderr:\n{tail(outcome.stderr)}")
-    return failures
-
-
-def judged(header: Header, failures: list[str]) -> Verdict:
-    """The verdict of a case with these failures: a pending case that holds is itself a failure."""
     match header.pending:
         Some(reason) =>
             if len(failures) == 0:
@@ -201,20 +259,6 @@ def judged(header: Header, failures: list[str]) -> Verdict:
     if len(failures) == 0:
         return Verdict.Pass
     return Verdict.Fail(failures)
-
-
-def refused(reason: str) -> CaseResult:
-    """A case that could not be run at all."""
-    return CaseResult(verdict=Verdict.Fail([reason]), notes=[])
-
-
-def unit_notes(trace: Path) -> list[str]:
-    """The units Oven reports having compiled or reused for the commands a case ran, in the order it reported them."""
-    if not trace.is_file():
-        return []
-    match trace.read_text("utf-8", "strict"):
-        Err(_) => return []
-        Ok(text) => return [line for line in text.split("\n") if line.startswith("oven: unit ")]
 
 
 def selected_family(family: str, selectors: list[str]) -> bool:

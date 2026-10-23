@@ -1959,9 +1959,17 @@ impl LibraryManifest {
     /// however far the shape has moved. See #1339.
     pub fn from_json_str(content: &str) -> Result<Self, LibraryManifestError> {
         Self::require_supported_manifest_format(content)?;
-        let raw: RawLibraryManifest =
-            serde_json::from_str(content).map_err(|err| LibraryManifestError::Parse(err.to_string()))?;
-        validate_raw_manifest(&raw)?;
+        let raw: RawLibraryManifest = {
+            let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_frontend::decode_manifest_json", bytes = content.len()).entered();
+            serde_json::from_str(content).map_err(|err| LibraryManifestError::Parse(err.to_string()))?
+        };
+        {
+            let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_frontend::validate_manifest", loaf = %raw.name).entered();
+            validate_raw_manifest(&raw)?;
+        }
+        let _invocation =
+            tracing::trace_span!(target: "incan::invocation", "incan_frontend::convert_manifest", loaf = %raw.name)
+                .entered();
         raw.into_semantic()
     }
 

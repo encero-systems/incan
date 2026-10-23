@@ -168,11 +168,15 @@ def compile_prepared_unit(unit: UnitDescription, toolchain: Toolchain, output: P
     return run_compiler(toolchain, arguments)
 
 
-pub def run_program(binary: Path, arguments: list[str]) -> Result[i32, str]:
+pub def run_program(binary: Path, arguments: list[str], argv0: Option[str] = None) -> Result[i32, str]:
     """Become the compiled program: this process is replaced by it, so it keeps the caller's arguments, standard
     streams, working directory and signals, and its status is the command's. Returns only when it cannot start."""
     program = f"{binary.0}"
     mut command = Command.new(binary.0)
+    match argv0:
+        Some(value) =>
+            command.arg0(value)
+        None => pass
     for argument in arguments:
         command.arg(argument)
     failure = command.exec()

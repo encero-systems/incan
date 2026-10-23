@@ -68,6 +68,10 @@ pub struct BodyIrModule {
     /// not lend their effects to a different entry module.
     #[serde(default)]
     pub entrypoint_effects: Vec<EntrypointEffect>,
+    /// Canonical mains explicitly selected by the unit for separate process invocations, in selector order. This
+    /// invocation-only selection is never published in a Loaf's positional executable representation.
+    #[serde(skip)]
+    pub program_entrypoints: Vec<CanonicalSymbolId>,
     /// Consumer invocation's source-import union and authenticated linked conversion contract, retained only on its
     /// final entry module. Ordinary source builders and published fragments leave this unselected.
     #[serde(default)]
@@ -414,6 +418,7 @@ impl BodyIrModule {
             string_conversion_contract: StringConversionContract::Unselected,
             decorated_bindings: Vec::new(),
             entrypoint_effects: Vec::new(),
+            program_entrypoints: Vec::new(),
             constant_declarations: Vec::new(),
             type_alias_declarations: Vec::new(),
             trait_declarations: Vec::new(),
@@ -5905,6 +5910,7 @@ mod tests {
         let module = BodyIrModule {
             decorated_bindings: Vec::new(),
             entrypoint_effects: Vec::new(),
+            program_entrypoints: Vec::new(),
             string_conversion_contract: StringConversionContract::Unselected,
             constant_declarations: Vec::new(),
             type_alias_declarations: Vec::new(),

@@ -41,6 +41,8 @@ dev.8 removes generated Rust crates and Cargo artifact coordinates. The library-
 
 One index per compilation records each reachable Loaf's key, artifact directory, manifest, and namespace: `pub::<key>` for ordinary dependencies and compiler-pinned `std.*` roots for standard packages. Every module path selects exactly one entry; types come from its manifest, governed bodies from `.incnbody`, and linkage from its rlib and native closure.
 
+An unchanged native source unit may reuse its canonical dependency footprint under complete source, artifact, and compiler file-generation guards; invalid or unsupported observations require the full index, and checking still runs anew.
+
 ### Calling into a Loaf
 
 A consumer names declarations without redeclaring them; every type and compiled function/method is exported at the crate root under its encoded canonical identity, with the crate name lowercased and non-ASCII-alphanumeric characters replaced by `_`, eliminating per-call identity records.

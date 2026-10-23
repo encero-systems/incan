@@ -35,6 +35,10 @@ pub model Fixture:
         """The case's name in reports and selectors: `<family>/<area>/<name>`."""
         return f"{self.family}/{self.area}/{self.name}"
 
+    def project_path(self, scratch: Path) -> Path:
+        """The stable working directory and Oven output owner for this case."""
+        return scratch.joinpath(f"{self.family}-{self.area}-{self.name}")
+
 
 pub def discover_family(root: Path, family: str) -> Result[list[Fixture], str]:
     """Every fixture of `family` under `root`, area by area in name order."""
@@ -108,22 +112,20 @@ def check_name(entry: Path, name: str) -> Result[None, str]:
 
 
 pub def materialize(fixture: Fixture, scratch: Path) -> Result[Path, str]:
-    """Bring the fixture's project directory under `scratch` to exactly the fixture's files, and return its root.
+    """Synchronize a case's files while retaining the stable project and Oven's prepared outputs."""
+    return materialize_files(fixture.project_path(scratch), fixture_files(fixture)?)
 
-    The directory is the same for every run of the case and is never removed, so what Oven prepared for it last time
-    is still there. A file is written only when its bytes differ, so an unchanged file keeps its modification time and
-    Oven can tell nothing changed; a file the fixture no longer has is removed. `target/` is Oven's and is left alone.
-    """
-    project = scratch.joinpath(f"{fixture.family}-{fixture.area}-{fixture.name}")
-    desired = fixture_files(fixture)?
+
+pub def materialize_files(project: Path, desired: Dict[str, bytes]) -> Result[Path, str]:
+    """Write only changed fixture bytes and prune stale inputs, retaining the project's target directory."""
     for relative in sorted([name for name in desired.keys()]):
         write_if_different(project.joinpath(relative), desired[relative])?
     prune(project, "", desired)?
     return Ok(project)
 
 
-def fixture_files(fixture: Fixture) -> Result[Dict[str, bytes], str]:
-    """The project's files by path relative to its root: the fixture's own, and the manifest it runs under."""
+pub def fixture_files(fixture: Fixture) -> Result[Dict[str, bytes], str]:
+    """The fixture's complete source and data projection, including its project manifest."""
     mut files: Dict[str, bytes] = {}
     if fixture.shape == "project":
         collect(fixture.entry, "", files)?
@@ -142,7 +144,7 @@ def fixture_files(fixture: Fixture) -> Result[Dict[str, bytes], str]:
 
 
 def collect(source: Path, relative: str, mut files: Dict[str, bytes]) -> Result[None, str]:
-    """Add the file at `source`, or every file below the directory there, under `relative` (a prefix for a directory)."""
+    """Add a file or directory tree under its project-relative path."""
     if source.is_file():
         files[relative] = source.read_bytes().map_err((error) => f"{source.0}: {error.message()}")?
         return Ok(None)
@@ -156,7 +158,7 @@ def collect(source: Path, relative: str, mut files: Dict[str, bytes]) -> Result[
 
 
 def write_if_different(path: Path, content: bytes) -> Result[None, str]:
-    """Write `content` to `path` unless it already holds exactly those bytes."""
+    """Write content only when the existing file's bytes differ."""
     if path.is_file() and path.read_bytes().map_err((error) => f"{path.0}: {error.message()}")? == content:
         return Ok(None)
     io(path.parent().mkdir(true, true), path.parent())?
@@ -165,7 +167,7 @@ def write_if_different(path: Path, content: bytes) -> Result[None, str]:
 
 
 def prune(directory: Path, relative: str, desired: Dict[str, bytes]) -> Result[None, str]:
-    """Remove below `directory` every file the fixture does not have, and the directories that leaves empty."""
+    """Remove stale fixture inputs while leaving Oven's target directory in place."""
     for entry in directory.iterdir().map_err((error) => f"{directory.0}: {error.message()}")?:
         name = entry.name()
         if relative == "" and name == "target":

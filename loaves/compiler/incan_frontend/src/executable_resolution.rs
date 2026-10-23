@@ -134,7 +134,11 @@ pub fn resolve_loaf_declarations(
     if requested.is_empty() {
         return Ok(ResolvedExecutableModules::default());
     }
-    resolve_from_catalog(&catalog(loaves)?, requested, true)
+    let resolved = resolve_from_catalog(&catalog(loaves)?, requested, true)?;
+    for package in resolved.package_versions.keys() {
+        loaves.note_resolved_package(package);
+    }
+    Ok(resolved)
 }
 
 /// One artifact per package name across the index; two instances of one package refuse rather than replacing each

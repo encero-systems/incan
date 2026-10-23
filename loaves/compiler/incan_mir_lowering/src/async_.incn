@@ -20,7 +20,7 @@ from pub::incan_mir_plan import (
     CalleeKind,
 )
 from pub::incan_mir_plan import place as plan_place, block as plan_block
-from classes import function_name, frame_type
+from classes import function_name, frame_type, is_program_entry
 from layout_types import native_source_type
 from unions import collect_unions
 from frame import (
@@ -73,8 +73,8 @@ pub def evaluator_name(module: &BodyIrModule, body: &Body) -> str:
     name = function_name(module, body)
     if body.is_async:
         return f"__incan_async_body_{name}"
-    if name == "main" and body.return_type == RustType.Primitive(Primitive.Int):
-        return "__incan_integer_main"
+    if is_program_entry(module, body) and body.return_type == RustType.Primitive(Primitive.Int):
+        return f"__incan_integer_{name}"
     return name
 
 
@@ -224,11 +224,11 @@ pub def await_future(
     return Ok(None)
 
 
-pub def integer_entry(body: Function) -> Function:
+pub def integer_entry(body: Function, entry_name: str) -> Function:
     """Run the checked integer main for its effects; its value is program metadata, never the process exit code."""
     span = body.span
     return Function(
-        name="main",
+        name=entry_name,
         parameters=[],
         return_type=PlanType.Unit,
         locals=[Local(ty=PlanType.Unit, span=span), Local(ty=body.return_type, span=span)],

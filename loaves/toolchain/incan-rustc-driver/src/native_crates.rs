@@ -16,6 +16,8 @@ use incan_frontend::loaf_index::LoafArtifact;
 /// supply only the roots the unit leaves unbound. Private provider aliases enter only native compilation, after source
 /// checking; conflicting artifacts remain refused instead of choosing a crate from a search directory or exposing
 /// transitive imports to the checker.
+/// A plan whose roots are already bound by direct inputs does not need closure discovery; the checker has already
+/// admitted its Loaf manifests, and reopening them cannot contribute another binding.
 pub(crate) fn link_externs(
     plan: &crate::plan::Plan,
     direct: &[(String, PathBuf)],
@@ -35,14 +37,18 @@ pub(crate) fn link_externs(
         )
         .filter(|root| !matches!(*root, "" | "std" | "core" | "alloc" | "crate"))
         .collect::<BTreeSet<_>>();
-    let closures = loaves
-        .iter()
-        .map(|loaf| {
-            LoafArtifact::read(&loaf.dir, &loaf.name)
-                .and_then(|artifact| artifact.native_closure())
-                .map_err(|error| error.to_string())
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let closures = if roots.iter().any(|root| !direct.iter().any(|(name, _)| name == root)) {
+        loaves
+            .iter()
+            .map(|loaf| {
+                LoafArtifact::read(&loaf.dir, &loaf.name)
+                    .and_then(|artifact| artifact.native_closure())
+                    .map_err(|error| error.to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        Vec::new()
+    };
     let mut selected = direct.to_vec();
     for root in roots {
         let mut offered = direct.iter().filter(|(name, _)| name == root).collect::<Vec<_>>();
