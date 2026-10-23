@@ -998,6 +998,7 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         unit.kind = UnitKind::Library;
     }
     let kind = unit.kind;
+    let loaves = unit.loaves.clone();
     let loaf_links: std::collections::BTreeSet<String> =
         unit.loaves.iter().map(|loaf| loaf.name.replace('-', "_")).collect();
     let rust = dependencies.rust_facts(Path::new(&arguments[3]));
@@ -1043,44 +1044,14 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     };
     let tests = crate::test_unit::report(&program.tests, &plan.tests)?;
 
-    // ---- Explicit native dependencies ----
-    if let Some(root) = crate::marker_traits::native_root(&plan) {
-        if !dependencies.externs.iter().any(|(name, _)| name == root) {
-            return Err(format!("unsupported Body IR native dependency `{root}` for a checked marker trait").into());
-        }
-    }
-    let library_items = plan
-        .models
-        .iter()
-        .map(|model| &model.library_item)
-        .chain(plan.enums.iter().map(|value| &value.library_item))
-        .chain(plan.models.iter().map(|model| &model.string_conversion_trait))
-        .filter(|item| !item.is_empty());
-    for item in library_items {
-        let root = item.split("::").next().unwrap_or_default();
-        // The standard library's own crates are always linked, as for external calls below.
-        if !matches!(root, "std" | "core" | "alloc" | "crate")
-            && !dependencies.externs.iter().any(|(name, _)| name == root)
-        {
-            return Err(format!("unsupported Body IR native dependency `{root}` for Loaf layout `{item}`").into());
-        }
-    }
-    for external in &plan.externals {
-        let root = crate::native_crates::callee_root(&external.path).ok_or("native external path has no crate")?;
-        if !matches!(root, "std" | "core" | "alloc") && !dependencies.externs.iter().any(|(name, _)| name == root) {
-            return Err(format!(
-                "unsupported Body IR native dependency `{root}` for canonical call `{}`",
-                external.path
-            )
-            .into());
-        }
-    }
+    // ---- Exact native dependencies, including checked Loaf implementation layouts ----
+    let native_externs = crate::native_crates::link_externs(&plan, &dependencies.externs, &loaves)?;
     crate::adapter::compile(
         plan,
         &arguments[1],
         Path::new(&arguments[2]),
         &identity,
-        &dependencies.externs,
+        &native_externs,
         &dependencies.directories,
         &dependencies.rustc_args,
         kind,
@@ -1095,7 +1066,7 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         publish_native_unions(&mut manifest, published_unions).map_err(|error| error.to_string())?;
         let directory = output.parent().ok_or("library output has no directory")?;
         let closure = LoafNativeClosure {
-            externs: dependencies.externs.clone(),
+            externs: native_externs,
             search: dependencies.directories.clone(),
             macro_externs: macro_externs(&manifest, &dependencies.externs, &loaf_links),
         };

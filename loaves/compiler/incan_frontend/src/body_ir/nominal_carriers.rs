@@ -128,6 +128,13 @@ fn qualify_type(ty: &mut IncanType, checked: Option<&IncanType>, identities: &Id
             };
             qualify_type(inner, original, identities);
         }
+        IncanType::NativeArray { element, .. } => {
+            let original = match checked {
+                Some(IncanType::NativeArray { element, .. }) => Some(element.as_ref()),
+                _ => None,
+            };
+            qualify_type(element, original, identities);
+        }
         IncanType::Function { params, return_type } => {
             for parameter in params {
                 qualify_type(&mut parameter.ty, None, identities);

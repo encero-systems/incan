@@ -1,4 +1,4 @@
-# behavior: Rust From accepts borrowed text; blanket traits preserve reusable values and native iteration retains enumeration positions
+# behavior: Rust From accepts borrowed text; blanket traits preserve reusable values, declared native bounds retain generic calls, and native iteration retains enumeration positions
 # expect-stdout:
 #   hello
 #   hello
@@ -8,6 +8,14 @@
 from rust::std::string import String as RustString
 from rust::std::time import Duration
 from rust::std::collections import VecDeque
+from rust::std::hash import Hash as NativeHash, Hasher, DefaultHasher
+
+
+def native_hash[T with NativeHash](value: T) -> u64:
+    """Use a declared native trait bound without requiring a nominal receiver owner."""
+    mut hasher = DefaultHasher.new()
+    NativeHash.hash(value, hasher)
+    return hasher.finish()
 
 
 def main() -> None:
@@ -25,3 +33,4 @@ def main() -> None:
     for index, _value in enumerate(queue.iter()):
         seen += index + 1
     assert seen == 1
+    assert native_hash(7) == native_hash(7)

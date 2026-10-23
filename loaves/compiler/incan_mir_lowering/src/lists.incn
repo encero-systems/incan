@@ -162,6 +162,7 @@ pub def is_exclusive_borrow(ty: PlanType) -> bool:
         PlanType.ModelMutRef(_owner, _name) => return true
         PlanType.EnumMutRef(_owner, _name) => return true
         PlanType.TupleMutRef(_elements) => return true
+        PlanType.NativeArrayMutRef(_elements, _length) => return true
         _ => return false
 
 

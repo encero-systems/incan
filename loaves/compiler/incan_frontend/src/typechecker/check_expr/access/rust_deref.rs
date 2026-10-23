@@ -83,6 +83,72 @@ impl TypeChecker {
         None
     }
 
+    /// Select only an inspected slice inherent method after the native array-to-slice receiver adjustment. Array
+    /// trait methods do not enter this fallback: borrowing a slice must never replace an array's consuming impl.
+    pub(super) fn resolve_rust_array_slice_method(&mut self, call: RustPathMethodCall<'_>) -> Option<ResolvedType> {
+        if !call.type_args.is_empty() {
+            return None;
+        }
+        let source = self
+            .rust_native_value_type(call.receiver_expr)
+            .or_else(|| self.type_info.expr_type(call.receiver_span).cloned())?;
+        let referent = match &source {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref(),
+            other => other,
+        };
+        let ResolvedType::RustPath(path) = referent else {
+            return None;
+        };
+        let (element, _) = self.rust_array_parts(path)?;
+        let metadata = self.rust_item_metadata_for_path("[]")?;
+        let RustItemKind::Type(info) = &metadata.kind else {
+            return None;
+        };
+        let method = info
+            .methods
+            .iter()
+            .find(|method| method.name == call.method && Self::rust_signature_has_receiver(&method.signature))?;
+        let owner = ResolvedType::Generic("[]".into(), vec![element.clone()]);
+        let signature = self.specialize_rust_owner_signature(&method.signature, "[]", &info.type_params, &[element]);
+        let mutable = signature.params.first().is_some_and(|parameter| {
+            Self::rust_display_borrow_kind(&parameter.type_display).is_some_and(|(mutable, _)| mutable)
+        });
+        if mutable && matches!(source, ResolvedType::Ref(_)) {
+            self.errors.push(crate::diagnostics::errors::type_mismatch(
+                &format!("&mut {path}"),
+                &source.to_string(),
+                call.receiver_span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
+        if mutable {
+            self.refuse_write_through_read_only_binding(call.receiver_expr, call.span);
+            self.validate_rust_borrow_mutability(RustArgCoercionKind::Borrow { mutable: true }, call.receiver_expr);
+        }
+        let errors_before = self.errors.len();
+        let result = self.validate_rust_method_call(
+            &format!("[].{}", call.method),
+            &signature,
+            call.args,
+            call.arg_types,
+            false,
+            call.span,
+        );
+        if self.errors.len() == errors_before {
+            self.retain_checked_rust_method(
+                method,
+                info,
+                "[]",
+                call.args,
+                call.arg_types,
+                Some(&owner),
+                &result,
+                call.span,
+            );
+        }
+        Some(result)
+    }
+
     /// Search instantiated Deref targets for an inherent or imported trait instance method. Associated functions do not
     /// participate in value lookup, and an adjustment chain remains explicit through Body IR rather than changing
     /// receiver types.
@@ -191,7 +257,13 @@ impl TypeChecker {
         receiver: &Spanned<Expr>,
         source: &ResolvedType,
     ) -> Option<ResolvedType> {
+        // A bound that fixes the trait arguments keeps its retained substitution; a bound whose method has its own
+        // type parameters falls through to the declared-trait selection.
         if let Some(result) = self.retain_bound_rust_trait_call(call, receiver, source) {
+            return Some(result);
+        }
+        if let Some(result) = self.retain_rust_parameter_trait_call(call, receiver, source) {
+            self.retain_explicit_rust_receiver(call.span)?;
             return Some(result);
         }
         let mut owner = source.clone();
@@ -224,15 +296,7 @@ impl TypeChecker {
             );
             if let Some(result) = selected {
                 self.retain_rust_deref_steps(call.span, &steps)?;
-                let retained = self
-                    .type_info
-                    .rust
-                    .checked_calls
-                    .get_mut(&(call.span.start, call.span.end))?;
-                retained.has_receiver = false;
-                let parameters = retained.parameters.clone();
-                self.type_info
-                    .record_call_site_callable_params_exact(call.span, &parameters);
+                self.retain_explicit_rust_receiver(call.span)?;
                 return Some(result);
             }
             let target = self.rust_associated_type(&owner, DEREF_TRAIT, "Target")?;
@@ -243,6 +307,16 @@ impl TypeChecker {
             owner = target;
         }
         None
+    }
+
+    /// Keep the source receiver in declared argument slot zero for explicit `Trait.method(receiver, ...)` syntax.
+    /// Native method selection already supplies that parameter's checked borrow and exact carrier.
+    fn retain_explicit_rust_receiver(&mut self, span: Span) -> Option<()> {
+        let retained = self.type_info.rust.checked_calls.get_mut(&(span.start, span.end))?;
+        retained.has_receiver = false;
+        let parameters = retained.parameters.clone();
+        self.type_info.record_call_site_callable_params_exact(span, &parameters);
+        Some(())
     }
 
     /// Recover an already selected native dereference or trait owner, including source collection and Option

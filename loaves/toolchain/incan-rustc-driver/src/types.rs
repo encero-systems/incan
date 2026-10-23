@@ -247,6 +247,13 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::StringMutRef => Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, string_type(tcx)?),
         PlanType::StrRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, tcx.types.str_),
         PlanType::StringArray(count) => array_type(tcx, string_type(tcx)?, *count)?,
+        PlanType::NativeArray(elements, count) => native_array_type(tcx, elements, *count)?,
+        PlanType::NativeArrayRef(elements, count) => {
+            Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, native_array_type(tcx, elements, *count)?)
+        }
+        PlanType::NativeArrayMutRef(elements, count) => {
+            Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, native_array_type(tcx, elements, *count)?)
+        }
         PlanType::StrArray(count) => array_type(tcx, native_type(tcx, &PlanType::StrRef)?, *count)?,
         PlanType::StringArrayRef(count) => Ty::new_imm_ref(
             tcx,
@@ -516,6 +523,17 @@ fn array_type<'tcx>(tcx: TyCtxt<'tcx>, element: Ty<'tcx>, count: i64) -> Result<
         reason: "array length must be nonnegative".into(),
     })?;
     Ok(Ty::new_array(tcx, element, count))
+}
+
+/// Preserve the checked native element and fixed count without interpreting the source array display again.
+fn native_array_type<'tcx>(tcx: TyCtxt<'tcx>, elements: &[PlanType], count: i64) -> Result<Ty<'tcx>, PlanError> {
+    let [element] = elements else {
+        return Err(PlanError::Invalid {
+            function: "native array".into(),
+            reason: "array requires exactly one element type".into(),
+        });
+    };
+    array_type(tcx, native_type(tcx, element)?, count)
 }
 
 /// Resolve an injected model or its concrete layout alias; aliases retain the same underlying source-named ADT.

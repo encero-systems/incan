@@ -235,6 +235,10 @@ pub(super) fn project_type(ty: IncanType, facts: &TypeCheckInfo) -> IncanType {
         IncanType::Named(name) if bir::rust_item_identity(&name).is_some() => IncanType::Named(name),
         IncanType::Tuple(items) => IncanType::Tuple(items.into_iter().map(|item| project_type(item, facts)).collect()),
         IncanType::Ref(inner) => IncanType::Ref(Box::new(project_type(*inner, facts))),
+        IncanType::NativeArray { element, length } => IncanType::NativeArray {
+            element: Box::new(project_type(*element, facts)),
+            length,
+        },
         IncanType::RefMut(inner) => IncanType::RefMut(Box::new(project_type(*inner, facts))),
         IncanType::TypeToken(inner) => IncanType::TypeToken(Box::new(project_type(*inner, facts))),
         IncanType::Function { params, return_type } => IncanType::Function {
@@ -268,7 +272,9 @@ fn named_leaves(ty: &IncanType, names: &mut BTreeSet<String>) {
                 named_leaves(arg, names);
             }
         }
-        IncanType::Ref(inner) | IncanType::RefMut(inner) => named_leaves(inner, names),
+        IncanType::Ref(inner) | IncanType::RefMut(inner) | IncanType::NativeArray { element: inner, .. } => {
+            named_leaves(inner, names)
+        }
         _ => {}
     }
 }

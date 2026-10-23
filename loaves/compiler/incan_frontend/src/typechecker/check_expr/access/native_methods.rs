@@ -40,7 +40,7 @@ impl TypeChecker {
         match &metadata.kind {
             RustItemKind::Type(owner) => self.resolve_native_type_method(call, &metadata, owner, preserves_shape),
             RustItemKind::Module(_) => self.resolve_native_module_function(call),
-            RustItemKind::Trait(trait_info) if call.receiver_binding.is_none() => self.resolve_rust_object_method(
+            RustItemKind::Trait(trait_info) if call.receiver_binding.is_none() => self.resolve_rust_declared_trait_method(
                 RustPathMethodCall {
                     receiver_metadata: Some(&metadata),
                     ..call

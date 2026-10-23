@@ -33,6 +33,12 @@ pub def native_source_type(
         Some(result) => return Ok(result)
         None => pass
     match ty:
+        RustType.NativeArray(element=element, length=length) =>
+            # The bootstrap binds Rust enum scalar fields by reference; copy the checked integer before conversion.
+            count = length.clone()
+            if count > 9223372036854775807u64:
+                return Err("unsupported Body IR native array length exceeds the plan integer range")
+            return Ok(PlanType.NativeArray([native_source_type(nominals, enums, unions, element, intrinsics)?], int(count)))
         RustType.RustInteropPath(path) =>
             if str(path) == "str":
                 return Ok(PlanType.NativeStr)
@@ -99,6 +105,7 @@ def is_native_str(ty: &RustType) -> bool:
 pub def shared_receiver_type(ty: PlanType) -> Result[PlanType, str]:
     """Borrow the exact retained nominal, text, scalar or collection carrier through the ordinary parameter layout."""
     match ty:
+        PlanType.NativeArray(elements, length) => return Ok(PlanType.NativeArrayRef(elements, length))
         PlanType.NativeSlice(elements) => return Ok(PlanType.SliceRef(elements))
         PlanType.FunctionPointer(_signature) => return Ok(PlanType.ScalarRef([ty]))
         PlanType.Model(index, name) => return Ok(PlanType.ModelRef(index, name))
@@ -117,6 +124,7 @@ pub def shared_receiver_type(ty: PlanType) -> Result[PlanType, str]:
 pub def mutable_receiver_type(ty: PlanType) -> Result[PlanType, str]:
     """Reuse exclusive source parameter storage for native references, retaining scalar reference carriers explicitly."""
     match ty:
+        PlanType.NativeArray(elements, length) => return Ok(PlanType.NativeArrayMutRef(elements, length))
         PlanType.NativeSlice(elements) => return Ok(PlanType.SliceMutRef(elements))
         _ => pass
     match exclusive_reference(ty):

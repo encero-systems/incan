@@ -221,6 +221,10 @@ pub enum PlanType:
     NativeSlice(list[PlanType])
     SliceRef(list[PlanType])
     SliceMutRef(list[PlanType])
+    # A native array preserves one element carrier and its checker-evaluated fixed length.
+    NativeArray(list[PlanType], int)
+    NativeArrayRef(list[PlanType], int)
+    NativeArrayMutRef(list[PlanType], int)
 
 
 pub def list_leaf_type(leaf: ListLeaf) -> PlanType:

@@ -240,9 +240,10 @@ pub fn decorated_signature_uses_parameters(ty: &IncanType, parameters: &[String]
         IncanType::Generic { args, .. } | IncanType::Tuple(args) => args
             .iter()
             .any(|argument| decorated_signature_uses_parameters(argument, parameters)),
-        IncanType::Ref(inner) | IncanType::RefMut(inner) | IncanType::TypeToken(inner) => {
-            decorated_signature_uses_parameters(inner, parameters)
-        }
+        IncanType::Ref(inner)
+        | IncanType::RefMut(inner)
+        | IncanType::TypeToken(inner)
+        | IncanType::NativeArray { element: inner, .. } => decorated_signature_uses_parameters(inner, parameters),
         _ => false,
     }
 }
@@ -886,7 +887,10 @@ fn record_held_rust_items(ty: &IncanType, arities: &mut std::collections::BTreeM
                 .for_each(|param| record_held_rust_items(&param.ty, arities));
             record_held_rust_items(return_type, arities);
         }
-        IncanType::TypeToken(inner) | IncanType::Ref(inner) | IncanType::RefMut(inner) => {
+        IncanType::TypeToken(inner)
+        | IncanType::Ref(inner)
+        | IncanType::RefMut(inner)
+        | IncanType::NativeArray { element: inner, .. } => {
             record_held_rust_items(inner, arities);
         }
         _ => {}
@@ -2508,7 +2512,7 @@ impl ResultVariant {
                         path.pop();
                     }
                 }
-                IncanType::Ref(inner) | IncanType::RefMut(inner) => {
+                IncanType::Ref(inner) | IncanType::RefMut(inner) | IncanType::NativeArray { element: inner, .. } => {
                     path.push(0);
                     paths(inner, path, out);
                     path.pop();

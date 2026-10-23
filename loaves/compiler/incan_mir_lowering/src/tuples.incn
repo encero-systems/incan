@@ -41,6 +41,7 @@ pub def type_name(ty: &RustType) -> str:
         RustType.Ref(_inner) => return "Ref"
         RustType.RefMut(_inner) => return "RefMut"
         RustType.RustInteropPath(_path) => return "RustInteropPath"
+        RustType.NativeArray(element=_element, length=_length) => return "NativeArray"
         RustType.NativeBuiltin(_builtin) => return str(ty)
         RustType.Unsupported(description) => return f"Unsupported[{description}]"
         RustType.Never => return "Never"

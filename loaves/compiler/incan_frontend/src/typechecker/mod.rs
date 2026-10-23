@@ -2277,9 +2277,12 @@ impl TypeChecker {
                 id => ResolvedType::Numeric(id),
             };
         }
+        // Public primitive re-exports are transparent aliases. A nominal alias keeps its public spelling: its expansion
+        // can include default arguments that no public path names.
         if !normalized.contains('<')
             && let Some(expanded) = self.rust_alias_expansion(&normalized, &[])
             && expanded != normalized
+            && expanded.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
         {
             return self.resolved_type_from_rust_display(&expanded);
         }

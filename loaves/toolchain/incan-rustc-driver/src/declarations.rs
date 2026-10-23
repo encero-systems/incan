@@ -217,11 +217,15 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
                 },
             },
         ),
-        PlanType::StringMutRef => ast::TyKind::Ref(
+        PlanType::StringRef | PlanType::StringMutRef => ast::TyKind::Ref(
             None,
             ast::MutTy {
                 ty: ty(&PlanType::String, span),
-                mutbl: ast::Mutability::Mut,
+                mutbl: if matches!(kind, PlanType::StringMutRef) {
+                    ast::Mutability::Mut
+                } else {
+                    ast::Mutability::Not
+                },
             },
         ),
         PlanType::EnumRef(index, name) | PlanType::EnumMutRef(index, name) => ast::TyKind::Ref(

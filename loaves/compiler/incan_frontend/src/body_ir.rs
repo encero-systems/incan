@@ -375,7 +375,7 @@ fn named_leaf_paths(ty: &IncanType, path: &mut Vec<usize>, out: &mut Vec<(Vec<us
                 path.pop();
             }
         }
-        IncanType::Ref(inner) | IncanType::RefMut(inner) => {
+        IncanType::Ref(inner) | IncanType::RefMut(inner) | IncanType::NativeArray { element: inner, .. } => {
             path.push(0);
             named_leaf_paths(inner, path, out);
             path.pop();
@@ -1341,7 +1341,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             IncanType::Generic { args, .. } | IncanType::Tuple(args) => {
                 args.iter().any(|arg| self.leaves_type_open(arg))
             }
-            IncanType::Ref(inner) | IncanType::RefMut(inner) => self.leaves_type_open(inner),
+            IncanType::Ref(inner) | IncanType::RefMut(inner) | IncanType::NativeArray { element: inner, .. } => {
+                self.leaves_type_open(inner)
+            }
             IncanType::Function { params, return_type } => {
                 params.iter().any(|param| self.leaves_type_open(&param.ty)) || self.leaves_type_open(return_type)
             }
@@ -1488,6 +1490,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// `Ok("fine")` for a `Result[int | str, str]` destination as the union's `str` member.
     fn fill_open_type_parts(&self, recorded: &IncanType, settled: &IncanType) -> IncanType {
         match (recorded, settled) {
+            (
+                IncanType::NativeArray { element, length },
+                IncanType::NativeArray {
+                    element: settled_element,
+                    length: settled_length,
+                },
+            ) if length == settled_length => IncanType::NativeArray {
+                element: Box::new(self.fill_open_type_parts(element, settled_element)),
+                length: *length,
+            },
             (IncanType::Unknown | IncanType::Infer, _) => settled.clone(),
             (IncanType::TypeVar(name), _) if !self.type_parameters.contains(name) => settled.clone(),
             (_, IncanType::Generic { base, args })

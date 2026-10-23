@@ -340,6 +340,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ) -> bir::Operand {
         self.retain_result_scalar_context(expr);
         let span = hir_span(expr.span);
+        if let Some(value) = self.lower_checked_rust_function_value(expr, scope, out) {
+            return value;
+        }
         if let Some(path) = self
             .type_info
             .rust

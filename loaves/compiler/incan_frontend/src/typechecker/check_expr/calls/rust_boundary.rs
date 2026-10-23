@@ -797,6 +797,34 @@ impl TypeChecker {
         );
     }
 
+    /// Retain a safe monomorphic free-function read using the same signature selection as its direct application.
+    pub(in crate::typechecker::check_expr) fn retain_rust_function_value(
+        &mut self,
+        path: &str,
+        signature: &RustFunctionSig,
+        span: Span,
+    ) -> Option<ResolvedType> {
+        if signature.is_async || signature.is_unsafe || !signature.type_params.is_empty() {
+            return None;
+        }
+        self.record_rust_call_site_params(span, &signature.params, path);
+        self.retain_checked_rust_function(path, signature, &HashMap::new(), span);
+        self.publish_rust_function_value(span)
+    }
+
+    /// Keep the selected callable's native parameters and result under its function-value role, so the read never
+    /// supplies an application's result provenance.
+    pub(in crate::typechecker::check_expr) fn publish_rust_function_value(
+        &mut self,
+        span: Span,
+    ) -> Option<ResolvedType> {
+        let key = (span.start, span.end);
+        let selected = self.type_info.rust.checked_calls.remove(&key)?;
+        let ty = ResolvedType::Function(selected.parameters.clone(), Box::new(selected.return_type.clone()));
+        self.type_info.rust.checked_function_values.insert(key, selected);
+        Some(ty)
+    }
+
     /// Record an ownership conversion for borrowed Rust scalar-like returns that Incan exposes as owned values.
     pub(in crate::typechecker) fn record_rust_return_coercion_from_display(
         &mut self,

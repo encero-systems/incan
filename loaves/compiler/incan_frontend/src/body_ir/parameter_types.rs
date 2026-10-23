@@ -159,6 +159,10 @@ fn refuse_runtime_conflicts(ty: IncanType, conflicts: &std::collections::BTreeSe
                 .collect(),
         ),
         IncanType::Ref(inner) => IncanType::Ref(Box::new(refuse_runtime_conflicts(*inner, conflicts))),
+        IncanType::NativeArray { element, length } => IncanType::NativeArray {
+            element: Box::new(refuse_runtime_conflicts(*element, conflicts)),
+            length,
+        },
         IncanType::RefMut(inner) => IncanType::RefMut(Box::new(refuse_runtime_conflicts(*inner, conflicts))),
         IncanType::TypeToken(inner) => IncanType::TypeToken(Box::new(refuse_runtime_conflicts(*inner, conflicts))),
         IncanType::Function {
@@ -230,6 +234,10 @@ fn retain_checked_nominal_names(ty: IncanType, facts: &TypeCheckInfo) -> IncanTy
                 .collect(),
         ),
         IncanType::Ref(inner) => IncanType::Ref(Box::new(retain_checked_nominal_names(*inner, facts))),
+        IncanType::NativeArray { element, length } => IncanType::NativeArray {
+            element: Box::new(retain_checked_nominal_names(*element, facts)),
+            length,
+        },
         IncanType::RefMut(inner) => IncanType::RefMut(Box::new(retain_checked_nominal_names(*inner, facts))),
         IncanType::TypeToken(inner) => IncanType::TypeToken(Box::new(retain_checked_nominal_names(*inner, facts))),
         IncanType::Function {
@@ -320,6 +328,10 @@ pub(super) fn retain_parameter_type(ty: IncanType, parameters: &[String]) -> Inc
                 .collect(),
         ),
         IncanType::Ref(inner) => IncanType::Ref(Box::new(retain_parameter_type(*inner, parameters))),
+        IncanType::NativeArray { element, length } => IncanType::NativeArray {
+            element: Box::new(retain_parameter_type(*element, parameters)),
+            length,
+        },
         IncanType::RefMut(inner) => IncanType::RefMut(Box::new(retain_parameter_type(*inner, parameters))),
         IncanType::TypeToken(inner) => IncanType::TypeToken(Box::new(retain_parameter_type(*inner, parameters))),
         IncanType::Function { params, return_type } => IncanType::Function {

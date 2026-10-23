@@ -18,7 +18,7 @@ use incan_lang::interop::{
 use rustc_hir::def::{DefKind, MacroKinds};
 use rustc_hir::def_id::DefId;
 use rustc_interface::interface;
-use rustc_middle::ty::{self, Ty, TyCtxt};
+use rustc_middle::ty::{self, Ty, TyCtxt, TypeFoldable, TypeFolder};
 use rustc_session::config::Input;
 use rustc_span::{FileName, sym};
 
@@ -490,6 +490,36 @@ fn display(ty: Ty<'_>) -> String {
     ty::print::with_no_trimmed_paths!(ty.to_string())
 }
 
+/// Fold signature constants under their declaring item's environment without normalizing aliases or opaque types.
+/// Concrete array lengths must cross the metadata boundary as values; unresolved generic constants stay explicit.
+struct SignatureConstants<'tcx> {
+    tcx: TyCtxt<'tcx>,
+    environment: ty::TypingEnv<'tcx>,
+}
+
+impl<'tcx> TypeFolder<TyCtxt<'tcx>> for SignatureConstants<'tcx> {
+    /// Supply the same native session that owns the signature and its constant expressions.
+    fn cx(&self) -> TyCtxt<'tcx> {
+        self.tcx
+    }
+
+    /// Evaluate a constant when its declaration environment proves it, preserving unsupported generic expressions.
+    fn fold_const(&mut self, value: ty::Const<'tcx>) -> ty::Const<'tcx> {
+        self.tcx
+            .try_normalize_erasing_regions(self.environment, ty::Unnormalized::new_wip(value))
+            .unwrap_or(value)
+    }
+}
+
+/// Render a native input or output with evaluated constants while retaining the written type and borrow structure.
+fn signature_display<'tcx>(tcx: TyCtxt<'tcx>, item: DefId, value: Ty<'tcx>) -> String {
+    let value = value.fold_with(&mut SignatureConstants {
+        tcx,
+        environment: ty::TypingEnv::non_body_analysis(tcx, item),
+    });
+    display(value)
+}
+
 /// One item's metadata; the nominal types its signatures name join `named`.
 fn describe(tcx: TyCtxt<'_>, def: DefId, path: &str, named: &mut HashSet<DefId>) -> RustItemMetadata {
     let kind = match tcx.def_kind(def) {
@@ -725,7 +755,7 @@ fn signature(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustFun
             let type_display = if receiver && index == 0 {
                 receiver_display(*input)
             } else {
-                display(*input)
+                signature_display(tcx, def, *input)
             };
             RustParam {
                 name: (receiver && index == 0).then(|| "self".to_owned()),
@@ -758,7 +788,7 @@ fn signature(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustFun
         bounds: trait_bounds(tcx, def, named),
         type_params,
         params,
-        return_type: display(output),
+        return_type: signature_display(tcx, def, output),
         is_async,
         is_unsafe: signature.safety().is_unsafe(),
     }
@@ -867,7 +897,8 @@ fn trait_impls<'tcx>(tcx: TyCtxt<'tcx>, owner: Ty<'tcx>, named: &mut HashSet<Def
 }
 
 /// Extract one positive implementation once for both owner and trait ABIs. Const binders remain unsupported;
-/// associated definitions and complete retained trait predicates keep their native declaration identities.
+/// associated definitions and complete retained trait predicates keep their native declaration identities. Nominal
+/// associated outputs join the same metadata closure as method returns, so their public methods remain inspectable.
 fn trait_impl_template(
     tcx: TyCtxt<'_>,
     implementation: DefId,
@@ -892,9 +923,11 @@ fn trait_impl_template(
         .copied()
         .filter(|item| tcx.def_kind(*item) == DefKind::AssocTy)
         .filter_map(|item| {
+            let value = tcx.type_of(item).instantiate_identity().skip_normalization();
+            note_named(value, named);
             Some(RustAssociatedTypeBinding {
                 name: tcx.opt_item_name(item)?.to_string(),
-                value_path: display(tcx.type_of(item).instantiate_identity().skip_normalization()),
+                value_path: display(value),
             })
         })
         .collect();

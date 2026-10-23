@@ -6,6 +6,7 @@ from rust::incan_semantics_core import (
     SemanticSourceTargetKind,
     function_type,
     generic,
+    native_array_type,
 )
 from rust::incan_semantics_core::body_ir import Body, LocalId as RustLocalId
 from symbols import type_component
@@ -38,6 +39,9 @@ pub def substitute(ty: &RustType, names: list[str], arguments: list[RustType]) -
         RustType.RefMut(inner) =>
             concrete: RustType = substitute(inner, names, arguments)?
             return Ok(RustType.RefMut(concrete.clone()))
+        RustType.NativeArray(element=element, length=length) =>
+            concrete: RustType = substitute(element, names, arguments)?
+            return Ok(native_array_type(concrete, length.clone()))
         RustType.Generic(base=base, args=elements) =>
             mut concrete: list[RustType] = []
             for element in elements:

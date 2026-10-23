@@ -93,6 +93,11 @@ pub enum IncanType {
     Unsupported(String),
     Infer,
     Unknown,
+    /// A native fixed-size array whose element storage and evaluated length were retained by the checker.
+    NativeArray {
+        element: Box<IncanType>,
+        length: u64,
+    },
 }
 
 /// Builtin runtime storage admitted by the direct route without impersonating a same-spelled source declaration.
@@ -139,6 +144,16 @@ impl RuntimeBuiltinType {
 /// This interop boundary is removable when dev.8 retires legacy emission; it preserves the supplied checked arguments.
 pub fn generic(base: String, args: Vec<IncanType>) -> IncanType {
     IncanType::Generic { base, args }
+}
+
+/// Construct the checked native array type for the legacy bootstrap, whose emitter cannot construct Rust
+/// struct-style variants (#2256). This bridge preserves the supplied element and evaluated count and retires with
+/// dev.7.
+pub fn native_array_type(element: IncanType, length: u64) -> IncanType {
+    IncanType::NativeArray {
+        element: Box::new(element),
+        length,
+    }
 }
 
 /// Construct a function type for Incan callers whose legacy emitter cannot construct Rust struct-style variants.
@@ -196,13 +211,16 @@ impl IncanType {
             Self::TypeVar(_) => AbiV0Representation::TypeParameter,
             Self::SelfType => AbiV0Representation::SelfType,
             Self::Ref(_) | Self::RefMut(_) => AbiV0Representation::Borrow,
-            Self::RustInteropPath(_) | Self::NativeBuiltin(_) => AbiV0Representation::RustInterop,
+            Self::RustInteropPath(_) | Self::NativeBuiltin(_) | Self::NativeArray { .. } => {
+                AbiV0Representation::RustInterop
+            }
             Self::Never | Self::Infer | Self::Unknown | Self::Unsupported(_) => AbiV0Representation::Unknown,
         }
     }
 }
 
 impl fmt::Display for IncanType {
+    /// Render structural native facts alongside source types, preserving exact array lengths in diagnostics.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Never => write!(f, "!"),
@@ -221,6 +239,7 @@ impl fmt::Display for IncanType {
                 write!(f, ") -> {return_type}")
             }
             Self::TypeToken(inner) => write!(f, "Type[{inner}]"),
+            Self::NativeArray { element, length } => write!(f, "[{element}; {length}]"),
             Self::Tuple(items) => {
                 write!(f, "(")?;
                 for (i, item) in items.iter().enumerate() {

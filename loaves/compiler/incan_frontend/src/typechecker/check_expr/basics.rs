@@ -128,6 +128,7 @@ impl TypeChecker {
             }
         }
         let source_target = self.source_target_for_symbol(name, &sym.kind);
+        let mut native_function_value = None;
 
         let (kind, ty) = match &sym.kind {
             SymbolKind::Variable(info) => (IdentKind::Value, info.ty.clone()),
@@ -245,6 +246,7 @@ impl TypeChecker {
                 let resolved = match &info.metadata {
                     Some(meta) => match &meta.kind {
                         incan_lang::interop::RustItemKind::Function(sig) => {
+                            native_function_value = Some((info.path.clone(), sig.clone()));
                             self.resolved_function_type_from_rust_sig_for_owner_path(sig, false, info.path.as_str())
                         }
                         incan_lang::interop::RustItemKind::Constant { type_display } => {
@@ -270,6 +272,10 @@ impl TypeChecker {
             }
         };
 
+        // Publish the exact selected metadata after immutable symbol inspection has finished.
+        let ty = native_function_value
+            .and_then(|(path, signature)| self.retain_rust_function_value(&path, &signature, span))
+            .unwrap_or(ty);
         self.type_info
             .expressions
             .ident_kinds

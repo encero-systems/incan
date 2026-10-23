@@ -351,19 +351,13 @@ pub(super) fn project_type_alias(
     Ok((value, audit.requirements))
 }
 
-/// Authenticate an already checked generated getter through one exact retained value-enum owner. The member is
+/// Authenticate an already checked generated member through one exact retained value-enum owner. The member is
 /// addressed through its owner's layout; this does not invent a callable body or admit private source methods.
-pub(super) fn generated_value_getter_owner(
+pub(super) fn generated_value_enum_member_owner(
     identity: &CanonicalSymbolId,
     declarations: &[crate::body_ir::ValueEnumDeclaration],
     library: &str,
 ) -> Option<CanonicalSymbolId> {
-    if identity.namespace != crate::SymbolNamespace::Member
-        || identity.kind != crate::SemanticSourceTargetKind::Method
-        || identity.declaration_name != "value"
-    {
-        return None;
-    }
     let mut owners = declarations.iter().filter_map(|declaration| {
         let mut owner = declaration.canonical.clone();
         if let SymbolOrigin::Module(path) = &owner.origin {
@@ -372,17 +366,25 @@ pub(super) fn generated_value_getter_owner(
                 module_path: path.clone(),
             };
         }
-        (owner.namespace == crate::SymbolNamespace::OrdinaryLexical
-            && owner.kind == crate::SemanticSourceTargetKind::Enum
-            && owner.declaration_name == declaration.name
-            && owner.declaration_span.end > owner.declaration_span.start
-            && owner.origin == identity.origin
-            && owner.scope_discriminant == identity.scope_discriminant
-            && owner.declaration_span == identity.declaration_span)
+        (owner.declaration_name == declaration.name && is_generated_value_enum_member(identity, &owner))
             .then_some(owner)
     });
     let owner = owners.next()?;
     owners.next().is_none().then_some(owner)
+}
+
+/// Authenticate generated scalar-enum members by their exact declaring identity at publication and index validation.
+/// A matching spelling alone never grants an enum's executable layout to an ordinary source method.
+pub(super) fn is_generated_value_enum_member(identity: &CanonicalSymbolId, owner: &CanonicalSymbolId) -> bool {
+    identity.namespace == crate::SymbolNamespace::Member
+        && identity.kind == crate::SemanticSourceTargetKind::Method
+        && matches!(identity.declaration_name.as_str(), "value" | "from_value")
+        && owner.namespace == crate::SymbolNamespace::OrdinaryLexical
+        && owner.kind == crate::SemanticSourceTargetKind::Enum
+        && owner.declaration_span.end > owner.declaration_span.start
+        && owner.origin == identity.origin
+        && owner.scope_discriminant == identity.scope_discriminant
+        && owner.declaration_span == identity.declaration_span
 }
 
 /// Require the same canonical origin and enclosing declaration span before borrowing an owner's binders.
@@ -508,7 +510,7 @@ impl<'a> PublicationAudit<'a> {
             SymbolOrigin::Package { library, .. } => {
                 if library == self.library && !self.eligible.contains(identity) {
                     if let Some(mut owner) =
-                        generated_value_getter_owner(identity, self.value_enum_declarations, self.library)
+                        generated_value_enum_member_owner(identity, self.value_enum_declarations, self.library)
                     {
                         self.identity(&mut owner, true)?;
                     } else {
@@ -566,7 +568,10 @@ impl<'a> PublicationAudit<'a> {
                 }
                 self.ty(return_type)
             }
-            IncanType::Ref(inner) | IncanType::RefMut(inner) | IncanType::TypeToken(inner) => self.ty(inner),
+            IncanType::Ref(inner)
+            | IncanType::RefMut(inner)
+            | IncanType::TypeToken(inner)
+            | IncanType::NativeArray { element: inner, .. } => self.ty(inner),
             IncanType::TypeVar(_)
             | IncanType::SelfType
             | IncanType::RustInteropPath(_)

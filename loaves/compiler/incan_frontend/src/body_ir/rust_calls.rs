@@ -25,6 +25,7 @@ pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::LoafCallable> {
         .chain(&facts.rust.await_conversions)
         .chain(argument_calls)
         .chain(field_calls)
+        .chain(facts.rust.checked_function_values.iter())
         .map(|(span, call)| (*span, call))
         .chain(
             facts
@@ -144,6 +145,74 @@ impl BodyBuilder<'_, '_> {
             .and_then(|step| step.storage.as_ref())
             .map_or(IncanType::Unknown, |storage| storage.return_type.clone());
         self.materialize_operand_to_place(value, ty, scope, hir_span(span), out)
+    }
+
+    /// Project a checked native function read into the existing capture-free named function-item representation.
+    /// The namespace is never evaluated; parameters and the forwarding target come only from the published native
+    /// signature.
+    pub(super) fn lower_checked_rust_function_value(
+        &mut self,
+        expr: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::Operand> {
+        let call = self
+            .type_info
+            .rust
+            .checked_function_values
+            .get(&(expr.span.start, expr.span.end))?
+            .clone();
+        let span = hir_span(expr.span);
+        let storage = call.storage.as_ref()?;
+        if call.has_receiver || !call.receiver_adjustments.is_empty() || !storage.type_arguments.is_empty() {
+            return Some(self.unsupported_operand(
+                format!(
+                    "native function value `{}` is not a closed associated or free function",
+                    call.path
+                ),
+                scope,
+                span,
+                out,
+            ));
+        }
+        let child = self.new_scope(Some(scope), span);
+        let mut parameters = Vec::new();
+        let mut arguments = Vec::new();
+        for (index, ty) in storage.parameters.iter().enumerate() {
+            let local = self.new_temp(ty.clone(), child, span);
+            self.locals[local.index()].origin = bir::LocalOrigin::Parameter;
+            parameters.push(bir::CallableParam {
+                local,
+                name: format!("__native_argument_{index}"),
+                ty: ty.clone(),
+                kind: super::parameter_types::source_parameter_kind(ast::ParamKind::Normal),
+                span,
+                default: bir::CallableParamDefault::Required,
+                mutable: false,
+            });
+            arguments.push(bir::ArgumentElement::One(self.temp_operand(local, ty)));
+        }
+        let binding = bir::ArgumentBinding::resolved_positional(parameters.len());
+        let mut statements = Vec::new();
+        let result = self.emit_checked_rust_call(&call, arguments, binding, expr.span, child, &mut statements)?;
+        Some(self.push_assign_temp(
+            bir::Rvalue::Closure {
+                params: parameters,
+                captured_operands: Vec::new(),
+                body: Box::new(bir::ClosureBody {
+                    function_item: true,
+                    consumes_environment: false,
+                    original_callable: None,
+                    capture_locals: Vec::new(),
+                    stmts: statements,
+                    result,
+                }),
+            },
+            self.resolve_ty(expr.span),
+            scope,
+            span,
+            out,
+        ))
     }
 
     /// Lower a metadata-selected Rust call through ordinary declared-slot binding and a named external target.

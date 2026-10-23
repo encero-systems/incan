@@ -51,6 +51,9 @@ fn numeric(kind: &SizedNumeric) -> Numeric {
 enum Scalar {
     NativeStr,
     NativeSlice(Vec<Scalar>),
+    NativeArray(Vec<Scalar>, i64),
+    NativeArrayRef(Vec<Scalar>, i64),
+    NativeArrayMutRef(Vec<Scalar>, i64),
     SliceRef(Vec<Scalar>),
     SliceMutRef(Vec<Scalar>),
     UnitFunction,
@@ -198,6 +201,13 @@ fn scalar(ty: &PlanType) -> Scalar {
     match ty {
         PlanType::NativeStr => Scalar::NativeStr,
         PlanType::NativeSlice(elements) => Scalar::NativeSlice(elements.iter().map(scalar).collect()),
+        PlanType::NativeArray(elements, length) => Scalar::NativeArray(elements.iter().map(scalar).collect(), *length),
+        PlanType::NativeArrayRef(elements, length) => {
+            Scalar::NativeArrayRef(elements.iter().map(scalar).collect(), *length)
+        }
+        PlanType::NativeArrayMutRef(elements, length) => {
+            Scalar::NativeArrayMutRef(elements.iter().map(scalar).collect(), *length)
+        }
         PlanType::SliceRef(elements) => Scalar::SliceRef(elements.iter().map(scalar).collect()),
         PlanType::SliceMutRef(elements) => Scalar::SliceMutRef(elements.iter().map(scalar).collect()),
         PlanType::ScalarRef(elements) => Scalar::ScalarRef(elements.iter().map(scalar).collect()),
@@ -470,18 +480,22 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
         if !identifier(&parameter.name) || !parameters.insert(&parameter.name) {
             return Err(invalid(function, "parameter name is invalid or duplicated"));
         }
-        if !(source_signature_type(&scalar(&parameter.ty))
-            || matches!(
-                scalar(&parameter.ty),
-                Scalar::ModelRef(_) | Scalar::ModelMutRef(_) | Scalar::EnumRef(_)
-            )
-            || matches!(
-                scalar(&parameter.ty),
-                Scalar::ScalarRef(ref elements) if matches!(elements.as_slice(), [inner] if scalar_referent(inner))
-            ))
-            || scalar(&parameter.ty) != scalar(&function.locals[index + 1].ty)
-        {
-            return Err(invalid(function, "parameter local differs from its declaration"));
+        if !source_parameter_type(&scalar(&parameter.ty)) {
+            return Err(invalid(
+                function,
+                format!("parameter `{}` has unsupported type {:?}", parameter.name, parameter.ty),
+            ));
+        }
+        if scalar(&parameter.ty) != scalar(&function.locals[index + 1].ty) {
+            return Err(invalid(
+                function,
+                format!(
+                    "parameter `{}` local {:?} differs from its declaration {:?}",
+                    parameter.name,
+                    function.locals[index + 1].ty,
+                    parameter.ty
+                ),
+            ));
         }
     }
     for local in &function.locals {
@@ -709,6 +723,9 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
         Projection::Deref(field_type) => {
             let pointee = match ty {
                 Scalar::SliceRef(elements) | Scalar::SliceMutRef(elements) => Scalar::NativeSlice(elements),
+                Scalar::NativeArrayRef(elements, length) | Scalar::NativeArrayMutRef(elements, length) => {
+                    Scalar::NativeArray(elements, length)
+                }
                 Scalar::ScalarRef(elements) | Scalar::ScalarMutRef(elements) => {
                     let [inner] = elements.as_slice() else {
                         return Err(invalid(function, "unsupported scalar reference arity"));
@@ -1227,6 +1244,7 @@ fn borrow_result(plan: &Plan, function: &Function, value: &Place, mutable: bool)
         Scalar::Dict(key, value) => Ok(Scalar::DictRef(key, value)),
         Scalar::String => Ok(Scalar::StringRef),
         Scalar::NativeSlice(elements) => Ok(Scalar::SliceRef(elements)),
+        Scalar::NativeArray(elements, length) => Ok(Scalar::NativeArrayRef(elements, length)),
         Scalar::ValidationError => Ok(Scalar::ValidationErrorRef),
         Scalar::FrozenCollection(name, elements) => Ok(Scalar::FrozenCollectionRef(name, elements)),
         Scalar::StringArray(count) => Ok(Scalar::StringArrayRef(count)),
@@ -1241,6 +1259,7 @@ fn shared_reference(ty: &Scalar) -> bool {
     matches!(
         ty,
         Scalar::StringRef
+            | Scalar::NativeArrayRef(_, _)
             | Scalar::SliceRef(_)
             | Scalar::ScalarRef(_)
             | Scalar::FrozenCollectionRef(_, _)
@@ -1257,13 +1276,28 @@ fn shared_reference(ty: &Scalar) -> bool {
     )
 }
 
+/// Source inputs additionally admit checked borrows of owned text and exact copyable scalar referents. Owned return
+/// and stored-value admission remain governed by `source_signature_type` rather than this parameter-only boundary.
+fn source_parameter_type(ty: &Scalar) -> bool {
+    if let Scalar::ScalarRef(elements) = ty {
+        return matches!(elements.as_slice(), [inner] if scalar_referent(inner));
+    }
+    source_signature_type(ty)
+        || matches!(
+            ty,
+            Scalar::StringRef | Scalar::ModelRef(_) | Scalar::ModelMutRef(_) | Scalar::EnumRef(_)
+        )
+}
+
 /// Source signatures expose scalars, owned text, explicit shared text and validation-error references, and the
 /// exclusive text reference a `mut str` parameter receives, models, callables, and tuples of admitted types; formatting
 /// views stay internal. Exact native slice references can cross a closed source type parameter without becoming owned
-/// lists. Metadata-validated native references retain their exact carrier. A function pointer's inputs also admit
-/// shared and exclusive model references retained by method decorators, as receiver frames do. Uninhabited results
-/// preserve divergence.
+/// lists. Metadata-validated native references retain their exact carrier. A function pointer's inputs follow the
+/// same checked reference-parameter contract as source receiver frames. Uninhabited results preserve divergence.
 fn source_signature_type(ty: &Scalar) -> bool {
+    if let Scalar::NativeArray(elements, length) = ty {
+        return *length >= 0 && matches!(elements.as_slice(), [element] if source_signature_type(element));
+    }
     if let Scalar::TypeToken(elements) = ty {
         return matches!(
             elements.as_slice(),
@@ -1284,10 +1318,7 @@ fn source_signature_type(ty: &Scalar) -> bool {
         let Some((result, inputs)) = signature.split_last() else {
             return false;
         };
-        return source_signature_type(result)
-            && inputs.iter().all(|input| {
-                source_signature_type(input) || matches!(input, Scalar::ModelRef(_) | Scalar::ModelMutRef(_))
-            });
+        return source_signature_type(result) && inputs.iter().all(source_parameter_type);
     }
     if let Scalar::Closure(signature) | Scalar::ClosureOnce(signature) | Scalar::ClosureRef(signature) = ty {
         return callable_object_signature(signature);
@@ -1368,6 +1399,12 @@ fn source_signature_type(ty: &Scalar) -> bool {
 /// metadata checking erases, and the exclusive model and enum references a checked element reborrow returns.
 /// Concrete owned list iterators and their polling references cross only these native trait-call boundaries.
 fn external_signature_type(ty: &Scalar) -> bool {
+    if let Scalar::NativeArray(elements, length)
+    | Scalar::NativeArrayRef(elements, length)
+    | Scalar::NativeArrayMutRef(elements, length) = ty
+    {
+        return *length >= 0 && matches!(elements.as_slice(), [element] if source_signature_type(element));
+    }
     if let Scalar::SliceRef(elements) | Scalar::SliceMutRef(elements) = ty {
         return matches!(elements.as_slice(), [element] if source_signature_type(element));
     }
@@ -2153,6 +2190,25 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
     }
 
     match ty {
+        PlanType::NativeArray(elements, length)
+        | PlanType::NativeArrayRef(elements, length)
+        | PlanType::NativeArrayMutRef(elements, length) => {
+            if *length < 0 || elements.len() != 1 {
+                return Err(PlanError::Invalid {
+                    function: "native array".into(),
+                    reason: "array requires one element type and a nonnegative length".into(),
+                });
+            }
+            for element in elements {
+                if !source_signature_type(&scalar(element)) {
+                    return Err(PlanError::Unsupported {
+                        function: "native array".into(),
+                        reason: "unsupported array element".into(),
+                    });
+                }
+                validate_model_type(plan, element)?;
+            }
+        }
         PlanType::NativeSlice(elements) | PlanType::SliceRef(elements) | PlanType::SliceMutRef(elements) => {
             let [element] = elements.as_slice() else {
                 return Err(PlanError::Invalid {
@@ -2904,6 +2960,9 @@ fn library_argument_models(
         | PlanType::ScalarRef(signature)
         | PlanType::ScalarMutRef(signature)
         | PlanType::NativeSlice(signature)
+        | PlanType::NativeArray(signature, _)
+        | PlanType::NativeArrayRef(signature, _)
+        | PlanType::NativeArrayMutRef(signature, _)
         | PlanType::SliceRef(signature)
         | PlanType::SliceMutRef(signature)
         | PlanType::Closure(signature)
@@ -2979,6 +3038,9 @@ fn borrowed_alias_in_source_type(plan: &Plan, ty: &PlanType, seen: &mut BTreeSet
             .iter()
             .any(|element| borrowed_alias_in_source_type(plan, &tuple_element_type(element.clone()), seen)),
         PlanType::NativeSlice(elements)
+        | PlanType::NativeArray(elements, _)
+        | PlanType::NativeArrayRef(elements, _)
+        | PlanType::NativeArrayMutRef(elements, _)
         | PlanType::SliceRef(elements)
         | PlanType::SliceMutRef(elements)
         | PlanType::ScalarRef(elements)

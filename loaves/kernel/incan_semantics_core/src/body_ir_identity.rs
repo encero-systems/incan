@@ -1171,9 +1171,10 @@ fn is_owner_bound_type(ty: &IncanType, parameters: &[String]) -> bool {
             params.iter().all(|param| is_owner_bound_type(&param.ty, parameters))
                 && is_owner_bound_type(return_type, parameters)
         }
-        IncanType::TypeToken(inner) | IncanType::Ref(inner) | IncanType::RefMut(inner) => {
-            is_owner_bound_type(inner, parameters)
-        }
+        IncanType::TypeToken(inner)
+        | IncanType::Ref(inner)
+        | IncanType::RefMut(inner)
+        | IncanType::NativeArray { element: inner, .. } => is_owner_bound_type(inner, parameters),
         IncanType::Never
         | IncanType::Primitive(_)
         | IncanType::Named(_)

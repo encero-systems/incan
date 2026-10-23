@@ -37,7 +37,8 @@ use crate::body_ir::{
 /// Version 23 appends builtin codec label guards; their conditional evaluation is retained in ordinary Body IR blocks.
 /// Version 24 distinguishes compiled callable contracts from caller-instantiated executable bodies.
 /// Version 25 retains callable union payload signatures and producer-owned captured environment aliases.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 25;
+/// Version 26 appends native fixed-size arrays with their checked element storage and evaluated length.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 26;
 
 /// Largest index this format admits, in bytes.
 ///
@@ -790,7 +791,7 @@ fn record_type_context_members(
         };
         for required in &required_members {
             if let Some(owner) =
-                publication::generated_value_getter_owner(required, std::slice::from_ref(value), library)
+                publication::generated_value_enum_member_owner(required, std::slice::from_ref(value), library)
             {
                 declarations.insert((*required).clone(), DeclarationCoverage::TypeContext { owner });
             }
@@ -943,14 +944,7 @@ impl SurfaceIndex {
                             crate::SemanticSourceTargetKind::Method,
                             crate::SemanticSourceTargetKind::Trait
                         )
-                    ) || (identity.kind == crate::SemanticSourceTargetKind::Method
-                        && owner.kind == crate::SemanticSourceTargetKind::Enum
-                        && identity.namespace == crate::SymbolNamespace::Member
-                        && owner.namespace == crate::SymbolNamespace::OrdinaryLexical
-                        && identity.declaration_name == "value"
-                        && identity.scope_discriminant == owner.scope_discriminant
-                        && identity.declaration_span == owner.declaration_span
-                        && owner.declaration_span.end > owner.declaration_span.start))
+                    ) || publication::is_generated_value_enum_member(identity, owner))
                     || !matches!(self.execution_coverage(owner), Ok(DeclarationCoverage::Covered { .. })))
             {
                 return Err(malformed(

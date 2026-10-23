@@ -1,4 +1,4 @@
-# behavior: imported Rust free functions retain ordinary results and nonreturning results in source return expressions
+# behavior: imported Rust functions retain direct and stored callable results, plus nonreturning results in source return expressions
 # expect-stdout:
 #   false
 
@@ -16,5 +16,8 @@ def finish() -> int:
 def main() -> None:
     """Print the result of the selected Rust function."""
     println(panicking())
+    query = panicking
+    assert not query()
+    assert not query()
     finish()
     println("unreachable")

@@ -87,6 +87,8 @@ from derived_methods import (
     slot_name,
 )
 from result_combinators import result_combinator, lower_result_combinator
+from rust::std::env import var_os as native_environment
+
 from rust::incan_semantics_core import (
     IncanType as RustType,
     HirSourceSpan as RustSpan,
@@ -284,7 +286,14 @@ from tuples import (
     carrier_element,
     owned_carrier,
 )
-from text_plan import format_parts, clone_text, owned_literal, owned_slice_text, owned_borrowed_text
+from text_plan import (
+    format_parts,
+    clone_text,
+    clone_text_reference,
+    owned_literal,
+    owned_slice_text,
+    owned_borrowed_text,
+)
 from options import (
     intrinsic_declarations,
     retain_body_carriers,
@@ -344,6 +353,7 @@ from frame import (
     finish_fallthrough,
     appended_field,
 )
+from array_views import borrow_array_slice
 from collections import (
     dictionary_method_signature,
     require_mutable_receiver,
@@ -666,7 +676,7 @@ def reference_value_read(
                 _ => return Ok(None)
         target = scalar_place(builder, value, span)?
         match place_type(builder.locals, target):
-            (PlanType.StrRef | PlanType.ScalarRef(_) | PlanType.ModelRef(_, _) | PlanType.SliceRef(_) | PlanType.StringRef | PlanType.EnumRef(_, _)) =>
+            (PlanType.StrRef | PlanType.ScalarRef(_) | PlanType.ModelRef(_, _) | PlanType.SliceRef(_) | PlanType.NativeArrayRef(_, _) | PlanType.StringRef | PlanType.EnumRef(_, _)) =>
                 if fact == OwnershipFact.Unknown or fact == OwnershipFact.MutBorrow:
                     return Err("unsupported Body IR projected reference without a checked read")
                 return Ok(Some(read_place(target, false, span)))
@@ -3820,10 +3830,12 @@ def instantiated_method_body(
     mut body = module.bodies[index].clone()
     if len(body.type_parameters) != 0:
         closed = sdk_forwarded_type_arguments(module, builder, target, body, arguments, span)?
+        typed = instantiate(body, closed, [])?
+        owned = owned_callable_slots(builder, body, typed, arguments, target.binding, 1)?
         builder.instances.append(
-            Instance(body=body.clone(), arguments=closed, owned_callable_slots=[], original_callable=false),
+            Instance(body=body.clone(), arguments=closed, owned_callable_slots=owned, original_callable=false),
         )
-        body = instantiate(body, closed, [])?
+        body = instantiate(body, closed, owned)?
     else:
         if len(target.type_args) != 0:
             return Err("unsupported Body IR type arguments on a method without type parameters")
@@ -4567,7 +4579,7 @@ def lower_type_parameter_call(
     _ = validate_static_receiver(module, target)?
     closed = checked_type_arguments(builder, static_type_arguments(module, target)?)?
     typed_body = instantiate(body, closed, [])?
-    owned = owned_callable_slots(builder, body, typed_body, arguments, target.binding)?
+    owned = owned_callable_slots(builder, body, typed_body, arguments, target.binding, 0)?
     concrete_body = instantiate(body, closed, owned)?
     builder.instances.append(
         Instance(body=body.clone(), arguments=closed, owned_callable_slots=owned, original_callable=false),
@@ -6554,7 +6566,8 @@ pub def display_plan_value(
     type_parameter: bool,
 ) -> Result[Place, str]:
     """
-    Format a materialized scalar, as generic code formats it when its checked type is a type parameter.
+    Format a materialized scalar, as generic code formats it when its checked type is a type parameter. A retained
+    shared string reference produces owned display text through the ordinary text materialization boundary.
 
     A list, set or dictionary displays through its structure, as legacy's Debug spells it. A shared scalar reference
     retains its pointer once, then copies its numeric or boolean referent into the ordinary scalar formatter.
@@ -6577,6 +6590,8 @@ pub def display_plan_value(
         return type_parameter_display(builder, operand, span)
     if is_owned_list(ty) or is_owned_collection(ty):
         return debug_plan_operand(builder, operand, span)
+    if ty == PlanType.StringRef:
+        return clone_text_reference(builder, operand, span)
     if ty == PlanType.String:
         return display_string_operand(builder, operand, span)
     if ty == PlanType.StringRef:
@@ -6751,6 +6766,9 @@ def borrow_slice_operand(
         RustOperand.Place(read) =>
             place = scalar_place(builder, read.place, span)?
             actual = place_type(builder.locals, place)
+            match borrow_array_slice(builder, place, elements, mutable, read.fact, span)?:
+                Some(view) => return Ok(view)
+                None => pass
             if actual == PlanType.SliceRef(elements) and not mutable:
                 return Ok(read_place(place, false, span))
             if actual == PlanType.SliceMutRef(elements):
@@ -7053,7 +7071,11 @@ def lowered_plan(
     tests: list[str],
     mut published: list[NativeUnionDeclaration],
 ) -> Result[Option[Plan], str]:
-    """Lower all three unit kinds through one pipeline; only a program requires an authored main."""
+    """Lower all three unit kinds through one pipeline, optionally tracing stages through `INCAN_TRACE_LOWERING`; only a program requires an authored main."""
+    trace_key: str = "INCAN_TRACE_LOWERING"
+    trace = native_environment(trace_key).is_some()
+    if trace:
+        println("lowering: validate modules")
     if len(modules) == 0 or entry < 0 or entry >= len(modules):
         return Err("invalid Body IR project entry")
     if len(sources) != len(modules) or len(files) != len(modules):
@@ -7061,9 +7083,17 @@ def lowered_plan(
     _conversion_placement = validate_conversion_placement(modules, entry)?
     for module in modules:
         _ = validate_project_module(module, modules)?
+    if trace:
+        println("lowering: project context")
     source_context, checked = project_context(modules, entry)?
+    if trace:
+        println("lowering: close async types")
     closed_context = close_async_types(source_context)?
+    if trace:
+        println("lowering: specialize nominals")
     nominal_context, nominal_instances = specialize_nominals_with_instances(closed_context)?
+    if trace:
+        println("lowering: specialize enums")
     context = specialize_enums(nominal_context)?
     mut has_main = false
     mut declares_main = false
@@ -7074,14 +7104,22 @@ def lowered_plan(
             has_main = true
     unions = collect_unions(context)
     mut intrinsics = intrinsic_declarations(context, files[entry])?
+    if trace:
+        println("lowering: checked deserialize")
     checked_functions, checked_runtime, checked_instances = lower_checked_deserialize(
         context,
         nominal_instances,
         files[entry],
         intrinsics,
     )?
+    if trace:
+        println("lowering: string conversions")
     conversion_functions, conversion_runtime = lower_string_conversions(context, files[entry], intrinsics)?
+    if trace:
+        println("lowering: model declarations")
     mut models = lower_model_declarations(context, files[entry], intrinsics, nominal_instances, kind == "library")?
+    if trace:
+        println("lowering: enum declarations")
     mut enums = lower_enum_declarations(context, files[entry], intrinsics)?
     attach_enum_comparisons(context, enums, intrinsics)?
     # Native comparison bridges call their checked slots without an ordinary source call to schedule them.
@@ -7109,6 +7147,8 @@ def lowered_plan(
                 continue
             if retains_emitted_frame(emitted_frames, body):
                 continue
+            if trace:
+                println(f"lowering: body {body_module_identity(body)?} {body.name} {body.span.start}")
             function, runtime, pending, synthesized = lower_function(
                 context,
                 body,
@@ -7154,6 +7194,8 @@ def lowered_plan(
         externals,
         instances,
     )?
+    if trace:
+        println("lowering: generic instances")
     _ = lower_instances(context, instances, unions, sources, files, owners, functions, externals, intrinsics)?
     for declaration in intrinsics:
         enums.append(declaration)
@@ -8895,7 +8937,7 @@ def lower_builtin_method(
             if identity.origin != SymbolOrigin.Builtin:
                 return Err("unsupported Body IR non-builtin list Method")
             member = str(identity.declaration_name)
-        None => return Err("unsupported Body IR Method without canonical identity")
+        None => return Err(f"unsupported Body IR Method {str(target.name)} without canonical identity in {builder.name} at {span.file}:{span.line}:{span.column}")
     # Builtin Clone calls use the exact retained native carrier rather than a same-named list member.
     if member in ["Clone.clone", "Option.clone"]:
         return lower_derived_clone(builder, arguments, destination, span)
@@ -11217,6 +11259,7 @@ def enum_payload_read(
         PlanType.ModelRef(_owner, _name) => return Ok(read_place(place, false, span))
         PlanType.EnumRef(_owner, _name) => return Ok(read_place(place, false, span))
         PlanType.SliceRef(_elements) => return Ok(read_place(place, false, span))
+        PlanType.NativeArrayRef(_elements, _length) => return Ok(read_place(place, false, span))
         _ => pass
     if numeric_carrier(payload_type) or payload_type == PlanType.Bool or payload_type == PlanType.Unit:
         return Ok(read_place(place, false, span))

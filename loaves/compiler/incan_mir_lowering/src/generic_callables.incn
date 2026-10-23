@@ -19,17 +19,18 @@ pub def owned_callable_slots(
     closed: &RustBody,
     arguments: &list[RustArgument],
     binding: &RustBinding,
+    receiver_slots: int,
 ) -> Result[list[int], str]:
-    """Select storage from retained generic parameters and already evaluated local closure facts, never infer types."""
+    """Select storage from retained generic parameters and evaluated closure facts; method bindings exclude their receiver slot."""
     match binding:
         RustBinding.Resolved(arguments=bindings, defaulted_slots=_defaults) =>
-            return owned_slots_for_bindings(builder, original, closed, arguments, bindings)
+            return owned_slots_for_bindings(builder, original, closed, arguments, bindings, receiver_slots)
         RustBinding.ResolvedDeclarationOrder(arguments=bindings, defaulted_slots=_defaults) =>
             # A checked named free call keeps frozen declaration order; its records still name each argument's slot.
             for index in range(1, len(bindings)):
                 if int(bindings[index].slot) <= int(bindings[index - 1].slot):
                     return Err("unsupported Body IR binding outside declaration order")
-            return owned_slots_for_bindings(builder, original, closed, arguments, bindings)
+            return owned_slots_for_bindings(builder, original, closed, arguments, bindings, receiver_slots)
         _ => return Err("unsupported Body IR generic callable without resolved slot binding")
 
 
@@ -39,18 +40,19 @@ def owned_slots_for_bindings(
     closed: &RustBody,
     arguments: &list[RustArgument],
     bindings: &list[RustBoundArgument],
+    receiver_slots: int,
 ) -> Result[list[int], str]:
     """Collect the generic value slots whose bound argument is an owned closure, whatever order the call evaluated in."""
-    if len(bindings) != len(arguments):
+    if receiver_slots < 0 or receiver_slots > 1 or len(bindings) + receiver_slots != len(arguments):
         return Err("invalid Body IR generic callable slot binding")
     mut owned: list[int] = []
     for slot in range(len(original.params)):
         if not is_generic_value(original.params[slot].ty):
             continue
         for index in range(len(bindings)):
-            if int(bindings[index].slot) != slot:
+            if int(bindings[index].slot) + receiver_slots != slot:
                 continue
-            ty = argument_storage(builder, arguments[index])?
+            ty = argument_storage(builder, arguments[index + receiver_slots])?
             match ty:
                 Some(PlanType.Closure(signature)) =>
                     if original.params[slot].mutable:

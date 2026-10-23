@@ -1,10 +1,11 @@
-# behavior: native method receivers retain checked borrows and carriers used by imported method defaults
+# behavior: native receivers retain checked borrows, associated constructors remain callable as stored values, and imported defaults retain native carriers
 # expect-stdout:
 #   2
 
 """Call a method on an opaque Rust value."""
 
 from rust::std::time import Duration
+from rust::std import time as native_time
 from std.io import BytesIO
 
 
@@ -12,6 +13,11 @@ def main() -> None:
     """Read a duration through its inherent Rust method."""
     value = Duration.from_secs(2)
     println(value.as_secs())
+    construct = Duration.from_secs
+    assert construct(3u64).as_secs() == 3u64
+    assert construct(4u64).as_secs() == 4u64
+    qualified = native_time.Duration.from_secs
+    assert qualified(5u64).as_secs() == 5u64
     match BytesIO(b"abc").read():
         Ok(data) => assert data == b"abc"
         Err(_) => assert false

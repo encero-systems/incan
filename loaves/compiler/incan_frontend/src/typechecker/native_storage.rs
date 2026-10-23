@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeKind};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::{CanonicalSymbolId, IncanType, body_ir};
+use quote::ToTokens;
 
 use super::TypeChecker;
 use super::type_info::{FunctionBindingInfo, RustCheckedCall, RustCheckedSignature, semantic_type_from_resolved};
@@ -54,6 +55,7 @@ impl TypeChecker {
         let mut awaits = std::mem::take(&mut self.type_info.rust.await_conversions);
         let mut arguments = std::mem::take(&mut self.type_info.rust.argument_adjustments);
         let mut fields = std::mem::take(&mut self.type_info.rust.field_adjustments);
+        let mut function_values = std::mem::take(&mut self.type_info.rust.checked_function_values);
         let mut hooks = std::mem::take(&mut self.type_info.rust.iteration_hooks);
         let mut storage = HashMap::new();
         for call in calls
@@ -61,6 +63,7 @@ impl TypeChecker {
             .chain(awaits.values_mut())
             .chain(arguments.values_mut().flatten())
             .chain(fields.values_mut().flatten())
+            .chain(function_values.values_mut())
         {
             self.freeze_rust_call(call, &mut storage);
         }
@@ -125,6 +128,7 @@ impl TypeChecker {
         self.type_info.rust.await_conversions = awaits;
         self.type_info.rust.argument_adjustments = arguments;
         self.type_info.rust.field_adjustments = fields;
+        self.type_info.rust.checked_function_values = function_values;
         self.type_info.rust.iteration_hooks = hooks;
     }
 
@@ -267,7 +271,7 @@ impl TypeChecker {
     ) -> IncanType {
         let structural = self.rust_storage_resolved(ty, parameters);
         let mut projected = semantic_type_from_resolved(&structural);
-        self.qualify_rust_storage(&mut projected, identities);
+        self.qualify_rust_storage(&mut projected, parameters, identities);
         let original = map_resolved_type_leaves(ty, &|leaf| source_binder(leaf, parameters));
         self.remember_rust_storage(&original, &projected, storage);
         projected
@@ -404,8 +408,18 @@ impl TypeChecker {
 
     /// Retain the exact owner beside the checker's shared nominal projection. Alias targets and native builtin storage
     /// remain checker facts; an unencoded conflicting owner refuses instead of overwriting another signature's proof.
-    fn qualify_rust_storage(&self, ty: &mut IncanType, identities: &mut BTreeMap<String, CanonicalSymbolId>) {
+    fn qualify_rust_storage(
+        &self,
+        ty: &mut IncanType,
+        parameters: &[String],
+        identities: &mut BTreeMap<String, CanonicalSymbolId>,
+    ) {
         match ty {
+            IncanType::RustInteropPath(path) => {
+                if let Some(array) = self.rust_array_storage(path, parameters, identities) {
+                    *ty = array;
+                }
+            }
             IncanType::Named(name) => {
                 if let Some(target) = self.type_info.type_alias_target(name) {
                     *ty = self.rust_storage_type(target, &mut HashMap::new(), identities);
@@ -449,7 +463,7 @@ impl TypeChecker {
             IncanType::Generic { base, args } => {
                 *base = self.rust_public_type_path(base);
                 let mut owner = IncanType::Named(base.clone());
-                self.qualify_rust_storage(&mut owner, identities);
+                self.qualify_rust_storage(&mut owner, parameters, identities);
                 let IncanType::Named(name) = owner else {
                     *ty = match owner {
                         IncanType::Unsupported(_) => owner,
@@ -459,25 +473,60 @@ impl TypeChecker {
                 };
                 *base = name;
                 for argument in args {
-                    self.qualify_rust_storage(argument, identities);
+                    self.qualify_rust_storage(argument, parameters, identities);
                 }
             }
             IncanType::Tuple(fields) => {
                 for field in fields {
-                    self.qualify_rust_storage(field, identities);
+                    self.qualify_rust_storage(field, parameters, identities);
                 }
             }
             IncanType::Ref(inner) | IncanType::RefMut(inner) | IncanType::TypeToken(inner) => {
-                self.qualify_rust_storage(inner, identities);
+                self.qualify_rust_storage(inner, parameters, identities);
             }
+            IncanType::NativeArray { element, .. } => self.qualify_rust_storage(element, parameters, identities),
             IncanType::Function { params, return_type } => {
                 for parameter in params {
-                    self.qualify_rust_storage(&mut parameter.ty, identities);
+                    self.qualify_rust_storage(&mut parameter.ty, parameters, identities);
                 }
-                self.qualify_rust_storage(return_type, identities);
+                self.qualify_rust_storage(return_type, parameters, identities);
             }
             _ => {}
         }
+    }
+
+    /// Freeze only arrays with an evaluated native integer length. The element uses the same source binder and
+    /// canonical-owner projection as every other native signature component; unresolved const parameters refuse.
+    fn rust_array_storage(
+        &self,
+        path: &str,
+        parameters: &[String],
+        identities: &mut BTreeMap<String, CanonicalSymbolId>,
+    ) -> Option<IncanType> {
+        let (element, length) = self.rust_array_parts(path)?;
+        Some(IncanType::NativeArray {
+            element: Box::new(self.rust_call_storage_type(&element, parameters, &mut HashMap::new(), identities)),
+            length,
+        })
+    }
+
+    /// Decode an admitted fixed-array metadata display once for receiver selection and structural publication.
+    /// Only evaluated nonnegative lengths authorize a view; const parameters remain explicit refusals.
+    pub(in crate::typechecker) fn rust_array_parts(&self, path: &str) -> Option<(ResolvedType, u64)> {
+        let syn::Type::Array(array) = syn::parse_str::<syn::Type>(path).ok()? else {
+            return None;
+        };
+        let syn::Expr::Lit(length) = &array.len else {
+            return None;
+        };
+        let syn::Lit::Int(length) = &length.lit else {
+            return None;
+        };
+        let length = length.base10_parse::<u64>().ok()?;
+        Some((
+            self.native_rust_signature_type(&array.elem.to_token_stream().to_string(), ""),
+            length,
+        ))
     }
 
     /// Index native values before and after checked source-owner qualification, including short import aliases whose

@@ -974,6 +974,9 @@ pub struct RustInteropArtifacts {
     pub field_adjustments: HashMap<(usize, usize), Vec<RustCheckedCall>>,
     /// Exact native values of public field expressions before source collection and scalar projection.
     pub field_values: HashMap<(usize, usize), RustCheckedFieldValue>,
+    /// Safe closed native functions selected as values, keyed by the read span rather than an application span.
+    /// Their signatures share call publication while their value role never supplies a call's result provenance.
+    pub checked_function_values: HashMap<(usize, usize), RustCheckedCall>,
     /// Closed native iteration calls selected from IntoIterator and Iterator facts at the iterable's span.
     pub iteration_hooks: HashMap<(usize, usize), RustIterationHooks>,
     /// Native result item selected for each local binding, even when its source type projects to str or a collection.
@@ -2134,6 +2137,7 @@ pub enum ResolvedMethodDispatch {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct CallSiteFacts {
     checked_rust_call: Option<RustCheckedCall>,
+    checked_rust_function_value: Option<RustCheckedCall>,
     body_ir_reexport_call: Option<BodyIrReexportCallInfo>,
     body_ir_string_slice_member: Option<CanonicalSymbolId>,
     inferred_constructor_type: Option<ResolvedType>,
@@ -2902,6 +2906,10 @@ impl TypeCheckInfo {
                 IncanType::Tuple(items.into_iter().map(|ty| self.qualify_semantic_type(ty)).collect())
             }
             IncanType::Ref(inner) => IncanType::Ref(Box::new(self.qualify_semantic_type(*inner))),
+            IncanType::NativeArray { element, length } => IncanType::NativeArray {
+                element: Box::new(self.qualify_semantic_type(*element)),
+                length,
+            },
             IncanType::RefMut(inner) => IncanType::RefMut(Box::new(self.qualify_semantic_type(*inner))),
             IncanType::TypeToken(inner) => IncanType::TypeToken(Box::new(self.qualify_semantic_type(*inner))),
             IncanType::Function {
@@ -3642,6 +3650,7 @@ impl TypeCheckInfo {
         let key = (span.start, span.end);
         CallSiteFacts {
             checked_rust_call: self.rust.checked_calls.remove(&key),
+            checked_rust_function_value: self.rust.checked_function_values.remove(&key),
             body_ir_reexport_call: self.calls.body_ir_reexport_calls.remove(&key),
             body_ir_string_slice_member: self.calls.body_ir_string_slice_members.remove(&key),
             inferred_constructor_type: self.calls.inferred_constructor_types.remove(&key),
@@ -3667,6 +3676,7 @@ impl TypeCheckInfo {
     pub(crate) fn clear_body_ir_call_site_facts(&mut self, span: Span) {
         let key = (span.start, span.end);
         self.rust.checked_calls.remove(&key);
+        self.rust.checked_function_values.remove(&key);
         self.calls.body_ir_reexport_calls.remove(&key);
         self.calls.body_ir_string_slice_members.remove(&key);
         self.calls.body_ir_constructor_types.remove(&key);
@@ -3697,6 +3707,11 @@ impl TypeCheckInfo {
         }
         let key = (span.start, span.end);
         put(&mut self.rust.checked_calls, key, facts.checked_rust_call);
+        put(
+            &mut self.rust.checked_function_values,
+            key,
+            facts.checked_rust_function_value,
+        );
         put(&mut self.calls.body_ir_reexport_calls, key, facts.body_ir_reexport_call);
         put(
             &mut self.calls.body_ir_string_slice_members,

@@ -126,10 +126,10 @@ impl TypeChecker {
         Some(result)
     }
 
-    /// Select a method declared on a plain native trait object. Its principal trait supplies the callable directly;
-    /// no concrete impl template is required for a dynamic receiver. The adapter verifies object safety and the
-    /// exact instantiated trait signature before constructing MIR.
-    pub(super) fn resolve_rust_object_method(
+    /// Select a declared native trait method for an admitted dynamic receiver or bounded source parameter. Neither
+    /// receiver needs a nominal impl template; the caller establishes its trait authority, and native compilation
+    /// verifies the exact instantiated signature and obligations before constructing MIR.
+    pub(super) fn resolve_rust_declared_trait_method(
         &mut self,
         call: RustPathMethodCall<'_>,
         info: &RustTraitInfo,
@@ -148,7 +148,10 @@ impl TypeChecker {
             ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => *inner,
             other => other,
         };
-        let owner = self.native_rust_signature_type(&render_resolved_type_as_rust_arg(&owner), "");
+        let owner = match self.active_type_param_name(&owner) {
+            Some(name) => ResolvedType::TypeVar(name.to_owned()),
+            None => self.native_rust_signature_type(&render_resolved_type_as_rust_arg(&owner), ""),
+        };
         let arguments = self.rust_owner_type_args(&owner, call.rust_path).unwrap_or_default();
         let associated_count = info
             .items
@@ -208,6 +211,66 @@ impl TypeChecker {
             self.retain_selected_rust_trait_call(&call, selected)?;
         }
         Some(result)
+    }
+
+    /// Admit an explicit native trait call on a source parameter only from its innermost declared bound. Trait
+    /// identities come from native metadata, so a same-named source trait and an outer shadowed parameter grant no
+    /// callable authority. Generic trait arguments require their own retained substitution and remain refused here.
+    pub(super) fn retain_rust_parameter_trait_call(
+        &mut self,
+        call: &RustTraitQualifiedCall<'_>,
+        receiver: &Spanned<Expr>,
+        source: &ResolvedType,
+    ) -> Option<ResolvedType> {
+        let owner = match source {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref(),
+            other => other,
+        };
+        let name = self.active_type_param_name(owner)?;
+        let bounds = self
+            .current_type_param_bound_details
+            .iter()
+            .rev()
+            .find_map(|frame| frame.get(name))?;
+        let identity = self.rust_trait_definition_path(call.rust_path);
+        let admitted = bounds.iter().any(|bound| {
+            if !bound.type_args.is_empty() {
+                return false;
+            }
+            let path = if let Some(path) = bound.name.strip_prefix("::") {
+                path
+            } else {
+                let Some(symbol) = self.lookup_symbol(&bound.name) else {
+                    return false;
+                };
+                let crate::symbols::SymbolKind::RustItem(item) = &symbol.kind else {
+                    return false;
+                };
+                &item.path
+            };
+            self.rust_item_metadata_for_path(path).is_some_and(|metadata| {
+                matches!(metadata.kind, RustItemKind::Trait(_)) && self.rust_trait_definition_path(path) == identity
+            })
+        });
+        if !admitted {
+            return None;
+        }
+        self.resolve_rust_declared_trait_method(
+            RustPathMethodCall {
+                rust_path: call.rust_path,
+                method: call.method,
+                receiver_metadata: None,
+                receiver_binding: None,
+                receiver_expr: receiver,
+                type_args: call.type_args,
+                args: &call.args[1..],
+                arg_types: &call.arg_types[1..],
+                receiver_span: receiver.span,
+                expected_return_ty: call.expected_return_ty,
+                span: call.span,
+            },
+            call.trait_info,
+        )
     }
 
     /// Select the native iteration protocol once, keeping the iterable call's facts intact. Its poll borrows the
@@ -490,7 +553,9 @@ impl TypeChecker {
         }
     }
 
-    /// Recover the exact native carrier of a public Rust field, selected call or local alias for generic inference.
+    /// Recover the exact native carrier of a public Rust field, selected call, checked source view, or local alias for
+    /// generic inference. A source view's flattened public type must not replace its already retained executable
+    /// borrow.
     pub(in crate::typechecker::check_expr) fn rust_native_value_type(
         &self,
         expression: &Spanned<Expr>,
@@ -523,14 +588,13 @@ impl TypeChecker {
                 .get(self.symbols.identity_of(symbol)?)
                 .cloned();
         }
-        Some(
-            self.type_info
-                .rust
-                .checked_calls
-                .get(&(expression.span.start, expression.span.end))?
-                .return_type
-                .clone(),
-        )
+        let key = (expression.span.start, expression.span.end);
+        self.type_info
+            .rust
+            .checked_calls
+            .get(&key)
+            .map(|call| call.return_type.clone())
+            .or_else(|| self.type_info.calls.body_ir_call_result_types.get(&key).cloned())
     }
 
     /// Compare canonical native carriers for trait selection. The source compatibility relation deliberately admits
@@ -1027,6 +1091,7 @@ impl TypeChecker {
         filter_callable_bounds: bool,
     ) -> Vec<TraitCandidate> {
         let mut candidates = Vec::new();
+        let selected = trait_path.map(|path| self.rust_trait_definition_path(path));
         let imported = self.rust_imported_trait_templates(info, trait_path);
         let mut current = source;
         loop {
@@ -1037,10 +1102,10 @@ impl TypeChecker {
                 .map(|implementation| (implementation, false))
                 .chain(imported.iter().map(|implementation| (implementation, true)))
             {
-                if trait_path.is_some_and(|path| {
-                    incan_lang::interop::ancestral_rust_path(path)
-                        != incan_lang::interop::ancestral_rust_path(&implementation.path)
-                }) {
+                if selected
+                    .as_ref()
+                    .is_some_and(|path| *path != incan_lang::interop::ancestral_rust_path(&implementation.path))
+                {
                     continue;
                 }
                 if (external || filter_callable_bounds) && !self.rust_impl_may_apply(implementation, &owner) {
@@ -1069,13 +1134,27 @@ impl TypeChecker {
         candidates
     }
 
+    /// Resolve an explicitly selected trait's retained definition identity before comparing impl references. Public
+    /// re-exports may differ between crates, but the extractor records one definition path for their shared trait.
+    fn rust_trait_definition_path(&self, path: &str) -> String {
+        let metadata = self.rust_item_metadata_for_path(path);
+        let definition = metadata
+            .as_deref()
+            .map(|metadata| metadata.definition_path.as_deref().unwrap_or(&metadata.canonical_path))
+            .unwrap_or(path);
+        incan_lang::interop::ancestral_rust_path(definition)
+    }
+
     /// Read extension-trait templates from their own ABI when the implementor's older ABI cannot contain that trait.
     /// Existing owner facts retain priority; importing a trait never rewrites the cached native type's answer.
     fn rust_imported_trait_templates(&self, info: &RustTypeInfo, selected: Option<&str>) -> Vec<RustImplementedTrait> {
         let mut templates = Vec::new();
+        let selected = selected.map(|path| self.rust_trait_definition_path(path));
         for import in self.type_info.rust.trait_imports.values() {
-            let identity = incan_lang::interop::ancestral_rust_path(&import.trait_path);
-            if selected.is_some_and(|selected| incan_lang::interop::ancestral_rust_path(selected) != identity)
+            let identity = incan_lang::interop::ancestral_rust_path(
+                import.definition_path.as_deref().unwrap_or(&import.trait_path),
+            );
+            if selected.as_ref().is_some_and(|selected| *selected != identity)
                 || info
                     .implemented_traits
                     .iter()
