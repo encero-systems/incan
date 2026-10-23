@@ -56,6 +56,41 @@ pub(crate) fn path_ty(path: ast::Path, span: Span) -> Box<ast::Ty> {
     })
 }
 
+/// A function pointer with already-translated inputs and result, shared by closed and generic field layouts.
+pub(crate) fn function_pointer(inputs: ThinVec<Box<ast::Ty>>, result: Box<ast::Ty>, span: Span) -> Box<ast::Ty> {
+    let inputs = inputs
+        .into_iter()
+        .map(|ty| ast::Param {
+            attrs: ThinVec::new(),
+            ty,
+            pat: Box::new(ast::Pat {
+                id: ast::DUMMY_NODE_ID,
+                kind: ast::PatKind::Wild,
+                span,
+                tokens: None,
+            }),
+            id: ast::DUMMY_NODE_ID,
+            span,
+            is_placeholder: false,
+        })
+        .collect();
+    Box::new(ast::Ty {
+        id: ast::DUMMY_NODE_ID,
+        kind: ast::TyKind::FnPtr(Box::new(ast::FnPtrTy {
+            safety: ast::Safety::Default,
+            ext: ast::Extern::None,
+            generic_params: ThinVec::new(),
+            decl: Box::new(ast::FnDecl {
+                inputs,
+                output: ast::FnRetTy::Ty(result),
+            }),
+            decl_span: span,
+        })),
+        span,
+        tokens: None,
+    })
+}
+
 /// A trait bound on a generic parameter, without higher-ranked binders or modifiers.
 pub(crate) fn trait_bound(path: ast::Path, span: Span) -> ast::GenericBound {
     ast::GenericBound::Trait(ast::PolyTraitRef::new(

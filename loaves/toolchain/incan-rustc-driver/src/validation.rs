@@ -4,9 +4,9 @@ use std::collections::BTreeSet;
 
 use crate::error::PlanError;
 use crate::plan::{
-    BinaryOp, Callee, CalleeKind, Constant, Function, ListLeaf, Operand, OperandKind, Place, Plan, PlanType,
-    Projection, RvalueKind, SizedNumeric, SourceSpan, StatementKind, TerminatorKind, UnaryOp, Unwind, list_leaf_type,
-    range_field_types, tuple_element_type,
+    BinaryOp, Callee, CalleeKind, Constant, Function, GenericLayoutType, ListLeaf, Operand, OperandKind, Place, Plan,
+    PlanType, Projection, RvalueKind, SizedNumeric, SourceSpan, StatementKind, TerminatorKind, UnaryOp, Unwind,
+    list_leaf_type, range_field_types, tuple_element_type,
 };
 
 /// Copyable comparison mirror of the Incan-owned sized carrier enum.
@@ -313,6 +313,7 @@ pub fn validate(plan: &Plan, library: bool) -> Result<(), PlanError> {
     }
     validate_models(plan)?;
     validate_enums(plan)?;
+    validate_generic_models(plan)?;
     library_model_order(plan)?;
     crate::checked_json::validate_roots(plan)?;
     crate::checked_json::validate_source_roots(plan)?;
@@ -2349,14 +2350,17 @@ fn valid_nominal_derives(derives: &[String], tuple: bool) -> bool {
         && derives.iter().collect::<BTreeSet<_>>().len() == derives.len()
 }
 
-/// A stdlib layout names a crate item by an identifier path below a crate root; its derives and storage belong to the
-/// crate that compiled it.
+/// A compiled layout names an item below its owning crate; a provider's own generic instantiations name `crate`.
 fn valid_library_item(library_item: &str) -> bool {
     if library_item.is_empty() {
         return true;
     }
     let segments: Vec<_> = library_item.split("::").collect();
-    segments.len() >= 2 && segments.iter().all(|segment| identifier(segment))
+    segments.len() >= 2
+        && segments
+            .iter()
+            .enumerate()
+            .all(|(index, segment)| (index == 0 && *segment == "crate") || identifier(segment))
 }
 
 /// Accept serde field names only as one entry per named field of a declaration that derives serde, the only derive
@@ -2369,6 +2373,64 @@ fn valid_serde_names(declaration: &crate::plan::ModelDeclaration, tuple: bool) -
                 .derives
                 .iter()
                 .any(|derive| matches!(derive.as_str(), "serde::Serialize" | "serde::Deserialize")))
+}
+
+/// Admit generic ADT binders and field types before AST injection, rejecting collisions with concrete layouts and
+/// functions. Native layout verification separately validates every concrete alias against its instantiated ADT.
+fn validate_generic_models(plan: &Plan) -> Result<(), PlanError> {
+    let mut names: BTreeSet<_> = plan
+        .functions
+        .iter()
+        .map(|value| value.name.as_str())
+        .chain(plan.models.iter().map(|value| value.name.as_str()))
+        .chain(plan.enums.iter().map(|value| value.name.as_str()))
+        .collect();
+    for model in &plan.generic_models {
+        span(&model.span)?;
+        let parameters = model.parameters.iter().map(String::as_str).collect::<BTreeSet<_>>();
+        let mut fields = BTreeSet::new();
+        if !identifier(&model.name)
+            || !identifier(&model.source_name)
+            || !names.insert(&model.name)
+            || parameters.is_empty()
+            || parameters.len() != model.parameters.len()
+            || parameters.iter().any(|name| !identifier(name))
+            || model.derives.iter().any(|name| {
+                !matches!(
+                    name.as_str(),
+                    "Clone" | "Debug" | "PartialEq" | "Eq" | "PartialOrd" | "Ord" | "Hash"
+                )
+            })
+            || model.fields.iter().any(|field| {
+                !identifier(&field.name) || !fields.insert(&field.name) || !generic_field_type(&field.ty, &parameters)
+            })
+        {
+            return Err(PlanError::Invalid {
+                function: model.name.clone(),
+                reason: "invalid generic ADT declaration".into(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// A generic field may mention only its declared binders, complete concrete carriers, and explicit nominal paths.
+fn generic_field_type(ty: &GenericLayoutType, parameters: &BTreeSet<&str>) -> bool {
+    match ty {
+        GenericLayoutType::Parameter(name) => parameters.contains(name.as_str()),
+        GenericLayoutType::Concrete(ty) => source_signature_type(&scalar(ty)),
+        GenericLayoutType::Tuple(elements) => elements.iter().all(|element| generic_field_type(element, parameters)),
+        GenericLayoutType::FunctionPointer(signature) => {
+            !signature.is_empty() && signature.iter().all(|element| generic_field_type(element, parameters))
+        }
+        GenericLayoutType::Applied(name, arguments) => {
+            name.split("::").enumerate().all(|(index, segment)| {
+                (index == 0 && matches!(segment, "crate" | "core" | "std" | "alloc")) || identifier(segment)
+            }) && arguments
+                .iter()
+                .all(|argument| generic_field_type(argument, parameters))
+        }
+    }
 }
 
 /// Validate model and newtype metadata before declaration injection; size cycles are checked separately.
@@ -2589,7 +2651,7 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
             || (declaration.library_item.is_empty() && !declaration.library_type_arguments.is_empty())
             || (!declaration.library_item.is_empty()
                 && (!declaration.carrier.is_empty()
-                    || !declaration.derives.is_empty()
+                    || declaration.derives.iter().any(|derive| derive != "Clone")
                     || !declaration.raw_kind.is_empty()))
             || declaration.derives.iter().any(|name| match name.as_str() {
                 "Debug" | "Clone" | "Copy" | "PartialEq" | "Eq" | "PartialOrd" | "Ord" | "Hash" => false,

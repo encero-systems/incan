@@ -154,27 +154,47 @@ fn public_item(tcx: TyCtxt<'_>, path: &str, kinds: &[DefKind], reason: &str) -> 
         if tcx.def_kind(current) != DefKind::Mod {
             return Err(unknown());
         }
-        let last = segments.peek().is_none();
-        current = tcx
-            .module_children(current)
-            .iter()
-            .filter(|child| child.ident.name.as_str() == segment && child.vis.is_public())
-            .filter_map(|child| child.res.opt_def_id())
-            .find_map(|child| {
-                if !last {
-                    return (tcx.def_kind(child) == DefKind::Mod).then_some(child);
-                }
-                if kinds.contains(&tcx.def_kind(child)) {
-                    return Some(child);
-                }
-                kinds.iter().find_map(|kind| layout_definition(tcx, child, *kind))
-            })
-            .ok_or_else(unknown)?;
+        let wanted = if segments.peek().is_some() {
+            &[DefKind::Mod]
+        } else {
+            kinds
+        };
+        current = public_layout_child(tcx, current, segment, wanted).ok_or_else(unknown)?;
     }
     if !kinds.contains(&tcx.def_kind(current)) {
         return Err(unknown());
     }
     Ok(current)
+}
+
+/// Resolve a public module item in its owning query domain. Local injected ADTs are HIR items; the external-only
+/// `module_children` query must never receive the current crate's definitions.
+fn public_layout_child(tcx: TyCtxt<'_>, module: DefId, name: &str, kinds: &[DefKind]) -> Option<DefId> {
+    if module.is_local() {
+        return tcx
+            .hir_crate_items(())
+            .free_items()
+            .map(|item| item.owner_id.to_def_id())
+            .filter(|def| {
+                tcx.parent(*def) == module
+                    && tcx.opt_item_name(*def).is_some_and(|symbol| symbol.as_str() == name)
+                    && tcx.visibility(*def).is_public()
+            })
+            .find_map(|def| admitted_layout_definition(tcx, def, kinds));
+    }
+    tcx.module_children(module)
+        .iter()
+        .filter(|child| child.ident.name.as_str() == name && child.vis.is_public())
+        .filter_map(|child| child.res.opt_def_id())
+        .find_map(|def| admitted_layout_definition(tcx, def, kinds))
+}
+
+/// Preserve an admitted item's own parameters before considering an alias's underlying ADT for field access.
+fn admitted_layout_definition(tcx: TyCtxt<'_>, definition: DefId, kinds: &[DefKind]) -> Option<DefId> {
+    if kinds.contains(&tcx.def_kind(definition)) {
+        return Some(definition);
+    }
+    kinds.iter().find_map(|kind| layout_definition(tcx, definition, *kind))
 }
 
 /// Read a public layout item's exact ADT definition, following a type alias through metadata without interpreting

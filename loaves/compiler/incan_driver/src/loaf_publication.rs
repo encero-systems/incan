@@ -24,7 +24,9 @@ use incan_frontend::contract_metadata::{CanonicalModelBundle, ContractMetadataPa
 use incan_frontend::diagnostics;
 use incan_frontend::library_exports::{CheckedNamedExport, checked_exports_by_name, collect_checked_public_exports};
 use incan_frontend::library_manifest::public_identities::public_executable_identities;
-use incan_frontend::library_manifest::{ExecutableRepresentationExport, LibraryManifest};
+use incan_frontend::library_manifest::{
+    ExecutableRepresentationExport, LibraryManifest, NativeUnionExport, NativeUnionOwnerExport, TypeRef,
+};
 use incan_frontend::loaf_index::LoafNativeClosure;
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::registry_metadata::{
@@ -32,7 +34,9 @@ use incan_frontend::registry_metadata::{
     CheckedRegistryPackageIdentity, collect_checked_registry_metadata, materialize_registry_reexport_projections,
 };
 use incan_frontend::typechecker::TypeChecker;
+use incan_semantics_core::IncanType;
 use incan_semantics_core::body_ir::BodyIrModule;
+use incan_semantics_core::body_ir::NativeUnionDeclaration;
 use incan_semantics_core::executable_representation::{EXECUTABLE_REPRESENTATION_VERSION, build_surface};
 
 /// What a library unit's checking pass collects for its publication, one module at a time.
@@ -245,4 +249,51 @@ pub fn write_loaf(
         .to_json_string()
         .map_err(|error| CliError::failure(format!("invalid library manifest for {name}: {error}")))?;
     write(format!("{name}.incnlib"), manifest.as_bytes())
+}
+
+/// Record the lowering's actual native union definitions in the manifest that authenticates their rlib. The semantic
+/// carrier and ordered members retain canonical nominal keys; no consumer spelling participates in publication.
+pub fn publish_native_unions(manifest: &mut LibraryManifest, unions: Vec<NativeUnionDeclaration>) -> CliResult<()> {
+    manifest.contract_metadata.native_unions = unions
+        .into_iter()
+        .map(|declaration| {
+            Ok(NativeUnionExport {
+                owner: NativeUnionOwnerExport::ContainingArtifact,
+                rust_name: declaration.rust_item,
+                members: declaration
+                    .members
+                    .iter()
+                    .map(native_union_member)
+                    .collect::<CliResult<_>>()?,
+                semantic_type: Some(declaration.ty),
+                local_nominals: Default::default(),
+                checked_projection: None,
+            })
+        })
+        .collect::<CliResult<_>>()?;
+    Ok(())
+}
+
+/// Encode an admitted native payload without shortening its canonical nominal leaves. Union publication must refuse
+/// an unrepresentable payload rather than make a new layout from an approximate type.
+fn native_union_member(ty: &IncanType) -> CliResult<TypeRef> {
+    Ok(match ty {
+        IncanType::Primitive(primitive) => TypeRef::Named {
+            name: primitive.to_string(),
+            origin: None,
+        },
+        IncanType::Named(name) => TypeRef::Named {
+            name: name.clone(),
+            origin: None,
+        },
+        IncanType::Generic { base, args } => TypeRef::Applied {
+            name: base.clone(),
+            args: args.iter().map(native_union_member).collect::<CliResult<_>>()?,
+            origin: None,
+        },
+        IncanType::Tuple(elements) => TypeRef::Tuple {
+            elements: elements.iter().map(native_union_member).collect::<CliResult<_>>()?,
+        },
+        _ => return Err(CliError::failure(format!("cannot publish native union payload {ty}"))),
+    })
 }

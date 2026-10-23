@@ -1,4 +1,4 @@
-//! Checker-selected fail-fast newtype validation ingress, including imported hooks with retained signatures.
+//! Checker-selected fail-fast newtype validation ingress, through local bodies or published Loaf signatures.
 
 use super::args::fixed_elements;
 use super::{BodyBuilder, CanonicalSymbolId, CompilerNodeId, HirSourceSpan, IncanType, bir};
@@ -63,7 +63,8 @@ impl BodyBuilder<'_, '_> {
         ))
     }
 
-    /// Invoke exactly the source hook selected by checking, then unwrap its Result with legacy's failure primitive.
+    /// Invoke exactly the hook selected by checking, then extract its Result with the admitted validation-failure
+    /// primitive.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn checked_newtype_hook(
         &mut self,
@@ -123,8 +124,9 @@ impl BodyBuilder<'_, '_> {
         Some((None, binding))
     }
 
-    /// Call the canonical source hook without choosing a failure strategy; its caller owns Result extraction.
-    /// An imported hook resolves by canonical identity across the retained module graph, never a caller-local span.
+    /// Call the canonical checked hook without choosing a failure strategy; its caller owns Result extraction.
+    /// A published hook has no consumer-local declaration span. Its exact return carrier comes from the retained
+    /// Loaf signature, and native metadata verifies the argument and result contract before the call is admitted.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn checked_newtype_hook_call(
         &mut self,
@@ -136,18 +138,21 @@ impl BodyBuilder<'_, '_> {
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
-        let Some((direct_call_id, binding)) = self.checked_newtype_hook_binding(owner, &identity) else {
-            return self.unsupported_operand(
-                "checked-newtype hook without its source binding".into(),
-                scope,
-                span,
-                out,
-            );
+        let (direct_call_id, returned) = if let Some((direct_call_id, binding)) =
+            self.checked_newtype_hook_binding(owner, &identity)
+        {
+            if binding.params.len() != 1 || binding.is_async {
+                return self.unsupported_operand("checked-newtype hook signature".into(), scope, span, out);
+            }
+            (
+                direct_call_id,
+                super::bodies::close_self_type(self.checked_type(&binding.return_type), ty),
+            )
+        } else if let Some(returned) = self.published_callable_returns.get(&identity) {
+            (None, returned.clone())
+        } else {
+            return self.unsupported_operand("checked-newtype hook without its declaration".into(), scope, span, out);
         };
-        if binding.params.len() != 1 || binding.is_async {
-            return self.unsupported_operand("checked-newtype hook signature".into(), scope, span, out);
-        }
-        let returned = super::bodies::close_self_type(self.checked_type(&binding.return_type), ty);
         let IncanType::Generic { base, args } = &returned else {
             return self.unsupported_operand("checked-newtype hook return".into(), scope, span, out);
         };

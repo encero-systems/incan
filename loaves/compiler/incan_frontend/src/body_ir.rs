@@ -206,7 +206,7 @@ pub fn build_body_ir_module(
             local_value_enum_declarations.insert(declaration.canonical.render_compact(), declaration.clone());
         }
     }
-    let published_callable_returns = collect::collect_published_callable_returns(context);
+    let published_callable_returns = collect::collect_published_callable_returns(context, type_info);
     let published_callable_defaults = collect::collect_published_callable_defaults(context);
     let published_newtype_returns = collect::collect_published_newtype_returns(context);
     let published_storage_types = collect::collect_published_storage_types(context);

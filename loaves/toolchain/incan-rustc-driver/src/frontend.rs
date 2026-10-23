@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use incan_driver::loaf_publication::{PublicationFacts, write_loaf};
+use incan_driver::loaf_publication::{PublicationFacts, publish_native_unions, write_loaf};
 use incan_driver::modules::{collect_library_modules_detailed_with_session, collect_modules_detailed_with_session};
 use incan_driver::session::{CompilationAnalysis, CompilationSession, RustFactsSetup};
 use incan_driver::unit::{UnitDescription, UnitKind};
@@ -80,8 +80,9 @@ struct CheckedProgram {
 ///
 /// Native-only declaration refusals follow analysis; desugaring and the Loaves the program imports from are owned by
 /// the session. The declarations the program reaches in its Loaves (DD-0007) come from their `.incnbody` records, and
-/// every module lowers against them. Private checked re-export calls add their exact package targets to the request
-/// without changing the ordinary reference graph. The unit's package is its registry package.
+/// every module lowers against them. Private checked re-export calls and implicit newtype coercions add their exact
+/// package targets to the request: their selected owners and hooks need not appear as written source references.
+/// The unit's package is its registry package.
 ///
 /// A library unit collects every authored module, checks each with its package identity and builds its manifest
 /// from the same pass. Bodies with function or nominal-owner type parameters remain governed; other linked
@@ -229,6 +230,14 @@ fn required_loaf_identities(
             modules
                 .iter()
                 .filter_map(|module| analysis.type_info_for_path(&module.file_path))
+                .flat_map(|info| info.expressions.validated_newtype_coercions.values())
+                .flat_map(|coercion| &coercion.steps)
+                .flat_map(|step| step.owner_identity.iter().chain(step.ctor_identity.iter()).cloned()),
+        )
+        .chain(
+            modules
+                .iter()
+                .filter_map(|module| analysis.type_info_for_path(&module.file_path))
                 .flat_map(|info| info.declarations.body_ir_native_type_identities.values().cloned()),
         )
         .chain(
@@ -311,11 +320,12 @@ fn complete_dependency_context(
     program.modules.splice(program.own..program.own, held);
     program.entry += held_modules;
     program.own += held_modules;
-    program
+    let entry_module = program
         .modules
         .get_mut(program.entry)
-        .ok_or("selected Body IR entry is missing")?
-        .loaf_callables = loaf_callables;
+        .ok_or("selected Body IR entry is missing")?;
+    entry_module.loaf_callables = loaf_callables;
+    entry_module.native_union_declarations = native_union_layouts(loaves);
     Ok(program)
 }
 
@@ -398,15 +408,53 @@ fn take_rust_layouts(modules: &mut [BodyIrModule]) -> Result<Vec<NominalDeclarat
     Ok(layouts.into_values().collect())
 }
 
-/// Select a linked native carrier or concrete compiled Loaf layout; source layouts with owner parameters stay governed.
-/// A generic source declaration has no single compiled concrete item; its checked fields specialize with its consumer.
+/// Select a native carrier or provider-owned Loaf layout. Generic models and classes publish one parameterized ADT;
+/// generic enum and newtype declarations keep their governed source storage until their native templates are supported.
 fn linked_type_item(identity: &CanonicalSymbolId, parameters: &[String]) -> Option<String> {
     incan_semantics_core::body_ir::native_nominal_item(identity).or_else(|| {
-        parameters
-            .is_empty()
-            .then(|| incan_semantics_core::body_ir::loaf_item_path(identity))
-            .flatten()
+        (parameters.is_empty()
+            || matches!(
+                identity.kind,
+                SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class
+            ))
+        .then(|| incan_semantics_core::body_ir::loaf_item_path(identity))
+        .flatten()
     })
+}
+
+/// Read each selected Loaf's published native union table, preserving its semantic carrier and physical variant
+/// order. The index already selects exact artifacts; the adapter subsequently verifies each layout against metadata.
+fn native_union_layouts(
+    loaves: &incan_frontend::loaf_index::LoafIndex,
+) -> Vec<incan_semantics_core::body_ir::NativeUnionDeclaration> {
+    use incan_frontend::library_manifest::resolved_type_from_manifest_type_ref;
+    use incan_frontend::typechecker::semantic_type_from_resolved;
+    loaves
+        .entries()
+        .flat_map(|entry| {
+            entry
+                .artifact
+                .manifest
+                .contract_metadata
+                .native_unions
+                .iter()
+                .filter_map(|native| {
+                    Some(incan_semantics_core::body_ir::NativeUnionDeclaration {
+                        ty: native.semantic_type.clone()?,
+                        rust_item: format!(
+                            "{}::{}",
+                            incan_semantics_core::body_ir::loaf_crate_name(&entry.artifact.manifest.name),
+                            native.rust_name
+                        ),
+                        members: native
+                            .members
+                            .iter()
+                            .map(|member| semantic_type_from_resolved(&resolved_type_from_manifest_type_ref(member)))
+                            .collect(),
+                    })
+                })
+        })
+        .collect()
 }
 
 /// Declare each Rust item the program holds in a declaration-only module under the item's native module: the
@@ -875,6 +923,7 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         );
         write_refusal_report(&refusals)?;
     }
+    let mut published_unions = Vec::new();
     let plan = {
         tracing::debug!(target: "incan::invocation", modules = ?program.modules, "checked direct-route Body IR");
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::lower_program", modules = program.modules.len()).entered();
@@ -886,6 +935,7 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             entry,
             kind.as_str().to_owned(),
             program.tests.iter().map(|test| test.name.clone()).collect(),
+            &mut published_unions,
         )?
     };
     let Some(plan) = plan else {
@@ -910,7 +960,9 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     for item in library_items {
         let root = item.split("::").next().unwrap_or_default();
         // The standard library's own crates are always linked, as for external calls below.
-        if !matches!(root, "std" | "core" | "alloc") && !dependencies.externs.iter().any(|(name, _)| name == root) {
+        if !matches!(root, "std" | "core" | "alloc" | "crate")
+            && !dependencies.externs.iter().any(|(name, _)| name == root)
+        {
             return Err(format!("unsupported Body IR native dependency `{root}` for Loaf layout `{item}`").into());
         }
     }
@@ -944,7 +996,8 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // ---- The Loaf beside a library unit's rlib (DD-0007) ----
-    if let Some(manifest) = program.manifest {
+    if let Some(mut manifest) = program.manifest {
+        publish_native_unions(&mut manifest, published_unions).map_err(|error| error.to_string())?;
         let directory = output.parent().ok_or("library output has no directory")?;
         let closure = LoafNativeClosure {
             externs: dependencies.externs.clone(),

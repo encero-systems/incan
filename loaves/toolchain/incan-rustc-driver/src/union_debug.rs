@@ -76,7 +76,7 @@ pub fn member_debug_impl(value: &EnumDeclaration, span: Span) -> Box<ast::Item> 
 }
 
 /// `fn fmt(&self, formatter: &mut ::core::fmt::Formatter) -> ::core::fmt::Result`, the trait method's signature.
-fn fmt_signature(span: Span) -> ast::FnSig {
+pub(crate) fn fmt_signature(span: Span) -> ast::FnSig {
     let receiver = ast::Param::from_self(
         ThinVec::new(),
         respan(span, ast::SelfKind::Region(None, ast::Mutability::Not)),

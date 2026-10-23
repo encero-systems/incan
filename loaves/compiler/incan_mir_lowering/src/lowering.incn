@@ -38,6 +38,7 @@ from pub::incan_mir_plan import (
     Place,
     Plan,
     PlanExport,
+    GenericModelDeclaration,
     StaticCell,
     PlanType,
     SizedNumeric,
@@ -94,6 +95,7 @@ from rust::incan_semantics_core import (
     CanonicalSymbolId as RustCanonicalSymbolId,
 )
 from rust::incan_semantics_core::body_ir import (
+    NativeUnionDeclaration,
     NominalDeclaration as RustNominalDeclaration,
     GlobalPlace as RustGlobalPlace,
     GlobalWritePolicy as RustGlobalWritePolicy,
@@ -256,6 +258,7 @@ from value_enums import (
     value_enum_from_value_owner,
 )
 from unions import (
+    publish_unions,
     require_native_union_signature,
     native_source_type,
     collect_unions,
@@ -266,6 +269,7 @@ from unions import (
     union_projection,
     carrier_injection,
 )
+from generic_layouts import generic_models
 from tuples import (
     is_tuple_type,
     tuple_has_owners,
@@ -6768,11 +6772,12 @@ pub def unit_plan(
     entry: int,
     kind: str,
     tests: list[str],
+    mut published: list[NativeUnionDeclaration],
 ) -> Result[Option[Plan], str]:
     """Lower one checked unit by kind; test entries come from session collection, never from naming heuristics here."""
     if kind != "program" and kind != "library" and kind != "test":
         return Err(f"unsupported unit kind {kind}")
-    return lowered_plan(modules, sources, files, entry, kind, tests)
+    return lowered_plan(modules, sources, files, entry, kind, tests, published)
 
 
 def lowered_plan(
@@ -6782,6 +6787,7 @@ def lowered_plan(
     entry: int,
     kind: str,
     tests: list[str],
+    mut published: list[NativeUnionDeclaration],
 ) -> Result[Option[Plan], str]:
     """Lower all three unit kinds through one pipeline; only a program requires an authored main."""
     if len(modules) == 0 or entry < 0 or entry >= len(modules):
@@ -6811,7 +6817,7 @@ def lowered_plan(
         intrinsics,
     )?
     conversion_functions, conversion_runtime = lower_string_conversions(context, files[entry], intrinsics)?
-    mut models = lower_model_declarations(context, files[entry], intrinsics, nominal_instances)?
+    mut models = lower_model_declarations(context, files[entry], intrinsics, nominal_instances, kind == "library")?
     mut enums = lower_enum_declarations(context, files[entry], intrinsics)?
     attach_enum_comparisons(context, enums, intrinsics)?
     mut functions = checked_functions
@@ -6892,8 +6898,11 @@ def lowered_plan(
     retain_factory_callable_storage(context, functions, models, externals)?
     validate_futures(context, intrinsics)?
     mut exports: list[PlanExport] = []
+    mut templates: list[GenericModelDeclaration] = []
     if kind == "library":
-        exports = loaf_exports(context, emitted_frames)
+        templates = generic_models(source_context, nominal_instances, files[entry])?
+        exports = loaf_exports(context, emitted_frames, source_context, templates)
+        publish_unions(context, intrinsics, published)?
     test_entries = collected_test_entries(context, checked[entry], tests, functions)?
     if kind == "program" and not has_main:
         if declares_main:
@@ -6910,6 +6919,7 @@ def lowered_plan(
                 statics=statics,
                 exports=exports,
                 tests=test_entries,
+                generic_models=templates,
             ),
         ),
     )
@@ -6936,13 +6946,19 @@ def collected_test_entries(context: &BodyIrModule, entry: &BodyIrModule, tests: 
     return Ok(entries)
 
 
-def loaf_exports(context: &BodyIrModule, emitted: list[RustBody]) -> list[PlanExport]:
+def loaf_exports(
+    context: &BodyIrModule,
+    emitted: list[RustBody],
+    declarations: &BodyIrModule,
+    templates: list[GenericModelDeclaration],
+) -> list[PlanExport]:
     """
     Export every body and type a Loaf compiles at its crate root, under the encoding of its canonical identity:
     the item its consumers name (DD-0007).
 
     A body emitted in several frames under one identity, such as a trait default per receiver, has no single item, so
-    none is exported for it. A generic body emits no item; its consumers instantiate its governed body.
+    none is exported for it. A generic body emits no item; its consumers instantiate its governed body. Generic
+    nominal exports name their retained templates, rather than any concrete instance discovered in this provider.
     """
     mut exports: list[PlanExport] = []
     mut ambiguous: list[str] = []
@@ -6956,7 +6972,14 @@ def loaf_exports(context: &BodyIrModule, emitted: list[RustBody]) -> list[PlanEx
                     else:
                         exports.append(PlanExport(name=name, path=f"crate::{function_name(context, body)}"))
             None => pass
-    for declaration in context.nominal_declarations:
+    for declaration in declarations.nominal_declarations:
+        if len(declaration.type_parameters) != 0:
+            mut retained = false
+            for template in templates:
+                if template.name == str(declaration.name):
+                    retained = true
+            if not retained:
+                continue
         if declaration.native_item == "" and is_package_identity(declaration.canonical):
             exports.append(
                 PlanExport(name=encode_incan_symbol_identity(declaration.canonical), path=f"crate::{declaration.name}"),
@@ -7133,7 +7156,7 @@ def body_refusals(
         intrinsics,
     )?
     conversion_functions, conversion_runtime = lower_string_conversions(context, files[entry], intrinsics)?
-    _models = lower_model_declarations(context, files[entry], intrinsics, nominal_instances)?
+    _models = lower_model_declarations(context, files[entry], intrinsics, nominal_instances, false)?
     _enums = lower_enum_declarations(context, files[entry], intrinsics)?
     mut refusals: list[str] = []
     mut functions = checked_functions

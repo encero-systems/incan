@@ -1,0 +1,20 @@
+pub model Parcel[T]:
+    """Keep one value in the provider's generic storage."""
+
+    pub value: T
+
+
+pub model Marker[T]:
+    """Keep a type parameter that has no authored data field."""
+
+    pub label: str
+
+
+pub def wrap(value: int) -> Parcel[int]:
+    """Construct a concrete instance inside its declaring package."""
+    return Parcel[int](value=value)
+
+
+pub def unpack(value: Parcel[str]) -> str:
+    """Read a different concrete instance constructed by the consumer."""
+    return value.value

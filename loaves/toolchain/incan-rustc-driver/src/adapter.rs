@@ -278,6 +278,17 @@ impl rustc_driver::Callbacks for Callbacks {
                 .items
                 .extend(enum_items(value, &compiler.sess.psess.attr_id_generator, span));
         }
+        for model in &self.plan.generic_models {
+            let span = match sources.span(&model.span) {
+                Ok(span) => span,
+                Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+            };
+            krate.items.extend(crate::generic_layouts::items(
+                model,
+                &compiler.sess.psess.attr_id_generator,
+                span,
+            ));
+        }
         for model in &self.plan.models {
             let span = match sources.span(&model.span) {
                 Ok(span) => span,
@@ -402,7 +413,7 @@ impl rustc_driver::Callbacks for Callbacks {
             }
         }
         // `std` is already declared by the prelude injection; a second `extern crate std;` would collide with it.
-        for root in roots.into_iter().filter(|root| *root != "std") {
+        for root in roots.into_iter().filter(|root| !matches!(*root, "std" | "crate")) {
             krate
                 .items
                 .push(declarations::external_crate(root, krate.spans.inner_span));
@@ -534,7 +545,9 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
     }
     let adt = tcx.adt_def(def);
     let declared = &adt.non_enum_variant().fields;
-    if declared.len() != model.fields.len() {
+    if declared.len() != model.fields.len()
+        && crate::generic_layouts::marker_type(tcx, adt, arguments, model.fields.len()).is_none()
+    {
         return Err(invalid("stdlib layout field count differs from metadata"));
     }
     for (slot, (field, planned)) in declared.iter().zip(&model.fields).enumerate() {
@@ -578,6 +591,10 @@ fn verify_library_enum(tcx: TyCtxt<'_>, value: &crate::plan::EnumDeclaration) ->
     }
     let arguments = callees::arguments(tcx, def, &value.library_type_arguments)?;
     callees::verify_bounds(tcx, def, arguments)?;
+    if value.derives.iter().any(|derive| derive == "Clone") {
+        let owner = rustc_middle::ty::Ty::new_adt(tcx, tcx.adt_def(def), arguments);
+        callees::verify_bounds(tcx, callees::clone_method(tcx)?, tcx.mk_args(&[owner.into()]))?;
+    }
     for (variant, planned) in declared.iter().zip(&value.variants) {
         if variant.name.as_str() != planned.name || variant.fields.len() != planned.fields.len() {
             return Err(invalid("unsupported stdlib enum variant differs from metadata"));
@@ -602,7 +619,7 @@ fn enum_items(
 ) -> Vec<Box<ast::Item>> {
     let value_enum = !value.raw_kind.is_empty();
     let mut item = declarations::enum_declaration(value, span);
-    if value.carrier.is_empty() {
+    if value.carrier.is_empty() && value.library_item.is_empty() {
         for derive in value
             .derives
             .iter()
