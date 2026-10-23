@@ -337,6 +337,7 @@ nav:
           - Oven and toolchain ownership map: contributing/explanation/oven_toolchain_ownership_map.md
           - "Post-mortem: v0.5.1": contributing/explanation/postmortem_v051.md
           - Incapunk docs theme: contributing/explanation/incapunk_docs_theme.md
+          - Readable Incan: contributing/explanation/readable-incan.md
           - Readable, maintainable Rust: contributing/explanation/readable-maintainable-rust.md
           - "std.testing internals": contributing/explanation/stdlib_testing_internals.md
       - Reference:

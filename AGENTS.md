@@ -26,6 +26,7 @@ Incan is a Python-like language that compiles to Rust. The compiler itself is wr
 
 | Document                 | Path                                                                                 |
 | ------------------------ | ------------------------------------------------------------------------------------ |
+| Incan coding conventions | [`workspaces/docs-site/docs/contributing/explanation/readable-incan.md`]             |
 | Rust coding conventions  | [`workspaces/docs-site/docs/contributing/explanation/readable-maintainable-rust.md`] |
 | Project architecture     | [`workspaces/docs-site/docs/contributing/explanation/architecture.md`]               |
 | Layer boundaries         | [`workspaces/docs-site/docs/contributing/explanation/layering.md`]                   |
@@ -34,6 +35,7 @@ Incan is a Python-like language that compiles to Rust. The compiler itself is wr
 | GitHub issue templates   | [`.github/ISSUE_TEMPLATE/`]                                                          |
 | Implementation learnings | [`.agents/learnings.md`]                                                             |
 
+[`workspaces/docs-site/docs/contributing/explanation/readable-incan.md`]: workspaces/docs-site/docs/contributing/explanation/readable-incan.md
 [`workspaces/docs-site/docs/contributing/explanation/readable-maintainable-rust.md`]: workspaces/docs-site/docs/contributing/explanation/readable-maintainable-rust.md
 [`workspaces/docs-site/docs/contributing/explanation/architecture.md`]: workspaces/docs-site/docs/contributing/explanation/architecture.md
 [`workspaces/docs-site/docs/contributing/explanation/layering.md`]: workspaces/docs-site/docs/contributing/explanation/layering.md
@@ -129,6 +131,14 @@ When making changes under `workspaces/docs-site/`:
 ## Code Style
 
 Read and follow [`workspaces/docs-site/docs/contributing/explanation/readable-maintainable-rust.md`] for the project's Rust coding conventions.
+
+**All Incan code follows [`workspaces/docs-site/docs/contributing/explanation/readable-incan.md`].** That covers the compiler's own Incan, Oven, the contract runner, the standard library and fixtures. Its reference example is `workspaces/contracts/src/formatting.incn`:
+- a public entry point whose docstring numbers the steps it performs;
+- a body that reads as those steps, one short comment per step;
+- each decision a named helper;
+- repeated plumbing wrapped once.
+
+Review touched Incan against it before a PR (`/review-incan-source-quality`).
 
 Spell everything in US English -- identifiers, comments, docstrings, diagnostics and docs (`color`, `behavior`, `initialize`, `catalog`; the owner keeps `cancelled`); `make us-english-check` (part of `make pre-commit-fast` and CI) rejects UK spellings, `make us-english-fix` rewrites them, and `scripts/check_us_english.allow` records the upstream names and quoted text that keep theirs.
 
