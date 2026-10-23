@@ -2555,7 +2555,7 @@ impl TypeChecker {
         self.type_info.expressions.expr_types.insert((span.start, span.end), ty);
     }
 
-    /// Project named leaves through the module/provider type binding retained by the accepting compilation.
+    /// Project named leaves through the module/provider or native metadata binding retained by this compilation.
     fn collect_expression_type_identities(
         &self,
         ty: &ResolvedType,
@@ -2563,6 +2563,7 @@ impl TypeChecker {
         identities: &mut std::collections::BTreeMap<Vec<usize>, CanonicalSymbolId>,
     ) {
         match ty {
+            ResolvedType::RustPath(display) => self.collect_rust_expression_type_identities(display, path, identities),
             ResolvedType::Named(name) => {
                 // Resolved nominal types keep their accepted module/provider binding even when a local value
                 // shadows the source alias. Provider-only return types may have no lexical symbol at all.
@@ -2600,6 +2601,54 @@ impl TypeChecker {
             // Function signatures and type variables require their own binder environment; this expression-value
             // projection does not invent one after checking. Concrete source annotations retain their own facts.
             _ => {}
+        }
+    }
+
+    /// Retain native leaf identities at checking, using the same signature type walk as native call carriers.
+    /// Opaque generic owners contribute their argument leaves; an exact native item query authorizes a nominal
+    /// leaf. Unsupported displays confer no identity, and registered runtime builtins keep their existing authority.
+    fn collect_rust_expression_type_identities(
+        &self,
+        display: &str,
+        path: &mut Vec<usize>,
+        identities: &mut std::collections::BTreeMap<Vec<usize>, CanonicalSymbolId>,
+    ) {
+        let resolved = self.native_rust_signature_type(display, "");
+        if resolved != ResolvedType::RustPath(display.to_owned()) {
+            self.collect_expression_type_identities(&resolved, path, identities);
+            return;
+        }
+        if let Some((base, arguments)) = Self::rust_generic_base_and_args(display) {
+            for (index, argument) in arguments
+                .into_iter()
+                .filter(|argument| !Self::rust_generic_arg_is_lifetime(argument))
+                .enumerate()
+            {
+                path.push(index);
+                self.collect_expression_type_identities(
+                    &self.native_rust_signature_type(argument, base),
+                    path,
+                    identities,
+                );
+                path.pop();
+            }
+            return;
+        }
+        if let Some(builtin) = incan_semantics_core::RuntimeBuiltinType::from_carrier_path(display) {
+            if let Some(identity) = self.type_info.body_ir_runtime_types.values().find(|identity| {
+                incan_semantics_core::RuntimeBuiltinType::from_identity(identity).as_ref() == Some(&builtin)
+            }) {
+                identities.insert(path.clone(), identity.clone());
+            }
+            return;
+        }
+        let Some(metadata) = self.rust_item_metadata_for_path(display) else {
+            return;
+        };
+        if matches!(metadata.kind, RustItemKind::Type(_))
+            && let Some(identity) = incan_semantics_core::body_ir::rust_item_identity(&metadata.canonical_path)
+        {
+            identities.insert(path.clone(), identity);
         }
     }
 

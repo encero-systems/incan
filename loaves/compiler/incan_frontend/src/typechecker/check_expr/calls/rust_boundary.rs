@@ -9,7 +9,7 @@ use crate::resolved_type_subst::{map_resolved_type_leaves, substitute_resolved_t
 use crate::symbols::{CallableParam, ResolvedType, TypeInfo};
 use crate::typechecker::helpers::{collection_type_id, render_resolved_type_as_rust_arg};
 use crate::typechecker::{RustArgCoercionInfo, RustArgCoercionKind};
-use incan_lang::interop::{CoercionPolicy, RustFunctionSig, RustParam, admitted_builtin_coercion};
+use incan_lang::interop::{CoercionPolicy, RustFunctionSig, RustItemKind, RustParam, admitted_builtin_coercion};
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_lang::lang::types::numerics;
 
@@ -247,10 +247,13 @@ impl TypeChecker {
         }
     }
 
-    /// Project only declared Rust parameters into the checker's ordinary structural inference representation.
-    /// Opaque generic paths are opened here once; lowering receives the instantiated checked result.
+    /// Project declared Rust parameters and canonical native constructors into ordinary structural inference.
+    /// Re-exported owners normalize once, and checked generic placeholders retain their declared binders.
     pub(in crate::typechecker) fn rust_inference_type(&self, ty: &ResolvedType, parameters: &[String]) -> ResolvedType {
         map_resolved_type_leaves(ty, &|leaf| {
+            if let ResolvedType::Generic(base, arguments) = leaf {
+                return Some(self.rust_inference_constructor(base, arguments, parameters));
+            }
             if let ResolvedType::Named(name) = leaf
                 && parameters.contains(name)
             {
@@ -287,17 +290,69 @@ impl TypeChecker {
                 .item_public_paths
                 .get(base)
                 .map_or(base, String::as_str);
-            Some(ResolvedType::Generic(
-                base.to_owned(),
-                arguments
-                    .into_iter()
-                    .filter(|argument| !Self::rust_generic_arg_is_lifetime(argument))
-                    .map(|argument| {
-                        self.rust_inference_type(&self.native_rust_signature_type(argument, ""), parameters)
-                    })
-                    .collect(),
-            ))
+            let arguments = arguments
+                .into_iter()
+                .filter(|argument| !Self::rust_generic_arg_is_lifetime(argument))
+                .map(|argument| self.native_rust_signature_type(argument, ""))
+                .collect::<Vec<_>>();
+            Some(self.rust_inference_constructor(base, &arguments, parameters))
         })
+    }
+
+    /// Normalize native defaults before projecting an ordinary collection shape, preserving the checked public
+    /// owner path for storage. A nondefault allocator remains an exact native argument.
+    fn rust_inference_constructor(
+        &self,
+        base: &str,
+        arguments: &[ResolvedType],
+        parameters: &[String],
+    ) -> ResolvedType {
+        let arguments = arguments
+            .iter()
+            .map(|argument| self.rust_inference_type(argument, parameters))
+            .collect();
+        if !base.contains("::") {
+            return ResolvedType::Generic(base.to_owned(), arguments);
+        }
+        let arguments = match self.rust_item_metadata_for_path(base) {
+            Some(incan_lang::interop::RustItemMetadata {
+                kind: RustItemKind::Type(info),
+                ..
+            }) => self.rust_storage_owner_arguments(arguments, &info, base),
+            _ => arguments,
+        };
+        let displays = arguments
+            .iter()
+            .map(render_resolved_type_as_rust_arg)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let display = format!("{base}<{displays}>");
+        self.resolved_structural_rust_param_display(&display, |checker, argument| {
+            checker.rust_inference_type(&checker.native_rust_signature_type(argument, ""), parameters)
+        })
+        .unwrap_or_else(|| ResolvedType::Generic(base.to_owned(), arguments))
+    }
+
+    /// Expand a source collection into an exact native owner only when a native template requires its hidden
+    /// default parameters. A whole type variable still binds the original source type through ordinary inference.
+    pub(in crate::typechecker) fn rust_inference_owner_for_template(
+        &self,
+        base: &str,
+        actual: &ResolvedType,
+    ) -> Option<ResolvedType> {
+        if !base.contains("::") {
+            return None;
+        }
+        let mut arguments = self.rust_owner_type_args(actual, base)?;
+        let metadata = self.rust_item_metadata_for_path(base)?;
+        let RustItemKind::Type(info) = metadata.kind else {
+            return None;
+        };
+        if !self.complete_rust_owner_arguments(&info, &mut arguments) {
+            return None;
+        }
+        let expanded = ResolvedType::Generic(base.to_owned(), arguments);
+        (&expanded != actual).then_some(expanded)
     }
 
     /// Infer declared function or impl arguments from bound inputs and the expected output, using the same

@@ -620,6 +620,9 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
     match value.global():
         Some(global) => return read_static(builder, value, global, fact, span)
         None => pass
+    match reference_value_read(builder, value, fact, span)?:
+        Some(reference) => return Ok(reference)
+        None => pass
     match fact:
         OwnershipFact.MutBorrow =>
             if is_element_place(builder, value)?:
@@ -636,6 +639,29 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
         Some(operand) => return Ok(operand)
         None => pass
     return target_read(builder, scalar_place(builder, value, span)?, fact, span)
+
+
+def reference_value_read(
+    builder: Builder,
+    value: &RustPlace,
+    fact: &OwnershipFact,
+    span: SourceSpan,
+) -> Result[Option[Operand], str]:
+    """Read an explicitly reference-typed slot as its reference, never its referent. Shared references can copy;
+    exclusive references transfer only under a checked Move. Borrowed storage for source receivers is ineligible."""
+    if len(value.projection) != 0:
+        return Ok(None)
+    match value.local_id():
+        None => return Ok(None)
+        Some(local) =>
+            index = int(local.index()) + 1 + builder.local_offset
+            if index not in builder.reference_values:
+                return Ok(None)
+            if fact == OwnershipFact.Unknown or fact == OwnershipFact.MutBorrow:
+                return Err("unsupported Body IR reference value without a checked copy or transfer")
+            if is_exclusive_borrow(builder.locals[index].ty) and fact != OwnershipFact.Move:
+                return Err("unsupported Body IR exclusive reference value without a checked transfer")
+            return Ok(Some(read_place(plan_place(index, span), fact == OwnershipFact.Move, span)))
 
 
 def is_direct_tuple_field(place: Place) -> bool:
@@ -696,7 +722,8 @@ def target_read(mut builder: Builder, target: Place, fact: &OwnershipFact, span:
             ) and owned_carrier(place_type(builder.locals, target)):
                 return Err("unsupported Body IR partial tuple move")
             if is_nominal_type(place_type(builder.locals, target)) and reads_through_reference(target):
-                return Err("unsupported Body IR move out of a borrowed value")
+                site = f"{builder.file}:{span.line}:{span.column} in {builder.name}"
+                return Err(f"unsupported Body IR move out of a borrowed value at {site}; projection {target.projection:?}")
             return Ok(Operand(kind=OperandKind.Move(target), span=span))
         OwnershipFact.Clone =>
             if frozen_observation_type(place_type(builder.locals, target)):
@@ -1703,7 +1730,7 @@ pub def lower_assignment(
                         return dictionary_entry_assignment(builder, destination, receiver, count, value, span)
                     return indexed_assignment_at(builder, destination, count, value, span)
             None => pass
-    target = scalar_place(builder, destination, span)?
+    target = assignment_place(builder, destination, span)?
     match value:
         RustRvalue.Match(scrutinee=scrutinee, arms=arms) =>
             return lower_enum_match(module, builder, target, scrutinee, arms, span)
@@ -1711,6 +1738,18 @@ pub def lower_assignment(
     lower_local_assignment(module, builder, target, value, span)?
     inherit_borrowed_item(builder, target, value)
     return Ok(None)
+
+
+def assignment_place(builder: Builder, destination: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+    """Replace a checked reference value's own slot; source receiver and projected writes still address their referents."""
+    if len(destination.projection) == 0:
+        match destination.local_id():
+            Some(local) =>
+                index = int(local.index()) + 1 + builder.local_offset
+                if index in builder.reference_values:
+                    return Ok(plan_place(index, span))
+            None => pass
+    return scalar_place(builder, destination, span)
 
 
 def element_assignment(
@@ -7548,6 +7587,7 @@ def lower_function(
         type_parameters=names,
         type_arguments=bindings,
         function_pointer_locals=function_pointer_storage(body),
+        reference_values=reference_value_storage(body, names, bindings)?,
         name=selected_name,
         synthesized=[],
         iteration_locals=list_iterator_locals(body.block),
@@ -7659,6 +7699,23 @@ def producer_return_type(
     return Ok(PlanType.Unit)
 
 
+def reference_value_storage(
+    body: &RustBody,
+    names: list[str],
+    arguments: list[RustType],
+) -> Result[list[int], str]:
+    """Retain the checked reference-value slots after ordinary type substitution. Receiver origins and borrowed
+    parameter representations do not change a source value's logical type and therefore add no slot here."""
+    mut slots: list[int] = []
+    for local in body.locals:
+        closed: RustType = substitute(local.ty, names, arguments)?
+        match closed:
+            RustType.Ref(_inner) => slots.append(int(local.id.index()) + 1)
+            RustType.RefMut(_inner) => slots.append(int(local.id.index()) + 1)
+            _ => pass
+    return Ok(slots)
+
+
 def frame_scopes(body: &RustBody) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
     """Retain the checked scope IDs and parent links in Copy tables; a negative parent denotes the root scope."""
     mut scoped_locals: list[tuple[int, int]] = []
@@ -7742,7 +7799,7 @@ def body_frame_type(
     """Admit a checked frame local with its declaration and slot retained in every refusal."""
     match frame_type(module, local, intrinsics):
         Ok(ty) => return Ok(ty)
-        Err(reason) => return Err(f"{reason} in {body.name} frame local {int(local.id.index())}")
+        Err(reason) => return Err(f"{reason} in {body.name} frame local {int(local.id.index())} at source bytes {local.span.start}..{local.span.end}")
 
 
 def frame_parameters(
@@ -7889,6 +7946,9 @@ pub def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpa
                 _ => return scalar_operand(builder, value, span)
         RustOperand.Place(read) =>
             validate_callback_place(builder, read.place)?
+            match reference_value_read(builder, read.place, read.fact, span)?:
+                Some(reference) => return Ok(reference)
+                None => pass
             match read.place.global():
                 Some(global) => return read_static(builder, read.place, global, read.fact, span)
                 None => pass
@@ -10714,7 +10774,7 @@ pub def bind_enum_payload(
     pattern: &RustPattern,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Bind payloads through native downcasts, copying scalars and cloning checked owned payloads."""
+    """Bind payloads through native downcasts, preserving checked copies, borrows, clones and single-owner moves."""
     match pattern:
         RustPattern.UnionMember(ty=_ty, fields=fields) =>
             return bind_enum_fields(builder, source, variant, fields, span)
@@ -11603,7 +11663,8 @@ def moved_native_enum_payload(
     fact: &OwnershipFact,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Transfer a checked native or standard payload move, retiring its single-field carrier before cleanup edges."""
+    """Transfer a checked native or standard payload move, retiring its carrier's drop entry when present.
+    Intrinsic call temporaries can be drop-free; checked Body IR supplies their move authority."""
     owner = enum_owner(place_type(builder.locals, source))?
     if fact != OwnershipFact.Move:
         return enum_payload_read(builder, payload, fact, span)
@@ -11614,8 +11675,10 @@ def moved_native_enum_payload(
         carrier = builder.intrinsics[owner - len(builder.enums)].carrier
         if carrier != "Option" and carrier != "Result":
             return enum_payload_read(builder, payload, fact, span)
-    if len(fields) != 1 or source.projection != Projection.Whole or source.local not in builder.owned:
-        return Err("unsupported Body IR SDK enum payload move outside a whole owned single-field carrier")
+    if len(fields) != 1 or source.projection != Projection.Whole:
+        return Err("unsupported Body IR native enum payload move outside a whole owned single-field carrier")
+    if owner < len(builder.enums) and source.local not in builder.owned:
+        return Err("unsupported Body IR native enum payload move without its carrier's drop owner")
     forget_owned(builder, source.local)
     return Ok(read_place(payload, true, span))
 

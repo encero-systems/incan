@@ -351,7 +351,7 @@ enum RetainedTypeLeaf {
 }
 
 /// Collect the identity-bearing leaves of `ty` with their structural paths below `path`, through generic arguments and
-/// tuple items, as `ResultVariant::has_complete_canonical_types` walks them.
+/// tuple items and references, as `ResultVariant::has_complete_canonical_types` walks them.
 fn named_leaf_paths(ty: &IncanType, path: &mut Vec<usize>, out: &mut Vec<(Vec<usize>, RetainedTypeLeaf)>) {
     match ty {
         IncanType::Named(name) => out.push((path.clone(), RetainedTypeLeaf::Named(name.clone()))),
@@ -362,6 +362,11 @@ fn named_leaf_paths(ty: &IncanType, path: &mut Vec<usize>, out: &mut Vec<(Vec<us
                 named_leaf_paths(item, path, out);
                 path.pop();
             }
+        }
+        IncanType::Ref(inner) | IncanType::RefMut(inner) => {
+            path.push(0);
+            named_leaf_paths(inner, path, out);
+            path.pop();
         }
         _ => {}
     }

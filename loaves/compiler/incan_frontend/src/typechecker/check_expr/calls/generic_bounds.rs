@@ -1350,6 +1350,8 @@ impl TypeChecker {
     /// This walks matching container structure recursively so constructor field checks and function calls can recover
     /// bindings such as `T -> String` from shapes like `Boxed[T]` versus `Boxed[String]`. Public-package aliases and
     /// provider-qualified spellings of the same generic declaration share that structure even when their names differ.
+    /// Native re-exports compare by their shared identity; a source collection expands only when the native template
+    /// needs its metadata-defaulted owner slots. Whole type parameters still bind the source argument unchanged.
     pub(in crate::typechecker) fn infer_type_param_bindings(
         &self,
         expected: &ResolvedType,
@@ -1370,6 +1372,10 @@ impl TypeChecker {
             ResolvedType::Generic(name, expected_args) => {
                 if let ResolvedType::Generic(actual_name, actual_args) = actual
                     && (name == actual_name
+                        || (name.contains("::")
+                            && actual_name.contains("::")
+                            && incan_lang::interop::ancestral_rust_path(name)
+                                == incan_lang::interop::ancestral_rust_path(actual_name))
                         || self
                             .public_library_type_identities
                             .get(name)
@@ -1385,6 +1391,8 @@ impl TypeChecker {
                     for (e, a) in expected_args.iter().zip(actual_args.iter()) {
                         self.infer_type_param_bindings(e, a, bindings);
                     }
+                } else if let Some(expanded) = self.rust_inference_owner_for_template(name, actual) {
+                    self.infer_type_param_bindings(expected, &expanded, bindings);
                 }
             }
             ResolvedType::Function(expected_params, expected_ret) => {
