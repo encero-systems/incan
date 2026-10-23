@@ -6,4 +6,4 @@ version = "0.1.0"
 main = "src/main.incn"
 
 [dependencies]
-cards = { path = "deps/cards" }
+nominals = { path = "deps/nominals" }

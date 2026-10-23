@@ -1,6 +1,0 @@
-from kinds import Level
-
-
-pub def selected() -> Level:
-    """Return a value whose generated members belong to the library."""
-    return Level.Loud

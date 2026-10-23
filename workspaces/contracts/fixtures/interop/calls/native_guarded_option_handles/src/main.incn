@@ -1,14 +1,21 @@
-# behavior: Option payloads behind native borrow guards keep their path methods and transfer ownership through take
+# behavior: borrowed AsRef builder inputs and AsFd lock calls preserve their reusable native owners (#2256), a dependency's unit enum values compare by their exact enum identities, and Option payloads behind native borrow guards keep their path methods and transfer ownership through take
 # expect-stdout:
+#   configured
+#   locked
+#   true
+#   true
 #   true
 #   true
 #   true
 #   true
 
+from rust::rustix::fs import flock, FlockOperation
 from rust::std::cell import RefCell
-from rust::std::fs import remove_file, remove_dir_all
+from rust::std::fs import File, remove_dir_all, remove_file
+from rust::std::os::fd import AsFd
 from rust::std::rc import Rc
-from rust::tempfile import NamedTempFile, TempDir
+from rust::std::string import String as RustString
+from rust::tempfile import Builder, NamedTempFile, TempDir
 
 
 @derive(Clone)
@@ -68,7 +75,37 @@ model DirectoryHandle:
             None => return ""
 
 
-def main() -> None:
+def show_borrowed_inputs() -> None:
+    """Configure borrowed builder inputs without losing the native result or lifetime arguments."""
+    mut builder = Builder.new()
+    prefix = RustString.from("lane-")
+    suffix = RustString.from(".txt")
+    prefix_ref = prefix.as_str()
+    suffix_ref = suffix.as_str()
+    builder.prefix(prefix_ref)
+    builder.suffix(suffix_ref)
+    println("configured")
+    match File.open("loaf.toml"):
+        Ok(file) =>
+            match flock(file.as_fd(), FlockOperation.NonBlockingLockShared):
+                Ok(_) =>
+                    match file.metadata():
+                        Ok(_metadata) => println("locked")
+                        Err(error) => println(f"{error}")
+                Err(error) => println(f"{error}")
+        Err(error) => println(f"{error}")
+
+
+def show_unit_variants() -> None:
+    """Compare the shared and exclusive file-lock operations as native values."""
+    shared = FlockOperation.LockShared
+    same = FlockOperation.LockShared
+    exclusive = FlockOperation.LockExclusive
+    println(shared == same)
+    println(shared != exclusive)
+
+
+def show_guarded_handles() -> None:
     """Read and persist both guarded handles, then remove their persisted filesystem entries."""
     match NamedTempFile.new():
         Ok(native) =>
@@ -98,3 +135,10 @@ def main() -> None:
     match saved.borrow().as_ref():
         Some(path) => assert path.clone().label() == "saved"
         None => assert false
+
+
+def main() -> None:
+    """Run each guarded-handle observation in the order of the cases it carries."""
+    show_borrowed_inputs()
+    show_unit_variants()
+    show_guarded_handles()

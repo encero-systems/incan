@@ -1,16 +1,41 @@
-# behavior: associated functions of imported Rust types are callable: a random Uuid renders as 36 characters, a typed HashMap starts empty and Instant.now() is taken
+# behavior: associated functions and types of imported Rust items are usable: a random Uuid renders as 36 characters, a typed HashMap starts empty and Instant.now() is taken; a variable spelled in TitleCase holding an imported Rust value is a value, so a method call on it renders the value; and a function returning an imported Rust HashMap keyed by Rust String builds an empty map (RFC 041)
 # expect-stdout:
+#   36
+#   0
 #   36
 #   0
 
 from rust::uuid import Uuid
 from rust::std::collections import HashMap
+from rust::std::string import String
 from rust::std::time import Instant
 
 
-def main() -> None:
+def empty_name_index() -> HashMap[String, int]:
+    return HashMap.new()
+
+
+def show_associated_functions() -> None:
     _id = Uuid.new_v4().to_string()
     mut _typed = HashMap.new[str, int]()
     _start = Instant.now()
     println(len(_id))
     println(_typed.len())
+
+
+def show_titlecase_value() -> None:
+    # A runtime variable named `TitleCase` with Unknown type (external interop result).
+    # This should stay a *value* method call (`TitleCase.to_string()`), NOT be rewritten to `TitleCase::to_string()`.
+    mut TitleCase = Uuid.new_v4()
+    rendered = TitleCase.to_string()
+    println(len(rendered))
+
+
+def show_path_type_return() -> None:
+    println(empty_name_index().len())
+
+
+def main() -> None:
+    show_associated_functions()
+    show_titlecase_value()
+    show_path_type_return()

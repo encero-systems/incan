@@ -1,12 +1,15 @@
-# behavior: a Rust HashMap retains its default generic owner and borrowed scalar results across repeated lookups, while a source model's same-named insert uses its own defaulted signature
+# behavior: a Rust HashMap retains its default generic owner and borrowed scalar results across repeated lookups, while a source model's same-named insert uses its own defaulted signature, and the Rust type keeps its identity through two public module paths (#705)
 # expect-stdout:
 #   2
 #   1
 #   missing
 #   2
 #   3
+#   true
 
 from rust::std::collections import HashMap
+from rust::std::collections import HashMap as PublicMap
+from rust::std::collections::hash_map import HashMap as ModuleMap
 
 
 model Counter:
@@ -22,7 +25,12 @@ def lookup(counts: HashMap[str, int], word: str) -> str:
         None => return "missing"
 
 
-def main() -> None:
+def empty(value: ModuleMap[str, int]) -> bool:
+    """Accept a map through its module's public path."""
+    return value.is_empty()
+
+
+def show_lookups() -> None:
     mut counts = HashMap.new[str, int]()
     counts.insert("the", 2)
     counts.insert("cat", 1)
@@ -36,3 +44,14 @@ def main() -> None:
     counter.insert("a")
     counter.insert("b", 2)
     println(counter.total)
+
+
+def show_reexported_identity() -> None:
+    """Pass the re-exported nominal type into the other path's position."""
+    value: PublicMap[str, int] = PublicMap.new()
+    println(empty(value))
+
+
+def main() -> None:
+    show_lookups()
+    show_reexported_identity()

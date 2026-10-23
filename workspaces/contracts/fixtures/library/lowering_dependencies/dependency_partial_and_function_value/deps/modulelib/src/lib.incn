@@ -1,3 +1,10 @@
+"""Module library with a nested namespace, a facade alias and a package-internal model."""
+
+pub from helpers import cast as safe_cast
+pub from registry import Entry
+pub from report import summary
+
+
 pub def show(prefix: str, label: str) -> str:
     return prefix + label
 
@@ -7,3 +14,7 @@ pub show_ace = partial show(label="ace")
 
 pub def calculate(value: int) -> int:
     return value * 2
+
+
+pub def cast(value: int) -> int:
+    return value + 1

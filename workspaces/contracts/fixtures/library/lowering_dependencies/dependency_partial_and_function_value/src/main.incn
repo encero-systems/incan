@@ -1,11 +1,17 @@
-# behavior: a positional argument fills an imported partial's first residual parameter while its later preset stays in place, and a dependency function reached through a module binding, aliased or not, is a value that can be bound to a local and passed as an argument
+# behavior: a provider's facade and namespace declarations resolve to what they were published from: a positional argument fills an imported partial's first residual parameter while its later preset stays in place, and a dependency function reached through a module binding, aliased or not, is a value that can be bound to a local and passed as an argument; a provider's facade alias resolves to the declaration it was published from, so its str signature is used even though the provider also exports a same-named int function; a package's module calls an inherent method of a model from a sibling module of the same package and a consumer calls that method on the dependency's type directly (#1174); and a provider's directory namespace routes a call to the nested module's callable while its qualified partial applies the preset taken from the provider's own const (#948)
 # expect-stdout:
 #   p:ace
 #   4
 #   6
 #   8
+#   <text>
+#   3
+#   base=10 tax=2
+#   total=12
+#   named of size 4
+#   direct of size 2
 
-from pub::modulelib import show_ace
+from pub::modulelib import Entry, cast, hyperquant, safe_cast, show_ace, summary
 import pub::modulelib as cl
 import pub::modulelib
 
@@ -14,10 +20,32 @@ def apply(f: (int) -> int, value: int) -> int:
     return f(value)
 
 
-def main() -> None:
+def show_partial_and_function_values() -> None:
     println(show_ace("p:"))
     calculate = cl.calculate
     println(calculate(2))
     println(apply(cl.calculate, 3))
     whole = modulelib.calculate
     println(whole(4))
+
+
+def show_facade_alias_signature() -> None:
+    println(safe_cast("text"))
+    println(cast(2))
+
+
+def show_inherent_methods() -> None:
+    println(summary())
+    println(Entry(key="total", amount=12).describe())
+
+
+def show_namespace_partial() -> None:
+    println(hyperquant.default_index(label="named"))
+    println(hyperquant.build_index(2, "direct"))
+
+
+def main() -> None:
+    show_partial_and_function_values()
+    show_facade_alias_signature()
+    show_inherent_methods()
+    show_namespace_partial()

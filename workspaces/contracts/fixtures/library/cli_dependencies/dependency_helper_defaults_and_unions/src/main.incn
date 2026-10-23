@@ -1,13 +1,47 @@
-# behavior: a consumer calling a dependency's pub helpers gets the omitted-argument default, the dependency-owned const default and union-typed parameters (#729)
+# behavior: a dependency's union surface reaches its consumers intact: a consumer calling a dependency's pub helpers gets the omitted-argument default, the dependency-owned const default and union-typed parameters (#729), a dependency model's methods returning `int | str`, a list of it and an option of it hand the consumer unions it passes to its own `int | str` positions and matches by member (#1797), two modules of one dependency each declare `Product` and `Answer = Product | int` and each module's union accepts its own `Product` and an int (#1796), a dependency whose public surface carries a native union is read from its admitted artifact where a model the package root re-exports from a submodule, and reached only as a list or option field of a function's result, keeps its declaration's fields and methods (#1561), Some(member) whose destination is a dependency's Option[union] is wrapped into the union the dependency declares as a call argument, a list element, a model field at construction and by assignment, an annotated binding, a match arm and a returned value while Ok(member) and Err(message) fill a dependency's Result[union, str], and a consumer passes a dependency's union member directly to the dependency's union parameter (#2024)
 # expect-stdout:
 #   adjusted=5
 #   order_count=__querykit_count_no_argument__
 #   orders=7
+#   answer 3
+#   answer empty
+#   first 5
+#   maybe 7
+#   first product 1
+#   first number 2
+#   second product two
+#   second number 3
+#   2 1 100
+#   50
+#   best 1
+#   7
+#   PLAIN
+#   kind k
+#   missing
+#   2
+#   HELD
+#   kind c
+#   PICKED
+#   FINE
+#   error bad
+#   ARM
+#   missing
+#   ASSIGNED
+#   total
 
-from pub::querykit import aggregate_as, aggregate_default, count, describe, lit
+from element_fields import run_element_fields
+from helper_defaults import run_helper_defaults
+from member_argument import run_member_argument
+from method_unions import run_method_unions
+from option_unions import run_option_unions
+from same_named import run_same_named
 
 
 def main() -> None:
-    println(describe(aggregate_as(lit(5), "adjusted")))
-    println(describe(aggregate_as(count(), "order_count")))
-    println(describe(aggregate_default(lit(7))))
+    """Run each union observation in the order of the cases it carries."""
+    run_helper_defaults()
+    run_method_unions()
+    run_same_named()
+    run_element_fields()
+    run_option_unions()
+    run_member_argument()

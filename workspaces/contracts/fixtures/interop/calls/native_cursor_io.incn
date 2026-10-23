@@ -1,0 +1,99 @@
+# behavior: a native Cursor keeps its borrowed vector, dereference receivers, mutable position, I/O error display, seek variants and field-guard reads: cloning a borrowed native byte vector returns owned bytes that outlive the cursor, Rc and RefCell guards preserve shared and mutable dereference receivers, Rust mutable receiver methods borrow the caller's value exclusively, an owned native I/O error formats like its own to_string method and remains usable, a native seek variant carries its checked integer payload into a cursor operation, and a trait-qualified reader behind a field guard lends its cursor to a bounded read and preserves the cursor for the next read
+# expect-stdout:
+#   2
+#   0
+#   2
+#   2
+#   true
+#   true
+#   2
+#   1
+#   2
+#   2
+
+"""Observe one native cursor through every receiver, ownership and trait shape the area cases cover."""
+
+from rust::std::cell import RefCell
+from rust::std::io import Cursor, Read, Seek, SeekFrom
+from rust::std::rc import Rc
+
+
+class Buffer:
+    """Keep one native cursor in shared interior-mutable storage."""
+
+    handle: Rc[RefCell[Cursor[bytes]]]
+
+    def read(self, size: u64) -> bytes:
+        """Read at most the requested number of bytes through a temporary exclusive guard."""
+        mut out = b""
+        mut cursor = self.handle.borrow_mut()
+        match Read.by_ref(cursor).take(size).read_to_end(out):
+            Ok(_) => return out
+            Err(_) => return b""
+
+
+def copied() -> bytes:
+    """Clone the vector behind a borrowed native cursor view."""
+    cursor = Cursor.new(b"ab")
+    return cursor.get_ref().clone()
+
+
+def show_owned_clone() -> None:
+    """Observe an owned result after its native cursor has gone out of scope."""
+    println(len(copied()))
+
+
+def show_deref_receivers() -> None:
+    """Read and update a cursor through native dereference adjustments."""
+    handle = Rc.new(RefCell.new(Cursor.new(b"abcd")))
+    mut cursor = handle.borrow_mut()
+    println(cursor.position())
+    cursor.set_position(2)
+    println(cursor.position())
+
+
+def show_mutable_receiver() -> None:
+    """Observe a mutation through a subsequent shared method."""
+    mut value = Cursor.new(b"abcd")
+    value.set_position(2)
+    println(value.position())
+
+
+def show_io_error_display() -> None:
+    """Display a native I/O error twice without consuming its owned value."""
+    mut cursor = Cursor.new(b"")
+    mut buffer = b"ab"
+    match cursor.read_exact(buffer):
+        Ok(_) => println("read")
+        Err(err) =>
+            expected = err.to_string()
+            println(f"{err}" == expected)
+            println(f"{err}" == expected)
+
+
+def show_seek_variants() -> None:
+    """Construct native seek variants and observe the resulting cursor positions."""
+    mut cursor = Cursor.new(b"abcd")
+    match cursor.seek(SeekFrom.Start(2u64)):
+        Ok(position) => println(int(position))
+        Err(_) => println(-1)
+    match cursor.seek(SeekFrom.Current(-1)):
+        Ok(position) => println(int(position))
+        Err(_) => println(-1)
+
+
+def show_guard_reads() -> None:
+    """Observe that bounded reads advance the original cursor."""
+    buffer = Buffer(handle=Rc.new(RefCell.new(Cursor.new(b"abcd"))))
+    println(len(buffer.read(2u64)))
+    println(len(buffer.read(2u64)))
+
+
+def main() -> None:
+    """Run each cursor observation in the order of the cases it carries."""
+    show_owned_clone()
+    show_deref_receivers()
+    show_mutable_receiver()
+    show_io_error_display()
+    show_seek_variants()
+    show_guard_reads()

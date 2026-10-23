@@ -6,4 +6,4 @@ version = "0.1.0"
 main = "src/main.incn"
 
 [rust-dependencies]
-tiny_option = { path = "rust/tiny_option" }
+string_fixtures = { path = "rust/string_fixtures" }

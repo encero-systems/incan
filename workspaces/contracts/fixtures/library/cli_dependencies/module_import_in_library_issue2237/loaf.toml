@@ -1,9 +1,0 @@
-[project]
-name = "module_import_in_library_issue2237"
-version = "0.1.0"
-
-[project.scripts]
-main = "src/main.incn"
-
-[dependencies]
-greetings = { path = "deps/greetings" }

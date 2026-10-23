@@ -1,9 +1,0 @@
-[project]
-name = "compiled_trait_slot"
-version = "0.1.0"
-
-[project.scripts]
-main = "src/main.incn"
-
-[dependencies]
-labels = { path = "deps/labels" }

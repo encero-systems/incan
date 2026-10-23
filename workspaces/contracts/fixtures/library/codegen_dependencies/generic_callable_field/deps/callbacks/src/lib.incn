@@ -1,9 +1,0 @@
-pub model Mapper[T, U]:
-    """Retain a callback whose input and result use this model's type parameters."""
-
-    pub transform: (T) -> U
-
-    def apply(self, value: T) -> U:
-        """Apply the stored callback to one value."""
-        transform = self.transform
-        return transform(value)

@@ -1,7 +1,13 @@
-# behavior: a newtype and a model whose @rust.derive names std::clone::Clone, a derive they already carry, build with one Clone implementation each
+# behavior: Rust interop builds through the CLI: a newtype and a model whose @rust.derive names std::clone::Clone, a derive they already carry, build with one Clone implementation each, a float literal passed to a Rust constructor that takes f32 arrives as that many seconds, and a function taking an aliased Rust generic over `tuple[&mut int, &mut int]` is accepted and called with a fresh handle
 # expect-stdout:
 #   ada
 #   2
+#   1500
+#   explicit mutable Rust generic CLI path
+
+from rust::std::time import Duration
+from rust::std::vec import Vec as ProviderHandle
+
 
 @rust.derive("std::clone::Clone")
 type Name = newtype str
@@ -12,8 +18,28 @@ model Person:
     name: Name
 
 
-def main() -> None:
+def replace_items(mut items: ProviderHandle[tuple[&mut int, &mut int]]) -> None:
+    pass
+
+
+def show_derived_clone() -> None:
     mut people: list[Person] = [Person(name=Name("ada"))]
     people.append(Person(name=Name("bo")))
     println(people[0].name.0)
     println(len(people))
+
+
+def show_f32_argument() -> None:
+    pause = Duration.from_secs_f32(1.5)
+    println(pause.as_millis())
+
+
+def show_generic_mutable_reference() -> None:
+    replace_items(ProviderHandle.new())
+    println("explicit mutable Rust generic CLI path")
+
+
+def main() -> None:
+    show_derived_clone()
+    show_f32_argument()
+    show_generic_mutable_reference()

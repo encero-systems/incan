@@ -8,6 +8,7 @@ main = "src/main.incn"
 [rust-dependencies]
 foreign_math = { package = "libm", version = "0.2", optional = true }
 unused = { package = "libm", version = "999", optional = true }
+checksum = { package = "crc32fast", version = "1" }
 
 [project.features]
 default = ["math"]

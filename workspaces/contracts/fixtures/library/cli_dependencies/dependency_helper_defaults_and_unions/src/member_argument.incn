@@ -1,0 +1,8 @@
+"""A consumer passing a dependency's union member to its union parameter."""
+
+from pub::unions import assign, number
+
+
+pub def run_member_argument() -> None:
+    """Use the union without importing its alias or member model."""
+    println(assign("total", number("amount")))

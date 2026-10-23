@@ -7,3 +7,6 @@ main = "src/main.incn"
 
 [rust-dependencies]
 crc-fast = "1"
+
+[dependencies]
+encoding_rs = { loaf = "crates-io/encoding_rs", version = "0.8", features = [], default-features = true }

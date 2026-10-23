@@ -1,4 +1,5 @@
 const LABEL: str = "flat"
+const NOTE: str = "note"
 
 
 def _unit() -> str:
@@ -21,3 +22,37 @@ pub def finish(kind: _Finish = _Finish.Gloss) -> str:
     match kind:
         _Finish.Matte => return "matte"
         _Finish.Gloss => return "gloss"
+
+
+pub model Card:
+    size: int = 4
+    pub label: str = "card"
+
+    def describe(self) -> str:
+        return f"{self.label} of size {self.size}"
+
+
+pub class Tray:
+    pub slots: int = 3
+
+
+pub def show(card: Card = Card(label=NOTE)) -> str:
+    return card.describe()
+
+
+pub def count(tray: Tray = Tray()) -> int:
+    return tray.slots
+
+
+pub def stacked(layers: int, tray: Tray = Tray()) -> int:
+    return layers * tray.slots
+
+
+pub stacked_twice = partial stacked(layers=2)
+
+
+pub def tagged(tag: str, card: Card) -> str:
+    return f"{tag} {card.describe()}"
+
+
+pub tag_ace = partial tagged(card=Card(label="ace"))

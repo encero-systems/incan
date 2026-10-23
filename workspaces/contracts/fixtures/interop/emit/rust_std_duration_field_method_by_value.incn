@@ -1,9 +1,11 @@
-# behavior: Rust Duration fields retain value arguments, exact numeric results, and PartialEq comparisons through source receivers and nested fields
+# behavior: Rust Duration fields retain value arguments, exact numeric results, and PartialEq comparisons through source receivers and nested fields, and assigning an imported Rust associated call directly to a model field keeps its target (#2223)
 # expect-stdout:
 #   5
 #   7
 #   5.5
 #   5.5
+#   3
+#   4
 
 from rust::std::time import Duration as RustDuration
 
@@ -26,7 +28,12 @@ model Timer:
     span: Span
 
 
-def main() -> None:
+model DelayTimer:
+    """A mutable field populated by a Rust associated function."""
+    delay: RustDuration
+
+
+def show_field_calls() -> None:
     """Exercise native field calls and equality without consuming their owners."""
     left = Span(value=RustDuration.from_secs(2))
     right = Span(value=RustDuration.from_secs(3))
@@ -41,3 +48,19 @@ def main() -> None:
     half = Span(value=RustDuration.from_millis(3500))
     println(left.plus(half).as_secs_f32())
     println(left.plus(half).as_secs_f64())
+
+
+def show_field_assignment() -> None:
+    """Compare direct assignment with the equivalent local-binding form."""
+    mut timer = DelayTimer(delay=RustDuration.from_secs(0))
+    timer.delay = RustDuration.from_secs(3)
+    println(timer.delay.as_secs())
+    replacement = RustDuration.from_secs(4)
+    timer.delay = replacement
+    println(timer.delay.as_secs())
+
+
+def main() -> None:
+    """Run each Duration observation in the order of the cases it carries."""
+    show_field_calls()
+    show_field_assignment()

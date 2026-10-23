@@ -1,9 +1,0 @@
-[project]
-name = "rust_unsized_slice_type_argument"
-version = "0.1.0"
-
-[project.scripts]
-main = "src/main.incn"
-
-[dependencies]
-encoding_rs = { loaf = "crates-io/encoding_rs", version = "0.8", features = [], default-features = true }

@@ -6,4 +6,4 @@ version = "0.1.0"
 main = "src/main.incn"
 
 [dependencies]
-querykit = { path = "deps/querykit" }
+unions = { path = "deps/unions" }

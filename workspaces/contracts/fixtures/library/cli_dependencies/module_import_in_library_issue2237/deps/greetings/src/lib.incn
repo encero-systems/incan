@@ -1,2 +1,0 @@
-"""Public greeting composition."""
-pub from compose import compose

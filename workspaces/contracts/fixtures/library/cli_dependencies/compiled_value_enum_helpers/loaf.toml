@@ -1,9 +1,0 @@
-[project]
-name = "compiled_value_enum_helpers"
-version = "0.1.0"
-
-[project.scripts]
-main = "src/main.incn"
-
-[dependencies]
-levels = { path = "deps/levels" }

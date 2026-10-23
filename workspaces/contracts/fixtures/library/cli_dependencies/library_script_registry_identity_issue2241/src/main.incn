@@ -1,10 +1,14 @@
-# behavior: a library with a registry Rust dependency and its own script remains callable by a consumer (#2241) (#2216)
+# behavior: a library with a registry Rust dependency and its own script remains callable by a consumer (#2241) (#2216), and a compiled registry-backed callable retains computed defaults and explicit arguments (#2241)
 # expect-stdout:
 #   42
+#   42
+#   7
 
 from pub::numbers import encoded
 
 
 def main() -> None:
-    """Read a value produced through the library's registry dependency."""
+    """Read a value produced through the library's registry dependency, by default and by argument."""
     println(encoded())
+    println(encoded())
+    println(encoded(7))

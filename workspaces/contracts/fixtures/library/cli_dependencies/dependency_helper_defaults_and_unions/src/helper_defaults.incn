@@ -1,0 +1,10 @@
+"""A consumer calling a dependency's pub helpers."""
+
+from pub::unions import aggregate_as, aggregate_default, count, describe, lit
+
+
+pub def run_helper_defaults() -> None:
+    """Take the omitted-argument default, the dependency-owned const default and union-typed parameters."""
+    println(describe(aggregate_as(lit(5), "adjusted")))
+    println(describe(aggregate_as(count(), "order_count")))
+    println(describe(aggregate_default(lit(7))))

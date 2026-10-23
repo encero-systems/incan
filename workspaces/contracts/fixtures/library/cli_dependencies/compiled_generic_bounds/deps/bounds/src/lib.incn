@@ -49,3 +49,39 @@ pub model Lookup with Failing[str]:
 
     def failure(self) -> str:
         return self.key
+
+
+pub trait Labeled:
+    """Describe values through one required method and one reusable default."""
+
+    def text(self) -> str:
+        """Return the receiver's own label."""
+        ...
+
+    def decorated(self) -> str:
+        """Call the receiver's selected implementation from the inherited default."""
+        return f"<{self.text()}>"
+
+    def set(mut self, value: str) -> None:
+        """Replace the receiver's label."""
+        ...
+
+    def replace(mut self, first: str, second: str) -> str:
+        """Retain the exclusive receiver across two compiled mutations and a shared read."""
+        self.set(first)
+        self.set(second)
+        return self.text()
+
+
+pub model Item with Labeled:
+    """Supply the label in a compiled library method."""
+
+    pub value: str
+
+    def text(self) -> str:
+        """Read the library-owned value."""
+        return self.value
+
+    def set(mut self, value: str) -> None:
+        """Update the library-owned field in place."""
+        self.value = value

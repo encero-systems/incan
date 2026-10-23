@@ -1,0 +1,51 @@
+"""A consumer constructing, matching and printing enums that share variant names."""
+
+from pub::enums import (
+    Action,
+    ActionKind,
+    EnterPayload,
+    Later,
+    Move,
+    Signal,
+    SignalKind,
+    Wrapper,
+    count_of,
+    describe,
+    kind_of,
+    phase_of,
+    route_of,
+    signal_kind,
+)
+from pub::enums.kinds import Phase, Route, route_label
+
+
+def label(action: Action) -> str:
+    match action:
+        Action.Enter(payload) => return f"enter {payload.step}"
+        Action.Leave => return "leave"
+
+
+pub def run_variant_names() -> None:
+    """Construct, match and print every enum the dependency publishes."""
+    enter = Action.Enter(EnterPayload(step="intro"))
+    println(label(enter))
+    println(label(Action.Leave))
+    println(kind_of(enter).value())
+    println(ActionKind.Leave.value())
+    println(phase_of(enter).value())
+    println(Phase.Leave.value())
+    println(route_of(enter))
+    println(route_of(Action.Leave))
+    println(route_label(Route.Enter("north", 4)))
+    println(describe(Move.Enter(1, 2)))
+    println(describe(Move.Leave("done")))
+    println(signal_kind(Signal.Start(3)).value())
+    println(SignalKind.Start.value())
+    match Signal.Start(4):
+        Signal.Start(value) => println(f"start {value}")
+        Signal.Stop => println("stop")
+    held = Wrapper.Holds(Later(count=2))
+    println(count_of(held))
+    match held:
+        Wrapper.Holds(later) => println(later.count + 1)
+        Wrapper.Empty => println("empty")

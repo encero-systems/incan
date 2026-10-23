@@ -6,4 +6,4 @@ version = "0.1.0"
 main = "src/main.incn"
 
 [dependencies]
-callability = { path = "deps/callability_core" }
+callability = { path = "deps/callability" }

@@ -1,0 +1,24 @@
+pub from records import Card
+pub from ids import EvidenceId
+pub from api import fraction_of
+
+
+pub model Evidence:
+    """An element whose name is private to the consumer's import scope."""
+    pub name: str
+
+
+pub model Bundle:
+    """A public container that determines an empty list's element type."""
+    pub items: list[Evidence]
+
+
+pub model Callback[T]:
+    """Store an ordinary function pointer with its declared input and output binder."""
+    pub f: (T) -> T
+
+
+pub def apply_callback(callback: Callback[int], value: int) -> int:
+    """Invoke a callback through the provider's native generic layout."""
+    invoke = callback.f
+    return invoke(value)

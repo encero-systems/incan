@@ -1,0 +1,60 @@
+# behavior: native calls the checker cannot admit are refused with their own reasons: a native variant pattern must belong to the scrutinee's checked Rust owner, an unknown Rust associated method is refused by its requested public item name, a source method cannot mutate a value through a native shared Option view, and a native usize variable needs an explicit conversion at an Incan int return boundary
+# expect-stderr-contains:
+#   does not resolve for this match
+#   Rust method `rust::std::path::Path::missing_contract` has no admitted callable signature
+#   has no method 'change(...)'
+#   Return type mismatch: expected 'Int', found 'usize'
+# expect-exit: 1
+
+"""A known native owner does not authorize a guessed associated method signature, and no refused call executes."""
+
+from rust::std::cell import RefCell
+from rust::std::cmp import Ordering
+from rust::std::env import VarError
+from rust::std::mem import size_of_val
+from rust::std::path import Path
+
+
+model Value:
+    """A source value whose mutation requires exclusive receiver access."""
+
+    number: int
+
+    def change(mut self) -> None:
+        """Change the stored value through an exclusive receiver."""
+        self.number = 2
+
+
+def classify(value: Ordering) -> str:
+    """Refuse a variant from a different native enum owner."""
+    match value:
+        VarError.NotPresent => return "wrong owner"
+        _ => return "ordering"
+
+
+def guessed_method() -> None:
+    """Request an associated method absent from the native owner's public contract."""
+    path = Path.missing_contract("leaf")
+    println(path)
+
+
+def shared_mutation() -> None:
+    """Refuse a mutable source method through a native shared payload."""
+    cell = RefCell.new(Some(Value(number=1)))
+    match cell.borrow().as_ref():
+        Some(value) => value.change()
+        None => pass
+
+
+def size() -> int:
+    """Refuse an ordinary usize value at a narrowing return boundary."""
+    value = size_of_val("leaf")
+    return value
+
+
+def main() -> None:
+    """Request every refused function, so admission rejects each before anything could execute."""
+    println(classify(Ordering.Equal))
+    guessed_method()
+    shared_mutation()
+    println(size())

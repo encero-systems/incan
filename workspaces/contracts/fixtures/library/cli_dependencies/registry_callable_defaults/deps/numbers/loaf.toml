@@ -1,6 +1,0 @@
-[project]
-name = "numbers"
-version = "0.1.0"
-
-[dependencies]
-serde_json = { loaf = "crates-io/serde_json", version = "1.0" }

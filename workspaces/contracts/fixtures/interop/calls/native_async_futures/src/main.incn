@@ -1,0 +1,61 @@
+# behavior: native futures and permits are awaited and moved: a semaphore permit moves out of its native Option without requiring Clone, awaiting a Rust ready future yields its associated output, a Rust async function yields its logical output when awaited, an extern declaration naming the dependency's exported attribute macro is a name for rustc, not a delegated call, and a Rust timeout projects its IntoFuture argument and yields the future output inside Result
+# expect-stdout:
+#   acquired
+#   7
+#   8
+#   resumed
+#   7
+
+rust.module("tokio")
+
+import std.async
+from rust::incan_std_async::sync import RawSemaphore, RawSemaphorePermit, semaphore_new, semaphore_try_acquire
+from rust::std::future import ready
+from rust::std::mem import drop
+from rust::std::time import Duration
+from rust::tokio::task import yield_now
+from rust::tokio::time import timeout
+
+
+@rust.extern
+def test() -> None:
+    """Name tokio's `test` attribute macro; the declaration has no function to delegate to."""
+    ...
+
+
+def acquire_permit() -> None:
+    """Acquire and release a native permit through its owned result."""
+    semaphore: RawSemaphore = semaphore_new(1)
+    match semaphore_try_acquire(semaphore):
+        Some(permit) =>
+            println("acquired")
+            drop(permit)
+        None => println("unavailable")
+
+
+async def await_ready_futures() -> None:
+    """Print the output of a concrete Rust future."""
+    println(await ready(7))
+    future = ready(8)
+    println(await future)
+
+
+async def await_native_async_function() -> None:
+    """Resume after a native async function suspends."""
+    await yield_now()
+    println("resumed")
+
+
+async def await_timeout() -> None:
+    """Await a projected native future under a deadline."""
+    match await timeout(Duration.from_secs(1), ready(7)):
+        Ok(value) => println(value)
+        Err(_) => println("expired")
+
+
+async def main() -> None:
+    """Run each native future observation in the order of the cases it carries."""
+    acquire_permit()
+    await await_ready_futures()
+    await await_native_async_function()
+    await await_timeout()

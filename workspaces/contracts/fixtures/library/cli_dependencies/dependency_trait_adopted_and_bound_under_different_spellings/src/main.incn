@@ -1,4 +1,4 @@
-# behavior: a consumer's model that adopts a dependency's trait under one spelling meets a bound that names the trait under another: the trait, an import alias, the dependency's alias and a module-bound spelling are one trait
+# behavior: a dependency's trait is one trait under every spelling a consumer uses: a consumer's model that adopts it under one spelling meets a bound that names the trait under another (the trait, an import alias, the dependency's alias and a module-bound spelling), a dependency's trait named through a module binding, as the trait or as the dependency's alias of it, is the dependency's own trait, so the dependency's model reached through the binding meets a bound on either spelling, and a trait imported under an alias or exported under one makes the dependency's model meet a bound on either spelling while a consumer's model adopts it with its own methods
 # expect-stdout:
 #   mine
 #   YOURS
@@ -6,68 +6,22 @@
 #   OURS
 #   theirs
 #   theirs
+#   dep!
+#   dep
+#   MINE
+#   yours
+#   dep!
+#   dep
+#   MINE
+#   yours
 
-import pub::tags as t
-from pub::tags import Tag, Tagging
-from pub::tags import Tag as Tagged
-
-
-def name_of[T with Tagging](value: T) -> str:
-    return value.tag()
-
-
-def shout[T with Tagged](value: T) -> str:
-    return value.loud()
-
-
-def quiet[T with t.Tag](value: T) -> str:
-    return value.tag()
-
-
-model Mine with Tagged:
-    id: int
-
-    def tag(self) -> str:
-        return "mine"
-
-    def loud(self) -> str:
-        return "MINE"
-
-
-model Yours with Tagging:
-    id: int
-
-    def tag(self) -> str:
-        return "yours"
-
-    def loud(self) -> str:
-        return "YOURS"
-
-
-model Ours with t.Tagging:
-    id: int
-
-    def tag(self) -> str:
-        return "ours"
-
-    def loud(self) -> str:
-        return "OURS"
-
-
-model Theirs with Tag:
-    id: int
-
-    def tag(self) -> str:
-        return "theirs"
-
-    def loud(self) -> str:
-        return "THEIRS"
+from alias_spelling import run_alias_spelling
+from bound_spellings import run_bound_spellings
+from module_binding import run_module_binding
 
 
 def main() -> None:
-    println(name_of(Mine(id=1)))
-    println(shout(Yours(id=2)))
-    println(quiet(Mine(id=1)))
-    println(shout(Ours(id=3)))
-    println(name_of(Theirs(id=4)))
-    println(quiet(Theirs(id=4)))
+    """Run each spelling observation in the order of the cases it carries."""
+    run_bound_spellings()
+    run_module_binding()
+    run_alias_spelling()

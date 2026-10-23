@@ -1,2 +1,0 @@
-"""The fraction API leaves the newtype in its own module."""
-pub from api import fraction_of

@@ -1,14 +1,41 @@
-# behavior: a consumer builds a dependency's model with an empty list, an empty dict and `None` for fields whose element types it never imports, one the package root republishes and one only its declaring module publishes, and the program builds and runs (#1561)
+# behavior: a consumer builds a dependency's nominal values without importing the types behind them: a model built with an empty list, an empty dict and `None` for fields whose element types it never imports, one the package root republishes and one only its declaring module publishes, builds and runs (#1561); empty nominal lists and generic callable fields retain their dependency-owned layouts (#2010, #2256); and a consumer implicitly constructs a validated dependency newtype without importing its name (#2008)
 # expect-stdout:
 #   empty 0 0
 #   none
+#   0
+#   6
+#   0.5
 
-from pub::cards import Card
+from pub::nominals import Bundle, Callback, Card, apply_callback, fraction_of
 
 
-def main() -> None:
+def increment(value: int) -> int:
+    """Close the provider's pointer input and output binder with one integer function."""
+    return value + 1
+
+
+def show_empty_card_fields() -> None:
     card = Card(title="empty", evidence_ids=[], tags={}, first=None)
     println(card.summary())
     match card.first:
         Some(_) => println("some")
         None => println("none")
+
+
+def show_empty_nominal_list() -> None:
+    """Construct the list field while importing only its containing model."""
+    bundle = Bundle(items=[])
+    println(len(bundle.items))
+    callback: Callback[int] = Callback(f=increment)
+    println(apply_callback(callback, 5))
+
+
+def show_implicit_newtype() -> None:
+    """Call the API with the underlying value alone."""
+    println(fraction_of(0.5))
+
+
+def main() -> None:
+    show_empty_card_fields()
+    show_empty_nominal_list()
+    show_implicit_newtype()

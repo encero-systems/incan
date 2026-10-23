@@ -1,25 +1,34 @@
-# behavior: generic receivers retain checked native views, internal source layouts, and captured callbacks returned by source methods
+# behavior: registry crates add receivers to native values: imported Rust extension traits add ordinary and generic binary methods to a standard cursor, generic receivers retain checked native views, internal source layouts and captured callbacks returned by source methods, preserve independent binders, infer trait-bound results, adapt source ranges with once-only endpoints and retain approved borrowed owner arguments, and an encoding's native byte slice exposes its inherent methods through a shared Cow receiver
 # expect-stdout:
+#   1
+#   770
+#   2
 #   7
 #   8
+#   2
+#   97
+#   2
 
-"""Keep generic inherent and trait receiver calls in one area case."""
+"""Keep generic inherent, trait and extension receiver calls of registry crates in one area case."""
 
-from rust::std::cell import Cell
-from rust::std::ops import Range
-from rust::std::mem import size_of_val
-from rust::std::net import Ipv4Addr
-from rust::std::time import Duration
-from std.traits.callable import Callable1
 from rust::blake2 import Blake2b512
 from rust::blake3 import hash as blake3_hash
+from rust::byteorder import BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt
+from rust::encoding_rs import Encoding
 from rust::rand import Rng, thread_rng
 from rust::sha2 import Digest, Sha224
 from rust::sha3 import Shake128
 from rust::sha3::digest import ExtendableOutputReset, Update, XofReader
+from rust::std::cell import Cell
+from rust::std::io import Cursor
+from rust::std::mem import size_of_val
+from rust::std::net import Ipv4Addr
+from rust::std::ops import Range
+from rust::std::time import Duration
 from rust::xxhash_rust::xxh32 import Xxh32, xxh32
 from rust::xxhash_rust::xxh64 import Xxh64, xxh64
 from rust::xxhash_rust::xxh3 import Xxh3Default, xxh3_64, xxh3_128
+from std.traits.callable import Callable1
 
 
 model DecodedValue[T with Clone]:
@@ -89,7 +98,31 @@ def bound(mut observed: list[int], value: int) -> int:
     return value
 
 
-def main() -> None:
+def encoded_bytes() -> bytes:
+    """Return a slice method's owned result through an explicit bytes boundary."""
+    match Encoding.for_label(b"utf-8"):
+        Some(encoding) =>
+            encoded = encoding.encode("ab")
+            return encoded.0.to_vec()
+        None => return b""
+
+
+def show_extension_traits() -> None:
+    """Read and write binary values through the imported cursor extension methods."""
+    mut input = Cursor.new(b"\x01\x02\x03")
+    match input.read_u8():
+        Ok(value) => println(int(value))
+        Err(_) => println(-1)
+    match input.read_u16[LittleEndian]():
+        Ok(value) => println(int(value))
+        Err(_) => println(-1)
+    mut output = Cursor.new(b"")
+    match output.write_u16[BigEndian](16706u16):
+        Ok(_) => println(len(output.into_inner()))
+        Err(_) => println(-1)
+
+
+def show_generic_receivers() -> None:
     """Retain the cell's element type and a deterministic singleton random range."""
     value = Cell.new(7)
     println(value.get())
@@ -153,3 +186,23 @@ def main() -> None:
     assert GenericReader().apply(transform=(value) => value + increment, value=4) == 7
     retained = GenericReader().keep((value) => value + increment)
     assert retained(5) == 8
+
+
+def show_slice_methods() -> None:
+    """Copy bytes through a slice method and keep the Cow available for another read."""
+    match Encoding.for_label(b"utf-8"):
+        Some(encoding) =>
+            encoded = encoding.encode("ab")
+            copied = encoded.0.to_vec()
+            println(len(copied))
+            println(copied[0])
+            println(len(encoded.0.to_vec()))
+        None => println("missing")
+    assert len(encoded_bytes()) == 2
+
+
+def main() -> None:
+    """Run each registry-crate observation in the order of the cases it carries."""
+    show_extension_traits()
+    show_generic_receivers()
+    show_slice_methods()

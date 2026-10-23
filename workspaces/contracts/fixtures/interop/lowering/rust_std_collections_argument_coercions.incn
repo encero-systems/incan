@@ -1,15 +1,28 @@
-# behavior: a str literal passed to a Rust method expecting a borrowed str is borrowed, a lookup method keeps its argument shape, and an argument a Rust method takes by mutable reference is borrowed mutably
+# behavior: lowering keeps Rust receivers and arguments exact: a Rust struct with public fields is constructed by named fields from Incan values and its fields read back, a str literal passed to a Rust method expecting a borrowed str is borrowed, a lookup method keeps its argument shape and an argument a Rust method takes by mutable reference is borrowed mutably, and an imported Rust type is a type-like receiver for its associated function, also when that call is nested inside a method argument, while an imported Rust constant is a value receiver for its methods
 # expect-stdout:
+#   1 4
+#   true
 #   11
 #   1
 #   3
+#   1
+#   1500
+#   1
 
-from rust::std::string import String as RustString
 from rust::std::collections import HashMap
+from rust::std::ops import Range
+from rust::std::string import String as RustString
+from rust::std::time import Duration, UNIX_EPOCH
 from rust::std::vec import Vec
 
 
-def main() -> None:
+def show_named_field_constructor() -> None:
+    span = Range(start=1, end=4)
+    println(f"{span.start} {span.end}")
+    println(span.contains(2))
+
+
+def show_collection_argument_coercions() -> None:
     mut text = RustString.from("hello")
     text.push_str(" world")
     println(text.len())
@@ -25,3 +38,22 @@ def main() -> None:
     right.push(3)
     left.append(right)
     println(left.len())
+
+
+def show_time_receivers() -> None:
+    base = Duration.from_secs(1)
+    println(base.as_secs())
+    total = base.saturating_add(Duration.from_millis(500))
+    println(total.as_millis())
+    match UNIX_EPOCH.checked_add(Duration.from_secs(1)):
+        Some(later) =>
+            match later.duration_since(UNIX_EPOCH):
+                Ok(elapsed) => println(elapsed.as_secs())
+                Err(_) => println("earlier than the epoch")
+        None => println("overflow")
+
+
+def main() -> None:
+    show_named_field_constructor()
+    show_collection_argument_coercions()
+    show_time_receivers()
