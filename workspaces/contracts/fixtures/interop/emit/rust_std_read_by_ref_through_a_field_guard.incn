@@ -12,7 +12,7 @@ from rust::std::rc import Rc
 class Buffer:
     handle: Rc[RefCell[Cursor[bytes]]]
 
-    def read(self, size: int) -> bytes:
+    def read(self, size: u64) -> bytes:
         mut out: bytes = b""
         mut cursor = self.handle.borrow_mut()
         match Read.by_ref(cursor).take(size).read_to_end(out):

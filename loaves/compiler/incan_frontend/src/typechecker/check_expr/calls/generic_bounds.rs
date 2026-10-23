@@ -1416,8 +1416,11 @@ impl TypeChecker {
                     for (e, a) in expected_args.iter().zip(actual_args.iter()) {
                         self.infer_type_param_bindings(e, a, bindings);
                     }
-                } else if let Some(expanded) = self.rust_inference_owner_for_template(name, actual) {
-                    self.infer_type_param_bindings(expected, &expanded, bindings);
+                } else if let Some(canonical) = self.rust_template_canonical_path(name)
+                    && let Some(expanded) = self.rust_inference_owner_for_template(&canonical, actual)
+                {
+                    let template = ResolvedType::Generic(canonical, expected_args.clone());
+                    self.infer_type_param_bindings(&template, &expanded, bindings);
                 }
             }
             ResolvedType::Function(expected_params, expected_ret) => {

@@ -237,6 +237,7 @@ impl TypeChecker {
                     .or_else(|| self.type_info.expr_type(call.receiver_span).cloned())
             })
             .flatten()
+            .map(|receiver| self.rusttype_native_target(&receiver).unwrap_or(receiver))
             .map(|receiver| self.rust_closed_owner(&receiver, owner, call.rust_path));
         self.retain_checked_rust_method(
             selected,
@@ -255,6 +256,12 @@ impl TypeChecker {
             .get(&(call.span.start, call.span.end))
             .map(|checked| self.rust_source_result_type(&checked.return_type, &result))
             .unwrap_or(result);
+        if receiver_is_type
+            && signature.return_type.trim() == "Self"
+            && let Some(rusttype) = self.rusttype_associated_receiver(&call)
+        {
+            return Some(rusttype);
+        }
         Some(result)
     }
 
@@ -347,12 +354,15 @@ impl TypeChecker {
                 .insert((call.span.start, call.span.end), arguments.clone());
         }
         // ---- Expected owner ----
+        // An expectation that still names the enclosing callee's open binder fixes no owner argument.
         let contextual_receiver = if specializes_owner && arguments.is_empty() {
-            call.expected_return_ty.and_then(|expected| {
-                let display = self.rust_display_for_owner_path(&signature.return_type, call.rust_path);
-                let actual = self.resolved_type_from_rust_display(&display);
-                Self::contextual_rust_receiver_type(&actual, expected, call.rust_path)
-            })
+            call.expected_return_ty
+                .filter(|expected| !Self::contains_unbound_rust_type_var(expected))
+                .and_then(|expected| {
+                    let display = self.rust_display_for_owner_path(&signature.return_type, call.rust_path);
+                    let actual = self.resolved_type_from_rust_display(&display);
+                    Self::contextual_rust_receiver_type(&actual, expected, call.rust_path)
+                })
         } else {
             None
         };

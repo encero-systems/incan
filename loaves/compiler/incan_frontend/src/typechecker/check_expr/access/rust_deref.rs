@@ -6,7 +6,7 @@ use crate::symbols::{CallableParam, ResolvedType};
 use crate::typechecker::helpers::render_resolved_type_as_rust_arg;
 use crate::typechecker::type_info::RustCheckedCall;
 use crate::typechecker::{IdentKind, RustArgCoercionKind};
-use incan_lang::interop::{RustItemKind, RustTypeInfo, ancestral_rust_path};
+use incan_lang::interop::{RustFunctionSig, RustItemKind, RustTypeInfo, ancestral_rust_path};
 use incan_lang::lang::types::collections::{CollectionTypeId, from_str as collection_type};
 
 const DEREF_TRAIT: &str = "std::ops::Deref";
@@ -164,6 +164,8 @@ impl TypeChecker {
             return None;
         }
         let source = self.type_info.expr_type(call.receiver_span)?.clone();
+        // A rusttype receiver dereferences through the native type it names.
+        let source = self.rusttype_native_target(&source).unwrap_or(source);
         let mut owner = self.rust_closed_owner(&source, info, call.rust_path);
         let mut steps = Vec::new();
         for _ in 0..12 {
@@ -210,18 +212,22 @@ impl TypeChecker {
             let arguments = self.rust_owner_type_args(&owner, &path).unwrap_or_default();
             let signature =
                 self.specialize_rust_owner_signature(&method.signature, &path, &info.type_params, &arguments);
+            let Some(signature) = self.specialize_written_method_arguments(&call, &path, signature) else {
+                return Some(ResolvedType::Unknown);
+            };
             if mutable {
                 self.refuse_write_through_read_only_binding(call.receiver_expr, call.span);
                 self.validate_rust_borrow_mutability(RustArgCoercionKind::Borrow { mutable: true }, call.receiver_expr);
             }
             let errors_before = self.errors.len();
-            let result = self.validate_rust_method_call(
+            let result = self.validate_rust_method_call_with_expected(
                 &format!("{path}.{}", call.method),
                 &signature,
                 call.args,
                 call.arg_types,
                 false,
                 call.span,
+                call.expected_return_ty,
             );
             if self.errors.len() != errors_before {
                 return Some(result);
@@ -247,6 +253,34 @@ impl TypeChecker {
             return Some(result);
         }
         None
+    }
+
+    /// Close a dereference target's method binders with the type arguments the call writes (`parse[i64]()`), and
+    /// retain them as the call site's instantiation. A call that writes none keeps its signature; wrong arity is
+    /// refused here.
+    fn specialize_written_method_arguments(
+        &mut self,
+        call: &RustPathMethodCall<'_>,
+        path: &str,
+        signature: RustFunctionSig,
+    ) -> Option<RustFunctionSig> {
+        if call.type_args.is_empty() {
+            return Some(signature);
+        }
+        if !self.validate_rust_method_type_arg_arity(call.method, &signature.type_params, call.type_args, call.span) {
+            return None;
+        }
+        let arguments = call
+            .type_args
+            .iter()
+            .map(|ty| self.resolve_type_checked(ty))
+            .collect::<Vec<_>>();
+        let specialized = self.specialize_rust_method_signature(&signature, path, &arguments);
+        self.type_info
+            .calls
+            .call_site_monomorph_type_args
+            .insert((call.span.start, call.span.end), arguments);
+        Some(specialized)
     }
 
     /// Resolve an explicit trait receiver through the same native owner selection and checked dereference calls as

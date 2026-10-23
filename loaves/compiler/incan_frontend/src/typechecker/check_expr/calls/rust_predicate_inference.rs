@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use incan_lang::interop::{RustFunctionSig, RustImplementedTrait, RustItemKind, RustTraitBound};
+use incan_lang::lang::types::numerics::NumericTypeId;
 
 use super::{TypeChecker, first_open_type_param};
 use crate::symbols::ResolvedType;
@@ -98,6 +99,61 @@ impl TypeChecker {
             selected = Some(inferred);
         }
         selected
+    }
+
+    /// Rebind a callable binder that an owned source text or bytes value closed to the borrowed native carrier
+    /// (`&str`, `&[u8]`), when its trait bound has a native implementation for the borrow and none for the owned
+    /// carrier (`P: Pattern` accepts `&str`, not `String`; `impl Buf` accepts `&[u8]`, not `Vec<u8>`). A binder whose
+    /// bound the owned carrier already satisfies keeps it.
+    pub(super) fn prefer_borrowed_bindings(
+        &self,
+        signature: &RustFunctionSig,
+        parameters: &[String],
+        bindings: &mut HashMap<String, ResolvedType>,
+    ) {
+        for predicate in &signature.bounds {
+            let name = predicate.self_type.trim();
+            if !parameters.iter().any(|parameter| parameter == name) {
+                continue;
+            }
+            let Some((owned, borrowed)) = bindings.get(name).and_then(Self::borrowed_native_carrier) else {
+                continue;
+            };
+            let Some(metadata) = self.rust_item_metadata_for_path(&predicate.path) else {
+                continue;
+            };
+            let RustItemKind::Trait(info) = &metadata.kind else {
+                continue;
+            };
+            let accepts = |owner: &ResolvedType| {
+                info.implementations.iter().any(|implementation| {
+                    self.rust_impl_may_apply(implementation, owner)
+                        && self.rust_impl_self_bindings(implementation, owner).is_some()
+                })
+            };
+            if !accepts(&owned) && accepts(&borrowed) {
+                bindings.insert(name.to_owned(), borrowed);
+            }
+        }
+    }
+
+    /// The owned native carrier a source text or bytes binding stands for, with the borrowed carrier a bound may
+    /// instead require.
+    fn borrowed_native_carrier(binding: &ResolvedType) -> Option<(ResolvedType, ResolvedType)> {
+        let byte = ResolvedType::Numeric(NumericTypeId::U8);
+        match binding {
+            ResolvedType::Str => Some((
+                ResolvedType::RustPath("std::string::String".into()),
+                ResolvedType::Ref(Box::new(ResolvedType::RustPath("str".into()))),
+            )),
+            ResolvedType::Generic(base, arguments) if base == "List" && arguments.as_slice() == [byte.clone()] => {
+                Some((
+                    ResolvedType::RustPath("std::vec::Vec<u8>".into()),
+                    ResolvedType::Ref(Box::new(ResolvedType::Generic("[]".into(), vec![byte]))),
+                ))
+            }
+            _ => None,
+        }
     }
 
     /// Match an implementation's self type before unifying its closed trait arguments with the callable predicate.

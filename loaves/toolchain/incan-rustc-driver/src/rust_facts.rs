@@ -285,6 +285,11 @@ fn describe_crates(tcx: TyCtxt<'_>, crates: &BTreeSet<String>) -> BTreeMap<Strin
                 definition_path: None,
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    methods: inherent_methods(
+                        tcx,
+                        tcx.incoherent_impls(ty::fast_reject::SimplifiedType::Str),
+                        &mut named,
+                    ),
                     implemented_traits: trait_impls(tcx, tcx.types.str_, &mut named),
                     ..RustTypeInfo::default()
                 }),
@@ -594,7 +599,7 @@ fn describe(tcx: TyCtxt<'_>, def: DefId, path: &str, named: &mut HashSet<DefId>)
 /// public fields and variants. Method binders remain distinct from the owner's potentially defaulted parameters.
 fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTypeInfo {
     let (type_params, type_param_defaults) = type_parameters(tcx, def);
-    let methods = inherent_methods(tcx, tcx.inherent_impls(def), named);
+    let methods = inherent_methods(tcx, &crate::callees::owner_inherent_impls(tcx, def), named);
     let adt = tcx.adt_def(def);
     let fields = if adt.is_struct() {
         adt.all_fields()

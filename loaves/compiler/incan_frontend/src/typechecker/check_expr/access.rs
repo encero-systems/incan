@@ -2759,7 +2759,7 @@ impl TypeChecker {
     }
 
     /// Return the canonical Rust path for a nominal receiver.
-    fn rust_canonical_path_for_nominal_receiver(
+    pub(in crate::typechecker) fn rust_canonical_path_for_nominal_receiver(
         &self,
         name: &str,
         type_args: Option<&[ResolvedType]>,
@@ -2903,6 +2903,17 @@ impl TypeChecker {
                 return None;
             }
             TypeInfo::Newtype(nt) if field == conventions::NEWTYPE_TUPLE_FIELD => {
+                // The wrapped slot belongs to the newtype's declaration, including one a library returned without
+                // the consumer importing it.
+                let owner = self
+                    .symbols
+                    .lookup(type_name)
+                    .and_then(|symbol| self.symbols.identity_of(symbol))
+                    .or_else(|| self.public_library_type_identities.get(type_name)?.canonical.as_ref())
+                    .cloned();
+                if let Some(owner) = owner {
+                    self.type_info.record_resolved_identity(span, owner);
+                }
                 return Some(nt.underlying.clone());
             }
             _ => return None,

@@ -924,7 +924,14 @@ impl TypeChecker {
                     let elem_ty = if let Some(arg) = args.first() {
                         let arg_expr = Self::call_arg_expr(arg);
                         let arg_ty = self.check_expr(arg_expr);
-                        let Some(elem_ty) = self.list_constructor_item_type(&arg_ty) else {
+                        // A Rust value iterates through its retained `IntoIterator` hooks, as in a loop header.
+                        let item_ty = match &arg_ty {
+                            ResolvedType::RustPath(_) => {
+                                Some(self.infer_iterator_element_type_from_expr(arg_expr, &arg_ty))
+                            }
+                            _ => self.list_constructor_item_type(&arg_ty),
+                        };
+                        let Some(elem_ty) = item_ty else {
                             self.errors
                                 .push(errors::builtin_expects_iterable(name, &arg_ty.to_string(), call_span));
                             return Some(ResolvedType::Unknown);

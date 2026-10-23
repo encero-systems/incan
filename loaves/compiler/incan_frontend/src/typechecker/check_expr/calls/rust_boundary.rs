@@ -498,6 +498,15 @@ impl TypeChecker {
         .unwrap_or_else(|| ResolvedType::Generic(base.to_owned(), arguments))
     }
 
+    /// The canonical Rust path a generic template names: its own path, or the item an imported Rust name stands for
+    /// (`Box` imported from `std::boxed`), so a template written with the import unifies with a native owner.
+    pub(super) fn rust_template_canonical_path(&self, name: &str) -> Option<String> {
+        if name.contains("::") {
+            return Some(name.to_owned());
+        }
+        self.rust_canonical_path_for_nominal_receiver(name, None)
+    }
+
     /// Expand a source collection into an exact native owner only when a native template requires its hidden
     /// default parameters. A whole type variable still binds the original source type through ordinary inference.
     pub(in crate::typechecker) fn rust_inference_owner_for_template(
@@ -575,6 +584,7 @@ impl TypeChecker {
             );
         }
         self.infer_rust_predicate_bindings(sig, parameters, &mut bound);
+        self.prefer_borrowed_bindings(sig, parameters, &mut bound);
         bound
     }
 
@@ -1528,6 +1538,29 @@ impl TypeChecker {
         preserves_lookup_arg_shape: bool,
         span: Span,
     ) -> ResolvedType {
+        self.validate_rust_method_call_with_expected(
+            callable_display,
+            sig,
+            args,
+            arg_types,
+            preserves_lookup_arg_shape,
+            span,
+            None,
+        )
+    }
+
+    /// Validate a Rust method call, letting the type its result is expected to have bind method binders the
+    /// arguments leave open (`parse::<F>()` reads `F` from `Result<i64, _>`).
+    pub(in crate::typechecker) fn validate_rust_method_call_with_expected(
+        &mut self,
+        callable_display: &str,
+        sig: &RustFunctionSig,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        preserves_lookup_arg_shape: bool,
+        span: Span,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> ResolvedType {
         let contextual_types = self.contextualize_rust_bound_closures(sig, args, arg_types);
         let arg_types = contextual_types.as_slice();
         if let Some(contract) = sig.receiver_contract {
@@ -1548,7 +1581,7 @@ impl TypeChecker {
         }
         let owner_path = Self::rust_method_owner_path(callable_display);
         let callable_returns =
-            self.infer_rust_signature_bindings(sig, owner_path, &sig.type_params, args, arg_types, None);
+            self.infer_rust_signature_bindings(sig, owner_path, &sig.type_params, args, arg_types, expected_return_ty);
         self.record_inferred_rust_arguments(callable_display, &sig.type_params, &callable_returns, span);
         let effective_sig = self.specialize_inferred_rust_signature(sig, owner_path, &callable_returns);
         let sig = &effective_sig;
@@ -1628,6 +1661,8 @@ impl TypeChecker {
         }
         let expected_params = self.rust_params_as_callable_params(&sig.params, path);
         let arg_types = self.check_call_arg_types_for_params(args, &expected_params);
+        // A closure passed to a callable-bounded binder takes its parameter types from the bound, as for a method.
+        let arg_types = self.contextualize_rust_bound_closures(sig, args, &arg_types);
         self.record_rust_call_site_params(span, &sig.params, path);
         let binding_errors_before = self.errors.len();
         self.bind_rust_call_args(path, &sig.params, args, &arg_types, span);

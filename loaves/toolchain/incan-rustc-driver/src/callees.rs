@@ -5,6 +5,7 @@ use crate::plan::{Callee, CalleeKind};
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
+use rustc_middle::ty::fast_reject::SimplifiedType;
 
 /// Resolve a retained public module constant, inherent associated constant or unit-variant constructor. Inherent
 /// constants use the same metadata lookup as checking; statics and trait constants still require their own
@@ -247,7 +248,12 @@ fn layout_definition(tcx: TyCtxt<'_>, definition: DefId, expected: DefKind) -> O
 /// concrete Self arguments and bounds remain subject to native signature validation.
 pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
     if let Some(method) = path.strip_prefix("[]::") {
-        return slice_function(tcx, method).ok_or_else(|| PlanError::UnknownCallee(path.into()));
+        return primitive_function(tcx, SimplifiedType::Slice, method)
+            .ok_or_else(|| PlanError::UnknownCallee(path.into()));
+    }
+    if let Some(method) = path.strip_prefix("str::") {
+        return primitive_function(tcx, SimplifiedType::Str, method)
+            .ok_or_else(|| PlanError::UnknownCallee(path.into()));
     }
     let mut segments = path.split("::").peekable();
     let root = segments.next().ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
@@ -326,17 +332,23 @@ fn trait_function(tcx: TyCtxt<'_>, owner: DefId, name: &str) -> Option<DefId> {
 /// Select one public inherent associated function from the exact nominal owner. The caller instantiates the owner's
 /// type parameters separately before validating the signature.
 fn inherent_function(tcx: TyCtxt<'_>, owner: DefId, name: &str) -> Option<DefId> {
-    inherent_function_in(tcx, tcx.inherent_impls(owner), name)
+    inherent_function_in(tcx, &owner_inherent_impls(tcx, owner), name)
 }
 
-/// Resolve a retained native slice method through the same primitive impl bucket rustc uses for method lookup.
-/// Only one public inherent declaration may select the callee; native arguments and predicates are verified later.
-fn slice_function(tcx: TyCtxt<'_>, name: &str) -> Option<DefId> {
-    inherent_function_in(
-        tcx,
-        tcx.incoherent_impls(rustc_middle::ty::fast_reject::SimplifiedType::Slice),
-        name,
-    )
+/// Every inherent impl rustc's method lookup reaches for a nominal owner: the impls in its defining crate and the
+/// incoherent ones another crate attaches to it. `std::io::Error` is defined below `std`, which supplies its
+/// OS-backed constructors (`new`, `other`, `last_os_error`) as incoherent impls.
+pub fn owner_inherent_impls(tcx: TyCtxt<'_>, owner: DefId) -> Vec<DefId> {
+    let mut implementations = tcx.inherent_impls(owner).to_vec();
+    implementations.extend_from_slice(tcx.incoherent_impls(SimplifiedType::Adt(owner)));
+    implementations
+}
+
+/// Resolve a retained native slice or `str` method through the same primitive impl bucket rustc uses for method
+/// lookup. Only one public inherent declaration may select the callee; native arguments and predicates are verified
+/// later.
+fn primitive_function(tcx: TyCtxt<'_>, bucket: SimplifiedType, name: &str) -> Option<DefId> {
+    inherent_function_in(tcx, tcx.incoherent_impls(bucket), name)
 }
 
 /// Select one public inherent function from exact impl owners, refusing ambiguous same-named declarations.

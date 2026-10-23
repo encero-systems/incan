@@ -2372,6 +2372,9 @@ impl TypeChecker {
                     {
                         return structural;
                     }
+                    if let Some(source) = self.resolved_source_generic_from_rust_display(base, &args) {
+                        return source;
+                    }
                 }
                 if self.lookup_type_info(normalized.as_str()).is_some() {
                     ResolvedType::Named(normalized)
@@ -2390,6 +2393,30 @@ impl TypeChecker {
             }
             _ => ResolvedType::Unknown,
         }
+    }
+
+    /// Name a source model, class, enum or newtype instance that a Rust display spells with angle brackets
+    /// (`Node<T>`), so the checked type keeps the declaration instead of an opaque Rust path. An argument that names a
+    /// type parameter of the enclosing declaration stays that parameter.
+    fn resolved_source_generic_from_rust_display(&self, base: &str, args: &[&str]) -> Option<ResolvedType> {
+        if !matches!(
+            self.lookup_semantic_type_info(base),
+            Some(TypeInfo::Model(_) | TypeInfo::Class(_) | TypeInfo::Enum(_) | TypeInfo::Newtype(_))
+        ) {
+            return None;
+        }
+        let arguments = args
+            .iter()
+            .map(|argument| {
+                let parameter = ResolvedType::Named(argument.trim().to_owned());
+                if self.active_type_param_name(&parameter).is_some() {
+                    parameter
+                } else {
+                    self.resolved_type_from_rust_display(argument)
+                }
+            })
+            .collect();
+        Some(ResolvedType::Generic(base.to_owned(), arguments))
     }
 
     /// Return a Rust generic parameter display when rust-analyzer reports a by-value generic boundary.
@@ -2700,8 +2727,11 @@ impl TypeChecker {
         destination: &ResolvedType,
     ) {
         let destination = self.expand_type_aliases(destination.clone());
-        let adapts =
-            destination.is_option() || (numeric_type_id_for_compat(value_ty).is_some() && *value_ty != destination);
+        let materializes = !matches!(destination, ResolvedType::Ref(_) | ResolvedType::RefMut(_))
+            && self.borrowed_source_value_materializes(value_ty);
+        let adapts = destination.is_option()
+            || (numeric_type_id_for_compat(value_ty).is_some() && *value_ty != destination)
+            || materializes;
         if !adapts || !self.types_compatible(value_ty, &destination) {
             return;
         }
@@ -2709,6 +2739,26 @@ impl TypeChecker {
             .expressions
             .value_destination_types
             .insert((value_span.start, value_span.end), destination);
+    }
+
+    /// Whether `borrowed` is a shared reference to a source model, or to a class that derives `Clone`: the language
+    /// copies such values on demand, so a write site or call slot that needs an owned value takes a clone of it. A
+    /// type imported from Rust keeps its own copy and clone semantics and is never materialized here.
+    pub(in crate::typechecker) fn borrowed_source_value_materializes(&self, borrowed: &ResolvedType) -> bool {
+        let ResolvedType::Ref(inner) = borrowed else {
+            return false;
+        };
+        let (ResolvedType::Named(name) | ResolvedType::Generic(name, _)) = inner.as_ref() else {
+            return false;
+        };
+        if self.rust_canonical_path_for_nominal_receiver(name, None).is_some() {
+            return false;
+        }
+        match self.lookup_semantic_type_info(name) {
+            Some(TypeInfo::Model(_)) => true,
+            Some(TypeInfo::Class(_)) => self.type_implements_trait(name, "Clone"),
+            _ => false,
+        }
     }
 
     /// Record the final checked type selected for one assignment binding.
@@ -9488,6 +9538,13 @@ impl TypeChecker {
             (ResolvedType::Ref(a), ResolvedType::Ref(b))
             | (ResolvedType::RefMut(a), ResolvedType::Ref(b))
             | (ResolvedType::RefMut(a), ResolvedType::RefMut(b)) => self.nested_types_compatible(a, b),
+            // A borrowed source model or class becomes an owned value where one is required; Body IR clones it there.
+            (ResolvedType::Ref(inner), expected)
+                if !matches!(expected, ResolvedType::Ref(_) | ResolvedType::RefMut(_))
+                    && self.borrowed_source_value_materializes(actual) =>
+            {
+                self.types_compatible(inner, expected)
+            }
             // Frozen const-eval values are compatible with their frozen wrappers. Ordinary runtime strings do not
             // implicitly become frozen values here; const-eval is responsible for freezing literal values first.
             (ResolvedType::FrozenStr, ResolvedType::FrozenStr) => true,

@@ -29,7 +29,7 @@ def describe(handle: Stdin) -> str:
     return "handle"
 
 
-def call_both[T, U](transform: (T) -> U, first: T, second: T) -> str:
+def call_both[T, U with Display](transform: (T) -> U, first: T, second: T) -> str:
     return f"{transform(first)} {transform(second)}"
 
 
@@ -46,7 +46,7 @@ def copy_algorithm[T, U](algorithm: Algorithm, first: T, second: U) -> str:
     return f"{kept.name} {algorithm.name}"
 
 
-def repeat_first[T, U](value: T, other: U) -> str:
+def repeat_first[T with Display, U](value: T, other: U) -> str:
     first = value
     second = value
     hold(other)

@@ -1084,6 +1084,36 @@ def enum_comparison_tag(mut builder: Builder, source: Place, span: SourceSpan) -
     return tag
 
 
+def owner_borrow(
+    mut builder: Builder,
+    operand: &RustOperand,
+    expected: PlanType,
+    span: SourceSpan,
+) -> Result[Option[Operand], str]:
+    """Borrow an owner's place for a destination declared as a reference to it, rather than reading a copy."""
+    match operand:
+        RustOperand.Place(read) =>
+            match read.place.global():
+                Some(_global) => return Ok(None)
+                None => pass
+            if is_element_place(builder, read.place)?:
+                return Ok(None)
+            place = scalar_place(builder, read.place, span)?
+            owner = place_type(builder.locals, place)
+            match (expected, owner):
+                (PlanType.ModelRef(index, _name), PlanType.Model(owner_index, _owner_name)) =>
+                    if index != owner_index:
+                        return Ok(None)
+                (PlanType.EnumRef(index, _name), PlanType.Enum(owner_index, _owner_name)) =>
+                    if index != owner_index:
+                        return Ok(None)
+                _ => return Ok(None)
+            reference = temporary(builder, expected, span)
+            builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
+            return Ok(Some(read_place(reference, false, span)))
+        _ => return Ok(None)
+
+
 def scalar_rvalue(
     module: &BodyIrModule,
     mut builder: Builder,
@@ -1095,6 +1125,9 @@ def scalar_rvalue(
     match value:
         RustRvalue.Use(operand) =>
             match retained_reference_value(builder, operand, expected, span)?:
+                Some(reference) => return Ok(RvalueKind.Use(reference))
+                None => pass
+            match owner_borrow(builder, operand, expected, span)?:
                 Some(reference) => return Ok(RvalueKind.Use(reference))
                 None => return Ok(RvalueKind.Use(value_operand(builder, operand, span)?))
         RustRvalue.UnaryOp(operator, operand) =>
@@ -6175,6 +6208,14 @@ def coerce_numeric_operand(
     return Ok(read_place(converted, false, span))
 
 
+def clone_model_reference(mut builder: Builder, reference: Operand, index: int, name: str, span: SourceSpan) -> Operand:
+    """Call a source model's derived Clone on a shared reference to it, yielding the owned copy."""
+    result = temporary(builder, PlanType.Model(index, name), span)
+    terminate_call(builder, CalleeKind.CloneModel(index, name), [reference], result, span)
+    builder.owned.append(result.local)
+    return read_place(result, true, span)
+
+
 pub def clone_nominal_operand(mut builder: Builder, value: Place, span: SourceSpan) -> Result[Operand, str]:
     """
     Materialize the checker's clone fact through a source nominal's real derived Clone implementation.
@@ -6189,23 +6230,11 @@ pub def clone_nominal_operand(mut builder: Builder, value: Place, span: SourceSp
             owned = Place(local=value.local, projection=Projection.Deref(PlanType.ValidationError), span=span)
             return carrier_payload_value(builder, owned, span)
         PlanType.ModelRef(index, name) =>
-            result = temporary(builder, PlanType.Model(index, name), span)
-            terminate_call(builder, CalleeKind.CloneModel(index, name), [read_place(value, false, span)], result, span)
-            builder.owned.append(result.local)
-            return Ok(read_place(result, true, span))
+            return Ok(clone_model_reference(builder, read_place(value, false, span), index, name, span))
         PlanType.Model(index, name) =>
             reference = temporary(builder, PlanType.ModelRef(index, name), span)
             builder.emit(plan_assign(reference, RvalueKind.Borrow(value), span))
-            result = temporary(builder, PlanType.Model(index, name), span)
-            terminate_call(
-                builder,
-                CalleeKind.CloneModel(index, name),
-                [read_place(reference, false, span)],
-                result,
-                span,
-            )
-            builder.owned.append(result.local)
-            return Ok(read_place(result, true, span))
+            return Ok(clone_model_reference(builder, read_place(reference, false, span), index, name, span))
         PlanType.Enum(index, name) =>
             # SDK enums own their Clone implementation; the local derive callee cannot validate a foreign layout.
             if index < len(builder.enums) and library_enum_item(builder.enums[index]) != "":
@@ -6627,6 +6656,8 @@ pub def display_plan_value(
         return display_string_operand(builder, operand, span)
     if ty == PlanType.StringRef:
         return Ok(owned_borrowed_text(builder, operand, span))
+    if ty == PlanType.StringMutRef:
+        return exclusive_text_display(builder, operand, span)
     if ty == PlanType.StrRef:
         return Ok(owned_slice_text(builder, operand, span))
     if has_sized_numeric(ty):
@@ -6657,6 +6688,21 @@ pub def display_plan_value(
     result = temporary(builder, PlanType.String, span)
     external_call(builder, f"incan_native_runtime::{name}", [ty], PlanType.String, [operand], result, span)
     return Ok(result)
+
+
+def exclusive_text_display(mut builder: Builder, operand: Operand, span: SourceSpan) -> Result[Place, str]:
+    """Format an exclusive String reference through a shared reborrow of its referent."""
+    mut reference = plan_place(0, span)
+    match operand.kind:
+        OperandKind.Move(place) =>
+            reference = place
+        OperandKind.Copy(place) =>
+            reference = place
+        _ => return Err("unsupported Body IR exclusive text display without a place")
+    referent = Place(local=reference.local, projection=Projection.Deref(PlanType.String), span=span)
+    shared = temporary(builder, PlanType.StringRef, span)
+    builder.emit(plan_assign(shared, RvalueKind.Borrow(referent), span))
+    return Ok(owned_borrowed_text(builder, read_place(shared, false, span), span))
 
 
 def debug_enum_operand(mut builder: Builder, place: Place, owner: int, span: SourceSpan) -> Result[Place, str]:
@@ -11169,7 +11215,12 @@ def bind_structural_pattern(
             local = int(binding.local.index()) + 1 + builder.local_offset
             ty = place_type(builder.locals, source)
             if builder.locals[local].ty != ty:
-                return Err("invalid Body IR structural pattern binding carrier")
+                # A borrowed subject binds its components as shared references to them.
+                reference = borrowed_binding_type(ty)
+                if reference == PlanType.Unit or builder.locals[local].ty != reference:
+                    return Err("invalid Body IR structural pattern binding carrier")
+                builder.emit(plan_assign(plan_place(local, span), RvalueKind.Borrow(source), span))
+                return Ok(None)
             if binding.fact == OwnershipFact.MutBorrow and is_list(ty):
                 return bind_payload_in_place(builder, local, source, span)
             mut value = read_place(source, false, span)
@@ -11217,6 +11268,16 @@ def bind_structural_pattern(
                         return bind_enum_payload(builder, carrier, slot, pattern, span)
                     _ => return Err("unsupported Body IR structural pattern binding")
     return Ok(None)
+
+
+def borrowed_binding_type(ty: PlanType) -> PlanType:
+    """The shared-reference carrier a binding takes to a matched scalar, text or model component; Unit when none."""
+    if numeric_carrier(ty) or ty == PlanType.Bool:
+        return PlanType.ScalarRef([ty])
+    match ty:
+        PlanType.String => return PlanType.StringRef
+        PlanType.Model(index, name) => return PlanType.ModelRef(index, name)
+        _ => return PlanType.Unit
 
 
 def structural_binding_carrier(ty: PlanType) -> bool:
@@ -11918,10 +11979,14 @@ pub def boundary_plan_operand(
     if source == PlanType.StrRef and target == PlanType.String:
         owned = owned_slice_text(builder, value, span)
         return Ok(read_place(owned, true, span))
+    # A borrowed source model that reaches a destination owning one was admitted by the checker there, so it is cloned.
     match (source, target):
         (PlanType.Tuple(_source_fields), PlanType.Tuple(_target_fields)) =>
             if source != target:
                 return Err("unsupported Body IR tuple value with differing checked field carriers")
+        (PlanType.ModelRef(owner, name), PlanType.Model(target_owner, _target_name)) =>
+            if owner == target_owner:
+                return Ok(clone_model_reference(builder, value, owner, name, span))
         _ => pass
     match converted_carrier_operand(builder, value, target, span)?:
         Some(converted) => return Ok(converted)
@@ -12182,6 +12247,13 @@ def bind_enum_fields(
                                 builder.emit(plan_assign(plan_place(local, span), RvalueKind.Borrow(projected), span))
                                 continue
                         Err(_reason) => pass
+                    # An exclusive subject binds each payload as an exclusive reference to it.
+                    match exclusive_reference(payload_types[slot]):
+                        Some(exclusive) =>
+                            if ty == exclusive:
+                                builder.emit(plan_assign(plan_place(local, span), RvalueKind.MutBorrow(projected), span))
+                                continue
+                        None => pass
                 if binding.fact == OwnershipFact.MutBorrow:
                     bind_payload_in_place(builder, local, projected, span)?
                 else:

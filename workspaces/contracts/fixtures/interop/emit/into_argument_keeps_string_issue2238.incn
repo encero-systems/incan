@@ -1,5 +1,4 @@
 # behavior: a string passed repeatedly to a generic Rust Into parameter stays usable afterwards (#2238)
-# pending: #2238 RustIoError.new has no admitted callable signature
 # expect-stdout:
 #   custom message
 #   custom message
