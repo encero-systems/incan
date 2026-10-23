@@ -55,31 +55,31 @@ pub(super) fn retain_declared_type(ty: &mut IncanType, identities: &Identities) 
 
 /// Retain source nominal identity on every admitted project's type-bearing declaration and deferred frame.
 pub(super) fn retain(module: &mut bir::BodyIrModule, facts: &TypeCheckInfo, context: &[bir::BodyIrModule]) {
-    let returns = return_carriers(module, context);
+    retain_return_owners(module, context);
     let constructors = constructor_arguments::collect(module, context);
     for declaration in &mut module.nominal_declarations {
         for ty in &mut declaration.field_types {
             qualify_type(ty, None, &declaration.named_type_identities);
         }
         if let Some(body) = &mut declaration.field_default_body {
-            retain_body(body, facts, &returns, &constructors);
+            retain_body(body, facts, &constructors);
         }
         for partial in &mut declaration.method_partial_defaults {
-            retain_body(&mut partial.frame, facts, &returns, &constructors);
+            retain_body(&mut partial.frame, facts, &constructors);
         }
     }
     for alias in &mut module.type_alias_declarations {
         qualify_type(&mut alias.ty, None, &alias.named_type_identities);
     }
     for body in &mut module.bodies {
-        retain_body(body, facts, &returns, &constructors);
+        retain_body(body, facts, &constructors);
     }
     for binding in &mut module.decorated_bindings {
-        retain_body(&mut binding.original_body, facts, &returns, &constructors);
+        retain_body(&mut binding.original_body, facts, &constructors);
     }
     for storage in &mut module.static_declarations {
         if let bir::StaticInitializer::Computed(body) = &mut storage.initial {
-            retain_body(body, facts, &returns, &constructors);
+            retain_body(body, facts, &constructors);
             storage.ty = body.return_type.clone();
         }
     }
@@ -148,18 +148,7 @@ fn qualify_type(ty: &mut IncanType, checked: Option<&IncanType>, identities: &Id
 }
 
 /// Retain a frame's carrier independently from the caller; defaults and closures continue to use that same frame.
-fn retain_body(
-    body: &mut bir::Body,
-    facts: &TypeCheckInfo,
-    returns: &ReturnCarriers,
-    constructors: &ConstructorCarriers,
-) {
-    retain_selected_returns(
-        &body.block.stmts,
-        &mut body.locals,
-        &mut body.named_type_identities,
-        returns,
-    );
+fn retain_body(body: &mut bir::Body, facts: &TypeCheckInfo, constructors: &ConstructorCarriers) {
     retain_constructor_results(
         &body.block.stmts,
         &mut body.locals,
@@ -168,12 +157,6 @@ fn retain_body(
     );
     for parameter in &body.params {
         if let bir::CallableParamDefault::Source(default) = &parameter.default {
-            retain_selected_returns(
-                &default.stmts,
-                &mut body.locals,
-                &mut body.named_type_identities,
-                returns,
-            );
             retain_constructor_results(
                 &default.stmts,
                 &mut body.locals,
@@ -649,6 +632,51 @@ struct ReturnCarrier {
 
 type ReturnCarriers = BTreeMap<CanonicalSymbolId, ReturnCarrier>;
 
+/// Bind call-result owners before opaque return refinement needs their nominal adoptions. This phase transfers only
+/// declaration-owned identities; final carrier qualification still runs after return witnesses have settled.
+pub(super) fn retain_return_owners(module: &mut bir::BodyIrModule, context: &[bir::BodyIrModule]) {
+    let returns = return_carriers(module, context);
+    for declaration in &mut module.nominal_declarations {
+        if let Some(body) = &mut declaration.field_default_body {
+            retain_body_return_owners(body, &returns);
+        }
+        for partial in &mut declaration.method_partial_defaults {
+            retain_body_return_owners(&mut partial.frame, &returns);
+        }
+    }
+    for body in &mut module.bodies {
+        retain_body_return_owners(body, &returns);
+    }
+    for binding in &mut module.decorated_bindings {
+        retain_body_return_owners(&mut binding.original_body, &returns);
+    }
+    for storage in &mut module.static_declarations {
+        if let bir::StaticInitializer::Computed(body) = &mut storage.initial {
+            retain_body_return_owners(body, &returns);
+        }
+    }
+}
+
+/// Apply the same declaration-owned result identity boundary to the body and its deferred parameter defaults.
+fn retain_body_return_owners(body: &mut bir::Body, returns: &ReturnCarriers) {
+    retain_selected_returns(
+        &body.block.stmts,
+        &mut body.locals,
+        &mut body.named_type_identities,
+        returns,
+    );
+    for parameter in &body.params {
+        if let bir::CallableParamDefault::Source(default) = &parameter.default {
+            retain_selected_returns(
+                &default.stmts,
+                &mut body.locals,
+                &mut body.named_type_identities,
+                returns,
+            );
+        }
+    }
+}
+
 /// Snapshot only declaration-owned return facts before mutating this module's execution frames.
 fn return_carriers(module: &bir::BodyIrModule, context: &[bir::BodyIrModule]) -> ReturnCarriers {
     context
@@ -804,9 +832,9 @@ fn retain_pattern_binding_carriers(
 
 /// Qualify only concrete leaves that agree with the selected declaration's result; type parameters grant no carrier.
 ///
-/// Nominal leaves must carry the exact selected canonical identity. A missing owner grants no authority, and a
-/// declaration with the same name never authorizes replacing another owner.
-fn retain_declared_return_type(
+/// Nominal leaves carry the exact selected canonical identity: a name already bound to another owner is never
+/// replaced, and an identity without a carrier key keeps its written name.
+pub(super) fn retain_declared_return_type(
     ty: &mut IncanType,
     declared: &IncanType,
     source: &Identities,
@@ -815,10 +843,11 @@ fn retain_declared_return_type(
     match (ty, declared) {
         (IncanType::Named(name), IncanType::Named(declared)) => {
             let Some(identity) = source.get(declared) else { return };
-            let Some(key) = nominal_carrier_key(identity) else {
+            if destination.get(name).is_some_and(|existing| existing != identity) {
                 return;
-            };
-            if destination.get(name) == Some(identity) {
+            }
+            let key = nominal_carrier_key(identity).unwrap_or_else(|| name.clone());
+            if *name == *declared || *name == identity.declaration_name || destination.get(name) == Some(identity) {
                 *name = key.clone();
                 destination.insert(key, identity.clone());
             }
@@ -829,7 +858,24 @@ fn retain_declared_return_type(
                 base: declared_base,
                 args: declared_args,
             },
-        ) if base == declared_base && args.len() == declared_args.len() => {
+        ) if args.len() == declared_args.len() => {
+            let mut owner = IncanType::Named(base.clone());
+            retain_declared_return_type(
+                &mut owner,
+                &IncanType::Named(declared_base.clone()),
+                source,
+                destination,
+            );
+            let IncanType::Named(retained) = owner else { return };
+            if base != declared_base
+                && *base == retained
+                && !destination
+                    .get(base)
+                    .is_some_and(|identity| source.get(declared_base) == Some(identity))
+            {
+                return;
+            }
+            *base = retained;
             for (argument, declared) in args.iter_mut().zip(declared_args) {
                 retain_declared_return_type(argument, declared, source, destination);
             }

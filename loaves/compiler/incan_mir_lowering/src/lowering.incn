@@ -61,7 +61,7 @@ from pub::incan_mir_plan import assign as plan_assign, place as plan_place, bloc
 from bytes_plan import bytes_literal
 from newtype_constants import numeric_newtype_literal
 from sdk_async_types import close_async_types, primary_async_body, async_call_type_arguments, selected_async_receiver
-from layout_types import shared_receiver_type
+from layout_types import shared_receiver_type, mutable_receiver_type, stored_field_type
 from text_ownership import drop_borrowed_text_temporaries
 from decimal_plan import decimal_literal, decimal_comparison, is_decimal_literal
 from frozen_plan import (
@@ -220,6 +220,7 @@ from traits import (
     receiver_fills_slot,
     receiver_fills_source_slot,
     receiver_fills_retained_slot,
+    receiver_method_identity,
     validate_static_receiver,
 )
 from decls import lower_model_declarations, publish_local_layouts, static_slot, static_accessors, library_item, library_enum_item
@@ -650,6 +651,13 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
     return target_read(builder, source, fact, span)
 
 
+def reference_read_fact(fact: &OwnershipFact) -> bool:
+    """Admit checked value reads of a logical reference. Copy, clone, borrow, and last-use transfer never authorize moving its referent; unknown and mutable borrowing remain separate operations."""
+    match fact:
+        (OwnershipFact.Copy | OwnershipFact.Clone | OwnershipFact.Borrow | OwnershipFact.Move) => return true
+        _ => return false
+
+
 def reference_value_read(
     mut builder: Builder,
     value: &RustPlace,
@@ -669,7 +677,7 @@ def reference_value_read(
         target = scalar_place(builder, value, span)?
         match place_type(builder.locals, target):
             (PlanType.StrRef | PlanType.ScalarRef(_) | PlanType.ModelRef(_, _) | PlanType.SliceRef(_) | PlanType.NativeArrayRef(_, _) | PlanType.StringRef | PlanType.EnumRef(_, _)) =>
-                if fact == OwnershipFact.Unknown or fact == OwnershipFact.MutBorrow:
+                if not reference_read_fact(fact):
                     return Err("unsupported Body IR projected reference without a checked read")
                 return Ok(Some(read_place(target, false, span)))
             _ => pass
@@ -680,7 +688,7 @@ def reference_value_read(
             index = int(local.index()) + 1 + builder.local_offset
             if index not in builder.reference_values:
                 return Ok(None)
-            if fact == OwnershipFact.Unknown or fact == OwnershipFact.MutBorrow:
+            if not reference_read_fact(fact):
                 return Err("unsupported Body IR reference value without a checked copy or transfer")
             if is_exclusive_borrow(builder.locals[index].ty) and fact != OwnershipFact.Move:
                 return Err("unsupported Body IR exclusive reference value without a checked transfer")
@@ -720,6 +728,8 @@ def target_read(mut builder: Builder, target: Place, fact: &OwnershipFact, span:
                 match target.projection:
                     Projection.VariantField(_variant, _slot, _ty) =>
                         return target_read(builder, target, OwnershipFact.Clone, span)
+                    (Projection.Field(_, _) | Projection.Fields(_) | Projection.DerefField(_, _) | Projection.DerefFields(_)) =>
+                        return callable_object(builder, target, signature, span)
                     _ => pass
             match fact:
                 OwnershipFact.Move =>
@@ -2309,7 +2319,7 @@ def lower_closure(
                     return Err("unsupported Body IR iterator closure capture without FnOnce contract")
             _ => pass
         if not closure_capture_type(ty, consumes_environment):
-            return Err("unsupported Body IR closure capture outside scalars, owned text and models")
+            return Err(f"unsupported Body IR closure capture {ty:?}")
         operands.append(operand)
         capture_types.append(ty)
     name = f"__incan_closure_{builder.name}_{len(builder.synthesized)}"
@@ -4191,8 +4201,6 @@ def lower_static_method_body(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Validate canonical storage, selected receiver passing and a nonescaping result before calling under its guard."""
-    if len(read.place.projection) != 0:
-        return Err("unsupported Body IR projected global method receiver")
     slot = static_slot(builder.statics, global)?
     if not is_computed_static(builder.statics[slot]):
         return Err("unsupported Body IR noncomputed global method receiver")
@@ -4200,14 +4208,15 @@ def lower_static_method_body(
     match owner:
         PlanType.Model(_owner, _name) => pass
         _ => return Err("unsupported Body IR nonmodel global method receiver")
-    index = owner_method_index(module, builder.body_indices, target, owner, builder.intrinsics)?
+    selected = computed_static_type(builder, read.place, global)?
+    index = owner_method_index(module, builder.body_indices, target, selected, builder.intrinsics)?
     body = instantiated_method_body(module, builder, target, index, arguments, span)?
     receiver = frame_type(module, body.locals[0], builder.intrinsics)?
     match receiver:
         PlanType.ModelMutRef(_owner, _name) =>
             if read.fact != OwnershipFact.MutBorrow:
                 return Err("unsupported Body IR global method without checked mutable receiver")
-        PlanType.ModelRef(_owner, _name) =>
+        (PlanType.ModelRef(_owner, _name) | PlanType.EnumRef(_owner, _name)) =>
             if read.fact != OwnershipFact.Borrow:
                 return Err("unsupported Body IR global method without checked shared receiver")
         _ => return Err("unsupported Body IR global method receiver frame")
@@ -4226,8 +4235,73 @@ def lower_static_method_body(
             _ => return Err("unsupported Body IR global method borrowed or unproven result")
     operands = method_ordinary_operands(module, builder, target, arguments, body, span)?
     initialize_module_statics(builder, static_owner(builder.statics[slot]), span)
-    callee = CalleeKind.StaticMethod(slot, source_method_symbol(module, builder, target, body, span))
+    mut symbol = source_method_symbol(module, builder, target, body, span)
+    if len(read.place.projection) != 0:
+        fields = field_path(
+            builder.nominals,
+            owner,
+            read.place.projection,
+            len(read.place.projection),
+            builder.enums,
+            builder.unions,
+            builder.intrinsics,
+        )?
+        mut inputs = [receiver]
+        for operand in operands:
+            inputs.append(operand_type(builder, operand)?)
+        mut root_reference = shared_receiver_type(owner)?
+        if read.fact == OwnershipFact.MutBorrow:
+            match owner:
+                PlanType.Model(index, name) =>
+                    root_reference = PlanType.ModelMutRef(index, name)
+                _ => return Err("unsupported Body IR static projection mutable root")
+        wrapper = f"{builder.name}__incan_static_projection_{slot}_{len(builder.synthesized)}"
+        synthesize(builder, static_projection_forwarder(wrapper, symbol, root_reference, fields, inputs, result, span))
+        symbol = wrapper
+    callee = CalleeKind.StaticMethod(slot, symbol)
     return emit_selected_body_call(builder, body, callee, operands, destination, span)
+
+
+def static_projection_forwarder(
+    name: str,
+    method: str,
+    root_reference: PlanType,
+    fields: list[FieldProjection],
+    inputs: list[PlanType],
+    result: PlanType,
+    span: SourceSpan,
+) -> Function:
+    """Borrow the retained field path under the root's guard and call its selected method without a snapshot."""
+    mut parameters = [Parameter(name="__incan_root", ty=root_reference, span=span)]
+    mut locals = [Local(ty=result, span=span), Local(ty=root_reference, span=span)]
+    mut arguments: list[Operand] = []
+    for index in range(1, len(inputs)):
+        parameters.append(Parameter(name=f"__incan_argument_{index}", ty=inputs[index], span=span))
+        locals.append(Local(ty=inputs[index], span=span))
+        arguments.append(read_place(plan_place(index + 1, span), true, span))
+    receiver = plan_place(len(locals), span)
+    locals.append(Local(ty=inputs[0], span=span))
+    field = Place(local=1, projection=Projection.DerefFields(fields), span=span)
+    mut borrow = RvalueKind.Borrow(field)
+    match root_reference:
+        PlanType.ModelMutRef(_owner, _name) =>
+            borrow = RvalueKind.MutBorrow(field)
+        _ => pass
+    invocation = TerminatorKind.Call(
+        Callee(kind=CalleeKind.Planned(method), span=span),
+        [read_place(receiver, true, span)] + arguments,
+        plan_place(0, span),
+        1,
+        Unwind.Continue,
+    )
+    return Function(
+        name=name,
+        parameters=parameters,
+        return_type=result,
+        locals=locals,
+        blocks=[plan_block([plan_assign(receiver, borrow, span)], invocation, span), plan_block([], TerminatorKind.Return, span)],
+        span=span,
+    )
 
 
 def lower_library_method(
@@ -4503,13 +4577,21 @@ def lower_standard_slot(
 
     A slot the receiver's own method fills is left to ordinary dispatch, because that method is what legacy calls. A
     receiver type that declares a method of the slot's name without such a record refuses, rather than taking the derived
-    behavior in its place.
+    behavior in its place. A checked Serialize default that still names the protocol itself keeps the canonical JSON
+    implementation; retaining that default is not an override.
     """
     locals = builder.locals[builder.local_offset:]
+    mut json_default = false
     if receiver_fills_slot(module, target, locals, arguments[0], span, builder.unions, builder.intrinsics):
-        return Ok(false)
+        if not is_json_serialize_method(target):
+            return Ok(false)
+        selected = receiver_method_identity(module, target, locals, arguments[0], span, builder.unions, builder.intrinsics)?
+        if selected != target.canonical:
+            return Ok(false)
+        # A retained default points at the protocol itself; only a distinct implementation overrides that slot.
+        json_default = true
     if is_json_serialize_method(target) or is_derived_clone(target) or is_derived_display(target):
-        if receiver_declares_method(module, builder, arguments[0], slot_name(target), span)?:
+        if not json_default and receiver_declares_method(module, builder, arguments[0], slot_name(target), span)?:
             return Err("unsupported Body IR standard slot on a type with its own method of that name")
     if is_json_serialize_method(target):
         lower_model_json_builtin(builder, arguments, destination, span)?
@@ -6362,11 +6444,12 @@ def model_field_operands(
     for slot in range(len(elements)):
         match elements[slot].as_one():
             Some(value) =>
-                field_type = native_source_type(
+                field_type = stored_field_type(
                     builder.nominals,
                     builder.enums,
                     builder.unions,
-                    declaration.field_types[slot],
+                    declaration,
+                    slot,
                     builder.intrinsics,
                 )?
                 if field_type == PlanType.String:
@@ -8422,6 +8505,8 @@ pub def value_operand(mut builder: Builder, value: &RustOperand, span: SourceSpa
                 return collection_value(builder, read, span)
             place = scalar_place(builder, read.place, span)?
             ty = place_type(builder.locals, place)
+            if is_collection(ty):
+                return collection_place_value(builder, place, read.fact, span)
             match zip_shape(ty):
                 Some(_shape) =>
                     if read.fact == OwnershipFact.Move:
@@ -10348,11 +10433,16 @@ def collection_value(mut builder: Builder, read: &RustPlaceOperand, span: Source
     if len(read.place.projection) != 0:
         return dictionary_index_read(builder, read.place, span)
     place = list_root_place(builder, read.place, span)?
+    return collection_place_value(builder, place, read.fact, span)
+
+
+def collection_place_value(mut builder: Builder, place: Place, fact: &OwnershipFact, span: SourceSpan) -> Result[Operand, str]:
+    """Materialize whole or structurally projected dictionary/set storage using the same checked read policy; projected moves gain no authority over their containing owner."""
     ty = place_type(builder.locals, place)
     owned = collection_owned(ty)
-    if read.fact == OwnershipFact.Move and ty == owned:
+    if fact == OwnershipFact.Move and ty == owned and place.projection == Projection.Whole:
         return Ok(read_place(place, true, span))
-    if read.fact != OwnershipFact.Clone and read.fact != OwnershipFact.Borrow:
+    if fact != OwnershipFact.Clone and fact != OwnershipFact.Borrow:
         return Err("unsupported Body IR collection value ownership")
     return cloned_collection(builder, place, span)
 
@@ -11831,12 +11921,103 @@ def write_static(
     else:
         ty = model_type(builder.nominals, global.ty)?
     if len(destination.projection) != 0:
+        if is_computed_static(builder.statics[static_slot(builder.statics, global)?]):
+            match ty:
+                PlanType.Model(_owner, _name) =>
+                    return write_guarded_static_field(module, builder, destination, global, value, ty, span)
+                _ => pass
         if not is_collection(ty):
             return Err("unsupported Body IR static projection")
         return write_static_entry(builder, destination, global, value, span)
     target = temporary(builder, ty, span)
     lower_local_assignment(module, builder, target, value, span)?
     return persist_static_value(builder, global, target, span)
+
+
+def write_guarded_static_field(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    destination: &RustPlace,
+    global: &RustGlobalPlace,
+    value: &RustRvalue,
+    owner: PlanType,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Evaluate the replacement before locking storage, then replace only the checked field under its exclusive guard."""
+    fields = field_path(
+        builder.nominals,
+        owner,
+        destination.projection,
+        len(destination.projection),
+        builder.enums,
+        builder.unions,
+        builder.intrinsics,
+    )?
+    selected = fields[-1].ty
+    reference = mutable_receiver_type(selected)?
+    root_reference = mutable_receiver_type(owner)?
+    replacement = temporary(builder, selected, span)
+    lower_local_assignment(module, builder, replacement, value, span)?
+    slot = static_slot(builder.statics, global)?
+    name = f"{builder.name}__incan_static_write_{slot}_{len(builder.synthesized)}"
+    path = "core::mem::replace"
+    builder.externals.append(
+        ExternalFunction(
+            path=path,
+            type_arguments=[selected],
+            parameters=[reference, selected],
+            return_type=selected,
+            span=span,
+        ),
+    )
+    synthesize(builder, static_field_writer(name, root_reference, fields, selected, reference, span))
+    initialize_module_statics(builder, static_owner(builder.statics[slot]), span)
+    forget_owned(builder, replacement.local)
+    output = temporary(builder, PlanType.Unit, span)
+    terminate_call(builder, CalleeKind.StaticMethod(slot, name), [read_place(replacement, true, span)], output, span)
+    return Ok(None)
+
+
+def static_field_writer(
+    name: str,
+    root_reference: PlanType,
+    fields: list[FieldProjection],
+    selected: PlanType,
+    reference: PlanType,
+    span: SourceSpan,
+) -> Function:
+    """Replace before dropping the old field, so storage remains initialized even if its destructor unwinds."""
+    field = Place(local=1, projection=Projection.DerefFields(fields), span=span)
+    borrow = plan_assign(plan_place(3, span), RvalueKind.MutBorrow(field), span)
+    replace = TerminatorKind.Call(
+        Callee(kind=CalleeKind.Instantiated("core::mem::replace", [selected]), span=span),
+        [read_place(plan_place(3, span), true, span), read_place(plan_place(2, span), true, span)],
+        plan_place(4, span),
+        1,
+        Unwind.Continue,
+    )
+    finished = plan_assign(plan_place(0, span), RvalueKind.Use(literal(Constant.Unit, span)), span)
+    return Function(
+        name=name,
+        parameters=[
+            Parameter(name="__incan_root", ty=root_reference, span=span),
+            Parameter(name="__incan_value", ty=selected, span=span),
+        ],
+        return_type=PlanType.Unit,
+        locals=[
+            Local(ty=PlanType.Unit, span=span),
+            Local(ty=root_reference, span=span),
+            Local(ty=selected, span=span),
+            Local(ty=reference, span=span),
+            Local(ty=selected, span=span),
+        ],
+        blocks=[
+            plan_block([borrow], replace, span),
+            plan_block([], TerminatorKind.Drop(plan_place(4, span), 2, Unwind.Continue), span),
+            plan_block([finished], TerminatorKind.Return, span),
+        ],
+        span=span,
+    )
 
 
 def write_static_entry(
@@ -12228,6 +12409,35 @@ def isinstance_place(mut builder: Builder, value: &RustOperand, span: SourceSpan
         _ => return Err("unsupported Body IR nonplace union isinstance")
 
 
+def bind_shared_enum_payload(
+    mut builder: Builder,
+    local: int,
+    payload: Place,
+    fact: &OwnershipFact,
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Preserve a checker-retained shared reference binding: copy a reference payload or borrow its owned nominal field. Match declaration slots rather than diagnostic names, and never materialize owned text or move an owner's payload into a reference slot."""
+    target = builder.locals[local].ty
+    if local not in builder.reference_values or is_exclusive_borrow(target):
+        return Ok(false)
+    if not reference_read_fact(fact):
+        return Err(f"unsupported Body IR shared enum payload reference read {fact:?} in {builder.name}")
+    source = place_type(builder.locals, payload)
+    if source == target:
+        builder.emit(plan_assign(plan_place(local, span), RvalueKind.Use(read_place(payload, false, span)), span))
+        return Ok(true)
+    match (target, source):
+        (PlanType.ModelRef(owner, _name), PlanType.Model(source, _source_name)) =>
+            if owner != source:
+                return Err("unsupported Body IR shared model payload owner mismatch")
+        (PlanType.EnumRef(owner, _name), PlanType.Enum(source, _source_name)) =>
+            if owner != source:
+                return Err("unsupported Body IR shared enum payload owner mismatch")
+        _ => return Ok(false)
+    builder.emit(plan_assign(plan_place(local, span), RvalueKind.Borrow(payload), span))
+    return Ok(true)
+
+
 def bind_enum_fields(
     mut builder: Builder,
     source: Place,
@@ -12263,6 +12473,8 @@ def bind_enum_fields(
                 if binding.fact == OwnershipFact.MutBorrow:
                     bind_payload_in_place(builder, local, projected, span)?
                 else:
+                    if bind_shared_enum_payload(builder, local, projected, binding.fact, span)?:
+                        continue
                     payload = moved_native_enum_payload(builder, source, projected, fields, binding.fact, span)?
                     value = boundary_plan_operand(builder, payload, ty, span)?
                     track_rvalue_moves(builder, RvalueKind.Use(value))

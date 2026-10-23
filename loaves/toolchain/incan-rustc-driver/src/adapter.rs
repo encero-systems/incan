@@ -368,10 +368,6 @@ impl rustc_driver::Callbacks for Callbacks {
             Ok(items) => krate.items.extend(items),
             Err(error) => compiler.sess.dcx().fatal(error.to_string()),
         }
-        match crate::marker_traits::items(&self.plan, krate.spans.inner_span) {
-            Ok(items) => krate.items.extend(items),
-            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-        }
         // A library unit re-exports its public names at the crate root (see `library_exports`).
         krate
             .items
@@ -637,7 +633,12 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
         if field.name.as_str() != planned.name
             || field.ty(tcx, arguments).skip_normalization() != crate::types::native_type(tcx, &planned.ty)?
         {
-            return Err(invalid("stdlib layout field differs from metadata"));
+            return Err(invalid(&format!(
+                "stdlib layout field `{}` at slot {slot} differs from metadata: native {}, planned {:?}",
+                planned.name,
+                field.ty(tcx, arguments).skip_normalization(),
+                planned.ty,
+            )));
         }
     }
     Ok(())

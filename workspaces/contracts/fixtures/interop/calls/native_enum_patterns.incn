@@ -1,4 +1,4 @@
-# behavior: native enum patterns retain exact payloads, nested variants, Rust discriminants, source field value arguments, shared payload clones and the borrowed payload's owner; native unit variants keep their constant identities and compare through their own implementation; native public fields preserve named construction order and writable storage; and a native UTF-8 error displays through captured Result mappers and narrowed callable formatters forwarded across source calls
+# behavior: native enum patterns retain exact payloads, nested variants, Rust discriminants, source field value arguments, shared payload clones, fresh non-Clone owners in if let and while let, and the borrowed payload's owner; native unit variants keep their constant identities and compare through their own implementation; native public fields preserve named construction order and writable storage; and a native UTF-8 error displays through captured Result mappers and narrowed callable formatters forwarded across source calls
 # expect-stdout:
 #   borrowed
 #   missing
@@ -16,11 +16,13 @@
 
 from rust::std::cell import RefCell
 from rust::std::cmp import Ordering
-from rust::std::env import VarError
+from rust::std::env import VarError, current_exe
 from rust::std::ffi import OsString
+from rust::std::fs import File
 from rust::std::io import ErrorKind, SeekFrom
 from rust::std::num import Wrapping
 from rust::std::ops import ControlFlow, Range
+from rust::std::path import PathBuf
 from rust::std::str import from_utf8
 
 
@@ -125,6 +127,31 @@ def show_borrowed_payload() -> None:
     println(borrowed_kind(invalid))
 
 
+def file_from_if_let(path: PathBuf) -> bool:
+    """Transfer a fresh native result's non-Clone file into the matching statement arm."""
+    if let Ok(file) = File.open(path):
+        match file.metadata():
+            Ok(metadata) => return metadata.is_file()
+            Err(_error) => return false
+    return false
+
+
+def file_from_while_let(path: PathBuf) -> bool:
+    """Transfer a fresh native file for each successful condition evaluation."""
+    while let Ok(file) = File.open(path):
+        match file.metadata():
+            Ok(metadata) => return metadata.is_file()
+            Err(_error) => return false
+    return false
+
+
+def fresh_file_payloads() -> bool:
+    """Read only the current test executable while checking both statement pattern forms."""
+    match current_exe():
+        Ok(path) => return file_from_if_let(path.clone()) and file_from_while_let(path)
+        Err(_error) => return false
+
+
 def show_payload_patterns() -> None:
     """Observe native unit and payload variants through direct and nested patterns."""
     println(environment_kind(Err(VarError.NotPresent)))
@@ -148,6 +175,7 @@ def show_payload_patterns() -> None:
     missing = VarError.NotPresent
     assert text_length(missing) > 0
     assert text_length(missing) > 0
+    assert fresh_file_payloads()
 
 
 def show_unit_variants() -> None:

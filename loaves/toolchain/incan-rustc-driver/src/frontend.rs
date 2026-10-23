@@ -84,7 +84,8 @@ struct CheckedProgram {
 /// the session. The declarations the program reaches in its Loaves (DD-0007) come from their `.incnbody` records, and
 /// every module lowers against them. Private checked re-export calls and implicit newtype coercions add their exact
 /// package targets to the request: their selected owners and hooks need not appear as written source references.
-/// The unit's package is its registry package.
+/// The unit's package is its registry package. Every source declaration, including an uncalled method, seeds
+/// dependency discovery because all source bodies compile.
 ///
 /// A library unit collects every authored module, checks each with its package identity and builds its manifest
 /// from the same pass. Bodies with function or nominal-owner type parameters remain governed; other linked
@@ -224,7 +225,13 @@ fn required_loaf_identities(
     let roots = modules
         .iter()
         .filter_map(|module| analysis.type_info_for_path(&module.file_path))
-        .flat_map(|info| info.declarations.declaration_identities.values().cloned());
+        .flat_map(|info| {
+            info.declarations
+                .declaration_identities
+                .values()
+                .chain(info.declarations.member_declaration_identities.values())
+                .cloned()
+        });
     let requested = incan_semantics_core::dependencies::CheckedDependencyGraph::from_fact_stores(&facts)
         .reachable_from(roots)
         .into_iter()

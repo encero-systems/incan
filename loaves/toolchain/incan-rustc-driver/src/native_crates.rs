@@ -33,7 +33,6 @@ pub(crate) fn link_externs(
                 .chain(plan.models.iter().map(|model| &model.string_conversion_trait))
                 .filter_map(|item| item.split("::").next()),
         )
-        .chain(crate::marker_traits::native_root(plan))
         .filter(|root| !matches!(*root, "" | "std" | "core" | "alloc" | "crate"))
         .collect::<BTreeSet<_>>();
     let closures = loaves
@@ -99,25 +98,28 @@ pub(crate) fn callee_root(path: &str) -> Option<&str> {
         .map(|root| if matches!(root, "[]" | "str") { "core" } else { root })
 }
 
-/// Find an explicitly imported alias before considering a unique canonical crate name. Renamed dependencies and
-/// multiple versions must retain rustc's binding rather than selecting the first crate with a matching package name.
-/// The reserved `crate` root identifies local HIR definitions rather than an external dependency.
-/// Repeated extern declarations must select the same artifact; conflicting bindings grant no root.
+/// Find an explicitly imported alias, including an anonymous metadata import, before a unique canonical crate name.
+/// Renamed dependencies and multiple versions must retain rustc's binding rather than selecting the first crate with a
+/// matching package name. A `crate` root names this compilation's injected declarations, rather than an external
+/// dependency. Repeated extern declarations must select the same artifact; conflicting bindings grant no root.
 pub(crate) fn root(tcx: TyCtxt<'_>, name: &str) -> Option<DefId> {
     if name == "crate" {
         return Some(rustc_hir::def_id::LOCAL_CRATE.as_def_id());
     }
-    let mut imported = tcx
-        .hir_crate_items(())
-        .free_items()
-        .filter(|item| {
-            let definition = item.owner_id.to_def_id();
-            tcx.def_kind(definition) == rustc_hir::def::DefKind::ExternCrate
-                && tcx
-                    .opt_item_name(definition)
-                    .is_some_and(|symbol| symbol.as_str() == name)
-        })
-        .filter_map(|item| tcx.extern_mod_stmt_cnum(item.owner_id.def_id));
+    let mut imported = tcx.hir_crate_items(()).free_items().filter_map(|item| {
+        let rustc_hir::ItemKind::ExternCrate(original, binding) = tcx.hir_item(item).kind else {
+            return None;
+        };
+        let alias = if binding.name == rustc_span::kw::Underscore {
+            original.unwrap_or(binding.name)
+        } else {
+            binding.name
+        };
+        if alias.as_str() != name {
+            return None;
+        }
+        tcx.extern_mod_stmt_cnum(item.owner_id.def_id)
+    });
     if let Some(first) = imported.next() {
         return imported.all(|other| other == first).then(|| first.as_def_id());
     }

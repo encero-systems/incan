@@ -98,6 +98,24 @@ pub def native_source_type(
     return model_type(nominals, ty)
 
 
+pub def stored_field_type(
+    mut nominals: list[NominalDeclaration],
+    mut enums: list[RustEnumDeclaration],
+    mut unions: list[RustType],
+    declaration: &NominalDeclaration,
+    slot: int,
+    mut intrinsics: list[EnumDeclaration],
+) -> Result[PlanType, str]:
+    """Use the Body IR field's owning callable fact at every construction and projection of its closed owner."""
+    ty = native_source_type(nominals, enums, unions, declaration.field_types[slot], intrinsics)?
+    owned: bool = declaration.owns_callable_field(slot)
+    if owned:
+        match ty:
+            PlanType.FunctionPointer(signature) => return Ok(PlanType.Closure(signature))
+            _ => return Err("invalid Body IR owned callable field without a function signature")
+    return Ok(ty)
+
+
 def is_native_str(ty: &RustType) -> bool:
     """Recognize the checker's unsized Rust str referent before ordinary owned-text projection."""
     match ty:

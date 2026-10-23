@@ -340,6 +340,21 @@ pub def method_index(
     return owner_method_index(module, bodies, target, owner, intrinsics)
 
 
+pub def receiver_method_identity(
+    module: &BodyIrModule,
+    target: &MethodTarget,
+    locals: list[Local],
+    argument: &ArgumentElement,
+    span: SourceSpan,
+    unions: list[RustType],
+    mut intrinsics: list[EnumDeclaration],
+) -> Result[Option[CanonicalSymbolId], str]:
+    """Use the same checked adopter selection for a compiled method and a retained executable body."""
+    match receiver_owner(module, locals, argument, span, unions, intrinsics):
+        Ok(owner) => return Ok(Some(owner_method_identity(module, target, owner)?))
+        Err(_reason) => return Ok(target.canonical.clone())
+
+
 def owner_method_identity(
     module: &BodyIrModule,
     target: &MethodTarget,

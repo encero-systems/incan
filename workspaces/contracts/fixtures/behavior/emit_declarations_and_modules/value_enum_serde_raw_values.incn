@@ -1,4 +1,4 @@
-# behavior: json-derived str and int value enums serialize as their raw values, parse back from the raw value and refuse the variant name
+# behavior: explicit and field-propagated json derives on str and int value enums serialize raw values, parse raw values and refuse variant names (#2256)
 # expect-stdout:
 #   {"env":"production","status":404}
 #   Dev 200
@@ -26,6 +26,37 @@ model Deployment:
     status: HttpStatus
 
 
+enum ImplicitEnv(str):
+    """Receive serde through its containing model instead of a decorator."""
+    Prod = "production"
+
+
+enum ImplicitStatus(int):
+    """Preserve numeric raw values when serde is propagated from a field."""
+    NotFound = 404
+
+
+@derive(json)
+model ImplicitDeployment:
+    """Propagate both serde directions to same-module value enum fields."""
+    env: ImplicitEnv
+    status: ImplicitStatus
+
+
+def check_implicit() -> None:
+    """Check raw-value round trips and refusal of source variant names."""
+    value = ImplicitDeployment(env=ImplicitEnv.Prod, status=ImplicitStatus.NotFound)
+    assert value.to_json() == '{"env":"production","status":404}'
+    match ImplicitDeployment.from_json('{"env":"production","status":404}'):
+        Ok(parsed) =>
+            assert parsed.env.value() == "production"
+            assert parsed.status.value() == 404
+        Err(_) => assert false
+    match ImplicitDeployment.from_json('{"env":"Prod","status":404}'):
+        Ok(_) => assert false
+        Err(_) => pass
+
+
 def describe(document: str) -> str:
     match Deployment.from_json(document):
         Ok(parsed) => return f"{parsed.env.message()} {parsed.status.value()}"
@@ -33,6 +64,7 @@ def describe(document: str) -> str:
 
 
 def main() -> None:
+    check_implicit()
     println(Deployment(env=Env.Prod, status=HttpStatus.NotFound).to_json())
     println(describe('{"env":"development","status":200}'))
     println(describe('{"env":"Dev","status":200}'))

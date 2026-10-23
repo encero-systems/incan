@@ -2015,7 +2015,7 @@ fn canonicalize_collection_type_names(ty: &mut ResolvedType) {
 }
 
 /// Return whether a resolved field type contains canonical Rust-path metadata at any nesting depth.
-fn resolved_type_contains_rust_path(ty: &ResolvedType) -> bool {
+pub(crate) fn resolved_type_contains_rust_path(ty: &ResolvedType) -> bool {
     match ty {
         ResolvedType::RustPath(_) => true,
         ResolvedType::FrozenList(inner)

@@ -624,8 +624,9 @@ fn local(function: &Function, index: i64) -> Result<Scalar, PlanError> {
         })
 }
 
-/// Require a field path's root to have its explicit owned shape or a nominal receiver reference to that shape.
-/// Shared enum receivers permit payload reads; mutable reborrows remain guarded by `borrow_result`.
+/// Recover a field path's owned shape from a shared or exclusive nominal reference or an exclusive tuple reference;
+/// non-dereferenced roots keep their retained shape. Shared enum receivers permit payload reads; mutable reborrows
+/// remain guarded by `borrow_result`.
 fn field_owner(function: &Function, ty: Scalar, dereference: bool) -> Result<Scalar, PlanError> {
     if !dereference {
         return Ok(ty);
@@ -1559,7 +1560,7 @@ fn validate_closure_constructor(function: &Function) -> Result<(), PlanError> {
         return Err(refused());
     }
     // Each capture comes from its own parameter. Consuming environments move every capture; reusable environments move
-    // owned text, lists, and models and copy scalars.
+    // the snapshots selected by Incan's capture policy and copy scalars.
     let forwarded = arguments.iter().enumerate().all(|(index, argument)| {
         let (moved, place) = match &argument.kind {
             OperandKind::Copy(place) => (false, place),
@@ -1569,7 +1570,7 @@ fn validate_closure_constructor(function: &Function) -> Result<(), PlanError> {
         let owned = function
             .parameters
             .get(index)
-            .is_some_and(|parameter| crate::closures::owned_capture(&parameter.ty));
+            .is_some_and(|parameter| crate::plan::owned_capture(parameter.ty.clone()));
         moved == (owned || consumes_environment)
             && matches!(place.projection, Projection::Whole)
             && usize::try_from(place.local).ok() == Some(index + 1)
@@ -2466,14 +2467,15 @@ fn validate_frozen_values(
 
 /// Validate the shape-specific derive vocabulary without accepting duplicate selections or reflection on tuples.
 /// A tuple newtype carries only the automatic derives its checker proved for the underlying value; owning a native
-/// non-Clone value never requires a Clone selection. Named models retain their mandatory automatic derives. Serde and
-/// Copy selections fit either shape and remain subject to rustc's trait checks. Qualified macro paths are checked
-/// selections from native dependency facts; rustc validates their derive namespace and expands them on the real type.
+/// non-Clone value never requires a Clone selection. Debug follows the checker's selection, including private native
+/// adapters and callable fields that omit it; the adapter never reconstructs that policy. Serde and Copy selections fit
+/// either shape and remain subject to rustc's trait checks. Qualified macro paths are checked selections from native
+/// dependency facts; rustc validates their derive namespace and expands them on the real type.
 fn valid_nominal_derives(derives: &[String], tuple: bool) -> bool {
     let required: &[&str] = if tuple {
         &[]
     } else {
-        &["Debug", "Clone", "FieldInfo", "IncanClass"]
+        &["Clone", "FieldInfo", "IncanClass"]
     };
     required
         .iter()
@@ -2571,8 +2573,8 @@ fn generic_field_type(ty: &GenericLayoutType, parameters: &BTreeSet<&str>) -> bo
 }
 
 /// Validate model and newtype metadata before declaration injection; size cycles are checked separately.
-/// Function-pointer fields keep their complete validated signatures and Copy storage. Captured callable objects remain
-/// a named unsupported refusal distinct from malformed metadata.
+/// Function-pointer fields keep Copy storage, while reusable captured callables own their environments. Borrowed
+/// and consuming callable fields require separate lifetime and invocation contracts and remain refused.
 fn validate_models(plan: &Plan) -> Result<(), PlanError> {
     let mut names: BTreeSet<_> = plan.functions.iter().map(|function| function.name.clone()).collect();
     for declaration in &plan.models {
@@ -2629,12 +2631,6 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
                 });
             }
             span(&field.span)?;
-            if matches!(field.ty, PlanType::Closure(_) | PlanType::ClosureRef(_)) {
-                return Err(PlanError::Invalid {
-                    function: declaration.name.clone(),
-                    reason: "unsupported callable model field declaration".into(),
-                });
-            }
             if (!tuple && !identifier(&field.name))
                 || !fields.insert(&field.name)
                 || !source_signature_type(&scalar(&field.ty))
@@ -2644,10 +2640,7 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
                     reason: "invalid model field declaration".into(),
                 });
             }
-            if matches!(
-                field.ty,
-                PlanType::Closure(_) | PlanType::ClosureOnce(_) | PlanType::ClosureRef(_)
-            ) {
+            if matches!(field.ty, PlanType::ClosureOnce(_) | PlanType::ClosureRef(_)) {
                 return Err(PlanError::Invalid {
                     function: declaration.name.clone(),
                     reason: "unsupported callable model field declaration".into(),

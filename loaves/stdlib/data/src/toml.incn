@@ -65,7 +65,7 @@ pub enum TomlKind(str):
         return self.value()
 
 
-def _value_kind(value: EditValue) -> TomlKind:
+def _value_kind(value: &EditValue) -> TomlKind:
     """Classify a borrowed TOML value without copying its contents."""
     match value:
         EditValue.String(_) => return TomlKind.String
@@ -310,8 +310,8 @@ pub class TomlValue:
                 )
         return self._traverse(self._item, keys)
 
-    def _traverse(self, item: SpannedItem, keys: list[str]) -> Result[Option[TomlValue], TomlError]:
-        """Walk borrowed parser nodes and copy only the selected subtree into its public snapshot."""
+    def _traverse(self, item: &SpannedItem, keys: list[str]) -> Result[Option[TomlValue], TomlError]:
+        """Walk borrowed parser nodes and copy only the selected subtree into its public snapshot. The explicit shared input retains the cursor's owner until native Body IR carries inferred cursor borrows (#2256)."""
         mut current = item
         mut selected_path = self._path
         for key in keys:
@@ -353,8 +353,9 @@ pub class TomlValue:
         mut track = Track.new()
         tracked = TrackingDeserializer.new(decoder, track)
         result: Result[_Decoded[T], EditDecodeError] = RustDeserialize.deserialize(tracked)
-        decoded = result.map_err((error) => self._decode_failure(error, str(track.path())))?
-        return Ok(decoded.value)
+        match result:
+            Ok(decoded) => return Ok(decoded.value)
+            Err(error) => return Err(self._decode_failure(error, str(track.path())))
 
     def _read[T with (DeserializeOwned, RustSerialize)](self) -> Result[T, TomlError]:
         """Reject serde's kind coercions by checking the decoded value's TOML shape against the source tree."""
@@ -413,7 +414,7 @@ pub class TomlValue:
         return _located_error(kind, detail, Some(path), location)
 
 
-def _item_kind(item: SpannedItem) -> TomlKind:
+def _item_kind(item: &SpannedItem) -> TomlKind:
     """
     Classify the parsed Rust enum, combining authored and inline container representations.
 

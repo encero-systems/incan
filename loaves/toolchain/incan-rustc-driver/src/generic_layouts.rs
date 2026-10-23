@@ -32,7 +32,13 @@ pub(crate) fn items(
         "core::marker::PhantomData".into(),
         vec![GenericLayoutType::Tuple(parameters)],
     );
-    fields.push(field_definition(&marker, layout_type(&marker_type, span), false, span));
+    let marker_ty = layout_type(&marker_type, span);
+    let tokens = model
+        .derives
+        .iter()
+        .any(|derive| matches!(derive.as_str(), "serde::Serialize" | "serde::Deserialize"))
+        .then(|| generic_model_tokens(model, &marker, &marker_ty, span));
+    fields.push(field_definition(&marker, marker_ty, false, span));
     let mut declaration = declarations::item(
         ast::ItemKind::Struct(
             ident(&model.name, span),
@@ -53,6 +59,7 @@ pub(crate) fn items(
             .attrs
             .push(declarations::derive_attribute(generator, derive, span));
     }
+    declaration.tokens = tokens;
     let mut items = vec![declaration];
     if model.derives.iter().any(|derive| derive == "Debug") {
         items.push(debug_impl(model, span));
@@ -61,6 +68,78 @@ pub(crate) fn items(
         items.push(clone_impl(model, span));
     }
     items
+}
+
+/// Supply procedural derives with the same generic binders and field types as the injected ADT. Serde sees only
+/// authored fields: the compiler's zero-sized marker is skipped, and diagnostic struct names retain their source
+/// spelling.
+fn generic_model_tokens(
+    model: &GenericModelDeclaration,
+    marker: &str,
+    marker_ty: &ast::Ty,
+    span: Span,
+) -> ast::tokenstream::LazyAttrTokenStream {
+    use ast::token::{Delimiter, Token, TokenKind};
+    use ast::tokenstream::{AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, LazyAttrTokenStream, Spacing};
+    let punctuation = |kind| AttrTokenTree::Token(Token::new(kind, span), Spacing::Alone);
+    let mut fields = Vec::new();
+    for field in &model.fields {
+        if field.public {
+            fields.push(declarations::keyword_token("pub", span));
+        }
+        fields.push(declarations::name_token(&field.name, span));
+        fields.push(punctuation(TokenKind::Colon));
+        fields.extend(declarations::type_tokens(&layout_type(&field.ty, span)));
+        fields.push(punctuation(TokenKind::Comma));
+    }
+    fields.extend(serde_skip_tokens(span));
+    fields.push(declarations::name_token(marker, span));
+    fields.push(punctuation(TokenKind::Colon));
+    fields.extend(declarations::type_tokens(marker_ty));
+    fields.push(punctuation(TokenKind::Comma));
+    let mut tokens = Vec::new();
+    if model.source_name != model.name {
+        tokens.extend(declarations::serde_rename_tokens(&model.source_name, span));
+    }
+    tokens.push(declarations::keyword_token("pub", span));
+    tokens.push(declarations::keyword_token("struct", span));
+    tokens.push(declarations::name_token(&model.name, span));
+    tokens.push(punctuation(TokenKind::Lt));
+    for parameter in &model.parameters {
+        tokens.push(declarations::name_token(parameter, span));
+        tokens.push(punctuation(TokenKind::Comma));
+    }
+    tokens.push(punctuation(TokenKind::Gt));
+    tokens.push(AttrTokenTree::Delimited(
+        DelimSpan::from_single(span),
+        DelimSpacing::new(Spacing::Alone, Spacing::Alone),
+        Delimiter::Brace,
+        AttrTokenStream::new(fields),
+    ));
+    LazyAttrTokenStream::new_direct(AttrTokenStream::new(tokens))
+}
+
+/// Hide the compiler-only marker from serialization and reconstruct its zero-sized default during deserialization.
+fn serde_skip_tokens(span: Span) -> Vec<ast::tokenstream::AttrTokenTree> {
+    use ast::token::{Delimiter, Token, TokenKind};
+    use ast::tokenstream::{AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, Spacing};
+    vec![
+        AttrTokenTree::Token(Token::new(TokenKind::Pound, span), Spacing::JointHidden),
+        AttrTokenTree::Delimited(
+            DelimSpan::from_single(span),
+            DelimSpacing::new(Spacing::JointHidden, Spacing::Alone),
+            Delimiter::Bracket,
+            AttrTokenStream::new(vec![
+                declarations::name_token("serde", span),
+                AttrTokenTree::Delimited(
+                    DelimSpan::from_single(span),
+                    DelimSpacing::new(Spacing::Alone, Spacing::Alone),
+                    Delimiter::Parenthesis,
+                    AttrTokenStream::new(vec![declarations::name_token("skip", span)]),
+                ),
+            ]),
+        ),
+    ]
 }
 
 /// Build one source field or the compiler-private marker without changing source field indices.

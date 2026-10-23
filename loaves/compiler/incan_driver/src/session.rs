@@ -211,6 +211,7 @@ impl CompilationSession {
                 .map_err(|error| CliError::failure(format!("{}: {error}", cache.display())))?;
             Arc::make_mut(&mut self.loaves).add_rust_abi_cache(Arc::new(decoded));
         }
+        Arc::make_mut(&mut self.loaves).declare_rust_crates(self.unit.rust_crates.iter().cloned());
         self.rust_facts_source = setup.source.clone();
         Ok(self)
     }

@@ -338,8 +338,8 @@ pub(super) fn project_enum(
     Ok((value, audit.requirements))
 }
 
-/// Project a checked canonical storage identity with complete initialization; source module addresses are rebased by
-/// publication.
+/// Project literal or computed storage, including read-only constants, under its checked canonical identity.
+/// Computed initialization receives the same portable body audit as a callable; its dependencies remain required.
 pub(super) fn project_static(
     source: &crate::body_ir::StaticDeclaration,
     module: &BodyIrModule,
@@ -347,16 +347,27 @@ pub(super) fn project_static(
     eligible: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<(crate::body_ir::StaticDeclaration, BTreeSet<CanonicalSymbolId>), CoverageReason> {
     if source.canonical.namespace != crate::SymbolNamespace::OrdinaryLexical
-        || source.canonical.kind != crate::SemanticSourceTargetKind::Static
-        || !crate::body_ir_identity::static_initializer_matches(source)
+        || !matches!(
+            source.canonical.kind,
+            crate::SemanticSourceTargetKind::Static | crate::SemanticSourceTargetKind::Const
+        )
+        || !module.is_well_formed_static_declaration(source)
     {
         return Err(CoverageReason::UnresolvedReference);
     }
     let mut value = source.clone();
-    let checked_types = BTreeMap::new();
+    let checked_types = match &source.initial {
+        crate::body_ir::StaticInitializer::Computed(body) => body.named_type_identities.clone(),
+        _ => BTreeMap::new(),
+    };
     let mut audit = PublicationAudit::new(module, library, eligible, &checked_types);
     audit.identity(&mut value.canonical, false)?;
     audit.ty(&value.ty)?;
+    if let crate::body_ir::StaticInitializer::Computed(body) = &source.initial {
+        let projected = project_body(body, module, library, eligible)?;
+        value.initial = crate::body_ir::StaticInitializer::Computed(Box::new(projected.body));
+        audit.requirements.extend(projected.requirements);
+    }
     Ok((value, audit.requirements))
 }
 
@@ -700,13 +711,16 @@ impl<'a> PublicationAudit<'a> {
     }
 
     /// Canonical fields and static storage require checked context; a requiring body cannot outlive missing
-    /// initialization. Callable replacement storage additionally requires its validated decorator binding.
+    /// initialization. Computed constants retain read-only authority. Callable replacement storage additionally
+    /// requires its validated decorator binding.
     fn place(&mut self, place: &mut Place) -> Result<(), CoverageReason> {
         if let PlaceRoot::Local(local) = &place.root {
             self.local_slots.insert(*local);
         }
         if let PlaceRoot::Global(value) = &mut place.root {
             if value.identity.kind != crate::SemanticSourceTargetKind::Static
+                && !(value.identity.kind == crate::SemanticSourceTargetKind::Const
+                    && value.write_policy == crate::body_ir::GlobalWritePolicy::ReadOnly)
                 && !self.replacement_storage.contains(&value.identity)
             {
                 return Err(CoverageReason::UnsupportedConstruct);

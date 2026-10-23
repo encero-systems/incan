@@ -192,9 +192,9 @@ pub def lower_enum_declarations(
     """
     Copy checked source-order variants and derives into the native declaration plan.
 
-    A source enum also takes the serde derives a serde-deriving declaration's fields require of it, as legacy
-    propagates them. A value enum reached this way stays refused until propagated raw-value serialization has parity
-    evidence; explicitly selected value-enum serde keeps its proven raw-value form. Source Display uses its checked Debug path rather than a native Rust derive.
+    A source enum also takes the serde derives a serde-deriving declaration's fields require of it. Value enums retain
+    the same checked raw values for explicit and propagated serde selections. Source Display uses its checked Debug
+    path rather than a native Rust derive.
     """
     reached = serde_propagation(module)?
     mut declarations: list[EnumDeclaration] = []
@@ -222,11 +222,6 @@ pub def lower_enum_declarations(
                 if derive != "Display":
                     derives.append(str(derive))
         raw_kind, raw_values = value_enum_raw_values(module, declaration)?
-        serialize, deserialize = reached
-        adds_serialize = str(declaration.name) in serialize and "serde::Serialize" not in declaration.derives
-        adds_deserialize = str(declaration.name) in deserialize and "serde::Deserialize" not in declaration.derives
-        if raw_kind != "" and item == "" and (adds_serialize or adds_deserialize):
-            return Err(f"unsupported Body IR serde derive propagation to value enum {declaration.name}")
         declarations.append(
             EnumDeclaration(
                 name=model_symbol(str(declaration.name)),

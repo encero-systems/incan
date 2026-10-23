@@ -755,14 +755,6 @@ pub model FallibleIteratorMethods:
 
 
 @derive(Clone, PartialEq)
-pub enum MarkerTrait:
-    """An empty standard trait authorized by its checked adoption and existing serde derive."""
-
-    TomlSerialize
-    TomlDeserialize
-
-
-@derive(Clone, PartialEq)
 pub model ModelDeclaration:
     """
     Checked field layout and implicit derives for one concrete source nominal layout.
@@ -800,8 +792,6 @@ pub model ModelDeclaration:
     # A checked standard Callable1 member and its ordered owned input/output carriers; empty grants no bridge.
     pub callable_method: str = ""
     pub callable_signature: list[PlanType] = []
-    # Only a checked canonical standard adoption with its required serde derive authorizes an empty native impl.
-    pub marker_traits: list[MarkerTrait] = []
     # A source SDK TryFrom[str] implementation forwards to the exact validated Incan conversion root.
     # Empty paired fields grant no implementation, independently of serde's Rust TryFrom contract.
     pub string_conversion_root: str = ""

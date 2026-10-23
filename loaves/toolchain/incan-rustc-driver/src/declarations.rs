@@ -470,15 +470,18 @@ fn generator_ty(name: &str, leaf: &ListLeaf, depth: i64, span: Span) -> Box<ast:
 }
 
 /// Select the private reusable Fn alias or construct the distinct consuming FnOnce object structurally.
-/// The reusable alias retains rustc-owned bound-input lifetimes; consuming environments never acquire its clone ABI.
+/// The reusable alias retains rustc-owned bound-input lifetimes and is rooted at the crate so fields inside concrete
+/// layout namespaces see the same object type. Consuming environments never acquire its clone ABI.
 pub(crate) fn callable_object_ast(signature: &[PlanType], span: Span, consumes_environment: bool) -> Box<ast::Ty> {
     if !consumes_environment {
+        let mut path = ast::Path::from_ident(ident("crate", span));
+        path.segments.push(ast::PathSegment::from_ident(ident(
+            &crate::cloneable_closures::alias_name(signature),
+            span,
+        )));
         return Box::new(ast::Ty {
             id: ast::DUMMY_NODE_ID,
-            kind: ast::TyKind::Path(
-                None,
-                ast::Path::from_ident(ident(&crate::cloneable_closures::alias_name(signature), span)),
-            ),
+            kind: ast::TyKind::Path(None, path),
             span,
             tokens: None,
         });
@@ -622,9 +625,13 @@ pub(crate) fn item(kind: ast::ItemKind, span: Span) -> Box<ast::Item> {
     })
 }
 
-/// Load each admitted external crate so canonical path resolution sees its module tree.
+/// Load metadata without reserving a source type's name at the crate root. The original dependency alias remains
+/// available in the extern prelude and on the anonymous HIR declaration for exact native crate resolution.
 pub fn external_crate(name: &str, span: Span) -> Box<ast::Item> {
-    item(ast::ItemKind::ExternCrate(None, ident(name, span)), span)
+    item(
+        ast::ItemKind::ExternCrate(Some(Symbol::intern(name)), ident("_", span)),
+        span,
+    )
 }
 
 /// Name the private namespace containing one source-named concrete layout; preflight checks its root collision.
@@ -830,7 +837,7 @@ fn model_tokens(model: &crate::plan::ModelDeclaration, span: Span) -> ast::token
 /// `#[serde(rename = "name")]` before a field in the derive input, as legacy writes it for an aliased field.
 ///
 /// The attribute exists only for serde's derive, which reads it as its helper; the injected AST field needs none.
-fn serde_rename_tokens(name: &str, span: Span) -> Vec<ast::tokenstream::AttrTokenTree> {
+pub(crate) fn serde_rename_tokens(name: &str, span: Span) -> Vec<ast::tokenstream::AttrTokenTree> {
     use ast::token::{Delimiter, Lit, LitKind, Token, TokenKind};
     use ast::tokenstream::{AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, Spacing};
     let literal = Lit::new(LitKind::Str, Symbol::intern(&name.escape_default().to_string()), None);

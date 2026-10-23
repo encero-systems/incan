@@ -1,6 +1,38 @@
+from rust::serde import Deserialize as RustDeserialize, Serialize as RustSerialize
+from rust::serde_json import Error as JsonError, from_str, to_string
+from default_payload import DefaultPayload
 pub from records import Card
 pub from ids import EvidenceId
 pub from api import fraction_of
+
+
+pub def serialize_default() -> bool:
+    """Verify the compiled provider uses serde for the selected standard default."""
+    return DefaultPayload(value=7).encoded() == '{"value":7}'
+
+
+@rust.derive(RustSerialize, RustDeserialize)
+pub model Envelope[T]:
+    """Serialize only the authored generic field and decode it without a private marker key."""
+    pub value: T
+
+
+def decode_document(text: str) -> Result[Envelope[int], JsonError]:
+    """Give the native decoder its expected generic result and forward its fresh error without copying it."""
+    return from_str(text)
+
+
+pub def serde_roundtrip() -> bool:
+    """Use the provider's generic serde implementations for both native calls."""
+    original = Envelope(value=7)
+    match to_string(original):
+        Err(_error) => return false
+        Ok(encoded) =>
+            if encoded != "{\"value\":7}":
+                return false
+            match decode_document(encoded):
+                Ok(decoded) => return decoded.value == 7
+                Err(_error) => return false
 
 
 pub model Evidence:

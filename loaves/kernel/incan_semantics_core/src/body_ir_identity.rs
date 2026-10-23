@@ -1089,16 +1089,6 @@ fn hashed_static_carrier(ty: &IncanType) -> bool {
     primitive_static_carrier(ty) && !matches!(ty, IncanType::Primitive(IncanPrimitiveType::Float))
 }
 
-/// Validate effect-free primitive or flat collection initialization; callers separately prove canonical storage
-/// ownership.
-///
-/// Local storage also admits checked computed bodies. Publication does not yet audit their executable dependencies, so
-/// its boundary retains only literal collections with checked primitive carriers.
-pub(crate) fn static_initializer_matches(declaration: &crate::body_ir::StaticDeclaration) -> bool {
-    !matches!(&declaration.initial, StaticInitializer::Computed(_))
-        && static_initializer_matches_parts(&declaration.ty, &declaration.initial)
-}
-
 /// Validate a literal payload against its exact primitive storage or collection element carrier.
 fn literal_static_carrier_matches(ty: &IncanType, value: &Constant) -> bool {
     matches!(

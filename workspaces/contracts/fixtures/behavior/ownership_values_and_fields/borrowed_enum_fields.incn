@@ -1,4 +1,4 @@
-# behavior: returning and passing enum fields from shared receivers preserves the owner's fields for later reads
+# behavior: returning and passing enum fields from shared receivers and reading native payloads through shared enum parameters preserves their owners for later reads
 # expect-stdout:
 #   ready
 #   optional
@@ -8,6 +8,18 @@
 #   payload
 #   payload
 #   ready
+
+from rust::std::env import VarError
+from rust::std::ffi import OsString
+
+
+def native_payload(value: &VarError) -> str:
+    """Inspect a native payload through its exact shared enum owner and active variant."""
+    match value:
+        VarError.NotPresent => return "missing"
+        VarError.NotUnicode(raw) => return raw.to_string_lossy().into_owned()
+        _ => return "unknown"
+
 
 enum State(str):
     """A string-backed state stored inside a borrowed receiver."""
@@ -64,6 +76,10 @@ def show(message: Message) -> None:
 
 def main() -> None:
     """Repeat each borrowed field read to observe source preservation."""
+    native = VarError.NotUnicode(OsString.from("borrowed"))
+    assert native_payload(native) == "borrowed"
+    assert native_payload(native) == "borrowed"
+    assert native_payload(VarError.NotPresent) == "missing"
     holder = Holder(state=State.Ready, message=Message.Text("payload"), optional=Some("optional"), result=Ok("result"))
     println(holder.state_value().value())
     match holder.optional_value():

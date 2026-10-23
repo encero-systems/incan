@@ -347,6 +347,7 @@ pub fn build_body_ir_module(
     let opaque_carriers = opaque_returns::collect(&module, type_info);
     // Retain source trait annotations before local opaque propagation replaces return types with model witnesses.
     trait_values::retain_inputs(&mut module, program, type_info, context);
+    nominal_carriers::retain_return_owners(&mut module, context);
     trait_returns::retain_returns(&mut module, program, type_info, context);
     opaque_returns::retain(&mut module, &opaque_carriers);
     nominal_carriers::retain(&mut module, type_info, context);
@@ -958,8 +959,9 @@ fn is_bare_derive(decorator: &ast::Decorator) -> bool {
 /// Determine whether an enum carries the narrow source-local RFC 032 scalar declaration fact.
 ///
 /// The checked native enum layout and its derives accompany this scalar registry. Immutable ordinary and static
-/// methods contribute independent checked bodies and do not change the variants or raw values. Trait dispatch,
-/// aliases, generic substitution, payloads, and other method shapes remain excluded rather than inferred from a layout.
+/// methods contribute independent checked bodies and do not change the variants or raw values. Variant aliases retain
+/// their checker's physical variant identity. Trait dispatch, generic substitution, payloads, and other method shapes
+/// remain excluded rather than inferred from a layout.
 pub fn is_direct_replacement_value_enum(enum_decl: &ast::EnumDecl) -> bool {
     enum_decl
         .decorators
@@ -968,7 +970,6 @@ pub fn is_direct_replacement_value_enum(enum_decl: &ast::EnumDecl) -> bool {
         && enum_decl.type_params.is_empty()
         && enum_decl.value_type.is_some()
         && enum_decl.traits.is_empty()
-        && enum_decl.variant_aliases.is_empty()
         && enum_decl
             .methods
             .iter()
@@ -1095,8 +1096,8 @@ struct BodyBuilder<'type_info, 'source> {
     /// `Ident` occurrences of its name in the declaring scope's statement suffix (see [`count_reads_in_stmts`]).
     /// Decremented on every read; a decrement that reaches zero selects [`bir::OwnershipFact::Move`].
     remaining_reads: HashMap<bir::LocalId, usize>,
-    /// Local owners whose earlier call arguments have been read but are not consumed until that call is emitted.
-    /// Nested argument evaluation cannot move one of these owners out from under the pending outer operand.
+    /// Local owners whose earlier operands remain unread until a call, dictionary write, or comprehension insertion.
+    /// Nested evaluation cannot move one of these owners out from under the pending outer operand.
     pending_argument_reads: Vec<bir::LocalId>,
     /// Active normalized loop scopes. Reads of enclosing owners must survive the next iteration even at their last
     /// textual use.

@@ -1200,6 +1200,21 @@ impl TypeChecker {
         )
     }
 
+    /// Whether a pattern qualifier names a rusttype other than the rusttype being matched. Wrappers over one Rust enum
+    /// share its identity path, yet each is its own type, so another wrapper's qualifier does not name the subject.
+    fn qualifier_is_other_rusttype(&self, qualifier: &str, subject: &ResolvedType) -> bool {
+        let (ResolvedType::Named(subject_name) | ResolvedType::Generic(subject_name, _)) = subject else {
+            return false;
+        };
+        let is_rusttype = |name: &str| {
+            self.lookup_type_info(name)
+                .is_some_and(|info| matches!(info, TypeInfo::Newtype(nt) if nt.is_rusttype))
+        };
+        is_rusttype(qualifier)
+            && is_rusttype(subject_name)
+            && !self.pattern_type_spelling_names_subject(qualifier, subject_name)
+    }
+
     /// Select a native variant from complete metadata and retain its exact storage layout once. Positional payloads
     /// inherit the subject's reference binding mode; named payloads keep their native storage type for checked
     /// copy/clone reads. Signatures and patterns share the checked public owner, so written field order and reexport
@@ -1219,7 +1234,9 @@ impl TypeChecker {
             let selected = self
                 .rust_canonical_path_for_receiver_type(&ResolvedType::Named(qualifier.to_owned()))
                 .unwrap_or_else(|| qualifier.to_owned());
-            if self.rust_native_type_identity_path(&selected) != self.rust_native_type_identity_path(&path) {
+            if self.rust_native_type_identity_path(&selected) != self.rust_native_type_identity_path(&path)
+                || self.qualifier_is_other_rusttype(qualifier, expected_ty)
+            {
                 return Some(RustEnumPatternResolution::QualifierMismatch);
             }
         }

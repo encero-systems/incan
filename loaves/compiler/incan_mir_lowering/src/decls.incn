@@ -11,20 +11,20 @@ from rust::incan_semantics_core::body_ir import (
 from pub::incan_mir_plan import (
     EnumDeclaration,
     ModelDeclaration,
-    MarkerTrait,
     FieldMetadata,
     Parameter,
     SourceSpan,
     PlanType,
     ListLeaf,
 )
-from unions import native_source_type, collect_unions
+from unions import collect_unions
+from layout_types import stored_field_type
 from checked_json_contracts import checked_deserialize_name
 from comparison_methods import comparison_functions
 from fallible_methods import fallible_methods
 from iterator_methods import iterator_methods
 from callable_methods import callable_methods
-from marker_traits import checked_marker_traits
+from marker_traits import validate_marker_traits
 from nominal_instances import NominalInstance
 from library_model_arguments import library_model_arguments, local_generic_item
 from string_conversion_contracts import conversion_name, conversion_trait
@@ -137,22 +137,7 @@ pub def lower_model_declarations(
         mut field_public = declaration.field_public
         mut serde_names: list[str] = []
         if item != "":
-            if len(declaration.native_type_arguments) == 0:
-                library_arguments = library_model_arguments(module, declaration, nominal_instances, intrinsics)?
-            else:
-                mut arguments: list[RustType] = []
-                for argument in declaration.native_type_arguments:
-                    arguments.append(argument.clone())
-                for argument in arguments:
-                    library_arguments.append(
-                        native_source_type(
-                            list(module.nominal_declarations),
-                            list(module.enum_declarations),
-                            unions,
-                            argument,
-                            intrinsics,
-                        )?,
-                    )
+            library_arguments = library_model_arguments(module, declaration, nominal_instances, intrinsics)?
             fields = library_fields(module, declaration, file, intrinsics)
             if len(fields) != len(declaration.fields):
                 field_public = []
@@ -167,11 +152,12 @@ pub def lower_model_declarations(
             serde_names = serde_field_names(declaration)
             for slot in range(len(declaration.fields)):
                 mut ty = PlanType.Unit
-                match native_source_type(
+                match stored_field_type(
                     list(module.nominal_declarations),
                     list(module.enum_declarations),
                     unions,
-                    declaration.field_types[slot],
+                    declaration,
+                    slot,
                     intrinsics,
                 ):
                     Ok(resolved) =>
@@ -181,9 +167,8 @@ pub def lower_model_declarations(
                     Parameter(name=str(declaration.fields[slot]), ty=ty, span=SourceSpan(file=file, line=1, column=1)),
                 )
         callable_name, callable_signature = callable_methods(module, owner, intrinsics)?
-        mut markers: list[MarkerTrait] = []
         if item == "":
-            markers = checked_marker_traits(declaration)?
+            validate_marker_traits(declaration)?
         models.append(
             ModelDeclaration(
                 name=model_symbol(str(declaration.name)),
@@ -203,7 +188,6 @@ pub def lower_model_declarations(
                 iterator=iterator_methods(module, owner, intrinsics)?,
                 callable_method=callable_name,
                 callable_signature=callable_signature,
-                marker_traits=markers,
                 string_conversion_root=string_conversion_root,
                 string_conversion_trait=string_conversion_trait,
             ),
@@ -337,11 +321,12 @@ def library_fields(
     mut unions = collect_unions(module)
     mut fields: list[Parameter] = []
     for slot in range(len(declaration.fields)):
-        match native_source_type(
+        match stored_field_type(
             list(module.nominal_declarations),
             list(module.enum_declarations),
             unions,
-            declaration.field_types[slot],
+            declaration,
+            slot,
             intrinsics,
         ):
             Ok(ty) =>

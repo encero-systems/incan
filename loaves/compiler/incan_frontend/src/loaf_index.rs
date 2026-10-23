@@ -280,6 +280,8 @@ pub struct LoafIndex {
     /// The ABI caches of the Rust crates the compilation links: the toolchain's standard crates and each compiled
     /// unit's.
     rust_abi_caches: Vec<Arc<RustAbiCache>>,
+    /// The Rust crates the unit declares itself, read in the unit's session rather than from a standard Loaf's closure.
+    declared_rust_crates: BTreeSet<String>,
     /// Rust facts the compiler read from rustc's crate metadata for paths no cache holds, keyed by path.
     rust_facts: BTreeMap<String, RustItemMetadata>,
     /// Items already resolved through the lookup order, decoded once and shared: the checker asks for the same
@@ -300,6 +302,7 @@ impl LoafIndex {
         Ok(Self {
             entries: indexed,
             rust_abi_caches: Vec::new(),
+            declared_rust_crates: BTreeSet::new(),
             rust_facts: BTreeMap::new(),
             resolved_rust_items: Arc::default(),
         })
@@ -308,6 +311,13 @@ impl LoafIndex {
     /// Add the ABI cache of linked Rust crates; it answers after the Loaves' own shipped ABI.
     pub fn add_rust_abi_cache(&mut self, cache: Arc<RustAbiCache>) {
         self.rust_abi_caches.push(cache);
+        self.forget_resolved_rust_items();
+    }
+
+    /// Name the Rust crates the unit declares. The ABI a standard Loaf ships does not answer for them, so their facts
+    /// come from the unit's own caches and extraction.
+    pub fn declare_rust_crates(&mut self, crates: impl IntoIterator<Item = String>) {
+        self.declared_rust_crates = crates.into_iter().collect();
         self.forget_resolved_rust_items();
     }
 
@@ -418,7 +428,8 @@ impl LoafIndex {
     }
 
     /// Rust item metadata for `canonical_path`: a Loaf's shipped manifest ABI first (in key order), then the linked
-    /// crates' ABI caches, then facts read at check time. Each item is decoded once and then shared.
+    /// crates' ABI caches, then facts read at check time. A standard Loaf's shipped facts do not answer for a crate the
+    /// unit declares. Each item is decoded once and then shared.
     pub fn rust_abi_item(&self, canonical_path: &str) -> Option<Arc<RustItemMetadata>> {
         if let Some(resolved) = self.resolved_rust_items.lock().ok()?.get(canonical_path) {
             return Some(Arc::clone(resolved));
@@ -430,15 +441,22 @@ impl LoafIndex {
         Some(resolved)
     }
 
-    /// Resolve one item through the lookup order, without the shared store.
+    /// Resolve one item through the lookup order, without the shared store. Ambient standard Loaves ship facts read in
+    /// their own closure's session, where visible paths and implementation sets can differ from the unit's; for a
+    /// crate the unit declares they stay silent and the unit's own extraction answers.
     fn resolve_rust_abi_item(&self, canonical_path: &str) -> Option<RustItemMetadata> {
-        self.entries
-            .values()
+        let root = canonical_path.split("::").next().unwrap_or(canonical_path);
+        let declared = self.declared_rust_crates.contains(root);
+        let shipping = || {
+            self.entries
+                .values()
+                .filter(move |entry| !(declared && matches!(entry.namespace, LoafNamespace::Standard { .. })))
+        };
+        shipping()
             .filter_map(|entry| entry.artifact.manifest.rust_abi.as_ref())
             .find_map(|abi| abi.get(canonical_path).cloned())
             .or_else(|| {
-                self.entries
-                    .values()
+                shipping()
                     .filter_map(|entry| entry.artifact.rust_abi_cache.as_ref())
                     .find_map(|cache| cache.get(canonical_path))
             })

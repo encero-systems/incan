@@ -16,15 +16,6 @@ use rustc_middle::{mir, ty};
 use rustc_span::{Ident, Span, Spanned, Symbol};
 use thin_vec::{ThinVec, thin_vec};
 
-/// Report whether a capture of this type moves into the environment and is cloned out for each call: owned text and
-/// owned lists, model snapshots and owned zip snapshots. Every other admitted capture is a Copy scalar.
-pub fn owned_capture(ty: &PlanType) -> bool {
-    matches!(
-        ty,
-        PlanType::String | PlanType::List(_, _) | PlanType::Model(_, _) | PlanType::ZipIterator(_, _)
-    )
-}
-
 /// Identify a reusable or consuming closure constructor, returning the lifted function and its capture count.
 pub fn constructor(function: &Function) -> Option<(&str, i64)> {
     function.blocks.iter().find_map(|block| match &block.terminator.kind {
@@ -241,7 +232,7 @@ pub fn callback<'tcx>(
         let owned = constructor_function
             .parameters
             .get(index)
-            .is_some_and(|parameter| owned_capture(&parameter.ty));
+            .is_some_and(|parameter| crate::plan::owned_capture(parameter.ty.clone()));
         let node = if consumes_environment {
             mir::Operand::Move(field)
         } else if owned {

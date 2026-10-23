@@ -792,6 +792,7 @@ pub(super) fn collect_local_nominal_declarations(
                 name: name.clone(),
                 fields: fields.iter().map(|field| field.node.name.clone()).collect(),
                 field_identities,
+                owned_callable_fields: Vec::new(),
                 field_public: fields
                     .iter()
                     .map(|field| {
@@ -1049,6 +1050,7 @@ fn collect_plain_newtype(
         name: newtype.name.clone(),
         fields: vec!["0".to_owned()],
         field_types: vec![underlying],
+        owned_callable_fields: Vec::new(),
         field_public: vec![true],
         field_aliases: vec![None],
         reflection_fields: None,

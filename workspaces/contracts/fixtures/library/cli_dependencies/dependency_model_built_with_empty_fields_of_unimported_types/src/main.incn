@@ -1,4 +1,4 @@
-# behavior: a consumer builds a dependency's nominal values without importing the types behind them: a model built with an empty list, an empty dict and `None` for fields whose element types it never imports, one the package root republishes and one only its declaring module publishes, builds and runs (#1561); empty nominal lists and generic callable fields retain their dependency-owned layouts (#2010, #2256); and a consumer implicitly constructs a validated dependency newtype without importing its name (#2008)
+# behavior: a consumer builds a dependency's nominal values without importing the types behind them: a model built with an empty list, an empty dict and `None` for fields whose element types it never imports, one the package root republishes and one only its declaring module publishes, builds and runs (#1561); empty nominal lists, generic callable fields, generic serde derives and standard Serialize defaults retain their dependency-owned behavior (#2010, #2256); and a consumer implicitly constructs a validated dependency newtype without importing its name (#2008)
 # expect-stdout:
 #   empty 0 0
 #   none
@@ -6,7 +6,7 @@
 #   6
 #   0.5
 
-from pub::nominals import Bundle, Callback, Card, apply_callback, fraction_of
+from pub::nominals import Bundle, Callback, Card, apply_callback, fraction_of, serde_roundtrip, serialize_default
 
 
 def increment(value: int) -> int:
@@ -28,6 +28,8 @@ def show_empty_nominal_list() -> None:
     println(len(bundle.items))
     callback: Callback[int] = Callback(f=increment)
     println(apply_callback(callback, 5))
+    assert serde_roundtrip()
+    assert serialize_default()
 
 
 def show_implicit_newtype() -> None:

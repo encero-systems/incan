@@ -1,5 +1,7 @@
 const LABEL: str = "flat"
 const NOTE: str = "note"
+const BASE: int = 2
+const SCALE: int = BASE * 60
 
 
 def _unit() -> str:
@@ -56,3 +58,23 @@ pub def tagged(tag: str, card: Card) -> str:
 
 
 pub tag_ace = partial tagged(card=Card(label="ace"))
+
+
+pub trait Key:
+    """Decode one owned key from its byte representation."""
+    @staticmethod
+    def decode(data: bytes) -> Result[Self, str]:
+        """Return the decoded key or its malformed-input detail."""
+        ...
+
+
+pub model Record with Key:
+    """Retain an implementation that depends on a private computed constant."""
+    pub value: int
+
+    @staticmethod
+    def decode(data: bytes) -> Result[Self, str]:
+        """Use the module's initialized constant through a fallible static method."""
+        if len(data) != 1:
+            return Err("wrong length")
+        return Ok(Record(value=SCALE))

@@ -489,7 +489,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         out,
                     );
                 }
-                if let Some(target) = self.local_value_enum_variant_target(base, name, expr.span) {
+                if let Some(target) = self.local_value_enum_variant_target(base, expr.span) {
                     return self.push_assign_temp(
                         bir::Rvalue::ValueEnumVariant(target),
                         self.resolve_ty(expr.span),
@@ -659,7 +659,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 if self
                     .local_fieldless_enum_variant_target(base, name, expr.span)
                     .is_some()
-                    || self.local_value_enum_variant_target(base, name, expr.span).is_some()
+                    || self.local_value_enum_variant_target(base, expr.span).is_some()
                     || self.checked_enum_variant_target(base, name, expr.span).is_some()
                 {
                     let ty = self.resolve_ty(expr.span);

@@ -45,9 +45,14 @@ pub def generic_models(
             # Construction defaults and reflection stay in their checked Incan records, rather than native derives.
             if derive in ["Default", "FieldInfo", "IncanClass"]:
                 continue
-            if derive not in ["Clone", "Debug", "PartialEq", "Eq", "PartialOrd", "Ord", "Hash"]:
+            if derive not in ["Clone", "Debug", "PartialEq", "Eq", "PartialOrd", "Ord", "Hash", "serde::Serialize", "serde::Deserialize"]:
                 return Err(f"unsupported Body IR generic Loaf derive {derive}")
             derives.append(str(derive))
+        if "serde::Serialize" in derives or "serde::Deserialize" in derives:
+            for alias in declaration.field_aliases:
+                match alias:
+                    Some(_name) => return Err(f"unsupported Body IR generic Loaf serde field alias on {declaration.name}")
+                    None => pass
         models.append(GenericModelDeclaration(
             name=str(declaration.name),
             source_name=str(declaration.canonical.declaration_name),

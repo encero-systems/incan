@@ -4,6 +4,7 @@ from rust::incan_semantics_core::body_ir import BodyIrModule, NominalDeclaration
 from pub::incan_mir_plan import PlanType, EnumDeclaration
 from nominal_instances import NominalInstance, nominal_symbol
 from unions import native_source_type, collect_unions
+from rust::incan_semantics_core import IncanType as RustType
 
 
 pub def local_generic_item(declaration: &NominalDeclaration, instances: list[NominalInstance]) -> Result[str, str]:
@@ -22,7 +23,7 @@ pub def library_model_arguments(
 ) -> Result[list[PlanType], str]:
     """Transport a retained instance's actual arguments, without decoding names or inferring them from fields."""
     if len(declaration.type_parameters) == 0:
-        return Ok([])
+        return native_arguments(module, declaration, intrinsics)
     mut selected: Option[NominalInstance] = None
     for instance in instances:
         if instance.declaration.canonical != declaration.canonical:
@@ -39,17 +40,82 @@ pub def library_model_arguments(
                     return Err("unsupported Body IR conflicting SDK model arguments")
     match selected:
         None => return Err("unsupported Body IR SDK model without checked instance arguments")
-        Some(instance) =>
-            mut unions = collect_unions(module)
-            mut arguments: list[PlanType] = []
-            for argument in instance.arguments:
-                arguments.append(
-                    native_source_type(
-                        list(module.nominal_declarations),
-                        list(module.enum_declarations),
-                        unions,
-                        argument,
-                        intrinsics,
-                    )?,
-                )
-            return Ok(arguments)
+        Some(instance) => return instance_native_arguments(module, declaration, instance, intrinsics)
+
+
+def native_arguments(
+    module: &BodyIrModule,
+    declaration: &NominalDeclaration,
+    mut intrinsics: list[EnumDeclaration],
+) -> Result[list[PlanType], str]:
+    """Preserve fixed runtime arguments of a nongeneric source surface without manufacturing an instance."""
+    mut unions = collect_unions(module)
+    mut arguments: list[PlanType] = []
+    for argument in declaration.native_type_arguments:
+        arguments.append(
+            native_source_type(
+                list(module.nominal_declarations),
+                list(module.enum_declarations),
+                unions,
+                argument,
+                intrinsics,
+            )?,
+        )
+    return Ok(arguments)
+
+
+def instance_native_arguments(
+    module: &BodyIrModule,
+    declaration: &NominalDeclaration,
+    instance: NominalInstance,
+    mut intrinsics: list[EnumDeclaration],
+) -> Result[list[PlanType], str]:
+    """Close native argument templates and retain each generic value's field storage through the linked owner ABI."""
+    mut templates: list[RustType] = []
+    for argument in instance.declaration.native_type_arguments:
+        templates.append(argument.clone())
+    if len(templates) == 0:
+        for name in instance.declaration.type_parameters:
+            parameter: RustType = RustType.TypeVar(str(name))
+            templates.append(parameter.clone())
+    mut closed = instance.arguments
+    if len(declaration.native_type_arguments) != 0:
+        closed = []
+        for argument in declaration.native_type_arguments:
+            closed.append(argument.clone())
+    if len(templates) != len(closed):
+        return Err("invalid Body IR native owner argument templates")
+    mut unions = collect_unions(module)
+    mut arguments: list[PlanType] = []
+    for index in range(len(closed)):
+        ty = native_source_type(
+            list(module.nominal_declarations),
+            list(module.enum_declarations),
+            unions,
+            closed[index],
+            intrinsics,
+        )?
+        arguments.append(stored_argument_type(declaration, instance.declaration, templates[index], ty)?)
+    return Ok(arguments)
+
+
+def stored_argument_type(
+    declaration: &NominalDeclaration,
+    template: &NominalDeclaration,
+    argument: &RustType,
+    ty: PlanType,
+) -> Result[PlanType, str]:
+    """Transport a stored generic callable's owning ABI into its native owner argument, using the same field facts."""
+    for slot in range(len(template.field_types)):
+        owned: bool = declaration.owns_callable_field(slot)
+        if not owned:
+            continue
+        match template.field_types[slot]:
+            RustType.TypeVar(_name) =>
+                if template.field_types[slot] != argument.clone():
+                    continue
+                match ty:
+                    PlanType.FunctionPointer(signature) => return Ok(PlanType.Closure(signature))
+                    _ => return Err("invalid Body IR stored callable owner argument")
+            _ => return Err("invalid Body IR stored callable field template")
+    return Ok(ty)

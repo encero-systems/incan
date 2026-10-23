@@ -4194,7 +4194,12 @@ impl TypeChecker {
                 .insert(class.name.clone());
         }
         let native_derives = self.native_derive_selection(&derives, declared);
-        let native_derives = self.body_ir_native_derive_selection(&native_derives);
+        let mut native_derives = self.body_ir_native_derive_selection(&native_derives);
+        if let Some(TypeInfo::Class(info)) = self.lookup_semantic_type_info(&class.name)
+            && self.class_omits_automatic_debug(&class.name, info)
+        {
+            native_derives.retain(|derive| derive != derives::as_str(incan_lang::lang::derives::DeriveId::Debug));
+        }
         self.type_info
             .declarations
             .class_derives
@@ -4784,6 +4789,16 @@ impl TypeChecker {
                 .declarations
                 .rust_native_derive_types
                 .insert(nt.name.clone());
+        }
+        // A std.serde.json protocol the newtype adopts with `with` selects serde's derive after the explicit ones.
+        let adoptions = match self.lookup_semantic_type_info(&nt.name) {
+            Some(TypeInfo::Newtype(info)) => info.trait_adoptions.clone(),
+            _ => Vec::new(),
+        };
+        for derive in self.adopted_json_derives(&adoptions) {
+            if !selected.iter().any(|existing| existing == derive) {
+                selected.push(derive.to_owned());
+            }
         }
         let selected = self.body_ir_native_derive_selection(&selected);
         self.type_info

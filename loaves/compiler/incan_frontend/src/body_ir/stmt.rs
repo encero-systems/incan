@@ -418,6 +418,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// A write checking resolved to a user-defined `__setitem__` is that method's call, in the same order. Static
     /// storage is the exception: legacy computes the assigned value before it locks the storage to write the entry, so
     /// the value is lowered before the index there, and the index is the last read of what it names.
+    /// A deferred index read reserves its owner until the value has been evaluated, as an earlier call argument does.
     pub(super) fn lower_index_assignment(
         &mut self,
         index_assignment: &ast::IndexAssignmentStmt,
@@ -442,8 +443,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .is_some()
             .then(|| self.lower_boundary_value(&index_assignment.value, None, scope, out));
         let index_operand = self.lower_expr_to_operand(&index_assignment.index, scope, out);
+        let pending_start = self.pending_argument_reads.len();
+        self.retain_pending_operand_read(&index_operand);
         place.projection.push(bir::PlaceElem::Index(Box::new(index_operand)));
         if !place.permits_write() {
+            self.pending_argument_reads.truncate(pending_start);
             let target = place.global().map_or_else(
                 || "index assignment target".to_string(),
                 |global| global.identity.render_compact(),
@@ -455,6 +459,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             Some(value) => value,
             None => self.lower_boundary_value(&index_assignment.value, None, scope, out),
         };
+        self.pending_argument_reads.truncate(pending_start);
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
                 place,

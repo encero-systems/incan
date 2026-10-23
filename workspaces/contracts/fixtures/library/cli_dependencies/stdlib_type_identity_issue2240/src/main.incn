@@ -1,5 +1,4 @@
 # behavior: JsonValue returned by a library is accepted as the consumer's own JsonValue (#2240)
-# pending: #2240 the complete data package is refused at its native Digest.update call
 # expect-stdout:
 #   0
 

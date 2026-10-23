@@ -242,6 +242,7 @@ def close_layout(instance: NominalInstance) -> Result[NominalDeclaration, str]:
     for ty in instance.declaration.field_types:
         concrete: RustType = substitute(ty, instance.declaration.type_parameters, instance.arguments)?
         result.field_types.push(concrete.clone())
+    result = retain_field_storage(result, instance.declaration)
     result.trait_adoptions.clear()
     for adoption in instance.declaration.trait_adoptions:
         mut closed = adoption.clone()
@@ -259,6 +260,12 @@ def close_layout(instance: NominalInstance) -> Result[NominalDeclaration, str]:
         closed: Body = close_owner_body(instance.declaration.method_partial_defaults[index].frame, instance)?
         result.method_partial_defaults[index].frame = closed.into_box()
     return Ok(result)
+
+
+def retain_field_storage(mut declaration: NominalDeclaration, template: &NominalDeclaration) -> NominalDeclaration:
+    """Return the updated imported value explicitly and retain its borrowed template across stage zero's method boundary (#2256)."""
+    declaration.retain_owned_callable_fields(template)
+    return declaration
 
 
 def owner_template(module: &BodyIrModule, body: &Body) -> Option[int]:

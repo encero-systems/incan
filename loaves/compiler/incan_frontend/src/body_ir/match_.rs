@@ -266,6 +266,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Restoring is what makes `if let`'s scoping honest: the pattern's names belong to the `then` branch only, and
     /// an `else` branch lowered afterwards must not see them. `in_place` is [`Self::matches_in_place`] for the
     /// construct's scrutinee; it applies to the pattern only, never to patterns nested in the body.
+    /// Unguarded statement arms use the same checked native payload transfer as expression matches; a fresh owned
+    /// Option/Result temporary must not require cloning its payload merely because the source spells `if let`.
     #[allow(clippy::too_many_arguments)] // The scrutinee's type, place and in-place fact travel together into one arm.
     pub(super) fn lower_statement_pattern_arm(
         &mut self,
@@ -281,7 +283,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let mut seen: HashMap<String, bir::LocalId> = HashMap::new();
         let mut saved_bindings: Vec<(String, Option<bir::LocalId>)> = Vec::new();
         let enclosing_in_place = std::mem::replace(&mut self.in_place_pattern, in_place);
-        let lowered_pattern = self.lower_match_pattern(
+        let mut lowered_pattern = self.lower_match_pattern(
             pattern,
             scrutinee_ty,
             scrutinee_place,
@@ -291,6 +293,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             &mut saved_bindings,
         );
         self.in_place_pattern = enclosing_in_place;
+        self.retain_owned_native_payload_move(scrutinee_place, &mut lowered_pattern);
 
         let mut body_stmts = Vec::new();
         self.lower_block_into(body, arm_scope, &mut body_stmts);

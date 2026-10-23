@@ -622,6 +622,11 @@ pub struct NominalDeclaration {
     pub field_identities: Vec<CanonicalSymbolId>,
     /// Checked field types in the same canonical order, including private layout dependencies.
     pub field_types: Vec<IncanType>,
+    /// Derived closed field slots that substituted a declared generic value with an environment-capable callable.
+    /// Publications retain the original templates instead; specializing a loaded template recreates these facts.
+    /// Explicit function fields remain function pointers; construction and projection use this same owning ABI.
+    #[serde(skip)]
+    pub owned_callable_fields: Vec<usize>,
     /// Checker-resolved public visibility, in the same order as the fields.
     pub field_public: Vec<bool>,
     /// Checked RFC 021 field aliases in the same order, `None` where a field declares none. A serde form names an
@@ -757,6 +762,7 @@ pub fn native_carrier_nominal(identity: &CanonicalSymbolId) -> Option<NominalDec
         fields: Vec::new(),
         field_identities: Vec::new(),
         field_types: Vec::new(),
+        owned_callable_fields: Vec::new(),
         field_public: Vec::new(),
         field_aliases: Vec::new(),
         reflection_fields: None,
@@ -806,6 +812,7 @@ pub fn native_opaque_nominal(identity: &CanonicalSymbolId, arity: usize) -> Opti
         fields: Vec::new(),
         field_identities: Vec::new(),
         field_types: Vec::new(),
+        owned_callable_fields: Vec::new(),
         field_public: Vec::new(),
         field_aliases: Vec::new(),
         reflection_fields: None,
@@ -4986,6 +4993,41 @@ pub fn nominal_carrier_key(identity: &CanonicalSymbolId) -> Option<String> {
 }
 
 impl NominalDeclaration {
+    /// Read a closed field's retained callable storage through the bootstrap's signed slot boundary. Invalid slots
+    /// grant no owning representation.
+    pub fn owns_callable_field(&self, slot: i64) -> bool {
+        let Ok(slot) = usize::try_from(slot) else { return false };
+        self.owned_callable_fields.contains(&slot)
+    }
+
+    /// Preserve the generic value category when closing a nominal's field types. A callable substituted for a
+    /// declared value binder owns its captured environment, even though its checked signature is a function type.
+    /// This boundary does not authorize a borrowed or consuming callable, or alter explicitly written function fields.
+    pub fn retain_owned_callable_fields(&mut self, template: &Self) {
+        self.owned_callable_fields.clear();
+        if matches!(template.canonical.origin, crate::SymbolOrigin::RustCrate(_)) {
+            return;
+        }
+        self.owned_callable_fields = template
+            .field_types
+            .iter()
+            .zip(&self.field_types)
+            .enumerate()
+            .filter_map(|(slot, (original, closed))| {
+                let IncanType::TypeVar(name) = original else {
+                    return None;
+                };
+                (template.type_parameters.contains(name) && matches!(closed, IncanType::Function { .. }))
+                    .then_some(slot)
+            })
+            .collect();
+        // A generic template's automatic Debug is conditional on its actual field types. Owning an erased
+        // callable preserves invocation and cloning, but grants no Debug implementation for the function value.
+        if !self.owned_callable_fields.is_empty() {
+            self.derives.retain(|derive| derive != "Debug");
+        }
+    }
+
     /// Read the declaration's generic base independently of a concrete instance's generated layout name. A checked
     /// carrier binding supplies source ownership; opaque native declarations retain their public Rust type path.
     pub fn template_carrier_name(&self) -> String {

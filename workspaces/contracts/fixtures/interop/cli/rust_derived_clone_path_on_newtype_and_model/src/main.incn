@@ -1,0 +1,69 @@
+# behavior: Rust interop builds through the CLI: a newtype and a model whose @rust.derive names std::clone::Clone, a derive they already carry, build with one Clone implementation each; a private class with direct Rust state omits automatic Debug while source-only private classes retain it (#2256); a float literal passed to a Rust constructor that takes f32 arrives as that many seconds; and a function taking an aliased Rust generic over `tuple[&mut int, &mut int]` is accepted and called with a fresh handle
+# expect-stdout:
+#   ada
+#   2
+#   1500
+#   explicit mutable Rust generic CLI path
+
+from rust::std::time import Duration
+from rust::std::vec import Vec as ProviderHandle
+from rust::xxhash_rust::xxh32 import Xxh32
+
+
+class _Native:
+    """Own a Clone native state that has no Debug implementation."""
+    handle: Xxh32
+
+    def digest(self) -> u32:
+        """Read the native state through its checked shared receiver."""
+        return self.handle.digest()
+
+
+class _Plain:
+    """Keep automatic Debug when all fields are source values."""
+    handle: int
+
+
+@rust.derive("std::clone::Clone")
+type Name = newtype str
+
+
+@rust.derive("std::clone::Clone")
+model Person:
+    name: Name
+
+
+def replace_items(mut items: ProviderHandle[tuple[&mut int, &mut int]]) -> None:
+    pass
+
+
+def show_derived_clone() -> None:
+    mut people: list[Person] = [Person(name=Name("ada"))]
+    people.append(Person(name=Name("bo")))
+    println(people[0].name.0)
+    println(len(people))
+
+
+def show_private_class_derives() -> None:
+    """Clone a private class over native state without Debug, and keep Debug on a source-only private class."""
+    value = _Native(handle=Xxh32.default())
+    cloned = value.clone()
+    assert value.digest() == cloned.digest()
+    assert f"{_Plain(handle=7):?}" == "_Plain { handle: 7 }"
+
+
+def show_f32_argument() -> None:
+    pause = Duration.from_secs_f32(1.5)
+    println(pause.as_millis())
+
+
+def show_generic_mutable_reference() -> None:
+    replace_items(ProviderHandle.new())
+    println("explicit mutable Rust generic CLI path")
+
+
+def main() -> None:
+    show_derived_clone()
+    show_private_class_derives()
+    show_f32_argument()
+    show_generic_mutable_reference()

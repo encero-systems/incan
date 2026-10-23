@@ -5,6 +5,7 @@ from rust::incan_semantics_core::body_ir import NativeUnionDeclaration
 from async_ import future_type, validate_futures, construct_future, await_future, async_entry, evaluator_name
 from defaults import default_arguments, default_type
 from numerics import numeric_carrier as checked_numeric_carrier
+pub from closures import owned_capture
 pub from lowering import BodyIrModule
 from lowering import (
     unit_plan as checked_unit_plan,
@@ -34,7 +35,6 @@ pub from pub::incan_mir_plan import (
     range_field_types,
     Local,
     ModelDeclaration,
-    MarkerTrait,
     NativeAttribute,
     Operand,
     OperandKind,

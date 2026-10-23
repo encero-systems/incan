@@ -1,15 +1,21 @@
-# behavior: an instance method, a classmethod, a staticmethod and a computed property each return their declared value when called through the matching receiver
+# behavior: method kinds and properties use their matching receivers; uncalled methods retain their dependency factory result layouts
 # expect-stdout:
 #   42
 #   42
 #   42
 #   100
 
+from std.datetime import DateTime
+
 class Counter:
     value: int
 
     def next(self) -> int:
         return self.value + 1
+
+    def timestamp(self) -> str:
+        """Require a dependency result layout even when no source call reaches this method."""
+        return DateTime.utc_now().isoformat()
 
 
 class Factory:

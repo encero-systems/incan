@@ -1,4 +1,4 @@
-# behavior: a model adopting std.serde.json Serialize gains to_json and keeps its ordinary methods, and a json-derived model serializes through a generic json.Serialize bound and decodes back through from_json (RFC 024)
+# behavior: a model adopting std.serde.json Serialize calls its default from ordinary methods; json-derived models serialize through a generic bound and decode through from_json (RFC 024, #2256)
 # expect-stdout:
 #   {"value":1}
 #   hello
@@ -12,6 +12,10 @@ from std.serde.json import Serialize
 
 model Payload with Serialize:
     value: int
+
+    def encoded(self) -> str:
+        """Call the selected Serialize default without treating it as an override."""
+        return self.to_json()
 
 
 model Text with Serialize:
@@ -31,6 +35,7 @@ def encode[T with json.Serialize](value: T) -> str:
 
 
 def main() -> None:
+    assert Payload(value=1).encoded() == '{"value":1}'
     println(Payload(value=1).to_json())
     text = Text(value="hello")
     println(text.display_text())

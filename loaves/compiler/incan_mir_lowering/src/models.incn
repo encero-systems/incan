@@ -30,6 +30,7 @@ from symbols import model_symbol
 from types import primitive_type
 from closures import function_pointer_type
 from layout_types import native_source_type as retained_type
+from layout_types import stored_field_type
 from ranges import range_field
 from unions import union_slot
 
@@ -268,7 +269,7 @@ pub def field_projection(
         PlanType.Model(owner, _name) =>
             declaration = declarations[owner]
             slot = field_slot(projection, declaration)?
-            ty = retained_type(declarations, enums, unions, declaration.field_types[slot], intrinsics)?
+            ty = stored_field_type(declarations, enums, unions, declaration, slot, intrinsics)?
             return Ok(FieldProjection(slot=slot, ty=ty))
         PlanType.Tuple(elements) =>
             slot = tuple_slot(projection, len(elements))?

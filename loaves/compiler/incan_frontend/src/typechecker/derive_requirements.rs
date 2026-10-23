@@ -26,7 +26,7 @@ use crate::ast::{CallArg, DictEntry, Expr, ListEntry, ParamKind, Span, Spanned, 
 use crate::diagnostics::CompileError;
 use crate::diagnostics::errors::{self, DerivedMember, HashRemedy, HashedCollectionRole};
 use crate::symbols::{
-    CallableParam, EnumInfo, MethodInfo, NewtypeInfo, ResolvedType, SymbolKind, TypeBoundInfo, TypeInfo,
+    CallableParam, ClassInfo, EnumInfo, MethodInfo, NewtypeInfo, ResolvedType, SymbolKind, TypeBoundInfo, TypeInfo,
 };
 use crate::typechecker::helpers::collection_type_id;
 use incan_lang::lang::derives::{self, DeriveId};
@@ -394,8 +394,7 @@ impl TypeChecker {
                 .automatic_nominal_derive(name, &model.derives, &model.traits, derive, false)
                 .map(|derived| derived || Self::dunder_provides(&model.methods, derive)),
             TypeInfo::Class(class) => {
-                // Lowering drops the automatic `Debug` of a private adapter class holding direct Rust state.
-                let opaque_debug = name.starts_with('_') && derive == DeriveId::Debug;
+                let opaque_debug = self.class_omits_automatic_debug(name, class);
                 self.automatic_nominal_derive(name, &class.derives, &class.traits, derive, opaque_debug)
                     .map(|derived| derived || Self::dunder_provides(&class.methods, derive))
             }
@@ -419,8 +418,19 @@ impl TypeChecker {
         }
     }
 
-    /// Whether a `model`, `class` or `enum` implements `derive` through its derives: `Clone` and `Debug` always
-    /// (`opaque_debug` marks the one case lowering drops `Debug`), any other only when declared or implied.
+    /// Whether a private adapter class with direct Rust state omits automatic Debug. Explicit or implied Debug stays
+    /// selected and rustc verifies the native fields' implementations; a private source-only class keeps its derive.
+    pub(in crate::typechecker) fn class_omits_automatic_debug(&self, name: &str, class: &ClassInfo) -> bool {
+        name.starts_with('_')
+            && self.declared_derive(name, &class.derives, &class.traits, DeriveId::Debug) != Some(true)
+            && class
+                .fields
+                .values()
+                .any(|field| crate::symbols::resolved_type_contains_rust_path(&field.ty))
+    }
+
+    /// Whether a `model`, `class` or `enum` implements `derive` through its derives: automatic `Clone` and `Debug`
+    /// except for an opaque adapter's Debug, and other derives only when declared or implied.
     fn automatic_nominal_derive(
         &self,
         name: &str,

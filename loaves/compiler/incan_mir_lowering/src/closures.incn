@@ -39,7 +39,7 @@ from classes import receiver_mode
 from async_ import evaluator_name
 from collections import is_collection, is_owned_collection
 from layout_types import native_source_type, callable_parameter_type, collection_leaf
-from lists import is_list, is_owned_list, parameter_storage_type, is_exclusive_borrow
+from lists import is_list, parameter_storage_type, is_exclusive_borrow
 from numerics import numeric_carrier
 from generators import generator_type, is_generator_type
 from frame import Builder
@@ -289,24 +289,22 @@ pub def closure_capture_type(ty: PlanType, consumes_environment: bool) -> bool:
     """
     Admit captures according to the retained reusable or consuming environment contract.
 
-    Reusable environments copy scalars and clone owned text, list, and model snapshots for every call. Checking forbids changes to captured values and aliases of their storage. A proven consuming environment instead transfers its canonical zip into the lifted body once.
+    Reusable environments copy scalars and clone owned text, list, model, and enum snapshots for every call. Checking forbids changes to captured values and aliases of their storage. A proven consuming environment instead transfers its canonical zip into the lifted body once.
     """
-    if consumes_environment:
-        match ty:
-            PlanType.ZipIterator(_left, _right) => return true
-            _ => pass
     match ty:
-        PlanType.Model(_owner, _name) => return true
-        PlanType.List(_leaf, _depth) => return true
-        _ => return closure_value_type(ty) and ty != PlanType.Unit
+        PlanType.ZipIterator(_left, _right) => return consumes_environment
+        _ => return owned_capture(ty) or (closure_value_type(ty) and ty != PlanType.Unit)
 
 
 pub def owned_capture(ty: PlanType) -> bool:
-    """Move text, lists, model and zip snapshots into an environment that clones them for each call."""
+    """Select environment-owned snapshots for construction, validation, and invocation; reusable calls clone them. The descriptor remains by value until stage zero supports borrowed local-enum matching (#2256)."""
     match ty:
+        PlanType.String => return true
+        PlanType.List(_leaf, _depth) => return true
         PlanType.Model(_owner, _name) => return true
+        PlanType.Enum(_owner, _name) => return true
         PlanType.ZipIterator(_left, _right) => return true
-        _ => return ty == PlanType.String or is_owned_list(ty)
+        _ => return false
 
 
 pub def closure_constructor(
