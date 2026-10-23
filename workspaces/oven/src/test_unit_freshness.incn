@@ -7,7 +7,7 @@ from incan_units import executable_outputs, install_executable, test_report
 from observation import load_ledger
 from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription, UnitLoaf
-from unit_freshness import Key, artifact_files, compiler_fingerprint, reusable, source_fingerprint, staleness
+from unit_freshness import Key, artifact_files, compiler_fingerprint, reusable, rust_key, source_fingerprint, staleness
 
 
 model Fixture:
@@ -240,3 +240,56 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
     test_report(tests.joinpath("app")).unlink().map_err((error) => error.message())?
     assert not reusable(outputs, tests.joinpath("app.oven-inputs"), one)?
     return Ok(None)
+
+
+pub def test_rust_unit_key_follows_its_crate_manifest_how_it_is_built_and_what_it_links() -> Result[None, str]:
+    """A Rust unit is keyed like an Incan one: every file of its crate, its manifest, its arguments, the compiler and
+    the libraries it links; unchanged, it is keyed from metadata alone."""
+    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    facet = scratch.path().joinpath("data")
+    write(facet.joinpath("loaf.toml"), "[project]\nname = \"data\"\nversion = \"0.1.0\"\n")?
+    write(facet.joinpath("rust").joinpath("src").joinpath("lib.rs"), "pub mod json;\n")?
+    write(facet.joinpath("rust").joinpath("src").joinpath("json.rs"), "pub fn parse() {}\n")?
+    write(facet.joinpath("rust").joinpath("src").joinpath("table.json"), "{}")?
+    dependency = scratch.path().joinpath("libcore.rlib")
+    write(dependency, "core one")?
+    ledger_path = scratch.path().joinpath("ledger.json")
+    mut keys: list[str] = []
+    mut work: list[int] = []
+    for round in range(2):
+        mut crates = load_ledger(ledger_path, 0, "")
+        key = rust_key("compiler", ["crate data lib", "--cfg", "feature=\"std\""], facet.joinpath("loaf.toml"), facet.joinpath("rust").joinpath("src"), [dependency.0], crates)?
+        crates.save()?
+        keys.append(key.digest)
+        work.append(crates.hashed + crates.listed)
+    assert keys[0] == keys[1]
+    assert work[1] == 0
+    base = keys[0]
+    write(facet.joinpath("rust").joinpath("src").joinpath("json.rs"), "pub fn parse() { let _ = 1; }\n")?
+    edited = rust_key_of(ledger_path, facet, dependency, "compiler", ["crate data lib", "--cfg", "feature=\"std\""])?
+    assert edited != base
+    write(facet.joinpath("rust").joinpath("src").joinpath("table.json"), "{\"a\": 1}")?
+    data = rust_key_of(ledger_path, facet, dependency, "compiler", ["crate data lib", "--cfg", "feature=\"std\""])?
+    assert data != edited
+    write(facet.joinpath("rust").joinpath("src").joinpath("extra.rs"), "")?
+    added = rust_key_of(ledger_path, facet, dependency, "compiler", ["crate data lib", "--cfg", "feature=\"std\""])?
+    assert added != data
+    write(facet.joinpath("loaf.toml"), "[project]\nname = \"data\"\nversion = \"0.2.0\"\n")?
+    manifest = rust_key_of(ledger_path, facet, dependency, "compiler", ["crate data lib", "--cfg", "feature=\"std\""])?
+    assert manifest != added
+    features = rust_key_of(ledger_path, facet, dependency, "compiler", ["crate data lib", "--cfg", "feature=\"alloc\""])?
+    assert features != manifest
+    compiler = rust_key_of(ledger_path, facet, dependency, "another compiler", ["crate data lib", "--cfg", "feature=\"alloc\""])?
+    assert compiler != features
+    write(dependency, "core two, rebuilt")?
+    linked = rust_key_of(ledger_path, facet, dependency, "another compiler", ["crate data lib", "--cfg", "feature=\"alloc\""])?
+    assert linked != compiler
+    return Ok(None)
+
+
+def rust_key_of(ledger_path: Path, facet: Path, dependency: Path, compiler: str, described: list[str]) -> Result[str, str]:
+    """The digest of a Rust unit's key against the ledger a previous pass saved."""
+    mut crates = load_ledger(ledger_path, 0, "")
+    key = rust_key(compiler, described, facet.joinpath("loaf.toml"), facet.joinpath("rust").joinpath("src"), [dependency.0], crates)?
+    crates.save()?
+    return Ok(key.digest)

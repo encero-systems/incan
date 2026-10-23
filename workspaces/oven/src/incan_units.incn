@@ -18,7 +18,7 @@ from observation import trace
 from publication import place
 from toolchain import Toolchain
 from unit import UnitDescription, dependency_units
-from unit_freshness import Key, artifact_files, record, reusable, staleness, unit_key
+from unit_freshness import Key, artifact_files, install_all, record, reusable, staleness, unit_key
 from unit_rust import prepare_native
 
 
@@ -135,21 +135,14 @@ pub def test_report(binary: Path) -> Path:
 
 
 pub def install_executable(staged: Path, output: Path, kind: str, stamp: Path, key: Key) -> Result[None, str]:
-    """Replace the stored executable with a completed build of `key`, atomically.
-
-    The old stamp goes first and the new one comes last, so no stamp ever vouches for outputs it did not describe: an
-    interruption leaves either no stamp, or a stamp and outputs that belong together.
-    """
-    if stamp.is_file():
-        stamp.unlink().map_err((error) => f"{stamp.0}: {error.message()}")?
-    if kind == "test":
-        place(test_report(staged), test_report(output))?
-    place(staged, output)?
+    """Replace the stored executable with a completed build of `key`, atomically (see `install_all`); the debug bundle
+    the linker wrote beside it follows, and only helps a debugger."""
+    install_all(executable_outputs(kind, staged), executable_outputs(kind, output), stamp, key)?
     if debug_bundle(staged).is_dir():
         if debug_bundle(output).is_dir():
             debug_bundle(output).remove_tree().map_err((error) => error.message())?
         place(debug_bundle(staged), debug_bundle(output))?
-    return record(stamp, key, executable_outputs(kind, output))
+    return Ok(None)
 
 
 def debug_bundle(binary: Path) -> Path:

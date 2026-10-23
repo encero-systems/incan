@@ -7,8 +7,8 @@ under the root project's target directory, named by the unit's identity: its pro
 Registry units come compiled: their rlibs by root name and the directories their dependencies live in.
 """
 
-from rust::std::process import Command, id
-from rust::std::fs import rename
+from rust::std::process import Command
+
 from rust::std::string import String as RustString
 from std import toml
 from std.toml import TomlValue
@@ -20,8 +20,11 @@ from loaf_local_graph import LocalDemand, LocalFacet, local_facets
 from rust_activation import CfgSnapshot, DependencyDomain, TargetConfiguration, version_matches
 from semver_req import compare_version_order, parse_version
 from json_fields import field, strings
-from publication import publish
-from toolchain import load_toolchain, located
+from home import unit_ledger
+from observation import SETTLE_SECONDS, load_ledger, trace
+from publication import place, publish
+from unit_freshness import Key, compiler_fingerprint, install_all, reusable, rust_key, staleness
+from toolchain import Toolchain, load_toolchain, located
 
 
 @derive(Eq)
@@ -32,6 +35,8 @@ pub model RegistryUnit:
     pub version: str
     pub domain: str
     pub directory: str
+    # Whether the stored unit was kept because nothing it was built from had changed.
+    pub reused: bool = false
     pub features: list[str] = []
 
 
@@ -99,6 +104,8 @@ pub model BuiltUnit:
     pub crate_name: str
     pub artifact: str
     pub directory: str
+    # Whether the stored unit was kept because nothing it was built from had changed.
+    pub reused: bool = false
 
 
 pub def read_registry_units(path: Path) -> Result[RegistryUnits, str]:
@@ -365,7 +372,10 @@ def unit_outputs(
     mut local_built = built
     if declared.kind != "":
         unit = compile_library(facet, declared, output, request, built, search)?
-        println(f"compiled {declared.crate_name} ({facet.domain.value()})")
+        if unit.reused:
+            println(f"reused {declared.crate_name} ({facet.domain.value()})")
+        else:
+            println(f"compiled {declared.crate_name} ({facet.domain.value()})")
         local_built[f"{facet.project}@{facet.domain.value()}"] = unit
         library = Some(unit)
     mut programs: list[str] = []
@@ -416,23 +426,111 @@ pub def compile_library(
     built: Dict[str, BuiltUnit],
     search: list[str],
 ) -> Result[BuiltUnit, str]:
-    """Compile one library unit into its own directory and return its artifact."""
+    """Compile one library unit into its own directory and return its artifact, unless the stored one is current.
+
+    A unit's outputs are its library and its code graph, stored under a stamp of the key they were built for (see
+    `unit_freshness`): its crate and manifest, how it is compiled, the compiler, and the identity of each library it
+    links. An unchanged unit starts no compiler; a changed one rebuilds, and so does every unit that links it. One
+    build of a unit runs at a time, and its outputs are installed only when complete.
+    """
     unit = identity(facet, request.profile)
-    directory = output.joinpath(f"{declared.crate_name}-{unit}")
-    directory.mkdir(true, true).map_err((error) => error.message())?
-    mut arguments = library_arguments(declared)
-    arguments = arguments + ["--out-dir", directory.0, "-C", f"metadata={unit}", "-C", f"extra-filename=-{unit}"]
-    arguments = arguments + linking(facet, request, built, search)?
+    name = f"{declared.crate_name}-{unit}"
+    directory = output.joinpath(name)
     toolchain = load_toolchain()?
-    pending = directory.joinpath(f"{declared.package}.incngraph.{id()}.pending")
-    graph_arguments = ["--rust-compile-codegraph", pending.0, facet.project, "--sysroot", toolchain.sysroot] + arguments
+    shared = library_arguments(declared) + ["-C", f"metadata={unit}", "-C", f"extra-filename=-{unit}"] + linking(facet, request, built, search)?
+    key = unit_key_of(facet, declared, request, unit, toolchain, shared)?
+    stamp = output.joinpath(f"{name}.oven-inputs")
+    label = f"unit {declared.crate_name} rust"
+    why = staleness(stored_outputs(directory, declared, unit), stamp, key)?
+    if why == "":
+        trace(f"{label}: reused")
+        return stored_unit(directory, declared, unit, true)
+    # One build of a unit at a time: a concurrent build waits here, and then finds the outputs it needs.
+    output.mkdir(true, true).map_err((error) => error.message())?
+    building = directory.lock_exclusive().map_err((error) => error.message())?
+    if reusable(stored_outputs(directory, declared, unit), stamp, key)?:
+        trace(f"{label}: reused (built meanwhile by another command)")
+        return stored_unit(directory, declared, unit, true)
+    trace(f"{label}: compiled ({why})")
+    return compiled_unit(facet, declared, output, name, toolchain, shared, stamp, key, unit)
+
+
+def unit_key_of(facet: LocalFacet, declared: RustFacet, request: RustBuild, unit: str, toolchain: Toolchain, shared: list[str]) -> Result[Key, str]:
+    """Reconcile a Rust unit's inputs against what earlier builds observed, and key them."""
+    mut crates = load_ledger(unit_ledger(request.project, f"rust-{request.profile}-{declared.crate_name}-{unit}"), SETTLE_SECONDS, "")
+    described = [f"crate {declared.crate_name} {declared.kind} {declared.edition} {declared.package} {declared.version}", f"profile {request.profile}"] + shared
+    key = rust_key(compiler_fingerprint(toolchain)?, described, Path(facet.project).joinpath("loaf.toml"), Path(declared.library).parent(), extern_artifacts(shared), crates)?
+    crates.save()?
+    return Ok(key)
+
+
+def extern_artifacts(arguments: list[str]) -> list[str]:
+    """The libraries a unit links: the file each `--extern alias=file` names."""
+    mut artifacts: list[str] = []
+    for index in range(len(arguments) - 1):
+        if arguments[index] == "--extern" and "=" in arguments[index + 1]:
+            artifacts.append(arguments[index + 1].split("=")[1])
+    return artifacts
+
+
+def stored_outputs(directory: Path, declared: RustFacet, unit: str) -> list[Path]:
+    """The library and the code graph of a stored unit: just the graph's place when no library is stored."""
+    graph = directory.joinpath(f"{declared.package}.incngraph")
+    match found_library(directory, declared.crate_name, unit):
+        Some(library) => return [library, graph]
+        None => return [graph]
+
+
+def found_library(directory: Path, crate_name: str, unit: str) -> Option[Path]:
+    """The library rustc wrote into `directory` for a unit, if there is one."""
+    if not directory.is_dir():
+        return None
+    match directory.iterdir():
+        Err(_) => return None
+        Ok(candidates) =>
+            for candidate in candidates:
+                name = candidate.name()
+                if name.startswith(f"lib{crate_name}-{unit}.") and (name.endswith(".rlib") or name.endswith(".dylib") or name.endswith(".so")):
+                    return Some(candidate)
+    return None
+
+
+def stored_unit(directory: Path, declared: RustFacet, unit: str, reused: bool) -> Result[BuiltUnit, str]:
+    """The unit whose library is stored in `directory`."""
+    match found_library(directory, declared.crate_name, unit):
+        Some(library) => return Ok(BuiltUnit(crate_name=declared.crate_name, artifact=library.0, directory=directory.0, reused=reused))
+        None => return Err(f"rustc wrote no library for {declared.crate_name} into {directory.0}")
+
+
+def compiled_unit(
+    facet: LocalFacet,
+    declared: RustFacet,
+    output: Path,
+    name: str,
+    toolchain: Toolchain,
+    shared: list[str],
+    stamp: Path,
+    key: Key,
+    unit: str,
+) -> Result[BuiltUnit, str]:
+    """Compile a unit beside its place and install what it wrote, library and graph together."""
+    staging = output.joinpath(f"{name}.staging")
+    if staging.is_dir():
+        staging.remove_tree().map_err((error) => error.message())?
+    staging.mkdir(true, true).map_err((error) => error.message())?
+    pending = staging.joinpath(f"{declared.package}.incngraph.pending")
+    graph_arguments = ["--rust-compile-codegraph", pending.0, facet.project, "--sysroot", toolchain.sysroot, "--out-dir", staging.0] + shared
     invoke_rustc(toolchain.driver, graph_arguments, package_environment(facet.project, declared, declared.crate_name), false, declared.crate_name)?
-    rename(pending.0, directory.joinpath(f"{declared.package}.incngraph").0).map_err((error) => str(error))?
-    for candidate in directory.iterdir().map_err((error) => error.message())?:
-        name = candidate.name()
-        if name.startswith(f"lib{declared.crate_name}-{unit}.") and (name.endswith(".rlib") or name.endswith(".dylib") or name.endswith(".so")):
-            return Ok(BuiltUnit(crate_name=declared.crate_name, artifact=candidate.0, directory=directory.0))
-    return Err(f"rustc wrote no library for {declared.crate_name} into {directory.0}")
+    staged_graph = staging.joinpath(f"{declared.package}.incngraph")
+    place(pending, staged_graph)?
+    match found_library(staging, declared.crate_name, unit):
+        None => return Err(f"rustc wrote no library for {declared.crate_name} into {staging.0}")
+        Some(library) =>
+            directory = output.joinpath(name)
+            directory.mkdir(true, true).map_err((error) => error.message())?
+            install_all([library, staged_graph], [directory.joinpath(library.name()), directory.joinpath(f"{declared.package}.incngraph")], stamp, key)?
+            staging.remove_tree().map_err((error) => error.message())?
+            return stored_unit(directory, declared, unit, false)
 
 
 pub def library_arguments(declared: RustFacet) -> list[str]:

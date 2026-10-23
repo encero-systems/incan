@@ -60,6 +60,8 @@ pub model Ledger:
 
     pub location: Path
     pub settle: int
+    # Which files a listing keeps: those whose names end with this, every file when it is empty.
+    pub extension: str = ".incn"
     # Files hashed and directories listed since the ledger was loaded: the work reconciliation could not avoid.
     pub hashed: int = 0
     pub listed: int = 0
@@ -80,7 +82,8 @@ pub model Ledger:
         return Ok(content)
 
     def sources(mut self, root: Path, recursive: bool) -> Result[list[str], str]:
-        """The Incan sources under `root`, sorted; only directories whose metadata changed are listed again.
+        """The files under `root` that this ledger keeps (Incan sources unless its extension says otherwise), sorted; only
+        directories whose metadata changed are listed again.
 
         The compiler's own collection rules apply: hidden directories, `target` and `node_modules` are not entered.
         """
@@ -110,7 +113,7 @@ pub model Ledger:
             if child.is_dir():
                 if not (name.startswith(".") or name == "target" or name == "node_modules"):
                     directories.append(name)
-            elif child.is_file() and name.endswith(".incn"):
+            elif child.is_file() and name.endswith(self.extension):
                 files.append(name)
         entry = DirectoryEntry(stamp=retained(observed, self.settle), files=sorted(files), directories=sorted(directories))
         trace(f"listing {directory.0}")
@@ -125,6 +128,8 @@ pub model Ledger:
         document = parse(text).map_err((error) => error.message())?
         if text_field(document, "schema", []).map_err(refusal)? != LEDGER_SCHEMA:
             return Err("not a ledger of this version")
+        if text_field(document, "extension", []).map_err(refusal)? != self.extension:
+            return Err("a ledger of other files")
         for row in rows(document, "files")?:
             self.files[text_field(row, "path", []).map_err(refusal)?] = FileEntry(
                 stamp=text_field(row, "stamp", []).map_err(refusal)?,
@@ -154,7 +159,7 @@ pub model Ledger:
                     JsonValue.object({"path": JsonValue.string(path), "stamp": JsonValue.string(entry.stamp), "files": texts(entry.files), "directories": texts(entry.directories)}),
                 )
         document = JsonValue.object(
-            {"schema": JsonValue.string(LEDGER_SCHEMA), "files": JsonValue.array(files), "directories": JsonValue.array(directories)},
+            {"schema": JsonValue.string(LEDGER_SCHEMA), "files": JsonValue.array(files), "directories": JsonValue.array(directories), "extension": JsonValue.string(self.extension)},
         )
         self.location.parent().mkdir(true, true).map_err((error) => f"{self.location.parent().0}: {error.message()}")?
         publish(self.location, document.to_json().map_err((error) => error.message())?)?
@@ -194,9 +199,9 @@ def retained(observed: Observation, settle: int) -> str:
     return ""
 
 
-pub def load_ledger(location: Path, settle: int) -> Ledger:
+pub def load_ledger(location: Path, settle: int, extension: str = ".incn") -> Ledger:
     """The ledger saved at `location`; a missing or unreadable one is an empty ledger, since it only saves work."""
-    empty = Ledger(location=location, settle=settle)
+    empty = Ledger(location=location, settle=settle, extension=extension)
     if not location.is_file():
         return empty
     mut loaded = empty

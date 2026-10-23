@@ -21,7 +21,7 @@ from std.json import JsonValue
 from home import unit_ledger
 from loaf_local_graph import unique
 from observation import Ledger, SETTLE_SECONDS, load_ledger, observe, trace
-from publication import publish
+from publication import place, publish
 from toolchain import Toolchain
 from unit import UnitDescription
 
@@ -134,10 +134,33 @@ pub def unit_key_with(unit: UnitDescription, compiler: str, described: str, mut 
     for cache in unit.rust_abi:
         artifacts.append(cache)
         artifacts.append(artifact_identity(Path(cache))?)
+    return assembled(compiler, described, sources, artifacts)
+
+
+def assembled(compiler: str, described: str, sources: list[str], artifacts: list[str]) -> Result[Key, str]:
+    """A key from the digests of its four kinds of input."""
     authored = fingerprint(sources)?
     linked = fingerprint(artifacts)?
     digest = fingerprint([UNIT_DOMAIN, compiler, described, authored, linked])?
     return Ok(Key(digest=digest, parts=[f"compiler {compiler}", f"description {described}", f"sources {authored}", f"artifacts {linked}"]))
+
+
+pub def rust_key(compiler: str, described: list[str], manifest: Path, crate_sources: Path, externs: list[str], mut crates: Ledger) -> Result[Key, str]:
+    """The key of a Rust unit: how it is compiled (`described`: its crate, features, profile and every argument), its
+    manifest and every file of its crate, the compiler, and the identity of each library it links.
+
+    The same kinds of input as an Incan unit's key, so the same stamp, lock and atomic install keep its outputs. The
+    ledger must keep every file (`load_ledger(.., "")`).
+    """
+    mut sources = [manifest.0, crates.digest(manifest)?]
+    for path in crates.sources(crate_sources, true)?:
+        sources.append(path)
+        sources.append(crates.digest(Path(path))?)
+    mut artifacts: list[str] = []
+    for extern in externs:
+        artifacts.append(extern)
+        artifacts.append(artifact_identity(Path(extern))?)
+    return assembled(compiler, fingerprint(described)?, sources, artifacts)
 
 
 def unit_files(unit: UnitDescription, mut project: Ledger) -> Result[list[str], str]:
@@ -206,3 +229,16 @@ pub def record(stamp: Path, key: Key, outputs: list[Path]) -> Result[None, str]:
     for output in outputs:
         lines.append(observe(output)?.stamp)
     return publish(stamp, "\n".join(lines))
+
+
+pub def install_all(staged: list[Path], finals: list[Path], stamp: Path, key: Key) -> Result[None, str]:
+    """Replace the stored outputs with a completed build of `key`: each staged file is renamed onto its place.
+
+    The old stamp goes first and the new one comes last, so no stamp ever vouches for outputs it did not describe: an
+    interruption leaves either no stamp, or a stamp and outputs that belong together.
+    """
+    if stamp.is_file():
+        stamp.unlink().map_err((error) => f"{stamp.0}: {error.message()}")?
+    for index in range(len(staged)):
+        place(staged[index], finals[index])?
+    return record(stamp, key, finals)
