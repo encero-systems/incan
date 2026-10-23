@@ -39,7 +39,9 @@ use incan_lang::interop::RustItemMetadata;
 use incan_semantics_core::IncanType;
 use incan_semantics_core::body_ir::BodyIrModule;
 use incan_semantics_core::body_ir::NativeUnionDeclaration;
-use incan_semantics_core::executable_representation::{EXECUTABLE_REPRESENTATION_VERSION, build_surface};
+use incan_semantics_core::executable_representation::{
+    EXECUTABLE_REPRESENTATION_VERSION, SurfaceReader, build_surface,
+};
 
 /// What a library unit's checking pass collects for its publication, one module at a time.
 pub struct PublicationFacts {
@@ -289,6 +291,10 @@ pub fn write_loaf(
             "failed to produce the executable representation of {name}: {error}"
         ))
     })?;
+    if tracing::enabled!(target: "incan::invocation", tracing::Level::DEBUG) {
+        let reader = SurfaceReader::open(&surface).map_err(|error| CliError::failure(error.to_string()))?;
+        tracing::debug!(target: "incan::invocation", package = %name, coverage = ?reader.index().declarations, "published governed coverage");
+    }
     manifest.contract_metadata.executable_representation = Some(ExecutableRepresentationExport {
         representation_version: EXECUTABLE_REPRESENTATION_VERSION,
         content_digest: hex::encode(Sha256::digest(&surface)),

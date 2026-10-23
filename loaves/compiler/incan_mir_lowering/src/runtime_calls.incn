@@ -1,0 +1,152 @@
+"""Instantiate published runtime bodies through the ordinary governed-call queue."""
+
+from pub::incan_mir_plan import (
+    PlanType, Function, ExternalFunction, CalleeKind, TerminatorKind, tuple_element_type, list_leaf_type,
+)
+from rust::incan_semantics_core import (
+    IncanType as RustType,
+    IncanPrimitiveType as Primitive,
+    IncanCallableParam as RustCallableParam,
+    NumericTypeId,
+    SymbolOrigin,
+    generic,
+    function_type,
+)
+from rust::incan_semantics_core::body_ir import BodyIrModule, Body
+from classes import function_name
+from type_parameters import Instance, instantiate
+
+
+pub def retain_runtime_instances(
+    module: &BodyIrModule,
+    mut functions: list[Function],
+    mut externals: list[ExternalFunction],
+    mut instances: list[Instance],
+) -> Result[None, str]:
+    """Replace each native runtime instantiation with its canonical governed body, including newly generated calls.
+
+    A Rust runtime contributes no bodies and keeps its external ABI. A published Incan body has one implementation:
+    its closed frame joins the ordinary queue, and every call with that exact runtime signature names that frame.
+    """
+    mut retained: list[ExternalFunction] = []
+    for external in externals:
+        match runtime_body(module, external.path)?:
+            None =>
+                if external.path.startswith("incan_native_runtime::") and len(external.type_arguments) != 0:
+                    return Err(f"runtime publishes no governed body for {external.path}")
+                retained.append(external)
+            Some(body) =>
+                if len(body.type_parameters) != len(external.type_arguments):
+                    return Err(f"invalid governed runtime type argument arity for {external.path}")
+                mut arguments: list[RustType] = []
+                for argument in external.type_arguments:
+                    match runtime_argument(module, argument):
+                        Ok(typed) => arguments.append(typed.clone())
+                        Err(reason) => return Err(f"{external.path}: {reason}")
+                closed = instantiate(body, arguments, [])?
+                symbol = function_name(module, closed)
+                redirect_runtime_calls(functions, external, symbol)?
+                mut present = false
+                for instance in instances:
+                    if instance.body.canonical == body.canonical and instance.arguments == arguments:
+                        present = true
+                if not present:
+                    instances.append(Instance(body=body, arguments=arguments, owned_callable_slots=[], original_callable=false))
+    while len(externals) != 0:
+        _ = externals.pop()
+    externals.extend(retained)
+    return Ok(None)
+
+
+def runtime_body(module: &BodyIrModule, path: str) -> Result[Option[Body], str]:
+    """Select a unique published runtime declaration; another package's same-named body is never a candidate."""
+    mut found: Option[Body] = None
+    for body in module.bodies:
+        if len(body.type_parameters) == 0 or path != f"incan_native_runtime::{body.name}":
+            continue
+        match body.canonical:
+            Some(identity) =>
+                match identity.origin:
+                    SymbolOrigin.Package(library=library, module_path=_owner) =>
+                        if str(library) != "incan_native_runtime":
+                            continue
+                    _ =>
+                        continue
+            None =>
+                continue
+        match found:
+            Some(_previous) => return Err(f"ambiguous governed runtime declaration {path}")
+            None => found = Some(body.clone())
+    return Ok(found)
+
+
+def redirect_runtime_calls(mut functions: list[Function], external: ExternalFunction, symbol: str) -> Result[None, str]:
+    """Keep exact call ownership and unwind edges; refuse a primitive wrapper that would reenter its own operation."""
+    for function_index in range(len(functions)):
+        for block_index in range(len(functions[function_index].blocks)):
+            match functions[function_index].blocks[block_index].terminator.kind:
+                TerminatorKind.Call(callee, arguments, destination, target, unwind) =>
+                    if callee.kind != CalleeKind.Instantiated(external.path, external.type_arguments):
+                        continue
+                    if functions[function_index].name == symbol:
+                        return Err(f"unsupported governed runtime body reenters {external.path}; its primitive must use Rust interop")
+                    mut planned = callee
+                    planned.kind = CalleeKind.Planned(symbol)
+                    functions[function_index].blocks[block_index].terminator.kind = TerminatorKind.Call(
+                        planned, arguments, destination, target, unwind,
+                    )
+                _ => pass
+    return Ok(None)
+
+
+def runtime_argument(module: &BodyIrModule, ty: PlanType) -> Result[RustType, str]:
+    """Retain a closed runtime argument's semantic carrier without parsing Rust displays or inferring from operands."""
+    match ty:
+        PlanType.Int => return Ok(RustType.Primitive(Primitive.Int))
+        PlanType.Float => return Ok(RustType.Primitive(Primitive.Float))
+        PlanType.I8 => return Ok(RustType.Primitive(Primitive.Numeric(NumericTypeId.I8)))
+        PlanType.I16 => return Ok(RustType.Primitive(Primitive.Numeric(NumericTypeId.I16)))
+        PlanType.I32 => return Ok(RustType.Primitive(Primitive.Numeric(NumericTypeId.I32)))
+        PlanType.I128 => return Ok(RustType.Primitive(Primitive.Numeric(NumericTypeId.I128)))
+        PlanType.ISize => return Ok(RustType.Primitive(Primitive.Numeric(NumericTypeId.ISize)))
+        PlanType.USize => return Ok(RustType.Primitive(Primitive.Numeric(NumericTypeId.USize)))
+        PlanType.U8 => return Ok(RustType.Primitive(Primitive.Numeric(NumericTypeId.U8)))
+        PlanType.U16 => return Ok(RustType.Primitive(Primitive.Numeric(NumericTypeId.U16)))
+        PlanType.U32 => return Ok(RustType.Primitive(Primitive.Numeric(NumericTypeId.U32)))
+        PlanType.U64 => return Ok(RustType.Primitive(Primitive.Numeric(NumericTypeId.U64)))
+        PlanType.U128 => return Ok(RustType.Primitive(Primitive.Numeric(NumericTypeId.U128)))
+        PlanType.F32 => return Ok(RustType.Primitive(Primitive.Numeric(NumericTypeId.F32)))
+        PlanType.F64 => return Ok(RustType.Primitive(Primitive.Numeric(NumericTypeId.F64)))
+        PlanType.Bool => return Ok(RustType.Primitive(Primitive.Bool))
+        PlanType.Unit => return Ok(RustType.Primitive(Primitive.Unit))
+        PlanType.String => return Ok(RustType.Primitive(Primitive.Str))
+        PlanType.FrozenStr => return Ok(RustType.Primitive(Primitive.FrozenStr))
+        PlanType.FrozenBytes => return Ok(RustType.Primitive(Primitive.FrozenBytes))
+        PlanType.Model(owner, _name) => return Ok(RustType.Named(str(module.nominal_declarations[owner].name)))
+        PlanType.ModelRef(owner, name) =>
+            return Ok(RustType.Ref(runtime_argument(module, PlanType.Model(owner, name))?))
+        PlanType.Enum(owner, _name) =>
+            if owner >= len(module.enum_declarations):
+                return Err("unsupported governed runtime intrinsic enum argument")
+            return Ok(RustType.Named(str(module.enum_declarations[owner].name)))
+        PlanType.Tuple(elements) =>
+            mut fields: list[RustType] = []
+            for element in elements:
+                fields.append(runtime_argument(module, tuple_element_type(element))?)
+            return Ok(RustType.Tuple(fields))
+        PlanType.TupleRef(elements) =>
+            return Ok(RustType.Ref(runtime_argument(module, PlanType.Tuple(elements))?))
+        PlanType.FunctionPointer(signature) =>
+            if len(signature) != 1:
+                return Err("unsupported governed runtime function-pointer argument with parameters")
+            parameters: list[RustCallableParam] = []
+            return Ok(function_type(parameters, runtime_argument(module, signature[0])?))
+        PlanType.List(leaf, depth) =>
+            mut element = runtime_argument(module, list_leaf_type(leaf))?
+            for _level in range(depth):
+                element = generic("List", [element])
+            return Ok(element)
+        PlanType.Set(leaf) => return Ok(generic("Set", [runtime_argument(module, list_leaf_type(leaf))?]))
+        PlanType.Dict(key, value) =>
+            return Ok(generic("Dict", [runtime_argument(module, list_leaf_type(key))?, runtime_argument(module, list_leaf_type(value))?]))
+        _ => return Err(f"unsupported governed runtime type argument representation {ty:?}")

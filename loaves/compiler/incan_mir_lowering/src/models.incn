@@ -192,6 +192,11 @@ pub def model_prefix(
                 None => pass
             # An enum method's shared receiver reads the whole enum through its reference.
             match locals[index].ty:
+                PlanType.TupleRef(elements) =>
+                    if count == 0:
+                        return Ok(Place(local=index, projection=Projection.Whole, span=span))
+                    fields = field_path(declarations, PlanType.Tuple(elements), value.projection, count, enums, unions, intrinsics)?
+                    return Ok(Place(local=index, projection=Projection.DerefFields(fields), span=span))
                 PlanType.EnumRef(owner, name) =>
                     if count == 0:
                         return Ok(Place(local=index, projection=Projection.Deref(PlanType.Enum(owner, name)), span=span))
@@ -275,6 +280,9 @@ pub def field_projection(
             slot = tuple_slot(projection, len(elements))?
             return Ok(FieldProjection(slot=slot, ty=tuple_element_type(elements[slot])))
         PlanType.TupleMutRef(elements) =>
+            slot = tuple_slot(projection, len(elements))?
+            return Ok(FieldProjection(slot=slot, ty=tuple_element_type(elements[slot])))
+        PlanType.TupleRef(elements) =>
             slot = tuple_slot(projection, len(elements))?
             return Ok(FieldProjection(slot=slot, ty=tuple_element_type(elements[slot])))
         PlanType.RangeValue => return range_field(projection)

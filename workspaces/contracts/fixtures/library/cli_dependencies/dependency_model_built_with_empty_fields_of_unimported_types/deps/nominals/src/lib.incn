@@ -1,5 +1,8 @@
 from rust::serde import Deserialize as RustDeserialize, Serialize as RustSerialize
 from rust::serde_json import Error as JsonError, from_str, to_string
+from rust::std::vec import Vec
+from rust::std::clone import Clone as RuntimeClone
+from std.derives.copying import Clone
 from default_payload import DefaultPayload
 pub from records import Card
 pub from ids import EvidenceId
@@ -33,6 +36,33 @@ pub def serde_roundtrip() -> bool:
             match decode_document(encoded):
                 Ok(decoded) => return decoded.value == 7
                 Err(_error) => return false
+
+
+pub def shared_copy[T with Clone](value: &T) -> T:
+    """Resolve a shared referent's bound method with the referent as Self."""
+    return value.clone()
+
+
+pub def native_shared_copy[T with RuntimeClone](value: &T) -> T:
+    """Close a qualified native trait's Self to the shared type parameter's referent."""
+    return RuntimeClone.clone(value)
+
+
+pub def empty_values[T]() -> list[T]:
+    """Publish a governed constructor whose native call retains its declared type argument (#2256)."""
+    return Vec.new()
+
+
+pub def one_value[T](value: T) -> list[T]:
+    """Retain a native receiver's declared type parameter and default allocator in a governed body."""
+    mut values: Vec[T] = Vec.new()
+    values.push(value)
+    return values
+
+
+pub def count_values[T](values: &Vec[T]) -> int:
+    """Read a native method's length through its published governed signature."""
+    return int(values.len())
 
 
 pub model Evidence:

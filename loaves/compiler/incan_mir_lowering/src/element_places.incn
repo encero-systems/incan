@@ -59,6 +59,8 @@ pub def element_prefix_type(mut builder: Builder, source: &RustPlace, count: int
                     ty = PlanType.Model(owner, name)
                 PlanType.TupleMutRef(elements) =>
                     ty = PlanType.Tuple(elements)
+                PlanType.TupleRef(elements) =>
+                    ty = PlanType.Tuple(elements)
                 PlanType.StringRef =>
                     ty = PlanType.String
                 PlanType.StringMutRef =>

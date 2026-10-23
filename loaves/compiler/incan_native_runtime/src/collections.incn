@@ -4,7 +4,9 @@ from std.derives.copying import Clone
 from std.derives.comparison import Eq, Hash
 from rust::std::fmt import Display
 from rust::std::clone import Clone as RuntimeClone
+from rust::std::cmp import Eq as RuntimeEq
 from rust::std::collections import HashMap as RuntimeDict
+from rust::std::collections import HashSet as RuntimeSet
 from rust::incan_std_core::collections import set_contains, dict_contains_key, dict_get, dict_get_mut
 
 
@@ -29,18 +31,18 @@ pub def unequal_dict[K with (Eq, Hash), V with Eq](left: &Dict[K, V], right: &Di
 
 
 pub def empty_set[T with (Eq, Hash)]() -> Set[T]:
-    """Create the same hash collection as the legacy Set constructor."""
-    return Set()
+    """Construct hash storage through Rust so a governed body does not reenter the Set builtin."""
+    return RuntimeSet.new()
 
 
-pub def insert_set[T with (Eq, Hash)](mut values: Set[T], value: T) -> None:
+pub def insert_set[T with (RuntimeEq, Hash)](values: &mut RuntimeSet[T], value: T) -> None:
     """Insert one owned element, preserving legacy duplicate elimination."""
-    values.add(value)
+    RuntimeSet.insert(values, value)
 
 
-pub def length_set[T](values: &Set[T]) -> int:
+pub def length_set[T](values: &RuntimeSet[T]) -> int:
     """Read the hash set's size without consuming it."""
-    return len(values)
+    return int(values.len())
 
 
 pub def contains_set[T with (Eq, Hash)](values: &Set[T], value: T) -> bool:
@@ -55,18 +57,18 @@ pub def clone_set[T with Clone](values: &Set[T]) -> Set[T]:
 
 
 pub def empty_dict[K with (Eq, Hash), V]() -> Dict[K, V]:
-    """Create the legacy dictionary representation."""
-    return Dict()
+    """Construct hash storage through Rust so a governed body does not reenter the Dict builtin."""
+    return RuntimeDict.new()
 
 
-pub def insert_dict[K with (Eq, Hash), V](mut values: Dict[K, V], key: K, value: V) -> None:
+pub def insert_dict[K with (RuntimeEq, Hash), V](values: &mut RuntimeDict[K, V], key: K, value: V) -> None:
     """Insert or overwrite a key in the same order as the source operands."""
-    values.insert(key, value)
+    RuntimeDict.insert(values, key, value)
 
 
-pub def length_dict[K, V](values: &Dict[K, V]) -> int:
+pub def length_dict[K, V](values: &RuntimeDict[K, V]) -> int:
     """Read a dictionary's size without consuming its binding."""
-    return len(values)
+    return int(values.len())
 
 
 pub def contains_dict[K with (Eq, Hash), V](values: &Dict[K, V], key: K) -> bool:
@@ -80,10 +82,11 @@ pub def clone_dict[K with Clone, V with Clone](values: &Dict[K, V]) -> Dict[K, V
     return RuntimeClone.clone(values)
 
 
-pub def get_dict[K with (Eq, Hash, Display), V with Clone](values: &Dict[K, V], key: K) -> V:
+pub def get_dict[K with (Eq, Hash, Display), V with RuntimeClone](values: &Dict[K, V], key: K) -> V:
     """Index a dictionary with the legacy missing-key diagnostic."""
     reference: &K = key
-    return RuntimeClone.clone(dict_get(values, reference))
+    value: &V = dict_get(values, reference)
+    return RuntimeClone.clone(value)
 
 
 pub def borrow_mut_dict[K with (Eq, Hash, Display), V](values: &mut Dict[K, V], key: K) -> &mut V:
@@ -92,11 +95,12 @@ pub def borrow_mut_dict[K with (Eq, Hash, Display), V](values: &mut Dict[K, V], 
     return dict_get_mut(values, reference)
 
 
-pub def optional_dict[K with (Eq, Hash, Display), V with Clone](values: &Dict[K, V], key: K) -> Option[V]:
+pub def optional_dict[K with (Eq, Hash, Display), V with RuntimeClone](values: &Dict[K, V], key: K) -> Option[V]:
     """Copy a present value or report its absence, as the legacy one-argument lookup does."""
     reference: &K = key
     if dict_contains_key(values, reference):
-        return Some(RuntimeClone.clone(dict_get(values, reference)))
+        value: &V = dict_get(values, reference)
+        return Some(RuntimeClone.clone(value))
     return None
 
 

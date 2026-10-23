@@ -4778,6 +4778,8 @@ impl TypeChecker {
 
     #[allow(clippy::too_many_arguments)]
     /// Resolve a method call on a generic placeholder using the active `T with Trait[...]` bound stack.
+    /// A shared reference exposes the referent's shared methods and substitutes that referent for Self; it never
+    /// authorizes a mutable receiver through the reference.
     pub(in crate::typechecker) fn resolve_generic_placeholder_method(
         &mut self,
         placeholder_name: &str,
@@ -4810,6 +4812,9 @@ impl TypeChecker {
         let mut candidates = Vec::new();
         for bound in &active_bounds {
             if let Some(entry) = self.trait_method_entry_resolved_for_adoption(bound, method, call_site_span) {
+                if matches!(receiver_ty, ResolvedType::Ref(_)) && entry.info.receiver == Some(Receiver::Mutable) {
+                    continue;
+                }
                 let dispatch = self.resolved_trait_dispatch(
                     &entry.origin_trait,
                     entry.origin_type_args.clone(),
@@ -4826,6 +4831,10 @@ impl TypeChecker {
         if candidates.is_empty() {
             return None;
         }
+        let receiver = match receiver_ty {
+            ResolvedType::Ref(inner) => inner.as_ref(),
+            _ => receiver_ty,
+        };
         self.resolve_method_overload(
             method,
             &candidates,
@@ -4833,7 +4842,7 @@ impl TypeChecker {
             args,
             arg_types,
             call_site_span,
-            receiver_ty,
+            receiver,
             expected_return_ty,
         )
     }
@@ -7614,8 +7623,12 @@ impl TypeChecker {
         // A method a generic placeholder's bound declares is typed by that bound, a protocol hook such as `__next__`
         // included: `source.__next__()` on `Source with Iterator[T]` is an `Option[T]`, not the permissive `Unknown`
         // below, so a value it yields keeps its type `T` downstream.
-        if self.is_generic_placeholder_type(&base_ty)
-            && let Some(placeholder_name) = self.generic_placeholder_name(&base_ty).map(str::to_string)
+        let placeholder_receiver = match &base_ty {
+            ResolvedType::Ref(inner) => inner.as_ref(),
+            _ => &base_ty,
+        };
+        if self.is_generic_placeholder_type(placeholder_receiver)
+            && let Some(placeholder_name) = self.generic_placeholder_name(placeholder_receiver).map(str::to_string)
             && let Some(ret) = self.resolve_generic_placeholder_method(
                 &placeholder_name,
                 method,

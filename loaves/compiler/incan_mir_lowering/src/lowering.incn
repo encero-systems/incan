@@ -416,6 +416,7 @@ from defaults import (
     model_default_arguments,
 )
 from type_parameters import Instance, instantiate, substitute
+from runtime_calls import retain_runtime_instances
 from generic_callables import owned_callable_slots
 from sdk_generic_callables import sdk_owned_callable_bindings, sdk_callable_type, sdk_callable_type_arguments
 from shared_callables import record_scalar_closure, scalar_capture, shared_sdk_operands
@@ -542,9 +543,11 @@ pub def scalar_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) 
     match union_projection(builder, value, span)?:
         Some(projected) => return Ok(projected)
         None => pass
+    # Materialize the suffix before borrowing it; direct mutable slice arguments still refuse (#2256).
+    mut frame_locals = builder.locals[builder.local_offset:]
     mut target = model_place(
         builder.nominals,
-        builder.locals[builder.local_offset:],
+        frame_locals,
         value,
         span,
         builder.enums,
@@ -716,6 +719,11 @@ def target_read(mut builder: Builder, target: Place, fact: &OwnershipFact, span:
             OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable callable borrow")
             _ => return Ok(read_place(target, false, span))
     match place_type(builder.locals, target):
+        PlanType.TupleRef(_elements) =>
+            match fact:
+                OwnershipFact.Unknown => return Err("unsupported Body IR unknown shared tuple ownership")
+                OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable shared tuple borrow")
+                _ => return Ok(read_place(target, false, span))
         PlanType.Future(_output) =>
             if fact != OwnershipFact.Move or target.projection != Projection.Whole:
                 return Err("unsupported Body IR future read without whole ownership transfer")
@@ -1164,9 +1172,10 @@ def scalar_rvalue(
                 Some(result) => return Ok(RvalueKind.Use(result))
                 None => pass
             if operator == BinOp.Div:
+                mut frame_locals = builder.locals[builder.local_offset:]
                 if not float_operand(
                     builder.nominals,
-                    builder.locals[builder.local_offset:],
+                    frame_locals,
                     left,
                     span,
                     builder.enums,
@@ -1174,7 +1183,7 @@ def scalar_rvalue(
                     builder.intrinsics,
                 )? or not float_operand(
                     builder.nominals,
-                    builder.locals[builder.local_offset:],
+                    frame_locals,
                     right,
                     span,
                     builder.enums,
@@ -4472,9 +4481,10 @@ def library_receiver(
                             _ => return Err("unsupported Body IR by-value SDK element receiver")
                     mut declarations = module.nominal_declarations
                     mut enums = module.enum_declarations
+                    mut frame_locals = builder.locals[builder.local_offset:]
                     mut receiver = model_place(
                         declarations,
-                        builder.locals[builder.local_offset:],
+                        frame_locals,
                         read.place,
                         span,
                         enums,
@@ -5368,6 +5378,7 @@ pub def call_argument_operand(
     match ty:
         PlanType.ModelRef(_owner, _name) => return shared_nominal_argument(builder, value, ty, span)
         PlanType.EnumRef(_owner, _name) => return shared_nominal_argument(builder, value, ty, span)
+        PlanType.TupleRef(_elements) => return shared_nominal_argument(builder, value, ty, span)
         PlanType.StringMutRef => return mutable_argument(builder, value, ty, span)
         PlanType.ModelMutRef(_owner, _name) => return mutable_argument(builder, value, ty, span)
         PlanType.EnumMutRef(_owner, _name) => return mutable_argument(builder, value, ty, span)
@@ -5404,6 +5415,9 @@ def shared_nominal_argument(
                     return Ok(read_place(reference, false, span))
                 _ => pass
             match source:
+                PlanType.Tuple(elements) =>
+                    if ty != PlanType.TupleRef(elements):
+                        return Err("unsupported Body IR shared tuple owner mismatch")
                 PlanType.Model(owner, name) =>
                     if ty != PlanType.ModelRef(owner, name):
                         return Err(f"unsupported Body IR shared receiver owner mismatch: {source:?} requires {ty:?} in {builder.name} at {span.file}:{span.line}")
@@ -7868,6 +7882,12 @@ def lower_instances(
 ) -> Result[None, str]:
     """Drain checked wrapper and original instance requests under their declaring module's source provenance."""
     mut completed: list[Instance] = []
+    mut governed_runtime = false
+    for index in range(len(owners)):
+        if owners[index].startswith("pub::incan_native_runtime::"):
+            governed_runtime = true
+    if governed_runtime:
+        retain_runtime_instances(module, functions, externals, instances)?
     mut cursor = 0
     while cursor < len(instances):
         mut instance = instances[cursor]
@@ -7914,6 +7934,8 @@ def lower_instances(
         completed.append(instance)
         _ = merge_externals(externals, runtime)?
         instances.extend(pending)
+        if governed_runtime:
+            retain_runtime_instances(module, functions, externals, instances)?
     return Ok(None)
 
 

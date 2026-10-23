@@ -126,6 +126,7 @@ def is_native_str(ty: &RustType) -> bool:
 pub def shared_receiver_type(ty: PlanType) -> Result[PlanType, str]:
     """Borrow the exact retained nominal, text, scalar or collection carrier through the ordinary parameter layout."""
     match ty:
+        PlanType.Tuple(elements) => return Ok(PlanType.TupleRef(elements))
         PlanType.StrRef => return Ok(PlanType.ScalarRef([ty]))
         PlanType.NativeArray(elements, length) => return Ok(PlanType.NativeArrayRef(elements, length))
         PlanType.NativeSlice(elements) => return Ok(PlanType.SliceRef(elements))

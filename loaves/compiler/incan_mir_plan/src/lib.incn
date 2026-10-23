@@ -108,7 +108,7 @@ pub enum PlanType:
     StringRef borrows an owned String, StringMutRef is the exclusive borrow a `mut str` parameter receives, and StrRef is a string literal's shared str view.
     ScalarRef and ScalarMutRef borrow exactly one numeric, Boolean, Decimal or frozen scalar carrier with explicit shared or exclusive intent; nested references and non-scalar referents are refused before native MIR construction.
     List stores its scalar or flat tuple leaf element and a positive nesting depth; ListRef and ListMutRef borrow that same Vec representation.
-    ModelRef and ModelMutRef retain shared and mutable nominal receiver references; ModelMutRef, EnumMutRef and TupleMutRef are also the exclusive borrow a `mut` parameter or an in-place loop item holds. TupleMutRef retains its referent's complete tuple layout.
+    ModelRef and ModelMutRef retain shared and mutable nominal receiver references; ModelMutRef, EnumMutRef and TupleMutRef are also the exclusive borrow a `mut` parameter or an in-place loop item holds. TupleRef and TupleMutRef retain the complete tuple layout with shared and exclusive access respectively.
     Decimal retains the legacy Decimal128 carrier; precision is checked upstream and the value keeps its written scale.
     FrozenStr retains the copyable frozen wrapper over static text; it owns no allocation and is distinct from String.
     FrozenBytes retains the copyable wrapper over a static byte slice, distinct from an owned byte list.
@@ -148,6 +148,7 @@ pub enum PlanType:
     CheckedInt
     Tuple(list[TupleElement])
     String
+    TupleRef(list[TupleElement])
     TupleMutRef(list[TupleElement])
     StringRef
     # Exactly one numeric, Bool, Decimal or frozen scalar referent; the shared borrow owns no storage.

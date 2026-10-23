@@ -1,12 +1,26 @@
-# behavior: a consumer builds a dependency's nominal values without importing the types behind them: a model built with an empty list, an empty dict and `None` for fields whose element types it never imports, one the package root republishes and one only its declaring module publishes, builds and runs (#1561); empty nominal lists, generic callable fields, generic serde derives and standard Serialize defaults retain their dependency-owned behavior (#2010, #2256); and a consumer implicitly constructs a validated dependency newtype without importing its name (#2008)
+# behavior: a consumer builds a dependency's nominal values without importing the types behind them: a model built with an empty list, an empty dict and `None` for fields whose element types it never imports, one the package root republishes and one only its declaring module publishes, builds and runs (#1561); empty nominal lists, generic callable fields, generic serde derives, standard Serialize defaults and owned clones through shared source and Rust trait bounds retain their dependency-owned behavior (#2010, #2256); and a consumer implicitly constructs a validated dependency newtype without importing its name (#2008)
 # expect-stdout:
 #   empty 0 0
 #   none
 #   0
+#   0
+#   1
+#   3 2
+#   2
+#   7
+#   a
+#   9
+#   9
+#   1
+#   answer
+#   text
+#   value
+#   shared
 #   6
 #   0.5
 
 from pub::nominals import Bundle, Callback, Card, apply_callback, fraction_of, serde_roundtrip, serialize_default
+from pub::nominals import empty_values, one_value, count_values, shared_copy, native_shared_copy
 
 
 def increment(value: int) -> int:
@@ -22,10 +36,46 @@ def show_empty_card_fields() -> None:
         None => println("none")
 
 
+def answer() -> str:
+    """Return a marker through the copied function pointer."""
+    return "answer"
+
+
 def show_empty_nominal_list() -> None:
     """Construct the list field while importing only its containing model."""
     bundle = Bundle(items=[])
     println(len(bundle.items))
+    println(len(empty_values[int]()))
+    println(count_values[int](one_value[int](7)))
+    source = [1, 2]
+    mut copied = source
+    copied.append(3)
+    println(f"{len(copied)} {len(source)}")
+    selected = copied[1]
+    println(shared_copy[int](selected))
+    pairs = [(7, "a")]
+    first, second = pairs[0]
+    println(first)
+    println(second)
+    mapping = {"answer": 9}
+    println(mapping["answer"])
+    match mapping.get("answer"):
+        Some(value) => println(value)
+        None => println(0)
+    callbacks = [answer]
+    println(len(callbacks))
+    selected_callback = callbacks[0]
+    println(selected_callback())
+    text_values = ["text"]
+    println(text_values[0])
+    text_mapping = {"key": "value"}
+    println(text_mapping["key"])
+    println(shared_copy[str]("shared"))
+    assert native_shared_copy[str]("shared") == "shared"
+    mut native_copy = native_shared_copy[list[int]](source)
+    native_copy.append(4)
+    assert len(native_copy) == 3
+    assert len(source) == 2
     callback: Callback[int] = Callback(f=increment)
     println(apply_callback(callback, 5))
     assert serde_roundtrip()

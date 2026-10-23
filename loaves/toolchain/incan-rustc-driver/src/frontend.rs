@@ -78,6 +78,50 @@ struct CheckedProgram {
     tests: Vec<crate::test_unit::CollectedTest>,
 }
 
+/// Carry checker-selected native nominal identities into governed source bodies before publication drops held layouts.
+/// Consumers recover the layouts through the ordinary held-Rust-items boundary; publication retains only used
+/// identities.
+fn retain_native_type_identities(modules: &mut [BodyIrModule], native: &[BodyIrModule]) {
+    let identities = native
+        .iter()
+        .flat_map(|module| &module.nominal_declarations)
+        .filter(|declaration| matches!(declaration.canonical.origin, SymbolOrigin::RustCrate(_)))
+        .map(|declaration| (declaration.name.clone(), declaration.canonical.clone()))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for module in modules {
+        for body in &mut module.bodies {
+            for (name, identity) in &identities {
+                body.named_type_identities
+                    .entry(name.clone())
+                    .or_insert_with(|| identity.clone());
+            }
+        }
+    }
+}
+
+/// Retain the published runtime facade's canonical declarations for calls introduced by native lowering.
+/// A bootstrap Rust runtime has no Loaf entry and contributes no governed bodies. A native runtime enters through the
+/// ordinary artifact index; its checked public identities select the same body records as source imports.
+fn runtime_declarations(session: &CompilationSession) -> Vec<CanonicalSymbolId> {
+    let Some(manifest) = session.loaves().manifest("incan_native_runtime") else {
+        return Vec::new();
+    };
+    manifest
+        .contract_metadata
+        .identity_graph
+        .exports
+        .iter()
+        .filter(|export| export.public_path.len() == 2)
+        .filter(|export| {
+            manifest.exports.functions.iter().any(|function| {
+                function.name == export.public_name && !function.type_params.is_empty()
+            })
+        })
+        .filter_map(|export| export.canonical.as_ref()?.hydrate())
+        .filter(|identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library == "incan_native_runtime"))
+        .collect()
+}
+
 /// Collect and analyze the described unit's source through its compilation session, retaining canonical checked facts.
 ///
 /// Native-only declaration refusals follow analysis; desugaring and the Loaves the program imports from are owned by
@@ -139,7 +183,10 @@ fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup) -> Result<Chec
     .ok_or("unsupported Body IR string conversion contract identity")?;
 
     // ---- Declarations the program reaches in its Loaves ----
-    let requested = required_loaf_identities(&modules, &analysis, package_identity)?;
+    let mut requested = required_loaf_identities(&modules, &analysis, package_identity)?;
+    requested.extend(runtime_declarations(&session).into_iter().filter(
+        |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity),
+    ));
     let mut bodies = load_loaf_modules(session.loaves(), &requested)?;
     // Loaf declarations retain canonical spans but carry no source text. Do not attribute those spans to the entry.
     let mut files = bodies
@@ -348,6 +395,7 @@ fn complete_dependency_context(
             .collect(),
         native_enums,
     );
+    retain_native_type_identities(&mut program.modules, &held);
     let held_modules = held.len();
     program.files.splice(
         program.own..program.own,

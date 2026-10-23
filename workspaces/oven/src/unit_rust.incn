@@ -9,7 +9,7 @@ from loaf_local_graph import LocalDemand, local_facets, unique
 from rust_activation import DependencyDomain
 from rust_units import RustBuild, read_registry_units, target_configuration, build_dependencies, registry_features, rust_facet
 from toolchain import NativeCrate, Toolchain, load_toolchain, located, rust_compiler
-from unit import UnitDescription, describe
+from unit import UnitDescription, UnitLoaf, describe
 
 
 pub def describe_native(source: Path, profile: str, request: FeatureRequest) -> Result[UnitDescription, str]:
@@ -31,6 +31,10 @@ pub def prepare_native(described: UnitDescription, toolchain: Toolchain) -> Resu
     for native in toolchain.externs:
         if native.name not in [item.name for item in unit.externs]:
             unit.externs.append(native)
+        directory = Path(native.path).parent()
+        if native.name != unit.package and directory.joinpath(f"{native.name}.incnlib").is_file():
+            if native.name not in [loaf.name for loaf in unit.loaves]:
+                unit.loaves.append(UnitLoaf(key=native.name, name=native.name, dir=directory.0, standard=false))
     loaves = unit.loaves
     for loaf in loaves:
         linked = loaf.name.replace("-", "_")

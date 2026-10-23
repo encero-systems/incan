@@ -205,6 +205,11 @@ pub def tuple_fields(value: Place, ty: PlanType, span: SourceSpan) -> Result[lis
     mut owner = value
     mut layout = ty
     match ty:
+        PlanType.TupleRef(elements) =>
+            layout = PlanType.Tuple(elements)
+            if value.projection != Projection.Whole:
+                return Err("unsupported Body IR projected tuple reference")
+            owner = Place(local=value.local, projection=Projection.Deref(layout), span=span)
         PlanType.TupleMutRef(elements) =>
             layout = PlanType.Tuple(elements)
             if value.projection != Projection.Whole:

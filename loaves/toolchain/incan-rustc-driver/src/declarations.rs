@@ -147,6 +147,13 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
                 .map(|element| ty(&tuple_element_type(element.clone()), span))
                 .collect(),
         ),
+        PlanType::TupleRef(elements) => ast::TyKind::Ref(
+            None,
+            ast::MutTy {
+                ty: ty(&PlanType::Tuple(elements.clone()), span),
+                mutbl: ast::Mutability::Not,
+            },
+        ),
         PlanType::TupleMutRef(elements) => ast::TyKind::Ref(
             None,
             ast::MutTy {

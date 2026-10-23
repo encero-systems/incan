@@ -82,6 +82,8 @@ enum Scalar {
     EnumMutRef(i64),
     CheckedInt,
     Tuple(Vec<Scalar>),
+    /// A shared reference keeps every tuple field's layout and owns none of its values.
+    TupleRef(Vec<Scalar>),
     TupleMutRef(Vec<Scalar>),
     String,
     StringRef,
@@ -245,6 +247,12 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::RangeValue => Scalar::RangeValue,
         PlanType::CallableArguments(inputs) => Scalar::Tuple(inputs.iter().map(scalar).collect()),
         PlanType::Tuple(elements) => Scalar::Tuple(
+            elements
+                .iter()
+                .map(|element| scalar(&tuple_element_type(element.clone())))
+                .collect(),
+        ),
+        PlanType::TupleRef(elements) => Scalar::TupleRef(
             elements
                 .iter()
                 .map(|element| scalar(&tuple_element_type(element.clone())))
@@ -542,6 +550,7 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
             span(&statement.span)?;
             match &statement.kind {
                 StatementKind::Assign(destination, value) => {
+                    writable_tuple_place(function, destination)?;
                     span(&value.span)?;
                     let expected = place(plan, function, destination)?;
                     let result = rvalue(plan, function, &value.kind, expected.clone())?;
@@ -651,9 +660,22 @@ fn local(function: &Function, index: i64) -> Result<Scalar, PlanError> {
         })
 }
 
-/// Recover a field path's owned shape from a shared or exclusive nominal reference or an exclusive tuple reference;
-/// non-dereferenced roots keep their retained shape. Shared enum receivers permit payload reads; mutable reborrows
-/// remain guarded by `borrow_result`.
+/// Reject assignments and call results that would write through a shared tuple reference.
+///
+/// Replacing a whole reference slot is distinct from changing its referent; projections preserve the shared root's
+/// read-only capability even after their pointee type has been recovered.
+fn writable_tuple_place(function: &Function, destination: &Place) -> Result<(), PlanError> {
+    if !matches!(destination.projection, Projection::Whole)
+        && matches!(local(function, destination.local)?, Scalar::TupleRef(_))
+    {
+        return Err(invalid(function, "cannot write through a shared tuple reference"));
+    }
+    Ok(())
+}
+
+/// Recover a field path's owned shape from a shared or exclusive nominal or tuple reference; non-dereferenced roots
+/// keep their retained shape. Shared enum and tuple receivers permit reads; mutable reborrows remain guarded by
+/// `borrow_result`.
 fn field_owner(function: &Function, ty: Scalar, dereference: bool) -> Result<Scalar, PlanError> {
     if !dereference {
         return Ok(ty);
@@ -661,7 +683,7 @@ fn field_owner(function: &Function, ty: Scalar, dereference: bool) -> Result<Sca
     match ty {
         Scalar::ModelRef(owner) | Scalar::ModelMutRef(owner) => Ok(Scalar::Model(owner)),
         Scalar::EnumRef(owner) | Scalar::EnumMutRef(owner) => Ok(Scalar::Enum(owner)),
-        Scalar::TupleMutRef(elements) => Ok(Scalar::Tuple(elements)),
+        Scalar::TupleRef(elements) | Scalar::TupleMutRef(elements) => Ok(Scalar::Tuple(elements)),
         _ => Err(invalid(
             function,
             "field dereference requires a nominal receiver reference",
@@ -774,7 +796,7 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
                 Scalar::ListIntoIterMutRef(leaf, depth) => Scalar::ListIntoIter(leaf, depth),
                 Scalar::StringRef | Scalar::StringMutRef => Scalar::String,
                 Scalar::EnumMutRef(owner) => Scalar::Enum(owner),
-                Scalar::TupleMutRef(elements) => Scalar::Tuple(elements),
+                Scalar::TupleRef(elements) | Scalar::TupleMutRef(elements) => Scalar::Tuple(elements),
                 Scalar::ListRef(leaf, depth) | Scalar::ListMutRef(leaf, depth) => Scalar::List(leaf, depth),
                 Scalar::SetRef(leaf) | Scalar::SetMutRef(leaf) => Scalar::Set(leaf),
                 Scalar::DictRef(key, value) | Scalar::DictMutRef(key, value) => Scalar::Dict(key, value),
@@ -1267,6 +1289,7 @@ fn borrow_result(plan: &Plan, function: &Function, value: &Place, mutable: bool)
     }
     match ty {
         Scalar::ZipIterator(left, right) => Ok(Scalar::ZipIteratorRef(left, right)),
+        Scalar::Tuple(elements) => Ok(Scalar::TupleRef(elements)),
         Scalar::GeneratorYield(leaf, depth) => Ok(Scalar::GeneratorYieldRef(leaf, depth)),
         Scalar::Enum(index) => Ok(Scalar::EnumRef(index)),
         Scalar::Model(index) => Ok(Scalar::ModelRef(index)),
@@ -1291,6 +1314,7 @@ fn shared_reference(ty: &Scalar) -> bool {
         ty,
         Scalar::StringRef
             | Scalar::NativeArrayRef(_, _)
+            | Scalar::TupleRef(_)
             | Scalar::SliceRef(_)
             | Scalar::ScalarRef(_)
             | Scalar::FrozenCollectionRef(_, _)
@@ -1342,7 +1366,7 @@ fn source_signature_type(ty: &Scalar) -> bool {
     if let Scalar::Future(outputs) = ty {
         return matches!(outputs.as_slice(), [output] if source_signature_type(output));
     }
-    if let Scalar::TupleMutRef(elements) = ty {
+    if let Scalar::TupleRef(elements) | Scalar::TupleMutRef(elements) = ty {
         return source_signature_type(&Scalar::Tuple(elements.clone()));
     }
     if let Scalar::FunctionPointer(signature) = ty {
@@ -2066,6 +2090,7 @@ fn terminator(plan: &Plan, function: &Function, value: &TerminatorKind, cleanup:
             edge(function, *true_target, cleanup)
         }
         TerminatorKind::Call(callee, arguments, destination, target, action) => {
+            writable_tuple_place(function, destination)?;
             if matches!(callee.kind, CalleeKind::SpawnGenerator(..)) && !arguments.is_empty() {
                 validate_generator_constructor(function, arguments)?;
             }
@@ -2346,7 +2371,7 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
             validate_model_type(plan, &checked_list_leaf_type(key)?)?;
             validate_model_type(plan, &checked_list_leaf_type(value)?)?;
         }
-        PlanType::Tuple(elements) | PlanType::TupleMutRef(elements) => {
+        PlanType::Tuple(elements) | PlanType::TupleRef(elements) | PlanType::TupleMutRef(elements) => {
             for element in elements {
                 validate_model_type(plan, &tuple_element_type(element.clone()))?;
             }
@@ -3078,7 +3103,7 @@ fn borrowed_alias_in_source_type(plan: &Plan, ty: &PlanType, seen: &mut BTreeSet
                 checked_list_leaf_type(leaf).map_or(true, |element| borrowed_alias_in_source_type(plan, &element, seen))
             })
         }
-        PlanType::Tuple(elements) | PlanType::TupleMutRef(elements) => elements
+        PlanType::Tuple(elements) | PlanType::TupleRef(elements) | PlanType::TupleMutRef(elements) => elements
             .iter()
             .any(|element| borrowed_alias_in_source_type(plan, &tuple_element_type(element.clone()), seen)),
         PlanType::NativeSlice(elements)

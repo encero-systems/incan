@@ -91,7 +91,8 @@ pub def propagate_result(
 ) -> Result[None, str]:
     """Move the selected payload once; error returns drop every other initialized owner before returning."""
     _owner, input = result_layout(builder, frame_place_type(builder.locals, source))?
-    output_owner, output = result_layout(builder, builder.locals[0].ty)?
+    output_type = builder.locals[0].ty
+    output_owner, output = result_layout(builder, output_type)?
     if input.variants[1].fields != output.variants[1].fields:
         return Err("unsupported Body IR TryPropagate error conversion")
     failure = builder.new_block(span)

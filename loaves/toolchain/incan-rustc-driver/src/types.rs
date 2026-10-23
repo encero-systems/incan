@@ -130,6 +130,11 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
                 .map(|element| native_type(tcx, &tuple_element_type(element.clone())))
                 .collect::<Result<Vec<_>, _>>()?,
         ),
+        PlanType::TupleRef(elements) => Ty::new_imm_ref(
+            tcx,
+            tcx.lifetimes.re_erased,
+            native_type(tcx, &PlanType::Tuple(elements.clone()))?,
+        ),
         PlanType::TupleMutRef(elements) => Ty::new_mut_ref(
             tcx,
             tcx.lifetimes.re_erased,

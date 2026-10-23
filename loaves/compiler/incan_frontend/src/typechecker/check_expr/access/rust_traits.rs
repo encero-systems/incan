@@ -393,14 +393,13 @@ impl TypeChecker {
 
     /// Retain a qualified method on a source type parameter from its declared native trait bound. The bound fixes
     /// the trait arguments, while the active source instance later closes Self; no concrete impl is guessed here.
+    /// A shared argument identifies its referent as Self only when metadata proves a shared receiver.
     pub(super) fn retain_bound_rust_trait_call(
         &mut self,
         call: &RustTraitQualifiedCall<'_>,
         receiver: &Spanned<Expr>,
         source: &ResolvedType,
     ) -> Option<ResolvedType> {
-        let name = self.generic_placeholder_name(source)?;
-        let source = ResolvedType::TypeVar(name.to_owned());
         let original = call.trait_info.items.iter().find_map(|item| match item {
             RustTraitAssoc::Function { name, signature } if name == call.method => Some(signature),
             _ => None,
@@ -408,6 +407,18 @@ impl TypeChecker {
         if original.is_async || original.is_unsafe || !original.type_params.is_empty() || !call.type_args.is_empty() {
             return None;
         }
+        let owner = match source {
+            ResolvedType::Ref(inner)
+                if original.params.first().is_some_and(|parameter| {
+                    Self::rust_display_borrow_kind(&parameter.type_display).is_some_and(|(mutable, _)| !mutable)
+                }) =>
+            {
+                inner.as_ref()
+            }
+            other => other,
+        };
+        let name = self.generic_placeholder_name(owner)?;
+        let source = ResolvedType::TypeVar(name.to_owned());
         let mut selected = None;
         for frame in self.current_type_param_bound_details.iter().rev() {
             for bound in frame.get(name).into_iter().flatten() {

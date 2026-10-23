@@ -93,6 +93,16 @@ def clone_place(
     """Clone through the retained carrier and its owning implementation; compiled enums do not acquire local derives."""
     ty = place_type(builder.locals, source)
     match ty:
+        PlanType.StringRef =>
+            reference = temporary(builder, ty, span)
+            builder.emit(plan_assign(reference, RvalueKind.Use(read_place(source, false, span)), span))
+            referent = Place(local=reference.local, projection=Projection.Deref(PlanType.String), span=span)
+            return clone_string_into(builder, referent, destination, span)
+        PlanType.TupleRef(elements) =>
+            if source.projection != Projection.Whole:
+                return Err("unsupported Body IR Clone through a projected tuple reference")
+            referent = Place(local=source.local, projection=Projection.Deref(PlanType.Tuple(elements)), span=span)
+            return clone_builtin_place(builder, referent, destination, span)
         PlanType.ScalarRef(elements) =>
             if len(elements) == 1:
                 mut copyable = numeric_carrier(elements[0]) or elements[0] == PlanType.Bool or elements[0] == PlanType.Unit

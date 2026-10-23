@@ -2,46 +2,55 @@
 
 from std.derives.copying import Clone
 from rust::std::clone import Clone as RuntimeClone
+from rust::std::vec import Vec
+from rust::std::mem import replace
+from rust::std::cmp import PartialEq as RuntimeEq
 from rust::incan_std_core::collections import (
     list_concat as runtime_concat,
     list_contains as runtime_contains,
     list_count as runtime_count,
     list_index as runtime_index,
     list_get_mut as runtime_get_mut,
+    list_get as runtime_get,
+    list_extend as runtime_extend,
+    list_remove as runtime_remove,
+    list_swap as runtime_swap,
     list_repeat as runtime_repeat,
     list_slice as runtime_slice,
 )
+from rust::incan_std_core::collections::__private import list_pop as runtime_pop
 from std.derives.comparison import Eq, Ord
 
 
 pub def equal_list[T with Eq](left: &list[T], right: &list[T]) -> bool:
     """Compare elements through legacy's borrowed PartialEq without introducing Clone effects."""
-    return left == right
+    return RuntimeEq.eq(left, right)
 
 
 pub def unequal_list[T with Eq](left: &list[T], right: &list[T]) -> bool:
     """Retain the legacy borrowed collection inequality operation."""
-    return left != right
+    return not RuntimeEq.eq(left, right)
 
 
 pub def empty_list[T]() -> list[T]:
-    """Allocate an empty homogeneous list."""
-    return []
+    """Allocate list storage through Vec so a governed instance does not recursively invoke itself."""
+    return Vec.new()
 
 
-pub def append_list[T](mut values: list[T], value: T) -> None:
-    """Append one owned value to the caller's list."""
-    values.append(value)
+pub def append_list[T](values: &mut Vec[T], value: T) -> None:
+    """Append through Vec's primitive to the caller's list storage."""
+    Vec.push(values, value)
 
 
-pub def length_list[T](values: &list[T]) -> int:
-    """Read a list's length without consuming its binding."""
-    return len(values)
+pub def length_list[T](values: &Vec[T]) -> int:
+    """Read Vec's length without consuming its binding or reentering the list builtin."""
+    return int(values.len())
 
 
-pub def get_list[T with Clone](values: &list[T], index: int) -> T:
+pub def get_list[T with RuntimeClone](values: &list[T], index: int) -> T:
     """Read an element using Python indices and the legacy runtime errors."""
-    return values[index]
+    element: &T = runtime_get(values, index)
+    return RuntimeClone.clone(element)
 
 
 pub def borrow_list_mut[T](values: &mut list[T], index: int) -> &mut T:
@@ -49,9 +58,9 @@ pub def borrow_list_mut[T](values: &mut list[T], index: int) -> &mut T:
     return runtime_get_mut(values, index)
 
 
-pub def set_list[T](mut values: list[T], index: int, value: T) -> None:
+pub def set_list[T](values: &mut list[T], index: int, value: T) -> None:
     """Replace an element through a caller-owned mutable list borrow."""
-    values[index] = value
+    _ = replace(runtime_get_mut(values, index), value)
 
 
 pub def clone_list[T with Clone](values: &list[T]) -> list[T]:
@@ -77,25 +86,24 @@ pub def index_list[T with Eq](values: &list[T], value: T) -> int:
     return runtime_index(values, reference)
 
 
-pub def extend_list[T with Clone](mut values: list[T], other: &list[T]) -> None:
+pub def extend_list[T with Clone](values: &mut list[T], other: &list[T]) -> None:
     """Append a copy of the other list's elements without consuming it."""
-    for index in range(len(other)):
-        values.append(other[index])
+    runtime_extend(values, other)
 
 
-pub def pop_list[T](mut values: list[T]) -> T:
+pub def pop_list[T](values: &mut list[T]) -> T:
     """Remove the last element with the legacy empty-list error."""
-    return values.pop()
+    return runtime_pop(values)
 
 
-pub def remove_list[T](mut values: list[T], index: int) -> None:
+pub def remove_list[T](values: &mut list[T], index: int) -> None:
     """Remove one element using legacy Python-style index normalization."""
-    values.remove(index)
+    runtime_remove(values, index)
 
 
-pub def swap_list[T](mut values: list[T], left: int, right: int) -> None:
+pub def swap_list[T](values: &mut list[T], left: int, right: int) -> None:
     """Swap two elements with the legacy negative-index and bounds behavior."""
-    values.swap(left, right)
+    runtime_swap(values, left, right)
 
 
 pub def concat_list[T with Clone](left: &list[T], right: &list[T]) -> list[T]:
