@@ -1,9 +1,11 @@
 """The inspection CLI selects units and presents the compiler's single graph representation."""
 
+from rust::std::io import Write, stderr
+from rust::std::string import String as RustString
 from std.fs import Path
 from std.json import JsonValue, parse
 from features import FeatureRequest
-from graph_cache import GraphUnit, cache_file, compiler_digest, fingerprint, publish, read_graph
+from graph_cache import GraphUnit, cache_file, compiler_digest, fingerprint, publish, read_graph, stamp_file, unchecked_note, unchecked_refusal, unchecked_warning
 from graph_dependencies import prepare_graph, unit_natives, unit_loaves
 from graph_incan import inspect_incan
 from graph_loaves import registry_artifacts, registry_graphs, standard_graphs
@@ -22,17 +24,22 @@ pub model GraphOptions:
     pub query: str = ""
     pub term: str = ""
     pub limit: int = 20
+    pub strict: bool = false
     pub substitutes: Dict[str, str] = {}
 
 
 def options(arguments: list[str]) -> Result[GraphOptions, str]:
     """Validate the full invocation before any build or cache operation."""
     if len(arguments) == 0 or arguments[0] != "codegraph":
-        return Err("usage: incan inspect codegraph PATH [--format json|jsonl] [--query defs|refs|callers|callees|imports TERM] [--limit N]")
+        return Err("usage: incan inspect codegraph PATH [--format json|jsonl] [--query defs|refs|callers|callees|imports TERM] [--limit N] [--strict]")
     mut result = GraphOptions()
     mut index = 1
     while index < len(arguments):
         value = arguments[index]
+        if value == "--strict":
+            result.strict = true
+            index += 1
+            continue
         if value in ["--format", "--query", "--substitute", "--limit"]:
             if index + 1 >= len(arguments):
                 return Err(f"{value} needs a value")
@@ -101,37 +108,61 @@ pub def inspect_codegraph(arguments: list[str]) -> Result[i32, str]:
 
 
 def response(paths: list[GraphUnit], root: str, selected: GraphOptions, toolchain: Toolchain) -> Result[str, str]:
-    """Cache presentation by immutable unit graph paths and query arguments; a warm repeat decodes no graph records."""
+    """Cache presentation by immutable unit graph paths and query arguments; a warm repeat decodes no graph records.
+
+    Every unit that failed checking is named on stderr, one line each, before any answer; `--strict` refuses instead.
+    """
     if len(paths) == 0:
         return Err("no units selected for graph inspection")
+    notes = unchecked_notes(paths)?
+    if selected.strict and len(notes) > 0:
+        return Err("\n".join([unchecked_refusal(note) for note in notes]))
+    for note in notes:
+        warn(unchecked_warning(note))
     mut owner = Path(root)
     if owner.is_file():
         owner = owner.parent()
-    mut inputs = ["incan.codegraph.presentation/6", root, selected.format, selected.query, selected.term, str(selected.limit)]
+    mut inputs = ["incan.codegraph.presentation/7", root, selected.format, selected.query, selected.term, str(selected.limit), str(selected.strict)]
     if selected.query == "imports":
         inputs.append("nonempty-import-labels/1")
     for unit in paths:
-        inputs = inputs + [unit.path.0, unit.root.0, unit.package, unit.version, compiler_digest(owner, unit.path.0)?]
+        inputs = inputs + [unit.path.0, unit.root.0, unit.package, unit.version, compiler_digest(owner, stamp_file(unit).0)?]
     digest = fingerprint(inputs)?
     cached = Path(f"{cache_file(owner, digest)?.0}.answer")
     if cached.is_file():
         return cached.read_text("utf-8", "strict").map_err((error) => error.message())
     mut rendered = ""
     if selected.query != "":
-        records = read_records(paths, root, toolchain, query_group(selected.query))?
+        records = read_records(paths, root, toolchain, query_group(selected.query), selected.strict, len(notes) > 0)?
         hits = query(records, selected.query, selected.term, anchor_root(Path(root)).0)
         mut lines = hits[:selected.limit]
         if len(hits) > selected.limit:
             lines.append(f"… {len(hits) - selected.limit} more")
         rendered = "\n".join(lines)
     else:
-        records = read_records(paths, root, toolchain, "")?
+        records = read_records(paths, root, toolchain, "", selected.strict, len(notes) > 0)?
         if selected.format == "json":
             rendered = JsonValue.array(records).to_json().map_err((error) => error.message())?
         else:
             rendered = "\n".join([record.to_json().map_err((error) => error.message())? for record in records])
     publish(cached, rendered)?
     return Ok(rendered)
+
+
+def unchecked_notes(paths: list[GraphUnit]) -> Result[list[str], str]:
+    """The notes of the selected units whose facts are not all checked, one per distinct unit."""
+    mut notes: list[str] = []
+    for unit in paths:
+        note = unchecked_note(unit.path)?
+        if note != "" and note not in notes:
+            notes.append(note)
+    return Ok(notes)
+
+
+def warn(message: str) -> None:
+    """Print one warning line to stderr; the answer itself stays on stdout."""
+    mut err = stderr()
+    _ = err.write_all(RustString.from(f"{message}\n").into_bytes())
 
 
 def anchor_root(path: Path) -> Path:
@@ -171,8 +202,11 @@ def inspect_source(source: Path, toolchain: Toolchain, substitutes: Dict[str, st
             return Err("inspection selected no source unit")
 
 
-def read_records(paths: list[GraphUnit], root: str, toolchain: Toolchain, group: str) -> Result[list[JsonValue], str]:
-    """Merge unit documents deterministically, retaining one header and one instance of each identified fact."""
+def read_records(paths: list[GraphUnit], root: str, toolchain: Toolchain, group: str, strict: bool, degraded: bool) -> Result[list[JsonValue], str]:
+    """Merge unit documents deterministically, retaining one header and one instance of each identified fact.
+
+    The header states the requested mode and whether any selected unit is unchecked, whichever unit's header was kept.
+    """
     mut records: list[JsonValue] = []
     mut seen: Dict[str, bool] = {}
     mut header: Dict[str, JsonValue] = {}
@@ -210,6 +244,10 @@ def read_records(paths: list[GraphUnit], root: str, toolchain: Toolchain, group:
             seen[key] = true
             records.append(record)
     header["root_path"] = JsonValue.string(root)
+    header["mode"] = JsonValue.string("allow_errors")
+    if strict:
+        header["mode"] = JsonValue.string("strict")
+    header["degraded"] = JsonValue.bool(degraded)
     header["languages"] = JsonValue.array([JsonValue.string(name) for name in sorted(languages)])
     header["semantic_contexts"] = JsonValue.array(contexts)
     return Ok([JsonValue.object(header)] + records)

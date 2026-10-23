@@ -22,8 +22,65 @@ pub model GraphUnit:
     pub version: str = ""
 
 
+pub def unchecked_marker(graph: Path) -> Path:
+    """The note beside a unit's graph entry when its facts are not all checked; checked and published graphs have none."""
+    return Path(f"{graph.0}.unchecked")
+
+
+pub def is_unchecked(graph: Path) -> bool:
+    """Whether the unit behind this graph entry failed checking, so it publishes no interface and no checked facts."""
+    return unchecked_marker(graph).is_file()
+
+
+pub def unchecked_note(graph: Path) -> Result[str, str]:
+    """Read why a unit is unchecked: its name, what it still contributes, a summary and one line per diagnostic."""
+    marker = unchecked_marker(graph)
+    if not marker.is_file():
+        return Ok("")
+    return marker.read_text("utf-8", "strict").map_err((error) => error.message())
+
+
+pub def publish_unchecked(graph: Path, name: str, consequence: str, reason: str) -> Result[None, str]:
+    """Record an unchecked unit beside its entry, before the entry itself, so no reader sees an unmarked entry."""
+    return publish(unchecked_marker(graph), f"{name}\n{consequence}\n{reason}")
+
+
+def note_line(note: str, index: int) -> str:
+    """One line of an unchecked note, empty when the note has fewer lines."""
+    lines = note.split("\n")
+    if index >= len(lines):
+        return ""
+    return lines[index]
+
+
+pub def unchecked_warning(note: str) -> str:
+    """The single warning line a query prints for an unchecked unit: its name, consequence, summary and first diagnostic."""
+    mut first = note_line(note, 3)
+    if first.startswith("- "):
+        first = first[2:]
+    mut detail = note_line(note, 2)
+    if first != "":
+        detail = f"{detail}; first {first}"
+    return f"warning: {note_line(note, 0)} is unchecked, {note_line(note, 1)} ({detail})"
+
+
+pub def unchecked_refusal(note: str) -> str:
+    """Strict export names the unit and lists every diagnostic the unit's check produced."""
+    details = note.split("\n")[2:]
+    return f"codegraph export failed because {note_line(note, 0)} is unchecked\n" + "\n".join(details)
+
+
+pub def stamp_file(unit: GraphUnit) -> Path:
+    """The file that identifies a unit's facts: its graph, or the note of a unit that produced none."""
+    if unit.path.is_file():
+        return unit.path
+    return unchecked_marker(unit.path)
+
+
 pub def read_graph(unit: GraphUnit, driver: str, group: str) -> Result[str, str]:
     """Decode indexed binary records for query output; only the storage reader runs, without checking or code generation."""
+    if not unit.path.is_file() and is_unchecked(unit.path):
+        return Ok("")
     mut command = Command.new(driver)
     command.env_remove("RUSTC_BOOTSTRAP")
     for argument in ["--read-codegraph", unit.path.0, unit.root.0, group]:

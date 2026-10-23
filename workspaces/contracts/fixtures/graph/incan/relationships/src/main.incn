@@ -1,4 +1,4 @@
-# behavior: Graph queries expose Incan relationships across checked package interfaces and declared Rust types without compiling Incan libraries.
+# behavior: Graph queries expose Incan relationships across checked package interfaces and declared Rust types without compiling Incan libraries. A unit that fails checking is named by one warning and contributes only unchecked facts, and --strict refuses it.
 # graph-commands:
 #   src/main.incn --query defs helper
 #   src/main.incn --query callers helper

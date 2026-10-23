@@ -87,12 +87,43 @@ def check_documents(incan: str, project: Path) -> Result[list[str], str]:
     if declaration_identities(original)? != declaration_identities(moved)?:
         failures.append("line movement changed a declaration identity")
     source.write_text("this is invalid in both languages {", "utf-8", "strict", None).map_err((error) => error.message())?
-    invalid = invoke(incan, ["inspect", "codegraph", "."], project)?
-    if invalid.code == Some(0):
-        failures.append("broken source reused a checked cached graph")
+    invalid = invoke(incan, ["inspect", "codegraph", ".", "--format", "json"], project)?
+    refused = invoke(incan, ["inspect", "codegraph", ".", "--strict"], project)?
     source.write_text(before, "utf-8", "strict", None).map_err((error) => error.message())?
+    if refused.code == Some(0):
+        failures.append("strict export of broken source reused a checked cached graph")
+    if invalid.code != Some(0) or "is unchecked" not in invalid.stderr or invalid.stdout.strip() == original.strip():
+        failures.append(f"broken source was not exported as an unchecked unit with a warning: {invalid.stderr}")
+    check_tolerant_export(incan, project)?
     check_published_graph(incan, project)?
     return Ok(failures)
+
+
+def check_tolerant_export(incan: str, project: Path) -> Result[None, str]:
+    """A unit that fails checking is named in one warning and contributes only unchecked facts, never costing the others."""
+    source = project.joinpath("context").joinpath("src").joinpath("lib.incn")
+    if not source.is_file():
+        return Ok(None)
+    before = source.read_text("utf-8", "strict").map_err((error) => error.message())?
+    source.write_text(before + "\n\npub def refused() -> int:\n    return \"not an int\"\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    query = ["inspect", "codegraph", ".", "--query", "defs"]
+    sibling = invoke(incan, query + ["checked_helper"], project)?
+    broken = invoke(incan, query + ["contextual_helper"], project)?
+    repeated = invoke(incan, query + ["contextual_helper"], project)?
+    strict = invoke(incan, query + ["contextual_helper", "--strict"], project)?
+    source.write_text(before, "utf-8", "strict", None).map_err((error) => error.message())?
+    warnings = [line for line in sibling.stderr.split("\n") if line.startswith("warning:")]
+    if sibling.code != Some(0) or "graph_checked::main::checked_helper" not in sibling.stdout or "(unchecked)" in sibling.stdout:
+        return Err(f"a failing sibling unit changed a checked answer: {sibling.stderr}")
+    if len(warnings) != 1 or "graph_context is unchecked" not in warnings[0]:
+        return Err(f"a failing unit was not named by exactly one warning line: {sibling.stderr}")
+    if broken.code != Some(0) or "contextual_helper" not in broken.stdout or "(unchecked)" not in broken.stdout:
+        return Err(f"an unchecked unit's parseable facts were not marked: {broken.stdout}{broken.stderr}")
+    if repeated.stdout != broken.stdout or repeated.stderr != broken.stderr or repeated.code != broken.code:
+        return Err("a warm query dropped or changed the unchecked warning")
+    if strict.code == Some(0) or "graph_context" not in strict.stderr:
+        return Err(f"strict export accepted a unit that fails checking: {strict.stderr}")
+    return Ok(None)
 
 
 def check_identity_queries(incan: str, project: Path, document: str) -> Result[None, str]:

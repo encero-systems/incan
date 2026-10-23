@@ -3,14 +3,19 @@
 from rust::std::process import id
 from std.fs import Path
 from features import FeatureRequest
-from graph_cache import cache_file, compiler_digest, fingerprint, publish, publish_binary, tree_inputs
+from graph_cache import cache_file, compiler_digest, fingerprint, is_unchecked, publish, publish_binary, publish_unchecked, tree_inputs
 from incan_units import crate_name, run_compiler, write_unit
 from toolchain import NativeCrate, Toolchain
 from unit import UnitLoaf, describe
 
 
 pub def inspect_incan(source: Path, toolchain: Toolchain, built: Dict[str, NativeCrate] = {}, interfaces: Dict[str, Path] = {}, features: list[str] = [], defaults: bool = true, source_loaves: list[UnitLoaf] = [], owner: Option[Path] = None) -> Result[Path, str]:
-    """Export one checked unit; dependency interfaces stay in the inspection cache and never claim native artifacts."""
+    """Export one unit, checked or not, once per digest; dependency interfaces stay in the inspection cache and never claim native artifacts.
+
+    A unit that fails checking is not an error here: its parseable facts are cached with a note naming its diagnostics, and it
+    publishes no interface. A unit the compiler refuses to export is cached as a note alone, contributing no facts. Only an
+    abnormal compiler exit fails, and nothing is cached for it.
+    """
     entry_source = source.resolve().map_err((error) => error.message())?
     mut unit = describe(entry_source, "debug", FeatureRequest(features=features, default_features=defaults))?
     if source.name() == "lib.incn":
@@ -36,7 +41,7 @@ pub def inspect_incan(source: Path, toolchain: Toolchain, built: Dict[str, Nativ
     mut cache_root = project
     if let Some(selected) = owner:
         cache_root = selected
-    mut inputs = ["incan.codegraph.incan/3", compiler_digest(cache_root, toolchain.driver)?, toolchain.sysroot, ready.to_json().to_json().map_err((error) => error.message())?]
+    mut inputs = ["incan.codegraph.incan/4", compiler_digest(cache_root, toolchain.driver)?, toolchain.sysroot, ready.to_json().to_json().map_err((error) => error.message())?]
     for native in ready.externs:
         inputs = inputs + [native.name, native.path, compiler_digest(cache_root, native.path)?]
     for abi in toolchain.rust_abi:
@@ -47,7 +52,7 @@ pub def inspect_incan(source: Path, toolchain: Toolchain, built: Dict[str, Nativ
     entry = cache_file(cache_root, fingerprint(inputs)?)?
     directory = interface_directory(entry)
     interface = directory.joinpath(f"{unit.package}.incnlib")
-    if entry.is_file() and (ready.kind != "library" or interface.is_file()):
+    if is_unchecked(entry) or (entry.is_file() and (ready.kind != "library" or interface.is_file())):
         return Ok(entry)
     description = write_unit(ready, crate_name(ready), Some(cache_root))?
     output = Path(f"{entry.0}.{id()}.analysis")
@@ -58,13 +63,23 @@ pub def inspect_incan(source: Path, toolchain: Toolchain, built: Dict[str, Nativ
         arguments.append(pending.0)
     if run_compiler(toolchain, arguments)? != 0:
         return Err(f"Incan graph export failed for {unit.package}")
-    document = output.read_bytes().map_err((error) => error.message())?
-    if ready.kind == "library":
+    note = Path(f"{output.0}.unchecked")
+    if note.is_file():
+        reason = note.read_text("utf-8", "strict").map_err((error) => error.message())?
+        mut consequence = "contributing no facts"
+        if output.is_file():
+            consequence = "using its parseable facts only"
+        publish_unchecked(entry, unit.package, consequence, reason)?
+        note.unlink().map_err((error) => error.message())?
+    elif ready.kind == "library":
         content = pending.read_text("utf-8", "strict").map_err((error) => error.message())?
         publish(interface, content)?
         pending.unlink().map_err((error) => error.message())?
-    publish_binary(entry, document)?
-    output.unlink().map_err((error) => error.message())?
+    if output.is_file():
+        publish_binary(entry, output.read_bytes().map_err((error) => error.message())?)?
+        output.unlink().map_err((error) => error.message())?
+    elif not is_unchecked(entry):
+        return Err(f"Incan graph export produced no graph for {unit.package}")
     return Ok(entry)
 
 

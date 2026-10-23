@@ -1,4 +1,4 @@
-# behavior: Rust definitions, grouped imports without blank hits, aliases, receiver-resolved methods and direct and indirect calls are inspected without running the program.
+# behavior: Rust definitions, grouped imports without blank hits, aliases, receiver-resolved methods and direct and indirect calls are inspected without running the program. Broken Rust source is named by one warning and contributes no facts, and --strict refuses it.
 # graph-commands:
 #   . --query defs helper
 #   . --query callers helper

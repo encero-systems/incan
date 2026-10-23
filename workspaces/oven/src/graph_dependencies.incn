@@ -5,7 +5,7 @@ from std import toml
 from std.json import JsonValue, parse
 from std.toml import TomlValue
 from features import FeatureRequest
-from graph_cache import GraphUnit, cache_file, compiler_digest, fingerprint, publish, tree_inputs
+from graph_cache import GraphUnit, cache_file, compiler_digest, fingerprint, is_unchecked, publish, tree_inputs
 from graph_incan import inspect_incan, interface_directory
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
 from rust_activation import DependencyDomain
@@ -24,6 +24,15 @@ pub model GraphDependencies:
     pub built: Dict[str, BuiltUnit]
     pub paths: list[GraphUnit]
     pub interfaces: Dict[str, Path]
+    # Directories of every library Oven's last build compiled, which an installed native artifact may link.
+    pub closure: list[str]
+
+
+def native_closure(root: Path, request: RustBuild) -> Result[list[str], str]:
+    """Name the libraries of Oven's last successful build, so rustc finds the crates a recorded native artifact links."""
+    receipt = root.joinpath("target").joinpath("incan").joinpath("rust").joinpath(request.profile).joinpath("units.json")
+    previous = libraries(receipt)?
+    return Ok([previous[name].directory for name in sorted([key for key in previous.keys()])])
 
 
 def libraries(path: Path, keyed: bool = false) -> Result[Dict[str, BuiltUnit], str]:
@@ -101,7 +110,7 @@ pub def prepare_graph(root: Path, profile: str, features: FeatureRequest, substi
                 project = root.joinpath(source).resolve().map_err((error) => error.message())?
                 additional = prepare_graph(project, profile, FeatureRequest(), {}, toolchain, ancestors + [root.0])?
                 paths = paths + additional.paths
-    return Ok(GraphDependencies(facets=facets, request=request, built=built, paths=paths, interfaces=interfaces))
+    return Ok(GraphDependencies(facets=facets, request=request, built=built, paths=paths, interfaces=interfaces, closure=native_closure(root, request)?))
 
 
 def build_native_units(root: Path, facets: list[LocalFacet], request: RustBuild, toolchain: Toolchain, previous: Dict[str, BuiltUnit]) -> Result[Dict[str, BuiltUnit], str]:
@@ -197,7 +206,10 @@ def compiled_directory(project: str, package: str, request: RustBuild, built: Di
 
 
 def checked_units(facets: list[LocalFacet], built: Dict[str, BuiltUnit], request: RustBuild, toolchain: Toolchain, inspect_root: bool) -> Result[Tuple[list[GraphUnit], Dict[str, Path]], str]:
-    """Read dependency publications, checking legacy and own Incan units after their dependencies for usable interfaces."""
+    """Read dependency publications, checking legacy and own Incan units after their dependencies for usable interfaces.
+
+    A unit that fails checking publishes no interface; its dependents check without it and report their own diagnostics.
+    """
     mut paths: list[GraphUnit] = []
     mut interfaces: Dict[str, Path] = {}
     for facet in facets:
@@ -216,6 +228,7 @@ def checked_units(facets: list[LocalFacet], built: Dict[str, BuiltUnit], request
             continue
         natives = unit_natives(facet, built, request)?
         path = inspect_incan(source, toolchain, natives, interfaces, facet.features, false, unit_loaves(facet, interfaces)?)?
-        interfaces[package] = interface_directory(path)
+        if not is_unchecked(path):
+            interfaces[package] = interface_directory(path)
         paths.append(GraphUnit(path=path, root=Path(facet.project), package=package, version=declared.version))
     return Ok((paths, interfaces))

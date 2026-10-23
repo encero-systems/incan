@@ -89,6 +89,16 @@ pub def display(value: JsonValue) -> str:
     return "::".join(segments)
 
 
+def unchecked(value: JsonValue) -> str:
+    """Mark a fact recovered from a unit that failed checking, so a hit is never read as a checked relationship."""
+    match nested(value, "degraded").as_bool():
+        Some(flag) =>
+            if flag:
+                return " (unchecked)"
+        None => pass
+    return ""
+
+
 def location(value: JsonValue, root: str) -> str:
     """A source anchor remains separate from the durable declaration identity."""
     source = nested(value, "span")
@@ -153,7 +163,7 @@ pub def query(records: list[JsonValue], kind: str, term: str, root: str) -> list
     if kind != "defs" and len(selected) > 1:
         for identifier in selected:
             record = by_id[identifier]
-            hits.append(f"declaration {display(record)} {location(record, root)}")
+            hits.append(f"declaration {display(record)} {location(record, root)}{unchecked(record)}")
     for record in records:
         record_kind = text(record, "record")
         if kind == "defs" and record_kind != "declaration":
@@ -179,7 +189,7 @@ pub def query(records: list[JsonValue], kind: str, term: str, root: str) -> list
             label = text(record, "path")
             if hit:
                 for name in import_labels(record):
-                    line = f"import {name} {location(record, root)}"
+                    line = f"import {name} {location(record, root)}{unchecked(record)}"
                     if line not in hits:
                         hits.append(line)
                 continue
@@ -198,7 +208,7 @@ pub def query(records: list[JsonValue], kind: str, term: str, root: str) -> list
             elif label == "":
                 label = text(record, "callee")
         if hit:
-            line = f"{record_kind} {label} {location(record, root)}"
+            line = f"{record_kind} {label} {location(record, root)}{unchecked(record)}"
             if line not in hits:
                 hits.append(line)
     return sorted(hits)

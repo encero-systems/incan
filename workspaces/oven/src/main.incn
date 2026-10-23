@@ -7,7 +7,7 @@
     incan describe-unit PATH [UNIT OPTIONS]
     incan build PATH [--substitute NAME=DIR] [UNIT OPTIONS]
     incan fmt [--check] PATH...
-    incan inspect codegraph PATH [--format json|jsonl] [--query KIND TERM] [--limit N]
+    incan inspect codegraph PATH [--format json|jsonl] [--query KIND TERM] [--limit N] [--strict]
     incan --version
 
 UNIT OPTIONS are `--profile NAME`, `--features A,B`, `--no-default-features` and `--all-features`.
