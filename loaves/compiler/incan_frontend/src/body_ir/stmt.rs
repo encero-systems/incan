@@ -1029,6 +1029,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// on the `Break` statement itself, matching [`bir::StatementKind::Break`]'s documented default. The innermost
     /// context comes from [`Self::loop_break_targets`], which every loop-lowering path pushes/pops around its own
     /// body so a `break` always targets the loop it is lexically inside, never an outer one.
+    /// The exited loop cannot repeat its value read, so that loop's ownership scope is suspended while the value is
+    /// evaluated. Enclosing loops and new loops within the value still protect their own repeated reads.
     pub(super) fn lower_break(
         &mut self,
         value: Option<&ast::Spanned<ast::Expr>>,
@@ -1037,10 +1039,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) {
         let target = self.loop_break_targets.last().copied().flatten();
-        match (value, target) {
-            (Some(expr), Some(result_local)) => {
-                let destination = self.locals[result_local.index()].ty.clone();
-                let operand = self.lower_boundary_value(expr, Some(&destination), scope, out);
+        let destination = target.map(|local| self.locals[local.index()].ty.clone());
+        let exited_loop = self.loop_scopes.pop();
+        let operand = value.map(|expr| self.lower_boundary_value(expr, destination.as_ref(), scope, out));
+        self.loop_scopes.extend(exited_loop);
+        match (operand, target) {
+            (Some(operand), Some(result_local)) => {
                 out.push(bir::Statement {
                     kind: bir::StatementKind::Assign {
                         place: bir::Place::from_local(result_local),
@@ -1053,8 +1057,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     span,
                 });
             }
-            _ => {
-                let operand = value.map(|v| self.lower_boundary_value(v, None, scope, out));
+            (operand, _) => {
                 out.push(bir::Statement {
                     kind: bir::StatementKind::Break { value: operand },
                     span,
