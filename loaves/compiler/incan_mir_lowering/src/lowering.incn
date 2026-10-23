@@ -6656,7 +6656,7 @@ def lower_text_helper(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Bind the retained string-helper identity to shared operands and its monomorphic runtime entry."""
+    """Bind the retained string-helper identity to shared operands and transfer its owned text or list result."""
     arity = text_helper_arity(name)
     if len(arguments) != arity:
         return Err("invalid Body IR string helper arity")
@@ -6675,8 +6675,9 @@ def lower_text_helper(
             output = scalar_place(builder, place, span)?
             forget_owned(builder, text.local)
             drop_owned(builder, output.local, span)
-            builder.emit(plan_assign(output, RvalueKind.Use(read_place(text, result == PlanType.String, span)), span))
-            if result == PlanType.String:
+            owns_result = result == PlanType.String or is_list(result)
+            builder.emit(plan_assign(output, RvalueKind.Use(read_place(text, owns_result, span)), span))
+            if owns_result:
                 builder.owned.append(output.local)
         None => drop_owned(builder, text.local, span)
     return Ok(None)

@@ -187,6 +187,7 @@ pub from strings import (
     not_contains_text,
     split_text,
     split_default_text,
+    split_whitespace_text,
     join_text,
     concat_text,
     slice_text_bounds,

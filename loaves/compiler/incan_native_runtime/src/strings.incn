@@ -1,5 +1,6 @@
 """Monomorphic text boundaries retaining the legacy runtime semantics."""
 
+from rust::std::primitive import str as RustStr
 from rust::incan_std_core::strings import (
     str_split as runtime_split,
     str_join as runtime_join,
@@ -122,6 +123,14 @@ pub def split_default_text(value: &str) -> list[str]:
     """An omitted separator retains the entire input as one piece in legacy."""
     separator: Option[str] = None
     return runtime_split(value, separator)
+
+
+pub def split_whitespace_text(value: &str) -> list[str]:
+    """Materialize Rust's Unicode whitespace iterator as owned strings, without empty pieces."""
+    mut pieces: list[str] = []
+    for piece in RustStr.split_whitespace(value):
+        pieces.append(str(piece))
+    return pieces
 
 
 pub def join_text(separator: &str, values: &list[str]) -> str:

@@ -1,8 +1,9 @@
 """Admission table for Body IR's canonical text operations."""
 
 from rust::incan_semantics_core::body_ir import HelperOp
-from pub::incan_mir_plan import PlanType, Operand, Place, SourceSpan
+from pub::incan_mir_plan import PlanType, ListLeaf, Operand, Place, SourceSpan
 from frame import Builder, temporary, external_call
+from lists import is_list
 
 
 pub def text_helper(helper: &HelperOp) -> Option[tuple[str, PlanType]]:
@@ -27,7 +28,7 @@ pub def text_helper(helper: &HelperOp) -> Option[tuple[str, PlanType]]:
 
 pub def text_helper_arity(name: str) -> int:
     """Retain the positional runtime signatures for text-only helpers."""
-    if name in ["length_text", "upper_text", "lower_text", "strip_text", "clone_text"]:
+    if name in ["length_text", "upper_text", "lower_text", "strip_text", "clone_text", "split_whitespace_text"]:
         return 1
     if name == "replace_text":
         return 3
@@ -45,6 +46,8 @@ pub def text_method(member: str, receiver: PlanType) -> Option[tuple[str, PlanTy
             return Some(("starts_text", PlanType.Bool))
         if member == f"{owner}.endswith":
             return Some(("ends_text", PlanType.Bool))
+        if member == f"{owner}.split_whitespace":
+            return Some(("split_whitespace_text", PlanType.List(ListLeaf.Str, 1)))
     return None
 
 
@@ -59,4 +62,6 @@ pub def emit_text_helper(
     """Emit one canonical borrowed-text call and retain its owned result for transfer or discard."""
     text = temporary(builder, result, span)
     external_call(builder, f"incan_native_runtime::{name}", parameters, result, operands, text, span)
+    if is_list(result):
+        builder.owned.append(text.local)
     return text
