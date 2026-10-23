@@ -625,6 +625,7 @@ pub enum GenericLayoutType:
     Concrete(PlanType)
     Applied(str, list[GenericLayoutType])
     Tuple(list[GenericLayoutType])
+    # Declaration-order native inputs followed by the result; never an empty signature.
     FunctionPointer(list[GenericLayoutType])
 
 

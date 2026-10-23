@@ -2,6 +2,7 @@
 
 from rust::std::fs import File as RustFile, OpenOptions
 from rust::std::io import ErrorKind
+from rust::std::os::fd import AsFd
 from rust::std::path import Path as RustPath
 from rust::rustix::fs import FlockOperation, flock
 
@@ -41,7 +42,7 @@ def _open_lock(path: str) -> Result[RustFile, str]:
 def _lock_shared(path: str) -> Result[FileLock, str]:
     """Acquire a blocking shared advisory lock while retaining the owned descriptor in the guard."""
     file = _open_lock(path)?
-    match flock(file, FlockOperation.LockShared):
+    match flock(file.as_fd(), FlockOperation.LockShared):
         Ok(_) => return Ok(FileLock(file))
         Err(err) => return Err(f"{err}")
 
@@ -49,7 +50,7 @@ def _lock_shared(path: str) -> Result[FileLock, str]:
 def _lock_exclusive(path: str) -> Result[FileLock, str]:
     """Acquire a blocking exclusive advisory lock while retaining the owned descriptor in the guard."""
     file = _open_lock(path)?
-    match flock(file, FlockOperation.LockExclusive):
+    match flock(file.as_fd(), FlockOperation.LockExclusive):
         Ok(_) => return Ok(FileLock(file))
         Err(err) => return Err(f"{err}")
 
@@ -57,7 +58,7 @@ def _lock_exclusive(path: str) -> Result[FileLock, str]:
 def _try_lock_shared(path: str) -> Result[Option[FileLock], str]:
     """Attempt a shared lock and translate expected contention into an empty optional result."""
     file = _open_lock(path)?
-    match flock(file, FlockOperation.NonBlockingLockShared):
+    match flock(file.as_fd(), FlockOperation.NonBlockingLockShared):
         Ok(_) => return Ok(Some(FileLock(file)))
         Err(err) =>
             if err.kind() == ErrorKind.WouldBlock:
@@ -68,7 +69,7 @@ def _try_lock_shared(path: str) -> Result[Option[FileLock], str]:
 def _try_lock_exclusive(path: str) -> Result[Option[FileLock], str]:
     """Attempt an exclusive lock and translate expected contention into an empty optional result."""
     file = _open_lock(path)?
-    match flock(file, FlockOperation.NonBlockingLockExclusive):
+    match flock(file.as_fd(), FlockOperation.NonBlockingLockExclusive):
         Ok(_) => return Ok(Some(FileLock(file)))
         Err(err) =>
             if err.kind() == ErrorKind.WouldBlock:

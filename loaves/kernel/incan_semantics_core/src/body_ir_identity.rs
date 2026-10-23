@@ -856,7 +856,7 @@ impl BodyIrModule {
                 return false;
             }
             IncanType::Generic {
-                base: declaration.name.clone(),
+                base: declaration.template_carrier_name(),
                 args: vec![underlying.clone()],
             }
         };
@@ -1010,7 +1010,7 @@ fn nominal_receiver_type(owner: &NominalDeclaration) -> crate::IncanType {
         crate::IncanType::Named(owner.carrier_name())
     } else {
         crate::IncanType::Generic {
-            base: owner.name.clone(),
+            base: owner.template_carrier_name(),
             args: owner
                 .type_parameters
                 .iter()

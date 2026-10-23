@@ -1,0 +1,11 @@
+# behavior: a compiled standard nominal retains its provider identity and methods
+# expect-stdout:
+#   leaf.txt
+"""Use a path whose canonical native item belongs to the compiled standard package."""
+
+from std.fs import Path
+
+
+def main() -> None:
+    """Call the provider's method on its own nominal layout."""
+    println(Path("folder/leaf.txt").name())

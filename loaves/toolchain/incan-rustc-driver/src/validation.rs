@@ -2379,10 +2379,10 @@ fn validate_frozen_values(
     Ok(())
 }
 
-/// Validate the shape-specific derive vocabulary without accepting duplicate selections or reflection on tuples. Serde
-/// derives fit either shape (a tuple wrapper serializes as its wrapped value), and so does Copy, which rustc admits
-/// only when every field is Copy. A newtype retains only the automatic derives its underlying type supports; a
-/// non-Clone native permit must not acquire Clone merely by being wrapped.
+/// Validate the shape-specific derive vocabulary without accepting duplicate selections or reflection on tuples.
+/// A tuple newtype carries only the automatic derives its checker proved for the underlying value; owning a native
+/// non-Clone value never requires a Clone selection. Named models retain their mandatory automatic derives. Serde and
+/// Copy selections fit either shape and remain subject to rustc's trait checks.
 fn valid_nominal_derives(derives: &[String], tuple: bool) -> bool {
     let required: &[&str] = if tuple {
         &[]

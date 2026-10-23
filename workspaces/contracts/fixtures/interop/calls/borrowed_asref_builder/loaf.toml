@@ -7,3 +7,6 @@ main = "src/main.incn"
 
 [rust-dependencies]
 tempfile = "3.27.0"
+
+[dependencies]
+rustix = { loaf = "crates-io/rustix", version = "1.1", features = ["fs"], default-features = true }

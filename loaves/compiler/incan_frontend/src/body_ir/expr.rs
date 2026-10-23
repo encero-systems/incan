@@ -125,16 +125,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         };
         if name == "0"
             && let IncanType::Generic { base: owner, args } = &ty
-            && let Some(identity) = self
-                .type_info
-                .declarations
-                .named_type_identities
-                .get(owner)
+            && let Some(identity) = parameter_types::retained_nominal_identity(owner, self.type_info)
                 .filter(|identity| identity.kind == SemanticSourceTargetKind::Newtype)
         {
             if let Some(declaration) = self.local_nominal_declarations.values().find(|declaration| {
                 declaration.canonical == *identity
-                    && declaration.name == *owner
+                    && declaration.template_carrier_name() == *owner
                     && declaration.type_parameters.len() == args.len()
                     && declaration.fields == ["0"]
             }) && (self.type_info.body_ir_newtypes.field_owner(span, self.type_info) == Some(identity)

@@ -11,19 +11,6 @@ use incan_semantics_core::CanonicalSymbolId;
 
 use super::{IncanType, TypeCheckInfo, bir, semantic_type_from_resolved};
 
-/// Whether an owned payload contains a retained native owner, including a tuple or collection that contains one.
-/// References alone grant no ownership transfer; a whole fresh Option/Result payload supplies that proof separately.
-pub(super) fn contains_native_owner(ty: &IncanType) -> bool {
-    match ty {
-        IncanType::Named(name) => bir::rust_item_identity(name).is_some(),
-        IncanType::Generic { base, args } => {
-            bir::rust_item_identity(base).is_some() || args.iter().any(contains_native_owner)
-        }
-        IncanType::Tuple(fields) => fields.iter().any(contains_native_owner),
-        _ => false,
-    }
-}
-
 /// Retain selected public native layouts using their checked field identities and type binders. The adapter verifies
 /// the complete instantiated foreign layout; these facts never authorize a guessed partial field projection.
 pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::NominalDeclaration> {

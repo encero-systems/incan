@@ -4,6 +4,7 @@ from rust::incan_semantics_core import (
     IncanCallableParam as RustCallableParam,
     IncanType as RustType,
     CanonicalSymbolId,
+    SymbolOrigin,
     SemanticSourceTargetKind,
     function_type,
     generic,
@@ -50,6 +51,30 @@ pub def is_default_body(module: &BodyIrModule, body: &Body) -> bool:
         Some(identity) =>
             for owner in module.trait_declarations:
                 if owner.origin == identity.origin and owner.declaration_span.start <= identity.declaration_span.start and identity.declaration_span.end <= owner.declaration_span.end:
+                    return true
+    return false
+
+
+pub def is_lazy_method_body(module: &BodyIrModule, body: &Body) -> bool:
+    """Keep dependency generic-owner methods governed until a call or native bridge selects them.
+
+    Discovering an imported layout does not authorize execution of every closed receiver method. Source methods keep
+    their ordinary root policy, and trait defaults retain their existing call-driven scheduling.
+    """
+    if is_default_body(module, body):
+        return true
+    if len(body.locals) == 0 or receiver_mode(body.locals[0].origin) == None:
+        return false
+    match body.canonical:
+        None => return false
+        Some(identity) =>
+            if identity.kind != SemanticSourceTargetKind.Method:
+                return false
+            match identity.origin:
+                SymbolOrigin.Package(library=_library, module_path=_path) => pass
+                _ => return false
+            for owner in module.nominal_declarations:
+                if len(owner.type_parameters) != 0 and owner.canonical.origin == identity.origin and owner.canonical.declaration_span.start <= identity.declaration_span.start and identity.declaration_span.end <= owner.canonical.declaration_span.end:
                     return true
     return false
 
@@ -204,8 +229,7 @@ def concrete_self_type(owner: &CanonicalSymbolId, owners: list[NominalDeclaratio
     """
     Retain the implementing owner's own parameters in Self until checked nominal instance scheduling closes them.
 
-    A canonical owner lookup supplies the declared frame; the trait's arguments never stand in for independent owner
-    arguments. Enums use their already-retained non-generic owner name. No missing class or model layout is guessed.
+    A canonical owner lookup supplies the template carrier and declared frame; the trait's arguments never stand in for independent owner arguments. Enums use their already-retained non-generic owner name. No missing class or model layout is guessed.
     """
     for declaration in owners:
         if not PartialEq.eq(declaration.canonical, owner):
@@ -216,7 +240,7 @@ def concrete_self_type(owner: &CanonicalSymbolId, owners: list[NominalDeclaratio
         for parameter in declaration.type_parameters:
             placeholder: RustType = RustType.TypeVar(str(parameter))
             arguments.append(placeholder.clone())
-        return Ok(generic(str(declaration.name), arguments))
+        return Ok(generic(str(declaration.template_carrier_name()), arguments))
     if owner.kind == SemanticSourceTargetKind.Enum:
         return Ok(RustType.Named(str(owner.declaration_name)))
     return Err("unsupported Body IR trait default without retained owner layout")
@@ -465,7 +489,7 @@ def receiver_owner(
     unions: list[RustType],
     intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
-    """Read the concrete model or source enum receiver from its native place, never from a method spelling."""
+    """Read the concrete model or source enum receiver from its native place, reporting the refused frame carrier."""
     match argument.as_one():
         Some(value) =>
             match value:
@@ -479,13 +503,14 @@ def receiver_owner(
                         unions,
                         intrinsics,
                     )?
-                    match place_type(locals, place):
+                    actual = place_type(locals, place)
+                    match actual:
                         PlanType.Model(owner, name) => return Ok(PlanType.Model(owner, name))
                         PlanType.Enum(owner, name) =>
                             if owner < len(module.enum_declarations):
                                 return Ok(PlanType.Enum(owner, name))
                         _ => pass
-                    return Err("unsupported Body IR trait-object receiver")
+                    return Err(f"unsupported Body IR trait-object receiver {actual:?} at {span.line}:{span.column}")
                 _ => return Err("unsupported Body IR Method nonplace receiver")
         None => return Err("unsupported Body IR Method spread receiver")
 

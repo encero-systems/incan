@@ -113,13 +113,13 @@ pub def static_type_arguments(module: &BodyIrModule, target: &NamedCallableTarge
 
 
 def static_owner_arguments(module: &BodyIrModule, target: &NamedCallableTarget) -> Result[list[RustType], str]:
-    """Read an explicitly instantiated receiver's arguments once its retained declaration confirms their arity."""
+    """Read an applied receiver's arguments only when its retained canonical template confirms the owner and arity."""
     match target.receiver_type:
         Some(ty) =>
             match ty:
                 RustType.Generic(base=base, args=owner_arguments) =>
                     for declaration in module.nominal_declarations:
-                        if declaration.canonical.declaration_name != str(base):
+                        if declaration.template_carrier_name() != str(base):
                             continue
                         if len(declaration.type_parameters) != len(owner_arguments):
                             return Err(f"unsupported Body IR static owner type argument arity on {base}")

@@ -33,7 +33,10 @@ pub def project_context(
         for index in range(len(module.nominal_declarations)):
             mut declaration = module.nominal_declarations[index].clone()
             # A producer-retained carrier key names the exact canonical owner; older unqualified layouts stay refused.
-            declaration.name = declaration.carrier_name()
+            if len(declaration.type_parameters) == 0:
+                declaration.name = declaration.carrier_name()
+            else:
+                declaration.name = declaration.template_carrier_name()
             if not retains_nominal(context, declaration)?:
                 context.nominal_declarations.push(declaration.clone())
         for index in range(len(module.enum_declarations)):

@@ -168,8 +168,8 @@ impl TypeChecker {
         }
     }
 
-    /// Whether a visible binding names the same checked Loaf declaration. A builtin trait placeholder also matches its
-    /// registered source module, but the caller must materialize that import before treating it as complete.
+    /// Whether the active binding denotes this exact Loaf declaration or its registry-owned builtin placeholder.
+    /// A placeholder is compatible with its declaring module, but still needs that module's checked contract.
     fn rebinds_same_declaration(&self, local_name: &str, module: &[String], item: &str) -> bool {
         let Some(symbol) = self.symbols.lookup_local(local_name) else {
             return false;
@@ -190,6 +190,27 @@ impl TypeChecker {
             }
             _ => false,
         }
+    }
+
+    /// Keep real imports idempotent while replacing a compatible builtin placeholder with checked Loaf metadata.
+    /// A bare spelling is never sufficient: only the builtin registry's declaring module can supply its contract.
+    fn loaf_import_needs_binding(&mut self, local_name: &str, module: &[String], item: &str, span: Span) -> bool {
+        let Some(existing_kind) = self.existing_local_symbol_kind(local_name) else {
+            return true;
+        };
+        if self.rebinds_same_declaration(local_name, module, item) {
+            return self
+                .symbols
+                .lookup_local(local_name)
+                .and_then(|symbol| self.symbols.identity_of(symbol))
+                .is_some_and(|identity| matches!(identity.origin, SymbolOrigin::Builtin));
+        }
+        self.errors.push(errors::pub_library_import_name_collision(
+            local_name,
+            existing_kind,
+            span,
+        ));
+        false
     }
 
     /// The standard `Registry` declarations of the package that declares `std.registry`: its own checked modules.
@@ -356,31 +377,16 @@ impl TypeChecker {
         self.cache_transitive_pub_export_semantics(library, &manifest);
         let available_exports = Self::loaf_module_member_names(&manifest, path);
         let root = self.loaf_binding_root(library);
+        let mut source_module = root.clone();
+        source_module.extend(path.iter().cloned());
         for item in items {
             let local_name = Self::import_item_local_name(item);
             if self.validate_protected_builtin_binding(&local_name, span) {
                 continue;
             }
             self.validate_root_namespace(&local_name, span);
-            if let Some(existing_kind) = self.existing_local_symbol_kind(&local_name) {
-                let mut module = root.clone();
-                module.extend(path.iter().cloned());
-                if !self.rebinds_same_declaration(&local_name, &module, &item.name) {
-                    self.errors.push(errors::pub_library_import_name_collision(
-                        &local_name,
-                        existing_kind,
-                        span,
-                    ));
-                    continue;
-                }
-                if !self
-                    .symbols
-                    .lookup_local(&local_name)
-                    .and_then(|symbol| self.symbols.identity_of(symbol))
-                    .is_some_and(|identity| identity.origin == SymbolOrigin::Builtin)
-                {
-                    continue;
-                }
+            if !self.loaf_import_needs_binding(&local_name, &source_module, &item.name, span) {
+                continue;
             }
             let imported_type_aliases = self.public_library_type_import_remapping(library, &manifest);
             if path.is_empty() {

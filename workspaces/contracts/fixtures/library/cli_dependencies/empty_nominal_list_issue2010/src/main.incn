@@ -1,11 +1,19 @@
-# behavior: an empty list gets its dependency-owned element type without importing that type (#2010)
+# behavior: empty nominal lists and generic callable fields retain their dependency-owned layouts (#2010, #2256)
 # expect-stdout:
 #   0
+#   6
 
-from pub::records import Bundle
+from pub::records import Bundle, Callback, apply_callback
+
+
+def increment(value: int) -> int:
+    """Close the provider's pointer input and output binder with one integer function."""
+    return value + 1
 
 
 def main() -> None:
     """Construct the list field while importing only its containing model."""
     bundle = Bundle(items=[])
     println(len(bundle.items))
+    callback: Callback[int] = Callback(f=increment)
+    println(apply_callback(callback, 5))

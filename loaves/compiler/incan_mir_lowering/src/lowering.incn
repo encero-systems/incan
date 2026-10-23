@@ -209,6 +209,7 @@ from decorator_caches import (
 )
 from traits import (
     is_default_body,
+    is_lazy_method_body,
     method_index,
     owner_method_index,
     receiver_method_target,
@@ -218,7 +219,7 @@ from traits import (
     receiver_fills_retained_slot,
     validate_static_receiver,
 )
-from decls import lower_model_declarations, static_slot, static_accessors, library_item, library_enum_item
+from decls import lower_model_declarations, publish_local_layouts, static_slot, static_accessors, library_item, library_enum_item
 from fallible_factories import NativeFactory, fallible_factory, retain_factory_callable_storage
 from iterator_methods import standard_protocol as standard_iterator_protocol
 from model_lists import model_list_read, structural_prefix, prefix_place
@@ -3555,8 +3556,9 @@ def lower_retained_method_call(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Borrow the concrete receiver and execute its selected source/default body without replacing its behavior."""
-    index = method_index(
+    """Borrow the concrete receiver and execute its selected body, naming the frame when its receiver is refused."""
+    mut index = -1
+    match method_index(
         module,
         target,
         builder.locals[builder.local_offset:],
@@ -3564,7 +3566,9 @@ def lower_retained_method_call(
         span,
         builder.unions,
         builder.intrinsics,
-    )?
+    ):
+        Ok(selected) => index = selected
+        Err(error) => return Err(f"{error} for {target.name} in {builder.name}")
     receiver_type, borrow = method_receiver(
         module,
         builder.locals[builder.local_offset:],
@@ -3780,7 +3784,7 @@ def instantiated_method_body(
     else:
         if len(target.type_args) != 0:
             return Err("unsupported Body IR type arguments on a method without type parameters")
-        if is_default_body(module, body):
+        if is_lazy_method_body(module, body):
             builder.instances.append(
                 Instance(body=body.clone(), arguments=[], owned_callable_slots=[], original_callable=false),
             )
@@ -6957,7 +6961,7 @@ def lowered_plan(
     merge_externals(externals, conversion_runtime)
     mut instances = checked_instances
     for body in context.bodies:
-        if is_default_body(context, body) and function_name(context, body) in bridge_bodies:
+        if is_lazy_method_body(context, body) and function_name(context, body) in bridge_bodies:
             instances.append(Instance(body=body.clone(), arguments=[], owned_callable_slots=[], original_callable=false))
     for index in range(len(checked)):
         for body in context.bodies:
@@ -6965,7 +6969,7 @@ def lowered_plan(
                 continue
             if len(body.type_parameters) != 0:
                 continue
-            if is_default_body(context, body):
+            if is_lazy_method_body(context, body):
                 continue
             if retains_emitted_frame(emitted_frames, body):
                 continue
@@ -7022,14 +7026,7 @@ def lowered_plan(
     for declaration in intrinsics:
         enums.append(declaration)
     if kind == "library":
-        # A private type can occur in a public callable's signature or default. Its canonical ABI item is exported;
-        # source visibility remains the manifest's checked public surface.
-        for index in range(len(models)):
-            if models[index].library_item == "":
-                models[index].public = true
-        for index in range(len(enums)):
-            if enums[index].library_item == "":
-                enums[index].public = true
+        publish_local_layouts(models, enums)
     retain_factory_callable_storage(context, functions, models, externals)?
     validate_futures(context, intrinsics)?
     mut exports: list[PlanExport] = []

@@ -4978,15 +4978,26 @@ pub fn nominal_carrier_key(identity: &CanonicalSymbolId) -> Option<String> {
 }
 
 impl NominalDeclaration {
+    /// Read the declaration's generic base independently of a concrete instance's generated layout name. A checked
+    /// carrier binding supplies source ownership; opaque native declarations retain their public Rust type path.
+    pub fn template_carrier_name(&self) -> String {
+        self.retained_carrier_key()
+            .or_else(|| native_opaque_name(&self.canonical))
+            .unwrap_or_else(|| self.canonical.declaration_name.clone())
+    }
+
+    /// Require the checker's exact binding before exposing an encoded source carrier key.
+    fn retained_carrier_key(&self) -> Option<String> {
+        nominal_carrier_key(&self.canonical).filter(|key| self.named_type_identities.get(key) == Some(&self.canonical))
+    }
+
     /// Read the producer-retained carrier key only when its complete identity agrees with this nongeneric layout.
     ///
     /// Older publications keep their source name and are still refused if project assembly finds an ambiguity.
     /// Generic templates retain their existing specialization keys; a missing or altered carrier map grants nothing.
     pub fn carrier_name(&self) -> String {
-        nominal_carrier_key(&self.canonical)
-            .filter(|key| {
-                self.type_parameter_count == 0 && self.named_type_identities.get(key) == Some(&self.canonical)
-            })
+        self.retained_carrier_key()
+            .filter(|_| self.type_parameter_count == 0)
             .unwrap_or_else(|| self.name.clone())
     }
 }
