@@ -11,8 +11,9 @@ use std::path::{Path, PathBuf};
 
 use incan_lang::interop::{
     RustAssociatedTypeBinding, RustFieldInfo, RustFunctionSig, RustImplementedTrait, RustItemKind, RustItemMetadata,
-    RustMacroInfo, RustMethodSig, RustModuleChild, RustModuleChildKind, RustModuleInfo, RustParam, RustPayloadCarrier,
-    RustTraitAssoc, RustTraitBound, RustTraitInfo, RustTypeInfo, RustTypeShape, RustVariantInfo, RustVisibility,
+    RustMacroForm, RustMacroInfo, RustMethodSig, RustModuleChild, RustModuleChildKind, RustModuleInfo, RustParam,
+    RustPayloadCarrier, RustTraitAssoc, RustTraitBound, RustTraitInfo, RustTypeInfo, RustTypeShape, RustVariantInfo,
+    RustVisibility,
 };
 use rustc_hir::def::{DefKind, MacroKinds};
 use rustc_hir::def_id::DefId;
@@ -258,9 +259,8 @@ fn describe_crates(tcx: TyCtxt<'_>, crates: &BTreeSet<String>) -> BTreeMap<Strin
             let definition = visible_path(tcx, def);
             metadata.definition_path = (definition != path).then_some(definition);
             if let RustItemKind::Trait(info) = &mut metadata.kind {
-                info.derive_macro = resolve(tcx, &path, true).map(|_| RustMacroInfo {
-                    expanded_traits: Vec::new(),
-                });
+                info.derive_macro =
+                    resolve(tcx, &path, true).map(|_| RustMacroInfo::with_forms(vec![RustMacroForm::Derive]));
             }
             if matches!(metadata.kind, RustItemKind::Macro(_))
                 && facts
@@ -396,12 +396,25 @@ fn public_items(tcx: TyCtxt<'_>, root: DefId, name: &str) -> Vec<(String, DefId)
                 | DefKind::Fn
                 | DefKind::Const { .. }
                 | DefKind::Static { .. } => items.push((child_path, def)),
-                DefKind::Macro(kinds) if kinds.contains(MacroKinds::DERIVE) => items.push((child_path, def)),
+                DefKind::Macro(kinds) if !macro_forms(kinds).is_empty() => items.push((child_path, def)),
                 _ => {}
             }
         }
     }
     items
+}
+
+/// The invocation forms a macro definition supports that source declarations can name: derive and attribute.
+/// A definition of only function-like macros has no such form.
+fn macro_forms(kinds: MacroKinds) -> Vec<RustMacroForm> {
+    let mut forms = Vec::new();
+    if kinds.contains(MacroKinds::DERIVE) {
+        forms.push(RustMacroForm::Derive);
+    }
+    if kinds.contains(MacroKinds::ATTR) {
+        forms.push(RustMacroForm::Attribute);
+    }
+    forms
 }
 
 /// Expose the exact public tuple and unit constructors with an enum in either a full ABI or fallback extraction.
@@ -493,15 +506,13 @@ fn describe(tcx: TyCtxt<'_>, def: DefId, path: &str, named: &mut HashSet<DefId>)
         DefKind::Trait => {
             let mut info = trait_info(tcx, def, named);
             if resolve(tcx, path, true).is_some() {
-                info.derive_macro = Some(RustMacroInfo {
-                    expanded_traits: Vec::new(),
-                });
+                info.derive_macro = Some(RustMacroInfo::with_forms(vec![RustMacroForm::Derive]));
             }
             RustItemKind::Trait(info)
         }
-        DefKind::Macro(kinds) if kinds.contains(MacroKinds::DERIVE) => RustItemKind::Macro(RustMacroInfo {
-            expanded_traits: Vec::new(),
-        }),
+        DefKind::Macro(kinds) if !macro_forms(kinds).is_empty() => {
+            RustItemKind::Macro(RustMacroInfo::with_forms(macro_forms(kinds)))
+        }
         DefKind::Mod => RustItemKind::Module(module_info(tcx, def)),
         other => RustItemKind::Unsupported {
             description: format!("{other:?}"),

@@ -11,6 +11,8 @@ from lowering import (
     program_refusals as checked_program_refusals,
 )
 pub from pub::incan_mir_plan import (
+    AttributeArgument,
+    AttributeValue,
     BasicBlock,
     BinaryOp,
     Callee,
@@ -33,6 +35,7 @@ pub from pub::incan_mir_plan import (
     Local,
     ModelDeclaration,
     MarkerTrait,
+    NativeAttribute,
     Operand,
     OperandKind,
     Parameter,

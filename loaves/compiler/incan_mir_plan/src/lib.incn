@@ -591,6 +591,33 @@ pub model BasicBlock:
 
 
 @derive(Clone, PartialEq)
+pub enum AttributeValue:
+    """A literal an attribute macro receives as a Rust literal; a list keeps its elements in written order."""
+
+    Text(str)
+    Int(int)
+    Float(float)
+    Bool(bool)
+    List(list[AttributeValue])
+
+
+@derive(Clone, PartialEq)
+pub model AttributeArgument:
+    """One attribute argument; an empty name marks a positional one."""
+
+    pub name: str
+    pub value: AttributeValue
+
+
+@derive(Clone, PartialEq)
+pub model NativeAttribute:
+    """One exported attribute macro applied to a declaration: its canonical Rust path and written arguments."""
+
+    pub path: str
+    pub arguments: list[AttributeArgument]
+
+
+@derive(Clone, PartialEq)
 pub model Function:
     """A declaration and its body, with locals zero through parameter count reserved."""
 
@@ -604,6 +631,8 @@ pub model Function:
     pub is_async: bool = false
     # Only the explicit boxing constructor retains native MIR for this callee.
     pub future_callee: Option[Callee] = None
+    # Attribute macros rustc expands on the declaration; the macro's output replaces it.
+    pub attributes: list[NativeAttribute] = []
 
 
 @derive(Clone, PartialEq)

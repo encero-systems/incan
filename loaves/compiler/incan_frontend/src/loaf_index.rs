@@ -130,6 +130,10 @@ pub struct LoafNativeClosure {
     pub externs: Vec<(String, PathBuf)>,
     /// The directories the linked crates' own dependencies are found in.
     pub search: Vec<PathBuf>,
+    /// The crates a consumer must name directly because the unit exports attribute macros: rustc expands such a macro
+    /// in the applying crate, where its output names the unit's own Rust crates. Empty unless the unit exports one.
+    #[serde(default)]
+    pub macro_externs: Vec<(String, PathBuf)>,
 }
 
 /// The namespace one Loaf owns in a compilation.

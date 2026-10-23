@@ -998,6 +998,8 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         unit.kind = UnitKind::Library;
     }
     let kind = unit.kind;
+    let loaf_links: std::collections::BTreeSet<String> =
+        unit.loaves.iter().map(|loaf| loaf.name.replace('-', "_")).collect();
     let rust = dependencies.rust_facts(Path::new(&arguments[3]));
     let parent = tracing::Span::current();
     let checked = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
@@ -1095,6 +1097,7 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         let closure = LoafNativeClosure {
             externs: dependencies.externs.clone(),
             search: dependencies.directories.clone(),
+            macro_externs: macro_externs(&manifest, &dependencies.externs, &loaf_links),
         };
         write_loaf(
             directory,
@@ -1106,4 +1109,33 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+/// The crates a consumer must name directly when this library exports attribute macros, else none.
+///
+/// rustc expands an attribute macro in the crate that applies it, and the macro's output names the exporting library's
+/// own Rust crates. Those are the library's links except its Loaf links, which a consumer binds as Loaves; the
+/// toolchain's crates are already bound for every unit and are left out by the consumer's Oven.
+fn macro_externs(
+    manifest: &LibraryManifest,
+    externs: &[(String, PathBuf)],
+    loaf_links: &BTreeSet<String>,
+) -> Vec<(String, PathBuf)> {
+    let exports_attribute_macro = manifest.contract_metadata.api.as_ref().is_some_and(|api| {
+        api.modules
+            .iter()
+            .flat_map(|module| &module.declarations)
+            .any(|declaration| {
+                matches!(declaration, incan_frontend::api_metadata::ApiDeclaration::Function(function)
+                    if function.native_attribute.is_some())
+            })
+    });
+    if !exports_attribute_macro {
+        return Vec::new();
+    }
+    externs
+        .iter()
+        .filter(|(name, _)| !loaf_links.contains(name))
+        .cloned()
+        .collect()
 }

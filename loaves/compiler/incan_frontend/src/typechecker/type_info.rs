@@ -1195,6 +1195,13 @@ pub struct DeclarationArtifacts {
     /// Body IR-only native derive paths after checked RFC 024 module and trait expansion. Descriptor is omitted
     /// because its checked structural opt-in has no native macro; legacy keeps consuming `model_derives` unchanged.
     pub body_ir_model_derives: HashMap<String, Vec<String>>,
+    /// Declaration spans of `@rust.extern` functions whose Rust item is an exported attribute macro, with its
+    /// canonical path. Such a declaration names a macro that rustc applies to an item; it has no callable body to
+    /// delegate to.
+    pub native_attribute_externs: HashMap<(usize, usize), String>,
+    /// Declaration spans of functions that apply exported attribute macros through their decorators, with each
+    /// application in written order. The providing Loaf's facts select the macro; the written arguments are kept.
+    pub native_attribute_applications: HashMap<(usize, usize), Vec<incan_semantics_core::body_ir::NativeAttribute>>,
     /// Canonical explicit native derives selected for newtypes; automatic derives remain construction facts.
     pub body_ir_newtype_derives: HashMap<String, Vec<String>>,
     /// The same native derive selection for source classes, whose automatic derives match a model's.

@@ -1197,6 +1197,7 @@ mod tests {
             panic_facts: Vec::new(),
             is_async: false,
             extern_delegation: None,
+            native_attributes: Vec::new(),
         }
     }
 

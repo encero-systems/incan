@@ -285,6 +285,7 @@ pub(super) fn finish_static_initializer_body(
         panic_facts: builder.panic_facts,
         is_async: false,
         extern_delegation: None,
+        native_attributes: Vec::new(),
     }
 }
 
@@ -449,6 +450,13 @@ pub(super) fn lower_function_body(
         panic_facts: builder.panic_facts,
         is_async: function.is_async(),
         extern_delegation,
+        native_attributes: lowering_facts
+            .type_info
+            .declarations
+            .native_attribute_applications
+            .get(&(decl_span.start, decl_span.end))
+            .cloned()
+            .unwrap_or_default(),
     }
 }
 /// Lower one method declaration's body into Body IR v0, or `None` for an abstract method (`body: None` — a trait
@@ -665,6 +673,7 @@ pub(super) fn lower_method_body(
         panic_facts: builder.panic_facts,
         is_async: method.is_async(),
         extern_delegation,
+        native_attributes: Vec::new(),
     })
 }
 /// Reconstruct the concrete `self` type for a method declared on `owner_name`, mirroring how

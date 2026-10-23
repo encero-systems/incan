@@ -39,6 +39,7 @@ mod generic_layouts;
 mod identity;
 mod library_exports;
 mod marker_traits;
+mod native_attributes;
 mod native_crates;
 mod plan;
 mod rust_codegraph;

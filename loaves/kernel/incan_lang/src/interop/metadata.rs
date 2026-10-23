@@ -44,7 +44,7 @@ pub enum RustItemKind {
     },
     /// A `trait` definition and its associated items.
     Trait(RustTraitInfo),
-    /// An exported derive macro, with any independently observed probe implementations.
+    /// An exported procedural macro, with any independently observed derive probe implementations.
     Macro(RustMacroInfo),
     /// Placeholder for Rust items not yet represented by a narrower metadata variant.
     Unsupported { description: String },
@@ -431,10 +431,23 @@ pub struct RustExpandedDeriveTrait {
     pub associated_type_bindings: Vec<RustAssociatedTypeBinding>,
 }
 
-/// An exported procedural derive macro and optional semantic output observed on a compiler-owned probe type.
+/// The invocation form of an exported procedural macro, which selects where a source declaration may name it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RustMacroForm {
+    /// `#[derive(Name)]` on a type declaration.
+    Derive,
+    /// `#[name(...)]` on an item declaration.
+    Attribute,
+}
+
+/// An exported procedural macro and, for a derive, optional semantic output observed on a compiler-owned probe type.
 /// An empty output list grants passthrough to rustc only, never an assumed implementation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustMacroInfo {
+    /// The invocation forms this export supports. Facts written before attribute macros were inspected record only
+    /// derives, so an absent field means a derive.
+    #[serde(default = "RustMacroInfo::derive_forms")]
+    pub forms: Vec<RustMacroForm>,
     /// Trait implementations observed from the macro expansion on the compiler-owned probe.
     ///
     /// A derive macro may emit more than one implementation, so this remains a collection rather than assuming the
@@ -442,6 +455,31 @@ pub struct RustMacroInfo {
     /// any input-sensitive behavior or predicates attached to those implementations on the real Incan-authored type.
     #[serde(default)]
     pub expanded_traits: Vec<RustExpandedDeriveTrait>,
+}
+
+impl RustMacroInfo {
+    /// The forms of a derive-only export, the default for facts that predate attribute macros.
+    fn derive_forms() -> Vec<RustMacroForm> {
+        vec![RustMacroForm::Derive]
+    }
+
+    /// An export of exactly the given forms, with no observed expansion.
+    pub fn with_forms(forms: Vec<RustMacroForm>) -> Self {
+        Self {
+            forms,
+            expanded_traits: Vec::new(),
+        }
+    }
+
+    /// Whether the export can appear in `#[derive(...)]`.
+    pub fn is_derive(&self) -> bool {
+        self.forms.contains(&RustMacroForm::Derive)
+    }
+
+    /// Whether the export can appear as `#[name(...)]` on an item.
+    pub fn is_attribute(&self) -> bool {
+        self.forms.contains(&RustMacroForm::Attribute)
+    }
 }
 
 /// One associated-type equality required by a structural mutable-reference implementation.

@@ -250,6 +250,15 @@ pub fn build_body_ir_module(
                 ast::Declaration::Partial(partial) => {
                     vec![partials::lower_source_partial(partial, decl.span, &lowering_facts)]
                 }
+                // An extern naming an attribute macro is applied by rustc to the items it decorates, not called.
+                ast::Declaration::Function(_)
+                    if type_info
+                        .declarations
+                        .native_attribute_externs
+                        .contains_key(&(decl.span.start, decl.span.end)) =>
+                {
+                    Vec::new()
+                }
                 ast::Declaration::Function(function) => {
                     vec![lower_function_body(function, decl.span, &lowering_facts)]
                 }

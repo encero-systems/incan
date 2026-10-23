@@ -1,9 +1,18 @@
-# behavior: a program that binds a rust.module runs
+# behavior: a program that binds a rust.module runs, and an extern in that module may return an owned native value that the program iterates
 # expect-stdout:
 #   42
+#   6
 
 """A program that binds a rust.module runs."""
-rust.module("incan_std_testing")
+rust.module("incan_std_core::iter")
+
+from rust::incan_std_core::iter import PyRange
+
+
+@rust.extern
+def range(start: int, end: int, step: int) -> PyRange:
+    """Delegate to the native range constructor, whose result is a native value rather than a scalar."""
+    ...
 
 
 def program_result() -> int:
@@ -14,3 +23,7 @@ def program_result() -> int:
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(program_result())
+    mut total = 0
+    for value in range(1, 4, 1):
+        total += value
+    println(total)

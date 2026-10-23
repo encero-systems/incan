@@ -20,12 +20,13 @@ use incan_frontend::api_metadata::{
     collect_checked_api_alias_metadata, collect_checked_api_metadata, materialize_api_alias_projections,
     materialize_checked_api_public_namespaces, validate_checked_api_docstrings,
 };
+use incan_frontend::ast::{Declaration, ImportKind, Visibility};
 use incan_frontend::contract_metadata::{CanonicalModelBundle, ContractMetadataPackage};
 use incan_frontend::diagnostics;
 use incan_frontend::library_exports::{CheckedNamedExport, checked_exports_by_name, collect_checked_public_exports};
 use incan_frontend::library_manifest::public_identities::public_executable_identities;
 use incan_frontend::library_manifest::{
-    ExecutableRepresentationExport, LibraryManifest, NativeUnionExport, NativeUnionOwnerExport, TypeRef,
+    ExecutableRepresentationExport, LibraryManifest, LibraryRustAbi, NativeUnionExport, NativeUnionOwnerExport, TypeRef,
 };
 use incan_frontend::loaf_index::LoafNativeClosure;
 use incan_frontend::parsed_module::ParsedModule;
@@ -34,6 +35,7 @@ use incan_frontend::registry_metadata::{
     CheckedRegistryPackageIdentity, collect_checked_registry_metadata, materialize_registry_reexport_projections,
 };
 use incan_frontend::typechecker::TypeChecker;
+use incan_lang::interop::RustItemMetadata;
 use incan_semantics_core::IncanType;
 use incan_semantics_core::body_ir::BodyIrModule;
 use incan_semantics_core::body_ir::NativeUnionDeclaration;
@@ -53,6 +55,8 @@ pub struct PublicationFacts {
     alias_modules: Vec<CheckedApiMetadata>,
     /// Checked registries and entries, one per module.
     registry_modules: Vec<CheckedRegistryMetadataModule>,
+    /// The inspected facts of the Rust items the unit re-exports, which its consumers bind them with.
+    rust_items: Vec<RustItemMetadata>,
 }
 
 impl PublicationFacts {
@@ -65,12 +69,14 @@ impl PublicationFacts {
             api_modules: Vec::new(),
             alias_modules: Vec::new(),
             registry_modules: Vec::new(),
+            rust_items: Vec::new(),
         }
     }
 
     /// Collect one checked module's public exports, API metadata and registries. A registry declared in the unit's
     /// entry module is published under the module path `lib`.
     pub fn visit(&mut self, module: &ParsedModule, checker: &TypeChecker, entry: bool) {
+        self.collect_reexported_rust_items(module, checker);
         let exports = collect_checked_public_exports(&module.ast, checker);
         let registry_path = if entry {
             vec!["lib".to_string()]
@@ -93,6 +99,38 @@ impl PublicationFacts {
             .push((module.path_segments.clone(), exports.clone()));
         self.exports_by_module
             .insert(module_key(&module.path_segments), checked_exports_by_name(exports));
+    }
+
+    /// Keep the inspected facts of each Rust item a public `pub from rust::… import` re-exports. A consumer binds the
+    /// name as the Rust item it is, and needs the same facts the provider's checker read to use it.
+    fn collect_reexported_rust_items(&mut self, module: &ParsedModule, checker: &TypeChecker) {
+        for declaration in &module.ast.declarations {
+            let Declaration::Import(import) = &declaration.node else {
+                continue;
+            };
+            if import.visibility != Visibility::Public {
+                continue;
+            }
+            let ImportKind::RustFrom {
+                crate_name,
+                path,
+                items,
+                ..
+            } = &import.kind
+            else {
+                continue;
+            };
+            for item in items {
+                let canonical = std::iter::once(crate_name.as_str())
+                    .chain(path.iter().map(String::as_str))
+                    .chain(std::iter::once(item.name.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("::");
+                if let Some(metadata) = checker.rust_item_metadata_for_path(&canonical) {
+                    self.rust_items.push(metadata.as_ref().clone());
+                }
+            }
+        }
     }
 
     /// Build the Loaf's library manifest: the entry module's public names, its checked API and identity graph, its
@@ -139,6 +177,7 @@ impl PublicationFacts {
                 CliError::failure(rendered.trim_end())
             })?;
         let mut manifest = LibraryManifest::from_checked_exports(&self.package, &unit.version, &selected);
+        manifest.rust_abi = LibraryRustAbi::from_items(self.rust_items);
         retain_feature_requirements(&mut manifest, modules, unit);
         manifest.contract_metadata.models = ContractMetadataPackage::new(
             model_bundles

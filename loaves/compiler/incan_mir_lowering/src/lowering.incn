@@ -434,6 +434,7 @@ from closures import (
 # =====================================================================================================================
 # Boundary types and validation
 # =====================================================================================================================
+from attributes import native_attributes
 from externs import delegated_function
 from mutable_parameters import mutable_argument
 from partial_callables import (
@@ -7970,6 +7971,7 @@ def lower_function(
         blocks=builder.blocks,
         span=span,
         is_async=body.is_async,
+        attributes=native_attributes(body.native_attributes),
     )
     if body.is_generator():
         match generator_shape(declared_type):

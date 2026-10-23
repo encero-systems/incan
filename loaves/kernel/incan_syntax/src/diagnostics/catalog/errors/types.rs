@@ -321,6 +321,14 @@ pub fn unknown_decorator(path: &str, span: Span) -> CompileError {
         .with_hint("Import the module alias or use a fully qualified decorator path")
 }
 
+/// Report a decorator argument that an attribute macro cannot receive: only literals, constants and lists of them.
+pub fn native_attribute_argument_unsupported(macro_path: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Arguments of the attribute macro `{macro_path}` must be literals, constants or lists of them"),
+        span,
+    )
+}
+
 /// Report a user-defined decorator on a declaration kind that keeps decorators compiler-owned.
 pub fn user_defined_decorator_unsupported_target(path: &str, kind: &str, span: Span) -> CompileError {
     CompileError::type_error(

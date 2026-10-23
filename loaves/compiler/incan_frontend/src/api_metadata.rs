@@ -162,6 +162,10 @@ pub struct ApiFunction {
     pub params: Vec<ParamExport>,
     pub return_type: TypeRef,
     pub is_async: bool,
+    /// Canonical Rust path of the attribute macro this `@rust.extern` declaration names, as the providing unit's Rust
+    /// facts inspected it. A consumer's decorator that resolves here applies that macro to the decorated item.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_attribute: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1293,6 +1297,12 @@ fn api_function(
         params: callable.params,
         return_type: callable.return_type,
         is_async: callable.is_async,
+        native_attribute: checker
+            .type_info()
+            .declarations
+            .native_attribute_externs
+            .get(&(span.start, span.end))
+            .cloned(),
     }
 }
 

@@ -327,6 +327,14 @@ impl rustc_driver::Callbacks for Callbacks {
                 }
             };
             let mut item = declarations::function(function, span);
+            if !function.attributes.is_empty() {
+                item.attrs.extend(crate::native_attributes::attributes(
+                    &compiler.sess.psess.attr_id_generator,
+                    function,
+                    span,
+                ));
+                item.tokens = Some(crate::native_attributes::function_tokens(function, span));
+            }
             if self.plan.tests.contains(&function.name) {
                 item.attrs.push(crate::test_unit::attribute(
                     &compiler.sess.psess.attr_id_generator,

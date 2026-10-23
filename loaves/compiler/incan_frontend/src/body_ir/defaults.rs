@@ -132,6 +132,7 @@ pub(super) fn attach_nominal_field_defaults(
             panic_facts: builder.panic_facts,
             is_async: false,
             extern_delegation: None,
+            native_attributes: Vec::new(),
         }));
     }
 }

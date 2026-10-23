@@ -855,7 +855,7 @@ fn serde_rename_tokens(name: &str, span: Span) -> Vec<ast::tokenstream::AttrToke
 }
 
 /// Turn an admitted AST identifier into a token with the same source span and hygiene.
-fn name_token(name: &str, span: Span) -> ast::tokenstream::AttrTokenTree {
+pub(crate) fn name_token(name: &str, span: Span) -> ast::tokenstream::AttrTokenTree {
     ast::tokenstream::AttrTokenTree::Token(
         ast::token::Token::from_ast_ident(ident(name, span)),
         ast::tokenstream::Spacing::Alone,
@@ -863,7 +863,7 @@ fn name_token(name: &str, span: Span) -> ast::tokenstream::AttrTokenTree {
 }
 
 /// Emit declaration keywords as keywords rather than the raw identifiers inferred for reserved AST names.
-fn keyword_token(name: &str, span: Span) -> ast::tokenstream::AttrTokenTree {
+pub(crate) fn keyword_token(name: &str, span: Span) -> ast::tokenstream::AttrTokenTree {
     ast::tokenstream::AttrTokenTree::Token(
         ast::token::Token::new(
             ast::token::TokenKind::Ident(Symbol::intern(name), ast::token::IdentIsRaw::No),
@@ -875,7 +875,7 @@ fn keyword_token(name: &str, span: Span) -> ast::tokenstream::AttrTokenTree {
 
 /// Mirror admitted paths, tuples, references, slices, and function-pointer signatures into procedural derive tokens
 /// while preserving explicit lifetimes.
-fn type_tokens(ty: &ast::Ty) -> Vec<ast::tokenstream::AttrTokenTree> {
+pub(crate) fn type_tokens(ty: &ast::Ty) -> Vec<ast::tokenstream::AttrTokenTree> {
     use ast::token::{Delimiter, Token, TokenKind};
     use ast::tokenstream::{AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, Spacing};
     match &ty.kind {

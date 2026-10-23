@@ -4,7 +4,7 @@ from std.fs import Path
 from std.json import parse
 from std.toml import TomlValue
 from features import FeatureRequest
-from json_fields import field, strings
+from json_fields import array, field, strings
 from loaf_local_graph import LocalDemand, local_facets, unique
 from rust_activation import DependencyDomain
 from rust_units import RustBuild, read_registry_units, target_configuration, build_dependencies, registry_features, rust_facet
@@ -42,6 +42,7 @@ pub def prepare_native(described: UnitDescription, toolchain: Toolchain) -> Resu
         unit.search.append(loaf.dir)
         closure = Path(loaf.dir).joinpath(f"{loaf.name}.native.json")
         unit.search = unit.search + loaf_search(closure)?
+        unit = expose_macro_crates(unit, closure, toolchain)?
     unit.search = unique(unit.search)
     return Ok(unit)
 
@@ -103,3 +104,31 @@ def loaf_search(closure: Path) -> Result[list[str], str]:
     match strings(field(document, "search", []).map_err((_) => f"{closure.0}: missing search")?, ["search"]):
         Err(_) => return Err(f"{closure.0}: search is not a list of directories")
         Ok(directories) => return Ok(directories)
+
+
+def expose_macro_crates(unit: UnitDescription, closure: Path, toolchain: Toolchain) -> Result[UnitDescription, str]:
+    """
+    Bind the Rust crates a reached Loaf's attribute macros expand against.
+
+    rustc expands an attribute macro in the crate that applies it, so the crates the macro's output names must be this
+    unit's direct externs. A Loaf that exports such a macro lists them in its native closure; the toolchain's own
+    crates are already bound for every unit and stay as they are.
+    """
+    if not closure.is_file():
+        return Ok(unit)
+    text = closure.read_text("utf-8", "strict").map_err((error) => f"{closure.0}: {error.message()}")?
+    document = parse(text).map_err((error) => f"{closure.0}: {error.message()}")?
+    mut result = unit
+    match document.get("macro_externs"):
+        None => return Ok(result)
+        Some(listed) =>
+            entries = array(listed, ["macro_externs"]).map_err((_) => f"{closure.0}: macro_externs is not a list")?
+            toolchain_names = [native.name for native in toolchain.externs]
+            for entry in entries:
+                pair = strings(entry, ["macro_externs"]).map_err((_) => f"{closure.0}: a macro extern is not a name and a path")?
+                if len(pair) != 2:
+                    return Err(f"{closure.0}: a macro extern is not a name and a path")
+                if pair[0] in toolchain_names:
+                    continue
+                result = add_extern(result, NativeCrate(name=pair[0], path=pair[1]))?
+            return Ok(result)

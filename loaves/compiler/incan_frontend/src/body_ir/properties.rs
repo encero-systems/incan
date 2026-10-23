@@ -96,6 +96,7 @@ pub(super) fn lower_getter_body(
         panic_facts: builder.panic_facts,
         is_async: false,
         extern_delegation: None,
+        native_attributes: Vec::new(),
     })
 }
 

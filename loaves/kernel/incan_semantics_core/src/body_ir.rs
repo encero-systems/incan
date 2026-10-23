@@ -695,8 +695,8 @@ pub fn native_nominal_item(identity: &CanonicalSymbolId) -> Option<String> {
         {
             return None;
         }
-        // A web extractor or response is stored as its stdlib carrier; any other Rust item is stored as itself.
-        return Some(web_carrier_item(path).map_or_else(|| path.join("::"), str::to_owned));
+        // A Rust item is stored as itself.
+        return Some(path.join("::"));
     }
     if let Some(builtin) = crate::RuntimeBuiltinType::from_identity(identity) {
         return Some(builtin.carrier_path().to_owned());
@@ -709,18 +709,6 @@ pub fn native_nominal_item(identity: &CanonicalSymbolId) -> Option<String> {
         && identity.declaration_name == "FieldInfo"
         && identity.kind == crate::SemanticSourceTargetKind::Class)
         .then(|| "incan_std_core::reflection::FieldInfo".to_owned())
-}
-
-/// The stdlib web carrier that stores an axum extractor or response, with its public tuple payload.
-fn web_carrier_item(path: &[String]) -> Option<&'static str> {
-    let path = path.iter().map(String::as_str).collect::<Vec<_>>();
-    match path.as_slice() {
-        ["axum", "Json"] => Some("incan_stdlib_web::web::response::Json"),
-        ["axum", "extract", "Query"] => Some("incan_stdlib_web::web::request::Query"),
-        ["axum", "extract", "Path"] => Some("incan_stdlib_web::web::request::Path"),
-        ["axum", "response", "Html"] => Some("incan_stdlib_web::web::response::Html"),
-        _ => None,
-    }
 }
 
 /// Physical direct-route declaration scope of a retained runtime carrier, or the existing source/package scope.
@@ -747,64 +735,28 @@ pub fn native_builtin_nominal(identity: &CanonicalSymbolId) -> Option<NominalDec
     native_carrier_nominal(identity)
 }
 
-/// Exact direct-route ABI of a compiler-known runtime carrier. ValidationError stays opaque; Json/Query/Path retain
-/// their public tuple payload and binder, while Html retains its fixed String specialization. Derive facts match the
-/// runtime implementations; field/constructor operations additionally require checker-owned use-site facts.
+/// Exact direct-route ABI of a compiler-known runtime carrier. ValidationError stays opaque, with no field,
+/// constructor or display operation; those require explicit Body IR runtime operations. Every Rust item, the web
+/// extractors and responses included, is a Rust value laid out from its inspected facts instead.
 pub fn native_carrier_nominal(identity: &CanonicalSymbolId) -> Option<NominalDeclaration> {
-    if !matches!(
-        identity.origin,
-        crate::SymbolOrigin::Builtin | crate::SymbolOrigin::RustCrate(_)
-    ) {
-        return None;
-    }
-    if let crate::SymbolOrigin::RustCrate(path) = &identity.origin
-        && web_carrier_item(path).is_none()
-    {
+    if identity.origin != crate::SymbolOrigin::Builtin {
         return None;
     }
     let native_item = native_nominal_item(identity)?;
     let module = native_nominal_module(identity)?;
-    let mut fields = Vec::new();
-    let mut field_identities = Vec::new();
-    let mut field_types = Vec::new();
-    let mut type_parameters = Vec::new();
-    let mut native_type_arguments = Vec::new();
-    let mut derives = vec!["Debug".to_owned(), "Clone".to_owned()];
-    if identity.origin == crate::SymbolOrigin::Builtin {
-        derives.extend(["PartialEq".to_owned(), "Eq".to_owned()]);
-    } else {
-        fields.push("0".to_owned());
-        field_identities.push(CanonicalSymbolId {
-            namespace: crate::SymbolNamespace::Member,
-            origin: identity.origin.clone(),
-            declaration_name: "0".to_owned(),
-            kind: crate::SemanticSourceTargetKind::Field,
-            scope_discriminant: None,
-            declaration_span: crate::HirSourceSpan::new(0, 0),
-        });
-        if identity.declaration_name == "Html" {
-            let string = IncanType::Primitive(crate::IncanPrimitiveType::Str);
-            field_types.push(string.clone());
-            native_type_arguments.push(string);
-        } else {
-            type_parameters.push("T".to_owned());
-            field_types.push(IncanType::TypeVar("T".to_owned()));
-        }
-    }
-    let field_public = vec![true; fields.len()];
-    let type_parameter_count = type_parameters.len();
+    let derives = ["Debug", "Clone", "PartialEq", "Eq"].map(str::to_owned).to_vec();
     Some(NominalDeclaration {
         trait_adoptions: Vec::new(),
         native_item,
         class_inheritance: None,
-        native_type_arguments,
+        native_type_arguments: Vec::new(),
         direct_declaration_id: CompilerNodeId::declaration_span(&module, 0, 0),
         canonical: identity.clone(),
         name: identity.declaration_name.clone(),
-        fields,
-        field_identities,
-        field_types,
-        field_public,
+        fields: Vec::new(),
+        field_identities: Vec::new(),
+        field_types: Vec::new(),
+        field_public: Vec::new(),
         field_aliases: Vec::new(),
         reflection_fields: None,
         reflection_metadata: None,
@@ -818,8 +770,8 @@ pub fn native_carrier_nominal(identity: &CanonicalSymbolId) -> Option<NominalDec
         newtype_string_conversion: NewtypeStringConversion::Unselected,
         derives,
         named_type_identities: Default::default(),
-        type_parameters,
-        type_parameter_count,
+        type_parameters: Vec::new(),
+        type_parameter_count: 0,
     })
 }
 
@@ -835,15 +787,10 @@ pub fn native_opaque_name(identity: &CanonicalSymbolId) -> Option<String> {
 /// Opaque storage of a Rust item a program holds as a value (DD-0006): the item itself, with `arity` written type
 /// arguments and no fields or derives, so a value is moved, borrowed and passed but never projected into. It is named
 /// [`native_opaque_name`].
-///
-/// Web carriers keep their payload shape through [`native_carrier_nominal`]; every other Rust item uses this one.
 pub fn native_opaque_nominal(identity: &CanonicalSymbolId, arity: usize) -> Option<NominalDeclaration> {
-    let crate::SymbolOrigin::RustCrate(path) = &identity.origin else {
+    let crate::SymbolOrigin::RustCrate(_) = &identity.origin else {
         return None;
     };
-    if web_carrier_item(path).is_some() {
-        return None;
-    }
     let native_item = native_nominal_item(identity)?;
     let module = native_nominal_module(identity)?;
     let type_parameters = (0..arity).map(|index| format!("T{index}")).collect::<Vec<_>>();
@@ -1352,6 +1299,49 @@ pub struct Body {
     /// there is nothing a consumer could execute by mistake. A consumer either calls the named Rust item or refuses
     /// the call; it must never run the empty block as if it were the function.
     pub extern_delegation: Option<ExternDelegation>,
+    /// Native attribute macros the source declaration applies, in written order (#2256).
+    ///
+    /// The checker selects each from a decorator that names an exported attribute macro in the providing Loaf's
+    /// facts. rustc expands them on the declaration; Body IR retains only the selection and the written arguments,
+    /// never a prediction of the expansion.
+    ///
+    /// Not part of a published body: rustc has expanded the macro when the providing unit compiled, and a consumer
+    /// never re-applies it, so the executable representation of a Loaf keeps its layout.
+    #[serde(skip)]
+    pub native_attributes: Vec<NativeAttribute>,
+}
+
+/// One native attribute macro application: `#[path(arguments)]` on a source declaration.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeAttribute {
+    /// Canonical Rust path of the exported attribute macro, such as `incan_web_macros::route`.
+    pub path: String,
+    /// The decorator's arguments in written order.
+    pub arguments: Vec<NativeAttributeArgument>,
+}
+
+/// One argument of a native attribute application, positional when `name` is `None`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeAttributeArgument {
+    /// The keyword the argument was written under.
+    pub name: Option<String>,
+    /// The argument's value.
+    pub value: NativeAttributeValue,
+}
+
+/// A literal value an attribute macro receives as a Rust literal, or a list of them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum NativeAttributeValue {
+    /// A string literal.
+    Text(String),
+    /// An integer literal.
+    Int(i64),
+    /// A floating-point literal.
+    Float(f64),
+    /// A boolean literal.
+    Bool(bool),
+    /// A bracketed list of values.
+    List(Vec<NativeAttributeValue>),
 }
 
 /// The Rust item an `@rust.extern` declaration delegates to.
@@ -5189,6 +5179,7 @@ mod tests {
             panic_facts: Vec::new(),
             is_async: false,
             extern_delegation: None,
+            native_attributes: Vec::new(),
         }
     }
 

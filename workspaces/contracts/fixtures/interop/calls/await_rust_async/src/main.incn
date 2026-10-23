@@ -1,9 +1,17 @@
-# behavior: a Rust async function yields its logical output when awaited
+# behavior: a Rust async function yields its logical output when awaited, and an extern declaration naming the dependency's exported attribute macro is a name for rustc, not a delegated call
 # expect-stdout:
 #   resumed
 
+rust.module("tokio")
+
 import std.async
 from rust::tokio::task import yield_now
+
+
+@rust.extern
+def test() -> None:
+    """Name tokio's `test` attribute macro; the declaration has no function to delegate to."""
+    ...
 
 
 async def main() -> None:

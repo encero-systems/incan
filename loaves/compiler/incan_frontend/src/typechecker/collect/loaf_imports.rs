@@ -1883,6 +1883,13 @@ impl TypeChecker {
         manifest: &LibraryManifest,
         target_path: &[String],
     ) -> Option<SymbolKind> {
+        let kind = Self::rust_reexport_symbol_kind(manifest, target_path)?;
+        matches!(&kind, SymbolKind::RustItem(info) if info.metadata.is_some()).then_some(kind)
+    }
+
+    /// The Rust item a provider's public `rust::` reexport names, bound as the provider's own import is. Metadata the
+    /// provider shipped travels with it; otherwise the consumer's checker inspects the item by its path on demand.
+    pub(super) fn rust_reexport_symbol_kind(manifest: &LibraryManifest, target_path: &[String]) -> Option<SymbolKind> {
         let [namespace, crate_name, rest @ ..] = target_path else {
             return None;
         };
@@ -1890,10 +1897,14 @@ impl TypeChecker {
             return None;
         }
         let path = target_path[1..].join("::");
-        let metadata = manifest.rust_abi.as_ref()?.get(&path)?.clone();
+        let metadata = manifest
+            .rust_abi
+            .as_ref()
+            .and_then(|abi| abi.get(&path))
+            .map(|metadata| Arc::new(metadata.clone()));
         Some(SymbolKind::RustItem(RustItemInfo {
             crate_name: crate_name.clone(),
-            metadata: Some(Arc::new(metadata)),
+            metadata,
             path,
             binding: RustImportBindingKind::FromImport,
         }))
@@ -2032,6 +2043,10 @@ impl TypeChecker {
     ) -> Option<SymbolKind> {
         if !visited.insert(target_path.to_vec()) {
             return None;
+        }
+        // A re-exported Rust item binds as the Rust item its provider imported.
+        if let Some(kind) = Self::rust_reexport_symbol_kind(manifest, target_path) {
+            return Some(kind);
         }
         let declaration = Self::api_declaration_for_target_path(manifest, target_path)?;
         match declaration {

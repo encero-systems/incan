@@ -6392,6 +6392,7 @@ impl TypeChecker {
         self.symbols.enter_scope(ScopeKind::Function);
 
         self.validate_decorators_allowing_user_defined(&func.decorators);
+        self.record_native_attribute_applications(&func.decorators, decl_span);
         self.check_registry_description_decorators(
             &func.decorators,
             &func.name,

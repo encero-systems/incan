@@ -19,13 +19,24 @@ use axum::http::{StatusCode, header};
 use axum::response::{Html as AxumHtmlInner, IntoResponse, Response as AxumRawResponse};
 use tokio::runtime::Runtime;
 
-// Re-export axum types so stdlib Incan modules can import them via `incan_std_web::Json`,
-// `incan_std_web::Html`, etc. These are transitional generated-code targets for the current host runtime.
+// Re-export axum types so stdlib Incan modules can import them via `incan_std_web::Json`, etc. These are transitional
+// generated-code targets for the current host runtime.
 pub use axum::Json;
-pub use axum::response::Html;
 
-pub type AxumHtml = axum::response::Html<String>;
 pub type AxumJson<T> = axum::Json<T>;
+
+/// An HTML response body: the text is served with `Content-Type: text/html`.
+///
+/// `std.web` writes this type without a type argument (`-> Html`, `Html("<p>ok</p>")`), so the facet closes axum's
+/// generic [`axum::response::Html`] over text here instead of leaving an open generic for every signature to complete.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Html(pub String);
+
+impl IntoResponse for Html {
+    fn into_response(self) -> AxumRawResponse {
+        AxumHtmlInner(self.0).into_response()
+    }
+}
 
 pub const GET: &str = "GET";
 pub const POST: &str = "POST";

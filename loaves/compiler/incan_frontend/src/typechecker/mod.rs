@@ -5353,6 +5353,19 @@ impl TypeChecker {
         })?;
         module_path.extend(nested_module.iter().cloned());
 
+        // A Rust item a Loaf module re-exports is that Rust item, spelled qualified or not.
+        if let Some((library, rest)) = self.loaf_module(&module_path)
+            && let Ok(Some(member)) = self.resolve_pub_library_module_symbol_member(&library, &rest, name)
+            && let SymbolKind::RustItem(info) = &member.kind
+            && let Some(identity) = member.canonical.clone()
+        {
+            return Some(QualifiedTypeReferenceInfo {
+                identity,
+                module_path,
+                resolved: ResolvedType::RustPath(info.path.clone()),
+            });
+        }
+
         // Compiler-known surface types have no source declaration for the stdlib cache to return. Their registry
         // ownership is nevertheless the same proof a direct `from std.web import Html` uses, so retain that stable
         // builtin identity and canonical resolved spelling for a qualified annotation as well (#1824).
