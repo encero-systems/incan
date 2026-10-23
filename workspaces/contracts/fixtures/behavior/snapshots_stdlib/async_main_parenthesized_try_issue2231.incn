@@ -1,0 +1,19 @@
+# behavior: a parenthesized await propagates its Result error out of async main
+# expect-stdout:
+# expect-stderr-contains:
+#   parenthesized failure
+# expect-exit: 1
+
+import std.async
+
+
+async def fail() -> Result[None, str]:
+    """Return an application error from an owned future."""
+    return Err("parenthesized failure")
+
+
+async def main() -> Result[None, str]:
+    """Propagate the realized Result before executing the next statement."""
+    (await fail())?
+    println("unreachable")
+    return Ok(None)

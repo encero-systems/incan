@@ -163,7 +163,7 @@ pub def intrinsic_declarations(module: &BodyIrModule, file: str) -> Result[list[
     """Collect concrete declaration, frame and computed-static carriers; function instances add closed layouts when scheduled."""
     mut declarations: list[EnumDeclaration] = []
     for delegation in module.loaf_callables:
-        if len(delegation.type_parameters) != 0:
+        if len(delegation.type_parameters) != 0 or not closed_arguments(delegation.native_type_arguments):
             continue
         for parameter in delegation.parameters:
             retain_carrier(module, declarations, parameter, file)?

@@ -313,7 +313,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         local
                     }
                 };
-                let (mut fact, last_use) = self.ownership_fact_for_place(place, expected_ty);
+                let (mut fact, mut last_use) = self.ownership_fact_for_place(place, expected_ty);
+                if fact == bir::OwnershipFact::Borrow && self.temporary_native_payload(place, expected_ty) {
+                    fact = bir::OwnershipFact::Move;
+                    last_use = true;
+                    self.native_enum_payload_bindings.insert(local);
+                }
                 // An arm changes this part of the scrutinee through the name, so the name borrows the part itself.
                 if self.in_place_pattern
                     && !place.projection.is_empty()
@@ -367,6 +372,24 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 bir::Pattern::Or(alternatives)
             }
         }
+    }
+
+    /// A temporary Option/Result owns its native payload and has no source binding that can observe a later read.
+    /// Preserve that move as a Body IR fact rather than asking native lowering to invent Clone for foreign resources.
+    fn temporary_native_payload(&self, place: &bir::Place, ty: &IncanType) -> bool {
+        let native = match ty {
+            IncanType::Named(name) | IncanType::Generic { base: name, .. } => bir::rust_item_identity(name).is_some(),
+            _ => false,
+        };
+        native
+            && place.projection.len() == 1
+            && place
+                .local_id()
+                .and_then(|id| self.locals.get(id.index()))
+                .is_some_and(|local| {
+                    local.origin == bir::LocalOrigin::Temporary
+                        && matches!(&local.ty, IncanType::Generic { base, .. } if base == "Option" || base == "Result")
+                })
     }
 
     /// Dispatch a checked constructor through its carrier, nominal and enum identity boundaries.

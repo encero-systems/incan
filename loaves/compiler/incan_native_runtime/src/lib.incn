@@ -44,7 +44,7 @@ pub from newtype_sums import add_newtype_sum, checked_sum_result
 pub from validation_errors import make_validation_error, make_coded_validation_error, format_validation_error
 pub from rust::incan_std_core::validation import ValidationError as ValidationErrorCarrier
 pub from carriers import format_carrier, clone_carrier_payload
-pub from async_ import run_async_entry, run_future_entry
+pub from async_ import run_async_entry, run_future_entry, run_result_future_entry
 pub from race_ import race_pair
 pub from generators import (
     poll_generator,

@@ -1,0 +1,14 @@
+# behavior: an error returned from async main is printed and exits 1
+# expect-stdout:
+#   before failure
+# expect-stderr-contains:
+#   async main failure
+# expect-exit: 1
+
+import std.async
+
+
+async def main() -> Result[None, str]:
+    """Return an entry error after an observable effect."""
+    println("before failure")
+    return Err("async main failure")

@@ -4,6 +4,8 @@ use super::{
     BodyBuilder, IncanType, SemanticSourceTargetKind, TypeCheckInfo, ast, bir, decorated_bindings,
     semantic_type_from_resolved,
 };
+use crate::resolved_type_subst::{map_resolved_type_leaves, substitute_resolved_type, type_param_subst_map};
+use crate::symbols::ResolvedType;
 use incan_semantics_core::IncanCallableParamKind;
 
 /// Preserve the already checked source role independently from its element or packed carrier type.
@@ -21,8 +23,9 @@ pub(super) fn source_parameter_kind(kind: ast::ParamKind) -> IncanCallableParamK
 /// Only checker-minted canonical bindings authorize this projection. Distinct checked owners sharing a source name
 /// retain separate identity-encoded carrier keys instead of collapsing their imported aliases.
 pub(super) fn checked_semantic_type(ty: &crate::symbols::ResolvedType, facts: &TypeCheckInfo) -> IncanType {
+    let ty = expand_rusttype_aliases(ty, facts);
     retain_checked_nominal_names(
-        super::runtime_nominals::project_type(facts.semantic_type(ty), facts),
+        super::runtime_nominals::project_type(facts.semantic_type(&ty), facts),
         facts,
     )
 }
@@ -35,16 +38,34 @@ pub(super) fn checked_parameter_type(
     facts: &TypeCheckInfo,
     parameters: &[String],
 ) -> IncanType {
+    let ty = expand_rusttype_aliases(ty, facts);
     retain_checked_nominal_names(
         retain_parameter_type(
             super::runtime_nominals::project_type(
-                facts.qualify_semantic_type(retain_parameter_type(semantic_type_from_resolved(ty), parameters)),
+                facts.qualify_semantic_type(retain_parameter_type(semantic_type_from_resolved(&ty), parameters)),
                 facts,
             ),
             parameters,
         ),
         facts,
     )
+}
+
+/// Substitute a transparent native alias before nominal source names enter Body IR. These declarations add no
+/// wrapper layout or constructor; the metadata-selected Rust owner supplies their complete representation.
+fn expand_rusttype_aliases(ty: &crate::symbols::ResolvedType, facts: &TypeCheckInfo) -> crate::symbols::ResolvedType {
+    map_resolved_type_leaves(ty, &|leaf| {
+        let (name, arguments) = match leaf {
+            ResolvedType::Named(name) => (name, &[][..]),
+            ResolvedType::Generic(name, arguments) => (name, arguments.as_slice()),
+            _ => return None,
+        };
+        let (parameters, template) = facts.rust.type_aliases.get(name)?;
+        Some(substitute_resolved_type(
+            template,
+            &type_param_subst_map(parameters, arguments),
+        ))
+    })
 }
 
 /// Retain signature storage only where both the current module and its checked provider context agree on provenance.

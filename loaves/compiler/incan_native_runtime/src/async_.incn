@@ -1,7 +1,7 @@
 """Run direct native entry callbacks inside the canonical async executor."""
 
 import std.async
-from rust::incan_std_async::runtime import block_on
+from rust::incan_std_async::runtime import block_on, RuntimeInitError
 from rust::incan_std_async::task import RuntimeFuture
 from rust::std::io import stderr, Write
 from rust::std::process import exit
@@ -20,11 +20,23 @@ pub def run_async_entry(entry: () -> None) -> None:
 
 
 pub def run_future_entry[F with RuntimeFuture[None]](future: F) -> None:
-    """Run an owned native future through the canonical executor and preserve its initialization error boundary."""
+    """Run an owned unit future, reporting executor initialization failure before exiting."""
     initialize_panic_hook()
     match block_on(future):
         Ok(_value) => pass
-        Err(error) =>
-            mut stream = stderr()
-            _ = stream.write_all(RustString.from(f"{error.message()}\n").into_bytes())
-            exit(1)
+        Err(error) => exit(report_runtime_error(error))
+
+
+pub def run_result_future_entry[E, F with RuntimeFuture[Result[None, E]]](future: F) -> Result[None, E]:
+    """Return the program's Result to native main; executor initialization errors keep their separate exit boundary."""
+    initialize_panic_hook()
+    match block_on(future):
+        Ok(value) => return value
+        Err(error) => exit(report_runtime_error(error))
+
+
+def report_runtime_error(error: RuntimeInitError) -> i32:
+    """Write the initialization error once and supply its failure exit status."""
+    mut stream = stderr()
+    _ = stream.write_all(RustString.from(f"{error.message()}\n").into_bytes())
+    return 1

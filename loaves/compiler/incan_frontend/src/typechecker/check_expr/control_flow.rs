@@ -49,6 +49,24 @@ impl TypeChecker {
         if self.expr_is_async_call_realization(expr) {
             return Some(ty.clone());
         }
+        if self.rust_associated_type(ty, "std::future::Future", "Output").is_none()
+            && let Some(future) = self.rust_associated_type(ty, "std::future::IntoFuture", "IntoFuture")
+        {
+            let output = self.rust_associated_type(&future, "std::future::Future", "Output")?;
+            self.type_info.rust.await_conversions.insert(
+                (expr.span.start, expr.span.end),
+                crate::typechecker::RustCheckedCall {
+                    receiver_adjustments: Vec::new(),
+                    path: "std::future::IntoFuture::into_future".into(),
+                    type_arguments: vec![ty.clone()],
+                    parameters: vec![crate::symbols::CallableParam::positional(ty.clone())],
+                    return_type: future,
+                    result_item_path: None,
+                    has_receiver: true,
+                },
+            );
+            return Some(output);
+        }
         self.await_output_type_from_type(ty)
     }
 
@@ -174,11 +192,17 @@ impl TypeChecker {
 
     /// Resolve the output type yielded by awaiting a checked awaitable type.
     pub(in crate::typechecker) fn await_output_type_from_type(&self, ty: &ResolvedType) -> Option<ResolvedType> {
+        if let Some(output) = self.rust_associated_type(ty, "std::future::Future", "Output") {
+            return Some(output);
+        }
+        if let Some(future) = self.rust_associated_type(ty, "std::future::IntoFuture", "IntoFuture") {
+            return self.rust_associated_type(&future, "std::future::Future", "Output");
+        }
         if let Some(name) = self.generic_placeholder_name(ty) {
             return self.await_output_type_from_active_bound(name);
         }
         match ty {
-            ResolvedType::Unknown | ResolvedType::RustPath(_) => Some(ResolvedType::Unknown),
+            ResolvedType::Unknown => Some(ResolvedType::Unknown),
             ResolvedType::TypeVar(name) => self.await_output_type_from_active_bound(name),
             ResolvedType::Generic(name, args)
                 if builtin_traits::from_str(name.as_str()) == Some(TraitId::Awaitable) && args.len() == 1 =>

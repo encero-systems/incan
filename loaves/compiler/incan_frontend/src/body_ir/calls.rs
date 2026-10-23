@@ -667,24 +667,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .calls
             .body_ir_reexport_calls
             .get(&(call_span.start, call_span.end));
-        let selected = self.type_info.resolved_identity(callee_span);
-        let imported = self.type_info.resolved_import_identity(name);
-        // A facade can export a function whose name also names its declaring module. A checked member import
-        // selects that SDK declaration; an ordinary module import never receives this supplemental identity.
-        let canonical = match (selected, imported) {
-            (Some(module), Some(function))
-                if module.kind == SemanticSourceTargetKind::Module
-                    && function.kind == SemanticSourceTargetKind::Function
-                    && module.origin == function.origin =>
-            {
-                Some(function.clone())
-            }
-            // The checker records an import binding's proven identity at each call site that selects it, so an absent
-            // call-site identity stays absent rather than being recovered from the import's local name.
-            _ => selected
-                .cloned()
-                .or_else(|| reexport.map(|call| call.canonical.clone())),
-        };
+        let canonical = self
+            .type_info
+            .resolved_call_identity(name, callee_span, reexport.map(|call| &call.canonical))
+            .cloned();
         let builtin = self.type_info.resolved_builtin_call(call_span);
         let canonical_builtin_id = canonical.as_ref().and_then(canonical_builtin);
         if builtin != canonical_builtin_id && (builtin.is_some() || canonical_builtin_id.is_some()) {

@@ -21,7 +21,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
-        let operand = self.lower_expr_to_operand(awaited, scope, out);
+        let operand = self.lower_await_operand(awaited, scope, out);
         self.record_runtime_requirement(AbiV0RuntimeRequirement::AsyncRuntime);
         let ty = self
             .retained_await_output(&operand)
@@ -36,6 +36,42 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             span: hir_span_value,
         });
         self.temp_operand(destination, &ty)
+    }
+
+    /// Evaluate an await operand once, then apply only its checker-selected IntoFuture conversion. Await and race
+    /// share this boundary so both preserve the same native carrier and ownership decision before suspension.
+    fn lower_await_operand(
+        &mut self,
+        awaited: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let operand = self.lower_expr_to_operand(awaited, scope, out);
+        let Some(conversion) = self
+            .type_info
+            .rust
+            .await_conversions
+            .get(&(awaited.span.start, awaited.span.end))
+            .cloned()
+        else {
+            return operand;
+        };
+        self.emit_checked_rust_call(
+            &conversion,
+            vec![bir::ArgumentElement::One(operand)],
+            bir::ArgumentBinding::resolved_positional(1),
+            awaited.span,
+            scope,
+            out,
+        )
+        .unwrap_or_else(|| {
+            self.unsupported_operand(
+                "await conversion without a native identity".to_owned(),
+                scope,
+                hir_span(awaited.span),
+                out,
+            )
+        })
     }
 
     /// Lower `race for value:` into a [`bir::StatementKind::Race`].
@@ -60,7 +96,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // enclosing block. Only the winning arm's body runs, so arm bodies are lowered into their own blocks below.
         let mut awaitables = Vec::with_capacity(race.arms.len());
         for arm in &race.arms {
-            awaitables.push(self.lower_expr_to_operand(&arm.awaitable, scope, out));
+            awaitables.push(self.lower_await_operand(&arm.awaitable, scope, out));
         }
         self.record_runtime_requirement(AbiV0RuntimeRequirement::AsyncRuntime);
 

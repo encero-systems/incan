@@ -1,0 +1,12 @@
+# behavior: an async test awaits a native future and reports a passing assertion
+# expect-stdout-contains:
+#   test_async_future.incn::test_ready_future PASSED
+
+import std.async
+from rust::std::future import ready
+
+
+async def test_ready_future() -> None:
+    """Assert on the associated output after the future completes."""
+    value = await ready(7)
+    assert value == 7

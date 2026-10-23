@@ -1390,6 +1390,20 @@ impl TypeChecker {
     /// rust-inspect extraction from this path would leak a heavy workspace/indexing concern into ordinary semantic
     /// checks.
     fn rust_identity_for_type(&self, ty: &ResolvedType) -> Option<RustTypeIdentity> {
+        let nominal = match ty {
+            ResolvedType::Named(name) => Some((name, &[][..])),
+            ResolvedType::Generic(name, arguments) => Some((name, arguments.as_slice())),
+            _ => None,
+        };
+        if let Some((name, arguments)) = nominal
+            && let Some(TypeInfo::Newtype(info)) = self.lookup_semantic_type_info(name)
+            && info.is_rusttype
+        {
+            let bindings = type_param_subst_map(&info.type_params, arguments);
+            let underlying = substitute_resolved_type(&info.underlying, &bindings);
+            let path = self.rust_path_for_rusttype_underlying(&underlying)?;
+            return self.rust_identity_for_type(&ResolvedType::RustPath(path));
+        }
         match ty {
             ResolvedType::RustPath(path) => {
                 let (base, args) = self.rust_path_base_and_args(path);
@@ -1416,6 +1430,14 @@ impl TypeChecker {
                 ))
             }
             ResolvedType::Generic(name, args) => {
+                if name.contains("::") {
+                    let arguments = args
+                        .iter()
+                        .map(render_resolved_type_as_rust_arg)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return self.rust_identity_for_type(&ResolvedType::RustPath(format!("{name}<{arguments}>")));
+                }
                 let SymbolKind::RustItem(info) = &self.lookup_symbol(name)?.kind else {
                     return None;
                 };
@@ -3467,6 +3489,7 @@ impl TypeChecker {
         self.type_info.traits.default_method_identities.clear();
         self.type_info.declarations.type_method_rebindings.clear();
         self.type_info.declarations.newtype_construction.clear();
+        self.type_info.rust.type_aliases.clear();
         self.type_info.derivations.derivable_modules = self.dependency_derivable_modules.clone();
         self.type_info.derivations.trait_rust_derive_paths = self.dependency_trait_rust_derive_paths.clone();
         let mut method_rebindings = Vec::new();
@@ -3502,6 +3525,15 @@ impl TypeChecker {
                     method_rebindings.push((sym.name.clone(), aliases));
                     if !info.is_rusttype {
                         newtype_construction.push((sym.name.clone(), info.clone()));
+                    } else if let Some((path, _, arguments, _)) =
+                        self.rust_identity_for_type(&ResolvedType::Named(sym.name.clone()))
+                    {
+                        let template =
+                            self.rust_inference_type(&ResolvedType::Generic(path, arguments), &info.type_params);
+                        self.type_info
+                            .rust
+                            .type_aliases
+                            .insert(sym.name.clone(), (info.type_params.clone(), template));
                     }
                     adopted_traits.extend(info.trait_adoptions.clone());
                 }
