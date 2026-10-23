@@ -11,7 +11,7 @@ use super::TypeChecker;
 use crate::typechecker::LoopContextKind;
 use crate::typechecker::helpers::result_ty;
 use incan_lang::interop::RustItemKind;
-use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId, TASK_JOIN_ERROR_TYPE_NAME};
+use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 
 impl TypeChecker {
@@ -210,16 +210,6 @@ impl TypeChecker {
                 if builtin_traits::from_str(name.as_str()) == Some(TraitId::Awaitable) && args.len() == 1 =>
             {
                 args.first().cloned()
-            }
-            ResolvedType::Generic(name, args)
-                if surface_types::from_str(name.as_str()) == Some(SurfaceTypeId::JoinHandle) && args.len() == 1 =>
-            {
-                args.first().map(|output| {
-                    result_ty(
-                        output.clone(),
-                        ResolvedType::Named(TASK_JOIN_ERROR_TYPE_NAME.to_string()),
-                    )
-                })
             }
             ResolvedType::Named(name) => self
                 .instantiated_trait_args_for_type(name, &[], builtin_traits::as_str(TraitId::Awaitable))

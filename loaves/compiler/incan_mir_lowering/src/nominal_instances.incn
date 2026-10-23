@@ -1,6 +1,6 @@
 """Concrete nominal layouts selected from checked Body IR types, retaining source declaration identities."""
 
-from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive, SemanticSourceTargetKind
+from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind
 from rust::incan_semantics_core::body_ir import BodyIrModule, Body, NominalDeclaration, LocalOrigin
 from symbols import type_component
 from type_parameters import substitute
@@ -188,7 +188,7 @@ def collect_generic_nominal_type(
     mut instances: list[NominalInstance],
     ancestors: list[str],
 ) -> Result[None, str]:
-    """Resolve a closed generic carrier against the retained nominal registry, without inferring type arguments."""
+    """Resolve a closed carrier from its checked declaration; substitute every field template uniformly and leave native derive validation to rustc."""
     for argument in arguments:
         _ = collect_nominal_type(module, argument, instances, ancestors)?
     if not closed_arguments(arguments):
@@ -198,29 +198,7 @@ def collect_generic_nominal_type(
             continue
         if len(declaration.type_parameters) != len(arguments):
             return Err(f"unsupported Body IR nominal type argument arity on {base}")
-        require_newtype_arguments(declaration, arguments)?
         return retain_nominal_instance(declaration, arguments, instances, ancestors)
-    return Ok(None)
-
-
-def require_newtype_arguments(declaration: &NominalDeclaration, arguments: list[RustType]) -> Result[None, str]:
-    """Restrict authored newtype payloads to proved conditional derives; native carriers keep their SDK-owned layout and derives."""
-    if library_item(declaration) != "" or declaration.canonical.kind != SemanticSourceTargetKind.Newtype:
-        return Ok(None)
-    if len(declaration.type_parameters) != 1 or len(declaration.field_types) != 1:
-        return Err("unsupported Body IR generic Newtype underlying template outside sole owner parameter")
-    match declaration.field_types[0]:
-        RustType.TypeVar(name) =>
-            if str(name) != str(declaration.type_parameters[0]):
-                return Err("unsupported Body IR generic Newtype underlying template outside sole owner parameter")
-        _ => return Err("unsupported Body IR generic Newtype underlying template outside sole owner parameter")
-    for argument in arguments:
-        match argument:
-            RustType.Primitive(Primitive.Int) => pass
-            RustType.Primitive(Primitive.Str) =>
-                if "Copy" in declaration.derives:
-                    return Err("unsupported Body IR generic Newtype Copy payload str")
-            _ => return Err("unsupported Body IR generic Newtype argument outside int or str")
     return Ok(None)
 
 

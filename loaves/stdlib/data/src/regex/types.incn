@@ -134,7 +134,8 @@ pub model Captures:
         """
         mut out: Dict[str, Option[str]] = {}
         for name in self.named.keys():
-            out[name] = _match_text(self.named[name])
+            value = _match_text(self.named[name])
+            out[name] = value
         return out
 
     def match_index(self, index: int) -> Option[Match]:

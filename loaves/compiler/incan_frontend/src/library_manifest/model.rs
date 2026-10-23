@@ -1144,6 +1144,9 @@ pub struct LibraryRustAbi {
     /// Canonical Rust item metadata keyed by `RustItemMetadata::canonical_path`.
     #[serde(default)]
     pub items: Vec<RustItemMetadata>,
+    /// Digest of the indexed `<name>.rustabi` asset containing dependency-owned native facts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_digest: Option<String>,
 }
 
 /// Default Rust ABI schema version for manifest payloads that predate explicit serde fields.
@@ -1162,6 +1165,7 @@ impl LibraryRustAbi {
         Some(Self {
             schema_version: RUST_ABI_SCHEMA_VERSION,
             items,
+            cache_digest: None,
         })
     }
 

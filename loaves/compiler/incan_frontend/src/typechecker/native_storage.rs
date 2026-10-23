@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeKind};
+use incan_lang::interop::rust_display_is_owned_string;
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::{CanonicalSymbolId, IncanType, body_ir};
 use quote::ToTokens;
@@ -14,28 +14,6 @@ use crate::resolved_type_subst::{map_resolved_type_leaves, substitute_resolved_t
 use crate::symbols::{ResolvedType, TypeInfo};
 
 impl TypeChecker {
-    /// Project an admitted SDK signature using this accepting checker's lexical types and shared owner guard.
-    /// Named carriers reject applied syntax; an unregistered or source-owned name grants no native SDK identity.
-    pub(in crate::typechecker) fn native_runtime_type(&self, path: &str) -> Option<ResolvedType> {
-        let id = surface_types::from_runtime_rust_path(path)?;
-        if !self.type_info.runtime_owner_admitted(id) {
-            return None;
-        }
-        let name = surface_types::as_str(id);
-        if surface_types::info_for(id).kind == SurfaceTypeKind::Named {
-            return (!path.contains('<')).then(|| ResolvedType::Named(name.to_owned()));
-        }
-        let (_, inner) = path.split_once('<')?;
-        let arguments = incan_lang::interop::split_top_level_rust_args(inner.strip_suffix('>')?);
-        if arguments.len() != 1 {
-            return None;
-        }
-        Some(ResolvedType::Generic(
-            name.to_owned(),
-            vec![self.resolved_type_from_rust_display(arguments[0])],
-        ))
-    }
-
     /// Retain source binder roles while the accepting function or method's lexical environment is still active.
     pub(in crate::typechecker) fn native_call_type_parameters(&self) -> Vec<String> {
         self.current_type_param_bound_details
@@ -279,7 +257,8 @@ impl TypeChecker {
 
     /// Reuse storage projection recursively, normalizing admitted associated types before freezing structural storage.
     /// A transparent alias already selects its native owner; freeze that owner before diagnostic runtime projection
-    /// can translate it back into the same source alias.
+    /// can translate it back into the same source alias. Rust's owned text keeps the primitive String carrier even
+    /// when a lexical import contributes another public path for that same definition.
     fn rust_storage_resolved(&self, ty: &ResolvedType, parameters: &[String]) -> ResolvedType {
         map_resolved_type_leaves(ty, &|leaf| {
             if let Some(binder) = source_binder(leaf, parameters) {
@@ -307,6 +286,9 @@ impl TypeChecker {
             let ResolvedType::RustPath(display) = leaf else {
                 return None;
             };
+            if rust_display_is_owned_string(display) {
+                return Some(ResolvedType::Str);
+            }
             // An admitted definition path has a native owner even when its final segment also names a source type.
             // Apply its public import identity before the display parser can consult that source declaration.
             let public = self.rust_public_type_path(display);
@@ -319,9 +301,7 @@ impl TypeChecker {
             {
                 return Some(self.rust_storage_resolved(&projected, parameters));
             }
-            let parsed = self
-                .native_runtime_type(display)
-                .unwrap_or_else(|| self.native_rust_signature_type(display, ""));
+            let parsed = self.native_rust_signature_type(display, "");
             if parsed != *leaf {
                 return Some(self.rust_storage_resolved(&parsed, parameters));
             }
@@ -344,8 +324,9 @@ impl TypeChecker {
         })
     }
 
-    /// Expand a checked transparent rusttype for native inference and storage from its declared underlying type.
-    /// Source members, conversions, and trait implementations retain their own checked admission requirements.
+    /// Expand a checked transparent rusttype after classifying its underlying native binders, then substitute its
+    /// actual arguments. Published Rust-path templates keep binder displays until this accepting-checker boundary;
+    /// source members, conversions, and trait implementations retain their own checked admission requirements.
     pub(in crate::typechecker) fn rusttype_native_target(&self, ty: &ResolvedType) -> Option<ResolvedType> {
         let (name, arguments) = match ty {
             ResolvedType::Named(name) => (name, &[][..]),
@@ -358,7 +339,8 @@ impl TypeChecker {
         if !info.is_rusttype || info.type_params.len() != arguments.len() {
             return None;
         }
-        let target = substitute_resolved_type(&info.underlying, &type_param_subst_map(&info.type_params, arguments));
+        let template = self.rust_inference_type(&info.underlying, &info.type_params);
+        let target = substitute_resolved_type(&template, &type_param_subst_map(&info.type_params, arguments));
         let Some((base, _, arguments, _)) = self.rust_identity_for_type(&target) else {
             return Some(target);
         };

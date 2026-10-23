@@ -49,11 +49,6 @@ from rust::incan_std_async::channel import (
 # Error Types
 # ============================================================================
 
-def _no_message() -> None:
-    """The unit value a reservation error carries: a reservation sends no message, so none can be returned."""
-    return
-
-
 pub model SendError[T] with Error:
     """
     Error returned when a send operation fails.
@@ -132,7 +127,7 @@ pub type Sender[T] = newtype RawSender[T]:
         """
         match await rust_sender_reserve(self.0):
             Ok(permit) => return Ok(SenderPermit(permit))
-            Err(_err) => return Err(SendError(value=_no_message()))
+            Err(err) => return Err(SendError(value=err.into_value()))
 
     def try_send(self, value: T) -> Result[None, SendError[T]]:
         """

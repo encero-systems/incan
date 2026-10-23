@@ -1,48 +1,17 @@
-//! Retain complete checked generic call arguments for Body IR without changing legacy inference records.
+//! Retain checked generic call arguments and results shared by expression checking and Body IR.
 
 use std::collections::{HashMap, HashSet};
 
 use super::TypeChecker;
 use crate::ast::{CallArg, Expr, Literal, Span, Spanned};
 use crate::resolved_type_subst::substitute_resolved_type;
-use crate::symbols::{FunctionInfo, MethodInfo, ResolvedType, SymbolKind, TypeBoundInfo, TypeInfo};
+use crate::symbols::{FunctionInfo, MethodInfo, ResolvedType, TypeBoundInfo, TypeInfo};
 use incan_lang::interop::is_rust_capability_bound;
 use incan_lang::lang::surface::constructors::ConstructorId;
 use incan_lang::lang::testing::{self, TestingAssertHelperId};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 impl TypeChecker {
-    /// A surface-import call validates on its builtin path rather than through the ordinary generic validator. Use
-    /// that successful selection and its imported signature with the same argument and async-target producers;
-    /// source shadows, failed calls and non-function bindings publish no executable contract.
-    pub(super) fn retain_body_ir_surface_call(
-        &mut self,
-        name: &str,
-        args: &[CallArg],
-        span: Span,
-        callee_span: Span,
-        errors_before: usize,
-    ) {
-        if self.errors.len() != errors_before || self.active_surface_function_import(name).is_none() {
-            return;
-        }
-        let signature = self.lookup_symbol(name).map(|symbol| symbol.kind.clone());
-        let is_async = match &signature {
-            Some(SymbolKind::Function(info)) => info.is_async,
-            _ => self
-                .type_info
-                .declarations
-                .function_bindings
-                .get(name)
-                .is_some_and(|binding| binding.is_async),
-        };
-        if let Some(SymbolKind::Function(info)) = signature {
-            let identity = self.called_function_identity(name);
-            self.retain_body_ir_call_arguments(&info, args, &HashMap::new(), span, identity.as_ref());
-        }
-        self.retain_body_ir_async_call_target(is_async, name, span, callee_span, errors_before);
-    }
-
     /// Retain a selected async function call only after its arity, argument, bound and capture checks succeed. The
     /// enclosing module wrapper's earlier diagnostics are included; a missing canonical function grants no contract.
     pub(in crate::typechecker::check_expr) fn retain_body_ir_async_call_target(
@@ -239,14 +208,7 @@ impl TypeChecker {
                     .body_ir_call_result_types
                     .insert((span.start, span.end), result.clone());
             }
-            let runtime_bridge = info
-                .type_param_bound_details
-                .values()
-                .flatten()
-                .any(|bound| self.body_ir_runtime_bridge_bound(bound));
-            let runtime_result =
-                matches!(&info.return_type, ResolvedType::RustPath(path) if self.native_runtime_type(path).is_some());
-            if concrete(&result) && (runtime_bridge || runtime_result || info.is_async) {
+            if concrete(&result) {
                 self.type_info
                     .calls
                     .inferred_call_result_types
@@ -493,17 +455,6 @@ impl TypeChecker {
         None
     }
 
-    /// Identify the SDK-owned associated-output contracts independently of any call's actual arguments.
-    fn body_ir_runtime_bridge_bound(&self, bound: &TypeBoundInfo) -> bool {
-        [
-            "incan_std_async::task::RuntimeFuture",
-            "incan_std_async::task::RuntimeFnOnce",
-            "incan_std_async::race::RuntimeRaceCallback",
-        ]
-        .iter()
-        .any(|owner| self.body_ir_runtime_bound_owner(bound, owner))
-    }
-
     /// Match a resolved native owner or an explicit Rust import, so an equal-spelled source import cannot authorize it.
     fn body_ir_runtime_bound_owner(&self, bound: &TypeBoundInfo, owner: &str) -> bool {
         if bound.name.trim_start_matches("::") == owner {
@@ -520,10 +471,6 @@ pub(super) fn normalized(ty: &ResolvedType, binders: &[String], checker: &TypeCh
     match ty {
         ResolvedType::Named(name) if binders.contains(name) => ResolvedType::TypeVar(name.clone()),
         ResolvedType::RustPath(name) if binders.contains(name) => ResolvedType::TypeVar(name.clone()),
-        ResolvedType::RustPath(path) => checker
-            .native_runtime_type(path)
-            .map(|carrier| normalized(&carrier, binders, checker))
-            .unwrap_or_else(|| ty.clone()),
         ResolvedType::Generic(name, elements) => {
             let elements = elements
                 .iter()

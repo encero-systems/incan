@@ -289,6 +289,14 @@ fn retain_declaration(module: &mut BodyIrModule, declaration: ExecutableDeclarat
         ExecutableDeclaration::Body(body) => {
             module.bodies.push(*body);
         }
+        ExecutableDeclaration::NativeBody { body, callables } => {
+            module.bodies.push(*body);
+            for callable in callables {
+                if !module.loaf_callables.contains(&callable) {
+                    module.loaf_callables.push(callable);
+                }
+            }
+        }
         ExecutableDeclaration::CompiledCallable(frame) => {
             if let Some(callable) = incan_semantics_core::body_ir::LoafCallable::from_body(&frame) {
                 module.loaf_callables.push(callable);

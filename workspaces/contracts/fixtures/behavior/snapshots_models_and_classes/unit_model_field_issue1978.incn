@@ -1,6 +1,17 @@
-# behavior: None initializes a model field whose instantiated type is None (#1978)
+# behavior: None initializes a unit field and a Rust generic method keeps its concrete unit argument inside an enclosing generic function (#1978)
 # expect-stdout:
 #   constructed
+
+import std.async
+from rust::incan_std_async::channel import (
+    SendError as NativeSendError,
+    Sender as NativeSender,
+    Receiver as NativeReceiver,
+    channel as native_channel,
+    sender_reserve,
+    receiver_close,
+)
+
 
 model Box[T]:
     """A holder whose field can have unit type."""
@@ -12,7 +23,26 @@ def make() -> Box[None]:
     return Box[None](value=None)
 
 
-def main() -> None:
+def recover[T](error: NativeSendError[None], unrelated: T) -> None:
+    """Keep the error's concrete unit payload distinct from the enclosing type parameter."""
+    value: None = error.into_value()
+
+
+async def reserve_closed[T](sender: NativeSender[T], receiver: NativeReceiver[T]) -> None:
+    """A Result from a generic sender still carries a concrete unit error at runtime."""
+    receiver_close(receiver)
+    match await sender_reserve(sender):
+        Err(error) =>
+            unit: None = error.into_value()
+        Ok(_) => assert false, "closed receiver admitted a reservation"
+
+
+async def main() -> None:
     """Require successful construction of the unit field."""
     box = make()
+    unit: None = None
+    recover(NativeSendError(value=unit), 7)
+    ends: (NativeSender[int], NativeReceiver[int]) = native_channel(1)
+    sender, receiver = ends
+    await reserve_closed[int](sender, receiver)
     println("constructed")

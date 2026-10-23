@@ -654,6 +654,7 @@ fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTyp
         Vec::new()
     };
     RustTypeInfo {
+        has_lifetime_params: has_lifetime_parameters(tcx, def),
         type_params,
         type_param_defaults,
         methods,
@@ -671,12 +672,21 @@ fn alias_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTy
     note_named(target, named);
     let (type_params, type_param_defaults) = type_parameters(tcx, def);
     RustTypeInfo {
+        has_lifetime_params: has_lifetime_parameters(tcx, def),
         type_params,
         type_param_defaults,
         alias_target: Some(display(target)),
         implemented_traits: trait_impls(tcx, target, named),
         ..RustTypeInfo::default()
     }
+}
+
+/// Retain lifetime presence before the extractor elides their labels from the source type-argument vocabulary.
+fn has_lifetime_parameters(tcx: TyCtxt<'_>, def: DefId) -> bool {
+    tcx.generics_of(def)
+        .own_params
+        .iter()
+        .any(|parameter| matches!(parameter.kind, ty::GenericParamDefKind::Lifetime))
 }
 
 /// Extract type binders and their declaration-order defaults identically for nominal owners and aliases.

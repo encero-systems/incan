@@ -1,5 +1,6 @@
-# behavior: an error from an awaited local function propagates out of async main
+# behavior: propagation yields an awaited local function's successful value and an awaited error exits async main (#2231)
 # expect-stdout:
+#   7
 # expect-stderr-contains:
 #   local awaited failure
 # expect-exit: 1
@@ -12,8 +13,15 @@ async def fail() -> Result[None, str]:
     return Err("local awaited failure")
 
 
+async def succeed() -> Result[int, str]:
+    """Expose the success payload after awaiting rather than the future itself."""
+    return Ok(7)
+
+
 async def main() -> Result[None, str]:
     """Propagate the awaited error before the following statement."""
+    value = await (succeed())?
+    println(value)
     await fail()?
     println("unreachable")
     return Ok(None)

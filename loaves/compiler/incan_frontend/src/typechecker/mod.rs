@@ -59,6 +59,7 @@ mod helpers;
 mod json_member_requirements;
 mod mut_arguments;
 mod mut_marker;
+mod native_lifetimes;
 mod native_newtype_facts;
 mod native_storage;
 mod nominal_type_param_bounds;
@@ -2033,13 +2034,14 @@ impl TypeChecker {
     /// Expand a Rust type alias applied to `args` into its target display, or `None` when `base` names no alias.
     ///
     /// The alias item records its target with the alias's own parameters; substituting the written arguments gives the
-    /// aliased type exactly, including arms the alias spelling omits.
+    /// aliased type exactly, including arms the alias spelling omits. Shipped caches and check-time extraction expose
+    /// the same alias contract; a dependency without a shipped cache must retain its target too.
     fn rust_alias_expansion(&self, base: &str, args: &[&str]) -> Option<String> {
         if !base.contains("::") {
             return None;
         }
         let lookup_path = Self::rust_metadata_lookup_path(base)?;
-        let metadata = self.loaves.rust_abi_item(lookup_path)?;
+        let metadata = self.known_rust_metadata_for_path(lookup_path)?;
         self.record_rust_metadata_query(base);
         let RustItemKind::Type(info) = &metadata.kind else {
             return None;
@@ -5587,7 +5589,7 @@ impl TypeChecker {
         }
     }
 
-    /// Expand transparent source type aliases inside a resolved type.
+    /// Expand transparent source type aliases inside a resolved type. A nominal Rust alias keeps its public spelling.
     fn expand_type_aliases(&self, ty: ResolvedType) -> ResolvedType {
         let mut expanding = HashSet::new();
         self.expand_type_aliases_inner(ty, &mut expanding)

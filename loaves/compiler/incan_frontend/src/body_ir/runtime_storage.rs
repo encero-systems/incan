@@ -168,25 +168,4 @@ impl BodyBuilder<'_, '_> {
             args: vec![first.clone()],
         })
     }
-
-    /// Retain the output of an already typed source future or registry-owned native task handle.
-    pub(super) fn retained_await_output(&self, operand: &bir::Operand) -> Option<IncanType> {
-        let ty = self.retained_operand_type(operand)?;
-        let IncanType::Generic { base, args } = &ty else {
-            return None;
-        };
-        let [output] = args.as_slice() else {
-            return None;
-        };
-        if base == "Awaitable" {
-            return Some(output.clone());
-        }
-        if base == "JoinHandle" && super::runtime_nominals::retains_task_storage(self.type_info, &ty) {
-            return Some(IncanType::Generic {
-                base: "Result".into(),
-                args: vec![output.clone(), IncanType::Named("TaskJoinError".into())],
-            });
-        }
-        None
-    }
 }

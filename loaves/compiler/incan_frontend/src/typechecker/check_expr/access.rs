@@ -671,6 +671,28 @@ impl TypeChecker {
         }
     }
 
+    /// Propagate only a Result method's unchanged payloads into its receiver's native generic call.
+    /// A transformed payload belongs to the callback and must never bind the receiver's original type parameter.
+    fn result_receiver_expected_type(method: &str, expected: &ResolvedType) -> Option<ResolvedType> {
+        let method = result_methods::from_str(method)?;
+        let result = |ok, err| ResolvedType::Generic("Result".to_string(), vec![ok, err]);
+        if matches!(method, ResultMethodId::Unwrap | ResultMethodId::UnwrapOr) {
+            return Some(result(expected.clone(), ResolvedType::Unknown));
+        }
+        let ResolvedType::Generic(name, args) = expected else {
+            return None;
+        };
+        if collection_type_id(name) != Some(CollectionTypeId::Result) || args.len() != 2 {
+            return None;
+        }
+        match method {
+            ResultMethodId::Map | ResultMethodId::AndThen => Some(result(ResolvedType::Unknown, args[1].clone())),
+            ResultMethodId::MapErr | ResultMethodId::OrElse => Some(result(args[0].clone(), ResolvedType::Unknown)),
+            ResultMethodId::Inspect | ResultMethodId::InspectErr => Some(expected.clone()),
+            ResultMethodId::Unwrap | ResultMethodId::UnwrapOr => None,
+        }
+    }
+
     /// Give the side of an `and_then` or `or_else` call's result that its closure's `Ok(...)` or `Err(...)` leaves open
     /// the type that constructor is built with (#1561).
     ///
@@ -6341,22 +6363,15 @@ impl TypeChecker {
         }
         let receiver_surface = self.checked_member_receiver_surface(base, &base_ty);
         if let Some(expected) = expected_return_ty
-            && matches!(
-                result_methods::from_str(method),
-                Some(ResultMethodId::Unwrap | ResultMethodId::UnwrapOr)
-            )
             && matches!(&base.node, Expr::Call(_, _, _))
             && matches!(
                 &base_ty,
                 ResolvedType::Generic(name, args)
                     if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result)
-                        && args.first().is_some_and(Self::contains_unbound_rust_type_var)
+                        && args.iter().any(Self::contains_unbound_rust_type_var)
             )
+            && let Some(expected_result) = Self::result_receiver_expected_type(method, expected)
         {
-            let expected_result = ResolvedType::Generic(
-                collection_name(CollectionTypeId::Result).to_string(),
-                vec![expected.clone(), ResolvedType::Unknown],
-            );
             base_ty = self.check_expr_with_expected(base, Some(&expected_result));
         }
 

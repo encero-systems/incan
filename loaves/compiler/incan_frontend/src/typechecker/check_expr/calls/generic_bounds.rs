@@ -94,8 +94,8 @@ impl TypeChecker {
     /// inferred bindings, with any binding a literal argument leaves open closed from the literal's elements, and the
     /// side an `Ok(...)` or `Err(...)` argument leaves open settled. The arguments that bind one type parameter bind it
     /// to one type, and a bounded type parameter no argument fixes is refused (#1561).
-    /// Successful single-function calls additionally retain exact parameter requirements for Body IR without replacing
-    /// ordinary bindings.
+    /// Successful calls share the fully checked native result with enclosing expressions and Body IR, preserving
+    /// associated outputs inferred from future and callable bounds.
     pub(in crate::typechecker::check_expr::calls) fn validate_function_call(
         &mut self,
         func_name: &str,
@@ -262,7 +262,12 @@ impl TypeChecker {
             }
             self.retain_declared_nominal_result(call_span, &info.return_type, &type_bindings, callee_identity.as_ref());
         }
-        substitute_resolved_type(&info.return_type, &type_bindings)
+        self.type_info
+            .calls
+            .inferred_call_result_types
+            .get(&(call_span.start, call_span.end))
+            .cloned()
+            .unwrap_or_else(|| substitute_resolved_type(&info.return_type, &type_bindings))
     }
 
     /// Retype a generic call's literal arguments at its instantiation (see

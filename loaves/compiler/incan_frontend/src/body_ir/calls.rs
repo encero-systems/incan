@@ -5,6 +5,7 @@ use super::primitives::*;
 use super::*;
 use incan_lang::lang::builtins::BuiltinFnId;
 use incan_lang::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
+use incan_lang::lang::surface::result_methods::ResultMethodId;
 use incan_lang::lang::surface::{dict_methods, list_methods, set_methods};
 use incan_semantics_core::SymbolOrigin;
 
@@ -2505,7 +2506,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     }
 
     /// Read consuming carriers before their defaults and borrow checked immutable constant values from typed
-    /// temporaries. Ordinary receivers retain borrowed places. Real global storage stays delayed because legacy
+    /// temporaries. Result transformations retain the same ownership policy, so fresh native errors need no Clone
+    /// implementation. Ordinary receivers retain borrowed places. Real global storage stays delayed because legacy
     /// evaluates a static wrapper's arguments before locking and cloning storage. A checked static decorator factory
     /// and an ordinary computed model static keep the checker's selected mut-self fact.
     fn lower_method_receiver(
@@ -2517,7 +2519,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
-        if intrinsic_carrier.is_some() && matches!(name, "unwrap" | "unwrap_or") {
+        let transforms_result = matches!(
+            self.checked_result_method(call_span),
+            Some(
+                ResultMethodId::Map
+                    | ResultMethodId::MapErr
+                    | ResultMethodId::AndThen
+                    | ResultMethodId::OrElse
+                    | ResultMethodId::Inspect
+                    | ResultMethodId::InspectErr
+            )
+        );
+        if transforms_result || (intrinsic_carrier.is_some() && matches!(name, "unwrap" | "unwrap_or")) {
             return self.lower_consumed_carrier_receiver(receiver, scope, out);
         }
         if let ast::Expr::Field(base, member) = &receiver.node

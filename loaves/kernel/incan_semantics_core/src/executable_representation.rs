@@ -38,7 +38,8 @@ use crate::body_ir::{
 /// Version 24 distinguishes compiled callable contracts from caller-instantiated executable bodies.
 /// Version 25 retains callable union payload signatures and producer-owned captured environment aliases.
 /// Version 26 appends native fixed-size arrays with their checked element storage and evaluated length.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 26;
+/// Version 27 retains checked native callable signatures with deferred executable bodies.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 27;
 
 /// Largest index this format admits, in bytes.
 ///
@@ -227,13 +228,31 @@ pub enum ExecutableDeclaration {
     },
     /// Authenticated signature and defaults of a compiled item. Its empty statement block is never executable.
     CompiledCallable(Box<Body>),
+    /// Deferred checked meaning and the exact native instantiations its calls select.
+    NativeBody {
+        /// The generic or otherwise caller-instantiated source frame.
+        body: Box<Body>,
+        /// Checker-produced signatures, matched by canonical identity and native type arguments.
+        callables: Vec<crate::body_ir::LoafCallable>,
+    },
 }
 
 impl ExecutableDeclaration {
-    /// Canonical identity carried by this fragment; it must agree with the index identity used to select it.
+    /// Canonical identity carried by this fragment; it must agree with the selecting index. Native-body records may
+    /// transport only exact Rust callable identities, never authorize a package declaration outside that index.
     pub fn identity(&self) -> Option<&CanonicalSymbolId> {
         match self {
             Self::Body(body) => body.canonical.as_ref(),
+            Self::NativeBody { body, callables } => (!callables.is_empty()
+                && callables.iter().all(|callable| {
+                    matches!(callable.canonical.origin, crate::SymbolOrigin::RustCrate(_))
+                        && crate::body_ir::rust_item_identity(&callable.item).as_ref() == Some(&callable.canonical)
+                        && callable.type_parameters.is_empty()
+                        && callable.parameter_defaults.is_empty()
+                        && callable.declaration_frame.is_none()
+                }))
+            .then_some(body.canonical.as_ref())
+            .flatten(),
             Self::CompiledCallable(frame) => (frame.block.stmts.is_empty()
                 && crate::body_ir::LoafCallable::from_body(frame).is_some())
             .then_some(frame.canonical.as_ref())
@@ -479,6 +498,10 @@ fn project_declarations(
     declarations: &mut BTreeMap<CanonicalSymbolId, DeclarationCoverage>,
 ) -> Result<BTreeMap<CanonicalSymbolId, AdmittedDeclaration>, ExecutableRepresentationError> {
     let mut admitted = BTreeMap::new();
+    let native_callables = modules
+        .iter()
+        .flat_map(|module| &module.loaf_callables)
+        .collect::<Vec<_>>();
     for module in modules {
         for value in &module.static_declarations {
             if !declarations.contains_key(&value.canonical) {
@@ -549,7 +572,7 @@ fn project_declarations(
             let projected = if unrepresentable.contains(identity) {
                 Err(CoverageReason::UnsupportedConstruct)
             } else {
-                publication::project_callable(body, module, library, public)
+                publication::project_callable(body, module, library, public, &native_callables)
             };
             match projected {
                 Ok((declaration, requirements)) => {
@@ -811,6 +834,7 @@ fn record_type_context_members(
             }
             ExecutableDeclaration::Enum(value) => value.variants.iter().map(|variant| &variant.canonical).collect(),
             ExecutableDeclaration::Body(_)
+            | ExecutableDeclaration::NativeBody { .. }
             | ExecutableDeclaration::CompiledCallable(_)
             | ExecutableDeclaration::DecoratedBody { .. }
             | ExecutableDeclaration::InvocationDecoratedBody { .. }
@@ -1093,6 +1117,7 @@ impl<'bytes> SurfaceReader<'bytes> {
     pub fn declaration(&self, identity: &CanonicalSymbolId) -> Result<Body, ExecutableRepresentationError> {
         match self.fragment(identity)? {
             ExecutableDeclaration::Body(body)
+            | ExecutableDeclaration::NativeBody { body, .. }
             | ExecutableDeclaration::DecoratedBody { body, .. }
             | ExecutableDeclaration::InvocationDecoratedBody { body, .. } => Ok(*body),
             _ => Err(malformed(

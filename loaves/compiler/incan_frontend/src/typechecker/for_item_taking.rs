@@ -404,16 +404,23 @@ impl TypeChecker {
     /// Whether a value of this type can be neither copied nor cloned: a compiler-known type the type table marks
     /// `not_cloneable` (`JoinHandle[T]`), alone or inside a tuple or a collection.
     ///
-    /// The type arrives either as the surface spelling or as the Rust path of its runtime type, which is how a stdlib
-    /// provider's checked API types the values its functions return (`spawn` returns
-    /// `incan_std_async::task::JoinHandle<T>`). A declared class, model, newtype or enum, any other Rust type, and a
-    /// type parameter are never such a value here, even when one shares a compiler-known type's name.
+    /// Transparent rusttypes first select their declared native owner, so a provider-qualified alias and its Rust
+    /// carrier share the registry's ownership rule. Authored nominal types and type parameters do not gain this
+    /// behavior from a matching source name.
     fn value_is_not_cloneable(&self, ty: &ResolvedType) -> bool {
+        if let Some(target) = self.rusttype_native_target(ty) {
+            return self.value_is_not_cloneable(&target);
+        }
         match ty {
             ResolvedType::RustPath(path) => {
                 surface_types::from_runtime_rust_path(path).is_some_and(surface_types::is_not_cloneable)
             }
             ResolvedType::Tuple(items) => items.iter().any(|item| self.value_is_not_cloneable(item)),
+            ResolvedType::Generic(name, _)
+                if surface_types::from_runtime_rust_path(name).is_some_and(surface_types::is_not_cloneable) =>
+            {
+                true
+            }
             ResolvedType::Generic(name, args)
                 if collection_type_id(name).is_some()
                     || matches!(

@@ -1330,6 +1330,10 @@ pub struct RustMutableReferenceCandidate {
 /// Method, field, and variant surface for a Rust ADT or builtin type.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct RustTypeInfo {
+    /// Whether this owner declares lifetime parameters. Erasing their labels does not authorize a borrowed source
+    /// signature: that boundary requires a retained lifetime contract.
+    #[serde(default)]
+    pub has_lifetime_params: bool,
     /// Source-declared type parameters in declaration order, with lifetimes elided.
     ///
     /// These belong to the Rust type declaration, not to one method. Associated calls such as

@@ -179,15 +179,27 @@ impl TypeChecker {
             Some(existing) if !matches!(existing.origin, SymbolOrigin::Builtin) => {
                 self.loaf_member_identity(module, item).as_ref() == Some(existing)
             }
-            // A compiler-owned builtin trait carries no Loaf identity; its declaring module names it.
+            // A compiler-owned placeholder may be imported through a facade only when both exports name the
+            // registered declaring module's exact trait. A matching short name grants no declaration authority.
             Some(existing) if existing.origin == SymbolOrigin::Builtin => {
-                local_name == item
-                    && matches!(
+                if local_name != item
+                    || !matches!(
                         self.symbols.get(symbol).map(|found| &found.kind),
                         Some(SymbolKind::Trait(_))
                     )
-                    && incan_lang::lang::traits::from_str(item).and_then(incan_lang::lang::traits::source_module)
-                        == Some(module.join(".").as_str())
+                {
+                    return false;
+                }
+                let Some(declaring) =
+                    incan_lang::lang::traits::from_str(item).and_then(incan_lang::lang::traits::source_module)
+                else {
+                    return false;
+                };
+                let declaring = declaring.split('.').map(str::to_owned).collect::<Vec<_>>();
+                let Some(imported) = self.loaf_member_identity(module, item) else {
+                    return false;
+                };
+                self.loaf_member_identity(&declaring, item).as_ref() == Some(&imported)
             }
             _ => false,
         }
@@ -274,6 +286,21 @@ impl TypeChecker {
             .unwrap_or_else(|| vec!["pub".to_string(), library.to_string()])
     }
 
+    /// Identify an admitted module by its provider package while its lexical binding keeps the dependency alias.
+    /// Standard namespaces retain their `std` module origins; a consumer's package alias never becomes a declaring
+    /// package in executable requirements.
+    fn loaf_module_identity(&self, library: &str, module: &[String]) -> Option<CanonicalSymbolId> {
+        let entry = self.loaves.entry(library)?;
+        let mut root = entry.binding_root();
+        if let [namespace, owner] = root.as_mut_slice()
+            && namespace == "pub"
+        {
+            owner.clone_from(&entry.artifact.name);
+        }
+        root.extend_from_slice(module);
+        SymbolTable::module_path_identity(&root)
+    }
+
     /// The Loaf import a `std.*` module path reaches: the standard package owning its namespace root, and the module
     /// path inside that package's manifest.
     pub(in crate::typechecker) fn standard_loaf_import(&self, segments: &[String]) -> Option<LoafImport> {
@@ -307,7 +334,7 @@ impl TypeChecker {
         self.cache_transitive_pub_export_semantics(library, &manifest);
         let mut canonical_path = self.loaf_binding_root(library);
         canonical_path.extend(import.module.iter().cloned());
-        let target_identity = SymbolTable::module_path_identity(&canonical_path);
+        let target_identity = self.loaf_module_identity(library, &import.module);
         self.define_import_symbol(name, canonical_path, false, target_identity, span);
     }
 
@@ -419,7 +446,7 @@ impl TypeChecker {
                 continue;
             }
             if imports_namespace {
-                let target_identity = SymbolTable::module_path_identity(&namespace_path);
+                let target_identity = self.loaf_module_identity(library, &child_module_path);
                 self.define_import_symbol(local_name, namespace_path, false, target_identity, span);
                 continue;
             }
@@ -465,7 +492,7 @@ impl TypeChecker {
             return;
         }
         if imports_namespace {
-            let target_identity = SymbolTable::module_path_identity(&namespace_path);
+            let target_identity = self.loaf_module_identity(library, &child_module_path);
             self.define_import_symbol(local_name, namespace_path, false, target_identity, span);
             return;
         }

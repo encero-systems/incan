@@ -413,8 +413,22 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
-        let hir_span_value = hir_span(outer_span);
         let operand_result_type = self.resolve_ty(inner.span);
+        let operand = self.lower_expr_to_operand(inner, scope, out);
+        self.emit_try(operand, operand_result_type, outer_span, scope, out)
+    }
+
+    /// Propagate one evaluated Result using the enclosing declaration's checked error contract. Awaited async
+    /// calls enter here after suspension, so their future storage never crosses the Result boundary.
+    pub(super) fn emit_try(
+        &mut self,
+        operand: bir::Operand,
+        operand_result_type: IncanType,
+        outer_span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let hir_span_value = hir_span(outer_span);
         let error_routing = match (
             result_error_type(&operand_result_type),
             result_error_type(&self.owner_return_type),
@@ -430,7 +444,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             },
             _ => bir::TryErrorRouting::Unresolved,
         };
-        let operand = self.lower_expr_to_operand(inner, scope, out);
         // The checked Result already fixes the success type, including when the outer expression has no separate type
         // entry.
         let ty = match &operand_result_type {

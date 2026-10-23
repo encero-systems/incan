@@ -4966,6 +4966,7 @@ def lower_loaf_call(
     match target.direct_call_id:
         Some(_identity) => return Err("Body IR Loaf call has a local call identity")
         None => pass
+    mut mismatch = "no retained callable with the selected identity"
     for callable in module.loaf_callables:
         match target.canonical:
             None => return Err("unsupported Body IR unproven Loaf call target")
@@ -4977,14 +4978,16 @@ def lower_loaf_call(
                         written = checked_type_arguments(builder, target.type_args)?
                         # A template from another source declaration may use binders absent from this frame.
                         match checked_type_arguments(builder, callable.native_type_arguments):
-                            Err(_reason) =>
+                            Err(reason) =>
+                                mismatch = reason
                                 continue
                             Ok(retained) =>
                                 if written != retained:
+                                    mismatch = f"native arguments differ: call {written}, declaration {retained}"
                                     continue
                     _ => pass
         return lower_delegated_call(module, builder, callable, target, arguments, destination, span)
-    return Err(f"unsupported Body IR imported or unresolved canonical call target {target.name} in {builder.name}")
+    return Err(f"unsupported Body IR imported or unresolved canonical call target {target.name} in {builder.name}: {mismatch}")
 
 
 def lower_delegated_call(
@@ -11376,10 +11379,7 @@ def enum_payload_read(
     fact: &OwnershipFact,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Preserve projected facts and stored shared model or enum references while materializing owned source bindings."""
-    if place_type(builder.locals, place) == PlanType.StrRef:
-        owned = owned_slice_text(builder, read_place(place, false, span), span)
-        return Ok(read_place(owned, true, span))
+    """Preserve checked native reference payloads and copy facts; clone only payloads with owned storage."""
     match fact:
         OwnershipFact.Copy => return Ok(read_place(place, false, span))
         OwnershipFact.Clone => pass
@@ -11394,6 +11394,7 @@ def enum_payload_read(
         PlanType.EnumRef(_owner, _name) => return Ok(read_place(place, false, span))
         PlanType.SliceRef(_elements) => return Ok(read_place(place, false, span))
         PlanType.NativeArrayRef(_elements, _length) => return Ok(read_place(place, false, span))
+        PlanType.StrRef => return Ok(read_place(place, false, span))
         _ => pass
     if numeric_carrier(payload_type) or payload_type == PlanType.Bool or payload_type == PlanType.Unit:
         return Ok(read_place(place, false, span))
@@ -12262,7 +12263,8 @@ def bind_enum_fields(
                 if binding.fact == OwnershipFact.MutBorrow:
                     bind_payload_in_place(builder, local, projected, span)?
                 else:
-                    value = moved_native_enum_payload(builder, source, projected, fields, binding.fact, span)?
+                    payload = moved_native_enum_payload(builder, source, projected, fields, binding.fact, span)?
+                    value = boundary_plan_operand(builder, payload, ty, span)?
                     track_rvalue_moves(builder, RvalueKind.Use(value))
                     builder.emit(plan_assign(plan_place(local, span), RvalueKind.Use(value), span))
                     if ty == PlanType.String or is_nominal_type(ty):

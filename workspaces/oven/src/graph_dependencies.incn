@@ -196,6 +196,8 @@ def compiled_directory(project: str, package: str, request: RustBuild, built: Di
             manifest = parse(source).map_err((error) => error.message())?
             if text(manifest, "name") != package or text(manifest, "version") != version:
                 return Err(f"{package}: compiled Loaf identity differs from the selected dependency")
+            if text(nested(manifest, "rust_abi"), "cache_digest") != "" and not directory.joinpath(f"{package}.rustabi").is_file():
+                return Err(f"{package}: missing native ABI cache beside its manifest")
             provider = nested(nested(manifest, "contract_metadata"), "provider")
             mut active: list[str] = []
             if let Some(value) = provider.get("active_features"):

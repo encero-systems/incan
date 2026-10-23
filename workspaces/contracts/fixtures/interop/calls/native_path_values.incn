@@ -1,7 +1,9 @@
-# behavior: native Path values keep their unsized and borrowed carriers: a native Cow retains its unsized text argument and resolves its associated owned output, a native option payload keeps its borrowed path component carrier through string conversion, a Rust Default constructor supplies an owned value usable by its inherent methods, an Incan int return converts a Rust usize result through the ordinary int conversion, and a native directory iterator retains its Result Item and allows methods on successful entries
+# behavior: native Path values keep their unsized and borrowed carriers: a native Cow retains its unsized text argument and resolves its associated owned output, a native option payload keeps its borrowed path component and text carriers through string conversion and output, a Rust Default constructor supplies an owned value usable by its inherent methods, an Incan int return converts a Rust usize result through the ordinary int conversion, and a native directory iterator retains its Result Item and allows methods on successful entries
 # expect-stdout:
 #   a/b
 #   file.txt
+#   folder/file.txt
+#   folder/file.txt
 #   true
 #   true
 #   true
@@ -36,6 +38,13 @@ def show_borrowed_component() -> None:
     match path.file_name():
         Some(name) => println(name.to_string_lossy().into_owned())
         None => println("missing")
+    maybe_text = path.to_str()
+    match maybe_text:
+        Some(text) => println(text)
+        None => println("missing text")
+    match maybe_text:
+        Some(text) => println(text)
+        None => println("missing text")
 
 
 def show_default_constructor() -> None:

@@ -1,7 +1,8 @@
 //! The compiled Loaves a compilation reaches, and the one index every consumer reads them through (DD-0007).
 //!
 //! A compiled Loaf is one artifact directory per profile: its library manifest (`<name>.incnlib`), its governed bodies
-//! (`<name>.incnbody`), its library unit (`lib<name>.rlib`) and the unit's native closure (`<name>.native.json`). An
+//! (`<name>.incnbody`), its library unit (`lib<name>.rlib`), the unit's native closure (`<name>.native.json`), and an
+//! optional manifest-authenticated native ABI cache (`<name>.rustabi`). An
 //! ordinary dependency owns `pub::<key>`; a standard package owns the `std.*` roots the compiler-pinned
 //! [`STANDARD_PACKAGE_NAMESPACE_POLICIES`] assign to it. A module path resolves to exactly one entry.
 
@@ -58,6 +59,8 @@ pub struct LoafArtifact {
     pub dir: PathBuf,
     /// The library manifest: public exports, vocabulary, soft keywords, contract metadata and Rust ABI.
     pub manifest: Arc<LibraryManifest>,
+    /// Manifest-authenticated native facts decoded lazily from the Loaf's indexed ABI asset.
+    rust_abi_cache: Option<Arc<RustAbiCache>>,
 }
 
 impl LoafArtifact {
@@ -79,12 +82,37 @@ impl LoafArtifact {
             digest: format!("sha256:{:x}", Sha256::digest(&bytes)),
             feature_projection: BTreeSet::new(),
         };
+        let rust_abi_cache = Self::read_rust_abi_cache(dir, name, &manifest)?;
         Ok(Self {
             identity,
             name: name.to_owned(),
             dir: dir.to_path_buf(),
             manifest: Arc::new(manifest),
+            rust_abi_cache,
         })
+    }
+
+    /// Verify the declared cache's exact bytes before exposing its indexed facts; absent declarations retain legacy
+    /// embedded metadata, while missing, altered, or incompatible declared assets refuse the Loaf.
+    fn read_rust_abi_cache(
+        dir: &Path,
+        name: &str,
+        manifest: &LibraryManifest,
+    ) -> Result<Option<Arc<RustAbiCache>>, LoafIndexError> {
+        let Some(expected) = manifest.rust_abi.as_ref().and_then(|abi| abi.cache_digest.as_ref()) else {
+            return Ok(None);
+        };
+        let path = dir.join(format!("{name}.rustabi"));
+        let unreadable = |reason: String| LoafIndexError::Unreadable {
+            path: path.clone(),
+            reason,
+        };
+        let bytes = std::fs::read(&path).map_err(|error| unreadable(error.to_string()))?;
+        if format!("sha256:{:x}", Sha256::digest(&bytes)) != *expected {
+            return Err(unreadable("native ABI cache digest differs from the manifest".into()));
+        }
+        let cache = RustAbiCache::decode(&bytes).map_err(unreadable)?;
+        Ok(Some(Arc::new(cache)))
     }
 
     /// The library manifest file.
@@ -408,6 +436,12 @@ impl LoafIndex {
             .values()
             .filter_map(|entry| entry.artifact.manifest.rust_abi.as_ref())
             .find_map(|abi| abi.get(canonical_path).cloned())
+            .or_else(|| {
+                self.entries
+                    .values()
+                    .filter_map(|entry| entry.artifact.rust_abi_cache.as_ref())
+                    .find_map(|cache| cache.get(canonical_path))
+            })
             .or_else(|| self.rust_abi_caches.iter().find_map(|cache| cache.get(canonical_path)))
             .or_else(|| self.rust_facts.get(canonical_path).cloned())
     }

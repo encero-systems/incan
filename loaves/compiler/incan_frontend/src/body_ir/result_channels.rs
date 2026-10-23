@@ -96,7 +96,7 @@ impl BodyBuilder<'_, '_> {
     }
 
     /// Select only a registry-owned builtin Result member, excluding same-spelled source methods.
-    fn checked_result_method(&self, span: ast::Span) -> Option<ResultMethodId> {
+    pub(super) fn checked_result_method(&self, span: ast::Span) -> Option<ResultMethodId> {
         let identity = self.type_info.resolved_identity(span)?;
         if identity.origin != SymbolOrigin::Builtin
             || identity.namespace != SymbolNamespace::Member

@@ -6,7 +6,7 @@
 
 mod exports;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::Path;
 
@@ -55,7 +55,7 @@ pub struct PublicationFacts {
     alias_modules: Vec<CheckedApiMetadata>,
     /// Checked registries and entries, one per module.
     registry_modules: Vec<CheckedRegistryMetadataModule>,
-    /// The inspected facts of the Rust items the unit re-exports, which its consumers bind them with.
+    /// Inspected native facts used by declarations and deferred bodies, independent of source import visibility.
     rust_items: Vec<RustItemMetadata>,
 }
 
@@ -76,7 +76,7 @@ impl PublicationFacts {
     /// Collect one checked module's public exports, API metadata and registries. A registry declared in the unit's
     /// entry module is published under the module path `lib`.
     pub fn visit(&mut self, module: &ParsedModule, checker: &TypeChecker, entry: bool) {
-        self.collect_reexported_rust_items(module, checker);
+        self.collect_native_rust_items(module, checker);
         let exports = collect_checked_public_exports(&module.ast, checker);
         let registry_path = if entry {
             vec!["lib".to_string()]
@@ -101,16 +101,15 @@ impl PublicationFacts {
             .insert(module_key(&module.path_segments), checked_exports_by_name(exports));
     }
 
-    /// Keep the inspected facts of each Rust item a public `pub from rust::… import` re-exports. A consumer binds the
-    /// name as the Rust item it is, and needs the same facts the provider's checker read to use it.
-    fn collect_reexported_rust_items(&mut self, module: &ParsedModule, checker: &TypeChecker) {
+    /// Ship imported and demanded native facts with aliases, signatures, and deferred bodies. A private Rust import
+    /// can back a public rusttype or generic function; retaining its ABI grants no source-visible import binding.
+    fn collect_native_rust_items(&mut self, module: &ParsedModule, checker: &TypeChecker) {
+        let mut paths = checker.observed_rust_metadata_queries();
+        let mut public_paths = BTreeSet::new();
         for declaration in &module.ast.declarations {
             let Declaration::Import(import) = &declaration.node else {
                 continue;
             };
-            if import.visibility != Visibility::Public {
-                continue;
-            }
             let ImportKind::RustFrom {
                 crate_name,
                 path,
@@ -126,9 +125,22 @@ impl PublicationFacts {
                     .chain(std::iter::once(item.name.as_str()))
                     .collect::<Vec<_>>()
                     .join("::");
-                if let Some(metadata) = checker.rust_item_metadata_for_path(&canonical) {
-                    self.rust_items.push(metadata.as_ref().clone());
+                if import.visibility == Visibility::Public {
+                    public_paths.insert(canonical.clone());
                 }
+                paths.insert(canonical);
+            }
+        }
+        for path in paths {
+            // The installed toolchain already supplies these complete ABI caches; copying them into every Loaf
+            // inflates manifests without adding a dependency-owned fact.
+            if !public_paths.contains(&path)
+                && (!path.contains("::") || matches!(path.split("::").next(), Some("std" | "core" | "alloc")))
+            {
+                continue;
+            }
+            if let Some(metadata) = checker.rust_item_metadata_for_path(&path) {
+                self.rust_items.push(metadata.as_ref().clone());
             }
         }
     }
@@ -246,7 +258,8 @@ fn retain_feature_requirements(manifest: &mut LibraryManifest, modules: &[Parsed
 
 /// Write a Loaf's files beside its rlib in `dir`: `<name>.incnbody`, the executable representation of `bodies` (the
 /// unit's own Body IR modules) projected onto the manifest's public identities; `<name>.incngraph`, the already-encoded
-/// graph from that same checking pass; `<name>.native.json`, the unit's native closure; and `<name>.incnlib` last,
+/// graph from that same checking pass; `<name>.native.json`, the unit's native closure; an indexed `<name>.rustabi`
+/// when dependency-owned native facts are needed; and `<name>.incnlib` last,
 /// so its presence means the artifact set is complete.
 pub fn write_loaf(
     dir: &Path,
@@ -282,6 +295,7 @@ pub fn write_loaf(
     });
     write(format!("{name}.incnbody"), &surface)?;
     write(format!("{name}.incngraph"), graph)?;
+    write_rust_abi_cache(dir, &mut manifest)?;
 
     // ---- Native closure and manifest ----
     let closure = serde_json::to_vec_pretty(closure)
@@ -291,6 +305,39 @@ pub fn write_loaf(
         .to_json_string()
         .map_err(|error| CliError::failure(format!("invalid library manifest for {name}: {error}")))?;
     write(format!("{name}.incnlib"), manifest.as_bytes())
+}
+
+/// Keep explicit Rust reexports embedded for their source binding contract, and publish other checked native facts
+/// through the existing indexed ABI codec. The manifest digest authenticates the asset without eager item decoding.
+fn write_rust_abi_cache(dir: &Path, manifest: &mut LibraryManifest) -> CliResult<()> {
+    let public = manifest
+        .contract_metadata
+        .identity_graph
+        .exports
+        .iter()
+        .filter_map(|export| export.target_path())
+        .filter(|path| path.first().is_some_and(|root| root == "rust"))
+        .map(|path| path[1..].join("::"))
+        .collect::<BTreeSet<_>>();
+    let Some(abi) = &mut manifest.rust_abi else {
+        return Ok(());
+    };
+    let (embedded, indexed): (Vec<_>, Vec<_>) = std::mem::take(&mut abi.items)
+        .into_iter()
+        .partition(|item| public.contains(&item.canonical_path));
+    abi.items = embedded;
+    if indexed.is_empty() {
+        return Ok(());
+    }
+    let indexed = indexed
+        .into_iter()
+        .map(|item| (item.canonical_path.clone(), item))
+        .collect::<BTreeMap<_, _>>();
+    let bytes = incan_lang::interop::encode_rust_abi_cache(&indexed).map_err(CliError::failure)?;
+    let path = dir.join(format!("{}.rustabi", manifest.name));
+    fs::write(&path, &bytes).map_err(|error| CliError::failure(format!("cannot write {}: {error}", path.display())))?;
+    abi.cache_digest = Some(format!("sha256:{:x}", Sha256::digest(&bytes)));
+    Ok(())
 }
 
 /// Record the lowering's actual native union definitions in the manifest that authenticates their rlib. The semantic

@@ -19,6 +19,8 @@ use crate::canonical_module_identity;
 pub(super) struct ProjectedBody {
     pub body: Body,
     pub requirements: BTreeSet<CanonicalSymbolId>,
+    /// Exact native call selections retained independently of package declaration requirements.
+    pub native_calls: Vec<(CanonicalSymbolId, Vec<IncanType>)>,
 }
 
 /// Publish one retained immutable value and its exact layout requirements without interpreting source expressions.
@@ -42,6 +44,7 @@ pub(super) fn project_callable(
     module: &BodyIrModule,
     library: &str,
     eligible: &BTreeSet<CanonicalSymbolId>,
+    native_callables: &[&crate::body_ir::LoafCallable],
 ) -> Result<(ExecutableDeclaration, BTreeSet<CanonicalSymbolId>), CoverageReason> {
     if module.decorated_bindings.iter().any(|binding| {
         binding.original_body.canonical == source.canonical
@@ -78,7 +81,27 @@ pub(super) fn project_callable(
         return project_compiled_callable(source, module, library, eligible);
     }
     let value = project_body(source, module, library, eligible)?;
-    Ok((ExecutableDeclaration::Body(Box::new(value.body)), value.requirements))
+    let mut callables = Vec::new();
+    for (identity, arguments) in value.native_calls {
+        let callable = native_callables
+            .iter()
+            .copied()
+            .find(|callable| callable.canonical == identity && callable.native_type_arguments == arguments)
+            .cloned()
+            .ok_or(CoverageReason::UnresolvedReference)?;
+        if !callables.contains(&callable) {
+            callables.push(callable);
+        }
+    }
+    let declaration = if callables.is_empty() {
+        ExecutableDeclaration::Body(Box::new(value.body))
+    } else {
+        ExecutableDeclaration::NativeBody {
+            body: Box::new(value.body),
+            callables,
+        }
+    };
+    Ok((declaration, value.requirements))
 }
 
 /// Publish only the caller-visible frame of an already compiled item, retaining parameter defaults and their local
@@ -215,6 +238,7 @@ pub(super) fn project_body(
     Ok(ProjectedBody {
         body,
         requirements: audit.requirements,
+        native_calls: audit.native_calls,
     })
 }
 
@@ -424,6 +448,8 @@ struct PublicationAudit<'a> {
     native_types: BTreeMap<String, CanonicalSymbolId>,
     used_nominal_types: BTreeMap<String, CanonicalSymbolId>,
     requirements: BTreeSet<CanonicalSymbolId>,
+    /// Native references need their checker-produced callable records rather than an Incan fragment.
+    native_calls: Vec<(CanonicalSymbolId, Vec<IncanType>)>,
     /// Local storage referenced by retained parameter defaults, independent of implementation-only locals.
     local_slots: BTreeSet<crate::body_ir::LocalId>,
 }
@@ -490,6 +516,7 @@ impl<'a> PublicationAudit<'a> {
                 .collect(),
             used_nominal_types: BTreeMap::new(),
             requirements: BTreeSet::new(),
+            native_calls: Vec::new(),
             local_slots: BTreeSet::new(),
         }
     }
@@ -946,6 +973,12 @@ impl<'a> PublicationAudit<'a> {
                         if target.builtin.is_none() {
                             let identity = target.canonical.as_mut().ok_or(CoverageReason::UnresolvedReference)?;
                             self.identity(identity, true)?;
+                            if matches!(identity.origin, SymbolOrigin::RustCrate(_)) {
+                                let selection = (identity.clone(), target.type_args.clone());
+                                if !self.native_calls.contains(&selection) {
+                                    self.native_calls.push(selection);
+                                }
+                            }
                             // Package dispatch is canonical throughout, including calls within the same fragment.
                             target.direct_call_id = None;
                         }

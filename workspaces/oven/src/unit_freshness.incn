@@ -11,7 +11,7 @@ Authored files are keyed by content, reconciled against retained observations (s
 is keyed without reading a source or listing a directory. Installed and built artifacts (the driver, native crates,
 Rust ABI caches and every Loaf's artifacts) are large, so they are keyed by their filesystem identity (inode, size,
 nanosecond times of modification and status change) and never by their bytes, which cost seconds per command. A stamp
-binds a key to the identity of the outputs built for it.
+binds a key to the identity of the outputs built for it, including a Loaf's published native ABI cache.
 """
 
 from std.encoding.hex import hexlify
@@ -32,7 +32,11 @@ const UNIT_DOMAIN: str = "incan.oven.unit/1"
 pub def artifact_files(directory: Path, package: str) -> list[Path]:
     """The complete DD-0007 artifact set required to reuse a library."""
     linked = package.replace("-", "_")
-    return [directory.joinpath(name) for name in [f"lib{linked}.rlib", f"{package}.incnlib", f"{package}.incnbody", f"{package}.native.json", f"{package}.incngraph"]]
+    mut artifacts = [directory.joinpath(name) for name in [f"lib{linked}.rlib", f"{package}.incnlib", f"{package}.incnbody", f"{package}.native.json", f"{package}.incngraph"]]
+    cache = directory.joinpath(f"{package}.rustabi")
+    if cache.is_file():
+        artifacts.append(cache)
+    return artifacts
 
 
 pub def artifact_identity(path: Path) -> Result[str, str]:

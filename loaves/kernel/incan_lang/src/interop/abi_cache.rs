@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 
 use super::metadata::RustItemMetadata;
 
-/// The cache layout's version; a reader refuses any other. Version 8 adds native variant field names to the combined
-/// exact-payload, trait implementation and supertrait predicate records.
-pub const RUST_ABI_CACHE_VERSION: u32 = 8;
+/// The cache layout's version; a reader refuses any other. Version 9 retains native owners' lifetime-parameter
+/// presence so checking can refuse borrowed signatures without a lifetime contract.
+pub const RUST_ABI_CACHE_VERSION: u32 = 9;
 
 /// One item's payload range within the cache.
 #[derive(Serialize, Deserialize)]

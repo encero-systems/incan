@@ -1,14 +1,24 @@
-# behavior: a declared registry crate is callable through its authored alias, including a feature-selected optional crate and a crate called with a byte-string argument, and a Rust type keeps its identity across public reexports (#705)
+# behavior: a declared registry crate is callable through its authored alias, including a feature-selected optional crate and a crate called with a byte-string argument, and a Rust type keeps its identity across public reexports, Arc and fallible decoding, while a concrete Rust type alias shares its constructor's native storage in a model field (#705, #2215, #1530)
 # expect-stdout:
 #   3.5
 #   0
 #   true
+#   value
+#   public
 
 from rust::checksum import hash
 from rust::foreign_math import fabs
 from rust::serde_json import Value as PublicValue
-from rust::serde_json::value import Value as ModuleValue
+from rust::serde_json::value import Value as ModuleValue, RawValue
+from rust::serde_json::de import from_slice
+from rust::serde_json import from_slice as public_from_slice
+from rust::sha2 import Sha256
 from rust::std::sync import Arc
+
+
+model DigestState:
+    """Retain an inspected concrete alias as a source model field."""
+    handle: Sha256
 
 
 def registry_value(value: Arc[ModuleValue]) -> bool:
@@ -16,10 +26,33 @@ def registry_value(value: Arc[ModuleValue]) -> bool:
     return value.is_null()
 
 
+def decode(source: bytes) -> Result[str, str]:
+    """Infer the success type through map_err while preserving the native error type."""
+    return from_slice(source).map_err((error) => str(error))
+
+
+def decode_public(source: bytes) -> Result[str, str]:
+    """Use the same exact target root through its public function reexport."""
+    return public_from_slice(source).map_err((error) => str(error))
+
+
+def retain_digest_state() -> None:
+    """Hold a concrete registry type in a model field, built through its own constructor, and clone it back."""
+    state = DigestState(handle=Sha256.default())
+    _copy: Sha256 = state.handle.clone()
+
+
 def main() -> None:
-    """Call the registry dependency selected by the package's compact features, read an empty byte string's checksum and
-    pass an Arc through equivalent public type paths."""
+    """Call the registry dependency selected by the package's compact features, read an empty byte string's checksum,
+    keep a registry type in a model field and pass an Arc through equivalent public type paths."""
     println(fabs(-3.5))
     println(hash(b""))
+    retain_digest_state()
     value = Arc.new(PublicValue.Null)
     println(registry_value(value))
+    match decode(b'"value"'):
+        Ok(text) => println(text)
+        Err(error) => println(error)
+    match decode_public(b'"public"'):
+        Ok(text) => println(text)
+        Err(error) => println(error)

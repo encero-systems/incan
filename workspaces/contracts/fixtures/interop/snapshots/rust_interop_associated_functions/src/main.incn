@@ -1,4 +1,4 @@
-# behavior: associated functions and types of imported Rust items are usable: a random Uuid renders as 36 characters, a typed HashMap starts empty and Instant.now() is taken; a variable spelled in TitleCase holding an imported Rust value is a value, so a method call on it renders the value; and a function returning an imported Rust HashMap keyed by Rust String builds an empty map (RFC 041)
+# behavior: associated functions and types of imported Rust items are usable: a random Uuid renders as 36 characters, a typed HashMap starts empty and Instant.now() is taken; a variable spelled in TitleCase holding an imported Rust value is a value, so a method call on it renders the value; and a function returning an imported Rust HashMap keyed by Rust String builds an empty map while borrowed Path receivers keep their own storage (RFC 041)
 # expect-stdout:
 #   36
 #   0
@@ -7,12 +7,19 @@
 
 from rust::uuid import Uuid
 from rust::std::collections import HashMap
+from rust::std::path import Path
 from rust::std::string import String
 from rust::std::time import Instant
 
 
 def empty_name_index() -> HashMap[String, int]:
+    """Return a native map whose key type is imported into this module."""
     return HashMap.new()
+
+
+def location_exists(directory: str) -> bool:
+    """Borrow a source parameter through Path independently of the map's native String key."""
+    return Path.new(directory).exists()
 
 
 def show_associated_functions() -> None:
@@ -33,6 +40,9 @@ def show_titlecase_value() -> None:
 
 def show_path_type_return() -> None:
     println(empty_name_index().len())
+    assert location_exists("/")
+    assert not location_exists("/definitely/not/a/directory")
+    assert Path.new("/").exists()
 
 
 def main() -> None:

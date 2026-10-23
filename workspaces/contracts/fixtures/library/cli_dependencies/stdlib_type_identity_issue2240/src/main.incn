@@ -1,10 +1,10 @@
 # behavior: JsonValue returned by a library is accepted as the consumer's own JsonValue (#2240)
-# pending: #2240 data requires std.io from system, whose BytesIO return is refused as &Bytes instead of Bytes
+# pending: #2240 the complete data package is refused at its native Digest.update call
 # expect-stdout:
 #   0
 
 from std.json import JsonValue
-from pub::documents import document
+from pub::documents import document, object_document, parsed_document
 
 
 def size(value: JsonValue) -> int:
@@ -15,3 +15,20 @@ def size(value: JsonValue) -> int:
 def main() -> None:
     """Pass the library's value straight across the typed boundary."""
     println(size(document()))
+    value = object_document()
+    assert size(value) == 0
+    match value.as_object():
+        None => assert false, "missing object"
+        Some(entries) =>
+            assert len(entries) == 1
+            assert size(entries["key"]) == 2
+    match parsed_document("{\"key\":[1,2]}"):
+        Err(error) => assert false, error
+        Ok(parsed) =>
+            assert size(parsed) == 0
+            match parsed.as_object():
+                None => assert false, "missing parsed object"
+                Some(entries) => assert len(entries) == 1
+    match parsed_document("{"):
+        Err(_) => pass
+        Ok(_) => assert false, "invalid JSON was accepted"
