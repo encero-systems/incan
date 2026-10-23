@@ -1,0 +1,6 @@
+from pub::stock import extra
+
+
+pub def price() -> int:
+    """Use the catalog feature unified by the root's other edge."""
+    return extra() + 40

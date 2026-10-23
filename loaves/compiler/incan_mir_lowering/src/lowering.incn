@@ -71,7 +71,7 @@ from frozen_plan import (
 )
 from loop_exits import exits_to
 from trait_links import (
-    is_well_formed_project_implementation,
+    validate_project_implementation,
     has_open_trait_arguments,
 )
 from derived_methods import (
@@ -406,6 +406,7 @@ from closures import (
     packed_input,
     validate_callable_representation,
     source_function_item,
+    function_item_callee,
     function_assignment,
     callable_copy_type,
     callable_signature,
@@ -443,10 +444,12 @@ def validate_project_module(module: &BodyIrModule, modules: &list[BodyIrModule])
     """Validate one module of a project, resolving its trait implementations against every module of the project."""
     count = validate_declarations_and_bodies(module)?
     for implementation in module.trait_implementations:
-        if not is_well_formed_project_implementation(module, implementation, modules):
-            if has_open_trait_arguments(implementation):
-                return Err("unsupported Body IR open trait default type arguments")
-            return Err("invalid Body IR trait implementation identity")
+        match validate_project_implementation(module, implementation, modules):
+            Ok(_valid) => pass
+            Err(reason) =>
+                if has_open_trait_arguments(implementation):
+                    return Err("unsupported Body IR open trait default type arguments")
+                return Err(f"{reason}; owner={implementation.owner:?}; slot={implementation.method:?}; implementation={implementation.implementation:?}")
     return Ok(count)
 
 
@@ -1756,14 +1759,14 @@ def lower_local_assignment(
         return Err("unsupported Body IR mutation of borrowed list iteration item")
     if in_place_iteration_binding(builder, target, value, span)?:
         return Ok(None)
-    match source_function_item(module, builder, value)?:
+    match source_function_item(module, builder, value, span)?:
         Some(item) =>
             name, ty = item
             if target.projection != Projection.Whole:
                 return Err("unsupported Body IR projected function-item construction")
             builder.locals[target.local].ty = ty
             builder.emit(
-                plan_assign(target, RvalueKind.FunctionItem(Callee(kind=CalleeKind.Planned(name), span=span)), span),
+                plan_assign(target, RvalueKind.FunctionItem(function_item_callee(builder, name, span)), span),
             )
             return Ok(None)
         None => pass
@@ -4052,12 +4055,18 @@ def lower_library_method(
     for index in range(1, len(delegation.parameters)):
         parameter: RustType = substitute(delegation.parameters[index], names, closed)?
         _ = require_native_union_signature(parameter, builder.intrinsics)?
-        ordinary_types.append(
-            native_source_type(builder.nominals, builder.enums, builder.unions, parameter, builder.intrinsics)?,
-        )
+        match delegation.declaration_frame.as_ref():
+            Some(boxed) =>
+                frame = boxed.as_ref()
+                ordinary_types.append(call_parameter_type(builder, frame, frame.params[index])?)
+            None =>
+                ordinary_types.append(
+                    native_source_type(builder.nominals, builder.enums, builder.unions, parameter, builder.intrinsics)?,
+                )
     owned = sdk_owned_callable_bindings(builder, delegation, target.binding, arguments, ordinary_types)?
-    for index in range(len(ordinary_types)):
-        ordinary_types[index] = sdk_callable_type(builder, delegation.parameters[index + 1], names, closed, owned)?
+    if delegation.declaration_frame == None:
+        for index in range(len(ordinary_types)):
+            ordinary_types[index] = sdk_callable_type(builder, delegation.parameters[index + 1], names, closed, owned)?
     parameters.extend(ordinary_types)
     mut argument_types = ordinary_types.clone()
     for index in range(len(argument_types)):
@@ -4067,6 +4076,7 @@ def lower_library_method(
             _ => pass
     result = library_method_result(builder, delegation, target, destination, names, closed, span)?
     boxed_operands = library_call_operands(
+        module,
         builder,
         delegation,
         target.binding,
@@ -4680,32 +4690,27 @@ def callable_argument(
             if callable_signature(source)? != signature:
                 return Err("invalid Body IR callable argument signature")
             match source:
-                PlanType.FunctionItem(name, _held) =>
-                    constructor = f"__incan_item_closure_{name}"
-                    anchor = SourceSpan(file=builder.file, line=1, column=1)
-                    synthesize(builder, closure_constructor(constructor, name, [], signature, false, anchor))
-                    boxed = temporary(builder, PlanType.Closure(signature), span)
-                    terminate_call(builder, CalleeKind.Planned(constructor), [], boxed, span)
-                    builder.owned.append(boxed.local)
-                    return callable_object(builder, boxed, signature, span)
+                PlanType.FunctionItem(_name, _held) =>
+                    pointer = temporary(builder, PlanType.FunctionPointer(signature), span)
+                    builder.emit(plan_assign(pointer, RvalueKind.ReifyFunction(read_place(place, false, span)), span))
+                    return pointer_callable_argument(builder, pointer, signature, span)
                 PlanType.FunctionPointer(_held) =>
-                    _ = closure_arguments(signature)?
-                    name = f"__incan_pointer_closure_{builder.name}_{len(builder.synthesized)}"
-                    synthesize(builder, pointer_forwarder(name, signature, span))
-                    constructor = f"{name}_new"
-                    synthesize(builder, closure_constructor(constructor, name, [source], signature, false, span))
-                    boxed = temporary(builder, PlanType.Closure(signature), span)
-                    terminate_call(
-                        builder,
-                        CalleeKind.Planned(constructor),
-                        [read_place(place, false, span)],
-                        boxed,
-                        span,
-                    )
-                    builder.owned.append(boxed.local)
-                    return callable_object(builder, boxed, signature, span)
+                    return pointer_callable_argument(builder, place, signature, span)
                 _ => return callable_object(builder, place, signature, span)
         _ => return Err("unsupported Body IR constant passed to a closure-holding parameter")
+
+
+def pointer_callable_argument(mut builder: Builder, pointer: Place, signature: list[PlanType], span: SourceSpan) -> Result[Operand, str]:
+    """Box a function pointer behind the same local forwarding environment for source and compiled function items."""
+    _ = closure_arguments(signature)?
+    name = f"__incan_pointer_closure_{builder.name}_{len(builder.synthesized)}"
+    synthesize(builder, pointer_forwarder(name, signature, span))
+    constructor = f"{name}_new"
+    synthesize(builder, closure_constructor(constructor, name, [PlanType.FunctionPointer(signature)], signature, false, span))
+    boxed = temporary(builder, PlanType.Closure(signature), span)
+    terminate_call(builder, CalleeKind.Planned(constructor), [read_place(pointer, false, span)], boxed, span)
+    builder.owned.append(boxed.local)
+    return callable_object(builder, boxed, signature, span)
 # =====================================================================================================================
 # Plain model construction and field replacement
 # =====================================================================================================================
@@ -4739,11 +4744,12 @@ def lower_loaf_call(
                         if target.type_args != callable.native_type_arguments:
                             continue
                     _ => pass
-        return lower_delegated_call(builder, callable, target, arguments, destination, span)
+        return lower_delegated_call(module, builder, callable, target, arguments, destination, span)
     return Err(f"unsupported Body IR imported or unresolved canonical call target {target.name} in {builder.name}")
 
 
 def lower_delegated_call(
+    module: &BodyIrModule,
     mut builder: Builder,
     delegation: &RustLoafCallable,
     target: &RustNamedCallableTarget,
@@ -4787,9 +4793,19 @@ def lower_delegated_call(
         parameters.append(
             native_source_type(builder.nominals, builder.enums, builder.unions, instantiated, builder.intrinsics)?,
         )
+    match delegation.declaration_frame.as_ref():
+        Some(boxed) =>
+            frame = boxed.as_ref()
+            parameters = []
+            for index in range(len(frame.params)):
+                parameters.append(call_parameter_type(builder, frame, frame.params[index])?)
+        None => pass
     returned: RustType = substitute(delegation.return_type, names, closed)?
     _ = require_native_union_signature(returned, builder.intrinsics)?
-    result = native_source_type(builder.nominals, builder.enums, builder.unions, returned, builder.intrinsics)?
+    mut result = native_source_type(builder.nominals, builder.enums, builder.unions, returned, builder.intrinsics)?
+    match delegation.declaration_frame.as_ref():
+        Some(boxed) => result = return_representation(boxed.as_ref(), result)?
+        None => pass
     mut type_arguments: list[PlanType] = []
     mut native_arguments = closed
     if checked_rust:
@@ -4798,7 +4814,7 @@ def lower_delegated_call(
         type_arguments.append(
             native_source_type(builder.nominals, builder.enums, builder.unions, argument, builder.intrinsics)?,
         )
-    operands = library_call_operands(builder, delegation, target.binding, arguments, parameters, span, 0, true)?
+    operands = library_call_operands(module, builder, delegation, target.binding, arguments, parameters, span, 0, true)?
     mut output = temporary(builder, result, span)
     match destination:
         Some(place) =>
@@ -4860,6 +4876,7 @@ def library_function_arguments(
 
 
 def library_call_operands(
+    module: &BodyIrModule,
     mut builder: Builder,
     delegation: &RustLoafCallable,
     binding: &RustArgumentBinding,
@@ -4870,21 +4887,24 @@ def library_call_operands(
     positional: bool,
 ) -> Result[list[Operand], str]:
     """
-    Bind a stdlib crate call's arguments, each passed owned as the crate item takes it.
+    Bind a compiled Loaf call's arguments, each passed owned as the crate item takes it.
 
-    A call that omits an argument passes the constant its record holds for that parameter, as legacy expands the
-    stdlib default at the call site. An offset of one skips a method receiver, the record's first parameter.
+    An omitted argument evaluates its declaration-owned default in an isolated frame. An offset of one skips a
+    method receiver, the record's first parameter.
     """
     if has_defaulted_slots(binding):
         return library_default_arguments(
+            module,
             builder,
-            delegation.parameter_defaults,
+            delegation,
             binding,
             arguments[offset:],
             types,
             span,
             offset,
         )
+    if delegation.declaration_frame != None:
+        return ordered_slot_operands(builder, binding, arguments, types, span, offset, false, positional)
     return ordered_slot_operands(builder, binding, arguments, types, span, offset, true, positional)
 
 
@@ -4929,7 +4949,7 @@ def ordered_arguments(
     return ordered_slot_operands(builder, binding, elements, types, span, 0)
 
 
-def call_parameter_type(builder: Builder, body: &RustBody, parameter: &RustCallableParam) -> Result[PlanType, str]:
+pub def call_parameter_type(builder: Builder, body: &RustBody, parameter: &RustCallableParam) -> Result[PlanType, str]:
     """
     The representation a call passes for one declared parameter, shared by functions and methods.
 
@@ -6778,6 +6798,15 @@ def lowered_plan(
     _ = lower_instances(context, instances, unions, sources, files, owners, functions, externals, intrinsics)?
     for declaration in intrinsics:
         enums.append(declaration)
+    if kind == "library":
+        # A private type can occur in a public callable's signature or default. Its canonical ABI item is exported;
+        # source visibility remains the manifest's checked public surface.
+        for index in range(len(models)):
+            if models[index].library_item == "":
+                models[index].public = true
+        for index in range(len(enums)):
+            if enums[index].library_item == "":
+                enums[index].public = true
     retain_factory_callable_storage(context, functions, models, externals)?
     validate_futures(context, intrinsics)?
     mut exports: list[PlanExport] = []
@@ -6827,7 +6856,7 @@ def collected_test_entries(context: &BodyIrModule, entry: &BodyIrModule, tests: 
 
 def loaf_exports(context: &BodyIrModule, emitted: list[RustBody]) -> list[PlanExport]:
     """
-    Export every body and public type a Loaf compiles at its crate root, under the encoding of its canonical identity:
+    Export every body and type a Loaf compiles at its crate root, under the encoding of its canonical identity:
     the item its consumers name (DD-0007).
 
     A body emitted in several frames under one identity, such as a trait default per receiver, has no single item, so
@@ -6846,12 +6875,12 @@ def loaf_exports(context: &BodyIrModule, emitted: list[RustBody]) -> list[PlanEx
                         exports.append(PlanExport(name=name, path=f"crate::{function_name(context, body)}"))
             None => pass
     for declaration in context.nominal_declarations:
-        if declaration.public and declaration.native_item == "" and is_package_identity(declaration.canonical):
+        if declaration.native_item == "" and is_package_identity(declaration.canonical):
             exports.append(
                 PlanExport(name=encode_incan_symbol_identity(declaration.canonical), path=f"crate::{declaration.name}"),
             )
     for declaration in context.enum_declarations:
-        if declaration.public and declaration.native_item == "" and is_package_identity(declaration.canonical):
+        if declaration.native_item == "" and is_package_identity(declaration.canonical):
             exports.append(
                 PlanExport(name=encode_incan_symbol_identity(declaration.canonical), path=f"crate::{declaration.name}"),
             )

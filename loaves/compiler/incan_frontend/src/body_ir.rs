@@ -137,9 +137,6 @@ pub fn build_body_ir_module(
     type_info: &TypeCheckInfo,
     context: &BodyIrContext<'_>,
 ) -> bir::BodyIrModule {
-    let mut facts = type_info.clone();
-    nominal_carriers::project_imported_alias_identities(&mut facts, context.modules);
-    let type_info = &facts;
     let provider_operations = context.provider_operations;
     let registry_package = context.registry_package;
     let module_identity = match context.library_package {

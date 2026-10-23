@@ -1,5 +1,4 @@
 # behavior: an empty list gets its dependency-owned element type without importing that type (#2010)
-# pending: #2010 the library dependency's compiled artifact is not prepared
 # expect-stdout:
 #   0
 

@@ -5,7 +5,7 @@ The compiler reads no manifest; it reads this. Its fields are the compiler's `in
 
 from std.fs import Path
 from std.json import JsonValue
-from features import FeatureRequest, resolve_features
+from features import ActiveGraph, FeatureRequest, resolve_features
 from home import dependency_artifact_dir, standard_artifact_dir, standard_packages
 from intake import LocalProject, intake
 from toolchain import NativeCrate
@@ -135,37 +135,97 @@ pub def describe(source: Path, profile: str, request: FeatureRequest) -> Result[
             mut projects: Dict[str, LocalProject] = {}
             for project in graph.projects:
                 projects[project.root] = project
-            own = projects[root.0]
-            mut loaves: list[UnitLoaf] = []
-            mut seen: list[str] = []
-            for edge in active.edges:
-                if edge.dependency_root in seen:
-                    continue
-                seen.append(edge.dependency_root)
-                dependency = projects[edge.dependency_root]
-                mut key = dependency.intent.name
-                if edge.requester_root == root.0:
-                    key = edge.alias
-                directory = dependency_artifact_dir(root.0, dependency.intent.name, profile)
-                loaves.append(UnitLoaf(key=key, name=dependency.intent.name, dir=directory.0, standard=false))
-            for loaf in standard_loaves(own.intent.name, profile)?:
-                loaves.append(loaf)
-            return Ok(
-                UnitDescription(
-                    source=entry.0,
-                    project_root=root.0,
-                    source_root=source_root_of(own),
-                    package=own.intent.name,
-                    version=own.intent.version,
-                    profile=profile,
-                    declared_features=sorted([name for name in own.intent.features.keys()]),
-                    active_features=active.active[root.0],
-                    loaves=loaves,
-                    rust_crates=rust_crates_of(own),
-                    contract_models=own.intent.contract_models,
-                    c_headers=own.intent.c_headers,
-                ),
-            )
+            return project_unit(entry, projects[root.0], profile, root.0, active, projects)
+
+
+pub def dependency_units(unit: UnitDescription) -> Result[list[UnitDescription], str]:
+    """Describe active path dependencies before their consumers, using the root graph's unified features and artifact directories.
+
+    The root's already selected feature closure reproduces its request without re-enabling defaults. Each library
+    sees only the closure it reaches, including features contributed by other edges in the root graph.
+    """
+    if len([loaf for loaf in unit.loaves if not loaf.standard]) == 0:
+        return Ok([])
+    graph = intake(Path(unit.project_root)).map_err((error) => error.message())?
+    request = FeatureRequest(features=unit.active_features, default_features=false)
+    active = resolve_features(graph, unit.project_root, request)?
+    mut projects: Dict[str, LocalProject] = {}
+    for project in graph.projects:
+        projects[project.root] = project
+    mut units: list[UnitDescription] = []
+    mut names: Dict[str, str] = {}
+    for root in graph.dependency_order:
+        if root == unit.project_root or root not in active.reached:
+            continue
+        project = projects[root]
+        if project.intent.name in names:
+            return Err(f"path dependencies {names[project.intent.name]} and {root} share package name `{project.intent.name}`")
+        names[project.intent.name] = root
+        entry = Path(root).joinpath("src").joinpath("lib.incn")
+        if not entry.is_file():
+            return Err(f"path dependency {project.intent.name} has no library: {entry.0}")
+        units.append(project_unit(entry, project, unit.profile, unit.project_root, active, projects)?)
+    return Ok(units)
+
+
+def project_unit(
+    entry: Path,
+    own: LocalProject,
+    profile: str,
+    artifact_root: str,
+    active: ActiveGraph,
+    projects: Dict[str, LocalProject],
+) -> Result[UnitDescription, str]:
+    """Describe one project in the root's selected graph; dependency builds share its artifact layout."""
+    return Ok(
+        UnitDescription(
+            source=entry.0,
+            project_root=own.root,
+            source_root=source_root_of(own),
+            package=own.intent.name,
+            version=own.intent.version,
+            profile=profile,
+            declared_features=sorted([name for name in own.intent.features.keys()]),
+            active_features=active.active[own.root],
+            loaves=project_loaves(own, profile, artifact_root, active, projects)?,
+            rust_crates=rust_crates_of(own),
+            contract_models=own.intent.contract_models,
+            c_headers=own.intent.c_headers,
+        ),
+    )
+
+
+def project_loaves(
+    own: LocalProject,
+    profile: str,
+    artifact_root: str,
+    active: ActiveGraph,
+    projects: Dict[str, LocalProject],
+) -> Result[list[UnitLoaf], str]:
+    """List a project's reachable Loaves, preserving direct aliases before transitive package names."""
+    mut reached = [own.root]
+    mut index = 0
+    while index < len(reached):
+        for edge in active.edges:
+            if edge.requester_root == reached[index] and edge.dependency_root not in reached:
+                reached.append(edge.dependency_root)
+        index += 1
+    mut loaves: list[UnitLoaf] = []
+    mut direct: list[str] = []
+    for edge in active.edges:
+        if edge.requester_root != own.root:
+            continue
+        dependency = projects[edge.dependency_root]
+        directory = dependency_artifact_dir(artifact_root, dependency.intent.name, profile)
+        loaves.append(UnitLoaf(key=edge.alias, name=dependency.intent.name, dir=directory.0, standard=false))
+        direct.append(edge.dependency_root)
+    for root in reached[1:]:
+        if root in direct:
+            continue
+        dependency = projects[root]
+        directory = dependency_artifact_dir(artifact_root, dependency.intent.name, profile)
+        loaves.append(UnitLoaf(key=dependency.intent.name, name=dependency.intent.name, dir=directory.0, standard=false))
+    return Ok(loaves + standard_loaves(own.intent.name, profile)?)
 
 
 def single_file_unit(entry: Path, profile: str, standard: list[UnitLoaf]) -> UnitDescription:

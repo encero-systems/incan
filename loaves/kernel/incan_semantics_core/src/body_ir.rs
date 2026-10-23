@@ -281,7 +281,8 @@ pub struct NativeUnionDeclaration {
 /// An external callable: a linked Loaf declaration (DD-0007) or a checker-selected Rust instantiation (DD-0006).
 /// The driver verifies its recorded signature against the exact compiled item's metadata.
 ///
-/// Every field is encoded, including empty vectors, because the executable representation uses positional records.
+/// Published fields use positional records. The declaration frame is a transient view projected from a loaded body,
+/// and is not an additional publication or a second copy of the executable representation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LoafCallable {
     /// Exact declaration identity selected by checking, independent of the caller's spelling.
@@ -305,10 +306,14 @@ pub struct LoafCallable {
     /// What each parameter takes when a call omits it, in `parameters` order, a method's receiver first.
     ///
     /// A parameter without a default is [`CallableParamDefault::Required`]. A default is a
-    /// [`CallableParamDefault::Source`] computation without statements whose result is the constant the call passes,
-    /// or [`CallableParamDefault::Unsupported`] when it is not such a constant.
+    /// [`CallableParamDefault::Source`] computation, evaluated in [`Self::declaration_frame`] when it has
+    /// statements, or a directly usable constant otherwise. An unavailable computation is explicitly Unsupported.
     #[serde(default)]
     pub parameter_defaults: Vec<CallableParamDefault>,
+    /// Checked parameter passing, callable representation and default storage from the authenticated loaded body.
+    /// Its ordinary statements are cleared; consumers compile no copy of the function's implementation.
+    #[serde(skip)]
+    pub declaration_frame: Option<Box<Body>>,
 }
 
 /// The crate a Loaf compiles to (DD-0007): its package name in lowercase, with every character other than an ASCII
@@ -350,13 +355,26 @@ impl LoafCallable {
     pub fn from_body(body: &Body) -> Option<Self> {
         let canonical = body.canonical.clone()?;
         let item = loaf_item_path(&canonical)?;
+        let mut frame = body.clone();
+        frame.block.stmts.clear();
         Some(Self {
             item,
-            parameters: body.params.iter().map(|param| param.ty.clone()).collect(),
+            parameters: body
+                .params
+                .iter()
+                .map(
+                    |param| match body.locals.get(param.local.index()).map(|local| &local.origin) {
+                        Some(LocalOrigin::Receiver { mutable: false }) => IncanType::Ref(Box::new(param.ty.clone())),
+                        Some(LocalOrigin::Receiver { mutable: true }) => IncanType::RefMut(Box::new(param.ty.clone())),
+                        _ => param.ty.clone(),
+                    },
+                )
+                .collect(),
             return_type: body.return_type.clone(),
             type_parameters: body.type_parameters.clone(),
             native_type_arguments: Vec::new(),
             parameter_defaults: body.params.iter().map(|param| param.default.clone()).collect(),
+            declaration_frame: Some(Box::new(frame)),
             canonical,
         })
     }

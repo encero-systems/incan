@@ -1120,8 +1120,8 @@ pub struct DeclarationArtifacts {
     /// Source types whose `@rust.derive(...)` decorators are completely covered by their retained native selections.
     /// Builtins and the supported serde derives retain their canonical targets; arbitrary macro expansions are absent.
     pub rust_native_derive_types: HashSet<String>,
-    /// Active module-scope nominal identities from source and package bindings, retained before lexical checker
-    /// context is discarded.
+    /// Active source and package nominal bindings and their canonical carrier keys, retained by the checker before
+    /// lexical context is discarded. Body IR copies this proof without rebuilding a name table.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
     /// Active compiler-owned native nominal bindings for Body IR only. Legacy continues to consume the ordinary
     /// nominal table; a real source binding under the same spelling cannot authorize this foreign ABI.
@@ -2436,7 +2436,7 @@ impl TypeCheckInfo {
             facts.push(SemanticFact::new(
                 CompilerNodeId::expression_span(&module_identity, span.0, span.1),
                 SemanticFactKind::Type,
-                SemanticFactValue::semantic_type(semantic_type_from_resolved(ty)),
+                SemanticFactValue::semantic_type(self.semantic_type(ty)),
             ));
         }
 
@@ -2608,7 +2608,9 @@ impl TypeCheckInfo {
             facts.push(SemanticFact::new(
                 CompilerNodeId::declaration(&module_identity, name),
                 SemanticFactKind::Type,
-                SemanticFactValue::semantic_type(semantic_type_from_function_binding(binding)),
+                SemanticFactValue::semantic_type(
+                    self.qualify_semantic_type(semantic_type_from_function_binding(binding)),
+                ),
             ));
         }
 
@@ -2674,6 +2676,64 @@ impl TypeCheckInfo {
     /// Return the resolved type recorded for the expression at `span`, if any.
     pub fn expr_type(&self, span: Span) -> Option<&ResolvedType> {
         self.expressions.expr_types.get(&(span.start, span.end))
+    }
+
+    /// Project a checked type without erasing its nominal owners. Carrier identities come only from the checker's
+    /// accepted bindings; an unresolved name remains unresolved rather than borrowing another module's declaration.
+    pub fn semantic_type(&self, ty: &ResolvedType) -> IncanType {
+        self.qualify_semantic_type(semantic_type_from_resolved(ty))
+    }
+
+    /// Retain checker-owned nominal leaves after an active declaration's binders have been classified. Body IR
+    /// consumes this result directly and must not rebuild identities from normalized source names.
+    pub fn qualify_semantic_type(&self, ty: IncanType) -> IncanType {
+        match ty {
+            IncanType::Named(name) => {
+                let identity = self
+                    .declarations
+                    .named_type_identities
+                    .get(&name)
+                    .or_else(|| self.declarations.body_ir_native_type_identities.get(&name));
+                let Some(identity) = identity else {
+                    return IncanType::Named(name);
+                };
+                let Some(key) = incan_semantics_core::body_ir::nominal_carrier_key(identity) else {
+                    return IncanType::Named(identity.declaration_name.clone());
+                };
+                if self
+                    .declarations
+                    .named_type_identities
+                    .get(&key)
+                    .is_some_and(|binding| binding != identity)
+                {
+                    return IncanType::Unsupported("conflicting checked nominal carrier binding".into());
+                }
+                IncanType::Named(key)
+            }
+            IncanType::Generic { base, args } => IncanType::Generic {
+                base,
+                args: args.into_iter().map(|ty| self.qualify_semantic_type(ty)).collect(),
+            },
+            IncanType::Tuple(items) => {
+                IncanType::Tuple(items.into_iter().map(|ty| self.qualify_semantic_type(ty)).collect())
+            }
+            IncanType::Ref(inner) => IncanType::Ref(Box::new(self.qualify_semantic_type(*inner))),
+            IncanType::RefMut(inner) => IncanType::RefMut(Box::new(self.qualify_semantic_type(*inner))),
+            IncanType::TypeToken(inner) => IncanType::TypeToken(Box::new(self.qualify_semantic_type(*inner))),
+            IncanType::Function {
+                mut params,
+                return_type,
+            } => {
+                for parameter in &mut params {
+                    parameter.ty = self.qualify_semantic_type(parameter.ty.clone());
+                }
+                IncanType::Function {
+                    params,
+                    return_type: Box::new(self.qualify_semantic_type(*return_type)),
+                }
+            }
+            ty => ty,
+        }
     }
 
     /// Return the final compiler-selected type of a binding introduced by an assignment statement.
@@ -3655,9 +3715,9 @@ fn semantic_type_from_function_binding(binding: &FunctionBindingInfo) -> IncanTy
 
 /// Convert the current typechecker type universe into the backend-neutral Incan semantic type model.
 ///
-/// HIR and Body IR reuse this mapping for facts, locals and operands instead of duplicating conversion policy.
-/// Builtin tuple annotations and inferred tuple literals have one structural semantic shape, including inside
-/// carriers and callable signatures. Generic nominal types retain their checked generic identity.
+/// This converts structural shape and preserves source spellings, not nominal authority. Checked fact and Body IR
+/// consumers must use [`TypeCheckInfo::semantic_type`] so the accepting checker's nominal owners survive the
+/// boundary. Builtin tuple annotations and inferred tuple literals share one structural semantic shape.
 pub fn semantic_type_from_resolved(ty: &ResolvedType) -> IncanType {
     match ty {
         ResolvedType::Never => IncanType::Never,

@@ -1,5 +1,5 @@
 # behavior: a consumer passes a dependency's union member directly to the dependency's union parameter (#2024)
-# pending: #2024 the library dependency's compiled artifact is not prepared
+# pending: #2024 the compiled union has no admitted native representation
 # expect-stdout:
 #   total
 

@@ -5,7 +5,7 @@
     incan check PATH [--format text|json] [UNIT OPTIONS]
     incan test PATH [UNIT OPTIONS]
     incan describe-unit PATH [UNIT OPTIONS]
-    incan build PROJECT [--substitute NAME=DIR] [UNIT OPTIONS]
+    incan build PATH [--substitute NAME=DIR] [UNIT OPTIONS]
     incan fmt [--check] PATH...
     incan --version
 
@@ -18,7 +18,7 @@ from rust::std::process import exit
 from rust::std::string import String as RustString
 from std.fs import Path
 from features import FeatureRequest
-from home import TOOLCHAIN
+from home import TOOLCHAIN, dependency_artifact_dir
 from unit_rust import describe_native
 from incan_units import check_unit, compile_unit, crate_name, run_program
 from rust_units import RustBuild, build_rust, read_registry_units
@@ -71,7 +71,7 @@ def main() -> None:
 
 def usage() -> str:
     """The command line's usage."""
-    return "usage: incan run PATH [UNIT OPTIONS] [-- ARGS...]\n       incan check PATH [--format text|json] [UNIT OPTIONS]\n       incan test PATH [UNIT OPTIONS]\n       incan describe-unit PATH [UNIT OPTIONS]\n       incan build PROJECT [--substitute NAME=DIR] [UNIT OPTIONS]\n       incan fmt [--check] PATH...\nUNIT OPTIONS: --profile NAME, --features A,B, --no-default-features, --all-features"
+    return "usage: incan run PATH [UNIT OPTIONS] [-- ARGS...]\n       incan check PATH [--format text|json] [UNIT OPTIONS]\n       incan test PATH [UNIT OPTIONS]\n       incan describe-unit PATH [UNIT OPTIONS]\n       incan build PATH [--substitute NAME=DIR] [UNIT OPTIONS]\n       incan fmt [--check] PATH...\nUNIT OPTIONS: --profile NAME, --features A,B, --no-default-features, --all-features"
 
 
 def fail(message: str, code: i32) -> None:
@@ -208,10 +208,15 @@ def describe_unit(arguments: list[str]) -> None:
 
 
 def build(arguments: list[str]) -> None:
-    """Compile a local Loaf's Rust facet and the local facets it reaches."""
+    """Compile an Incan source unit or a Rust project against the installed toolchain's registry units."""
     match parse_options(arguments):
         Err(reason) => fail(f"incan build: {reason}\n{usage()}", 2)
         Ok(options) =>
+            match build_source(Path(options.path)):
+                Some(source) =>
+                    finish("build", built(options, source))
+                    return
+                None => pass
             match build_project(options):
                 Err(reason) => fail(f"incan build: {reason}", 1)
                 Ok(binaries) =>
@@ -233,3 +238,25 @@ def build_project(options: Options) -> Result[list[str], str]:
         substitutes=options.substitutes,
     )
     return build_rust(request)
+
+
+def build_source(path: Path) -> Option[Path]:
+    """Select an explicit source or a directory's conventional Incan entry; other directories name Rust projects."""
+    if path.is_file():
+        return Some(path)
+    for name in ["lib.incn", "main.incn"]:
+        source = path.joinpath("src").joinpath(name)
+        if source.is_file():
+            return Some(source)
+    return None
+
+
+def built(options: Options, source: Path) -> Result[i32, str]:
+    """Build a source file or a project's conventional library or main program, preparing its path dependencies."""
+    mut unit = describe_native(source, options.profile, options.request)?
+    library = source.name() == "lib.incn"
+    mut output = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath(unit.profile).joinpath("bin").joinpath(crate_name(unit))
+    if library:
+        unit.kind = "library"
+        output = dependency_artifact_dir(unit.project_root, unit.package, unit.profile).joinpath(f"lib{crate_name(unit)}.rlib")
+    return compile_unit(unit, load_toolchain()?, output)

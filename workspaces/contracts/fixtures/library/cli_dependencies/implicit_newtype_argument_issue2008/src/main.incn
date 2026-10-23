@@ -1,5 +1,5 @@
 # behavior: a consumer implicitly constructs a validated dependency newtype without importing its name (#2008)
-# pending: #2008 the library dependency's compiled artifact is not prepared
+# pending: #2008 Body IR cannot retain the imported validated-newtype coercion owner
 # expect-stdout:
 #   0.5
 

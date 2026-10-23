@@ -292,6 +292,30 @@ impl BodyIrModule {
         })
     }
 
+    /// Whether a body is governed by its own type parameters or by the checked parameters of its enclosing owner.
+    /// A receiver method need not repeat its owner's binders on the method declaration; it still requires caller
+    /// instantiation and must not become a compiled nongeneric Loaf callable.
+    pub fn body_requires_instantiation(&self, body: &Body) -> bool {
+        if !body.type_parameters.is_empty() {
+            return true;
+        }
+        let Some(identity) = &body.canonical else {
+            return false;
+        };
+        if identity.namespace != SymbolNamespace::Member {
+            return false;
+        }
+        self.nominal_declarations.iter().any(|owner| {
+            !owner.type_parameters.is_empty()
+                && owner.canonical.origin == identity.origin
+                && declares_member(&owner.canonical, identity)
+        }) || self.enum_declarations.iter().any(|owner| {
+            !owner.type_parameters.is_empty()
+                && owner.canonical.origin == identity.origin
+                && declares_member(&owner.canonical, identity)
+        })
+    }
+
     /// Whether a function, source Partial forwarding body, or retained nominal method or computed-property getter has
     /// its own canonical declaration identity and span-derived direct-call id. Methods and getters must belong to a
     /// retained nominal, normal enum or trait owner whose span contains them; an instance receiver must match that
@@ -440,19 +464,6 @@ impl BodyIrModule {
                 .all(|binding| is_closed_type(&binding.argument))
     }
 
-    /// Whether a callable must retain its governed body rather than name a single compiled Loaf item.
-    /// Method-local parameters and parameters of its canonical nominal owner both require consumer instantiation.
-    pub fn body_requires_instantiation(&self, body: &Body) -> bool {
-        !body.type_parameters.is_empty()
-            || body.canonical.as_ref().is_some_and(|identity| {
-                self.nominal_declarations.iter().any(|owner| {
-                    owner.type_parameter_count != 0
-                        && owner.canonical.origin == identity.origin
-                        && declares_member(&owner.canonical, identity)
-                })
-            })
-    }
-
     /// Whether a retained layout agrees with its canonical identities and physical declaration scope. Native layouts
     /// either match a fixed carrier or extend an opaque skeleton with public metadata-selected fields, whose exact
     /// native types rustc verifies. A linked Loaf's item must encode its canonical declaration. A selected native
@@ -488,12 +499,11 @@ impl BodyIrModule {
                 return false;
             }
         }
-        if !declaration.native_item.is_empty()
-            && crate::body_ir::native_nominal_item(&declaration.canonical).as_deref()
-                != Some(declaration.native_item.as_str())
-            && crate::body_ir::loaf_item_path(&declaration.canonical).as_deref()
-                != Some(declaration.native_item.as_str())
-        {
+        let compiled_item = match &declaration.canonical.origin {
+            crate::SymbolOrigin::Package { .. } => crate::body_ir::loaf_item_path(&declaration.canonical),
+            _ => crate::body_ir::native_nominal_item(&declaration.canonical),
+        };
+        if !declaration.native_item.is_empty() && compiled_item.as_deref() != Some(declaration.native_item.as_str()) {
             return false;
         }
         if matches!(

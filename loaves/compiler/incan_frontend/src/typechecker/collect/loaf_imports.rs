@@ -464,11 +464,12 @@ impl TypeChecker {
         }
 
         if let Some(mut kind) = flat_function {
-            self.remap_symbol_kind_with_import_aliases(&mut kind, imported_type_aliases);
             let canonical = manifest
                 .contract_metadata
                 .identity_graph
                 .canonical_for_public_name(&item.name);
+            self.remap_symbol_kind_through_declaring_module(library, manifest, canonical.as_ref(), &mut kind);
+            self.remap_symbol_kind_with_import_aliases(&mut kind, imported_type_aliases);
             let mut binding_path = root;
             binding_path.push(item.name.clone());
             let symbol_id = self.symbols.define_import_binding_at_path(
@@ -872,92 +873,13 @@ impl TypeChecker {
         owner_module_path: &[String],
     ) -> HashMap<String, String> {
         let mut remapping = self.public_library_canonical_type_remapping(library, manifest);
-        let Some(api) = manifest.contract_metadata.api.as_ref() else {
-            return remapping;
-        };
-
-        let api_declarations = api
-            .modules
-            .iter()
-            .flat_map(|module| {
-                module
-                    .declarations
-                    .iter()
-                    .cloned()
-                    .map(|declaration| (module.module_path.clone(), declaration))
-            })
-            .collect::<Vec<_>>();
-        let mut candidates: BTreeMap<String, Vec<(Vec<String>, String)>> = BTreeMap::new();
-        for (module_path, declaration) in &api_declarations {
-            let type_name = match declaration {
-                ApiDeclaration::Model(item) => Some(&item.name),
-                ApiDeclaration::Class(item) => Some(&item.name),
-                ApiDeclaration::Enum(item) => Some(&item.name),
-                ApiDeclaration::Newtype(item) => Some(&item.name),
-                ApiDeclaration::TypeAlias(item) => Some(&item.name),
-                _ => None,
-            };
-            let Some(type_name) = type_name else {
-                continue;
-            };
-            let mut source_path = module_path.clone();
-            source_path.push(type_name.clone());
-            let canonical = canonical_public_library_type_name(library, &source_path.join("::"));
-            let public_path = std::iter::once(manifest.name.clone())
-                .chain(source_path.iter().cloned())
-                .collect::<Vec<_>>();
-            let declaration_identity = manifest
-                .contract_metadata
-                .identity_graph
-                .canonical_for_public_path(&public_path);
-            self.public_library_type_identities.insert(
-                canonical.clone(),
-                self.admitted_public_type_identity(library, &source_path, declaration_identity),
-            );
-            candidates
-                .entry(type_name.clone())
-                .or_default()
-                .push((module_path.clone(), canonical));
-        }
-
-        for (name, candidates) in candidates {
-            if let Some((_, canonical)) = candidates
-                .iter()
-                .find(|(module_path, _)| module_path == owner_module_path)
-                .or_else(|| (candidates.len() == 1).then(|| &candidates[0]))
-            {
-                remapping.insert(name, canonical.clone());
-            }
-        }
-
-        for (module_path, declaration) in api_declarations {
-            let name = Self::api_declaration_name(&declaration);
-            let mut source_path = module_path;
-            source_path.push(name.to_string());
-            let canonical = canonical_public_library_type_name(library, &source_path.join("::"));
-            if self.transitive_pub_types.contains_key(&canonical) || self.transitive_pub_traits.contains_key(&canonical)
-            {
-                continue;
-            }
-            let Some(mut kind) = self.symbol_kind_from_api_declaration(Some(api), &declaration) else {
-                continue;
-            };
-            self.remap_symbol_kind_with_import_aliases(&mut kind, &remapping);
-            Self::mark_compiled_class_field_provider(&mut kind, library);
-            match kind {
-                SymbolKind::Type(info) if !matches!(info, TypeInfo::TypeAlias | TypeInfo::Builtin) => {
-                    self.transitive_pub_types.entry(canonical).or_default().push(info);
-                }
-                SymbolKind::Trait(info) => {
-                    self.transitive_pub_traits.entry(canonical).or_default().push(info);
-                }
-                _ => {}
-            }
-        }
+        self.register_pub_library_declarations(library, manifest, &remapping);
+        remapping.extend(self.pub_library_declaration_scope(library, manifest, owner_module_path));
         remapping
     }
 
-    /// Define one declaration imported through a derived public module namespace.
+    /// Define one declaration imported through a derived public module namespace, retaining provider identity for
+    /// both nominal types and trait types so an imported alias matches its declaring-module signature spelling.
     pub(super) fn define_pub_module_import_symbol(
         &mut self,
         library: &str,
@@ -971,6 +893,7 @@ impl TypeChecker {
             .map(|(type_params, target)| crate::typechecker::TypeAliasTarget {
                 type_params: type_params.iter().map(|param| param.name.clone()).collect(),
                 target,
+                nominal_identities: Default::default(),
             });
         let mut partial_projection = member.partial_projection;
         let canonical = member.canonical;
@@ -1030,6 +953,7 @@ impl TypeChecker {
         if matches!(
             kind,
             SymbolKind::Type(TypeInfo::Model(_) | TypeInfo::Class(_) | TypeInfo::Enum(_) | TypeInfo::Newtype(_))
+                | SymbolKind::Trait(_)
         ) {
             let mut source_path = source_module_path;
             source_path.push(source_name);
@@ -2227,6 +2151,7 @@ impl TypeChecker {
                 type_alias_target = Some(crate::typechecker::TypeAliasTarget {
                     type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
                     target,
+                    nominal_identities: Default::default(),
                 });
                 SymbolKind::Type(TypeInfo::TypeAlias)
             }
@@ -2251,6 +2176,7 @@ impl TypeChecker {
                     type_alias_target = Some(crate::typechecker::TypeAliasTarget {
                         type_params: Vec::new(),
                         target,
+                        nominal_identities: Default::default(),
                     });
                 }
                 let Some(kind) = self.symbol_kind_from_manifest_alias(manifest, export, &mut HashSet::new()) else {

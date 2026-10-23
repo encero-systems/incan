@@ -14,8 +14,16 @@ from unit import UnitDescription, describe
 
 pub def describe_native(source: Path, profile: str, request: FeatureRequest) -> Result[UnitDescription, str]:
     """Describe the source and prepare the exact native inputs checking and compilation share."""
-    mut unit = describe(source, profile, request)?
-    toolchain = load_toolchain()?
+    return prepare_native(describe(source, profile, request)?, load_toolchain()?)
+
+
+pub def prepare_native(described: UnitDescription, toolchain: Toolchain) -> Result[UnitDescription, str]:
+    """Prepare native inputs on an already selected unit, preserving unified features, unit kind and Loaf artifact directories.
+
+    Dependency preparation calls this after its providers compile so their published native search paths join the
+    same descriptor boundary as ordinary programs. No source graph or feature request is selected again here.
+    """
+    mut unit = described
     unit.search = toolchain.search
     unit.rust_abi = toolchain.rust_abi
     if Path(unit.project_root).joinpath("loaf.toml").is_file():

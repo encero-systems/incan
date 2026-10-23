@@ -1,0 +1,83 @@
+"""Content fingerprints for prepared path libraries; a stamp is written only after all four artifacts exist."""
+
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.hash import sha256
+from std.json import JsonValue
+from toolchain import Toolchain
+from unit import UnitDescription
+
+
+pub def artifact_files(directory: Path, package: str) -> list[Path]:
+    """The complete DD-0007 artifact set required to reuse a library."""
+    linked = package.replace("-", "_")
+    return [directory.joinpath(name) for name in [f"lib{linked}.rlib", f"{package}.incnlib", f"{package}.incnbody", f"{package}.native.json"]]
+
+
+def file_digest(path: Path) -> Result[str, str]:
+    """Hash exact bytes, preserving read failures rather than treating them as unchanged inputs."""
+    content = path.read_bytes().map_err((error) => f"{path.0}: {error.message()}")?
+    return Ok(hexlify(sha256.digest(content)))
+
+
+pub def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
+    """Bind reuse to the driver and its installed native closure and Rust facts, once per preparation."""
+    mut inputs = [toolchain.driver, toolchain.sysroot, file_digest(Path(toolchain.driver))?]
+    for native in toolchain.externs:
+        inputs.append(native.name)
+        inputs.append(native.path)
+        inputs.append(file_digest(Path(native.path))?)
+    for cache in toolchain.rust_abi:
+        inputs.append(cache)
+        inputs.append(file_digest(Path(cache))?)
+    return fingerprint(inputs + toolchain.search)
+
+
+pub def source_fingerprint(unit: UnitDescription, compiler: str) -> Result[str, str]:
+    """Hash the description, manifest, source tree, metadata inputs and every reached library's artifacts.
+
+    Sorted paths make added, removed and renamed modules observable. Dependency artifacts bind consumers to rebuilt
+    providers, including transitive ones. Content rather than modification times allows unchanged repeats to reuse.
+    """
+    description = unit.to_json().to_json().map_err((error) => error.message())?
+    mut inputs = ["incan.oven.path-library/1", compiler, description]
+    root = Path(unit.project_root)
+    mut paths = [root.joinpath("loaf.toml").0, unit.source]
+    for path in Path(unit.source_root).rglob("*.incn").map_err((error) => error.message())?:
+        if path.is_file():
+            paths.append(path.0)
+    for extra in unit.contract_models + unit.c_headers:
+        paths.append(root.joinpath(extra).0)
+    for path in sorted(paths):
+        inputs.append(path)
+        inputs.append(file_digest(Path(path))?)
+    for loaf in unit.loaves:
+        for path in artifact_files(Path(loaf.dir), loaf.name):
+            inputs.append(path.0)
+            inputs.append(file_digest(path)?)
+    for native in unit.externs:
+        inputs.append(native.name)
+        inputs.append(native.path)
+        inputs.append(file_digest(Path(native.path))?)
+    for cache in unit.rust_abi:
+        inputs.append(cache)
+        inputs.append(file_digest(Path(cache))?)
+    return fingerprint(inputs)
+
+
+def fingerprint(inputs: list[str]) -> Result[str, str]:
+    """Frame every input independently before hashing so paths and contents cannot alias each other."""
+    text = JsonValue.array([JsonValue.string(value) for value in inputs]).to_json().map_err((error) => error.message())?
+    return Ok(hexlify(sha256.digest(text.encode("utf-8"))))
+
+
+pub def reusable(directory: Path, package: str, digest: str) -> Result[bool, str]:
+    """Require a complete artifact set and the last successful build's matching input digest."""
+    for path in artifact_files(directory, package):
+        if not path.is_file():
+            return Ok(false)
+    stamp = directory.joinpath(".oven-inputs.sha256")
+    if not stamp.is_file():
+        return Ok(false)
+    recorded = stamp.read_text("utf-8", "strict").map_err((error) => f"{stamp.0}: {error.message()}")?
+    return Ok(recorded == digest)
