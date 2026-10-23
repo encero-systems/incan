@@ -20,6 +20,7 @@ from trait_links import contains
 from options import carrier_payload_value, clone_tuple_operand
 from tuples import is_tuple_type
 from text_plan import clone_text
+from decls import library_enum_item
 
 
 pub def is_derived_clone(target: &MethodTarget) -> bool:
@@ -89,7 +90,7 @@ def clone_place(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Clone through the retained carrier, dereferencing scalar references before copying their values."""
+    """Clone through the retained carrier and its owning implementation; compiled enums do not acquire local derives."""
     ty = place_type(builder.locals, source)
     match ty:
         PlanType.ScalarRef(elements) =>
@@ -115,7 +116,11 @@ def clone_place(
         PlanType.Enum(index, name) =>
             if index >= len(builder.enums):
                 return clone_builtin_place(builder, source, destination, span)
-            if index < 0 or "Clone" not in builder.enums[index].derives:
+            if index < 0:
+                return Err("unsupported Body IR enum Clone without a derived Clone")
+            if library_enum_item(builder.enums[index]) != "":
+                return clone_builtin_place(builder, source, destination, span)
+            if "Clone" not in builder.enums[index].derives:
                 return Err("unsupported Body IR enum Clone without a derived Clone")
             reference = PlanType.EnumRef(index, name)
             return clone_into(builder, source, reference, CalleeKind.CloneEnum(index, name), ty, destination, span)

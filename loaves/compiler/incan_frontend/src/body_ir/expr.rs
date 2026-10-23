@@ -20,7 +20,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     }
 
     /// Retain the checker's constant tuple index, including negative literals, before flattening ordinary expressions.
-    /// Non-tuple indexing keeps its existing evaluation and ownership behavior.
+    /// Other indexes capture checked scalar projections and owned text when evaluated, keeping a deferred receiver's
+    /// key alive across its later call arguments without changing the key's ownership decision.
     fn lower_checked_index_operand(
         &mut self,
         base: &ast::Spanned<ast::Expr>,
@@ -33,7 +34,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         {
             return bir::Operand::Constant(bir::Constant::Int(value));
         }
-        self.lower_expr_to_operand(index, scope, out)
+        let value = self.lower_expr_to_operand(index, scope, out);
+        self.retain_evaluated_value_read(index, value, scope, out)
     }
 
     /// Retain a known web carrier's tuple payload before its checked source field. The runtime owner comes from the

@@ -73,7 +73,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Lower a tuple or set literal to a [`bir::Rvalue::Aggregate`], recording an
     /// [`AbiV0RuntimeRequirement::Allocator`] requirement for lists and sets specifically (list/set construction
-    /// always allocates; tuples do not).
+    /// always allocates; tuples do not). Deferred owner reads stay reserved across later nested entries, as they do
+    /// across nested call arguments, so a later entry cannot move storage an earlier entry still reads.
     pub(super) fn lower_aggregate(
         &mut self,
         kind: bir::AggregateKind,
@@ -83,13 +84,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
-        let operands: Vec<bir::Operand> = items
-            .iter()
-            .map(|item| {
-                let value = self.lower_expr_to_operand(item, scope, out);
-                self.retain_evaluated_value_read(item, value, scope, out)
-            })
-            .collect();
+        let pending_start = self.pending_argument_reads.len();
+        let mut operands = Vec::with_capacity(items.len());
+        for item in items {
+            let value = self.lower_expr_to_operand(item, scope, out);
+            let value = self.retain_evaluated_value_read(item, value, scope, out);
+            self.retain_pending_operand_read(&value);
+            operands.push(value);
+        }
+        self.pending_argument_reads.truncate(pending_start);
         let ty = self.resolve_ty(span);
         if matches!(kind, bir::AggregateKind::List | bir::AggregateKind::Set) {
             self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);

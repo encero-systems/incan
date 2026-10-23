@@ -61,22 +61,27 @@ pub from pub::incan_mir_plan import (
 )
 
 
+pub model SourceInputs:
+    """Own source text, paths and collected test names across the compiler's Rust caller boundary."""
+
+    pub sources: list[str]
+    pub files: list[str]
+    pub tests: list[str]
+
+
 pub def unit_plan(
-    modules: &list[BodyIrModule],
-    sources: list[str],
-    files: list[str],
-    entry: int,
-    kind: str,
-    tests: list[str],
+    modules: &list[BodyIrModule], inputs: SourceInputs, entry: int, kind: str,
     mut published: list[NativeUnionDeclaration],
 ) -> Result[Option[Plan], str]:
-    """Lower a program, library or collected test unit through one canonical caller boundary."""
-    return checked_unit_plan(modules, sources, files, entry, kind, tests, published)
+    """Borrow checked modules and consume their source inputs to lower a program, library or collected test unit."""
+    return checked_unit_plan(modules, inputs.sources, inputs.files, entry, kind, inputs.tests, published)
 
 
-pub def program_refusals(modules: &list[BodyIrModule], sources: list[str], files: list[str], entry: int) -> list[str]:
-    """Delegate the census's per-body refusal collection through the canonical caller boundary."""
-    return checked_program_refusals(modules, sources, files, entry)
+pub def program_refusals(
+    modules: &list[BodyIrModule], inputs: SourceInputs, entry: int, progress: bool, selection: str,
+) -> list[str]:
+    """Consume source inputs for complete or exact-body refusal collection, optionally reporting its current body."""
+    return checked_program_refusals(modules, inputs.sources, inputs.files, entry, progress, selection)
 
 
 pub def numeric_carrier(ty: PlanType) -> bool:

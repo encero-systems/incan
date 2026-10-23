@@ -78,10 +78,10 @@ fn inline_range_parts(
 }
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
-    /// Lower `if`/`elif`/`else` into a [`bir::StatementKind::If`] chain. `elif` branches are folded into nested
-    /// `else { if ... }` wrappers from the last branch inward (see the inline comment above the fold loop), and an
-    /// `if let` pattern condition — not yet modeled by v0 — lowers to an explicit unsupported placeholder instead of
-    /// the real branch.
+    /// Lower `if`/`elif`/`else` into a [`bir::StatementKind::If`] chain. Evaluate ownership facts in written order,
+    /// then fold the already lowered `elif` branches into nested `else { if ... }` wrappers from the last branch
+    /// inward. Reversing the ownership visit would move an owner in an earlier condition before a later condition
+    /// reads it. Pattern conditions use the dedicated `if let` boundary.
     pub(super) fn lower_if(
         &mut self,
         if_stmt: &ast::IfStmt,
@@ -102,20 +102,25 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let then_block = self.lower_branch_block(&if_stmt.then_body, scope, span);
         let mut range_layouts_after_branches = vec![self.materialized_range_locals.clone()];
 
-        self.materialized_range_locals = range_layouts_before.clone();
+        let mut lowered_branches = Vec::with_capacity(if_stmt.elif_branches.len());
+        for (elif_cond, elif_body) in &if_stmt.elif_branches {
+            self.materialized_range_locals = range_layouts_before.clone();
+            let mut wrapper = Vec::new();
+            let cond_operand = self.lower_expr_to_operand(elif_cond, scope, &mut wrapper);
+            let then_block = self.lower_branch_block(elif_body, scope, span);
+            lowered_branches.push((wrapper, cond_operand, then_block));
+            range_layouts_after_branches.push(self.materialized_range_locals.clone());
+        }
+
+        self.materialized_range_locals = range_layouts_before;
         let mut else_block = if_stmt
             .else_body
             .as_ref()
             .map(|else_body| self.lower_branch_block(else_body, scope, span));
         range_layouts_after_branches.push(self.materialized_range_locals.clone());
 
-        // Fold `elif` branches into nested `else { if ... }` wrappers, innermost (last elif) first, so the earlier
-        // conditions end up evaluated first at the top of the chain once wrapped by the outer `if` pushed below.
-        for (elif_cond, elif_body) in if_stmt.elif_branches.iter().rev() {
-            self.materialized_range_locals = range_layouts_before.clone();
-            let mut wrapper = Vec::new();
-            let cond_operand = self.lower_expr_to_operand(elif_cond, scope, &mut wrapper);
-            let then_block = self.lower_branch_block(elif_body, scope, span);
+        // Only assembly runs backward; every read's ownership fact is already fixed in written order.
+        for (mut wrapper, cond_operand, then_block) in lowered_branches.into_iter().rev() {
             wrapper.push(bir::Statement {
                 kind: bir::StatementKind::If {
                     cond: cond_operand,
@@ -125,7 +130,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 span,
             });
             else_block = Some(bir::Block { scope, stmts: wrapper });
-            range_layouts_after_branches.push(self.materialized_range_locals.clone());
         }
 
         self.materialized_range_locals = intersect_range_layouts(range_layouts_after_branches);

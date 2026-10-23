@@ -507,20 +507,19 @@ pub def none_operand(mut builder: Builder, ty: PlanType, span: SourceSpan) -> Re
     return Ok(read_place(output, true, span))
 
 
-pub def borrowed_runtime_value(
+pub def borrowed_native_value(
     mut builder: Builder,
-    name: str,
+    path: str,
     source: Place,
     ty: PlanType,
     reference_type: PlanType,
     result_type: PlanType,
     span: SourceSpan,
 ) -> Place:
-    """Instantiate a native runtime helper against one checked carrier or payload type and its shared reference."""
+    """Instantiate one native callee against a checked carrier or payload type and its shared reference."""
     reference = temporary(builder, reference_type, span)
     builder.emit(plan_assign(reference, RvalueKind.Borrow(source), span))
     output = temporary(builder, result_type, span)
-    path = f"incan_native_runtime::{name}"
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=[ty], parameters=[reference_type], return_type=result_type, span=span),
     )
@@ -534,9 +533,9 @@ pub def format_carrier(mut builder: Builder, source: Place, span: SourceSpan) ->
     owner, declaration = carrier_layout(builder, frame_place_type(builder.locals, source))?
     ty = PlanType.Enum(owner, declaration.name)
     return Ok(
-        borrowed_runtime_value(
+        borrowed_native_value(
             builder,
-            "format_carrier",
+            "incan_native_runtime::format_carrier",
             source,
             ty,
             PlanType.EnumRef(owner, declaration.name),
@@ -571,7 +570,7 @@ pub def carrier_payload_value(mut builder: Builder, place: Place, span: SourceSp
         PlanType.Model(owner, name) =>
             reference_type = PlanType.ModelRef(owner, name)
         _ => return Err("unsupported Body IR intrinsic payload clone type")
-    output = borrowed_runtime_value(builder, "clone_carrier_payload", place, ty, reference_type, ty, span)
+    output = borrowed_native_value(builder, "core::clone::Clone::clone", place, ty, reference_type, ty, span)
     return Ok(read_place(output, true, span))
 
 

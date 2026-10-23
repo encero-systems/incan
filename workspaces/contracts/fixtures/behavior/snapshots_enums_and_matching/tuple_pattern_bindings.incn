@@ -1,10 +1,32 @@
-# behavior: a tuple pattern over a tuple[...]-typed value binds its names with the element types
+# behavior: tuple patterns retain their element types and clone owned enum bindings nested in optional payloads (#2256)
 # expect-stdout:
 #   42 hello
 #   zero
 #   43 HELLO
+#   payload
+#   payload
+#   none
 
 """Issue #1714: the names a tuple pattern binds are usable, typed as the tuple's elements."""
+
+
+enum Choice:
+    """Keep an owned non-Copy payload inside a tuple pattern."""
+
+    Text(str)
+
+
+def selected(value: Option[tuple[Choice, int]]) -> Choice:
+    """Return the nested enum binding while retaining its matched tuple's storage."""
+    match value:
+        Some((choice, _number)) => return choice
+        None => return Choice.Text("none")
+
+
+def show(choice: Choice) -> None:
+    """Observe the enum's owned text without relying on an additional formatter."""
+    match choice:
+        Choice.Text(word) => println(word)
 
 
 def describe(pair: tuple[int, str]) -> str:
@@ -23,3 +45,8 @@ def main() -> None:
     zero: tuple[int, str] = (0, "zero")
     println(describe(zero))
     println(describe(pair))
+    value: Option[tuple[Choice, int]] = Some((Choice.Text("payload"), 7))
+    show(selected(value))
+    show(selected(value))
+    absent: Option[tuple[Choice, int]] = None
+    show(selected(absent))

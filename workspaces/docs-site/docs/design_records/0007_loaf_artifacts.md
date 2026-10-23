@@ -45,6 +45,8 @@ One index per compilation records each reachable Loaf's key, artifact directory,
 
 A consumer names declarations without redeclaring them; every type and compiled function/method is exported at the crate root under its encoded canonical identity, with the crate name lowercased and non-ASCII-alphanumeric characters replaced by `_`, eliminating per-call identity records.
 
+The checked, unambiguous nongeneric callable and nominal names at a package root also alias their canonical Loaf items for Rust consumers; these facade aliases add no layout or implementation. Explicit Rust item reexports retain their checked Rust targets, including target-owned type parameters.
+
 Every public callable's `.incnbody` declaration supplies parameters, default computations, and type parameters for consumer call checking and omitted arguments; the driver verifies calls against rlib metadata. Compiled callables publish declarations only: their implementation dependencies stay in the rlib, while functions with type parameters and open trait defaults retain governed bodies.
 
 Published unions retain checked semantic carriers, public native owners, canonical nominal payload identities, and physical variant order; consumers use that representation for construction, narrowing, and tests, refusing conflicting owners instead of inventing wrappers or import-dependent order.

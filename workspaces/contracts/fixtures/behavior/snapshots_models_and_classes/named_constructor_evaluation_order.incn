@@ -1,7 +1,12 @@
-# behavior: named constructor arguments are evaluated in the order written, then fill the declared fields (#1462)
+# behavior: constructor arguments and tuple entries retain evaluated text before later entries consume it; a mutable call receives a snapshot of its receiver's text field (#1462, #2256)
 # expect-stdout:
 #   inspect intent
 #   inspect evidence
+#   manifest
+#   manifest
+#   manifest
+#   manifest
+#   manifest
 #   manifest
 #   manifest
 
@@ -17,13 +22,42 @@ model Document:
     intent: str
 
 
+def paired(source: str) -> tuple[str, Evidence]:
+    """Retain the first text entry before the nested constructor consumes its source."""
+    return (source, Evidence(source=source))
+
+
+def same_evidence(value: Evidence) -> Evidence:
+    """Transfer a carrier through a nested by-value call."""
+    return value
+
+
+def paired_owners(value: Evidence) -> tuple[Evidence, Evidence]:
+    """Keep an earlier carrier entry alive while a nested call reads the same source."""
+    return (value, same_evidence(value))
+
+
+def update(mut document: Document, intent: str) -> None:
+    """Store the caller's already evaluated text value."""
+    document.intent = intent
+
+
 def inspect(label: str, source: str) -> str:
     println(f"inspect {label}")
     return source
 
 
 def main() -> None:
+    """Observe constructor order, nested aggregate ownership and a field beside its mutable owner."""
     source = "manifest"
-    result = Document(intent=inspect("intent", source), evidence=Evidence(source=inspect("evidence", source)))
+    mut result = Document(intent=inspect("intent", source), evidence=Evidence(source=inspect("evidence", source)))
     println(result.intent)
     println(result.evidence.source)
+    text, evidence = paired(source)
+    println(text)
+    println(evidence.source)
+    left, right = paired_owners(evidence)
+    println(left.source)
+    println(right.source)
+    update(result, result.intent)
+    println(result.intent)

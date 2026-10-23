@@ -324,6 +324,31 @@ fn invalid(function: &Function, reason: impl Into<String>) -> PlanError {
 /// This pass checks references, signatures, scalar expression types, and cleanup edges. It is not an ownership
 /// checker: stage 3c must only submit checked bodies, and rustc's borrow checker remains a backstop.
 pub fn validate(plan: &Plan, library: bool) -> Result<(), PlanError> {
+    validate_declarations(plan, library)?;
+    for function in &plan.functions {
+        validate_callable(plan, function)?;
+    }
+    Ok(())
+}
+
+/// Collect each function's first adapter refusal after the shared declaration context has passed validation.
+/// A declaration failure is returned alone because individual function checks require that context.
+pub(crate) fn refusals(plan: &Plan, library: bool) -> Vec<PlanError> {
+    if let Err(error) = validate_declarations(plan, library) {
+        return vec![error];
+    }
+    plan.functions
+        .iter()
+        .filter_map(|function| match validate_callable(plan, function) {
+            Ok(()) => None,
+            Err(error @ PlanError::Invalid { .. }) => Some(error),
+            Err(error) => Some(invalid(function, error.to_string())),
+        })
+        .collect()
+}
+
+/// Validate names, declarations, extern signatures and the entrypoint before any callable body is inspected.
+fn validate_declarations(plan: &Plan, library: bool) -> Result<(), PlanError> {
     span(&plan.span)?;
     let mut names = BTreeSet::new();
     for function in &plan.functions {
@@ -395,12 +420,14 @@ pub fn validate(plan: &Plan, library: bool) -> Result<(), PlanError> {
             ));
         }
     }
-    for function in &plan.functions {
-        validate_closure_constructor(function)?;
-        crate::shared_callables::validate(function)?;
-        validate_function(plan, function)?;
-    }
     Ok(())
+}
+
+/// Apply the same closure, callable-storage and body checks in ordinary compilation and diagnostic enumeration.
+fn validate_callable(plan: &Plan, function: &Function) -> Result<(), PlanError> {
+    validate_closure_constructor(function)?;
+    crate::shared_callables::validate(function)?;
+    validate_function(plan, function)
 }
 
 /// Whether a binary main's result is a standard `Result` with a unit success and a text or SDK-owned error.

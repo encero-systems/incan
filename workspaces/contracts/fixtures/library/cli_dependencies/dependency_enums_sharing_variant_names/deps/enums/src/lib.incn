@@ -2,6 +2,9 @@ from kinds import Phase, Route, route_label
 from level_kinds import Level
 pub from middle import ExportedPacket as RelayedPacket
 pub from inner import Other
+pub from inner import Receipt as PublicReceipt
+pub from inner import make_receipt as public_receipt
+pub from rust::std::net import Ipv4Addr as PublicAddress
 
 
 @derive(Clone, Eq)

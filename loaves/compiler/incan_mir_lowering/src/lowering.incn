@@ -762,7 +762,7 @@ def target_read(mut builder: Builder, target: Place, fact: &OwnershipFact, span:
                 return Err("unsupported Body IR partial tuple move")
             if is_nominal_type(place_type(builder.locals, target)) and reads_through_reference(target):
                 site = f"{builder.file}:{span.line}:{span.column} in {builder.name}"
-                return Err(f"unsupported Body IR move out of a borrowed value at {site}; projection {target.projection:?}")
+                return Err(f"unsupported Body IR move out of a borrowed value at {site}; frame local {target.local}; projection {target.projection:?}")
             return Ok(Operand(kind=OperandKind.Move(target), span=span))
         OwnershipFact.Clone =>
             if frozen_observation_type(place_type(builder.locals, target)):
@@ -1260,13 +1260,8 @@ def collection_equality(
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
     """Classify both checked layouts before evaluating either operand, then compare their shared collection views."""
-    for operand in [left, right]:
-        match operand:
-            RustOperand.Place(read) =>
-                if read.place.local_id() == None:
-                    return Ok(None)
-            RustOperand.Constant(RustConstant.Bytes(_bytes)) => pass
-            _ => return Ok(None)
+    if not local_comparison_operand(left) or not local_comparison_operand(right):
+        return Ok(None)
     left_shape = equality_shape(comparison_operand_type(builder, left, span)?)
     right_shape = equality_shape(comparison_operand_type(builder, right, span)?)
     if left_shape == None or right_shape == None:
@@ -1279,6 +1274,14 @@ def collection_equality(
             references = [list_borrow(builder, places[0], false, span)?, list_borrow(builder, places[1], false, span)?]
             return Ok(Some(emit_collection_equality(builder, ty, references, operator == BinOp.Ne, span)?))
         None => return Ok(None)
+
+
+def local_comparison_operand(value: &RustOperand) -> bool:
+    """Recognize checked local and byte-literal comparison operands without collecting borrowed values into owned storage."""
+    match value:
+        RustOperand.Place(read) => return read.place.local_id() != None
+        RustOperand.Constant(RustConstant.Bytes(_bytes)) => return true
+        _ => return false
 
 
 def newtype_equality(
@@ -1314,21 +1317,10 @@ def newtype_equality(
         return Err("unsupported Body IR newtype equality without retained PartialEq")
     if source_operand_type(builder, right, span)? != ty:
         return Err("unsupported Body IR equality between different newtypes")
-    mut operands: list[Operand] = []
-    for value in [left, right]:
-        selected = value_operand(builder, value, span)?
-        mut source = plan_place(0, span)
-        match selected.kind:
-            OperandKind.Move(place) =>
-                source = place
-            OperandKind.Copy(place) =>
-                source = place
-            _ => return Err("unsupported Body IR newtype equality without an owned place")
-        if place_type(builder.locals, source) != ty:
-            return Err("unsupported Body IR newtype equality carrier mismatch")
-        borrowed = temporary(builder, reference, span)
-        builder.emit(plan_assign(borrowed, RvalueKind.Borrow(source), span))
-        operands.append(read_place(borrowed, false, span))
+    operands = [
+        newtype_comparison_operand(builder, left, ty, reference, span)?,
+        newtype_comparison_operand(builder, right, ty, reference, span)?,
+    ]
     path = "core::cmp::PartialEq::eq"
     builder.externals.append(
         ExternalFunction(
@@ -1346,6 +1338,27 @@ def newtype_equality(
         builder.emit(plan_assign(negated, RvalueKind.Unary(UnaryOp.Not, read_place(output, false, span)), span))
         return Ok(Some(read_place(negated, false, span)))
     return Ok(Some(read_place(output, false, span)))
+
+
+def newtype_comparison_operand(
+    mut builder: Builder,
+    value: &RustOperand,
+    ty: PlanType,
+    reference: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Materialize one checked newtype operand and borrow its retained carrier for equality."""
+    selected = value_operand(builder, value, span)?
+    mut source = plan_place(0, span)
+    match selected.kind:
+        OperandKind.Move(place) => source = place
+        OperandKind.Copy(place) => source = place
+        _ => return Err("unsupported Body IR newtype equality without an owned place")
+    if place_type(builder.locals, source) != ty:
+        return Err("unsupported Body IR newtype equality carrier mismatch")
+    borrowed = temporary(builder, reference, span)
+    builder.emit(plan_assign(borrowed, RvalueKind.Borrow(source), span))
+    return Ok(read_place(borrowed, false, span))
 
 
 def text_comparison_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[bool, str]:
@@ -7285,7 +7298,7 @@ def lowered_plan(
         bridge_bodies.extend(declaration.comparison_methods)
     mut functions = checked_functions
     functions.extend(conversion_functions)
-    mut emitted_frames: list[RustBody] = []
+    mut emitted_frames = EmittedFrames(bodies=[])
     mut externals = checked_runtime
     merge_externals(externals, conversion_runtime)
     mut instances = checked_instances
@@ -7293,14 +7306,15 @@ def lowered_plan(
         if is_lazy_method_body(context, body) and function_name(context, body) in bridge_bodies:
             instances.append(Instance(body=body.clone(), arguments=[], owned_callable_slots=[], original_callable=false))
     for index in range(len(checked)):
+        owner = str(checked[index].module_id.path())
         for body in context.bodies:
-            if body_module_identity(body)? != str(checked[index].module_id.path()):
+            if body_module_identity(body)? != owner:
                 continue
             if len(body.type_parameters) != 0:
                 continue
             if is_lazy_method_body(context, body):
                 continue
-            if retains_emitted_frame(emitted_frames, body):
+            if emitted_frames.contains(body):
                 continue
             if trace:
                 println(f"lowering: body {body_module_identity(body)?} {body.name} {body.span.start}")
@@ -7331,7 +7345,7 @@ def lowered_plan(
                     function.return_type,
                     function.span,
                 ))
-            emitted_frames.append(body.clone())
+            emitted_frames.bodies.append(body.clone())
             append_synthesized(functions, synthesized)?
             append_async_entry(context, body, function, index == entry, tests, intrinsics, functions, externals)?
             append_generator_constructor(functions, context, body, sources[index], files[index], intrinsics)?
@@ -7364,7 +7378,7 @@ def lowered_plan(
     mut templates: list[GenericModelDeclaration] = []
     if kind == "library":
         templates = generic_models(source_context, nominal_instances, files[entry])?
-        exports = loaf_exports(context, emitted_frames, source_context, templates)
+        exports = loaf_exports(context, emitted_frames.bodies, source_context, templates)
         publish_unions(context, intrinsics, published)?
     test_entries = collected_test_entries(context, checked[entry], tests, functions)?
     if kind == "program" and not has_main:
@@ -7510,14 +7524,19 @@ def is_package_identity(identity: &RustCanonicalSymbolId) -> bool:
         _ => return false
 
 
-def retains_emitted_frame(mut frames: list[RustBody], candidate: &RustBody) -> bool:
-    """Reuse an identical canonical frame revisited through shared module context; differing facts still face overload validation."""
-    if candidate.canonical == None:
+model EmittedFrames:
+    """Own emitted frame snapshots while membership checks borrow their history without copying every previous body."""
+
+    bodies: list[RustBody]
+
+    def contains(self, candidate: &RustBody) -> bool:
+        """Reuse an identical canonical frame revisited through module context; differing facts still face overload validation."""
+        if candidate.canonical == None:
+            return false
+        for frame in self.bodies:
+            if frame == candidate:
+                return true
         return false
-    for frame in frames:
-        if frame == candidate:
-            return true
-    return false
 
 
 def lower_computed_statics(
@@ -7685,20 +7704,24 @@ def lower_literal_dictionary(
     return Ok((Function(name=name, parameters=[], return_type=ty, locals=builder.locals, blocks=builder.blocks, span=span), builder.externals))
 
 
-pub def program_refusals(modules: &list[BodyIrModule], sources: list[str], files: list[str], entry: int) -> list[str]:
+pub def program_refusals(
+    modules: &list[BodyIrModule], sources: list[str], files: list[str], entry: int, progress: bool, selection: str,
+) -> list[str]:
     """
     Collect every body's first refusal rather than only the program's first, for the direct-route census.
 
     The declaration context is prepared as `unit_plan` prepares it, and a refusal there is the only one reported,
     because no body lowers without that context. Each ordinary body then lowers independently, so a refusal in one body
     never hides another body's, and checked type-parameter instances follow once every body has been tried. Each
-    refusal names the body it came from. The plan itself is discarded.
+    refusal names the body it came from. The plan itself is discarded. With `progress`, stdout names each body before
+    lowering starts, so a long-running census identifies its current boundary without process sampling.
+    A nonempty `selection` checks only ordinary bodies with that exact name; it does not compile their dependencies.
     """
     if len(modules) == 0 or entry < 0 or entry >= len(modules):
         return ["invalid Body IR project entry"]
     if len(sources) != len(modules) or len(files) != len(modules):
         return ["invalid Body IR project source provenance"]
-    match body_refusals(modules, sources, files, entry):
+    match body_refusals(modules, sources, files, entry, progress, selection):
         Ok(refusals) => return refusals
         Err(error) => return [error]
 
@@ -7708,6 +7731,8 @@ def body_refusals(
     sources: list[str],
     files: list[str],
     entry: int,
+    progress: bool,
+    selection: str,
 ) -> Result[list[str], str]:
     """
     Prepare the declaration context exactly as `unit_plan` does, refusing as it refuses, then lower each ordinary
@@ -7733,22 +7758,29 @@ def body_refusals(
     _models = lower_model_declarations(context, files[entry], intrinsics, nominal_instances, false)?
     _enums = lower_enum_declarations(context, files[entry], intrinsics)?
     mut refusals: list[str] = []
+    mut selected_count = 0
     mut functions = checked_functions
     functions.extend(conversion_functions)
     mut externals = checked_runtime
     merge_externals(externals, conversion_runtime)
     mut instances = checked_instances
     for index in range(len(checked)):
+        module_owner = str(checked[index].module_id.path())
         for body in context.bodies:
             match body_module_identity(body):
                 Ok(owner) =>
-                    if owner != str(checked[index].module_id.path()):
+                    if owner != module_owner:
                         continue
                 Err(error) =>
                     refusals.append(f"{body.name}: {error}")
                     continue
             if len(body.type_parameters) != 0:
                 continue
+            if selection != "" and str(body.name) != selection:
+                continue
+            selected_count += 1
+            if progress:
+                println(f"census body: {body.name}")
             match lower_function(
                 context,
                 bodies,
@@ -7768,6 +7800,12 @@ def body_refusals(
                         Ok(_) => pass
                         Err(error) => refusals.append(f"{body.name}: {error}")
                 Err(error) => refusals.append(f"{body.name}: {error}")
+    if selection != "":
+        if selected_count == 0:
+            refusals.append(f"unsupported Body IR census selection without an ordinary body: {selection}")
+        if progress:
+            println("census complete: selected ordinary bodies only; no artifact compiled")
+        return Ok(refusals)
     mut owners: list[str] = []
     for module in checked:
         owners.append(str(module.module_id.path()))
@@ -11306,7 +11344,7 @@ def bind_structural_pattern(
     pattern: &RustPattern,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Initialize arm-scoped locals only after every component of the pattern matched."""
+    """Initialize structural bindings through the retained payload ownership policy after every component matched."""
     match pattern:
         RustPattern.Var(binding) =>
             local = int(binding.local.index()) + 1 + builder.local_offset
@@ -11320,20 +11358,17 @@ def bind_structural_pattern(
                 return Ok(None)
             if binding.fact == OwnershipFact.MutBorrow and is_list(ty):
                 return bind_payload_in_place(builder, local, source, span)
-            mut value = read_place(source, false, span)
             match binding.fact:
                 OwnershipFact.Unknown => return Err("unsupported Body IR pattern binding ownership Unknown")
                 OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable pattern binding")
                 _ => pass
-            if ty == PlanType.String:
-                cloned = clone_text(builder, source, span)?
-                value = read_place(cloned, true, span)
-            else:
-                if is_tuple_type(ty):
-                    value = clone_tuple_operand(builder, source, span)?
+            owned_binding = ty == PlanType.String or tuple_has_owners(ty) or owned_carrier(ty) or is_owned_collection(ty)
+            mut value = read_place(source, false, span)
+            if owned_binding:
+                value = enum_payload_read(builder, source, binding.fact, span)?
             track_rvalue_moves(builder, RvalueKind.Use(value))
             builder.emit(plan_assign(plan_place(local, span), RvalueKind.Use(value), span))
-            if ty == PlanType.String or tuple_has_owners(ty):
+            if owned_binding:
                 builder.owned.append(local)
         RustPattern.Tuple(items) =>
             ty = place_type(builder.locals, source)
@@ -11592,7 +11627,9 @@ def read_static(
     elif fact != OwnershipFact.Copy:
         return Err("unsupported Body IR static ownership")
     read_cell, _write_cell = static_accessors(ty)?
-    initial = static_initial_operand(builder, builder.statics[slot].initial, ty, span)?
+    # The initializer reference must not point into the builder while materialization mutates that builder.
+    initializer = builder.statics[slot].initial.clone()
+    initial = static_initial_operand(builder, initializer, ty, span)?
     target = temporary(builder, ty, span)
     external_call(builder, read_cell, [PlanType.Int, ty], ty, [literal(Constant.Int(slot), span), initial], target, span)
     if not is_owned_collection(ty):
@@ -13117,7 +13154,7 @@ def retained_reference_value(
     expected: PlanType,
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
-    """Read a whole native shared-reference value at its exact retained destination carrier, without dereferencing it."""
+    """Copy a retained reference or initialize one from a checked shared borrow of whole owner storage, without writing through an uninitialized reference."""
     match expected:
         PlanType.ModelRef(_owner, _name) => pass
         PlanType.EnumRef(_owner, _name) => pass
@@ -13133,10 +13170,19 @@ def retained_reference_value(
                 None => return Ok(None)
                 Some(local) =>
                     place = plan_place(int(local.index()) + 1 + builder.local_offset, span)
-                    if place_type(builder.locals, place) != expected:
-                        return Ok(None)
                     if read.fact == OwnershipFact.Unknown or read.fact == OwnershipFact.MutBorrow:
                         return Err("unsupported Body IR shared-reference value ownership")
+                    if place_type(builder.locals, place) != expected:
+                        if read.fact != OwnershipFact.Borrow:
+                            return Ok(None)
+                        match shared_receiver_type(place_type(builder.locals, place)):
+                            Ok(reference_type) =>
+                                if reference_type != expected:
+                                    return Ok(None)
+                            Err(_reason) => return Ok(None)
+                        reference = temporary(builder, expected, span)
+                        builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
+                        return Ok(Some(read_place(reference, false, span)))
                     return Ok(Some(read_place(place, read.fact == OwnershipFact.Move, span)))
         _ => return Ok(None)
 

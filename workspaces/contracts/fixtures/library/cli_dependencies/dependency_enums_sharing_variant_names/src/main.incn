@@ -1,4 +1,4 @@
-# behavior: a dependency's enums keep their own variants and layouts: enums that share variant names (a value enum beside payload enums of other arities, in both declaration orders, and enums imported from a sibling module) each publish their own variants, and a variant whose payload type is declared after its enum publishes that type, with the dependency building and the consumer constructing, matching and printing each (#1561); a library value enum keeps its generated getter and parser under imported and returned values; and dependency enum aliases through two reexports retain their owner and payload layout even when another enum has the same member names in a different order (#1337, #1698)
+# behavior: dependency enums retain distinct variants and layouts across declaration orders, sibling modules, later payload declarations and two reexports (#1561, #1337, #1698); value enums retain generated getters and parsers; enum aliases retain compiled Clone implementations, and Rust consumers retain reexported factory, model and Rust item identities (#2256)
 # expect-stdout:
 #   loud
 #   quiet
@@ -20,9 +20,15 @@
 #   start 4
 #   2
 #   3
+#   true
+#   17
 #   41
 #   0
 #   42
+#   -1
+#   43
+#   0
+#   44
 #   -1
 
 from enum_reexports import run_enum_reexports

@@ -1,8 +1,16 @@
-# behavior: string functions return a concatenation or an owned local and preserve the parameter text in their result
+# behavior: string functions return concatenations and owned locals, and borrowed comparisons survive short-circuit elif fallthrough with the owner available (#2256)
 # expect-stdout:
 #   hi Ada
 #   owned
 #   hello, Ada
+#   a
+#   b
+#   c
+#   d
+#   none
+#   owned
+#   d
+#   none
 
 """Executes the selected string ownership control flow and assertion cases."""
 def program_result() -> str:
@@ -14,6 +22,8 @@ def program_result() -> str:
 def owned_text() -> str:
     """Return text that was first bound to a local."""
     value = "owned"
+    assert value >= "own"
+    assert value != ""
     return value
 
 
@@ -22,8 +32,49 @@ def greet(name: str) -> str:
     return "hello, " + name
 
 
+def classify(member: str, ready: bool) -> str:
+    """Fall through borrowed comparisons without transferring the compared owner."""
+    mut name = "none"
+    if member == "a" and ready:
+        name = "a"
+    elif member == "b" and ready:
+        name = "b"
+    elif member == "c":
+        name = "c"
+    elif member == "d" and ready:
+        name = "d"
+    return name
+
+
+def accepts(value: str, expected: str, ready: bool) -> bool:
+    """Consume the supplied value independently from the caller's later branch conditions."""
+    return value == expected and ready
+
+
+def classify_calls(member: str, ready: bool) -> str:
+    """Keep deferred ownership reads in the same order as the branch conditions execute."""
+    mut name = "none"
+    if accepts(member, "a", ready):
+        name = "a"
+    elif accepts(member, "b", ready):
+        name = "b"
+    elif accepts(member, "c", ready):
+        name = "c"
+    elif accepts(member, "d", ready):
+        name = "d"
+    return name
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(program_result())
     println(owned_text())
     println(greet("Ada"))
+    println(classify("a", true))
+    println(classify("b", true))
+    println(classify("c", false))
+    println(classify("d", true))
+    println(classify("b", false))
+    println(owned_text())
+    println(classify_calls("d", true))
+    println(classify_calls("b", false))

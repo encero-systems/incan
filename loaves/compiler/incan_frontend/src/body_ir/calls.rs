@@ -229,8 +229,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         bir::Operand::Place(source)
     }
 
-    /// Retain one checked reference argument's owner and passing mode without copying or snapshotting the referent.
-    /// The caller selects shared versus exclusive from its declared parameter type, including for foreign receivers.
+    /// Retain a checked reference boundary's owner and passing mode without copying or snapshotting the referent.
+    /// The caller selects shared versus exclusive from its declared parameter or binding type, including for foreign
+    /// receivers.
     pub(super) fn retain_argument_borrow(&mut self, read: &mut bir::PlaceOperand, mutable: bool) {
         if read.fact == bir::OwnershipFact::Move
             && read.place.projection.is_empty()
@@ -393,8 +394,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     }
 
     /// Keep a local owner's deferred operand read live until the enclosing operation is fully evaluated.
-    /// Calls, dictionary writes, and comprehensions share this reservation. Copy scalars and hidden temporary values
-    /// need none. The caller restores its stack boundary, preserving reservations made by an enclosing operation.
+    /// Calls, aggregates, dictionary writes, and comprehensions share this reservation. Copy scalars and hidden
+    /// temporary values need none. The caller restores its stack boundary, preserving reservations made by an
+    /// enclosing operation.
     pub(super) fn retain_pending_operand_read(&mut self, operand: &bir::Operand) {
         let bir::Operand::Place(read) = operand else {
             return;

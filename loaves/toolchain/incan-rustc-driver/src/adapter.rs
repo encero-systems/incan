@@ -240,11 +240,12 @@ fn mir_built<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> &'tcx Steal<Body<'tcx>
 }
 
 /// Inject the prevalidated declarations after parsing an empty Incan crate root.
-struct Callbacks {
+struct Callbacks<'manifest> {
     plan: Arc<Plan>,
+    manifest: Option<&'manifest incan_frontend::library_manifest::LibraryManifest>,
 }
 
-impl rustc_driver::Callbacks for Callbacks {
+impl rustc_driver::Callbacks for Callbacks<'_> {
     /// Install the source-free root and the MIR query override; cap lints that only see placeholder bodies.
     fn config(&mut self, config: &mut interface::Config) {
         config.input = Input::Str {
@@ -369,9 +370,10 @@ impl rustc_driver::Callbacks for Callbacks {
             Err(error) => compiler.sess.dcx().fatal(error.to_string()),
         }
         // A library unit re-exports its public names at the crate root (see `library_exports`).
-        krate
-            .items
-            .extend(crate::library_exports::items(&self.plan, krate.spans.inner_span));
+        match crate::library_exports::items(&self.plan, self.manifest, krate.spans.inner_span) {
+            Ok(items) => krate.items.extend(items),
+            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+        }
         // Computed statics keep rustc's own MIR for their storage and accessors (see `statics`).
         for cell in &self.plan.statics {
             let span = match sources.span(&cell.span) {
@@ -758,6 +760,9 @@ fn instantiate_generic_externals(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Option<
 /// The caller supplies the exact toolchain/library identity already verified before checking. External crates are
 /// explicit rlib paths; their metadata resolves canonical callees. No generated Rust source or ambient unstable grant
 /// is used.
+/// `INCAN_DIRECT_VALIDATION_REPORT` optionally records each function's first preflight refusal before normal
+/// validation. `INCAN_DIRECT_PLAN_REPORT` optionally records the complete plan for native ownership diagnostics.
+/// A library manifest lends its already checked public facade names for aliases of the canonical native items.
 pub fn compile(
     plan: Plan,
     crate_name: &str,
@@ -767,8 +772,22 @@ pub fn compile(
     dependency_search_paths: &[PathBuf],
     rustc_args: &[String],
     kind: UnitKind,
+    manifest: Option<&incan_frontend::library_manifest::LibraryManifest>,
 ) -> Result<(), DriverError> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_compile", input = %output.display(), functions = plan.functions.len()).entered();
+    if let Some(path) = std::env::var_os("INCAN_DIRECT_PLAN_REPORT") {
+        std::fs::write(path, format!("{plan:#?}"))
+            .map_err(|error| DriverError::Invocation(format!("cannot write native plan report: {error}")))?;
+    }
+    if let Some(path) = std::env::var_os("INCAN_DIRECT_VALIDATION_REPORT") {
+        let mut report = String::new();
+        for refusal in validation::refusals(&plan, kind != UnitKind::Program) {
+            report.push_str(&refusal.to_string().replace('\n', " "));
+            report.push('\n');
+        }
+        std::fs::write(path, report)
+            .map_err(|error| DriverError::Invocation(format!("cannot write native validation report: {error}")))?;
+    }
     validation::validate(&plan, kind != UnitKind::Program)?;
     if crate_name.is_empty() || !crate_name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
         return Err(DriverError::Invocation("crate name must be a Rust identifier".into()));
@@ -820,7 +839,8 @@ pub fn compile(
         args.push(format!("dependency={}", path.display()));
     }
     args.extend_from_slice(rustc_args);
-    let result = rustc_driver::catch_fatal_errors(|| rustc_driver::run_compiler(&args, &mut Callbacks { plan }));
+    let result =
+        rustc_driver::catch_fatal_errors(|| rustc_driver::run_compiler(&args, &mut Callbacks { plan, manifest }));
     *PLAN.lock().map_err(|_| DriverError::State)? = None;
     if let Some(error) = FAILURE.lock().map_err(|_| DriverError::State)?.take() {
         return Err(DriverError::Plan(error));

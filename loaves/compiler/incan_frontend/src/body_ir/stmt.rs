@@ -194,7 +194,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// An inferred binding of a nongeneric source call retains its providing module's closed return carrier, so a
     /// private import alias in the producer cannot become a consumer-side storage type.
     /// Inferred SDK task bindings likewise keep the checked call's executable output; explicitly annotated bindings
-    /// keep their declared contract.
+    /// keep their declared contract. A shared-reference binding retains a borrow fact and keeps its source owner
+    /// initialized rather than transferring it into the new binding.
     ///
     /// A Result constructor rebind whose legacy payload is missing retains a named refusal even when Body IR keeps
     /// the local's closed carrier.
@@ -244,7 +245,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         ty = self.retained_result_binding_type(assignment, ty, out);
         let materializes_range = self.expr_has_materialized_range_layout(&assignment.value);
         self.settle_open_result_value(&assignment.value, &ty);
-        let value = self.lower_boundary_value(&assignment.value, Some(&ty), scope, out);
+        let mut value = self.lower_boundary_value(&assignment.value, Some(&ty), scope, out);
+        if matches!(ty, IncanType::Ref(_))
+            && let bir::Operand::Place(read) = &mut value
+        {
+            self.retain_argument_borrow(read, false);
+        }
         // An awaited method can retain its closed output only after its future has been constructed. Preserve that
         // checked native constraint through an inferred binding without changing an explicit annotation.
         if assignment.ty.is_none()

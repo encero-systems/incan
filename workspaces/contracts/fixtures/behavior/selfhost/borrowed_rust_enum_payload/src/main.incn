@@ -59,6 +59,13 @@ def copy_field(holder: &MessageHolder) -> Message:
     return copied
 
 
+def shared_local(value: Message) -> bool:
+    """Initialize shared-reference storage from an owner and keep that owner readable afterward."""
+    reference: &Message = value
+    assert has_record(reference)
+    return has_record(value)
+
+
 def loopback[T](value: &IpAddr, unused: T) -> bool:
     """Inspect the concrete borrowed payload of either address variant."""
     match value:
@@ -168,6 +175,7 @@ def main() -> None:
         assert len(str(labels[index])) > 0
     println("checked")
     value = message()
+    assert shared_local(value)
     assert reference_records(value, value)
     borrowed = value.borrowed_message()
     assert f"{borrowed:?}" == 'Some(Record { count: 7, text: "native", ready: false })'

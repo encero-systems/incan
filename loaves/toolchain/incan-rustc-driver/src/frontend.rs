@@ -13,7 +13,7 @@ use incan_frontend::ast::{DecoratorArg, Expr, Literal};
 use incan_frontend::library_manifest::LibraryManifest;
 use incan_frontend::loaf_index::{LoafIndex, LoafNativeClosure};
 use incan_frontend::parsed_module::ParsedModule;
-use incan_mir_lowering::{program_refusals, unit_plan};
+use incan_mir_lowering::{SourceInputs, program_refusals, unit_plan};
 use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable, NominalDeclaration};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 
@@ -986,6 +986,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
 /// Run source, frontend, canonical Body IR, Incan lowering, plan validation, adapter, and pinned native compilation.
 /// Adapter errors cross the executable boundary as their display text so named unsupported gaps retain the CLI's
 /// refusal classification instead of appearing as debug-form plan errors.
+/// An exact-body census selection reports only that diagnostic lowering pass and returns without compiling an artifact.
 pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     if arguments.len() < 4 {
         return Err("usage: --unit UNIT CRATE OUTPUT SYSROOT [--rustc-arg ARG] [--library]".into());
@@ -1022,26 +1023,42 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     if std::env::var_os(REFUSAL_REPORT).is_some() {
+        let selection = std::env::var("INCAN_DIRECT_CENSUS_BODY").unwrap_or_default();
+        let selected = !selection.is_empty();
         let refusals = program_refusals(
             &program.modules,
-            program.sources.clone(),
-            program.files.clone(),
+            SourceInputs {
+                sources: program.sources.clone(),
+                files: program.files.clone(),
+                tests: Vec::new(),
+            },
             program.entry.try_into()?,
+            std::env::var_os("INCAN_DIRECT_CENSUS_PROGRESS").is_some(),
+            selection,
         );
         write_refusal_report(&refusals)?;
+        if selected {
+            if let Some(refusal) = refusals.first() {
+                return Err(refusal.clone().into());
+            }
+            return Ok(());
+        }
     }
     let mut published_unions = Vec::new();
     let plan = {
         tracing::debug!(target: "incan::invocation", modules = ?program.modules, "checked direct-route Body IR");
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::lower_program", modules = program.modules.len()).entered();
         let entry = program.entry.try_into()?;
+        let inputs = SourceInputs {
+            sources: program.sources,
+            files: program.files,
+            tests: program.tests.iter().map(|test| test.name.clone()).collect(),
+        };
         unit_plan(
             &program.modules,
-            program.sources,
-            program.files,
+            inputs,
             entry,
             kind.as_str().to_owned(),
-            program.tests.iter().map(|test| test.name.clone()).collect(),
             &mut published_unions,
         )?
     };
@@ -1062,6 +1079,7 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         &dependencies.directories,
         &dependencies.rustc_args,
         kind,
+        program.manifest.as_ref(),
     )
     .map_err(|error| error.to_string())?;
     if kind == UnitKind::Test {

@@ -3,6 +3,17 @@ pub enum Packet:
     Empty
 
 
+pub model Receipt:
+    """Retain a public model layout behind a facade alias."""
+
+    pub amount: int
+
+
+pub def make_receipt() -> Receipt:
+    """Construct the source model behind the facade's Rust-visible function."""
+    return Receipt(amount=17)
+
+
 pub enum Other:
     Empty
     Value(int)
