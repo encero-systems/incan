@@ -45,7 +45,13 @@ pub model RegexError:
 type _RawRegex = rusttype RustRegex
 
 
-def _compile_raw(pattern: str, ignore_case: bool, multiline: bool, dotall: bool, verbose: bool) -> Result[RustRegex, RegexError]:
+def _compile_raw(
+    pattern: str,
+    ignore_case: bool,
+    multiline: bool,
+    dotall: bool,
+    verbose: bool,
+) -> Result[RustRegex, RegexError]:
     """Apply identical engine flags to the search pattern and the full input pattern."""
     mut builder = RegexBuilder.new(pattern)
     builder.case_insensitive(ignore_case)
@@ -56,8 +62,16 @@ def _compile_raw(pattern: str, ignore_case: bool, multiline: bool, dotall: bool,
 
 
 def _captures(raw: &_RawRegex, text: str) -> Option[Captures]:
-    """Copy indexed and named engine captures into owned source values for either matching mode."""
+    """
+    Copy indexed and named engine captures into owned source values for either matching mode.
+
+    1. A pattern that does not match has no captures.
+    2. Every indexed group gets a slot, and a group that took part fills it with an owned match.
+    3. Every named group is listed, with its match when it took part.
+    """
+    # 1. A pattern that does not match has no captures at all.
     if let Some(raw_caps) = raw.captures(text):
+        # 2. Every indexed group gets a slot, and a group that took part fills it with an owned match.
         capture_count = _offset_from_usize(raw_caps.len())
         missing_capture: Option[Match] = None
         mut indexed: list[Option[Match]] = list.repeat(missing_capture, capture_count)
@@ -72,6 +86,7 @@ def _captures(raw: &_RawRegex, text: str) -> Option[Captures]:
                             start_offset=_offset_from_usize(found.start()),
                             end_offset=_offset_from_usize(found.end()),
                         ))
+        # 3. Every named group is listed, with its owned match only when it took part.
         mut named: Dict[str, Option[Match]] = {}
         for maybe_name in raw.capture_names():
             if let Some(raw_name) = maybe_name:

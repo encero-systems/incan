@@ -67,6 +67,6 @@ pub def decode_frozen_bytes(
     encoding: &RustString,
     errors: &RustString,
 ) -> Result[str, ValidationError]:
-    """Copy the frozen slice into ordinary byte storage and reuse the decoder without calling this boundary recursively."""
+    """Copy the frozen slice into ordinary byte storage and reuse that decoder, never calling this boundary again."""
     owned: RustVec[u8] = own_static_bytes(value.as_slice())
     return decode_bytes(owned, encoding, errors)

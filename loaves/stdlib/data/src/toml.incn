@@ -311,7 +311,12 @@ pub class TomlValue:
         return self._traverse(self._item, keys)
 
     def _traverse(self, item: &SpannedItem, keys: list[str]) -> Result[Option[TomlValue], TomlError]:
-        """Walk borrowed parser nodes and copy only the selected subtree into its public snapshot. The explicit shared input retains the cursor's owner until native Body IR carries inferred cursor borrows (#2256)."""
+        """
+        Walk borrowed parser nodes and copy only the selected subtree into its public snapshot.
+
+        The explicit shared input retains the cursor's owner until native Body IR carries inferred cursor borrows
+        (#2256).
+        """
         mut current = item
         mut selected_path = self._path
         for key in keys:

@@ -10,7 +10,8 @@ location, including operands and places, so native diagnostics retain provenance
 @derive(Clone, PartialEq)
 pub enum TupleElement:
     """
-    One tuple element's layout: a scalar, owned or frozen text, an owned list, a model or enum carrier, a Copy function pointer, an exact scalar, nominal or slice reference, or a nested tuple.
+    One tuple element's layout: a scalar, owned or frozen text, an owned list, a model or enum carrier, a Copy function
+    pointer, an exact scalar, nominal or slice reference, or a nested tuple.
 
     A list keeps its leaf and depth, an enum carrier (an `Option`, a `Result` or a source enum) keeps its retained
     declaration index and name, and a nested tuple keeps its own element layout, exactly as the matching `PlanType`
@@ -49,8 +50,8 @@ pub enum ListLeaf:
     """
     Scalar, flat tuple, Copy function pointer, and exact retained nominal/carrier leaves; hash keys still require admitted Eq and Hash authority.
 
-    `List`, `Set` and `Dict` are owned collection values held by another collection, such as a dictionary's list values or a
-    list's dictionaries. A list of lists keeps one leaf with a greater depth, so `List` never leads a `PlanType.List`.
+    `List`, `Set` and `Dict` are owned collection values held by another collection, such as a dictionary's list values
+    or a list's dictionaries. A list of lists keeps one leaf with a greater depth, so `List` never leads a `PlanType.List`.
     `FrozenStr` and `FrozenBytes` keep dependency-owned Copy wrappers; ordinary strings and bytes own their read data.
     A variant cannot hold its own type directly, so `List` holds its element leaf as the only item of a list, and
     `Set` holds one element leaf, and `Dict` holds its key and value leaves, in that order, as the two items of one.
@@ -106,9 +107,12 @@ pub enum PlanType:
 
     Sized numeric variants preserve their exact Rust carriers. CheckedNumeric stores its named sized carrier; its value projection retains the carrier type. Tuple elements retain their ordered types and own any string elements. Array lengths are exact nonnegative counts. CheckedInt and arrays are body temporaries; shared slice variants already include their reference.
     StringRef borrows an owned String, StringMutRef is the exclusive borrow a `mut str` parameter receives, and StrRef is a string literal's shared str view.
-    ScalarRef and ScalarMutRef borrow exactly one numeric, Boolean, Decimal or frozen scalar carrier with explicit shared or exclusive intent; nested references and non-scalar referents are refused before native MIR construction.
+    ScalarRef and ScalarMutRef borrow exactly one numeric, Boolean, Decimal or frozen scalar carrier with explicit shared
+    or exclusive intent; nested references and non-scalar referents are refused before native MIR construction.
     List stores its scalar or flat tuple leaf element and a positive nesting depth; ListRef and ListMutRef borrow that same Vec representation.
-    ModelRef and ModelMutRef retain shared and mutable nominal receiver references; ModelMutRef, EnumMutRef and TupleMutRef are also the exclusive borrow a `mut` parameter or an in-place loop item holds. TupleRef and TupleMutRef retain the complete tuple layout with shared and exclusive access respectively.
+    ModelRef and ModelMutRef retain shared and mutable nominal receiver references; ModelMutRef, EnumMutRef and
+    TupleMutRef are also the exclusive borrow a `mut` parameter or an in-place loop item holds. TupleRef and TupleMutRef
+    retain the complete tuple layout with shared and exclusive access respectively.
     Decimal retains the legacy Decimal128 carrier; precision is checked upstream and the value keeps its written scale.
     FrozenStr retains the copyable frozen wrapper over static text; it owns no allocation and is distinct from String.
     FrozenBytes retains the copyable wrapper over a static byte slice, distinct from an owned byte list.
@@ -271,28 +275,37 @@ pub def tuple_element_type(element: TupleElement) -> PlanType:
         TupleElement.Enum(owner, name) => return PlanType.Enum(owner, name)
         TupleElement.Tuple(elements) => return PlanType.Tuple(elements)
         TupleElement.FunctionPointer(signature) => return PlanType.FunctionPointer(signature)
-        TupleElement.Reference(mutable, elements) =>
-            if len(elements) == 1:
-                match elements[0]:
-                    PlanType.String =>
-                        if mutable:
-                            return PlanType.StringMutRef
-                        return PlanType.StringRef
-                    PlanType.Enum(owner, name) =>
-                        if mutable:
-                            return PlanType.EnumMutRef(owner, name)
-                        return PlanType.EnumRef(owner, name)
-                    _ => pass
-            if mutable:
-                return PlanType.ScalarMutRef(elements)
-            if elements == [PlanType.NativeStr]:
-                return PlanType.StrRef
-            return PlanType.ScalarRef(elements)
+        TupleElement.Reference(mutable, elements) => return reference_type(mutable, elements)
         TupleElement.ModelRef(index, name) => return PlanType.ModelRef(index, name)
         TupleElement.ModelMutRef(index, name) => return PlanType.ModelMutRef(index, name)
         TupleElement.SliceRef(elements) => return PlanType.SliceRef(elements)
         TupleElement.SliceMutRef(elements) => return PlanType.SliceMutRef(elements)
         TupleElement.FrozenStr => return PlanType.FrozenStr
+
+
+def reference_type(mutable: bool, referent: list[PlanType]) -> PlanType:
+    """
+    The local type of a tuple element that borrows one referent, shared or exclusive.
+
+    A string and an enum have reference types of their own, and a native `str` is the string-view type; any other
+    referent is a scalar reference.
+    """
+    if len(referent) == 1:
+        match referent[0]:
+            PlanType.String =>
+                if mutable:
+                    return PlanType.StringMutRef
+                return PlanType.StringRef
+            PlanType.Enum(owner, name) =>
+                if mutable:
+                    return PlanType.EnumMutRef(owner, name)
+                return PlanType.EnumRef(owner, name)
+            _ => pass
+    if mutable:
+        return PlanType.ScalarMutRef(referent)
+    if referent == [PlanType.NativeStr]:
+        return PlanType.StrRef
+    return PlanType.ScalarRef(referent)
 
 
 @derive(Clone, PartialEq)
