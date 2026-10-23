@@ -1,10 +1,21 @@
-# behavior: a declared registry crate is callable through its authored alias
+# behavior: a declared registry crate is callable through its authored alias and a Rust type keeps its identity across public reexports (#705)
 # expect-stdout:
 #   3.5
+#   true
 
 from rust::foreign_math import fabs
+from rust::serde_json import Value as PublicValue
+from rust::serde_json::value import Value as ModuleValue
+from rust::std::sync import Arc
+
+
+def registry_value(value: Arc[ModuleValue]) -> bool:
+    """Keep the defining module's type identity inside Arc while callers use its public reexport."""
+    return value.is_null()
 
 
 def main() -> None:
-    """Call the registry dependency selected by the package's compact features."""
+    """Call the selected registry alias and pass an Arc through equivalent public type paths."""
     println(fabs(-3.5))
+    value = Arc.new(PublicValue.Null)
+    println(registry_value(value))

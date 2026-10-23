@@ -12,15 +12,18 @@ use crate::typechecker::helpers::render_resolved_type_as_rust_arg;
 use crate::typechecker::type_info::{ConstructorFieldBinding, RustCheckedCall, RustCheckedEnum, RustCheckedLayout};
 
 impl TypeChecker {
-    /// Select the checked public binding shared by native signatures, constructors, patterns and coverage. A
-    /// definition path never creates a second carrier when metadata already binds it through a public reexport;
-    /// an explicit lexical Rust import retains that checked public path before diagnostic aliases are consulted.
+    /// Select the shared public carrier for native signatures, constructors, patterns and coverage. Lexical imports
+    /// first select their admitted Rust path, then use the same definition-based binding as qualified spellings;
+    /// collected public reexports reuse one carrier for the same native definition.
     pub(in crate::typechecker) fn rust_public_type_path(&self, path: &str) -> String {
-        if let Some(symbol) = self.lookup_symbol(path)
-            && let SymbolKind::RustItem(info) = &symbol.kind
-        {
-            return info.path.clone();
-        }
+        let path = self
+            .lookup_symbol(path)
+            .and_then(|symbol| match &symbol.kind {
+                SymbolKind::RustItem(info) => Some(info.path.as_str()),
+                _ => None,
+            })
+            .unwrap_or(path);
+        let path = Self::normalize_rust_namespace_path(path);
         self.type_info
             .rust
             .item_public_paths
@@ -63,8 +66,9 @@ impl TypeChecker {
         })
     }
 
-    /// Retain a metadata-selected native variant and its storage adaptations. The source payload signature stays
-    /// semantic, while boxed fields carry an explicit owned Box construction into Body IR's argument boundary.
+    /// Retain a metadata-selected native variant and its storage adaptations. Named arguments select the same
+    /// declaration slots as ordinary callable binding, independently of written order. Boxed fields carry an explicit
+    /// owned Box construction into Body IR's argument boundary while the source signature stays semantic.
     pub(in crate::typechecker::check_expr) fn retain_rust_variant_construction(
         &mut self,
         path: &str,
@@ -73,6 +77,7 @@ impl TypeChecker {
         params: &[CallableParam],
         span: Span,
     ) {
+        // ---- Complete native layout ----
         let Some(metadata) = self.rust_item_metadata_for_complete_type(path) else {
             return;
         };
@@ -82,6 +87,8 @@ impl TypeChecker {
         let Some(layout) = self.checked_rust_enum_layout(path, &info) else {
             return;
         };
+
+        // ---- Variant identity ----
         let ancestral = incan_lang::interop::ancestral_rust_path(path);
         if matches!(ancestral.as_str(), "core::option::Option" | "core::result::Result") {
             let Some(constructor) = incan_lang::lang::surface::constructors::from_str(variant) else {
@@ -99,14 +106,29 @@ impl TypeChecker {
             self.type_info.record_resolved_identity(span, identity);
             self.type_info.rust.checked_enums.insert(public_path, layout);
         }
+
+        // ---- Written payload adjustments ----
         let Some(carriers) = self.rust_variant_payload_carriers(path, variant) else {
             return;
         };
-        for ((arg, param), carrier) in args.iter().zip(params).zip(carriers) {
-            if carrier != incan_lang::interop::RustPayloadCarrier::Boxed {
+        for (position, arg) in args.iter().enumerate() {
+            let (slot, value) = match arg {
+                CallArg::Positional(value) => (position, value),
+                CallArg::Named(name, value) => {
+                    let Some(slot) = params
+                        .iter()
+                        .position(|param| param.name.as_deref() == Some(name.node.as_str()))
+                    else {
+                        continue;
+                    };
+                    (slot, value)
+                }
+                _ => continue,
+            };
+            if carriers.get(slot) != Some(&incan_lang::interop::RustPayloadCarrier::Boxed) {
                 continue;
             }
-            let CallArg::Positional(value) = arg else {
+            let Some(param) = params.get(slot) else {
                 continue;
             };
             let storage = self.native_signature_storage_owner(ResolvedType::Generic(

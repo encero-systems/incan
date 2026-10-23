@@ -1,13 +1,14 @@
-# behavior: int parses the string returned by a Rust value's to_string method (#2230)
-# pending: #2230 NonZeroI64.new has no admitted callable signature
+# behavior: int parses the string returned by a borrowed Rust String's to_string method (#2230)
 # expect-stdout:
 #   42
 
-from rust::std::num import NonZeroI64
+from rust::std::collections import HashMap
 
 
 def main() -> None:
-    """Parse a Rust display result as text instead of casting it."""
-    match NonZeroI64.new(42):
+    """Parse the display result of the borrowed String returned by a Rust lookup."""
+    mut values: HashMap[str, str] = HashMap.new()
+    values.insert("number", "42")
+    match values.get("number"):
         Some(value) => println(int(value.to_string()))
         None => println("missing")

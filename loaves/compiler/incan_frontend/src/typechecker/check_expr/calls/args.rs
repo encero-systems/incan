@@ -718,9 +718,9 @@ impl TypeChecker {
         }
     }
 
-    /// Validate a source call argument, allowing an owned value at a declared shared-reference parameter. The retained
-    /// parameter type directs Body IR to borrow that value; assignment compatibility does not acquire this coercion.
-    /// RFC 017 validated-newtype coercions remain scoped to this argument span.
+    /// Validate a source call argument, retaining metadata-selected dereferences and owned target materialization at
+    /// this boundary. An owned value at a shared parameter is borrowed by Body IR's retained parameter contract;
+    /// assignment compatibility does not acquire these adjustments. RFC 017 coercions stay scoped to this span.
     fn emit_arg_type_mismatch_if_needed(
         &mut self,
         callee: &str,
@@ -730,18 +730,20 @@ impl TypeChecker {
         span: Span,
         compatibility: CallArgumentCompatibility,
     ) {
-        if self
-            .retain_borrowed_argument_dereferences(actual, expected, span)
-            .is_some()
-        {
+        // ---- Native argument adjustments ----
+        if self.retain_argument_dereferences(actual, expected, span).is_some() {
             return;
         }
+
+        // ---- Source compatibility ----
         let compatible = match expected {
             ResolvedType::Ref(inner) if !matches!(actual, ResolvedType::Ref(_) | ResolvedType::RefMut(_)) => {
                 self.types_compatible(actual, inner)
             }
             _ => self.types_compatible(actual, expected),
         };
+
+        // ---- Boundary coercions and refusal ----
         if !compatible
             && !(compatibility == CallArgumentCompatibility::CheckedCIntegerBridge
                 && Self::checked_c_integer_bridge_compatible(actual, expected))

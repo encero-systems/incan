@@ -1,4 +1,4 @@
-# behavior: native and source payloads and associated array constants retain identities through shared references, reference collections, optional results, borrowed and copied fields, boxed construction, nested re-exported variants and exact unsigned payload carriers (#2256)
+# behavior: native and source payloads and associated array constants retain identities through shared references, reference collections, optional results, borrowed and copied fields, boxed construction, nested re-exported variants and exact unsigned payload carriers; boxed fields satisfy owned parameters without consuming their owner, and named construction binds fields independently of written order (#2256, #2236, #2093)
 # expect-stdout:
 #   checked
 #   7
@@ -34,6 +34,11 @@
 #   native message
 #   1
 #   checked
+#   native message
+#   7
+#   Record { count: 11, text: "built", ready: true }
+#   11
+#   11
 
 from rust::messages import CopyNumber, Envelope, Message, category, message, boxed_message, message_envelope, wrapped_message
 from rust::messages::category import Kind as Category
@@ -144,8 +149,14 @@ def reference_records(left: &Message, right: &Message) -> bool:
     return true
 
 
+def describe_owned(value: Message) -> None:
+    """Accept an owned native value through the Box field's checked dereference and clone."""
+    println(value)
+
+
 def main() -> None:
-    """Observe retained native layouts, methods and associated text-array constants."""
+    """Observe retained native layouts, methods and associated text-array constants, then construct and borrow native
+    payloads while retaining their owners."""
     match maybe_record():
         Some(record) => assert record.value == 7
         None => assert false
@@ -167,7 +178,7 @@ def main() -> None:
     envelope = message_envelope()
     assert borrowed_record(envelope)
     assert borrowed_record(envelope)
-    inspect_count(envelope.message.as_ref())
+    inspect_count(envelope.message)
     wrapped = wrapped_message()
     inspect_wrapped(wrapped)
     println(value)
@@ -216,3 +227,10 @@ def main() -> None:
     println(f"{indexed[0]}")
     println(len(indexed))
     println("checked")
+    describe_owned(envelope.message)
+    inspect_count(envelope.message.as_ref())
+    record = Message.Record(ready=true, text="built", count=11)
+    println(f"{record:?}")
+    named = Message.NamedBox(inner=record)
+    inspect_wrapped(named)
+    inspect_count(record)

@@ -2190,8 +2190,8 @@ impl TypeChecker {
     /// Return callable-parameter metadata for one rust-inspect-backed enum variant constructor.
     ///
     /// Rust enum variants are callable constructors at the source surface, but they are not ordinary inherent
-    /// functions. Carrying their payload shapes through the same callable metadata path keeps backend argument
-    /// ownership planning target-driven instead of guessing from the source expression shape.
+    /// functions. Named fields retain their metadata names and declaration order for ordinary argument binding;
+    /// tuple payloads remain positional. The same payload contract directs downstream ownership planning.
     pub fn rust_variant_callable_params(&self, rust_path: &str, variant: &str) -> Option<Vec<CallableParam>> {
         let metadata = self.rust_item_metadata_for_path(rust_path)?;
         let RustItemKind::Type(info) = &metadata.kind else {
@@ -2202,7 +2202,14 @@ impl TypeChecker {
             variant
                 .fields
                 .iter()
-                .map(|field| CallableParam::positional(self.resolved_type_from_rust_shape(field)))
+                .enumerate()
+                .map(|(index, field)| {
+                    let ty = self.resolved_type_from_rust_shape(field);
+                    match variant.field_names.get(index) {
+                        Some(name) => CallableParam::named(name, ty, ParamKind::Normal),
+                        None => CallableParam::positional(ty),
+                    }
+                })
                 .collect(),
         )
     }
@@ -7412,9 +7419,41 @@ impl TypeChecker {
         owners
     }
 
-    /// Map each imported Rust item's import and definition spellings to its public import path, once, from the
-    /// metadata import collection already attached; no extraction runs here.
+    /// Map imported Rust spellings to one public carrier per admitted type definition and bound extern namespace.
+    /// Choosing the smallest public path makes the carrier independent of symbol iteration order while keeping
+    /// private defining paths out of executable identities. A canonical defining path has no separate definition
+    /// alias in rustc metadata. All facts come from the collected import metadata.
     fn checked_rust_item_public_paths(&self) -> HashMap<String, String> {
+        // ---- Public representatives of native definitions ----
+        let mut type_paths: HashMap<(String, String), String> = HashMap::new();
+        for symbol in self.symbols.all_symbols() {
+            let SymbolKind::RustItem(info) = &symbol.kind else {
+                continue;
+            };
+            let metadata = info
+                .metadata
+                .clone()
+                .or_else(|| self.rust_item_metadata_for_path(info.path.as_str()));
+            let Some(metadata) = metadata else {
+                continue;
+            };
+            if !matches!(metadata.kind, RustItemKind::Type(_)) {
+                continue;
+            }
+            let definition = metadata.definition_path.as_ref().unwrap_or(&metadata.canonical_path);
+            let public = Self::normalize_rust_namespace_path(&info.path).to_owned();
+            let domain = public.split("::").next().unwrap_or("").to_owned();
+            type_paths
+                .entry((domain, definition.clone()))
+                .and_modify(|selected| {
+                    if public < *selected {
+                        *selected = public.clone();
+                    }
+                })
+                .or_insert(public);
+        }
+
+        // ---- Source spellings and defining paths ----
         let mut paths = HashMap::new();
         for symbol in self.symbols.all_symbols() {
             let SymbolKind::RustItem(info) = &symbol.kind else {
@@ -7425,15 +7464,23 @@ impl TypeChecker {
                 .metadata
                 .clone()
                 .or_else(|| self.rust_item_metadata_for_path(info.path.as_str()));
+            let domain = public.split("::").next().unwrap_or("").to_owned();
+            let canonical = metadata
+                .as_ref()
+                .filter(|metadata| matches!(metadata.kind, RustItemKind::Type(_)))
+                .map(|metadata| metadata.definition_path.as_ref().unwrap_or(&metadata.canonical_path))
+                .and_then(|definition| type_paths.get(&(domain, definition.clone())))
+                .cloned()
+                .unwrap_or_else(|| public.clone());
             if let Some(definition) = metadata.and_then(|metadata| metadata.definition_path.clone()) {
-                paths.entry(definition).or_insert_with(|| public.clone());
+                paths.entry(definition).or_insert_with(|| canonical.clone());
             }
             if self.lookup_symbol(&symbol.name).is_some_and(
                 |selected| matches!(&selected.kind, SymbolKind::RustItem(selected) if selected.path == info.path),
             ) {
-                paths.insert(symbol.name.clone(), public.clone());
+                paths.insert(symbol.name.clone(), canonical.clone());
             }
-            paths.insert(public.clone(), public);
+            paths.insert(public, canonical);
         }
         paths
     }

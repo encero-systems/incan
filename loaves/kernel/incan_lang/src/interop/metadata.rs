@@ -76,6 +76,18 @@ pub enum RustCollectionFamily {
 }
 
 impl RustCollectionFamily {
+    /// The standard native owner of a source collection projection. Borrowed Dict and Set values use the same
+    /// metadata-selected method contracts as their owned Rust counterparts.
+    #[must_use]
+    pub const fn canonical_path(self) -> &'static str {
+        match self {
+            Self::HashMap => "std::collections::HashMap",
+            Self::BTreeMap => "std::collections::BTreeMap",
+            Self::HashSet => "std::collections::HashSet",
+            Self::BTreeSet => "std::collections::BTreeSet",
+        }
+    }
+
     /// Classify a canonical Rust path into a supported collection family.
     #[must_use]
     pub fn for_canonical_path(path: &str) -> Option<Self> {

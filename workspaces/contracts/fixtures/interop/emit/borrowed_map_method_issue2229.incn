@@ -1,5 +1,4 @@
 # behavior: a borrowed Rust HashMap obtained from a method retains its get method (#2229)
-# pending: #2229 a borrowed native map projects to &Dict without its native get method
 # expect-stdout:
 #   7
 

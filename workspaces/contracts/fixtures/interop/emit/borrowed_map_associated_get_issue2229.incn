@@ -1,5 +1,4 @@
 # behavior: Rust HashMap.get accepts a string literal key when called as an associated function on a borrowed map (#2229)
-# pending: #2229 the checker counts the receiver as an extra associated-call argument
 # expect-stdout:
 #   7
 

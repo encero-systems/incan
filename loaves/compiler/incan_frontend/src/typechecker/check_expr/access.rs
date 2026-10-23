@@ -2676,13 +2676,28 @@ impl TypeChecker {
     /// Return the receiver's Rust item path, keeping instantiated arguments on the checked receiver type.
     /// Method identity never contains generic display syntax; impl inference reads arguments from the receiver.
     pub(in crate::typechecker) fn rust_canonical_path_for_receiver_type(&self, ty: &ResolvedType) -> Option<String> {
+        // ---- Rusttype backing owner ----
         if let Some(target) = self.rusttype_native_target(ty) {
             return self.rust_canonical_path_for_receiver_type(&target);
         }
+
+        // ---- Native and source-projected receivers ----
         match ty {
             ResolvedType::Generic(base, arguments) if base == "[]" && arguments.len() == 1 => Some(base.clone()),
             ResolvedType::Generic(base, _) if base.contains("::") => Some(base.clone()),
-            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.rust_canonical_path_for_receiver_type(inner),
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => {
+                self.rust_canonical_path_for_receiver_type(inner).or_else(|| {
+                    match inner.as_ref() {
+                        // A source str owns String storage; a native unsized str keeps its own RustPath.
+                        ResolvedType::Str => Some("std::string::String".to_owned()),
+                        ResolvedType::Generic(name, _) => {
+                            incan_lang::interop::RustCollectionFamily::for_type_name(name)
+                                .map(|family| family.canonical_path().to_owned())
+                        }
+                        _ => None,
+                    }
+                })
+            }
             ResolvedType::RustPath(path) => {
                 if path.starts_with("dyn ") {
                     let object = self.native_rust_signature_type(path, "");

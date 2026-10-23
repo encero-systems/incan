@@ -12,3 +12,6 @@ unused = { package = "libm", version = "999", optional = true }
 [project.features]
 default = ["math"]
 math = ["dep:foreign_math"]
+
+[dependencies]
+serde_json = { loaf = "crates-io/serde_json", version = "1.0", features = ["raw_value", "unbounded_depth"] }

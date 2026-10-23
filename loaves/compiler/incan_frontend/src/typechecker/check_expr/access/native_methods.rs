@@ -83,11 +83,14 @@ impl TypeChecker {
         owner: &RustTypeInfo,
         preserves_shape: bool,
     ) -> Option<ResolvedType> {
+        // ---- Inherent member and receiver role ----
         let receiver_is_type = self.native_receiver_is_type(&call);
         let selected = owner.methods.iter().find(|candidate| {
             candidate.name == call.method
                 && (receiver_is_type || Self::rust_signature_has_receiver(&candidate.signature))
         });
+
+        // ---- Trait and dereference alternatives ----
         if selected.is_none()
             && let Some(result) = self.resolve_retained_rust_trait_call(call, owner)
         {
@@ -101,9 +104,39 @@ impl TypeChecker {
         {
             return Some(result);
         }
+
+        // ---- Written associated-call receiver ----
         let Some(selected) = selected else {
             return Some(self.resolve_missing_native_method(call, Some(metadata), preserves_shape));
         };
+        if receiver_is_type && Self::rust_signature_has_receiver(&selected.signature) {
+            // Associated-call syntax supplies self as an ordinary written argument. Normalize that slot once so
+            // inference, boundary validation and retained native storage all include it.
+            let mut explicit = selected.clone();
+            let arguments = owner
+                .type_params
+                .iter()
+                .map(|name| ResolvedType::TypeVar(name.clone()))
+                .collect::<Vec<_>>();
+            explicit.signature = self.specialize_rust_owner_signature(
+                &explicit.signature,
+                call.rust_path,
+                &owner.type_params,
+                &arguments,
+            );
+            if let Some(receiver) = explicit.signature.params.first_mut() {
+                let Some(native_owner) = selected.impl_self_type.as_deref() else {
+                    return Some(self.refuse_missing_rust_method_signature(call.rust_path, call.method, call.span));
+                };
+                receiver.type_display = match Self::rust_display_borrow_kind(&receiver.type_display) {
+                    Some((true, _)) => format!("&mut {native_owner}"),
+                    Some((false, _)) => format!("&{native_owner}"),
+                    None => native_owner.to_owned(),
+                };
+                receiver.name = Some("receiver".into());
+            }
+            return self.check_native_inherent_method(call, owner, &explicit, true, preserves_shape);
+        }
         self.check_native_inherent_method(call, owner, selected, receiver_is_type, preserves_shape)
     }
 
@@ -170,6 +203,12 @@ impl TypeChecker {
 
     /// Distinguish associated-function syntax from a checked value receiver using the retained identifier role.
     fn native_receiver_is_type(&self, call: &RustPathMethodCall<'_>) -> bool {
+        if call
+            .receiver_metadata
+            .is_some_and(|metadata| matches!(metadata.kind, RustItemKind::Constant { .. }))
+        {
+            return false;
+        }
         matches!(
             self.type_info.ident_kind(call.receiver_span),
             Some(IdentKind::TypeName | IdentKind::RustImport)
