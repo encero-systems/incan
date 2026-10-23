@@ -1,7 +1,7 @@
 //! The only rustc-private boundary: Incan declarations enter as AST items and bodies enter as MIR.
 
 use crate::error::PlanError;
-use crate::identity::{self, IdentityError};
+use crate::identity::DriverIdentity;
 use crate::plan::{Plan, PlanType};
 use crate::spans::Sources;
 use crate::{bodies, callees, declarations, types, union_debug, validation, value_enum_serde};
@@ -39,9 +39,6 @@ pub enum DriverError {
     /// The scalar plan violates its preflight contract.
     #[error(transparent)]
     Plan(#[from] PlanError),
-    /// Build-bound toolchain evidence does not match the runtime.
-    #[error(transparent)]
-    Identity(#[from] IdentityError),
     /// rustc refused the compilation after valid preflight input.
     #[error("native compilation failed")]
     Compilation,
@@ -625,13 +622,14 @@ fn instantiate_generic_externals(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Option<
 
 /// Compile a plan supplied directly by an Incan caller function into a native binary.
 ///
-/// Preflight and exact toolchain/library identity verification precede rustc. External crates are explicit rlib
-/// paths; their metadata resolves canonical callees. No generated Rust source or ambient unstable grant is used.
+/// The caller supplies the exact toolchain/library identity already verified before checking. External crates are
+/// explicit rlib paths; their metadata resolves canonical callees. No generated Rust source or ambient unstable grant
+/// is used.
 pub fn compile(
     plan: Plan,
     crate_name: &str,
     output: &Path,
-    sysroot: &Path,
+    identity: &DriverIdentity,
     externs: &[(String, PathBuf)],
     dependency_search_paths: &[PathBuf],
     rustc_args: &[String],
@@ -639,7 +637,6 @@ pub fn compile(
 ) -> Result<(), DriverError> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_compile", input = %output.display(), functions = plan.functions.len()).entered();
     validation::validate(&plan, kind != UnitKind::Program)?;
-    let identity = identity::verify(sysroot)?;
     if crate_name.is_empty() || !crate_name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
         return Err(DriverError::Invocation("crate name must be a Rust identifier".into()));
     }

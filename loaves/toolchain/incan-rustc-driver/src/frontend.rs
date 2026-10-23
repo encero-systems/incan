@@ -729,7 +729,7 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let mut unit = UnitDescription::read(Path::new(&arguments[0])).map_err(|error| error.message)?;
     let source_path = unit.source.clone();
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::compile_unit", input = %source_path.display()).entered();
-    crate::identity::verify(Path::new(&arguments[3]))?;
+    let identity = crate::identity::verify(Path::new(&arguments[3]))?;
     let output = Path::new(&arguments[2]);
     let dependencies = dependencies(&unit, &arguments[4..])?;
     if dependencies.library {
@@ -818,7 +818,7 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         plan,
         &arguments[1],
         Path::new(&arguments[2]),
-        Path::new(&arguments[3]),
+        &identity,
         &dependencies.externs,
         &dependencies.directories,
         &dependencies.rustc_args,
