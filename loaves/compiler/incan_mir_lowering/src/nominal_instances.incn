@@ -56,6 +56,12 @@ pub def instance_arguments(module: &BodyIrModule, declaration: &NominalDeclarati
             match find_instance_arguments(field, base, name):
                 Some(arguments) => return Ok(arguments)
                 None => pass
+    for owner in module.enum_declarations:
+        for variant in owner.variants:
+            for field in variant.fields:
+                match find_instance_arguments(field, base, name):
+                    Some(arguments) => return Ok(arguments)
+                    None => pass
     return Err(f"unsupported Body IR unretained SDK type arguments on {name}")
 
 
@@ -96,6 +102,10 @@ pub def specialize_nominals_with_instances(
         for local in body.locals:
             _ = collect_nominal_type(module, local.ty, instances, [])?
         _ = collect_nominal_type(module, body.return_type, instances, [])?
+    for declaration in module.enum_declarations:
+        for variant in declaration.variants:
+            for field in variant.fields:
+                _ = collect_nominal_type(module, field, instances, [])?
     mut result = module.clone()
     result.nominal_declarations.clear()
     for declaration in module.nominal_declarations:

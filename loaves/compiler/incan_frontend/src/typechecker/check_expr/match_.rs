@@ -218,6 +218,8 @@ impl TypeChecker {
     /// a type mismatch. Each arm is written to the expected type directly when that type is numeric or an `Option`
     /// that holds no union, the adaptations lowering makes in an arm; otherwise the arms unify among themselves and
     /// the whole match is written to the place, since an arm is not made a union member or any other type in place.
+    /// Pattern checking retains native layouts before coverage reads them, so exhaustiveness never depends on an
+    /// earlier match having selected the same native enum.
     pub(in crate::typechecker::check_expr) fn check_match(
         &mut self,
         subject: &Spanned<Expr>,
@@ -236,8 +238,6 @@ impl TypeChecker {
         };
         let mut remaining_union_members = subject_ty.union_members().map(|members| members.to_vec());
         let view_param = self.pattern_view_param(subject);
-
-        self.check_match_exhaustiveness(&subject_ty, arms, _span);
 
         let mut arm_values = Vec::new();
 
@@ -296,6 +296,7 @@ impl TypeChecker {
                 self.remove_covered_union_members(remaining, &arm.node.pattern, &subject_ty);
             }
         }
+        self.check_match_exhaustiveness(&subject_ty, arms, _span);
         self.note_dict_lookup_match(subject, arms);
 
         let arm_destination = expected
@@ -807,7 +808,7 @@ impl TypeChecker {
                     self.rust_enum_constructor_payload_types(expected_ty, name.node.as_str(), name.span);
                 let field_types: Option<Vec<ResolvedType>> =
                     incan_resolution.clone().or_else(|| match rust_resolution.as_ref() {
-                        Some(RustEnumPatternResolution::PayloadTypes(fields)) => Some(fields.clone()),
+                        Some(RustEnumPatternResolution::PayloadTypes { fields, .. }) => Some(fields.clone()),
                         Some(RustEnumPatternResolution::QualifierMismatch) | None => None,
                     });
 
@@ -836,6 +837,7 @@ impl TypeChecker {
                             sub_patterns,
                             Some(fields.as_slice()),
                             self.pattern_subject_is_rust_backed(expected_ty),
+                            rust_resolution.as_ref(),
                         );
                     }
                     None => {
@@ -856,6 +858,7 @@ impl TypeChecker {
                             sub_patterns,
                             None,
                             self.pattern_subject_is_rust_backed(expected_ty),
+                            rust_resolution.as_ref(),
                         );
                     }
                 }
@@ -1057,16 +1060,18 @@ impl TypeChecker {
             .collect()
     }
 
-    /// Positional sub-patterns for enum-like constructor patterns: known payload types per index, or all
-    /// [`ResolvedType::Unknown`] when `known_fields` is `None` (Rust interop best-effort).
+    /// Check positional payloads against their ordered types and named native payloads against metadata field
+    /// identities. Only legacy positional patterns without metadata retain Unknown types; named fields never guess.
     fn check_constructor_subpatterns_enum_like(
         &mut self,
         ctor_label: &str,
         sub_patterns: &[PatternArg],
         known_fields: Option<&[ResolvedType]>,
         rust_backed: bool,
+        rust_resolution: Option<&RustEnumPatternResolution>,
     ) {
         let mut idx = 0usize;
+        let mut provided = HashSet::new();
         for arg in sub_patterns {
             match arg {
                 PatternArg::Positional(pat) => {
@@ -1079,13 +1084,26 @@ impl TypeChecker {
                     }
                     idx += 1;
                 }
-                PatternArg::Named(_, pat) => {
-                    // A Rust enum may use struct variants, whose fields are named and cannot be destructured
-                    // positionally. Rust variant metadata records payload shapes in declaration order but not field
-                    // names, so the payload is checked permissively here and `rustc` validates the names, matching
-                    // how the rest of Rust-interop payload checking already behaves.
+                PatternArg::Named(name, pat) => {
                     if rust_backed {
-                        self.check_pattern(pat, &ResolvedType::Unknown);
+                        if !provided.insert(name.node.clone()) {
+                            self.errors
+                                .push(errors::duplicate_pattern_field(ctor_label, &name.node, name.span));
+                            continue;
+                        }
+                        let selected = match rust_resolution {
+                            Some(RustEnumPatternResolution::PayloadTypes { fields, names, .. }) => names
+                                .iter()
+                                .position(|field| field == &name.node)
+                                .and_then(|slot| fields.get(slot)),
+                            _ => None,
+                        };
+                        if let Some(field) = selected {
+                            self.check_pattern(pat, field);
+                        } else {
+                            self.errors
+                                .push(errors::missing_field(ctor_label, &name.node, name.span));
+                        }
                     } else {
                         self.errors
                             .push(errors::named_pattern_not_supported(ctor_label, pat.span));
@@ -1095,10 +1113,8 @@ impl TypeChecker {
         }
     }
 
-    /// Return whether a match subject is backed by a Rust type, directly or through a `rusttype` newtype.
-    ///
-    /// Rust-backed subjects get permissive payload treatment throughout pattern checking, because Rust metadata
-    /// records payload shapes without the detail an Incan declaration would carry.
+    /// Recognize metadata-backed native subjects, directly or through a rusttype wrapper. Legacy positional
+    /// fallbacks may remain permissive while checking, but a missing fact never grants executable layout authority.
     fn pattern_subject_is_rust_backed(&self, expected_ty: &ResolvedType) -> bool {
         let (expected_ty, _) = borrowed_pattern_subject(expected_ty);
         match expected_ty {
@@ -1129,7 +1145,7 @@ impl TypeChecker {
         }
 
         match rust_resolution {
-            Some(RustEnumPatternResolution::PayloadTypes(_)) => true,
+            Some(RustEnumPatternResolution::PayloadTypes { .. }) => true,
             Some(RustEnumPatternResolution::QualifierMismatch) => false,
             None => !pattern_full_name.contains("::"),
         }
@@ -1184,9 +1200,9 @@ impl TypeChecker {
         )
     }
 
-    /// Select a native enum pattern from complete metadata, retaining its declaration layout and variant identity.
-    /// Payload templates close in the subject's native owner arguments before match ergonomics adds references.
-    /// Missing metadata never manufactures a payload path or authorizes a partial foreign layout.
+    /// Select a native variant from complete metadata and retain its exact storage layout once. Positional payloads
+    /// inherit the subject's reference binding mode; named payloads keep their native storage type for checked
+    /// copy/clone reads. Written field order and public reexport spellings never establish a second layout.
     fn rust_enum_constructor_payload_types(
         &mut self,
         expected_ty: &ResolvedType,
@@ -1202,7 +1218,7 @@ impl TypeChecker {
             let selected = self
                 .rust_canonical_path_for_receiver_type(&ResolvedType::Named(qualifier.to_owned()))
                 .unwrap_or_else(|| qualifier.to_owned());
-            if selected != path {
+            if self.rust_native_type_identity_path(&selected) != self.rust_native_type_identity_path(&path) {
                 return Some(RustEnumPatternResolution::QualifierMismatch);
             }
         }
@@ -1211,13 +1227,19 @@ impl TypeChecker {
             return None;
         };
         if info.variants.is_empty()
-            || info
-                .variants
-                .iter()
-                .any(|variant| variant.fields.len() != variant.field_type_displays.len())
+            || info.variants.iter().any(|variant| {
+                variant.fields.len() != variant.field_type_displays.len()
+                    || (!variant.field_names.is_empty() && variant.fields.len() != variant.field_names.len())
+            })
         {
             return None;
         }
+        let names = info
+            .variants
+            .iter()
+            .find(|selected| selected.name == variant)?
+            .field_names
+            .clone();
         let variants = info
             .variants
             .iter()
@@ -1229,10 +1251,11 @@ impl TypeChecker {
                         .iter()
                         .map(|field| self.native_rust_signature_type(field, &path))
                         .collect::<Vec<_>>(),
+                    variant.field_names.clone(),
                 )
             })
             .collect::<Vec<_>>();
-        let fields = &variants.iter().find(|(name, _)| name == variant)?.1;
+        let fields = &variants.iter().find(|(name, _, _)| name == variant)?.1;
         let mut arguments = self.rust_owner_type_args(expected_ty, &path)?;
         if !self.complete_rust_owner_arguments(&info, &mut arguments) {
             return None;
@@ -1240,10 +1263,16 @@ impl TypeChecker {
         let substitution = type_param_subst_map(&info.type_params, &arguments);
         let fields = fields
             .iter()
-            .map(|field| borrowed_pattern_payload(substitute_resolved_type(field, &substitution), borrow))
+            .map(|field| {
+                let field = substitute_resolved_type(field, &substitution);
+                if names.is_empty() {
+                    borrowed_pattern_payload(field, borrow)
+                } else {
+                    field
+                }
+            })
             .collect();
-        // Rust Option/Result already project to intrinsic carriers. Their imported spellings keep the same builtin
-        // constructor identity rather than declaring a competing native layout for the identical storage.
+        // Option and Result keep their intrinsic constructor identities and storage.
         let ancestral = incan_lang::interop::ancestral_rust_path(&path);
         if matches!(ancestral.as_str(), "core::option::Option" | "core::result::Result") {
             let constructor = constructors::from_str(variant)?;
@@ -1262,7 +1291,7 @@ impl TypeChecker {
                 variants,
             },
         );
-        Some(RustEnumPatternResolution::payloads(fields))
+        Some(RustEnumPatternResolution::PayloadTypes { fields, names })
     }
 
     /// Check that a match expression covers all possible cases.
@@ -1369,13 +1398,20 @@ impl TypeChecker {
 }
 
 enum RustEnumPatternResolution {
-    PayloadTypes(Vec<ResolvedType>),
+    PayloadTypes {
+        fields: Vec<ResolvedType>,
+        names: Vec<String>,
+    },
     QualifierMismatch,
 }
 
 impl RustEnumPatternResolution {
+    /// Retain positional payload types without granting any named field identity.
     fn payloads(fields: Vec<ResolvedType>) -> Self {
-        Self::PayloadTypes(fields)
+        Self::PayloadTypes {
+            fields,
+            names: Vec::new(),
+        }
     }
 }
 

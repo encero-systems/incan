@@ -450,6 +450,9 @@ impl rustc_driver::Callbacks for Callbacks {
         if let Err(error) = crate::cloneable_closures::verify_captures(tcx, &self.plan) {
             refuse(tcx, error);
         }
+        if let Err(error) = crate::statics::verify_method_results(tcx, &self.plan) {
+            refuse(tcx, error);
+        }
         for external in &self.plan.externals {
             let def = match callees::external(tcx, &external.path) {
                 Ok(def) => def,
@@ -573,7 +576,8 @@ fn library_model_item(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration) ->
 }
 
 /// Check the concrete SDK enum's argument count, bounds, ordered variants and instantiated payload types against
-/// native metadata. Construction and matching address variants by index; generic templates never authorize storage.
+/// native metadata. Variant indices select rustc's own constructors and discriminants, including explicit tags.
+/// Generic templates never authorize storage.
 fn verify_library_enum(tcx: TyCtxt<'_>, value: &crate::plan::EnumDeclaration) -> Result<(), PlanError> {
     let invalid = |reason: &str| PlanError::Invalid {
         function: value.library_item.clone(),
@@ -585,7 +589,8 @@ fn verify_library_enum(tcx: TyCtxt<'_>, value: &crate::plan::EnumDeclaration) ->
             "unsupported stdlib enum type argument count differs from metadata",
         ));
     }
-    let declared = tcx.adt_def(def).variants();
+    let owner = tcx.adt_def(def);
+    let declared = owner.variants();
     if declared.len() != value.variants.len() {
         return Err(invalid("unsupported stdlib enum variant count differs from metadata"));
     }

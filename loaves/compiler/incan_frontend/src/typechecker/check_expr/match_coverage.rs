@@ -52,7 +52,7 @@ enum CoverageKey {
 pub(super) struct CoverageConstructor {
     key: CoverageKey,
     fields: Vec<ResolvedType>,
-    /// Canonical field names of a record constructor in declaration order; empty for every other constructor.
+    /// Canonical field names of a record or named native variant in declaration order; empty for positional payloads.
     field_names: Vec<String>,
     /// Checked fields of a record constructor, used to resolve a pattern's field aliases.
     record_fields: HashMap<String, FieldInfo>,
@@ -102,7 +102,15 @@ impl CoverageConstructor {
         if !partially_covered || self.fields.is_empty() {
             return name;
         }
-        let wildcards = vec!["_"; self.fields.len()].join(", ");
+        let wildcards = if self.field_names.is_empty() {
+            vec!["_"; self.fields.len()].join(", ")
+        } else {
+            self.field_names
+                .iter()
+                .map(|field| format!("{field}=_"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
         format!("{name}({wildcards})")
     }
 }
@@ -169,12 +177,15 @@ pub(super) fn expand_coverage_heads(rows: Vec<CoverageRow<'_>>) -> Vec<CoverageR
 impl TypeChecker {
     /// Return the variant constructors of a match subject whose missing variants a refusal names.
     ///
-    /// These are a source enum, generic or not, `Option` and `Result`. Any other subject (a scalar, a tuple, a model)
-    /// is checked as one value and reported as missing `_`.
+    /// These are a source or retained native enum, generic or not, `Option` and `Result`. Any other subject (a scalar,
+    /// a tuple, a model) is checked as one value and reported as missing `_`.
     pub(super) fn match_subject_variant_constructors(
         &self,
         subject_ty: &ResolvedType,
     ) -> Option<Vec<CoverageConstructor>> {
+        if let Some(constructors) = self.native_coverage_constructors(subject_ty) {
+            return Some(constructors);
+        }
         let enforced = subject_ty.is_option()
             || subject_ty.is_result()
             || matches!(
@@ -307,6 +318,18 @@ impl TypeChecker {
                 if !spellings.iter().any(|spelling| spelling.as_str() == variant) {
                     return None;
                 }
+                if !constructor.field_names.is_empty() {
+                    let mut payload = vec![None; width];
+                    for arg in args {
+                        let PatternArg::Named(field, pattern) = arg else {
+                            continue;
+                        };
+                        if let Some(slot) = constructor.field_names.iter().position(|name| name == &field.node) {
+                            *payload.get_mut(slot)? = Some(&pattern.node);
+                        }
+                    }
+                    return Some(payload);
+                }
                 let mut payload: CoverageRow<'p> = args
                     .iter()
                     .filter_map(|arg| match arg {
@@ -353,11 +376,36 @@ impl TypeChecker {
         }
     }
 
+    /// Read native payload columns and field order from the same complete layout retained for lowering. Reference
+    /// binding mode does not change coverage, and owner arguments instantiate templates before the matrix walk.
+    fn native_coverage_constructors(&self, column: &ResolvedType) -> Option<Vec<CoverageConstructor>> {
+        let (column, _) = borrowed_pattern_subject(column);
+        let path = self.rust_canonical_path_for_receiver_type(column)?;
+        let layout = self.type_info.rust.checked_enums.get(&path)?;
+        let arguments = self.rust_owner_type_args(column, &path)?;
+        let substitution = type_param_subst_map(&layout.type_parameters, &arguments);
+        Some(
+            layout
+                .variants
+                .iter()
+                .map(|(name, fields, names)| {
+                    let fields = fields
+                        .iter()
+                        .map(|field| substitute_resolved_type(field, &substitution))
+                        .collect();
+                    let mut constructor = CoverageConstructor::variant(name, Vec::new(), fields);
+                    constructor.field_names = names.clone();
+                    constructor
+                })
+                .collect(),
+        )
+    }
+
     /// Enumerate the constructors of a column type, or `None` when the checker cannot enumerate its values.
     ///
-    /// `bool`, `Option`, `Result`, tuples, source enums, models and classes are enumerable; a source enum's and a
-    /// record's payload types are instantiated with the column's type arguments. Everything else (scalars, unions,
-    /// type parameters, Rust types, newtypes) is not.
+    /// `bool`, `Option`, `Result`, tuples, retained native enums, source enums, models and classes are enumerable; an
+    /// enum's and a record's payload types are instantiated with the column's type arguments. Everything else
+    /// (scalars, unions, type parameters, opaque Rust types, newtypes) is not.
     fn coverage_constructors(&self, column: &ResolvedType) -> Option<Vec<CoverageConstructor>> {
         if matches!(column, ResolvedType::Bool) {
             return Some(vec![
@@ -379,6 +427,9 @@ impl TypeChecker {
                 CoverageConstructor::variant(constructors::as_str(ConstructorId::Ok), Vec::new(), vec![ok]),
                 CoverageConstructor::variant(constructors::as_str(ConstructorId::Err), Vec::new(), vec![err]),
             ]);
+        }
+        if let Some(constructors) = self.native_coverage_constructors(column) {
+            return Some(constructors);
         }
         if let TupleShape::Tuple(items) = classify_tuple_shape(column) {
             return Some(vec![CoverageConstructor {

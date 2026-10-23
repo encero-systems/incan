@@ -1098,8 +1098,9 @@ pub struct RustCheckedFieldValue {
 pub struct RustCheckedEnum {
     /// Type binders in native declaration order, excluding lifetimes.
     pub type_parameters: Vec<String>,
-    /// Ordered variant names and exact checked payload templates, before match ergonomics adds references.
-    pub variants: Vec<(String, Vec<ResolvedType>)>,
+    /// Ordered variant names, exact native payload templates and named-field slots, before match ergonomics adds
+    /// references.
+    pub variants: Vec<(String, Vec<ResolvedType>, Vec<String>)>,
 }
 
 /// A metadata-selected Rust call, retaining the signature and receiver passing mode the checker admitted.

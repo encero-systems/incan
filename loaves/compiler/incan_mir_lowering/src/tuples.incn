@@ -117,7 +117,7 @@ pub def tuple_slot(projection: &PlaceElem, count: int) -> Result[int, str]:
     mut slot = -1
     match projection:
         PlaceElem.Field(name=name, canonical=_canonical, structural=structural) =>
-            if not structural.clone():
+            if not structural:
                 return Err("unsupported Body IR nonstructural tuple field")
             slot = int(str(name))
         PlaceElem.Index(index) =>

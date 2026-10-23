@@ -58,8 +58,7 @@ def visit_statement(body: &RustBody, kind: &RustStatementKind, mut pairs: list[i
             matched_value: &RustRvalue = value
             match matched_value:
                 RustRvalue.Match(scrutinee=_scrutinee, arms=arms) =>
-                    matched_arms: &list[RustMatchArm] = arms
-                    for arm in matched_arms:
+                    for arm in arms:
                         collect_arm_pairs(body, arm, pairs)
                 _ => pass
         RustStatementKind.UnsafeRegion(acknowledgment=_acknowledgment, body=nested) =>

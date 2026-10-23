@@ -452,6 +452,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         seen: &mut HashMap<String, bir::LocalId>,
         saved_bindings: &mut Vec<(String, Option<bir::LocalId>)>,
     ) -> bir::Pattern {
+        if let Some(value) = self.lower_rust_enum_pattern(name, args, place, arm_scope, reads, seen, saved_bindings) {
+            return value;
+        }
         if let Some(value) =
             self.lower_union_pattern(pattern, name, args, place, arm_scope, reads, seen, saved_bindings)
         {
@@ -474,6 +477,57 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return value;
         }
         self.lower_generic_constructor_pattern(name, args, expected_ty, place, arm_scope, reads, seen, saved_bindings)
+    }
+
+    /// Order native payload patterns by the checker's selected metadata fields, filling unnamed storage with wildcards.
+    /// A native variant identity authorizes no source-spelling lookup or guessed positional field.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_rust_enum_pattern(
+        &mut self,
+        name: &ast::Spanned<ast::Ident>,
+        args: &[ast::PatternArg],
+        place: &bir::Place,
+        arm_scope: bir::ScopeId,
+        reads: &PatternReadScope<'_>,
+        seen: &mut HashMap<String, bir::LocalId>,
+        saved_bindings: &mut Vec<(String, Option<bir::LocalId>)>,
+    ) -> Option<bir::Pattern> {
+        let identity = self.type_info.resolved_identity(name.span)?.clone();
+        let incan_semantics_core::SymbolOrigin::RustCrate(path) = &identity.origin else {
+            return None;
+        };
+        let layout = self.type_info.rust.checked_enums.get(&path.join("::"))?;
+        let (_, types, names) = layout
+            .variants
+            .iter()
+            .find(|(variant, _, _)| *variant == identity.declaration_name)?;
+        let mut fields = vec![bir::Pattern::Wildcard; types.len()];
+        for (position, arg) in args.iter().enumerate() {
+            let (slot, pattern) = match arg {
+                ast::PatternArg::Positional(pattern) => (position, pattern),
+                ast::PatternArg::Named(field, pattern) => (names.iter().position(|name| *name == field.node)?, pattern),
+            };
+            let mut field_place = place.clone();
+            field_place
+                .projection
+                .push(bir::PlaceElem::structural_field(slot.to_string()));
+            let lowered = self.lower_match_pattern(
+                pattern,
+                &IncanType::Unknown,
+                &field_place,
+                arm_scope,
+                reads,
+                seen,
+                saved_bindings,
+            );
+            *fields.get_mut(slot)? = lowered;
+        }
+        Some(bir::Pattern::Enum {
+            canonical: Some(identity.clone()),
+            name: String::new(),
+            variant: identity.declaration_name,
+            fields,
+        })
     }
 
     /// Retain the checked union member and optional carrier before projecting payload bindings.

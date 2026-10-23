@@ -2826,7 +2826,8 @@ fn visit_value_layout(
     Ok(())
 }
 
-/// Walk owned argument shapes before AST materialization; an alias cannot invent lifetimes for borrowed components.
+/// Collect model aliases required by an argument before AST materialization. A native enum alias depends on its type
+/// arguments, not its payload fields; a Box-linked native enum must not become an invented alias dependency cycle.
 fn library_argument_models(
     plan: &Plan,
     ty: &PlanType,
@@ -2843,6 +2844,12 @@ fn library_argument_models(
         PlanType::Enum(index, _) | PlanType::EnumRef(index, _) | PlanType::EnumMutRef(index, _) => {
             if enums.insert(*index) {
                 if let Some(declaration) = enum_declaration(plan, *index) {
+                    if !declaration.library_item.is_empty() {
+                        for argument in &declaration.library_type_arguments {
+                            library_argument_models(plan, argument, enums, models)?;
+                        }
+                        return Ok(());
+                    }
                     for field in declaration.variants.iter().flat_map(|variant| &variant.fields) {
                         library_argument_models(plan, field, enums, models)?;
                     }

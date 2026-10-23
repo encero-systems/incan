@@ -552,6 +552,11 @@ fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTyp
                     name: variant.name.to_string(),
                     fields,
                     field_type_displays,
+                    field_names: if variant.ctor_kind().is_none() {
+                        variant.fields.iter().map(|field| field.name.to_string()).collect()
+                    } else {
+                        Vec::new()
+                    },
                     field_carriers,
                 }
             })

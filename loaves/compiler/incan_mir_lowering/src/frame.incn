@@ -273,7 +273,7 @@ pub def terminate_call(
     destination: Place,
     span: SourceSpan,
 ) -> None:
-    """Emit a call that continues in a fresh block and unwinds through the current owners' cleanup chain."""
+    """Emit a call with the current owners' unwind cleanup; a Never destination closes its unreachable continuation."""
     # A moved argument is the callee's to drop now, so it leaves the owners before the cleanup chain is built.
     forget_moved_arguments(builder, arguments)
     continuation = builder.new_block(span)
@@ -287,6 +287,8 @@ pub def terminate_call(
     )
     builder.finish(call, span)
     builder.current = continuation
+    if place_type(builder.locals, destination) == PlanType.Never:
+        builder.finish(TerminatorKind.Unreachable, span)
 
 
 pub def read_place(place: Place, moved: bool, span: SourceSpan) -> Operand:

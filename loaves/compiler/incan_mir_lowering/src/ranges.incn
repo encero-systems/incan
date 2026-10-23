@@ -39,7 +39,7 @@ pub def range_field(projection: &RustPlaceElem) -> Result[FieldProjection, str]:
     """Project one structural range field through Body IR's declared field order."""
     match projection:
         RustPlaceElem.Field(name=name, canonical=canonical, structural=structural) =>
-            if not structural.clone():
+            if not structural:
                 return Err("invalid Body IR nonstructural range field")
             match canonical:
                 Some(_identity) => return Err("invalid Body IR nominal field on a structural range")

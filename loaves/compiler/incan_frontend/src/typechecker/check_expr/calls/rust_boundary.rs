@@ -501,10 +501,38 @@ impl TypeChecker {
             return structural;
         }
         let ty = self.resolved_rust_boundary_target_from_param_display_for_owner_path(display, owner);
-        map_resolved_type_leaves(&ty, &|leaf| {
+        let ty = map_resolved_type_leaves(&ty, &|leaf| {
             matches!(leaf, ResolvedType::Ref(inner) if **inner == ResolvedType::Str)
                 .then(|| ResolvedType::Ref(Box::new(ResolvedType::RustPath("str".into()))))
-        })
+        });
+        self.native_signature_storage_owner(ty)
+    }
+
+    /// Canonicalize metadata-defaulted native storage at signature intake, as receiver selection already does. A
+    /// payload layout and a call signature must not retain different arities for the same defaulted native owner.
+    pub(in crate::typechecker::check_expr) fn native_signature_storage_owner(&self, ty: ResolvedType) -> ResolvedType {
+        let normalized = map_resolved_type_leaves(&ty, &|leaf| self.short_native_storage_owner(leaf));
+        let normalized = self.short_native_storage_owner(&normalized).unwrap_or(normalized);
+        if normalized != ty {
+            return self.native_signature_storage_owner(normalized);
+        }
+        normalized
+    }
+
+    /// Shorten one exact native owner from its metadata defaults. A changed display may reveal a structural
+    /// collection or nested owner, so the caller walks the resulting structure before publishing its storage type.
+    fn short_native_storage_owner(&self, ty: &ResolvedType) -> Option<ResolvedType> {
+        let path = match ty {
+            ResolvedType::RustPath(path) if path.contains('<') => self.rust_path_base_and_args(path).0,
+            ResolvedType::Generic(base, _) if base.contains("::") => base.clone(),
+            _ => return None,
+        };
+        if let Some(metadata) = self.known_rust_metadata_for_path(&path)
+            && let RustItemKind::Type(info) = metadata.kind
+        {
+            return Some(self.rust_storage_owner(ty, &info, &path));
+        }
+        None
     }
 
     /// Retain a declaration-ordered inference result for Body IR; conflicting constraints are source errors.

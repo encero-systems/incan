@@ -140,7 +140,7 @@ def carrier_tests(
     match place_type(builder.locals, source):
         PlanType.Enum(index, _name) =>
             owner = index
-        _ => return Err("invalid Body IR carrier pattern scrutinee")
+        _ => return Err(f"invalid Body IR carrier pattern scrutinee {place_type(builder.locals, source):?}")
     slot = carrier_pattern_slot(builder, owner, pattern)?
     if slot < 0:
         builder.finish(TerminatorKind.Goto(selected), span)

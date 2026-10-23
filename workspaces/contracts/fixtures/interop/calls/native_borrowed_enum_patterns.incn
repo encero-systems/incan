@@ -1,7 +1,6 @@
 # behavior: matching a borrowed native enum retains its borrowed payload's owner
 # expect-stdout:
 #   borrowed
-# pending: a shared source-call argument of enum type still refuses ownership Borrow outside formatting
 
 from rust::std::env import VarError
 from rust::std::ffi import OsString

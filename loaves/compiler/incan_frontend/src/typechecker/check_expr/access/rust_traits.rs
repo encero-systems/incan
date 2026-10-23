@@ -421,7 +421,12 @@ impl TypeChecker {
     /// storage defaults separately from retained declaration facts, including defaults exposed by public field
     /// templates. Already-short owners retain structured source arguments rather than round-tripping their aliases
     /// and model identities through a display.
-    pub(super) fn rust_storage_owner(&self, owner: &ResolvedType, info: &RustTypeInfo, path: &str) -> ResolvedType {
+    pub(in crate::typechecker::check_expr) fn rust_storage_owner(
+        &self,
+        owner: &ResolvedType,
+        info: &RustTypeInfo,
+        path: &str,
+    ) -> ResolvedType {
         match owner {
             ResolvedType::Ref(inner) => return ResolvedType::Ref(Box::new(self.rust_storage_owner(inner, info, path))),
             ResolvedType::RefMut(inner) => {

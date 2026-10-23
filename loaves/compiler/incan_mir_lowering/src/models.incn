@@ -283,18 +283,17 @@ pub def field_slot(value: &RustPlaceElem, declaration: &NominalDeclaration) -> R
     # Legacy #459-like pattern-only imports require the typed enum parameter until dev.8.
     match value:
         RustPlaceElem.Field(name=name, canonical=canonical, structural=structural) =>
-            # Legacy borrowed-pattern payloads remain references; materialize the owned comparison values until dev.8.
-            if structural.clone():
-                return Err("unsupported Body IR structural model projection")
-            match canonical:
-                Some(identity) =>
-                    for slot in range(len(declaration.fields)):
-                        if declaration.fields[slot] == str(name) and declaration.field_identities[slot] == identity.clone():
-                            return Ok(slot)
-                None => pass
-            return Err(
-                f"unsupported Body IR unproven model field; projection {value:?}; selected owner {declaration.canonical:?}; name {declaration.name:?}; fields {declaration.fields:?}; field identities {declaration.field_identities:?}; field types {declaration.field_types:?}",
-            )
+            if not structural:
+                match canonical:
+                    Some(identity) =>
+                        for slot in range(len(declaration.fields)):
+                            if declaration.fields[slot] == str(name) and declaration.field_identities[slot] == identity.clone():
+                                return Ok(slot)
+                    None => pass
+                return Err(
+                    f"unsupported Body IR unproven model field; projection {value:?}; selected owner {declaration.canonical:?}; name {declaration.name:?}; fields {declaration.fields:?}; field identities {declaration.field_identities:?}; field types {declaration.field_types:?}",
+                )
+            return Err("unsupported Body IR structural model projection")
         _ => return Err("unsupported Body IR model index or slice projection")
 
 
