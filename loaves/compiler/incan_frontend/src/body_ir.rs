@@ -1045,6 +1045,9 @@ struct BodyBuilder<'type_info, 'source> {
     /// Local owners whose earlier call arguments have been read but are not consumed until that call is emitted.
     /// Nested argument evaluation cannot move one of these owners out from under the pending outer operand.
     pending_argument_reads: Vec<bir::LocalId>,
+    /// Active normalized loop scopes. Reads of enclosing owners must survive the next iteration even at their last
+    /// textual use.
+    loop_scopes: Vec<bir::ScopeId>,
     /// Source-annotated function locals whose Rust representation is a function pointer rather than an inferred item.
     function_pointer_locals: Vec<bir::LocalId>,
     /// Local bindings the checker proved hold capturing callable values rather than function pointers.
@@ -1139,6 +1142,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             external_locals: HashMap::new(),
             remaining_reads: HashMap::new(),
             pending_argument_reads: Vec::new(),
+            loop_scopes: Vec::new(),
             function_pointer_locals: Vec::new(),
             closure_holding_locals: Vec::new(),
             moved_out: HashSet::new(),
@@ -1720,20 +1724,22 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Select the Duckborrower fact and last-use marker for reading `place`.
     ///
     /// Projected reads (`.field`, `[index]`) never move: v0 does not track partial-move state, so a non-Copy
-    /// projected read always borrows rather than risking an unsound move out of a place the surrounding code still
-    /// owns. A bare read of a [`bir::LocalOrigin::Receiver`] local (`self`/`mut self`) never moves either, for a
-    /// stronger reason than the projected case: a receiver is always a Rust-level reference at the emission
-    /// boundary, so moving a non-Copy value out of it would not even compile — the only sound way to produce an
-    /// owned value from it is to clone (mirrors the existing backend ownership planner's treatment of non-Copy
-    /// `self` reads in `loaves/compiler/incan_emit/src/ownership.rs`, which this module's own docs cite as precedent).
-    /// A bare read of caller-owned parameter storage, identified by [`Self::is_borrowed_parameter`], never moves for
-    /// the same reason: a collection parameter is a shared binding, or a mutable borrow when declared `mut` (RFC 129).
-    /// An owned value read from it clones; passing it on to a `mut` parameter instead retains a reborrow fact.
-    /// Every other bare local read decrements its remaining-reads countdown; reaching zero selects `Move` (and
-    /// records the local as moved for [`Self::insert_scope_drops`]), otherwise `Clone`. A pending earlier call argument
-    /// keeps its owner alive across later nested argument evaluation, so even its final textual read clones until the
-    /// outer call consumes that operand. A local with no tracked
-    /// countdown (an [`bir::LocalOrigin::External`] reference) gets the explicit [`bir::OwnershipFact::Unknown`].
+    /// projected read borrows rather than risking an unsound move out of a place the surrounding code still owns.
+    /// A checked source enum field instead records an explicit clone when read as a value; reference consumers retain
+    /// their ordinary borrow adjustment. A bare read of a [`bir::LocalOrigin::Receiver`] local (`self`/`mut self`)
+    /// never moves either, for a stronger reason than the projected case: a receiver is always a Rust-level
+    /// reference in the native frame, so moving a non-Copy value out of it is invalid. Producing an owned value
+    /// therefore clones the referent. A bare read of caller-owned parameter storage, identified by
+    /// [`Self::is_borrowed_parameter`], never moves for the same reason: a collection parameter is a shared
+    /// binding, or a mutable borrow when declared `mut` (RFC 129). An owned value read from it clones; passing it
+    /// on to a `mut` parameter instead retains a reborrow fact. Every other bare local read decrements its
+    /// remaining-reads countdown; reaching zero selects `Move` (and records the local as moved for
+    /// [`Self::insert_scope_drops`]), otherwise `Clone`. A pending earlier call argument keeps its owner alive
+    /// across later nested argument evaluation, so even its final textual read clones until the outer call consumes
+    /// that operand. An owner declared outside the active loop also clones at its last textual read, because that
+    /// source read executes again on the next iteration. Loop-local owners can still transfer at their last use. A
+    /// local with no tracked countdown (an [`bir::LocalOrigin::External`] reference) gets the explicit
+    /// [`bir::OwnershipFact::Unknown`].
     ///
     /// Note that [`count_reads_in_stmts`] counts a `.field`/`[index]` occurrence of a name toward that local's
     /// total the same as a bare occurrence, but only bare reads ever decrement the countdown here. A local read
@@ -1745,6 +1751,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if !place.projection.is_empty() {
             let fact = if is_copy {
                 bir::OwnershipFact::Copy
+            } else if self.is_checked_enum_value(ty) {
+                bir::OwnershipFact::Clone
             } else {
                 bir::OwnershipFact::Borrow
             };
@@ -1774,16 +1782,40 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
             return (bir::OwnershipFact::Copy, false);
         }
+        let reused_by_loop = self.loop_reuses_local(local);
         let Some(remaining) = self.remaining_reads.get_mut(&local) else {
             return (bir::OwnershipFact::Unknown, false);
         };
         *remaining = remaining.saturating_sub(1);
-        if *remaining == 0 && !self.pending_argument_reads.contains(&local) {
+        if *remaining == 0 && !self.pending_argument_reads.contains(&local) && !reused_by_loop {
             self.moved_out.insert(local);
             (bir::OwnershipFact::Move, true)
         } else {
             (bir::OwnershipFact::Clone, false)
         }
+    }
+
+    /// Identify storage declared outside the innermost loop, whose textual final read can execute repeatedly.
+    /// Descendants of the loop scope are initialized per iteration and retain ordinary last-use transfers.
+    fn loop_reuses_local(&self, local: bir::LocalId) -> bool {
+        let Some(loop_scope) = self.loop_scopes.last() else {
+            return false;
+        };
+        let Some(declaration) = self.locals.get(local.index()) else {
+            return false;
+        };
+        let mut scope = Some(declaration.scope);
+        while let Some(current) = scope {
+            if current == *loop_scope {
+                return false;
+            }
+            scope = self
+                .scopes
+                .iter()
+                .find(|entry| entry.id == current)
+                .and_then(|entry| entry.parent);
+        }
+        true
     }
 
     /// Whether `local` is a method's `self`/`mut self` receiver, per its recorded [`bir::LocalOrigin`].

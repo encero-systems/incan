@@ -316,13 +316,13 @@ impl TypeChecker {
     }
 
     /// Normalize native identities for comparison without rewriting the public paths retained for executable
-    /// storage. Constructor aliases and leaf aliases use the same standard re-export identity table.
+    /// storage. Constructor aliases and leaf aliases share retained defining paths and standard reexport identities.
     fn rust_trait_comparison_type(&self, ty: &ResolvedType) -> ResolvedType {
         let ty = self.rust_inference_type(ty, &[]);
         map_resolved_type_leaves(&ty, &|leaf| {
             if let ResolvedType::Generic(base, arguments) = leaf {
                 let base = if base.contains("::") {
-                    incan_lang::interop::ancestral_rust_path(base)
+                    self.rust_native_type_identity_path(base)
                 } else {
                     base.clone()
                 };
@@ -340,8 +340,22 @@ impl TypeChecker {
             if incan_lang::interop::rust_display_is_owned_string(path) {
                 return Some(ResolvedType::Str);
             }
-            Some(ResolvedType::RustPath(incan_lang::interop::ancestral_rust_path(path)))
+            Some(ResolvedType::RustPath(self.rust_native_type_identity_path(path)))
         })
+    }
+
+    /// Compare public type reexports through their retained defining path within the same bound crate. Distinct
+    /// extern aliases remain separate domains; standard reexports retain the existing ancestry normalization.
+    pub(in crate::typechecker) fn rust_native_type_identity_path(&self, path: &str) -> String {
+        let metadata = self.rust_item_metadata_for_path(path);
+        let definition = metadata.as_ref().and_then(|metadata| {
+            if !matches!(metadata.kind, RustItemKind::Type(_)) {
+                return None;
+            }
+            let definition = metadata.definition_path.as_deref()?;
+            (definition.split("::").next() == path.split("::").next()).then_some(definition)
+        });
+        incan_lang::interop::ancestral_rust_path(definition.unwrap_or(path))
     }
 
     /// Bind one impl's declared Self template to a concrete native owner before inspecting its members or projections.

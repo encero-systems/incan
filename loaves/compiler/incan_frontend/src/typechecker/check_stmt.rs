@@ -1315,10 +1315,10 @@ impl TypeChecker {
         }
     }
 
-    /// Admit the existing native usize-to-int boundary only for a retained Rust call, without widening ordinary
-    /// Incan numeric assignment compatibility or losing the Rust callee's exact native return signature.
-    fn native_usize_return(
-        &self,
+    /// Record the existing native usize-to-int return conversion only for a retained Rust call. The exact native
+    /// signature remains unchanged; Body IR consumes this decision without widening ordinary source compatibility.
+    fn record_native_usize_return(
+        &mut self,
         expr: Option<&Spanned<Expr>>,
         actual: &ResolvedType,
         expected: &ResolvedType,
@@ -1329,14 +1329,23 @@ impl TypeChecker {
             return false;
         }
         let Some(mut expr) = expr else { return false };
+        let boundary_span = expr.span;
         while let Expr::Paren(inner) = &expr.node {
             expr = inner;
         }
-        self.type_info
+        let accepted = self
+            .type_info
             .rust
             .checked_calls
             .get(&(expr.span.start, expr.span.end))
-            .is_some_and(|call| &call.return_type == actual)
+            .is_some_and(|call| &call.return_type == actual);
+        if accepted {
+            self.type_info
+                .expressions
+                .numeric_conversion_destinations
+                .insert((boundary_span.start, boundary_span.end), expected.clone());
+        }
+        accepted
     }
 
     /// Check a return statement against the active function context, including an authenticated native usize result.
@@ -1357,9 +1366,9 @@ impl TypeChecker {
             ResolvedType::Unit
         };
 
-        if let Some(expected) = self.symbols.current_return_type()
-            && !self.types_compatible(&return_ty, expected)
-            && !self.native_usize_return(expr, &return_ty, expected)
+        if let Some(expected) = self.symbols.current_return_type().cloned()
+            && !self.types_compatible(&return_ty, &expected)
+            && !self.record_native_usize_return(expr, &return_ty, &expected)
         {
             self.errors.push(errors::return_type_mismatch(
                 &expected.to_string(),

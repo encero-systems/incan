@@ -84,13 +84,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.lower_chained_assignment(chained_assignment, remaining, scope, span, out)
             }
             ast::Statement::Return(value) => {
-                // A returned `Ok(...)` or `Err(...)` builds the sides the declared return type settles for it.
-                let value = value.as_ref().map(|returned| {
-                    let destination = self.owner_return_type.clone();
-                    self.settle_open_result_value(returned, &destination);
-                    let operand = self.lower_boundary_value(returned, Some(&destination), scope, out);
-                    self.owned_parameter_operand(returned, operand)
-                });
+                let value = value
+                    .as_ref()
+                    .map(|returned| self.lower_return_operand(returned, scope, out));
                 out.push(bir::Statement {
                     kind: bir::StatementKind::Return { value },
                     span,
@@ -132,6 +128,23 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
             other => self.push_unsupported_stmt(unsupported_stmt_label(other), span, out),
         }
+    }
+
+    /// Read a return value on a terminal function path, where enclosing loops cannot repeat the read.
+    /// New loops inside the return expression still establish their own repeated-read scopes. Borrowed receivers and
+    /// parameters retain their normal ownership rules, and Result constructors use the declared return channels.
+    fn lower_return_operand(
+        &mut self,
+        returned: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let destination = self.owner_return_type.clone();
+        self.settle_open_result_value(returned, &destination);
+        let enclosing_loops = std::mem::take(&mut self.loop_scopes);
+        let operand = self.lower_boundary_value(returned, Some(&destination), scope, out);
+        self.loop_scopes = enclosing_loops;
+        self.owned_parameter_operand(returned, operand)
     }
 
     /// Retain a source acknowledgment and its operations without introducing an Incan binding or drop scope.

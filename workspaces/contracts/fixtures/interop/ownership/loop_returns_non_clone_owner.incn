@@ -1,0 +1,18 @@
+# behavior: returning from a loop transfers an enclosing non-Clone value to the caller
+# expect-stdout:
+#   false
+
+from rust::std::sync import Mutex
+
+
+def make() -> Mutex[int]:
+    """Return an owned mutex without cloning it."""
+    value = Mutex.new(7)
+    while true:
+        return value
+
+
+def main() -> None:
+    """Observe the transferred native owner."""
+    value = make()
+    println(value.is_poisoned())

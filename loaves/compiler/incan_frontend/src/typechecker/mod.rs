@@ -110,8 +110,7 @@ use helpers::{collection_name, collection_type_id, render_resolved_type_as_rust_
 use incan_lang::interop::{
     RUST_NEVER_TYPE_DISPLAY, RustExpandedDeriveTrait, RustFunctionSig, RustItemKind, RustItemMetadata,
     RustMutableReferenceCandidate, RustMutableReferenceTypeParam, RustParam, RustPayloadCarrier, RustTypeShape,
-    metadata_free_method_signature, render_rust_type_shape_path, rust_display_is_owned_string,
-    split_top_level_rust_args, strip_rust_borrow_lifetimes,
+    render_rust_type_shape_path, rust_display_is_owned_string, split_top_level_rust_args, strip_rust_borrow_lifetimes,
 };
 use incan_lang::lang::builtins::{self, BuiltinFnId};
 use incan_lang::lang::c_abi;
@@ -2224,9 +2223,7 @@ impl TypeChecker {
 
     /// Resolve a Rust-origin associated function signature (must not take `self`) from cached metadata.
     pub fn rust_associated_function_signature(&self, rust_path: &str, method: &str) -> Option<RustFunctionSig> {
-        let sig = self
-            .rust_method_signature(rust_path, method)
-            .or_else(|| metadata_free_method_signature(rust_path, method))?;
+        let sig = self.rust_method_signature(rust_path, method)?;
         if Self::rust_signature_has_receiver(&sig) {
             return None;
         }

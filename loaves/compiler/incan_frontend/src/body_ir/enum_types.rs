@@ -3,6 +3,23 @@
 use super::{BodyBuilder, CanonicalSymbolId, IncanType, SemanticSourceTargetKind, ast};
 
 impl BodyBuilder<'_, '_> {
+    /// Recognize a source or intrinsic enum value through its checked type, independently of its field's borrow
+    /// storage. An owned projected read needs Clone; a reference consumer explicitly retains a borrow at its call
+    /// boundary.
+    pub(super) fn is_checked_enum_value(&self, ty: &IncanType) -> bool {
+        if matches!(ty, IncanType::Generic { base, .. }
+            if matches!(super::collections::from_str(base), Some(super::CollectionTypeId::Option | super::CollectionTypeId::Result)))
+        {
+            return true;
+        }
+        let name = match ty {
+            IncanType::Named(name) | IncanType::Generic { base: name, .. } => name,
+            _ => return false,
+        };
+        super::parameter_types::retained_nominal_identity(name, self.type_info)
+            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Enum)
+    }
+
     /// Pin enum arguments from an exact nongeneric declaration when checking omitted a call-site snapshot.
     pub(super) fn settle_declared_enum_arguments(&mut self, identity: &CanonicalSymbolId, arguments: &[ast::CallArg]) {
         let Some(binding) = self

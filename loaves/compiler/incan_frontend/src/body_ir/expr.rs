@@ -101,6 +101,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// conflict refusal, before selecting the canonical layout. They never parse a key or use later name bindings.
     /// A provider method's checked nongeneric newtype return can supply that authority without a consumer import,
     /// but its own return binding and retained layout must agree; conflicting copies or bindings deny the projection.
+    /// A checked nongeneric newtype identity also authenticates its wrapped slot before its declaring module's body
+    /// is built. Final layout validation still requires that exact owner; module ordering supplies no second identity.
     pub(super) fn lower_checked_field_projection(
         &self,
         base: &ast::Spanned<ast::Expr>,
@@ -156,17 +158,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         if name == "0"
             && let IncanType::Named(owner) = &ty
-            && let Some(declaration) = self.local_nominal_declarations.values().find(|declaration| {
-                declaration.canonical.kind == SemanticSourceTargetKind::Newtype
-                    && if self.retain_nominal_carriers || self.foreign_source_method_result(base) {
-                        parameter_types::retained_nominal_identity(owner, self.type_info)
-                            == Some(&declaration.canonical)
-                    } else {
-                        declaration.name == *owner
-                    }
-            })
+            && let Some(identity) = parameter_types::retained_nominal_identity(owner, self.type_info)
+                .filter(|identity| identity.kind == SemanticSourceTargetKind::Newtype)
         {
-            return bir::PlaceElem::field(name, Some(declaration.canonical.clone()));
+            return bir::PlaceElem::field(name, Some(identity.clone()));
         }
         if tuple_type_elements(&ty)
             .is_some_and(|elements| name.parse::<usize>().is_ok_and(|index| index < elements.len()))
@@ -192,30 +187,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 .or_else(|| self.retained_field_identity(&ty, name));
             bir::PlaceElem::field(name, identity)
         }
-    }
-
-    /// A foreign source method cannot grant a hidden newtype's slot through a local spelling fallback. Existing
-    /// checked owner bindings remain sufficient; source-local methods retain their own declaration path, including
-    /// package-owned modules whose physical module identifier differs from the source path.
-    fn foreign_source_method_result(&self, expression: &ast::Spanned<ast::Expr>) -> bool {
-        if !matches!(expression.node, ast::Expr::MethodCall(_, _, _, _)) {
-            return false;
-        }
-        let Some(method) = self.type_info.resolved_identity(expression.span) else {
-            return false;
-        };
-        method.kind == SemanticSourceTargetKind::Method
-            && matches!(
-                method.origin,
-                incan_semantics_core::SymbolOrigin::Module(_) | incan_semantics_core::SymbolOrigin::Package { .. }
-            )
-            && incan_semantics_core::canonical_module_identity(method).as_deref() != Some(self.module_identity)
-            && self
-                .type_info
-                .declarations
-                .member_declaration_identities
-                .get(&(method.declaration_span.start, method.declaration_span.end))
-                != Some(method)
     }
 
     /// A checked provider method can return a source newtype the consumer never imports. Its own return binding and

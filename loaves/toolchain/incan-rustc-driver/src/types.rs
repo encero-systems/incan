@@ -214,6 +214,7 @@ fn scalar_reference_type<'tcx>(tcx: TyCtxt<'tcx>, elements: &[PlanType], mutable
 }
 
 /// Resolve the explicitly bound dependency's immutable wrapper and preserve its exact static storage arguments.
+/// A transitive copy with the same crate name cannot replace the owner used by the AST declaration.
 pub fn frozen_collection_type<'tcx>(
     tcx: TyCtxt<'tcx>,
     name: &str,
@@ -253,7 +254,8 @@ pub fn frozen_collection_type<'tcx>(
     Ok(Ty::new_adt(tcx, tcx.adt_def(definition), tcx.mk_args(&arguments)))
 }
 
-/// Resolve the bound standard crate's generator ADT from dependency metadata and retain its element type.
+/// Resolve the bound core dependency's actual generator ADT and retain its element type. Transitive copies do not
+/// replace the explicit crate alias used by the generator's declaration and runtime calls.
 pub fn generator_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str, leaf: &ListLeaf, depth: i64) -> Result<Ty<'tcx>, PlanError> {
     let mut definition = crate::native_crates::root(tcx, "incan_std_core")
         .ok_or_else(|| PlanError::UnknownCallee("incan_std_core".into()))?;
@@ -631,7 +633,8 @@ fn zip_type<'tcx>(
     ))
 }
 
-/// Resolve the bound SDK TypeToken carrier with its exact represented native type.
+/// Resolve the bound core dependency's TypeToken carrier with its exact represented native type. A same-named
+/// transitive core artifact cannot supply the carrier for the explicit SDK declaration.
 pub fn type_token_type<'tcx>(tcx: TyCtxt<'tcx>, elements: &[PlanType]) -> Result<Ty<'tcx>, PlanError> {
     let [element] = elements else {
         return Err(PlanError::UnknownCallee("unsupported TypeToken arity".into()));

@@ -1,0 +1,24 @@
+"""Readers of a newtype owned by another source module."""
+
+from paths import Path
+from rust::std::path import Path as RustPath
+
+
+pub def text(path: Path) -> str:
+    """Return the wrapped value through the parameter's retained identity."""
+    return path.0
+
+
+pub def forwarded(path: Path) -> str:
+    """Pass the wrapped value through an ordinary string boundary."""
+    return echo(path.0)
+
+
+def echo(value: str) -> str:
+    """Return a text argument."""
+    return value
+
+
+pub def native(path: Path) -> bool:
+    """Pass the source newtype's field into a native call with a same-named foreign type."""
+    return RustPath.new(path.0).is_relative()
