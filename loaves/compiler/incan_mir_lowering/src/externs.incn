@@ -22,11 +22,12 @@ from numerics import has_sized_numeric
 pub def delegated_function(
     name: str,
     path: str,
+    type_arguments: list[PlanType],
     parameters: list[Parameter],
     result: PlanType,
     span: SourceSpan,
 ) -> Result[tuple[Function, list[ExternalFunction]], str]:
-    """Pass every parameter through in declaration order and return the Rust item's result, moving owned values."""
+    """Pass parameters in declaration order to the exact checked Rust instantiation, moving owned values."""
     if name == "main":
         return Err("unsupported Body IR ExternDelegation entrypoint")
     if not delegated_type(result):
@@ -41,8 +42,11 @@ pub def delegated_function(
         locals.append(Local(ty=ty, span=span))
         types.append(ty)
         arguments.append(Operand(kind=OperandKind.Move(place(index + 1, span)), span=span))
+    mut callee = CalleeKind.External(path)
+    if len(type_arguments) != 0:
+        callee = CalleeKind.Instantiated(path, type_arguments)
     call = TerminatorKind.Call(
-        Callee(kind=CalleeKind.External(path), span=span),
+        Callee(kind=callee, span=span),
         arguments,
         place(0, span),
         1,
@@ -56,7 +60,7 @@ pub def delegated_function(
         blocks=[block([], call, span), block([], TerminatorKind.Return, span)],
         span=span,
     )
-    return Ok((function, [ExternalFunction(path=path, parameters=types, return_type=result, span=span)]))
+    return Ok((function, [ExternalFunction(path=path, type_arguments=type_arguments, parameters=types, return_type=result, span=span)]))
 
 
 def delegated_type(ty: PlanType) -> bool:

@@ -6,10 +6,11 @@ Oven is the build system and the `incan` command line, written in Incan (DD-0008
 
 | Module | Owns |
 | --- | --- |
-| `main.incn` | The `incan` command line: `run`, `check`, `describe-unit`, `build`. |
-| `unit.incn` | The unit description (`incan.unit/1`) of a program, a library or a standard package: what the compiler reads instead of a manifest (`incan describe-unit PATH`). |
+| `main.incn` | The `incan` command line: `run`, `check`, `test`, `describe-unit`, `build`. |
+| `unit.incn` | The unit description (`incan.unit/1`) of a program, library or test unit: what the compiler reads instead of a manifest (`incan describe-unit PATH`). |
 | `toolchain.incn` | The installed toolchain (`<home>/toolchains/<toolchain>/toolchain.json`, `incan.toolchain/1`): the compiler, the pinned sysroot it was built against, the ABI cache of its standard Rust crates (DD-0009), and the native closure every compiled unit links. |
 | `incan_units.incn` | Checking and compiling a described unit with the toolchain's compiler, and running the program it compiled (`incan check`, `incan run`). |
+| `testing.incn` | Running a compiled test unit and reporting the collected tests' observed outcomes (`incan test PATH [UNIT OPTIONS]`). |
 | `rust_units.incn` | Rust units: a local Loaf's Rust facet and the local facets it reaches, one `rustc` per unit against compiled registry units (`incan build`). A binary that links the toolchain's own `rustc_driver` gets a runpath to it and the identity it was built against. |
 | `intake.incn`, `manifest_errors.incn` | Reading `loaf.toml`: the package, its scripts and features, its path, Rust-facet and registry dependencies (standard packages are ambient, never declared), its source root, contract model bundles and C headers. Every refusal names the manifest, the field path and its TOML location. |
 | `features.incn` | Package feature resolution over the local graph (RFC 114): additive, unified across active edges, optional dependencies selected by features, cycles refused. |
@@ -19,7 +20,13 @@ Oven is the build system and the `incan` command line, written in Incan (DD-0008
 | `unit_codegen.incn` | Declared codegen options for exact resolved units. |
 | `invocation.incn` | The restrictions a command runs under (locked, frozen, offline). |
 
-`test_*.incn` hold each module's tests (`incan test src/`).
+`test_*.incn` hold each module's tests. The dev.8 command accepts one test file at a time; directory discovery is not implemented.
+
+## Test units
+
+`incan test tests/test_example.incn` takes the same profile and feature options as `incan run`. Oven describes the file as a `test` unit and compiles it once through the same compiler entry as programs and libraries. The compiler collects tests with the session's `std.testing` marker semantics and writes their native entry names and outcome markers beside the binary in `<binary>.tests.json`. Each synchronous, zero-argument test runs in a separate native harness process. Oven prints `<file>::<function> PASSED`, `FAILED`, `SKIPPED (<reason>)`, `XFAIL (<reason>)` or `XPASS (<reason>)` and exits 1 for failures or unexpected passes. Skipped tests are never executed. Test stdout and stderr are captured; output from unexpected failures is reported on stderr.
+
+Fixtures, test parameters, async tests, timeouts and resource markers currently produce named refusals. Their execution contracts are not implemented by this initial native harness.
 
 ## Building
 

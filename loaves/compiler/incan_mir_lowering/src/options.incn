@@ -331,7 +331,7 @@ def retain_call_carriers(
     destination: &Option[RustPlace],
     file: str,
 ) -> Result[None, str]:
-    """Retain closed published free-function signatures, including carriers absent from locals such as Option[Unit] for a None argument."""
+    """Retain checked free-function signatures before calls, including constant-only carriers absent from locals."""
     match target.canonical:
         Some(identity) =>
             if identity.kind != SemanticSourceTargetKind.Function:
@@ -339,6 +339,21 @@ def retain_call_carriers(
         None => return Ok(None)
     if not closed_arguments(target.type_args):
         return Ok(None)
+    for candidate in module.bodies:
+        if target.canonical != candidate.canonical or len(candidate.type_parameters) != len(target.type_args):
+            continue
+        mut parameters: list[RustType] = []
+        for parameter in candidate.params:
+            parameters.append(parameter.ty.clone())
+        retain_closed_signature(
+            module,
+            declarations,
+            parameters,
+            candidate.return_type,
+            candidate.type_parameters,
+            target.type_args,
+            file,
+        )?
     for delegation in module.loaf_callables:
         if target.canonical != Some(delegation.canonical.clone()):
             continue
@@ -355,11 +370,25 @@ def retain_call_carriers(
                 Some(_receiver) => pass
         if len(closed) != len(delegation.type_parameters):
             return Err("unsupported Body IR SDK carrier type argument arity")
-        for parameter in delegation.parameters:
-            instantiated: RustType = substitute(parameter, delegation.type_parameters, closed)?
-            retain_carrier(module, declarations, instantiated, file)?
-        closed_result: RustType = substitute(delegation.return_type, delegation.type_parameters, closed)?
-        retain_carrier(module, declarations, closed_result, file)?
+        retain_closed_signature(module, declarations, delegation.parameters, delegation.return_type, delegation.type_parameters, closed, file)?
+    return Ok(None)
+
+
+def retain_closed_signature(
+    module: &BodyIrModule,
+    mut declarations: list[EnumDeclaration],
+    parameters: list[RustType],
+    result: &RustType,
+    names: list[str],
+    arguments: list[RustType],
+    file: str,
+) -> Result[None, str]:
+    """Close a retained callable's signature from checked type arguments before any operand needs its carrier."""
+    for parameter in parameters:
+        instantiated: RustType = substitute(parameter, names, arguments)?
+        retain_carrier(module, declarations, instantiated, file)?
+    closed_result: RustType = substitute(result, names, arguments)?
+    retain_carrier(module, declarations, closed_result, file)?
     return Ok(None)
 
 

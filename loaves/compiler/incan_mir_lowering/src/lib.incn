@@ -6,8 +6,7 @@ from defaults import default_arguments, default_type
 from numerics import numeric_carrier as checked_numeric_carrier
 pub from lowering import BodyIrModule
 from lowering import (
-    program_plan as checked_program_plan,
-    library_plan as checked_library_plan,
+    unit_plan as checked_unit_plan,
     program_refusals as checked_program_refusals,
 )
 pub from pub::incan_mir_plan import (
@@ -55,24 +54,16 @@ pub from pub::incan_mir_plan import (
 )
 
 
-pub def program_plan(
+pub def unit_plan(
     modules: &list[BodyIrModule],
     sources: list[str],
     files: list[str],
     entry: int,
+    kind: str,
+    tests: list[str],
 ) -> Result[Option[Plan], str]:
-    """Retain a checked missing entry as a semantic CLI outcome after every body lowers; unsupported bodies still fail."""
-    return checked_program_plan(modules, sources, files, entry)
-
-
-pub def library_plan(
-    modules: &list[BodyIrModule],
-    sources: list[str],
-    files: list[str],
-    entry: int,
-) -> Result[Plan, str]:
-    """Lower a library Loaf's checked bodies through the canonical caller boundary; no `main` is required."""
-    return checked_library_plan(modules, sources, files, entry)
+    """Lower a program, library or collected test unit through one canonical caller boundary."""
+    return checked_unit_plan(modules, sources, files, entry, kind, tests)
 
 
 pub def program_refusals(modules: &list[BodyIrModule], sources: list[str], files: list[str], entry: int) -> list[str]:

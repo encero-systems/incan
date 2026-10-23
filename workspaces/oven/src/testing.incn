@@ -1,0 +1,68 @@
+"""Native test execution: compile one unit, then report the session-collected entries' observed outcomes."""
+
+from rust::std::process import Command
+from rust::std::io import Write, stderr
+from std.fs import Path
+from std.json import JsonValue, parse
+from incan_units import compile_unit, crate_name
+from json_fields import array, text_field
+from toolchain import Toolchain
+from unit import UnitDescription
+
+
+pub def run_tests(unit: UnitDescription, toolchain: Toolchain) -> Result[i32, str]:
+    """Compile once and run each collected test in its own process, so one panic never hides a later test."""
+    binary = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath(unit.profile).joinpath("tests").joinpath(crate_name(unit))
+    compiled = compile_unit(unit, toolchain, binary)?
+    if compiled != 0:
+        return Ok(compiled)
+    report = Path(f"{binary.0}.tests.json")
+    text = report.read_text("utf-8", "strict").map_err((error) => error.message())?
+    document = parse(text).map_err((error) => error.message())?
+    tests = array(document, []).map_err((_) => "compiler test report must be an array")?
+    mut failed = false
+    for test in tests:
+        if not run_test(binary, Path(unit.source).name(), test)?:
+            failed = true
+    if failed:
+        return Ok(1)
+    return Ok(0)
+
+
+def reason(test: JsonValue, marker: str) -> Option[str]:
+    """Read a marker reason; null means the collected test has no such marker."""
+    match test.get(marker):
+        Some(value) => return value.as_str()
+        None => return None
+
+
+def run_test(binary: Path, file: str, test: JsonValue) -> Result[bool, str]:
+    """Observe one exact native test and apply its collected skip or expected-failure policy."""
+    name = text_field(test, "name", []).map_err((_) => "compiler test report has no name")?
+    native = text_field(test, "native", []).map_err((_) => "compiler test report has no native entry")?
+    label = f"{file}::{name}"
+    match reason(test, "skip"):
+        Some(why) =>
+            println(f"{label} SKIPPED ({why})")
+            return Ok(true)
+        None => pass
+    mut command = Command.new(binary.0)
+    command.arg("--exact").arg(native).arg("--nocapture")
+    output = command.output().map_err((error) => f"cannot run {binary.0}: {error}")?
+    passed = output.status.success()
+    match reason(test, "xfail"):
+        Some(why) =>
+            if passed:
+                println(f"{label} XPASS ({why})")
+                return Ok(false)
+            println(f"{label} XFAIL ({why})")
+            return Ok(true)
+        None => pass
+    if passed:
+        println(f"{label} PASSED")
+        return Ok(true)
+    println(f"{label} FAILED")
+    mut err = stderr()
+    written_output = err.write_all(output.stdout)
+    written_error = err.write_all(output.stderr)
+    return Ok(false)

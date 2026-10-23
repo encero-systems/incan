@@ -659,7 +659,7 @@ def rust_request(alias: str, value: TomlValue, manifest: str, group: str) -> Res
 
 
 pub def load_project(root: Path) -> Result[LocalProject, IntakeError]:
-    """Read one byte snapshot and validate existing conventional library or explicitly declared script paths."""
+    """Read one byte snapshot and validate script paths; conventional library and test-only packages need no script."""
     manifest = root.joinpath("loaf.toml")
     raw = manifest.read_bytes().map_err((error) => refusal(manifest.0, [], IntakeErrorKind.Missing, error.message()))?
     document = parse_document(raw, manifest.0)?
@@ -697,7 +697,7 @@ pub def load_project(root: Path) -> Result[LocalProject, IntakeError]:
                         "script resolves to conventional library",
                     ).with_source(source),
                 )
-    if len(intent.scripts) == 0 and not root.joinpath("src/lib.incn").is_file():
+    if len(intent.scripts) == 0 and not root.joinpath("src/lib.incn").is_file() and not root.joinpath("tests").is_dir():
         return Err(
             refusal(
                 manifest.0,

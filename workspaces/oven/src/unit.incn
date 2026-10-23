@@ -55,6 +55,7 @@ pub model UnitDescription:
     pub externs: list[NativeCrate] = []
     pub search: list[str] = []
     pub rust_abi: list[str] = []
+    pub kind: str = "program"
 
     def to_json(self) -> JsonValue:
         """The description as the compiler reads it."""
@@ -62,6 +63,7 @@ pub model UnitDescription:
             {
                 "schema": JsonValue.string(UNIT_DESCRIPTION_SCHEMA),
                 "source": JsonValue.string(self.source),
+                "kind": JsonValue.string(self.kind),
                 "project_root": JsonValue.string(self.project_root),
                 "source_root": JsonValue.string(self.source_root),
                 "package": JsonValue.string(self.package),

@@ -14,6 +14,30 @@ use crate::error::{CliError, CliResult};
 /// The schema of a unit description.
 pub const UNIT_DESCRIPTION_SCHEMA: &str = "incan.unit/1";
 
+/// The entry contract of a compilation unit; all kinds share source analysis and Body IR lowering.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UnitKind {
+    /// A native executable with an authored main.
+    #[default]
+    Program,
+    /// A Loaf exporting its declarations as an rlib.
+    Library,
+    /// A native test executable whose entries come from session test collection.
+    Test,
+}
+
+impl UnitKind {
+    /// The kind spelling shared with Incan lowering and Oven's unit description.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Program => "program",
+            Self::Library => "library",
+            Self::Test => "test",
+        }
+    }
+}
+
 /// One unit: its source, its package and every Loaf it reaches.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -22,6 +46,9 @@ pub struct UnitDescription {
     pub schema: String,
     /// The unit's entry source: a program's entry file, a Loaf's `lib.incn` or a test module.
     pub source: PathBuf,
+    /// The entry contract; descriptions predating explicit kinds describe programs.
+    #[serde(default)]
+    pub kind: UnitKind,
     /// The package's root directory, which package-relative paths are spelled against.
     pub project_root: PathBuf,
     /// The package's source root, which module paths are spelled against.

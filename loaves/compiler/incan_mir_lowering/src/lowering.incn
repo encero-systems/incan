@@ -6670,26 +6670,18 @@ def display_receiver(mut builder: Builder, value: &RustOperand, span: SourceSpan
     return display_operand(builder, value, span)
 
 
-pub def program_plan(
+pub def unit_plan(
     modules: &list[BodyIrModule],
     sources: list[str],
     files: list[str],
     entry: int,
+    kind: str,
+    tests: list[str],
 ) -> Result[Option[Plan], str]:
-    """Lower every checked body before returning a plan; None proves absent entry, while unsupported entry representations fail."""
-    return lowered_plan(modules, sources, files, entry, false)
-
-
-pub def library_plan(
-    modules: &list[BodyIrModule],
-    sources: list[str],
-    files: list[str],
-    entry: int,
-) -> Result[Plan, str]:
-    """Lower every checked body of a library Loaf; a library has no `main`, so the plan is always present."""
-    match lowered_plan(modules, sources, files, entry, true)?:
-        Some(plan) => return Ok(plan)
-        None => return Err("library lowering produced no plan")
+    """Lower one checked unit by kind; test entries come from session collection, never from naming heuristics here."""
+    if kind != "program" and kind != "library" and kind != "test":
+        return Err(f"unsupported unit kind {kind}")
+    return lowered_plan(modules, sources, files, entry, kind, tests)
 
 
 def lowered_plan(
@@ -6697,9 +6689,10 @@ def lowered_plan(
     sources: list[str],
     files: list[str],
     entry: int,
-    library: bool,
+    kind: str,
+    tests: list[str],
 ) -> Result[Option[Plan], str]:
-    """Lower every checked body; an executable without `main` yields None, a library never needs one."""
+    """Lower all three unit kinds through one pipeline; only a program requires an authored main."""
     if len(modules) == 0 or entry < 0 or entry >= len(modules):
         return Err("invalid Body IR project entry")
     if len(sources) != len(modules) or len(files) != len(modules):
@@ -6788,9 +6781,10 @@ def lowered_plan(
     retain_factory_callable_storage(context, functions, models, externals)?
     validate_futures(context, intrinsics)?
     mut exports: list[PlanExport] = []
-    if library:
+    if kind == "library":
         exports = loaf_exports(context, emitted_frames)
-    if not library and not has_main:
+    test_entries = collected_test_entries(context, checked[entry], tests, functions)?
+    if kind == "program" and not has_main:
         if declares_main:
             return Err("unsupported Body IR selected main representation")
         return Ok(None)
@@ -6804,9 +6798,31 @@ def lowered_plan(
                 span=SourceSpan(file=files[entry], line=1, column=1),
                 statics=statics,
                 exports=exports,
+                tests=test_entries,
             ),
         ),
     )
+
+
+def collected_test_entries(context: &BodyIrModule, entry: &BodyIrModule, tests: list[str], functions: list[Function]) -> Result[list[str], str]:
+    """Resolve collected zero-argument tests to their checked native functions and refuse unsupported signatures."""
+    mut entries: list[str] = []
+    for name in tests:
+        mut found = false
+        for body in entry.bodies:
+            if str(body.name) != name:
+                continue
+            native = function_name(context, body)
+            for function in functions:
+                if function.name != native:
+                    continue
+                if len(function.parameters) != 0 or function.return_type != PlanType.Unit or function.is_async:
+                    return Err(f"unsupported test signature for {name}: requires synchronous () -> None")
+                entries.append(native)
+                found = true
+        if not found:
+            return Err(f"unsupported collected test body {name}")
+    return Ok(entries)
 
 
 def loaf_exports(context: &BodyIrModule, emitted: list[RustBody]) -> list[PlanExport]:
@@ -6966,7 +6982,7 @@ pub def program_refusals(modules: &list[BodyIrModule], sources: list[str], files
     """
     Collect every body's first refusal rather than only the program's first, for the direct-route census.
 
-    The declaration context is prepared as `program_plan` prepares it, and a refusal there is the only one reported,
+    The declaration context is prepared as `unit_plan` prepares it, and a refusal there is the only one reported,
     because no body lowers without that context. Each ordinary body then lowers independently, so a refusal in one body
     never hides another body's, and checked type-parameter instances follow once every body has been tried. Each
     refusal names the body it came from. The plan itself is discarded.
@@ -6987,7 +7003,7 @@ def body_refusals(
     entry: int,
 ) -> Result[list[str], str]:
     """
-    Prepare the declaration context exactly as `program_plan` does, refusing as it refuses, then lower each ordinary
+    Prepare the declaration context exactly as `unit_plan` does, refusing as it refuses, then lower each ordinary
     body on its own and record the first refusal of every body that refuses.
     """
     _conversion_placement = validate_conversion_placement(modules, entry)?
@@ -7319,9 +7335,13 @@ def lower_function(
         Some(delegation) =>
             if body.is_async or body.is_generator():
                 return Err("unsupported Body IR async or generator ExternDelegation")
+            mut native_arguments: list[PlanType] = []
+            for argument in type_arguments:
+                native_arguments.append(native_source_type(module.nominal_declarations, module.enum_declarations, unions, argument, intrinsics)?)
             function, externals = delegated_function(
                 selected_name,
                 delegation.rust_path(),
+                native_arguments,
                 frame_parameters(module, body, source, file, intrinsics)?,
                 native_source_type(
                     module.nominal_declarations,
