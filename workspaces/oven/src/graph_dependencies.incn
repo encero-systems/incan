@@ -1,21 +1,39 @@
 """Prepare the native metadata Rust checking needs and check authored Incan units separately."""
 
 from std.fs import Path
-from std import toml
-from std.json import JsonValue, parse
+from std.json import JsonValue
 from std.toml import TomlValue
 from features import FeatureRequest
+from files import json_text, parse_json, read
 from graph_cache import GraphUnit, cache_file, is_unchecked, tree_inputs
-from publication import publish
-from unit_freshness import artifact_identity, fingerprint
 from graph_incan import inspect_incan, interface_directory
+from graph_queries import nested, text
+from home import dependency_artifact_dir
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
+from publication import publish
 from rust_activation import DependencyDomain
-from rust_units import RustBuild, BuiltUnit, compile_library, identity, ordered, read_registry_units, registry_features, rust_facet, target_configuration
+from rust_units import (
+    BuiltUnit,
+    RustBuild,
+    compile_library,
+    identity,
+    ordered,
+    read_receipt,
+    read_registry_units,
+    receipt_document,
+    registry_selection,
+    rust_facet,
+    rust_output,
+    target_configuration,
+)
+from toml_fields import optional_strings, read_manifest
 from toolchain import NativeCrate, Toolchain, rust_compiler
 from unit import UnitLoaf
-from home import dependency_artifact_dir
-from graph_queries import nested, text
+from unit_freshness import artifact_identity, fingerprint, native_identities
+
+
+# The version of the key native preparation is cached under; changing it discards every cached preparation.
+const NATIVE_DOMAIN: str = "incan.graph.native/2"
 
 
 pub model GraphDependencies:
@@ -30,143 +48,255 @@ pub model GraphDependencies:
     pub closure: list[str]
 
 
+def receipt_path(root: Path, request: RustBuild) -> Path:
+    """Where Oven's last build of the project recorded the libraries it built."""
+    return rust_output(root, request.profile).joinpath("units.json")
+
+
 def native_closure(root: Path, request: RustBuild) -> Result[list[str], str]:
-    """Name the libraries of Oven's last successful build, so rustc finds the crates a recorded native artifact links."""
-    receipt = root.joinpath("target").joinpath("incan").joinpath("rust").joinpath(request.profile).joinpath("units.json")
-    previous = libraries(receipt)?
+    """Name the libraries of Oven's last successful build, so rustc finds the crates a native artifact links."""
+    previous = read_receipt(receipt_path(root, request))?
     return Ok([previous[name].directory for name in sorted([key for key in previous.keys()])])
 
 
-def libraries(path: Path, keyed: bool = false) -> Result[Dict[str, BuiltUnit], str]:
-    """Read exact native libraries from Oven's last successful build, never select a library by directory scanning."""
-    if not path.is_file():
-        return Ok({})
-    source = path.read_text("utf-8", "strict").map_err((error) => error.message())?
-    receipt = parse(source).map_err((error) => error.message())?
-    if receipt.require("schema").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())? != "incan.rust-units/1":
-        return Err(f"{path.0}: unsupported native unit receipt")
-    mut result: Dict[str, BuiltUnit] = {}
-    for item in receipt.require("units").map_err((error) => error.message())?.expect_array().map_err((error) => error.message())?:
-        name = item.require("crate").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
-        artifact = item.require("artifact").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
-        directory = item.require("directory").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
-        mut key = name
-        if keyed:
-            key = item.require("key").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
-        if key in result:
-            return Err(f"{path.0}: ambiguous native library {name}")
-        if Path(artifact).is_file():
-            result[key] = BuiltUnit(crate_name=name, artifact=artifact, directory=directory)
-    return Ok(result)
+def native_units(
+    root: Path,
+    facets: list[LocalFacet],
+    request: RustBuild,
+    toolchain: Toolchain,
+) -> Result[Dict[str, BuiltUnit], str]:
+    """
+    Cache native dependency preparation by source closure and exact supplied artifacts; never emit Incan code.
 
-
-def native_units(root: Path, facets: list[LocalFacet], request: RustBuild, toolchain: Toolchain) -> Result[Dict[str, BuiltUnit], str]:
-    """Cache native dependency preparation by source closure and exact supplied artifacts; never emit Incan code."""
-    receipt = root.joinpath("target").joinpath("incan").joinpath("rust").joinpath(request.profile).joinpath("units.json")
-    previous = libraries(receipt)?
-    mut inputs = ["incan.graph.native/2", artifact_identity(Path(toolchain.driver))?, toolchain.sysroot, artifact_identity(Path(toolchain.registry_units))?]
-    for facet in facets:
-        inputs = inputs + [str(facet.features), facet.domain.value()] + tree_inputs(Path(facet.project))?
-        for selected in facet.registry:
-            loaf = selected.require("loaf").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
-            requirement = selected.require("req").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
-            inputs.append(artifact_identity(Path(request.registry.artifact(loaf, requirement, facet.domain.value(), registry_features(selected)?)?))?)
-    for name in sorted([key for key in previous.keys()]):
-        inputs = inputs + [name, previous[name].artifact, artifact_identity(Path(previous[name].artifact))?]
-    for native in toolchain.externs:
-        inputs = inputs + [native.name, native.path, artifact_identity(Path(native.path))?]
-    entry = Path(f"{cache_file(root, fingerprint(inputs)?)?.0}.native")
+    1. Read the libraries Oven's last build recorded.
+    2. Key the preparation by everything it depends on.
+    3. A preparation cached under that key is read back.
+    4. Otherwise prepare the native libraries, and cache what that built under the key.
+    """
+    # 1. The libraries Oven's last build recorded are the only ones an Incan edge may bind without building.
+    previous = read_receipt(receipt_path(root, request))?
+    # 2. The key covers the compiler, the sources, the registry artifacts and the recorded libraries.
+    digest = fingerprint(native_inputs(facets, request, toolchain, previous)?)?
+    entry = Path(f"{cache_file(root, digest)?.0}.native")
+    # 3. A preparation done before for this very key is read back, not repeated.
     if entry.is_file():
-        return libraries(entry, true)
+        return read_receipt(entry, true)
+    # 4. What is prepared is cached under the key, with each library's unit key, for the next inspection.
     built = build_native_units(root, facets, request, toolchain, previous)?
-    units: list[JsonValue] = [JsonValue.object({
-        "key": JsonValue.string(key), "crate": JsonValue.string(built[key].crate_name),
-        "artifact": JsonValue.string(built[key].artifact), "directory": JsonValue.string(built[key].directory),
-    }) for key in sorted([key for key in built.keys()])]
-    document = JsonValue.object({"schema": JsonValue.string("incan.rust-units/1"), "units": JsonValue.array(units)})
-    publish(entry, document.to_json().map_err((error) => error.message())?)?
+    publish(entry, json_text(receipt_document(built, true))?)?
     return Ok(built)
 
 
-pub def prepare_graph(root: Path, profile: str, features: FeatureRequest, substitutes: Dict[str, str], toolchain: Toolchain, ancestors: list[str] = []) -> Result[GraphDependencies, str]:
-    """Read published dependency graphs and check remaining Incan source without compiling any Incan unit.
+def native_inputs(
+    facets: list[LocalFacet],
+    request: RustBuild,
+    toolchain: Toolchain,
+    previous: Dict[str, BuiltUnit],
+) -> Result[list[str], str]:
+    """
+    Everything native preparation depends on.
+
+    The compiler and the registry closure, each facet's features, domain and sources with the identity of its registry
+    artifacts, the libraries a previous build recorded, and the toolchain's native crates.
+    """
+    mut inputs = [
+        NATIVE_DOMAIN,
+        artifact_identity(Path(toolchain.driver))?,
+        toolchain.sysroot,
+        artifact_identity(Path(toolchain.registry_units))?,
+    ]
+    for facet in facets:
+        inputs = inputs + [str(facet.features), facet.domain.value()] + tree_inputs(Path(facet.project))?
+        for selected in facet.registry:
+            artifact = request.registry.artifact_for(registry_selection(selected)?, facet.domain.value())?
+            inputs.append(artifact_identity(Path(artifact))?)
+    for name in sorted([key for key in previous.keys()]):
+        inputs = inputs + [name, previous[name].artifact, artifact_identity(Path(previous[name].artifact))?]
+    return Ok(inputs + native_identities(toolchain.externs)?)
+
+
+pub def prepare_graph(
+    root: Path,
+    profile: str,
+    features: FeatureRequest,
+    substitutes: Dict[str, str],
+    toolchain: Toolchain,
+    ancestors: list[str] = [],
+) -> Result[GraphDependencies, str]:
+    """
+    Read published dependency graphs and check remaining Incan source without compiling any Incan unit.
 
     A Rust consumer of Incan requires an existing native library from its last successful build or installed
     toolchain. That library supplies rustc metadata; a bootstrap Rust graph never substitutes for authored Incan facts.
+
+    1. A project that selects itself as a codegraph source again is a cycle.
+    2. Activate the graph of local facets, in an order where each follows the facets it links.
+    3. Prepare the native libraries, then check the Incan units, each after its dependencies.
+    4. Follow the manifest's `tool.incan.codegraph.sources` into further projects.
     """
+    # 1. A project that is its own codegraph source, directly or through others, would never finish.
     if root.0 in ancestors:
         return Err(f"cyclic codegraph source selection: {root.0}")
+    # 2. The facets are the Rust graph the manifest activates, each coming after the facets it links.
     rustc = rust_compiler(toolchain)
-    demand = LocalDemand(project=root.0, domain=DependencyDomain.Target, features=features.features, defaults=features.default_features)
+    demand = LocalDemand(
+        project=root.0,
+        domain=DependencyDomain.Target,
+        features=features.features,
+        defaults=features.default_features,
+    )
     facets = ordered(local_facets(demand, target_configuration(rustc)?, None, substitutes, true)?)?
-    request = RustBuild(project=root.0, profile=profile, rustc=rustc, registry=read_registry_units(Path(toolchain.registry_units))?, features=features.features, default_features=features.default_features, substitutes=substitutes)
+    request = RustBuild(
+        project=root.0,
+        profile=profile,
+        rustc=rustc,
+        registry=read_registry_units(Path(toolchain.registry_units))?,
+        features=features.features,
+        default_features=features.default_features,
+        substitutes=substitutes,
+    )
+    # 3. Native libraries exist before the Incan units are checked, and each unit is checked after its dependencies.
     built = native_units(root, facets, request, toolchain)?
     checked_paths, interfaces = checked_units(facets, built, request, toolchain, len(ancestors) == 0)?
-    mut paths = checked_paths
-    manifest = root.joinpath("loaf.toml").read_text("utf-8", "strict").map_err((error) => error.message())?
-    document = toml.parse(manifest).map_err((error) => error.message())?
-    match document.get_optional[list[str]]("tool.incan.codegraph.sources").map_err((error) => error.message())?:
-        None => pass
+    # 4. Further projects the manifest names are inspected on their own, and their graphs join this one's.
+    paths =checked_paths + source_graphs(root, profile, toolchain, ancestors)?
+    closure = native_closure(root, request)?
+    return Ok(
+        GraphDependencies(
+            facets=facets,
+            request=request,
+            built=built,
+            paths=paths,
+            interfaces=interfaces,
+            closure=closure,
+        ),
+    )
+
+
+def source_graphs(root: Path, profile: str, toolchain: Toolchain, ancestors: list[str]) -> Result[list[GraphUnit], str]:
+    """The graphs of the projects the manifest names under `tool.incan.codegraph.sources`, each prepared on its own."""
+    match optional_strings(read_manifest(root)?, "tool.incan.codegraph.sources")?:
+        None => return Ok([])
         Some(sources) =>
+            mut paths: list[GraphUnit] = []
             for source in sources:
                 project = root.joinpath(source).resolve().map_err((error) => error.message())?
                 additional = prepare_graph(project, profile, FeatureRequest(), {}, toolchain, ancestors + [root.0])?
                 paths = paths + additional.paths
-    return Ok(GraphDependencies(facets=facets, request=request, built=built, paths=paths, interfaces=interfaces, closure=native_closure(root, request)?))
+            return Ok(paths)
 
 
-def build_native_units(root: Path, facets: list[LocalFacet], request: RustBuild, toolchain: Toolchain, previous: Dict[str, BuiltUnit]) -> Result[Dict[str, BuiltUnit], str]:
-    """Prepare only Rust libraries; an Incan edge may bind an explicitly recorded or installed native artifact."""
+def build_native_units(
+    root: Path,
+    facets: list[LocalFacet],
+    request: RustBuild,
+    toolchain: Toolchain,
+    previous: Dict[str, BuiltUnit],
+) -> Result[Dict[str, BuiltUnit], str]:
+    """
+    Prepare only Rust libraries; an Incan edge may bind an explicitly recorded or installed native artifact.
+
+    1. A facet with no Rust library of its own binds the native artifact its crate was recorded with, or the
+       toolchain's, if there is one.
+    2. The project's own Rust facet is built only when it has binaries to link.
+    3. Another Rust facet keeps the library recorded for this very unit, and is otherwise compiled after the units it
+       links, which must exist already.
+    """
     mut built: Dict[str, BuiltUnit] = {}
     mut search = request.registry.search
     for facet in facets:
-        key = f"{facet.project}@{facet.domain.value()}"
         declared = rust_facet(facet.project, false)?
+        # 1. A facet with no Rust library binds the native library recorded for its crate, if any, and builds nothing.
         if declared.kind == "":
-            if declared.crate_name in previous:
-                built[key] = previous[declared.crate_name]
-            else:
-                for native in toolchain.externs:
-                    if native.name == declared.crate_name:
-                        built[key] = BuiltUnit(crate_name=native.name, artifact=native.path, directory=Path(native.path).parent().0)
-            if key in built:
-                search.append(built[key].directory)
+            match recorded_native(declared.crate_name, previous, toolchain.externs):
+                Some(library) =>
+                    built[facet.key()] = library
+                    search.append(library.directory)
+                None => pass
             continue
+        # 2. The project's own library is built only for a binary to link; inspecting it needs no native artifact.
         own = facet.project == root.0 and facet.domain == DependencyDomain.Target
         if own and len(declared.binaries) == 0:
             continue
-        if not own and declared.crate_name in previous:
-            published = previous[declared.crate_name]
-            expected = f"{declared.crate_name}-{identity(facet, request.profile)}"
-            if Path(published.directory).name() == expected:
-                built[key] = published
-                search.append(published.directory)
-                continue
-        for edge in facet.local:
-            if f"{edge.project}@{edge.domain.value()}" not in built:
-                return Err(f"Rust inspection of {declared.package} needs an existing native library for {edge.alias}; checking Incan produces no native artifact")
-        unit = compile_library(facet, declared, root.joinpath("target").joinpath("incan").joinpath("rust").joinpath(request.profile), request, built, search)?
-        built[key] = unit
+        # 3. A library already built for this very unit is kept; any other is compiled after the libraries it links.
+        if not own:
+            match current_library(facet, declared.crate_name, previous, request.profile):
+                Some(library) =>
+                    built[facet.key()] = library
+                    search.append(library.directory)
+                    continue
+                None => pass
+        require_native_links(facet, declared.package, built)?
+        output = rust_output(root, request.profile)
+        unit = compile_library(facet, declared, output, request, built, search)?
+        built[facet.key()] = unit
         search.append(unit.directory)
     return Ok(built)
 
 
-pub def unit_natives(facet: LocalFacet, built: Dict[str, BuiltUnit], request: RustBuild) -> Result[Dict[str, NativeCrate], str]:
-    """Bind exact native libraries under their crate names and this unit's declared local aliases."""
+def recorded_native(name: str, previous: Dict[str, BuiltUnit], externs: list[NativeCrate]) -> Option[BuiltUnit]:
+    """The library recorded for a crate by the last build, else the toolchain's own library of that name."""
+    if name in previous:
+        return Some(previous[name])
+    mut found: Option[BuiltUnit] = None
+    for native in externs:
+        if native.name == name:
+            directory = Path(native.path).parent().0
+            found = Some(BuiltUnit(crate_name=native.name, artifact=native.path, directory=directory))
+    return found
+
+
+def current_library(
+    facet: LocalFacet,
+    name: str,
+    previous: Dict[str, BuiltUnit],
+    profile: str,
+) -> Option[BuiltUnit]:
+    """The library recorded for a crate, when it was built for this very unit (its directory carries the identity)."""
+    if name not in previous:
+        return None
+    published = previous[name]
+    if Path(published.directory).name() == f"{name}-{identity(facet, profile)}":
+        return Some(published)
+    return None
+
+
+def require_native_links(facet: LocalFacet, package: str, built: Dict[str, BuiltUnit]) -> Result[None, str]:
+    """Every unit a facet links must already have a native library; checking Incan produces none."""
+    for edge in facet.local:
+        if edge.key() not in built:
+            return Err(
+                f"Rust inspection of {package} needs an existing native library for {edge.alias}; "
+                + "checking Incan produces no native artifact",
+            )
+    return Ok(None)
+
+
+pub def unit_natives(
+    facet: LocalFacet,
+    built: Dict[str, BuiltUnit],
+    request: RustBuild,
+) -> Result[Dict[str, NativeCrate], str]:
+    """
+    Bind exact native libraries under their crate names and this unit's declared local aliases.
+
+    1. Every built library, under its crate name.
+    2. Every local edge, under the alias this unit names it by.
+    3. Every registry edge, under its alias.
+    """
     mut natives: Dict[str, NativeCrate] = {}
+    # 1. Every library built is available to the unit by its own crate name.
     for key in sorted([key for key in built.keys()]):
         library = built[key]
         natives[library.crate_name] = NativeCrate(name=library.crate_name, path=library.artifact)
+    # 2. A local edge's library is also known by the alias this unit writes it as.
     for edge in facet.local:
-        key = f"{edge.project}@{edge.domain.value()}"
-        if key in built:
+        if edge.key() in built:
             alias = edge.alias.replace("-", "_")
-            natives[alias] = NativeCrate(name=alias, path=built[key].artifact)
+            natives[alias] = NativeCrate(name=alias, path=built[edge.key()].artifact)
+    # 3. A registry edge's library is the exact artifact the registry selects, under the alias it is written by.
     for index in range(len(facet.registry)):
-        selected = facet.registry[index]
-        loaf = selected.require("loaf").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
-        requirement = selected.require("req").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
-        artifact = request.registry.artifact(loaf, requirement, facet.domain.value(), registry_features(selected)?)?
+        artifact = request.registry.artifact_for(registry_selection(facet.registry[index])?, facet.domain.value())?
         alias = facet.registry_aliases[index].replace("-", "_")
         natives[alias] = NativeCrate(name=alias, path=artifact)
     return Ok(natives)
@@ -182,37 +312,84 @@ pub def unit_loaves(facet: LocalFacet, interfaces: Dict[str, Path]) -> Result[li
     return Ok(loaves)
 
 
-def compiled_directory(project: str, package: str, request: RustBuild, built: Dict[str, BuiltUnit], key: str, features: list[str], version: str) -> Result[Option[Path], str]:
-    """An Incan dependency's published graph is admitted only beside its Incan manifest, never from bootstrap-emitted Rust."""
-    mut candidates = [dependency_artifact_dir(request.project, package, request.profile), dependency_artifact_dir(project, package, request.profile)]
+def compiled_directory(
+    project: str,
+    package: str,
+    request: RustBuild,
+    built: Dict[str, BuiltUnit],
+    key: str,
+    features: list[str],
+    version: str,
+) -> Result[Option[Path], str]:
+    """
+    An Incan dependency's published graph is admitted only beside its Incan manifest, never from bootstrap-emitted Rust.
+
+    The candidates are the artifact directories of the root project and of the dependency's own project, and the
+    directory its library was built into. The first that holds a graph and an interface must be a complete, matching
+    compiled Loaf.
+    """
+    mut candidates = [
+        dependency_artifact_dir(request.project, package, request.profile),
+        dependency_artifact_dir(project, package, request.profile),
+    ]
     if key in built:
         candidates.append(Path(built[key].directory))
     for directory in candidates:
         if directory.joinpath(f"{package}.incnlib").is_file() and directory.joinpath(f"{package}.incngraph").is_file():
-            for name in [f"lib{package.replace('-', '_')}.rlib", f"{package}.incnbody", f"{package}.native.json"]:
-                if not directory.joinpath(name).is_file():
-                    return Err(f"{package}: incomplete compiled Loaf beside its graph")
-            source = directory.joinpath(f"{package}.incnlib").read_text("utf-8", "strict").map_err((error) => error.message())?
-            manifest = parse(source).map_err((error) => error.message())?
-            if text(manifest, "name") != package or text(manifest, "version") != version:
-                return Err(f"{package}: compiled Loaf identity differs from the selected dependency")
-            if text(nested(manifest, "rust_abi"), "cache_digest") != "" and not directory.joinpath(f"{package}.rustabi").is_file():
-                return Err(f"{package}: missing native ABI cache beside its manifest")
-            provider = nested(nested(manifest, "contract_metadata"), "provider")
-            mut active: list[str] = []
-            if let Some(value) = provider.get("active_features"):
-                for item in value.expect_array().map_err((error) => error.message())?:
-                    active.append(item.expect_str().map_err((error) => error.message())?)
-            if sorted(active) != sorted(features):
-                return Err(f"{package}: compiled Loaf graph has a different feature projection")
+            verify_compiled_loaf(directory, package, version, features)?
             return Ok(Some(directory))
     return Ok(None)
 
 
-def checked_units(facets: list[LocalFacet], built: Dict[str, BuiltUnit], request: RustBuild, toolchain: Toolchain, inspect_root: bool) -> Result[Tuple[list[GraphUnit], Dict[str, Path]], str]:
-    """Read dependency publications, checking legacy and own Incan units after their dependencies for usable interfaces.
+def verify_compiled_loaf(directory: Path, package: str, version: str, features: list[str]) -> Result[None, str]:
+    """
+    Refuse a compiled Loaf that is incomplete, is not the selected dependency, or was built for other features.
+
+    1. The rest of the artifact set is beside the graph.
+    2. Its manifest names this package and version, and has its native ABI cache when it declares one.
+    3. Its active features are the ones selected.
+    """
+    # 1. A graph beside a partial artifact set would let a consumer rely on a Loaf that cannot be linked.
+    for name in [f"lib{package.replace('-', '_')}.rlib", f"{package}.incnbody", f"{package}.native.json"]:
+        if not directory.joinpath(name).is_file():
+            return Err(f"{package}: incomplete compiled Loaf beside its graph")
+    # 2. The Loaf is the package and version selected, and carries the native ABI cache it declares.
+    manifest = parse_json(read(directory.joinpath(f"{package}.incnlib"))?)?
+    if text(manifest, "name") != package or text(manifest, "version") != version:
+        return Err(f"{package}: compiled Loaf identity differs from the selected dependency")
+    declares_cache = text(nested(manifest, "rust_abi"), "cache_digest") != ""
+    if declares_cache and not directory.joinpath(f"{package}.rustabi").is_file():
+        return Err(f"{package}: missing native ABI cache beside its manifest")
+    # 3. The Loaf was built for the features this consumer selects, so its graph describes the code it will link.
+    if sorted(active_features(manifest)?) != sorted(features):
+        return Err(f"{package}: compiled Loaf graph has a different feature projection")
+    return Ok(None)
+
+
+def active_features(manifest: JsonValue) -> Result[list[str], str]:
+    """The features a compiled Loaf's manifest records as active in its provider metadata."""
+    provider = nested(nested(manifest, "contract_metadata"), "provider")
+    mut active: list[str] = []
+    if let Some(value) = provider.get("active_features"):
+        for item in value.expect_array().map_err((error) => error.message())?:
+            active.append(item.expect_str().map_err((error) => error.message())?)
+    return Ok(active)
+
+
+def checked_units(
+    facets: list[LocalFacet],
+    built: Dict[str, BuiltUnit],
+    request: RustBuild,
+    toolchain: Toolchain,
+    inspect_root: bool,
+) -> Result[Tuple[list[GraphUnit], Dict[str, Path]], str]:
+    """
+    Read dependency publications, checking legacy and own Incan units after their dependencies for usable interfaces.
 
     A unit that fails checking publishes no interface; its dependents check without it and report their own diagnostics.
+
+    1. A facet that is not the project's own is read from the published graph of its compiled Loaf, when it has one.
+    2. Any other facet with an Incan library is checked from source, against the interfaces of the units before it.
     """
     mut paths: list[GraphUnit] = []
     mut interfaces: Dict[str, Path] = {}
@@ -220,18 +397,32 @@ def checked_units(facets: list[LocalFacet], built: Dict[str, BuiltUnit], request
         declared = rust_facet(facet.project, false)?
         package = declared.package
         own = inspect_root and facet.project == request.project and facet.domain == DependencyDomain.Target
+        # 1. A dependency with a compiled Loaf contributes the graph it published, and its interface joins the others.
         if not own:
-            match compiled_directory(facet.project, package, request, built, f"{facet.project}@{facet.domain.value()}", facet.features, declared.version)?:
+            published = compiled_directory(
+                facet.project,
+                package,
+                request,
+                built,
+                facet.key(),
+                facet.features,
+                declared.version,
+            )?
+            match published:
                 Some(directory) =>
                     interfaces[package] = directory
-                    paths.append(GraphUnit(path=directory.joinpath(f"{package}.incngraph"), root=Path(facet.project), package=package, version=declared.version))
+                    graph = directory.joinpath(f"{package}.incngraph")
+                    root = Path(facet.project)
+                    paths.append(GraphUnit(path=graph, root=root, package=package, version=declared.version))
                     continue
                 None => pass
+        # 2. Any other facet with an Incan library is checked from source, against the interfaces checked before it.
         source = Path(facet.project).joinpath("src").joinpath("lib.incn")
         if not source.is_file():
             continue
         natives = unit_natives(facet, built, request)?
-        path = inspect_incan(source, toolchain, natives, interfaces, facet.features, false, unit_loaves(facet, interfaces)?)?
+        loaves = unit_loaves(facet, interfaces)?
+        path = inspect_incan(source, toolchain, natives, interfaces, facet.features, false, loaves)?
         if not is_unchecked(path):
             interfaces[package] = interface_directory(path)
         paths.append(GraphUnit(path=path, root=Path(facet.project), package=package, version=declared.version))

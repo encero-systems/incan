@@ -3,25 +3,87 @@
 from rust::std::process import id
 from std.fs import Path
 from features import FeatureRequest
+from files import json_text, make_directory, read, remove
 from graph_cache import cache_file, is_unchecked, publish_unchecked, tree_inputs
 from publication import publish, publish_binary
-from unit_freshness import artifact_identity, fingerprint
+from unit_freshness import artifact_identity, cache_identities, fingerprint, native_identities
 from incan_units import crate_name, run_compiler, write_unit
 from toolchain import NativeCrate, Toolchain
-from unit import UnitLoaf, describe
+from unit import UnitDescription, UnitLoaf, describe
 
 
-pub def inspect_incan(source: Path, toolchain: Toolchain, built: Dict[str, NativeCrate] = {}, interfaces: Dict[str, Path] = {}, features: list[str] = [], defaults: bool = true, source_loaves: list[UnitLoaf] = [], owner: Option[Path] = None) -> Result[Path, str]:
-    """Export one unit, checked or not, once per digest; dependency interfaces stay in the inspection cache and never claim native artifacts.
+# The version of the key an export is cached under; changing it discards every cached export.
+const EXPORT_DOMAIN: str = "incan.codegraph.incan/4"
 
-    A unit that fails checking is not an error here: its parseable facts are cached with a note naming its diagnostics, and it
-    publishes no interface. A unit the compiler refuses to export is cached as a note alone, contributing no facts. Only an
-    abnormal compiler exit fails, and nothing is cached for it.
+
+pub def inspect_incan(
+    source: Path,
+    toolchain: Toolchain,
+    built: Dict[str, NativeCrate] = {},
+    interfaces: Dict[str, Path] = {},
+    features: list[str] = [],
+    defaults: bool = true,
+    source_loaves: list[UnitLoaf] = [],
+    owner: Option[Path] = None,
+) -> Result[Path, str]:
     """
+    Export one unit, checked or not, once per digest; dependency interfaces stay in the inspection cache and never
+    claim native artifacts.
+
+    A unit that fails checking is not an error here: its parseable facts are cached with a note naming its diagnostics,
+    and it publishes no interface. A unit the compiler refuses to export is cached as a note alone, contributing no
+    facts. Only an abnormal compiler exit fails, and nothing is cached for it.
+
+    1. Describe the unit against the toolchain, linking the checked interfaces of the Loaves it reaches.
+    2. Name the export by a digest of everything it reads; a cached export is returned as it is.
+    3. Have the compiler export the unit's graph, and its interface when it is a library.
+    4. Publish the graph, the interface and the note of a unit that failed checking.
+    """
+    # 1. The unit is described against the toolchain, and links the interfaces its dependencies were checked into.
     entry_source = source.resolve().map_err((error) => error.message())?
     mut unit = describe(entry_source, "debug", FeatureRequest(features=features, default_features=defaults))?
     if source.name() == "lib.incn":
         unit.kind = "library"
+    ready = prepared_unit(unit, toolchain, built, interfaces, source_loaves)?
+    # 2. An export is made once per digest of everything it reads; a cached one, checked or not, is returned as it is.
+    project = Path(unit.project_root)
+    mut cache_root = project
+    if let Some(selected) = owner:
+        cache_root = selected
+    entry = cache_file(cache_root, export_digest(ready, project, toolchain)?)?
+    directory = interface_directory(entry)
+    interface = directory.joinpath(f"{unit.package}.incnlib")
+    if is_unchecked(entry) or (entry.is_file() and (ready.kind != "library" or interface.is_file())):
+        return Ok(entry)
+    # 3. The compiler writes its output beside the entry's name, so a failed export leaves nothing at the entry itself.
+    description = write_unit(ready, crate_name(ready), Some(cache_root))?
+    output = Path(f"{entry.0}.{id()}.analysis")
+    pending = Path(f"{interface.0}.{id()}.analysis")
+    mut arguments = ["--codegraph", description.0, toolchain.sysroot, output.0]
+    if ready.kind == "library":
+        make_directory(directory)?
+        arguments.append(pending.0)
+    if run_compiler(toolchain, arguments)? != 0:
+        return Err(f"Incan graph export failed for {unit.package}")
+    # 4. The graph, the interface and any note are published whole, a note before the entry it describes.
+    publish_export(entry, interface, unit.package, output, pending, ready.kind == "library")?
+    return Ok(entry)
+
+
+def prepared_unit(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    built: Dict[str, NativeCrate],
+    interfaces: Dict[str, Path],
+    source_loaves: list[UnitLoaf],
+) -> Result[UnitDescription, str]:
+    """
+    The unit as the exporting compiler is told about it.
+
+    It searches the toolchain's directories and reads its Rust ABI caches. Its native crates are the toolchain's, with
+    each built crate replacing the toolchain's of the same name. Its standard Loaves are kept, and every other Loaf it
+    reaches is linked to its checked interface.
+    """
     mut ready = unit
     ready.search = toolchain.search
     ready.rust_abi = toolchain.rust_abi
@@ -30,59 +92,71 @@ pub def inspect_incan(source: Path, toolchain: Toolchain, built: Dict[str, Nativ
         native = built[name]
         ready.externs = [item for item in ready.externs if item.name != name] + [native]
         ready.search.append(Path(native.path).parent().0)
-    mut loaves = [loaf for loaf in ready.loaves if loaf.standard] + source_loaves
-    for index in range(len(loaves)):
-        mut loaf = loaves[index]
+    ready.loaves = linked_loaves([loaf for loaf in ready.loaves if loaf.standard] + source_loaves, interfaces)?
+    return Ok(ready)
+
+
+def linked_loaves(loaves: list[UnitLoaf], interfaces: Dict[str, Path]) -> Result[list[UnitLoaf], str]:
+    """The Loaves with each non-standard one pointing at its checked interface; one without an interface is refused."""
+    mut linked = loaves
+    for index in range(len(linked)):
+        mut loaf = linked[index]
         if not loaf.standard:
             if loaf.name not in interfaces:
                 return Err(f"inspection needs the checked interface of {loaf.name}")
             loaf.dir = interfaces[loaf.name].0
-            loaves[index] = loaf
-    ready.loaves = loaves
-    project = Path(unit.project_root)
-    mut cache_root = project
-    if let Some(selected) = owner:
-        cache_root = selected
-    mut inputs = ["incan.codegraph.incan/4", artifact_identity(Path(toolchain.driver))?, toolchain.sysroot, ready.to_json().to_json().map_err((error) => error.message())?]
-    for native in ready.externs:
-        inputs = inputs + [native.name, native.path, artifact_identity(Path(native.path))?]
-    for abi in toolchain.rust_abi:
-        inputs = inputs + [abi, artifact_identity(Path(abi))?]
+            linked[index] = loaf
+    return Ok(linked)
+
+
+def export_digest(ready: UnitDescription, project: Path, toolchain: Toolchain) -> Result[str, str]:
+    """
+    The digest an export is cached under: the compiler, the unit's description, its native crates and ABI caches, its
+    search directories and the authored files of its project and of the Loaves it reaches.
+    """
+    head = [EXPORT_DOMAIN, artifact_identity(Path(toolchain.driver))?, toolchain.sysroot, json_text(ready.to_json())?]
+    mut inputs = head + native_identities(ready.externs)? + cache_identities(toolchain.rust_abi)?
     inputs = inputs + ready.search + tree_inputs(project)?
     for loaf in ready.loaves:
         inputs = inputs + tree_inputs(Path(loaf.dir))?
-    entry = cache_file(cache_root, fingerprint(inputs)?)?
-    directory = interface_directory(entry)
-    interface = directory.joinpath(f"{unit.package}.incnlib")
-    if is_unchecked(entry) or (entry.is_file() and (ready.kind != "library" or interface.is_file())):
-        return Ok(entry)
-    description = write_unit(ready, crate_name(ready), Some(cache_root))?
-    output = Path(f"{entry.0}.{id()}.analysis")
-    mut arguments = ["--codegraph", description.0, toolchain.sysroot, output.0]
-    pending = Path(f"{interface.0}.{id()}.analysis")
-    if ready.kind == "library":
-        directory.mkdir(true, true).map_err((error) => error.message())?
-        arguments.append(pending.0)
-    if run_compiler(toolchain, arguments)? != 0:
-        return Err(f"Incan graph export failed for {unit.package}")
+    return fingerprint(inputs)
+
+
+def publish_export(
+    entry: Path,
+    interface: Path,
+    package: str,
+    output: Path,
+    pending: Path,
+    library: bool,
+) -> Result[None, str]:
+    """
+    Publish what the compiler exported, and remove its pending files.
+
+    1. A unit that failed checking leaves a note, which is published beside the entry before the entry itself.
+    2. Otherwise a library's interface is published.
+    3. The graph is published when the compiler wrote one; an export without a graph and without a note is an error.
+    """
     note = Path(f"{output.0}.unchecked")
     if note.is_file():
-        reason = note.read_text("utf-8", "strict").map_err((error) => error.message())?
+        # 1. A unit that failed checking is cached with a note saying why, and what facts it still contributes.
+        reason = read(note)?
         mut consequence = "contributing no facts"
         if output.is_file():
             consequence = "using its parseable facts only"
-        publish_unchecked(entry, unit.package, consequence, reason)?
-        note.unlink().map_err((error) => error.message())?
-    elif ready.kind == "library":
-        content = pending.read_text("utf-8", "strict").map_err((error) => error.message())?
-        publish(interface, content)?
-        pending.unlink().map_err((error) => error.message())?
+        publish_unchecked(entry, package, consequence, reason)?
+        remove(note)?
+    elif library:
+        # 2. A checked library publishes the interface its dependents are checked against.
+        publish(interface, read(pending)?)?
+        remove(pending)?
+    # 3. The graph the compiler wrote becomes the entry; an export with neither a graph nor a note is an error.
     if output.is_file():
         publish_binary(entry, output.read_bytes().map_err((error) => error.message())?)?
-        output.unlink().map_err((error) => error.message())?
+        remove(output)?
     elif not is_unchecked(entry):
-        return Err(f"Incan graph export produced no graph for {unit.package}")
-    return Ok(entry)
+        return Err(f"Incan graph export produced no graph for {package}")
+    return Ok(None)
 
 
 pub def interface_directory(entry: Path) -> Path:

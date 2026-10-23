@@ -1,32 +1,38 @@
-"""Owner lifecycle contracts: one writer starts it, stale state recovers, retained answers are guarded, and it retires."""
+"""Owner lifecycle contracts: one starter, stale state recovered, retained answers guarded, and retirement."""
 
 from std.fs import Path
 from std.json import JsonValue
-from std.tempfile import TemporaryDirectory
+from files import read, remove, write
 from owner_endpoint import Endpoint, attach, endpoint_for, greeted, timeout_for
 from owner_protocol import Connection, Reply, Request, listen
 from owner_state import Owner, unchanged, watch
+from scratch import scratch_directory
 
 
 def endpoint_in(directory: Path) -> Endpoint:
     """An endpoint whose files live in `directory`."""
-    return Endpoint(generation="g", directory=directory.0, socket=directory.joinpath("o.sock").0, lock=directory.joinpath("o.lock").0, ready=directory.joinpath("o.ready").0, mailbox=directory.joinpath("o.trace").0)
+    return Endpoint(
+        generation="g",
+        directory=directory.0,
+        socket=directory.joinpath("o.sock").0,
+        lock=directory.joinpath("o.lock").0,
+        ready=directory.joinpath("o.ready").0,
+        mailbox=directory.joinpath("o.trace").0,
+    )
 
 
 def leave_stale(path: str) -> Result[None, str]:
     """Bind a socket and let the listener go, as a crashed owner does: the socket file stays, nothing listens."""
-    listener = listen(path, true)?
+    # The listener is dropped at once; the socket file it bound stays behind.
+    _ = listen(path, true)?
     return Ok(None)
 
 
 def absent(found: Result[Option[Connection], str]) -> bool:
     """Whether an attempt to connect found no owner."""
     match found:
-        Ok(none) =>
-            match none:
-                None => return true
-                Some(_) => return false
         Err(_) => return false
+        Ok(connected) => return connected is None
 
 
 def refused_attach(found: Result[Option[Connection], str]) -> bool:
@@ -43,40 +49,70 @@ def refused_greeting(found: Result[None, str]) -> bool:
         Ok(_) => return false
 
 
+def ready_greeting(generation: str) -> Result[JsonValue, str]:
+    """The greeting an owner of `generation` sends when it listens."""
+    return Ok(Reply(status="ready", generation=generation, pid=1).to_json())
+
+
 pub def test_startup_is_arbitrated_and_stale_state_recovers() -> Result[None, str]:
-    """No owner is none; a socket nobody listens at is removed; a file in its place is refused and kept; one lock holder."""
-    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    """No owner is none; a stale socket is removed; a file in its place is kept; one starter holds the lock."""
+    scratch = scratch_directory()?
     endpoint = endpoint_in(scratch.path())
     assert absent(attach(endpoint))
-    leave_stale(endpoint.socket)?
-    assert Path(endpoint.socket).exists()
-    assert absent(attach(endpoint))
-    assert not Path(endpoint.socket).exists()
-    Path(endpoint.socket).write_text("not a socket", "utf-8", "strict", None).map_err((error) => error.message())?
-    assert refused_attach(attach(endpoint))
-    assert Path(endpoint.socket).read_text("utf-8", "strict").map_err((error) => error.message())? == "not a socket"
-    Path(endpoint.socket).unlink().map_err((error) => error.message())?
-    mut listener = listen(endpoint.socket, true)?
-    assert not absent(attach(endpoint))
-    first = Path(endpoint.lock).try_lock_exclusive().map_err((error) => error.message())?
-    match first:
-        None => assert false, "the first starter did not get the lock"
-        Some(held) =>
-            second = Path(endpoint.lock).try_lock_exclusive().map_err((error) => error.message())?
-            match second:
-                Some(_) => assert false, "two starters held the lock at once"
-                None => pass
-    assert refused_greeting(greeted(Ok(Reply(status="ready", generation="other", pid=1).to_json()), "g"))
-    assert refused_greeting(greeted(Ok(Reply(status="done", generation="g", pid=1).to_json()), "g"))
-    assert refused_greeting(greeted(Err("closed"), "g"))
-    assert not refused_greeting(greeted(Ok(Reply(status="ready", generation="g", pid=1).to_json()), "g"))
+    check_stale_socket_is_removed(endpoint)?
+    check_foreign_file_is_kept(endpoint)?
+    check_one_starter_holds_the_lock(endpoint)?
+    check_greetings_are_validated()
     assert timeout_for("run") == 0
     assert timeout_for("stop") == 5
     return Ok(None)
 
 
+def check_stale_socket_is_removed(endpoint: Endpoint) -> Result[None, str]:
+    """A socket nobody listens at is no owner, and attaching removes it."""
+    leave_stale(endpoint.socket)?
+    assert Path(endpoint.socket).exists()
+    assert absent(attach(endpoint))
+    assert not Path(endpoint.socket).exists()
+    return Ok(None)
+
+
+def check_foreign_file_is_kept(endpoint: Endpoint) -> Result[None, str]:
+    """An ordinary file where the socket belongs is refused and left alone; a live listener is an owner."""
+    write(Path(endpoint.socket), "not a socket")?
+    assert refused_attach(attach(endpoint))
+    assert read(Path(endpoint.socket))? == "not a socket"
+    remove(Path(endpoint.socket))?
+    # The listener stays up until this function returns, so the attach below finds a live owner.
+    mut listener = listen(endpoint.socket, true)?
+    assert not absent(attach(endpoint))
+    return Ok(None)
+
+
+def check_one_starter_holds_the_lock(endpoint: Endpoint) -> Result[None, str]:
+    """Of two starters, the first gets the lock and the second does not."""
+    first = Path(endpoint.lock).try_lock_exclusive().map_err((error) => error.message())?
+    match first:
+        None => assert false, "the first starter did not get the lock"
+        Some(held) =>
+            # `held` is the first starter's lock, kept while the second starter tries.
+            second = Path(endpoint.lock).try_lock_exclusive().map_err((error) => error.message())?
+            match second:
+                Some(_) => assert false, "two starters held the lock at once"
+                None => pass
+    return Ok(None)
+
+
+def check_greetings_are_validated() -> None:
+    """Only a `ready` greeting of the expected generation is accepted."""
+    assert refused_greeting(greeted(ready_greeting("other"), "g"))
+    assert refused_greeting(greeted(Ok(Reply(status="done", generation="g", pid=1).to_json()), "g"))
+    assert refused_greeting(greeted(Err("closed"), "g"))
+    assert not refused_greeting(greeted(ready_greeting("g"), "g"))
+
+
 pub def test_the_owner_serves_one_generation_and_retires() -> Result[None, str]:
-    """A request for another generation or a bad path is refused; stop retires; idle retires only when idle long enough."""
+    """Another generation or a bad path is refused; stop retires; idle retires only when idle long enough."""
     mut owner = Owner(generation="g", last_served=1000)
     assert owner.handle(Request(command="status", generation="other"), 600).status == "refused"
     assert owner.handle(Request(command="status", generation="g"), 600).status == "done"
@@ -95,18 +131,18 @@ pub def test_the_owner_serves_one_generation_and_retires() -> Result[None, str]:
 
 pub def test_retained_answers_are_guarded_by_the_files_they_came_from() -> Result[None, str]:
     """An edited, created or removed file ends a retained answer; an untouched one keeps it."""
-    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    scratch = scratch_directory()?
     manifest = scratch.path().joinpath("loaf.toml")
     lock = scratch.path().joinpath("oven.lock")
-    manifest.write_text("[project]\nname = \"a\"\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    write(manifest, "[project]\nname = \"a\"\n")?
     guard = watch([manifest.0, lock.0])
     assert unchanged(guard)
-    manifest.write_text("[project]\nname = \"bb\"\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    write(manifest, "[project]\nname = \"bb\"\n")?
     assert not unchanged(guard)
     renewed = watch([manifest.0, lock.0])
-    lock.write_text("", "utf-8", "strict", None).map_err((error) => error.message())?
+    write(lock, "")?
     assert not unchanged(renewed)
     again = watch([manifest.0, lock.0])
-    lock.unlink().map_err((error) => error.message())?
+    remove(lock)?
     assert not unchanged(again)
     return Ok(None)

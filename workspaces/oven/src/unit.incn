@@ -77,7 +77,7 @@ pub model UnitDescription:
                 "rust_crates": texts(self.rust_crates),
                 "contract_models": texts(self.contract_models),
                 "c_headers": texts(self.c_headers),
-                "externs": JsonValue.array([JsonValue.object({"name": JsonValue.string(item.name), "path": JsonValue.string(item.path)}) for item in self.externs]),
+                "externs": JsonValue.array([item.to_json() for item in self.externs]),
                 "search": texts(self.search),
                 "rust_abi": texts(self.rust_abi),
             },
@@ -119,7 +119,8 @@ def standard_loaves(package: str, profile: str) -> Result[list[UnitLoaf], str]:
     mut loaves: list[UnitLoaf] = []
     for found in standard_packages()?:
         if found.name != package:
-            loaves.append(UnitLoaf(key=found.name, name=found.name, dir=standard_artifact_dir(found.name, profile)?.0, standard=true))
+            directory = standard_artifact_dir(found.name, profile)?
+            loaves.append(UnitLoaf(key=found.name, name=found.name, dir=directory.0, standard=true))
     return Ok(loaves)
 
 
@@ -134,40 +135,54 @@ pub def describe(source: Path, profile: str, request: FeatureRequest) -> Result[
             graph = intake(found).map_err((error) => error.message())?
             root = found.resolve().map_err((error) => f"{found.0}: {error.message()}")?
             active = resolve_features(graph, root.0, request)?
-            mut projects: Dict[str, LocalProject] = {}
-            for project in graph.projects:
-                projects[project.root] = project
+            projects = projects_by_root(graph.projects)
             return project_unit(entry, projects[root.0], profile, root.0, active, projects)
 
 
 pub def dependency_units(unit: UnitDescription) -> Result[list[UnitDescription], str]:
-    """Describe active path dependencies before their consumers, using the root graph's unified features and artifact directories.
+    """
+    Describe active path dependencies before their consumers, using the root graph's unified features and artifact
+    directories.
 
     The root's already selected feature closure reproduces its request without re-enabling defaults. Each library
     sees only the closure it reaches, including features contributed by other edges in the root graph.
+
+    1. A unit that links no path dependency has none to describe.
+    2. Read the project graph and select the features the unit already has, without defaults.
+    3. Describe each reached project in dependency order. Every one must have a library and its own package name.
     """
+    # 1. A unit that links only standard packages has no path dependency to prepare.
     if len([loaf for loaf in unit.loaves if not loaf.standard]) == 0:
         return Ok([])
+    # 2. The dependencies see the features the unit already has, with defaults left off, not a new request's.
     graph = intake(Path(unit.project_root)).map_err((error) => error.message())?
     request = FeatureRequest(features=unit.active_features, default_features=false)
     active = resolve_features(graph, unit.project_root, request)?
-    mut projects: Dict[str, LocalProject] = {}
-    for project in graph.projects:
-        projects[project.root] = project
+    projects = projects_by_root(graph.projects)
+    # 3. Each reached project is a library of its own package name, described before the projects that consume it.
     mut units: list[UnitDescription] = []
     mut names: Dict[str, str] = {}
     for root in graph.dependency_order:
         if root == unit.project_root or root not in active.reached:
             continue
         project = projects[root]
-        if project.intent.name in names:
-            return Err(f"path dependencies {names[project.intent.name]} and {root} share package name `{project.intent.name}`")
-        names[project.intent.name] = root
+        package = project.intent.name
+        if package in names:
+            return Err(f"path dependencies {names[package]} and {root} share package name `{package}`")
+        names[package] = root
         entry = Path(root).joinpath("src").joinpath("lib.incn")
         if not entry.is_file():
-            return Err(f"path dependency {project.intent.name} has no library: {entry.0}")
+            return Err(f"path dependency {package} has no library: {entry.0}")
         units.append(project_unit(entry, project, unit.profile, unit.project_root, active, projects)?)
     return Ok(units)
+
+
+def projects_by_root(found: list[LocalProject]) -> Dict[str, LocalProject]:
+    """The projects of a graph, by their root directories."""
+    mut projects: Dict[str, LocalProject] = {}
+    for project in found:
+        projects[project.root] = project
+    return projects
 
 
 def project_unit(
@@ -204,14 +219,17 @@ def project_loaves(
     active: ActiveGraph,
     projects: Dict[str, LocalProject],
 ) -> Result[list[UnitLoaf], str]:
-    """List a project's reachable Loaves, preserving direct aliases before transitive package names."""
-    mut reached = [own.root]
-    mut index = 0
-    while index < len(reached):
-        for edge in active.edges:
-            if edge.requester_root == reached[index] and edge.dependency_root not in reached:
-                reached.append(edge.dependency_root)
-        index += 1
+    """
+    List a project's reachable Loaves, preserving direct aliases before transitive package names.
+
+    1. Find every project reachable from this one through the active edges.
+    2. The direct dependencies come first, each under the alias this project names it by.
+    3. The transitive ones follow, each under its package name.
+    4. The standard packages come last.
+    """
+    # 1. A unit links every project reachable through the active edges, however far.
+    reached = reachable_roots(own.root, active)
+    # 2. A direct dependency is named in the unit's source by the alias the project gave it.
     mut loaves: list[UnitLoaf] = []
     mut direct: list[str] = []
     for edge in active.edges:
@@ -221,13 +239,27 @@ def project_loaves(
         directory = dependency_artifact_dir(artifact_root, dependency.intent.name, profile)
         loaves.append(UnitLoaf(key=edge.alias, name=dependency.intent.name, dir=directory.0, standard=false))
         direct.append(edge.dependency_root)
+    # 3. A transitive dependency is named by its package, since no alias of this project reaches it.
     for root in reached[1:]:
         if root in direct:
             continue
-        dependency = projects[root]
-        directory = dependency_artifact_dir(artifact_root, dependency.intent.name, profile)
-        loaves.append(UnitLoaf(key=dependency.intent.name, name=dependency.intent.name, dir=directory.0, standard=false))
+        name = projects[root].intent.name
+        directory = dependency_artifact_dir(artifact_root, name, profile)
+        loaves.append(UnitLoaf(key=name, name=name, dir=directory.0, standard=false))
+    # 4. Every standard package is available, except the one the unit is.
     return Ok(loaves + standard_loaves(own.intent.name, profile)?)
+
+
+def reachable_roots(start: str, active: ActiveGraph) -> list[str]:
+    """The project at `start` and every project reachable from it through the active edges, in discovery order."""
+    mut reached = [start]
+    mut index = 0
+    while index < len(reached):
+        for edge in active.edges:
+            if edge.requester_root == reached[index] and edge.dependency_root not in reached:
+                reached.append(edge.dependency_root)
+        index += 1
+    return reached
 
 
 def single_file_unit(entry: Path, profile: str, standard: list[UnitLoaf]) -> UnitDescription:

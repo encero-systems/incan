@@ -1,10 +1,11 @@
 """Content-addressed inspection entries under the owning project's target directory."""
 
-from std.fs import Path
-from observation import file_digest
-from publication import publish
 from rust::std::process import Command
 from rust::std::string import String as RustString
+from std.fs import Path
+from files import make_directory, read
+from observation import file_digest
+from publication import publish
 
 
 pub model GraphUnit:
@@ -17,7 +18,7 @@ pub model GraphUnit:
 
 
 pub def unchecked_marker(graph: Path) -> Path:
-    """The note beside a unit's graph entry when its facts are not all checked; checked and published graphs have none."""
+    """The note beside a unit's graph entry when not all its facts are checked; a checked graph has none."""
     return Path(f"{graph.0}.unchecked")
 
 
@@ -31,7 +32,7 @@ pub def unchecked_note(graph: Path) -> Result[str, str]:
     marker = unchecked_marker(graph)
     if not marker.is_file():
         return Ok("")
-    return marker.read_text("utf-8", "strict").map_err((error) => error.message())
+    return read(marker)
 
 
 pub def publish_unchecked(graph: Path, name: str, consequence: str, reason: str) -> Result[None, str]:
@@ -48,7 +49,7 @@ def note_line(note: str, index: int) -> str:
 
 
 pub def unchecked_warning(note: str) -> str:
-    """The single warning line a query prints for an unchecked unit: its name, consequence, summary and first diagnostic."""
+    """The warning line a query prints for an unchecked unit: its name, consequence, summary and first diagnostic."""
     mut first = note_line(note, 3)
     if first.startswith("- "):
         first = first[2:]
@@ -72,7 +73,7 @@ pub def stamp_file(unit: GraphUnit) -> Path:
 
 
 pub def read_graph(unit: GraphUnit, driver: str, group: str) -> Result[str, str]:
-    """Decode indexed binary records for query output; only the storage reader runs, without checking or code generation."""
+    """Decode indexed binary records for query output; only the storage reader runs, never the checker or codegen."""
     if not unit.path.is_file() and is_unchecked(unit.path):
         return Ok("")
     mut command = Command.new(driver)
@@ -112,5 +113,5 @@ pub def tree_inputs(root: Path) -> Result[list[str], str]:
 pub def cache_file(project: Path, digest: str) -> Result[Path, str]:
     """Select a unit's immutable graph entry; only successful exports publish this path."""
     directory = project.joinpath("target").joinpath("incan").joinpath("codegraph")
-    directory.mkdir(true, true).map_err((error) => error.message())?
+    make_directory(directory)?
     return Ok(directory.joinpath(f"{digest}.incngraph"))

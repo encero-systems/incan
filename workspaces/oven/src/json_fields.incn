@@ -44,3 +44,23 @@ pub def boolean(value: JsonValue, path: list[str]) -> Result[bool, list[str]]:
     match value.as_bool():
         Some(flag) => return Ok(flag)
         None => return Err(path)
+
+
+pub def required_text(value: JsonValue, key: str) -> Result[str, str]:
+    """The string at `key` of an object; a failure is the JSON library's message."""
+    return value.require(key).map_err((error) => error.message())?.expect_str().map_err((error) => error.message())
+
+
+pub def required_items(value: JsonValue, key: str) -> Result[list[JsonValue], str]:
+    """The array at `key` of an object; a failure is the JSON library's message."""
+    return value.require(key).map_err((error) => error.message())?.expect_array().map_err((error) => error.message())
+
+
+pub def string_value(value: JsonValue) -> Result[str, str]:
+    """A JSON string; a failure is the JSON library's message."""
+    return value.expect_str().map_err((error) => error.message())
+
+
+pub def array_value(value: JsonValue) -> Result[list[JsonValue], str]:
+    """A JSON array; a failure is the JSON library's message."""
+    return value.expect_array().map_err((error) => error.message())

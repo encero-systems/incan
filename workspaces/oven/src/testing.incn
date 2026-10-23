@@ -3,8 +3,9 @@
 from rust::std::process import Command
 from rust::std::io import Write, stderr
 from std.fs import Path
-from std.json import JsonValue, parse
-from incan_units import compile_unit, crate_name, test_report
+from std.json import JsonValue
+from files import parse_json, read
+from incan_units import compile_unit, stored_executable, test_report
 from json_fields import array, text_field
 from toolchain import Toolchain
 from unit import UnitDescription
@@ -12,7 +13,7 @@ from unit import UnitDescription
 
 pub def tests_binary(unit: UnitDescription) -> Path:
     """Where a test unit's executable is stored in its project."""
-    return Path(unit.project_root).joinpath("target").joinpath("incan").joinpath(unit.profile).joinpath("tests").joinpath(crate_name(unit))
+    return stored_executable(unit, "tests")
 
 
 pub def run_tests(unit: UnitDescription, toolchain: Toolchain) -> Result[i32, str]:
@@ -25,18 +26,24 @@ pub def run_tests(unit: UnitDescription, toolchain: Toolchain) -> Result[i32, st
 
 
 pub def run_collected(binary: Path, file: str) -> Result[i32, str]:
-    """Run each collected test of a compiled test unit in its own process, so one panic never hides a later test.
+    """
+    Run each collected test of a compiled test unit in its own process, so one panic never hides a later test.
 
     The tests always execute afresh; only their compilation is ever reused.
+
+    1. Read the report of the tests the compiler collected.
+    2. Run every test, whether or not an earlier one failed.
+    3. The exit code is 1 when any test failed.
     """
-    report = test_report(binary)
-    text = report.read_text("utf-8", "strict").map_err((error) => error.message())?
-    document = parse(text).map_err((error) => error.message())?
+    # 1. The compiler's report names every collected test, so none is run that the compiler did not collect.
+    document = parse_json(read(test_report(binary))?)?
     tests = array(document, []).map_err((_) => "compiler test report must be an array")?
+    # 2. Every test runs, so one failure never hides a later one.
     mut failed = false
     for test in tests:
         if not run_test(binary, file, test)?:
             failed = true
+    # 3. The run fails if any test did.
     if failed:
         return Ok(1)
     return Ok(0)
@@ -50,19 +57,29 @@ def reason(test: JsonValue, marker: str) -> Option[str]:
 
 
 def run_test(binary: Path, file: str, test: JsonValue) -> Result[bool, str]:
-    """Observe one exact native test and apply its collected skip or expected-failure policy."""
+    """
+    Observe one exact native test and apply its collected skip or expected-failure policy. Whether it counts as held.
+
+    1. A skipped test is reported and not run.
+    2. The test runs in its own process.
+    3. An expected failure that fails holds; one that passes does not.
+    4. Any other test holds when it passed, and a failure shows what the test printed.
+    """
     name = text_field(test, "name", []).map_err((_) => "compiler test report has no name")?
     native = text_field(test, "native", []).map_err((_) => "compiler test report has no native entry")?
     label = f"{file}::{name}"
+    # 1. A skipped test is reported with its reason and never started.
     match reason(test, "skip"):
         Some(why) =>
             println(f"{label} SKIPPED ({why})")
             return Ok(true)
         None => pass
+    # 2. The test runs in a process of its own, so a panic ends only that test.
     mut command = Command.new(binary.0)
     command.arg("--exact").arg(native).arg("--nocapture")
     output = command.output().map_err((error) => f"cannot run {binary.0}: {error}")?
     passed = output.status.success()
+    # 3. A test expected to fail holds when it fails, and does not when it unexpectedly passes.
     match reason(test, "xfail"):
         Some(why) =>
             if passed:
@@ -71,11 +88,18 @@ def run_test(binary: Path, file: str, test: JsonValue) -> Result[bool, str]:
             println(f"{label} XFAIL ({why})")
             return Ok(true)
         None => pass
+    # 4. Any other test holds when it passed; one that failed shows what it printed.
     if passed:
         println(f"{label} PASSED")
         return Ok(true)
     println(f"{label} FAILED")
-    mut err = stderr()
-    written_output = err.write_all(output.stdout)
-    written_error = err.write_all(output.stderr)
+    show_output(output.stdout, output.stderr)
     return Ok(false)
+
+
+def show_output(printed: bytes, complained: bytes) -> None:
+    """Show what a failed test printed on its two streams, on standard error, the first stream first."""
+    mut err = stderr()
+    for stream in [printed, complained]:
+        # A closed standard error cannot be told about, so a failed write is ignored.
+        _ = err.write_all(stream)

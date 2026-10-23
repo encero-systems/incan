@@ -14,18 +14,22 @@ else is answered `fallback`, and the command prepares it in its own process.
 from std.fs import Path
 from std.environ import get_or
 from features import FeatureRequest
+from files import discard_file
 from home import owners_dir, standard_packages, unit_ledger
 from incan_units import compile_executable, program_binary
 from intake import intake
 from loaf_local_graph import unique
 from observation import SETTLE_SECONDS, Ledger, load_ledger, now_seconds
-from owner_protocol import Reply, Request
+from owner_protocol import Reply, Request, prepares_executable
 from rust_units import rust_facet
 from testing import tests_binary
 from toolchain import Toolchain, load_toolchain, toolchain_file
 from unit import UnitDescription, describe
 from unit_freshness import Key, artifact_identity, compiler_fingerprint, description_digest, ledger_name, reconciled_key
 from unit_rust import prepare_native
+
+
+const FALLBACK_REASON: str = "the owner serves only projects whose Loaves are standard packages"
 
 
 pub model Watched:
@@ -84,28 +88,47 @@ pub model Owner:
     unsupported: Dict[str, Watched] = {}
 
     def handle(mut self, request: Request, idle_seconds: int) -> Reply:
-        """Answer one request. A request for another generation is refused before anything runs."""
+        """
+        Answer one request.
+
+        1. A request for another generation is refused before anything runs.
+        2. Lifecycle requests (`stop`, `status`, `idle`) are answered from the owner's own state.
+        3. A request for an executable (`run`, `build`, `test`) is prepared and counted as served.
+        4. Any other command is refused.
+        """
+        # 1. A stale client must not be served by a newer owner, nor the reverse.
         if request.generation != self.generation:
-            return Reply(status="refused", generation=self.generation, reason="the request is for another owner generation")
+            return self.respond("refused", "the request is for another owner generation")
+        # 2. Lifecycle requests prepare nothing.
         if request.command == "stop":
-            return Reply(status="retiring", generation=self.generation)
+            return self.respond("retiring")
         if request.command == "status":
-            return Reply(status="done", generation=self.generation, reason=f"served {self.served} requests")
+            return self.respond("done", f"served {self.served} requests")
         if request.command == "idle":
-            if now_seconds() - self.last_served >= idle_seconds:
-                return Reply(status="retiring", generation=self.generation)
-            return Reply(status="done", generation=self.generation)
-        if request.command in ["run", "build", "test"]:
+            return self.answer_idle(idle_seconds)
+        # 3. Only a prepared executable counts as a served request and refreshes the idle clock.
+        if prepares_executable(request.command):
             reply = self.prepare(request)
             self.served += 1
             self.last_served = now_seconds()
             return reply
-        return Reply(status="refused", generation=self.generation, reason=f"unknown command `{request.command}`")
+        # 4. A command the owner does not know is refused by name, never guessed at.
+        return self.respond("refused", f"unknown command `{request.command}`")
+
+    def respond(self, status: str, reason: str = "") -> Reply:
+        """A reply of this owner's generation."""
+        return Reply(status=status, generation=self.generation, reason=reason)
+
+    def answer_idle(self, idle_seconds: int) -> Reply:
+        """`retiring` once the owner has served nothing for `idle_seconds`, else `done`."""
+        if now_seconds() - self.last_served >= idle_seconds:
+            return self.respond("retiring")
+        return self.respond("done")
 
     def prepare(mut self, request: Request) -> Reply:
         """Make the executable a run, build or test request needs, and say how that went."""
         reset_trace()
-        mut reply = Reply(status="refused", generation=self.generation)
+        mut reply = self.respond("refused")
         match self.try_prepare(request):
             Ok(found) => reply = found
             Err(reason) => reply.reason = reason
@@ -113,16 +136,27 @@ pub model Owner:
         return reply
 
     def try_prepare(mut self, request: Request) -> Result[Reply, str]:
-        """The reply for a request that names a source file."""
+        """
+        The reply for a request that names a source file.
+
+        1. The entry is an absolute path to an existing source.
+        2. The toolchain is current.
+        3. The entry's preparation is retained or prepared; an entry the owner does not serve falls back to the command.
+        4. The unit's inputs are reconciled into its key and the executable is kept or built.
+        """
+        # 1. The entry is an absolute path to a source that exists, which the owner can find from its own directory.
         if not request.path.startswith("/"):
             return Err("the entry must be an absolute path")
         if not Path(request.path).is_file():
             return Err(f"{request.path}: no such source file")
+        # 2. The toolchain is the one installed now, and a changed one has dropped every retained entry.
         toolchain = self.current_toolchain()?
         id = entry_id(request)
+        # 3. An entry the owner does not serve is answered `fallback`, and the command prepares it itself.
         match self.held_entry(id, request, toolchain)?:
-            None => return Ok(Reply(status="fallback", reason="the owner serves only projects whose Loaves are standard packages"))
+            None => return Ok(Reply(status="fallback", reason=FALLBACK_REASON))
             Some(found) =>
+                # 4. The executable is kept or built for the key its inputs reconcile to, as without an owner.
                 mut held = found
                 key = held.key(self.compiler)?
                 self.held[id] = held
@@ -144,22 +178,50 @@ pub model Owner:
         return Ok(loaded)
 
     def held_entry(mut self, id: str, request: Request, toolchain: Toolchain) -> Result[Option[Held], str]:
-        """An entry's retained preparation while what it was derived from is unchanged, else prepared again."""
+        """
+        An entry's retained preparation while what it was derived from is unchanged, else prepared again.
+
+        1. Reuse the retained preparation, or the retained verdict that the owner does not serve the entry, while the
+           files it was derived from are unchanged.
+        2. Describe and prepare the unit, and watch the files that preparation depends on.
+        3. An entry the owner does not serve is remembered as such and left to the command.
+        4. Retain the preparation with its description digest and ledger.
+        """
+        # 1. A retained answer, positive or negative, is used only while every file it came from is unchanged.
         if id in self.held and unchanged(self.held[id].watched):
             return Ok(Some(self.held[id]))
         if id in self.unsupported and unchanged(self.unsupported[id]):
             return Ok(None)
-        features = FeatureRequest(features=request.features, default_features=request.default_features, all_features=request.all_features)
-        mut unit = prepare_native(describe(Path(request.path), request.profile, features)?, toolchain)?
+        # 2. The unit is prepared exactly as the command line prepares it, and the files it depends on are watched.
+        unit = prepare_native(describe(Path(request.path), request.profile, requested_features(request))?, toolchain)?
         watched = watch(guard_paths(unit)?)
+        # 3. The owner's verdict that it does not serve this entry is itself retained, so it is not worked out again.
         if not supported(unit)?:
             self.unsupported[id] = watched
             return Ok(None)
-        if request.command == "test":
-            unit.kind = "test"
-        held = Held(unit=unit, described=description_digest(unit)?, watched=watched, ledger=load_ledger(unit_ledger(unit.project_root, ledger_name(unit)), SETTLE_SECONDS))
+        # 4. The preparation is kept with the digest of its description and the ledger of what requests observed.
+        held = retain(unit, request.command, watched)?
         self.held[id] = held
         return Ok(Some(held))
+
+
+def requested_features(request: Request) -> FeatureRequest:
+    """The feature selection a request carries."""
+    return FeatureRequest(
+        features=request.features,
+        default_features=request.default_features,
+        all_features=request.all_features,
+    )
+
+
+def retain(unit: UnitDescription, command: str, watched: Watched) -> Result[Held, str]:
+    """The preparation to retain for a unit: its description digest and the ledger of what requests observed."""
+    mut prepared = unit
+    if command == "test":
+        prepared.kind = "test"
+    described = description_digest(prepared)?
+    ledger = load_ledger(unit_ledger(prepared.project_root, ledger_name(prepared)), SETTLE_SECONDS)
+    return Ok(Held(unit=prepared, described=described, watched=watched, ledger=ledger))
 
 
 def entry_id(request: Request) -> str:
@@ -167,7 +229,8 @@ def entry_id(request: Request) -> str:
     mut kind = "program"
     if request.command == "test":
         kind = "test"
-    return f"{kind} {request.path} {request.profile} {','.join(request.features)} {request.default_features} {request.all_features}"
+    features = ",".join(request.features)
+    return f"{kind} {request.path} {request.profile} {features} {request.default_features} {request.all_features}"
 
 
 def supported(unit: UnitDescription) -> Result[bool, str]:
@@ -193,35 +256,71 @@ def toolchain_paths(toolchain: Toolchain) -> Result[list[str], str]:
 
 
 def guard_paths(unit: UnitDescription) -> Result[list[str], str]:
-    """The files a prepared unit depends on: the manifests of its project graph, its lock, the standard library
-    directory with its packages' manifests, and the libraries of the standard packages it links."""
+    """
+    The files a prepared unit depends on.
+
+    1. The manifests of its project graph.
+    2. Its lock.
+    3. The standard library directory with its packages' manifests.
+    4. The libraries of the standard packages it links.
+    """
     root = Path(unit.project_root)
     mut paths: list[str] = []
+    # 1. An edit to any manifest of the project graph ends the retained preparation.
     if root.joinpath("loaf.toml").is_file():
         graph = intake(root).map_err((error) => error.message())?
         for project in graph.projects:
             paths.append(Path(project.root).joinpath("loaf.toml").0)
+    # 2. So does a change of the lock.
     paths.append(root.joinpath("oven.lock").0)
+    # 3. So does a change to the set of standard packages, or to the manifest of any of them.
     paths.append(get_or("INCAN_STDLIB", ""))
     for package in standard_packages()?:
         paths.append(Path(package.root).joinpath("loaf.toml").0)
+    # 4. So does a rebuilt library of a standard package the unit links.
     for loaf in unit.loaves:
         paths.append(Path(loaf.dir).joinpath(f"lib{loaf.name.replace('-', '_')}.rlib").0)
     return Ok(unique(paths))
 
 
-def built(unit: UnitDescription, toolchain: Toolchain, key: Key, request: Request, generation: str) -> Result[Reply, str]:
-    """Keep or build the executable for `key`, reporting what the compiler printed."""
+def built(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    key: Key,
+    request: Request,
+    generation: str,
+) -> Result[Reply, str]:
+    """
+    Keep or build the executable for `key`, reporting what the compiler printed.
+
+    1. Choose where the program or the tests are stored.
+    2. Collect the compiler's streams in files of this request instead of the owner's own.
+    3. Keep the stored executable or compile it.
+    4. Report the exit code, the executable and what the compiler printed.
+    """
+    # 1. A test request stores its executable with the tests, any other with the program.
     mut output = program_binary(unit)
     if request.command == "test":
         output = tests_binary(unit)
+    # 2. What the compiler prints reaches the client in the reply, not the owner's own detached streams.
     prefix = console_prefix(generation)?
     discard(f"{prefix}.out")
     discard(f"{prefix}.err")
     mut capturing = toolchain
     capturing.console = prefix
+    # 3. An executable whose key is unchanged is kept, and a changed one is compiled.
     code = compile_executable(unit, capturing, output, key)?
-    return Ok(Reply(status="done", generation=generation, exit=code, binary=output.0, stdout=taken(f"{prefix}.out"), stderr=taken(f"{prefix}.err")))
+    # 4. The client learns how the compile ended, where the executable is, and everything the compiler printed.
+    return Ok(
+        Reply(
+            status="done",
+            generation=generation,
+            exit=code,
+            binary=output.0,
+            stdout=taken(f"{prefix}.out"),
+            stderr=taken(f"{prefix}.err"),
+        ),
+    )
 
 
 def console_prefix(generation: str) -> Result[str, str]:
@@ -238,7 +337,7 @@ def taken(path: str) -> str:
     match file.read_text("utf-8", "replace"):
         Ok(found) => text = found
         Err(_) => pass
-    removed = file.unlink()
+    discard_file(file)
     return text
 
 
@@ -246,7 +345,7 @@ def discard(path: str) -> None:
     """Remove a collected stream left by an earlier request."""
     file = Path(path)
     if file.is_file():
-        removed = file.unlink()
+        discard_file(file)
 
 
 def trace_mailbox() -> str:

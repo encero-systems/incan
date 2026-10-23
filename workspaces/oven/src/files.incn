@@ -1,0 +1,45 @@
+"""Reading, writing and removing the files Oven keeps, reporting every failure as the system's message in plain text."""
+
+from std.fs import Path
+from std.json import JsonValue, parse
+
+
+pub def read(path: Path) -> Result[str, str]:
+    """A file as strict UTF-8 text."""
+    return path.read_text("utf-8", "strict").map_err((error) => error.message())
+
+
+pub def write(path: Path, text: str) -> Result[None, str]:
+    """Create or replace a file with strict UTF-8 text; its directory must exist."""
+    return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+pub def remove(path: Path) -> Result[None, str]:
+    """Remove a file."""
+    return path.unlink().map_err((error) => error.message())
+
+
+pub def discard_file(path: Path) -> None:
+    """Remove a file that may already be gone. Tidying up never fails its caller, so a file that stays is ignored."""
+    _ = path.unlink()
+
+
+pub def make_directory(path: Path) -> Result[None, str]:
+    """Create a directory and its missing parents; one that exists is left as it is."""
+    return path.mkdir(true, true).map_err((error) => error.message())
+
+
+pub def read_json(path: Path) -> Result[JsonValue, str]:
+    """A JSON document from a file; a failure names the file."""
+    text = path.read_text("utf-8", "strict").map_err((error) => f"{path.0}: {error.message()}")?
+    return parse(text).map_err((error) => f"{path.0}: {error.message()}")
+
+
+pub def parse_json(text: str) -> Result[JsonValue, str]:
+    """A JSON document from text."""
+    return parse(text).map_err((error) => error.message())
+
+
+pub def json_text(document: JsonValue) -> Result[str, str]:
+    """A JSON document as compact text."""
+    return document.to_json().map_err((error) => error.message())

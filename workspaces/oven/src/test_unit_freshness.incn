@@ -2,9 +2,10 @@
 
 from rust::std::fs import OpenOptions, metadata
 from std.fs import Path
-from std.tempfile import TemporaryDirectory
+from files import make_directory, read, remove, write as write_file
 from incan_units import executable_outputs, install_executable, test_report
 from observation import load_ledger
+from scratch import scratch_directory
 from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription, UnitLoaf
 from unit_freshness import Key, artifact_files, compiler_fingerprint, reusable, rust_key, source_fingerprint, staleness
@@ -28,16 +29,16 @@ model Pass:
 
 def write(path: Path, text: str) -> Result[None, str]:
     """Create or replace a file, making its directory first."""
-    path.parent().mkdir(true, true).map_err((error) => error.message())?
-    path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
-    return Ok(None)
+    make_directory(path.parent())?
+    return write_file(path, text)
 
 
 def rewrite_in_place(path: Path, text: str) -> Result[None, str]:
     """Replace a file's bytes where they are with `text`, then put its modification time back as it was."""
     prefix = f"{path.0}: "
-    before = metadata(f"{path.0}").map_err((error) => f"{prefix}{error}")?.modified().map_err((error) => f"{prefix}{error}")?
-    path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
+    stat = metadata(f"{path.0}").map_err((error) => f"{prefix}{error}")?
+    before = stat.modified().map_err((error) => f"{prefix}{error}")?
+    write_file(path, text)?
     mut options = OpenOptions.new()
     options.write(true)
     file = options.open(f"{path.0}").map_err((error) => f"{prefix}{error}")?
@@ -103,8 +104,8 @@ def reconcile(scratch: Path, setup: Fixture) -> Result[Pass, str]:
 
 
 pub def test_unchanged_unit_is_keyed_without_reading_or_listing() -> Result[None, str]:
-    """A second pass over unchanged inputs yields the same key from metadata alone: no file hashed, no directory listed."""
-    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    """A second pass over unchanged inputs yields the same key from metadata alone: nothing hashed or listed."""
+    scratch = scratch_directory()?
     setup = fixture(scratch.path())?
     first = reconcile(scratch.path(), setup)?
     assert first.hashed > 0
@@ -118,7 +119,7 @@ pub def test_unchanged_unit_is_keyed_without_reading_or_listing() -> Result[None
 
 pub def test_source_edit_rekeys_and_hashes_only_what_changed() -> Result[None, str]:
     """An edited source changes the key and costs one hash; a new module also relists its directory."""
-    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    scratch = scratch_directory()?
     setup = fixture(scratch.path())?
     first = reconcile(scratch.path(), setup)?
     write(Path(setup.unit.source), "def main() -> None:\n    println(\"edited\")\n")?
@@ -152,7 +153,7 @@ pub def test_source_edit_rekeys_and_hashes_only_what_changed() -> Result[None, s
 
 pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
     """A rebuilt path dependency or standard package changes the key of everything that links it."""
-    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    scratch = scratch_directory()?
     setup = fixture(scratch.path())?
     first = reconcile(scratch.path(), setup)?
     write(artifact_files(Path(setup.unit.loaves[0].dir), "dep")[0], "dependency rebuilt with different code")?
@@ -166,8 +167,8 @@ pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
 
 
 pub def test_toolchain_change_rekeys_every_unit() -> Result[None, str]:
-    """The driver, a native crate, a Rust ABI cache and the target each change the fingerprint, and nothing else does."""
-    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    """The driver, a native crate, a Rust ABI cache and the target each change the fingerprint; nothing else does."""
+    scratch = scratch_directory()?
     setup = fixture(scratch.path())?
     first = compiler_fingerprint(setup.toolchain)?
     assert compiler_fingerprint(setup.toolchain)? == first
@@ -194,8 +195,8 @@ pub def test_toolchain_change_rekeys_every_unit() -> Result[None, str]:
 
 
 pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
-    """Reuse needs a stamp for the key and the very outputs it recorded; every interruption leaves a rebuild, not a mix."""
-    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    """Reuse needs a stamp for the key and the outputs it recorded; every interruption leaves a rebuild, not a mix."""
+    scratch = scratch_directory()?
     bin = scratch.path().joinpath("bin")
     output = bin.joinpath("app")
     stamp = bin.joinpath("app.oven-inputs")
@@ -215,9 +216,9 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
     # A replacement in flight does not disturb the installed pair.
     write(staged, "second build, still being linked")?
     assert reusable([output], stamp, one)?
-    assert output.read_text("utf-8", "strict").map_err((error) => error.message())? == "first build"
+    assert read(output)? == "first build"
     # An installation that fails after the old stamp is withdrawn leaves no stamp to vouch for the old outputs.
-    staged.unlink().map_err((error) => error.message())?
+    remove(staged)?
     match install_executable(staged, output, "program", stamp, two):
         Ok(_) => assert false, "installing a missing build succeeded"
         Err(_) => pass
@@ -237,7 +238,7 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
     install_executable(tests.joinpath("app-77"), tests.joinpath("app"), "test", tests.joinpath("app.oven-inputs"), one)?
     outputs = executable_outputs("test", tests.joinpath("app"))
     assert reusable(outputs, tests.joinpath("app.oven-inputs"), one)?
-    test_report(tests.joinpath("app")).unlink().map_err((error) => error.message())?
+    remove(test_report(tests.joinpath("app")))?
     assert not reusable(outputs, tests.joinpath("app.oven-inputs"), one)?
     return Ok(None)
 
@@ -245,51 +246,65 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
 pub def test_rust_unit_key_follows_its_crate_manifest_how_it_is_built_and_what_it_links() -> Result[None, str]:
     """A Rust unit is keyed like an Incan one: every file of its crate, its manifest, its arguments, the compiler and
     the libraries it links; unchanged, it is keyed from metadata alone."""
-    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
-    facet = scratch.path().joinpath("data")
-    write(facet.joinpath("loaf.toml"), "[project]\nname = \"data\"\nversion = \"0.1.0\"\n")?
-    write(facet.joinpath("rust").joinpath("src").joinpath("lib.rs"), "pub mod json;\n")?
-    write(facet.joinpath("rust").joinpath("src").joinpath("json.rs"), "pub fn parse() {}\n")?
-    write(facet.joinpath("rust").joinpath("src").joinpath("table.json"), "{}")?
-    dependency = scratch.path().joinpath("libcore.rlib")
-    write(dependency, "core one")?
-    ledger_path = scratch.path().joinpath("ledger.json")
-    mut keys: list[str] = []
-    mut work: list[int] = []
-    for round in range(2):
-        mut crates = load_ledger(ledger_path, 0, "")
-        key = rust_key("compiler", ["crate data lib", "--cfg", "feature=\"std\""], facet.joinpath("loaf.toml"), facet.joinpath("rust").joinpath("src"), [dependency.0], crates)?
-        crates.save()?
-        keys.append(key.digest)
-        work.append(crates.hashed + crates.listed)
-    assert keys[0] == keys[1]
-    assert work[1] == 0
-    base = keys[0]
-    write(facet.joinpath("rust").joinpath("src").joinpath("json.rs"), "pub fn parse() { let _ = 1; }\n")?
-    edited = rust_key_of(ledger_path, facet, dependency, "compiler", ["crate data lib", "--cfg", "feature=\"std\""])?
-    assert edited != base
-    write(facet.joinpath("rust").joinpath("src").joinpath("table.json"), "{\"a\": 1}")?
-    data = rust_key_of(ledger_path, facet, dependency, "compiler", ["crate data lib", "--cfg", "feature=\"std\""])?
+    scratch = scratch_directory()?
+    setup = rust_crate(scratch.path())?
+    sources = setup.facet.joinpath("rust").joinpath("src")
+    # Unchanged, the key is the same and costs no hashing or listing.
+    first = rust_pass(setup, "compiler", "std")?
+    second = rust_pass(setup, "compiler", "std")?
+    assert first.key == second.key
+    assert second.hashed + second.listed == 0
+    # Each input of the key changes it: a source, a data file, a new module, the manifest, the cfg, the compiler and
+    # a linked library.
+    write(sources.joinpath("json.rs"), "pub fn parse() { let _ = 1; }\n")?
+    edited = rust_pass(setup, "compiler", "std")?.key
+    assert edited != first.key
+    write(sources.joinpath("table.json"), "{\"a\": 1}")?
+    data = rust_pass(setup, "compiler", "std")?.key
     assert data != edited
-    write(facet.joinpath("rust").joinpath("src").joinpath("extra.rs"), "")?
-    added = rust_key_of(ledger_path, facet, dependency, "compiler", ["crate data lib", "--cfg", "feature=\"std\""])?
+    write(sources.joinpath("extra.rs"), "")?
+    added = rust_pass(setup, "compiler", "std")?.key
     assert added != data
-    write(facet.joinpath("loaf.toml"), "[project]\nname = \"data\"\nversion = \"0.2.0\"\n")?
-    manifest = rust_key_of(ledger_path, facet, dependency, "compiler", ["crate data lib", "--cfg", "feature=\"std\""])?
+    write(setup.facet.joinpath("loaf.toml"), "[project]\nname = \"data\"\nversion = \"0.2.0\"\n")?
+    manifest = rust_pass(setup, "compiler", "std")?.key
     assert manifest != added
-    features = rust_key_of(ledger_path, facet, dependency, "compiler", ["crate data lib", "--cfg", "feature=\"alloc\""])?
+    features = rust_pass(setup, "compiler", "alloc")?.key
     assert features != manifest
-    compiler = rust_key_of(ledger_path, facet, dependency, "another compiler", ["crate data lib", "--cfg", "feature=\"alloc\""])?
+    compiler = rust_pass(setup, "another compiler", "alloc")?.key
     assert compiler != features
-    write(dependency, "core two, rebuilt")?
-    linked = rust_key_of(ledger_path, facet, dependency, "another compiler", ["crate data lib", "--cfg", "feature=\"alloc\""])?
+    write(setup.dependency, "core two, rebuilt")?
+    linked = rust_pass(setup, "another compiler", "alloc")?.key
     assert linked != compiler
     return Ok(None)
 
 
-def rust_key_of(ledger_path: Path, facet: Path, dependency: Path, compiler: str, described: list[str]) -> Result[str, str]:
-    """The digest of a Rust unit's key against the ledger a previous pass saved."""
-    mut crates = load_ledger(ledger_path, 0, "")
-    key = rust_key(compiler, described, facet.joinpath("loaf.toml"), facet.joinpath("rust").joinpath("src"), [dependency.0], crates)?
+model RustCrate:
+    """A Rust unit's crate on disk, the library it links and the ledger its keys are reconciled through."""
+
+    facet: Path
+    dependency: Path
+    ledger: Path
+
+
+def rust_crate(scratch: Path) -> Result[RustCrate, str]:
+    """Lay out a crate `data` with a manifest, a module, a data file and one linked library."""
+    facet = scratch.joinpath("data")
+    sources = facet.joinpath("rust").joinpath("src")
+    write(facet.joinpath("loaf.toml"), "[project]\nname = \"data\"\nversion = \"0.1.0\"\n")?
+    write(sources.joinpath("lib.rs"), "pub mod json;\n")?
+    write(sources.joinpath("json.rs"), "pub fn parse() {}\n")?
+    write(sources.joinpath("table.json"), "{}")?
+    dependency = scratch.joinpath("libcore.rlib")
+    write(dependency, "core one")?
+    return Ok(RustCrate(facet=facet, dependency=dependency, ledger=scratch.joinpath("ledger.json")))
+
+
+def rust_pass(setup: RustCrate, compiler: str, feature: str) -> Result[Pass, str]:
+    """Key the crate as a new process would, built with `feature`: load the ledger, reconcile, save it."""
+    described = ["crate data lib", "--cfg", f"feature=\"{feature}\""]
+    manifest = setup.facet.joinpath("loaf.toml")
+    sources = setup.facet.joinpath("rust").joinpath("src")
+    mut crates = load_ledger(setup.ledger, 0, "")
+    key = rust_key(compiler, described, manifest, sources, [setup.dependency.0], crates)?
     crates.save()?
-    return Ok(key.digest)
+    return Ok(Pass(key=key.digest, hashed=crates.hashed, listed=crates.listed))

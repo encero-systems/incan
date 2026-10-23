@@ -18,11 +18,12 @@ from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue
+from files import json_text
 from home import unit_ledger
 from loaf_local_graph import unique
 from observation import Ledger, SETTLE_SECONDS, load_ledger, observe, trace
 from publication import place, publish
-from toolchain import Toolchain
+from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription
 
 
@@ -32,7 +33,9 @@ const UNIT_DOMAIN: str = "incan.oven.unit/1"
 pub def artifact_files(directory: Path, package: str) -> list[Path]:
     """The complete DD-0007 artifact set required to reuse a library."""
     linked = package.replace("-", "_")
-    mut artifacts = [directory.joinpath(name) for name in [f"lib{linked}.rlib", f"{package}.incnlib", f"{package}.incnbody", f"{package}.native.json", f"{package}.incngraph"]]
+    compiled = [f"lib{linked}.rlib", f"{package}.incnlib", f"{package}.incnbody"]
+    described = [f"{package}.native.json", f"{package}.incngraph"]
+    mut artifacts = [directory.joinpath(name) for name in compiled + described]
     cache = directory.joinpath(f"{package}.rustabi")
     if cache.is_file():
         artifacts.append(cache)
@@ -64,13 +67,17 @@ pub def unit_key(unit: UnitDescription, toolchain: Toolchain) -> Result[Key, str
 
 
 pub def reconciled_key(unit: UnitDescription, compiler: str, described: str, mut project: Ledger) -> Result[Key, str]:
-    """The key of a unit against a ledger that may already hold what earlier requests observed; the ledger is saved when
-    this reconciliation changed it, and the work it could not avoid is traced."""
+    """
+    The key of a unit against a ledger that may already hold what earlier requests observed.
+
+    The ledger is saved when this reconciliation changed it, and the work it could not avoid is traced.
+    """
     hashed = project.hashed
     listed = project.listed
     key = unit_key_with(unit, compiler, described, project)?
     project.save()?
-    trace(f"{ledger_name(unit)}: key {key.digest[:12]}, hashed {project.hashed - hashed} files, listed {project.listed - listed} directories")
+    work = f"hashed {project.hashed - hashed} files, listed {project.listed - listed} directories"
+    trace(f"{ledger_name(unit)}: key {key.digest[:12]}, {work}")
     return Ok(key)
 
 
@@ -83,24 +90,46 @@ pub def ledger_name(unit: UnitDescription) -> str:
 
 
 pub def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
-    """Bind reuse to the driver and its installed native closure and Rust facts.
+    """
+    Bind reuse to the driver and its installed native closure and Rust facts.
 
     The installed driver is named by its content digest, and its path is part of the fingerprint.
+
+    1. The driver, its sysroot and the driver's identity.
+    2. The native crates every unit links, and the Rust ABI caches checking reads.
+    3. The directories the dependencies of those crates live in.
     """
-    mut inputs = [toolchain.driver, toolchain.sysroot, artifact_identity(Path(toolchain.driver))?]
-    for native in toolchain.externs:
+    # 1. A different driver, at another path or rebuilt in place, is a different compiler.
+    driver = [toolchain.driver, toolchain.sysroot, artifact_identity(Path(toolchain.driver))?]
+    # 2. So is a changed runtime or support crate, or a changed Rust fact cache.
+    natives = native_identities(toolchain.externs)?
+    caches = cache_identities(toolchain.rust_abi)?
+    # 3. The directories the crates' own dependencies live in are part of the compiler's reach.
+    return fingerprint(driver + natives + caches + toolchain.search)
+
+
+pub def native_identities(externs: list[NativeCrate]) -> Result[list[str], str]:
+    """The name, path and identity of each native crate, in order."""
+    mut inputs: list[str] = []
+    for native in externs:
         inputs.append(native.name)
         inputs.append(native.path)
         inputs.append(artifact_identity(Path(native.path))?)
-    for cache in toolchain.rust_abi:
+    return Ok(inputs)
+
+
+pub def cache_identities(caches: list[str]) -> Result[list[str], str]:
+    """The path and identity of each Rust ABI cache, in order."""
+    mut inputs: list[str] = []
+    for cache in caches:
         inputs.append(cache)
         inputs.append(artifact_identity(Path(cache))?)
-    return fingerprint(inputs + toolchain.search)
+    return Ok(inputs)
 
 
 pub def description_digest(unit: UnitDescription) -> Result[str, str]:
-    """The digest of everything the unit's description says: profile, features, kind and every path and crate it names."""
-    return fingerprint([unit.to_json().to_json().map_err((error) => error.message())?])
+    """The digest of what the unit's description says: profile, features, kind and every path and crate it names."""
+    return fingerprint([json_text(unit.to_json())?])
 
 
 pub def source_fingerprint(unit: UnitDescription, compiler: str, mut project: Ledger) -> Result[Key, str]:
@@ -109,32 +138,46 @@ pub def source_fingerprint(unit: UnitDescription, compiler: str, mut project: Le
 
 
 pub def unit_key_with(unit: UnitDescription, compiler: str, described: str, mut project: Ledger) -> Result[Key, str]:
-    """Hash everything authored that the compilation reads, and identify every artifact it links.
+    """
+    Hash everything authored that the compilation reads, and identify every artifact it links.
 
     A caller that keeps the unit's description digest (it only changes with the description) passes it in. Sorted
     paths make added, removed and renamed modules observable. Dependency artifacts bind consumers to rebuilt
     providers, including transitive ones.
+
+    1. Pair every authored file the compilation reads with its digest.
+    2. Pair every linked artifact with its identity.
+    3. Combine them with the compiler and the description into the key.
     """
-    mut sources: list[str] = []
-    for path in unit_files(unit, project)?:
-        sources.append(path)
-        sources.append(project.digest(Path(path))?)
-    mut artifacts: list[str] = []
+    # 1. An edit to any authored file the compilation reads changes the key; an untouched file costs no read.
+    files = unit_files(unit, project)?
+    sources = digested(files, project)?
+    # 2. A rebuilt library, native crate or ABI cache the unit links changes the key of the unit linking it.
+    artifacts = loaf_identities(unit)? + native_identities(unit.externs)? + cache_identities(unit.rust_abi)?
+    # 3. The compiler and the unit's description are part of the key beside its two kinds of input.
+    return assembled(compiler, described, sources, artifacts)
+
+
+def digested(paths: list[str], mut ledger: Ledger) -> Result[list[str], str]:
+    """Each path followed by the digest of its bytes, reconciled through the ledger."""
+    mut inputs: list[str] = []
+    for path in paths:
+        inputs.append(path)
+        inputs.append(ledger.digest(Path(path))?)
+    return Ok(inputs)
+
+
+def loaf_identities(unit: UnitDescription) -> Result[list[str], str]:
+    """The path and identity of every artifact of every Loaf the unit links; a missing artifact is `absent`."""
+    mut inputs: list[str] = []
     for loaf in unit.loaves:
         for path in artifact_files(Path(loaf.dir), loaf.name):
-            artifacts.append(path.0)
-            if not path.is_file():
-                artifacts.append("absent")
+            inputs.append(path.0)
+            if path.is_file():
+                inputs.append(artifact_identity(path)?)
             else:
-                artifacts.append(artifact_identity(path)?)
-    for native in unit.externs:
-        artifacts.append(native.name)
-        artifacts.append(native.path)
-        artifacts.append(artifact_identity(Path(native.path))?)
-    for cache in unit.rust_abi:
-        artifacts.append(cache)
-        artifacts.append(artifact_identity(Path(cache))?)
-    return assembled(compiler, described, sources, artifacts)
+                inputs.append("absent")
+    return Ok(inputs)
 
 
 def assembled(compiler: str, described: str, sources: list[str], artifacts: list[str]) -> Result[Key, str]:
@@ -142,29 +185,47 @@ def assembled(compiler: str, described: str, sources: list[str], artifacts: list
     authored = fingerprint(sources)?
     linked = fingerprint(artifacts)?
     digest = fingerprint([UNIT_DOMAIN, compiler, described, authored, linked])?
-    return Ok(Key(digest=digest, parts=[f"compiler {compiler}", f"description {described}", f"sources {authored}", f"artifacts {linked}"]))
+    parts = [f"compiler {compiler}", f"description {described}", f"sources {authored}", f"artifacts {linked}"]
+    return Ok(Key(digest=digest, parts=parts))
 
 
-pub def rust_key(compiler: str, described: list[str], manifest: Path, crate_sources: Path, externs: list[str], mut crates: Ledger) -> Result[Key, str]:
-    """The key of a Rust unit: how it is compiled (`described`: its crate, features, profile and every argument), its
-    manifest and every file of its crate, the compiler, and the identity of each library it links.
+pub def rust_key(
+    compiler: str,
+    described: list[str],
+    manifest: Path,
+    crate_sources: Path,
+    externs: list[str],
+    mut crates: Ledger,
+) -> Result[Key, str]:
+    """
+    The key of a Rust unit.
 
     The same kinds of input as an Incan unit's key, so the same stamp, lock and atomic install keep its outputs. The
     ledger must keep every file (`load_ledger(.., "")`).
+
+    1. How it is compiled (`described`: its crate, features, profile and every argument), digested.
+    2. Its manifest and every file of its crate, each with its digest.
+    3. The identity of each library it links.
+    4. Combine them with the compiler into the key.
     """
-    mut sources = [manifest.0, crates.digest(manifest)?]
-    for path in crates.sources(crate_sources, true)?:
-        sources.append(path)
-        sources.append(crates.digest(Path(path))?)
+    # 1. Another crate name, feature, profile or argument is another unit.
+    description = fingerprint(described)?
+    # 2. An edit to the manifest or to any file of the crate, data files included, changes the key.
+    manifest_inputs = digested([manifest.0], crates)?
+    listed = crates.sources(crate_sources, true)?
+    sources = manifest_inputs + digested(listed, crates)?
+    # 3. A rebuilt library the crate links changes its key.
     mut artifacts: list[str] = []
     for extern in externs:
         artifacts.append(extern)
         artifacts.append(artifact_identity(Path(extern))?)
-    return assembled(compiler, fingerprint(described)?, sources, artifacts)
+    # 4. The compiler joins the crate's inputs in the same key an Incan unit has.
+    return assembled(compiler, description, sources, artifacts)
 
 
 def unit_files(unit: UnitDescription, mut project: Ledger) -> Result[list[str], str]:
-    """The files a unit's compilation reads from its project: manifest, lock, entry, sources and metadata inputs.
+    """
+    The files a unit's compilation reads from its project: manifest, lock, entry, sources and metadata inputs.
 
     Modules resolve from the source root and from the entry's own directory, so an entry outside the source root (a
     test beside `src`) brings its directory with it; an entry in the project root brings only its own siblings.
@@ -185,7 +246,7 @@ def unit_files(unit: UnitDescription, mut project: Ledger) -> Result[list[str], 
 
 pub def fingerprint(inputs: list[str]) -> Result[str, str]:
     """Frame every input independently before hashing so paths and contents cannot alias each other."""
-    text = JsonValue.array([JsonValue.string(value) for value in inputs]).to_json().map_err((error) => error.message())?
+    text = json_text(JsonValue.array([JsonValue.string(value) for value in inputs]))?
     return Ok(hexlify(sha256.digest(text.encode("utf-8"))))
 
 
@@ -195,15 +256,31 @@ pub def reusable(outputs: list[Path], stamp: Path, key: Key) -> Result[bool, str
 
 
 pub def staleness(outputs: list[Path], stamp: Path, key: Key) -> Result[str, str]:
-    """Why the stored outputs cannot be kept for `key`; empty when they can."""
+    """
+    Why the stored outputs cannot be kept for `key`; empty when they can.
+
+    1. Without a stamp there is no stored build.
+    2. A stamp of another key names the kinds of input that changed.
+    3. A stamp records exactly the outputs expected.
+    4. Every output is still the one the stamp recorded.
+    """
+    # 1. An output without a stamp was never vouched for.
     if not stamp.is_file():
         return Ok("no stored build")
     recorded = stamp.read_text("utf-8", "strict").map_err((error) => f"{stamp.0}: {error.message()}")?.split("\n")
+    # 2. A stamp of another key says which kinds of input changed since, so a rebuild can say why.
     if recorded[0] != key.digest:
         return Ok(f"{changed_kinds(recorded[1:], key.parts)} changed")
+    # 3. A stamp that recorded fewer or more outputs than expected describes some other build.
     first = 1 + len(key.parts)
     if len(recorded) != first + len(outputs):
         return Ok("the stored build is incomplete")
+    # 4. Each output is the very file the stamp recorded, so a binary replaced behind its back is not reused.
+    return replaced_output(outputs, recorded, first)
+
+
+def replaced_output(outputs: list[Path], recorded: list[str], first: int) -> Result[str, str]:
+    """Why an output is not the one the stamp recorded at line `first` onward; empty when each one is."""
     for index in range(len(outputs)):
         if not outputs[index].is_file():
             return Ok("the stored build is missing")
@@ -224,7 +301,7 @@ def changed_kinds(recorded: list[str], parts: list[str]) -> str:
 
 
 pub def record(stamp: Path, key: Key, outputs: list[Path]) -> Result[None, str]:
-    """Publish the stamp of a completed build: its key, the digest of each kind of input, then each output's identity."""
+    """Publish a completed build's stamp: its key, the digest of each kind of input, then each output's identity."""
     mut lines = [key.digest] + key.parts
     for output in outputs:
         lines.append(observe(output)?.stamp)
@@ -232,7 +309,8 @@ pub def record(stamp: Path, key: Key, outputs: list[Path]) -> Result[None, str]:
 
 
 pub def install_all(staged: list[Path], finals: list[Path], stamp: Path, key: Key) -> Result[None, str]:
-    """Replace the stored outputs with a completed build of `key`: each staged file is renamed onto its place.
+    """
+    Replace the stored outputs with a completed build of `key`: each staged file is renamed onto its place.
 
     The old stamp goes first and the new one comes last, so no stamp ever vouches for outputs it did not describe: an
     interruption leaves either no stamp, or a stamp and outputs that belong together.

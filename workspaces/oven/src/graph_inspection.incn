@@ -5,17 +5,32 @@ from rust::std::string import String as RustString
 from std.fs import Path
 from std.json import JsonValue, parse
 from features import FeatureRequest
-from graph_cache import GraphUnit, cache_file, read_graph, stamp_file, unchecked_note, unchecked_refusal, unchecked_warning
-from publication import publish
-from unit_freshness import artifact_identity, fingerprint
-from graph_dependencies import prepare_graph, unit_natives, unit_loaves
+from files import json_text, read
+from graph_cache import (
+    GraphUnit,
+    cache_file,
+    read_graph,
+    stamp_file,
+    unchecked_note,
+    unchecked_refusal,
+    unchecked_warning,
+)
+from graph_dependencies import GraphDependencies, prepare_graph, unit_natives, unit_loaves
 from graph_incan import inspect_incan
 from graph_loaves import registry_artifacts, registry_graphs, standard_graphs
 from graph_queries import query, query_group, text
 from graph_rust import inspect_rust
+from json_fields import required_items, string_value
+from publication import publish
+from rust_units import rust_facet
 from toolchain import Toolchain, load_toolchain
 from unit import project_root_of
-from rust_units import rust_facet
+from unit_freshness import artifact_identity, fingerprint
+
+
+const QUERY_KINDS: FrozenList[str] = ["defs", "refs", "callers", "callees", "imports"]
+# The version of the key an answer is cached under; changing it discards every cached answer.
+const PRESENTATION_DOMAIN: str = "incan.codegraph.presentation/7"
 
 
 pub model GraphOptions:
@@ -31,9 +46,17 @@ pub model GraphOptions:
 
 
 def options(arguments: list[str]) -> Result[GraphOptions, str]:
-    """Validate the full invocation before any build or cache operation."""
+    """
+    Validate the full invocation before any build or cache operation.
+
+    1. The command is `codegraph`.
+    2. Read each argument: `--strict`, a flag with its value, or the one path.
+    3. A path is required, and the format and query kind must be known.
+    """
+    # 1. Only the `codegraph` inspection exists, and anything else is answered with the usage.
     if len(arguments) == 0 or arguments[0] != "codegraph":
-        return Err("usage: incan inspect codegraph PATH [--format json|jsonl] [--query defs|refs|callers|callees|imports TERM] [--limit N] [--strict]")
+        return Err(usage())
+    # 2. A flag takes the arguments it needs, nothing else starts with `-`, and the first plain argument is the path.
     mut result = GraphOptions()
     mut index = 1
     while index < len(arguments):
@@ -41,114 +64,185 @@ def options(arguments: list[str]) -> Result[GraphOptions, str]:
         if value == "--strict":
             result.strict = true
             index += 1
-            continue
-        if value in ["--format", "--query", "--substitute", "--limit"]:
+        elif value == "--query":
+            read_query(result, arguments, index)?
+            index += 3
+        elif value in ["--format", "--limit", "--substitute"]:
             if index + 1 >= len(arguments):
                 return Err(f"{value} needs a value")
-            item = arguments[index + 1]
-            if value == "--format":
-                result.format = item
-            elif value == "--limit":
-                result.limit = parse(item).map_err((_) => "--limit needs a nonnegative integer")?.expect_int().map_err((_) => "--limit needs a nonnegative integer")?
-                if result.limit < 0:
-                    return Err("--limit needs a nonnegative integer")
-            elif value == "--substitute":
-                parts = item.split("=")
-                if len(parts) != 2 or parts[0] == "" or parts[1] == "":
-                    return Err("--substitute takes NAME=DIR")
-                result.substitutes[parts[0]] = parts[1]
-            else:
-                result.query = item
-                if index + 2 >= len(arguments):
-                    return Err("--query needs a query kind and TERM")
-                result.term = arguments[index + 2]
-                index += 1
+            apply_flag(result, value, arguments[index + 1])?
             index += 2
-            continue
-        if value.startswith("-") or result.path != "":
+        elif value.startswith("-") or result.path != "":
             return Err(f"unexpected argument `{value}`")
-        result.path = value
-        index += 1
+        else:
+            result.path = value
+            index += 1
+    # 3. Nothing is built or cached before the path, the format and the query kind are known to be valid.
     if result.path == "":
         return Err("a PATH is required")
     if result.format not in ["json", "jsonl"]:
         return Err("--format is json or jsonl")
-    if result.query != "" and result.query not in ["defs", "refs", "callers", "callees", "imports"]:
+    if result.query != "" and result.query not in QUERY_KINDS:
         return Err(f"unknown graph query `{result.query}`")
     return Ok(result)
 
 
+def usage() -> str:
+    """The inspection command's usage."""
+    options_text = "[--format json|jsonl] [--query defs|refs|callers|callees|imports TERM] [--limit N] [--strict]"
+    return f"usage: incan inspect codegraph PATH {options_text}"
+
+
+def read_query(mut result: GraphOptions, arguments: list[str], index: int) -> Result[None, str]:
+    """Read `--query KIND TERM`, which takes the two arguments after the flag."""
+    if index + 1 >= len(arguments):
+        return Err("--query needs a value")
+    result.query = arguments[index + 1]
+    if index + 2 >= len(arguments):
+        return Err("--query needs a query kind and TERM")
+    result.term = arguments[index + 2]
+    return Ok(None)
+
+
+def apply_flag(mut result: GraphOptions, flag: str, item: str) -> Result[None, str]:
+    """Apply `--format`, `--limit` or `--substitute` with the value that follows it."""
+    if flag == "--format":
+        result.format = item
+    elif flag == "--limit":
+        result.limit = limit_of(item)?
+    else:
+        parts = item.split("=")
+        if len(parts) != 2 or parts[0] == "" or parts[1] == "":
+            return Err("--substitute takes NAME=DIR")
+        result.substitutes[parts[0]] = parts[1]
+    return Ok(None)
+
+
+def limit_of(item: str) -> Result[int, str]:
+    """A nonnegative whole number given as a `--limit`."""
+    limit = parse(item).map_err((_) => limit_refusal())?.expect_int().map_err((_) => limit_refusal())?
+    if limit < 0:
+        return Err(limit_refusal())
+    return Ok(limit)
+
+
+def limit_refusal() -> str:
+    """What a `--limit` that is not a nonnegative whole number is refused with."""
+    return "--limit needs a nonnegative integer"
+
+
 pub def inspect_codegraph(arguments: list[str]) -> Result[i32, str]:
-    """Export JSON/JSONL or answer a compact query, reusing content-addressed unit exports."""
+    """
+    Export JSON/JSONL or answer a compact query, reusing content-addressed unit exports.
+
+    1. Read the options and the toolchain.
+    2. Select the units to inspect: an Incan source through its checked interfaces, anything else as a Rust project.
+    3. Render the answer for the options and print it.
+    """
+    # 1. A bad invocation is refused before the toolchain is read or anything is built.
     selected = options(arguments)?
     path = Path(selected.path).resolve().map_err((error) => error.message())?
     toolchain = load_toolchain()?
+    # 2. An Incan source is inspected through its checked dependencies' interfaces; anything else is a Rust project.
+    source = entry_source(path)
     mut paths: list[GraphUnit] = []
-    mut source = path
-    if path.is_dir() and not path.joinpath("src").joinpath("lib.rs").is_file():
-        for name in ["lib.incn", "main.incn"]:
-            candidate = path.joinpath("src").joinpath(name)
-            if candidate.is_file():
-                source = candidate
-                break
     if source.is_file() and source.name().endswith(".incn"):
         paths = inspect_source(source, toolchain, selected.substitutes)?
     else:
-        mut root = path
-        if root.is_file():
-            root = root.parent()
-            while not root.joinpath("loaf.toml").is_file():
-                parent = root.parent()
-                if parent.0 == root.0:
-                    return Err(f"{selected.path}: no owning loaf.toml")
-                root = parent
+        root = owning_project(path, selected.path)?
         paths = inspect_rust(root, "debug", FeatureRequest(), selected.substitutes, toolchain)?
+    # 3. The answer is on standard output, and a query that selects nothing prints nothing.
     rendered = response(paths, path.0, selected, toolchain)?
     if rendered != "":
         println(rendered)
     return Ok(0)
 
 
+def entry_source(path: Path) -> Path:
+    """The path itself, or for a directory that is not a Rust crate its conventional Incan entry, library first."""
+    if path.is_dir() and not path.joinpath("src").joinpath("lib.rs").is_file():
+        for name in ["lib.incn", "main.incn"]:
+            candidate = path.joinpath("src").joinpath(name)
+            if candidate.is_file():
+                return candidate
+    return path
+
+
+def owning_project(path: Path, given: str) -> Result[Path, str]:
+    """The project directory of a path: itself, or the nearest directory above a file that holds a `loaf.toml`."""
+    if not path.is_file():
+        return Ok(path)
+    mut root = path.parent()
+    while not root.joinpath("loaf.toml").is_file():
+        parent = root.parent()
+        if parent.0 == root.0:
+            return Err(f"{given}: no owning loaf.toml")
+        root = parent
+    return Ok(root)
+
+
 def response(paths: list[GraphUnit], root: str, selected: GraphOptions, toolchain: Toolchain) -> Result[str, str]:
-    """Cache presentation by immutable unit graph paths and query arguments; a warm repeat decodes no graph records.
+    """
+    Cache presentation by immutable unit graph paths and query arguments; a warm repeat decodes no graph records.
 
     Every unit that failed checking is named on stderr, one line each, before any answer; `--strict` refuses instead.
+
+    1. Units that failed checking are named, or refused with `--strict`.
+    2. An answer cached under the digest of the selection and the units' graphs is returned as it is.
+    3. Otherwise render the answer and cache it.
     """
     if len(paths) == 0:
         return Err("no units selected for graph inspection")
+    # 1. A unit that failed checking is named on stderr before any answer, and under `--strict` it refuses the answer.
     notes = unchecked_notes(paths)?
     if selected.strict and len(notes) > 0:
         return Err("\n".join([unchecked_refusal(note) for note in notes]))
     for note in notes:
         warn(unchecked_warning(note))
+    # 2. The same selection over the same graphs gets its answer from the cache without decoding a record.
     mut owner = Path(root)
     if owner.is_file():
         owner = owner.parent()
-    mut inputs = ["incan.codegraph.presentation/7", root, selected.format, selected.query, selected.term, str(selected.limit), str(selected.strict)]
+    cached = Path(f"{cache_file(owner, fingerprint(presentation_inputs(paths, root, selected)?)?)?.0}.answer")
+    if cached.is_file():
+        return read(cached)
+    # 3. Any other answer is rendered once and cached for the next time.
+    rendered = render(paths, root, selected, toolchain, len(notes) > 0)?
+    publish(cached, rendered)?
+    return Ok(rendered)
+
+
+def presentation_inputs(paths: list[GraphUnit], root: str, selected: GraphOptions) -> Result[list[str], str]:
+    """Everything an answer depends on: the options, and each unit's graph with the identity of its file."""
+    mut inputs = [PRESENTATION_DOMAIN, root, selected.format, selected.query, selected.term]
+    inputs = inputs + [str(selected.limit), str(selected.strict)]
     if selected.query == "imports":
         inputs.append("nonempty-import-labels/1")
     for unit in paths:
         inputs = inputs + [unit.path.0, unit.root.0, unit.package, unit.version, artifact_identity(stamp_file(unit))?]
-    digest = fingerprint(inputs)?
-    cached = Path(f"{cache_file(owner, digest)?.0}.answer")
-    if cached.is_file():
-        return cached.read_text("utf-8", "strict").map_err((error) => error.message())
-    mut rendered = ""
+    return Ok(inputs)
+
+
+def render(
+    paths: list[GraphUnit],
+    root: str,
+    selected: GraphOptions,
+    toolchain: Toolchain,
+    degraded: bool,
+) -> Result[str, str]:
+    """The answer to a query, at most `limit` hits, or the merged records as one JSON array or one record per line."""
     if selected.query != "":
-        records = read_records(paths, root, toolchain, query_group(selected.query), selected.strict, len(notes) > 0)?
+        group = query_group(selected.query)
+        records = read_records(paths, root, toolchain, group, selected.strict, degraded)?
         hits = query(records, selected.query, selected.term, anchor_root(Path(root)).0)
         mut lines = hits[:selected.limit]
         if len(hits) > selected.limit:
             lines.append(f"… {len(hits) - selected.limit} more")
-        rendered = "\n".join(lines)
-    else:
-        records = read_records(paths, root, toolchain, "", selected.strict, len(notes) > 0)?
-        if selected.format == "json":
-            rendered = JsonValue.array(records).to_json().map_err((error) => error.message())?
-        else:
-            rendered = "\n".join([record.to_json().map_err((error) => error.message())? for record in records])
-    publish(cached, rendered)?
-    return Ok(rendered)
+        return Ok("\n".join(lines))
+    records = read_records(paths, root, toolchain, "", selected.strict, degraded)?
+    if selected.format == "json":
+        return json_text(JsonValue.array(records))
+    return Ok("\n".join([json_text(record)? for record in records]))
 
 
 def unchecked_notes(paths: list[GraphUnit]) -> Result[list[str], str]:
@@ -164,6 +258,7 @@ def unchecked_notes(paths: list[GraphUnit]) -> Result[list[str], str]:
 def warn(message: str) -> None:
     """Print one warning line to stderr; the answer itself stays on stdout."""
     mut err = stderr()
+    # A closed standard error cannot be told about, so a failed write is ignored.
     _ = err.write_all(RustString.from(f"{message}\n").into_bytes())
 
 
@@ -187,27 +282,64 @@ def anchor_root(path: Path) -> Path:
 
 
 def inspect_source(source: Path, toolchain: Toolchain, substitutes: Dict[str, str]) -> Result[list[GraphUnit], str]:
-    """Inspect the source closure through checked interfaces, without building an Incan library."""
+    """
+    Inspect the source closure through checked interfaces, without building an Incan library.
+
+    1. A source outside any project is inspected alone.
+    2. A project's dependency graphs are prepared, and the registry graphs join them.
+    3. A library is inspected as its project's library; any other source as the project's own unit that contains it.
+    4. The standard Loaves the units reach join the answer.
+    """
+    # 1. A source outside any project stands alone, with no dependencies to prepare.
     match project_root_of(source):
         None => return Ok([GraphUnit(path=inspect_incan(source, toolchain)?, root=source.parent())])
         Some(root) =>
+            # 2. A project's dependencies contribute the graphs they published, and registry Loaves theirs.
             prepared = prepare_graph(root, "debug", FeatureRequest(), substitutes, toolchain)?
             mut paths = prepared.paths + registry_graphs(registry_artifacts(prepared.facets, prepared.request)?)
-            if source.name() == "lib.incn":
-                standard = standard_graphs(root, "debug", toolchain, paths, rust_facet(root.0, false)?.package)?
-                return Ok(paths + standard)
-            for facet in prepared.facets:
-                if facet.project == root.0 and facet.domain.value() == "target":
-                    paths.append(GraphUnit(path=inspect_incan(source, toolchain, unit_natives(facet, prepared.built, prepared.request)?, prepared.interfaces, facet.features, false, unit_loaves(facet, prepared.interfaces)?)?, root=root))
-                    standard = standard_graphs(root, "debug", toolchain, paths, rust_facet(root.0, false)?.package)?
-                    return Ok(paths + standard)
-            return Err("inspection selected no source unit")
+            # 3. A library is already among the prepared graphs; any other source adds the graph of its own unit.
+            if source.name() != "lib.incn":
+                paths.append(own_unit_graph(source, root, prepared, toolchain)?)
+            # 4. The standard Loaves the units reach join, except the one the project itself is.
+            package = rust_facet(root.0, false)?.package
+            standard = standard_graphs(root, "debug", toolchain, paths, package)?
+            return Ok(paths + standard)
 
 
-def read_records(paths: list[GraphUnit], root: str, toolchain: Toolchain, group: str, strict: bool, degraded: bool) -> Result[list[JsonValue], str]:
-    """Merge unit documents deterministically, retaining one header and one instance of each identified fact.
+def own_unit_graph(
+    source: Path,
+    root: Path,
+    prepared: GraphDependencies,
+    toolchain: Toolchain,
+) -> Result[GraphUnit, str]:
+    """The graph of a source of the project's own target unit, checked against the interfaces of its dependencies."""
+    for facet in prepared.facets:
+        if facet.project == root.0 and facet.domain.value() == "target":
+            natives = unit_natives(facet, prepared.built, prepared.request)?
+            loaves = unit_loaves(facet, prepared.interfaces)?
+            graph = inspect_incan(source, toolchain, natives, prepared.interfaces, facet.features, false, loaves)?
+            return Ok(GraphUnit(path=graph, root=root))
+    return Err("inspection selected no source unit")
+
+
+def read_records(
+    paths: list[GraphUnit],
+    root: str,
+    toolchain: Toolchain,
+    group: str,
+    strict: bool,
+    degraded: bool,
+) -> Result[list[JsonValue], str]:
+    """
+    Merge unit documents deterministically, retaining one header and one instance of each identified fact.
 
     The header states the requested mode and whether any selected unit is unchecked, whichever unit's header was kept.
+
+    1. Read the records of each unit for the group, one JSON document per line.
+    2. A header is checked against the unit it came from. The first one is kept, and then that of the unit that holds
+       the root; all of them contribute their languages and semantic contexts.
+    3. Any other record is kept once per identity.
+    4. The kept header is completed with the mode, degradation, languages and contexts of the whole selection.
     """
     mut records: list[JsonValue] = []
     mut seen: Dict[str, bool] = {}
@@ -215,25 +347,18 @@ def read_records(paths: list[GraphUnit], root: str, toolchain: Toolchain, group:
     mut languages: list[str] = []
     mut contexts: list[JsonValue] = []
     for unit in paths:
+        # 1. Each unit's records are read for the group the query needs, one JSON document to a line.
         document = read_graph(unit, toolchain.driver, group)?
         for line in document.split("\n"):
             if line.strip() == "":
                 continue
             record = parse(line).map_err((error) => f"{unit.path.0}: {error.message()}")?
-            mut key = text(record, "id")
+            # 2. A header must belong to the unit it was read for; the one kept is the first, or the root unit's.
             if text(record, "record") == "header":
-                package = record.get("package")
-                if unit.package != "" and package is None:
-                    return Err(f"{unit.path.0}: graph has no Loaf identity")
-                if let Some(value) = package:
-                    if unit.package != "" and text(value, "name") != unit.package:
-                        return Err(f"{unit.path.0}: graph names a different Loaf")
-                    if unit.version != "" and text(value, "version") != unit.version:
-                        return Err(f"{unit.path.0}: graph has a different Loaf version")
+                check_identity(unit, record)?
                 if len(header) == 0 or unit.root.0 == root or root.startswith(f"{unit.root.0}/"):
                     header = record.expect_object().map_err((error) => error.message())?
-                for language in record.require("languages").map_err((error) => error.message())?.expect_array().map_err((error) => error.message())?:
-                    name = language.expect_str().map_err((error) => error.message())?
+                for name in header_languages(record)?:
                     if name not in languages:
                         languages.append(name)
                 match record.get("semantic_contexts"):
@@ -241,10 +366,13 @@ def read_records(paths: list[GraphUnit], root: str, toolchain: Toolchain, group:
                         contexts = contexts + value.expect_array().map_err((error) => error.message())?
                     None => pass
                 continue
+            # 3. A fact several units report is kept once, under the first that reported it.
+            key = text(record, "id")
             if key != "" and key in seen:
                 continue
             seen[key] = true
             records.append(record)
+    # 4. The header tells the reader the mode, whether any unit was unchecked, and every language and context involved.
     header["root_path"] = JsonValue.string(root)
     header["mode"] = JsonValue.string("allow_errors")
     if strict:
@@ -253,3 +381,24 @@ def read_records(paths: list[GraphUnit], root: str, toolchain: Toolchain, group:
     header["languages"] = JsonValue.array([JsonValue.string(name) for name in sorted(languages)])
     header["semantic_contexts"] = JsonValue.array(contexts)
     return Ok([JsonValue.object(header)] + records)
+
+
+def check_identity(unit: GraphUnit, header: JsonValue) -> Result[None, str]:
+    """Refuse a graph whose header names no Loaf, or another Loaf or version than the unit it was read for."""
+    package = header.get("package")
+    if unit.package != "" and package is None:
+        return Err(f"{unit.path.0}: graph has no Loaf identity")
+    if let Some(value) = package:
+        if unit.package != "" and text(value, "name") != unit.package:
+            return Err(f"{unit.path.0}: graph names a different Loaf")
+        if unit.version != "" and text(value, "version") != unit.version:
+            return Err(f"{unit.path.0}: graph has a different Loaf version")
+    return Ok(None)
+
+
+def header_languages(header: JsonValue) -> Result[list[str], str]:
+    """The languages a graph header says its facts are in."""
+    mut names: list[str] = []
+    for language in required_items(header, "languages")?:
+        names.append(string_value(language)?)
+    return Ok(names)

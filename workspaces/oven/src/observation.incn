@@ -82,10 +82,11 @@ pub model Ledger:
         return Ok(content)
 
     def sources(mut self, root: Path, recursive: bool) -> Result[list[str], str]:
-        """The files under `root` that this ledger keeps (Incan sources unless its extension says otherwise), sorted; only
-        directories whose metadata changed are listed again.
+        """
+        The files under `root` that this ledger keeps (Incan sources unless its extension says otherwise), sorted.
 
-        The compiler's own collection rules apply: hidden directories, `target` and `node_modules` are not entered.
+        Only directories whose metadata changed are listed again. The compiler's own collection rules apply: hidden
+        directories, `target` and `node_modules` are not entered.
         """
         mut found: list[str] = []
         mut pending = [root]
@@ -102,20 +103,33 @@ pub model Ledger:
         return Ok(sorted(found))
 
     def listing(mut self, directory: Path) -> Result[DirectoryEntry, str]:
-        """A directory's retained children, listed again only when its metadata changed."""
+        """
+        A directory's retained children, listed again only when its metadata changed.
+
+        1. An unchanged directory keeps the listing it was retained with.
+        2. A changed one is listed: the files this ledger keeps and the subdirectories worth entering.
+        3. The new listing is retained.
+        """
+        # 1. A directory whose metadata is as recorded is not listed again.
         observed = observe(directory)?
         if directory.0 in self.directories and self.directories[directory.0].stamp == observed.stamp:
             return Ok(self.directories[directory.0])
+        # 2. A changed directory yields the files this ledger keeps and the subdirectories worth entering.
         mut files: list[str] = []
         mut directories: list[str] = []
         for child in directory.iterdir().map_err((error) => f"{directory.0}: {error.message()}")?:
             name = child.name()
             if child.is_dir():
-                if not (name.startswith(".") or name == "target" or name == "node_modules"):
+                if not skipped_directory(name):
                     directories.append(name)
             elif child.is_file() and name.endswith(self.extension):
                 files.append(name)
-        entry = DirectoryEntry(stamp=retained(observed, self.settle), files=sorted(files), directories=sorted(directories))
+        # 3. The new listing is kept under the metadata it was taken at, and counts as work the pass could not avoid.
+        entry = DirectoryEntry(
+            stamp=retained(observed, self.settle),
+            files=sorted(files),
+            directories=sorted(directories),
+        )
         trace(f"listing {directory.0}")
         self.listed += 1
         self.changed = true
@@ -123,48 +137,96 @@ pub model Ledger:
         return Ok(entry)
 
     def read(mut self) -> Result[None, str]:
-        """Take the rows of the saved document; any malformed row refuses the whole document."""
+        """
+        Take the rows of the saved document; any malformed row refuses the whole document.
+
+        1. The document is a ledger of this version, for the files this ledger keeps.
+        2. Each file row and each directory row is read in full.
+        """
+        # 1. Only a ledger of this version, for the same kind of files, can vouch for the files it names.
         text = self.location.read_text("utf-8", "strict").map_err((error) => error.message())?
         document = parse(text).map_err((error) => error.message())?
-        if text_field(document, "schema", []).map_err(refusal)? != LEDGER_SCHEMA:
+        if text_of(document, "schema")? != LEDGER_SCHEMA:
             return Err("not a ledger of this version")
-        if text_field(document, "extension", []).map_err(refusal)? != self.extension:
+        if text_of(document, "extension")? != self.extension:
             return Err("a ledger of other files")
+        # 2. Every row is read in full, so a ledger with one malformed row retains nothing.
         for row in rows(document, "files")?:
-            self.files[text_field(row, "path", []).map_err(refusal)?] = FileEntry(
-                stamp=text_field(row, "stamp", []).map_err(refusal)?,
-                digest=text_field(row, "digest", []).map_err(refusal)?,
-            )
+            self.files[text_of(row, "path")?] = FileEntry(stamp=text_of(row, "stamp")?, digest=text_of(row, "digest")?)
         for row in rows(document, "directories")?:
-            self.directories[text_field(row, "path", []).map_err(refusal)?] = DirectoryEntry(
-                stamp=text_field(row, "stamp", []).map_err(refusal)?,
+            self.directories[text_of(row, "path")?] = DirectoryEntry(
+                stamp=text_of(row, "stamp")?,
                 files=names(row, "files")?,
                 directories=names(row, "directories")?,
             )
         return Ok(None)
 
     def save(mut self) -> Result[None, str]:
-        """Publish the ledger atomically when this pass changed it, leaving out what no longer exists."""
+        """
+        Publish the ledger atomically when this pass changed it, leaving out what no longer exists.
+
+        1. A ledger no pass changed is not rewritten.
+        2. The document keeps the rows of the files and directories that still exist.
+        3. It is published beside the ledger's directory, which is created when it is missing.
+        """
+        # 1. A pass that learned nothing leaves the saved ledger untouched.
         if not self.changed:
             return Ok(None)
-        mut files: list[JsonValue] = []
-        for path in sorted([key for key in self.files.keys()]):
-            if Path(path).is_file():
-                files.append(JsonValue.object({"path": JsonValue.string(path), "stamp": JsonValue.string(self.files[path].stamp), "digest": JsonValue.string(self.files[path].digest)}))
-        mut directories: list[JsonValue] = []
-        for path in sorted([key for key in self.directories.keys()]):
-            if Path(path).is_dir():
-                entry = self.directories[path]
-                directories.append(
-                    JsonValue.object({"path": JsonValue.string(path), "stamp": JsonValue.string(entry.stamp), "files": texts(entry.files), "directories": texts(entry.directories)}),
-                )
-        document = JsonValue.object(
-            {"schema": JsonValue.string(LEDGER_SCHEMA), "files": JsonValue.array(files), "directories": JsonValue.array(directories), "extension": JsonValue.string(self.extension)},
-        )
-        self.location.parent().mkdir(true, true).map_err((error) => f"{self.location.parent().0}: {error.message()}")?
+        # 2. The ledger forgets files and directories that no longer exist.
+        document = self.document()
+        # 3. A reader sees the old ledger or the new one, never half of either.
+        parent = self.location.parent()
+        parent.mkdir(true, true).map_err((error) => f"{parent.0}: {error.message()}")?
         publish(self.location, document.to_json().map_err((error) => error.message())?)?
         self.changed = false
         return Ok(None)
+
+    def document(self) -> JsonValue:
+        """The ledger as the document it is saved as: the rows of the files and directories that still exist."""
+        mut files: list[JsonValue] = []
+        for path in sorted([key for key in self.files.keys()]):
+            if Path(path).is_file():
+                files.append(file_row(path, self.files[path]))
+        mut directories: list[JsonValue] = []
+        for path in sorted([key for key in self.directories.keys()]):
+            if Path(path).is_dir():
+                directories.append(directory_row(path, self.directories[path]))
+        return JsonValue.object(
+            {
+                "schema": JsonValue.string(LEDGER_SCHEMA),
+                "files": JsonValue.array(files),
+                "directories": JsonValue.array(directories),
+                "extension": JsonValue.string(self.extension),
+            },
+        )
+
+
+def skipped_directory(name: str) -> bool:
+    """Hidden directories, build output (`target`) and vendored packages (`node_modules`) are not entered."""
+    return name.startswith(".") or name == "target" or name == "node_modules"
+
+
+def file_row(path: str, entry: FileEntry) -> JsonValue:
+    """One file of the saved document."""
+    return JsonValue.object(
+        {
+            "path": JsonValue.string(path),
+            "stamp": JsonValue.string(entry.stamp),
+            "digest": JsonValue.string(entry.digest),
+        },
+    )
+
+
+def directory_row(path: str, entry: DirectoryEntry) -> JsonValue:
+    """One directory of the saved document."""
+    return JsonValue.object(
+        {
+            "path": JsonValue.string(path),
+            "stamp": JsonValue.string(entry.stamp),
+            "files": texts(entry.files),
+            "directories": texts(entry.directories),
+        },
+    )
 
 
 def texts(items: list[str]) -> JsonValue:
@@ -182,7 +244,10 @@ pub def observe(path: Path) -> Result[Observation, str]:
     """A file or directory's identity as the filesystem reports it, following symbolic links."""
     prefix = f"{path.0}: "
     info = metadata(path.0).map_err((error) => f"{prefix}{error}")?
-    stamp = f"{info.dev()}:{info.ino()}:{info.size()}:{info.mode()}:{info.mtime()}.{info.mtime_nsec()}:{info.ctime()}.{info.ctime_nsec()}"
+    file = f"{info.dev()}:{info.ino()}:{info.size()}:{info.mode()}"
+    modified = f"{info.mtime()}.{info.mtime_nsec()}"
+    changed = f"{info.ctime()}.{info.ctime_nsec()}"
+    stamp = f"{file}:{modified}:{changed}"
     mut newest = int(info.mtime())
     if int(info.ctime()) > newest:
         newest = int(info.ctime())
@@ -224,6 +289,11 @@ def names(row: JsonValue, name: str) -> Result[list[str], str]:
         None => return Err(f"no `{name}`")
 
 
+def text_of(row: JsonValue, name: str) -> Result[str, str]:
+    """A string field of a ledger document or row."""
+    return text_field(row, name, []).map_err(refusal)
+
+
 def refusal(failed: list[str]) -> str:
     """The field path that failed, as text."""
     return ".".join(failed)
@@ -245,13 +315,24 @@ pub def relay(lines: list[str]) -> None:
         return
     text = "\n".join(lines) + "\n"
     if destination == "-":
-        mut err = stderr()
-        written = err.write_all(RustString.from(text).into_bytes())
+        write_to_stderr(text)
         return
-    match Path(destination).open("a"):
+    append_to(Path(destination), text)
+
+
+def write_to_stderr(text: str) -> None:
+    """Write text to the standard error stream."""
+    mut err = stderr()
+    # A closed standard error cannot be told about, so a failed write is ignored.
+    _ = err.write_all(RustString.from(text).into_bytes())
+
+
+def append_to(path: Path, text: str) -> None:
+    """Append text to a file; a trace that cannot be written is dropped, since it only explains."""
+    match path.open("a"):
         Ok(file) =>
             mut sink = file
-            appended = sink.write(text)
+            _ = sink.write(text)
         Err(_) => pass
 
 

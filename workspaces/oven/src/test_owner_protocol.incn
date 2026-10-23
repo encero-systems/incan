@@ -3,8 +3,8 @@
 from rust::std::io import Write
 from rust::std::os::unix::net import UnixStream
 from std.json import JsonValue
-from std.tempfile import TemporaryDirectory
 from owner_protocol import MAX_FRAME, Reply, Request, dial, length_of, listen, padded, reply_of, request_of
+from scratch import scratch_directory
 
 
 def raw(path: str, bytes_sent: bytes) -> Result[None, str]:
@@ -41,12 +41,19 @@ def refused_request(result: Result[Request, str]) -> bool:
 
 pub def test_frames_round_trip_and_stay_bounded() -> Result[None, str]:
     """A document survives a frame in both directions; the bound is a refusal before any allocation."""
-    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    scratch = scratch_directory()?
     path = scratch.path().joinpath("o.sock").0
     mut listener = listen(path, true)?
     mut client = dial(path)?
     mut server = listener.accept()?
-    request = Request(command="run", generation="abc", path="/p/src/main.incn", features=["a", "b"], default_features=false)
+    # A request travels from the client to the server, and a reply back.
+    request = Request(
+        command="run",
+        generation="abc",
+        path="/p/src/main.incn",
+        features=["a", "b"],
+        default_features=false,
+    )
     client.send(request.to_json())?
     seen = request_of(server.receive()?)?
     assert seen.command == "run"
@@ -60,6 +67,7 @@ pub def test_frames_round_trip_and_stay_bounded() -> Result[None, str]:
     assert answer.exit == 3
     assert answer.binary == "/p/target/bin/p"
     assert answer.trace == ["oven: x"]
+    # A header states a length of eight digits, within the bound.
     assert padded(42) == "00000042"
     assert length_of(padded(MAX_FRAME).encode("utf-8"))? == MAX_FRAME
     assert refuses(length_of(padded(MAX_FRAME + 1).encode("utf-8")))
@@ -70,7 +78,7 @@ pub def test_frames_round_trip_and_stay_bounded() -> Result[None, str]:
 
 pub def test_a_broken_client_leaves_the_next_request_healthy() -> Result[None, str]:
     """A cut-off payload, a junk header and a non-request each refuse one connection and nothing else."""
-    scratch = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    scratch = scratch_directory()?
     path = scratch.path().joinpath("o.sock").0
     mut listener = listen(path, true)?
     raw(path, "00000100{".encode("utf-8"))?

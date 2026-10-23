@@ -1,25 +1,40 @@
 """Read published standard and registry Loaf graphs; legacy source-backed packages have one cached export."""
 
 from std.fs import Path
-from std.json import parse
+from std.toml import TomlValue
+from files import parse_json
 from graph_cache import GraphUnit, read_graph
 from graph_dependencies import unit_natives
 from graph_incan import inspect_incan
+from graph_queries import text
 from home import standard_artifact_dir, standard_packages
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
 from rust_activation import DependencyDomain
-from rust_units import RustBuild, read_registry_units, registry_features, target_configuration
+from rust_units import RustBuild, read_registry_units, registry_selection, target_configuration
 from toolchain import Toolchain, rust_compiler
-from std.toml import TomlValue
-from graph_queries import text
 
 
-pub def standard_graphs(owner: Path, profile: str, toolchain: Toolchain, units: list[GraphUnit], exclude: str = "") -> Result[list[GraphUnit], str]:
-    """Follow compiler-proven package origins into standard Loaves, without treating ambient availability as a dependency."""
-    mut graphs: list[GraphUnit] = []
+pub def standard_graphs(
+    owner: Path,
+    profile: str,
+    toolchain: Toolchain,
+    units: list[GraphUnit],
+    exclude: str = "",
+) -> Result[list[GraphUnit], str]:
+    """
+    Follow compiler-proven package origins into standard Loaves, without treating ambient availability as a dependency.
+
+    1. Every standard package of the toolchain is available, except the one `exclude` names.
+    2. Read the origins each unit's graph records, starting from the selected units.
+    3. A package origin that names an available standard package not seen yet adds that package's graph, whose own
+       origins are followed in turn.
+    """
+    # 1. Every standard package of the toolchain is available to follow; ambient availability makes none a dependency.
     mut available: Dict[str, str] = {}
     for package in standard_packages()?:
         available[package.name] = package.root
+    # 2. The origins to follow are the ones each unit's graph records, starting from the units selected.
+    mut graphs: list[GraphUnit] = []
     mut seen = [exclude] + [unit.package for unit in units if unit.package in available]
     mut queue = units
     while len(queue) > 0:
@@ -27,31 +42,59 @@ pub def standard_graphs(owner: Path, profile: str, toolchain: Toolchain, units: 
         for line in read_graph(current, toolchain.driver, "origins")?.split("\n"):
             if line == "":
                 continue
-            origin = parse(line).map_err((error) => error.message())?
-            name = text(origin, "library")
-            if text(origin, "kind") != "package" or name not in available or name in seen:
-                continue
-            seen.append(name)
-            unit = standard_graph(owner, profile, toolchain, name, available[name])?
-            graphs.append(unit)
-            queue.append(unit)
+            # 3. A package met for the first time contributes its graph, and its own origins are followed in turn.
+            match origin_package(line, available, seen)?:
+                None => pass
+                Some(name) =>
+                    seen.append(name)
+                    unit = standard_graph(owner, profile, toolchain, name, available[name])?
+                    graphs.append(unit)
+                    queue.append(unit)
     return Ok(graphs)
 
 
-def standard_graph(owner: Path, profile: str, toolchain: Toolchain, package: str, source_root: str) -> Result[GraphUnit, str]:
-    """Read a published standard graph, or cache a legacy source export entirely under the requesting project."""
+def origin_package(line: str, available: Dict[str, str], seen: list[str]) -> Result[Option[str], str]:
+    """The standard package a graph origin record names, when it is an available one not seen yet."""
+    origin = parse_json(line)?
+    name = text(origin, "library")
+    if text(origin, "kind") != "package" or name not in available or name in seen:
+        return Ok(None)
+    return Ok(Some(name))
+
+
+def standard_graph(
+    owner: Path,
+    profile: str,
+    toolchain: Toolchain,
+    package: str,
+    source_root: str,
+) -> Result[GraphUnit, str]:
+    """
+    Read a published standard graph, or cache a legacy source export entirely under the requesting project.
+
+    1. A standard package compiled with a graph publishes it beside its artifacts.
+    2. Otherwise export the package's own source, under the requesting project's cache.
+    """
+    # 1. A package compiled with a graph is read from the graph it published.
     graph = standard_artifact_dir(package, profile)?.joinpath(f"{package}.incngraph")
     if graph.is_file():
         return Ok(GraphUnit(path=graph, root=Path(f"@std/{package}"), package=package))
+    # 2. Any other is exported from its source, once, into the requesting project's own cache.
     rustc = rust_compiler(toolchain)
     demand = LocalDemand(project=source_root, domain=DependencyDomain.Target, features=[], defaults=true)
     facets = local_facets(demand, target_configuration(rustc)?, None, {}, true)?
-    request = RustBuild(project=owner.0, profile=profile, rustc=rustc, registry=read_registry_units(Path(toolchain.registry_units))?)
+    request = RustBuild(
+        project=owner.0,
+        profile=profile,
+        rustc=rustc,
+        registry=read_registry_units(Path(toolchain.registry_units))?,
+    )
     for facet in facets:
         if facet.project != source_root or facet.domain != DependencyDomain.Target:
             continue
         source = Path(source_root).joinpath("src").joinpath("lib.incn")
-        legacy = inspect_incan(source, toolchain, unit_natives(facet, {}, request)?, {}, facet.features, false, [], Some(owner))?
+        natives = unit_natives(facet, {}, request)?
+        legacy = inspect_incan(source, toolchain, natives, {}, facet.features, false, [], Some(owner))?
         return Ok(GraphUnit(path=legacy, root=Path(f"@std/{package}"), package=package))
     return Err(f"no standard graph source selected for {package}")
 
@@ -61,10 +104,9 @@ pub def registry_artifacts(facets: list[LocalFacet], request: RustBuild) -> Resu
     mut artifacts: Dict[str, str] = {}
     for facet in facets:
         for selected in facet.registry:
-            loaf = selected.require("loaf").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
-            requirement = selected.require("req").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
-            artifact = request.registry.artifact(loaf, requirement, facet.domain.value(), registry_features(selected)?)?
-            artifacts[artifact] = loaf
+            selection = registry_selection(selected)?
+            artifact = request.registry.artifact_for(selection, facet.domain.value())?
+            artifacts[artifact] = selection.loaf
     return Ok(artifacts)
 
 
