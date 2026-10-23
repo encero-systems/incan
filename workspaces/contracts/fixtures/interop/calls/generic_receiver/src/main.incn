@@ -1,0 +1,208 @@
+# behavior: registry crates add receivers to native values: imported Rust extension traits add ordinary and generic binary methods to a standard cursor, generic receivers retain checked native views, internal source layouts and captured callbacks returned by source methods, preserve independent binders, infer trait-bound results, adapt source ranges with once-only endpoints and retain approved borrowed owner arguments, and an encoding's native byte slice exposes its inherent methods through a shared Cow receiver
+# expect-stdout:
+#   1
+#   770
+#   2
+#   7
+#   8
+#   2
+#   97
+#   2
+
+"""Keep generic inherent, trait and extension receiver calls of registry crates in one area case."""
+
+from rust::blake2 import Blake2b512
+from rust::blake3 import hash as blake3_hash
+from rust::byteorder import BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt
+from rust::encoding_rs import Encoding
+from rust::rand import Rng, thread_rng
+from rust::sha2 import Digest, Sha224
+from rust::sha3 import Shake128
+from rust::sha3::digest import ExtendableOutputReset, Update, XofReader
+from rust::std::cell import Cell
+from rust::std::io import Cursor
+from rust::std::mem import size_of_val
+from rust::std::net import Ipv4Addr
+from rust::std::ops import Range
+from rust::std::time import Duration
+from rust::xxhash_rust::xxh32 import Xxh32, xxh32
+from rust::xxhash_rust::xxh64 import Xxh64, xxh64
+from rust::xxhash_rust::xxh3 import Xxh3Default, xxh3_64, xxh3_128
+from std.traits.callable import Callable1
+
+
+model DecodedValue[T with Clone]:
+    """Keep a generic method's intermediate value out of its caller's result signature."""
+
+    item: T
+
+
+class GenericReader:
+    """Close an internal wrapper layout through checked generic method calls."""
+
+    def decode[T with Clone](self, value: T) -> Result[DecodedValue[T], str]:
+        """Construct the private intermediate specialization."""
+        return Ok(DecodedValue(item=value))
+
+    def read[T with Clone](self, value: T) -> Result[T, str]:
+        """Consume the wrapper after an inferred generic method call."""
+        decoded = self.decode(value)?
+        return Ok(decoded.item)
+
+    def integer(self) -> Result[int, str]:
+        """Close the scalar frame without exposing its intermediate layout."""
+        return self.read(7)
+
+    def native(self) -> Result[Duration, str]:
+        """Close a native-value frame through the same method chain."""
+        return self.read(Duration.from_secs(9u64))
+
+    def apply[F with Callable1[int, int]](self, value: int, transform: F) -> int:
+        """Invoke a generic callback while retaining its captured environment."""
+        return transform(value)
+
+    def keep[F with Callable1[int, int]](self, transform: F) -> F:
+        """Return a callback with its captured environment owned by the caller."""
+        return transform
+
+
+class DigestOwner:
+    """Retain a native digest behind a source field."""
+
+    handle: Sha224
+
+    def update(mut self, chunk: bytes) -> None:
+        """Bind the native method's anonymous by-value input parameter."""
+        Digest.update(self.handle, chunk.as_slice())
+
+    def finish(mut self) -> bytes:
+        """Return the selected digest output and reset the native owner."""
+        return self.handle.finalize_reset().to_vec()
+
+
+def choose(low: int, high: int) -> int:
+    """Infer independent method arguments for a blanket trait implementation."""
+    mut rng = thread_rng()
+    return rng.gen_range(Range(start=low, end=high))
+
+
+def choose_source(low: int, high: int) -> int:
+    """Pass a source half-open range through the same checked native argument contract."""
+    mut rng = thread_rng()
+    return rng.gen_range(low..high)
+
+
+def bound(mut observed: list[int], value: int) -> int:
+    """Record each range endpoint evaluation before returning its value."""
+    observed.append(value)
+    return value
+
+
+def encoded_bytes() -> bytes:
+    """Return a slice method's owned result through an explicit bytes boundary."""
+    match Encoding.for_label(b"utf-8"):
+        Some(encoding) =>
+            encoded = encoding.encode("ab")
+            return encoded.0.to_vec()
+        None => return b""
+
+
+def show_extension_traits() -> None:
+    """Read and write binary values through the imported cursor extension methods."""
+    mut input = Cursor.new(b"\x01\x02\x03")
+    match input.read_u8():
+        Ok(value) => println(int(value))
+        Err(_) => println(-1)
+    match input.read_u16[LittleEndian]():
+        Ok(value) => println(int(value))
+        Err(_) => println(-1)
+    mut output = Cursor.new(b"")
+    match output.write_u16[BigEndian](16706u16):
+        Ok(_) => println(len(output.into_inner()))
+        Err(_) => println(-1)
+
+
+def show_generic_receivers() -> None:
+    """Retain the cell's element type and a deterministic singleton random range."""
+    value = Cell.new(7)
+    println(value.get())
+    value.set(8)
+    println(value.get())
+    text = "borrowed"
+    shared: Cell[&str] = Cell.new(text)
+    assert len(shared.get()) == 8
+    assert len(shared.get()) == 8
+    assert text == "borrowed"
+    assert choose(7, 8) == 7
+    assert choose_source(9, 10) == 9
+    mut observed: list[int] = []
+    mut rng = thread_rng()
+    selected: int = rng.gen_range(bound(observed, 11)..bound(observed, 12))
+    assert selected == 11
+    assert observed == [11, 12]
+    inferred: u8 = rng.gen_range(13..14).wrapping_resize()
+    assert inferred == 13u8
+    native: Sha224 = Sha224.default()
+    mut digest = DigestOwner(handle=native)
+    digest.update(b"abc")
+    output = digest.finish()
+    assert len(output) == 28
+    assert output == b"\x23\x09\x7d\x22\x34\x05\xd8\x22\x86\x42\xa4\x77\xbd\xa2\x55\xb3\x2a\xad\xbc\xe4\xbd\xa0\xb3\xf7\xe3\x6c\x9d\xa7"
+    mut other = Blake2b512.default()
+    Digest.update(other, b"abc".as_slice())
+    assert len(other.finalize_reset().to_vec()) == 64
+    mut shake = Shake128.default()
+    Update.update(shake, b"abc".as_slice())
+    mut reader = ExtendableOutputReset.finalize_xof_reset(shake)
+    mut output = b"\x00\x00\x00\x00"
+    reader.read(output)
+    assert output == b"\x58\x81\x09\x2d"
+    owner = blake3_hash(b"abc".as_slice())
+    assert size_of_val(owner.as_bytes()) == 32
+    view = owner.as_bytes()
+    copied = view.to_vec()
+    assert len(copied) == 32
+    assert copied == owner.as_bytes().to_vec()
+    octets = Ipv4Addr.new(127u8, 0u8, 0u8, 1u8).octets()
+    assert octets.to_vec() == b"\x7f\x00\x00\x01"
+    input = b"abc"
+    mut small = Xxh32.default()
+    small.update(input.as_slice())
+    assert small.digest() == xxh32(input.as_slice(), 0u32)
+    mut large = Xxh64.default()
+    large.update(input.as_slice())
+    assert large.digest() == xxh64(input.as_slice(), 0u64)
+    mut wide = Xxh3Default.default()
+    wide.update(input.as_slice())
+    assert wide.digest() == xxh3_64(input.as_slice())
+    assert wide.digest128() == xxh3_128(input.as_slice())
+    match GenericReader().integer():
+        Ok(decoded) => assert decoded == 7
+        Err(_error) => assert false
+    match GenericReader().native():
+        Ok(decoded) => assert decoded.as_secs() == 9u64
+        Err(_error) => assert false
+    increment = 3
+    assert GenericReader().apply(transform=(value) => value + increment, value=4) == 7
+    retained = GenericReader().keep((value) => value + increment)
+    assert retained(5) == 8
+
+
+def show_slice_methods() -> None:
+    """Copy bytes through a slice method and keep the Cow available for another read."""
+    match Encoding.for_label(b"utf-8"):
+        Some(encoding) =>
+            encoded = encoding.encode("ab")
+            copied = encoded.0.to_vec()
+            println(len(copied))
+            println(copied[0])
+            println(len(encoded.0.to_vec()))
+        None => println("missing")
+    assert len(encoded_bytes()) == 2
+
+
+def main() -> None:
+    """Run each registry-crate observation in the order of the cases it carries."""
+    show_extension_traits()
+    show_generic_receivers()
+    show_slice_methods()

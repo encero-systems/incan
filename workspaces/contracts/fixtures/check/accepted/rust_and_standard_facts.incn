@@ -1,0 +1,13 @@
+# behavior: Rust function facts and standard module facts coexist in one checked unit
+# expect-accepted:
+
+"""Rust and standard imports retain their signatures in the same compilation session."""
+
+from rust::std::convert import identity
+from std.testing import assert_eq
+
+
+def main() -> None:
+    """Check an inferred Rust result with a standard assertion."""
+    value: int = identity(7)
+    assert_eq(value, 7)

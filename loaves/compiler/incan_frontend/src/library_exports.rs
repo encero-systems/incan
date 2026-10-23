@@ -22,6 +22,34 @@ use crate::symbols::{
 use crate::typechecker::{PartialProjectionTargetKind, TypeChecker};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 
+/// Retain feature requirements for public names before projection removes inactive declarations. These records
+/// explain an unavailable export; they grant no declaration identity or executable body to an inactive item.
+pub fn gated_public_exports(
+    program: &Program,
+    module_path: &[String],
+) -> Vec<crate::library_manifest::ProviderFactRequirement> {
+    program
+        .declarations
+        .iter()
+        .filter(|declaration| {
+            !declaration.required_features.is_empty() && crate::typechecker::is_public_decl(declaration)
+        })
+        .filter_map(|declaration| {
+            let name = crate::typechecker::declaration_name(declaration)?;
+            Some(crate::library_manifest::ProviderFactRequirement {
+                kind: crate::library_manifest::ProviderFactKind::Export,
+                identity: module_path
+                    .iter()
+                    .map(String::as_str)
+                    .chain(std::iter::once(name))
+                    .collect::<Vec<_>>()
+                    .join("::"),
+                required_features: declaration.required_features.iter().cloned().collect(),
+            })
+        })
+        .collect()
+}
+
 #[derive(Clone, Copy)]
 struct DefaultPathContext<'a> {
     checker: &'a TypeChecker,
@@ -1970,7 +1998,7 @@ fn map_methods_with_defaults(
 ) -> Vec<CheckedMethod> {
     let mut entries: Vec<_> = methods
         .iter()
-        .filter(|(name, _)| is_exported_method_name(name))
+        .filter(|(name, info)| is_exported_method_name(name) || is_registry_description_method(info))
         .map(|(name, info)| checked_method_from_info(name, info))
         .collect();
     attach_method_defaults(&mut entries, ast_methods, checker);
@@ -1986,8 +2014,12 @@ fn map_method_overloads_with_defaults(
 ) -> Vec<CheckedMethod> {
     let mut entries: Vec<_> = method_overloads
         .iter()
-        .filter(|(name, _)| is_exported_method_name(name))
-        .flat_map(|(name, overloads)| overloads.iter().map(|info| checked_method_from_info(name, info)))
+        .flat_map(|(name, overloads)| {
+            overloads
+                .iter()
+                .filter(|info| is_exported_method_name(name) || is_registry_description_method(info))
+                .map(|info| checked_method_from_info(name, info))
+        })
         .collect();
     attach_method_defaults(&mut entries, ast_methods, checker);
     entries.sort_by(|left, right| {
@@ -2001,6 +2033,30 @@ fn map_method_overloads_with_defaults(
 /// Return whether a method belongs in public API metadata.
 fn is_exported_method_name(name: &str) -> bool {
     !name.starts_with('_') || name.starts_with("__") || matches!(name, "_checked_current_unit" | "_checked_package")
+}
+
+/// Publish the standard registry's reserved registration signatures for compiler-generated descriptions.
+/// Underscore-prefixed methods elsewhere retain ordinary private metadata; the checked provider identity grants this
+/// exception.
+fn is_registry_description_method(info: &MethodInfo) -> bool {
+    let Some(identity) = &info.identity else {
+        return false;
+    };
+    if identity.kind != SemanticSourceTargetKind::Method
+        || !matches!(
+            identity.declaration_name.as_str(),
+            "_describe" | "_describe_function" | "_describe_method"
+        )
+    {
+        return false;
+    }
+    match &identity.origin {
+        SymbolOrigin::Package { library, module_path } => {
+            library == "incan_stdlib_core" && module_path.iter().map(String::as_str).eq(["registry"])
+        }
+        SymbolOrigin::Module(path) => path.iter().map(String::as_str).eq(["std", "registry"]),
+        _ => false,
+    }
 }
 
 /// Convert one semantic method entry into the checked export shape.

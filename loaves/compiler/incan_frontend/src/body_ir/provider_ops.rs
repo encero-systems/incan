@@ -62,7 +62,7 @@ impl ProviderOperationCatalog {
     /// the Loaves this compilation links.
     pub fn from_loaves(loaves: &LoafIndex) -> Result<Self, String> {
         let mut catalog = Self::new();
-        for entry in loaves.entries() {
+        for entry in loaves.provider_operation_entries() {
             let provider_key = entry.artifact.identity.stable_key();
             for descriptor in &entry.artifact.manifest.contract_metadata.provider.operation_descriptors {
                 let Some(module_path) = descriptor.operation.module_path() else {

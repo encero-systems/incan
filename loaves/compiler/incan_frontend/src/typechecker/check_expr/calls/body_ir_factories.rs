@@ -38,7 +38,7 @@ impl TypeChecker {
             return;
         };
         let (parameters, result) = self.method_types_substituting_call_site_self(&declared, &template);
-        let result = normalized(&result, &names, &self.type_info);
+        let result = normalized(&result, &names, self);
         let fixed = match &template {
             ResolvedType::Generic(_, arguments) => names
                 .iter()
@@ -56,14 +56,14 @@ impl TypeChecker {
             .map(|(name, ty)| (name.clone(), ty.clone()))
             .collect();
         if let Some(expected) = expected {
-            self.infer_type_param_bindings(&result, &normalized(expected, &[], &self.type_info), &mut bindings);
+            self.infer_type_param_bindings(&result, &normalized(expected, &[], self), &mut bindings);
         }
         for (expression, parameter) in Self::arguments_with_parameter_types(&parameters, args) {
             let Some(actual) = self.type_info.expr_type(expression.span) else {
                 return;
             };
-            let actual = normalized(actual, &[], &self.type_info);
-            let parameter = normalized(parameter, &names, &self.type_info);
+            let actual = normalized(actual, &[], self);
+            let parameter = normalized(parameter, &names, self);
             if !concrete(&actual) {
                 return;
             }

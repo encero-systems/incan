@@ -1,16 +1,75 @@
-# behavior: executes plain collection index projection
+# behavior: tuple and nested list projections read their elements, local or model-field list slices return fresh lists, and text indexing preserves Unicode scalar positions, negative indices and nested text owners (#2256)
 # expect-stdout:
 #   1
+#   1
+#   1
+#   40
+#   [40]
+#   [40]
+#   é
+#   猫
+#   猫
+#   aé猫
 
 
 """Executes plain collection index projection."""
 def program_result() -> int:
-  """Compute and return `pair.0`."""
-  pairs = [(1, 2)]
-  pair = pairs[0]
-  return pair.0
+    """Compute and return `pair.0`."""
+    pairs = [(1, 2)]
+    pair = pairs[0]
+    return pair.0
+
+
+def text_at(value: &str, index: int) -> str:
+    """Index borrowed Unicode text by scalar position without changing its owner."""
+    return value[index]
+
+
+model Bucket:
+    """Hold the list read through a field projection or slice."""
+    values: list[int]
+
+
+def tuple_projection() -> int:
+    """Project a standalone tuple."""
+    pair = (1, 2)
+    return pair.0
+
+
+def nested_projection() -> int:
+    """Project through consecutive collection indices."""
+    pairs = [(1, 2)]
+    return pairs[0][0]
+
+
+def field_projection() -> int:
+    """Index a list reached through its model field."""
+    bucket = Bucket(values=[40, 2])
+    return bucket.values[0]
+
+
+def local_slice() -> list[int]:
+    """Slice a local list into a new list."""
+    values = [40, 2]
+    return values[0:1]
+
+
+def field_slice() -> list[int]:
+    """Slice a list reached through its model field."""
+    bucket = Bucket(values=[40, 2])
+    return bucket.values[0:1]
 
 
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(program_result())
+    println(tuple_projection())
+    println(nested_projection())
+    println(field_projection())
+    println(local_slice())
+    println(field_slice())
+    text = "aé猫"
+    println(text_at(text, 1))
+    println(text_at(text, -1))
+    println([text][0][2])
+    println(text)

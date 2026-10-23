@@ -1,0 +1,117 @@
+"""Content-addressed inspection entries under the owning project's target directory."""
+
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from std.fs import Path
+from files import make_directory, read
+from observation import file_digest
+from publication import publish
+
+
+pub model GraphUnit:
+    """One portable graph and the source root under which this consumer presents its Loaf-relative anchors."""
+
+    pub path: Path
+    pub root: Path
+    pub package: str = ""
+    pub version: str = ""
+
+
+pub def unchecked_marker(graph: Path) -> Path:
+    """The note beside a unit's graph entry when not all its facts are checked; a checked graph has none."""
+    return Path(f"{graph.0}.unchecked")
+
+
+pub def is_unchecked(graph: Path) -> bool:
+    """Whether the unit behind this graph entry failed checking, so it publishes no interface and no checked facts."""
+    return unchecked_marker(graph).is_file()
+
+
+pub def unchecked_note(graph: Path) -> Result[str, str]:
+    """Read why a unit is unchecked: its name, what it still contributes, a summary and one line per diagnostic."""
+    marker = unchecked_marker(graph)
+    if not marker.is_file():
+        return Ok("")
+    return read(marker)
+
+
+pub def publish_unchecked(graph: Path, name: str, consequence: str, reason: str) -> Result[None, str]:
+    """Record an unchecked unit beside its entry, before the entry itself, so no reader sees an unmarked entry."""
+    return publish(unchecked_marker(graph), f"{name}\n{consequence}\n{reason}")
+
+
+def note_line(note: str, index: int) -> str:
+    """One line of an unchecked note, empty when the note has fewer lines."""
+    lines = note.split("\n")
+    if index >= len(lines):
+        return ""
+    return lines[index]
+
+
+pub def unchecked_warning(note: str) -> str:
+    """The warning line a query prints for an unchecked unit: its name, consequence, summary and first diagnostic."""
+    mut first = note_line(note, 3)
+    if first.startswith("- "):
+        first = first[2:]
+    mut detail = note_line(note, 2)
+    if first != "":
+        detail = f"{detail}; first {first}"
+    return f"warning: {note_line(note, 0)} is unchecked, {note_line(note, 1)} ({detail})"
+
+
+pub def unchecked_refusal(note: str) -> str:
+    """Strict export names the unit and lists every diagnostic the unit's check produced."""
+    details = note.split("\n")[2:]
+    return f"codegraph export failed because {note_line(note, 0)} is unchecked\n" + "\n".join(details)
+
+
+pub def stamp_file(unit: GraphUnit) -> Path:
+    """The file that identifies a unit's facts: its graph, or the note of a unit that produced none."""
+    if unit.path.is_file():
+        return unit.path
+    return unchecked_marker(unit.path)
+
+
+pub def read_graph(unit: GraphUnit, driver: str, group: str) -> Result[str, str]:
+    """Decode indexed binary records for query output; only the storage reader runs, never the checker or codegen."""
+    if not unit.path.is_file() and is_unchecked(unit.path):
+        return Ok("")
+    mut command = Command.new(driver)
+    command.env_remove("RUSTC_BOOTSTRAP")
+    for argument in ["--read-codegraph", unit.path.0, unit.root.0, group]:
+        command.arg(argument)
+    result = command.output().map_err((error) => str(error))?
+    if not result.status.success():
+        return Err(output_text(result.stderr)?)
+    return output_text(result.stdout)
+
+
+def output_text(content: bytes) -> Result[str, str]:
+    """Graph query output is a UTF-8 protocol; invalid bytes refuse instead of silently replacing characters."""
+    match RustString.from_utf8(content):
+        Ok(value) => return Ok(str(value))
+        Err(_) => return Err("graph reader returned non-UTF-8 output")
+
+
+pub def tree_inputs(root: Path) -> Result[list[str], str]:
+    """Hash authored files in deterministic order, including manifests and included assets, excluding build outputs."""
+    if root.is_file():
+        return Ok([root.0, file_digest(root)?])
+    mut by_name: Dict[str, Path] = {}
+    for entry in root.iterdir().map_err((error) => f"{root.0}: {error.message()}")?:
+        name = entry.name()
+        if name.startswith(".") or name == "target" or name == "node_modules":
+            continue
+        by_name[name] = entry
+    mut inputs: list[str] = []
+    for name in sorted([key for key in by_name.keys()]):
+        for value in tree_inputs(by_name[name])?:
+            inputs.append(value)
+    return Ok(inputs)
+
+
+pub def cache_file(project: Path, digest: str) -> Result[Path, str]:
+    """Select a unit's immutable graph entry; only successful exports publish this path."""
+    directory = project.joinpath("target").joinpath("incan").joinpath("codegraph")
+    make_directory(directory)?
+    return Ok(directory.joinpath(f"{digest}.incngraph"))

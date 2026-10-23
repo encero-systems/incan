@@ -1,23 +1,28 @@
-# Pinned native driver boundary
+# `incan-rustc-driver`
 
-This Loaf contains the Rust adapter required by `rustc_private`. Its input types are authored in `incan_mir_plan` and consumed through `incan_mir_plan::caller::incan`; no Rust mirror of the plan is maintained. Declarations are injected AST items with diverging placeholders, and bodies are supplied through `mir_built`.
+The compiler: a second front end to the pinned rustc (DD-0004). Oven runs it once per unit, from the unit description it wrote (DD-0008).
 
-The executable has a scalar conformance invocation (`SOURCE CRATE OUTPUT SYSROOT RUNTIME_RLIB [normal|overflow|dangling] [DEPENDENCY_DIR ...]`) and a Rust-unit invocation (`--rust-unit SYSROOT [rustc_private] -- RUSTC_ARGUMENTS`). The scalar invocation obtains its hand-filled plan from an Incan function. The output fixture is an Incan Loaf, so callable output needs no new authored Rust runtime.
+- `--unit UNIT CRATE OUTPUT SYSROOT [--extern CRATE=RLIB] [--search DIR] [--rust-abi CACHE] [--rustc-arg ARG] [--library]` checks the unit, lowers its Body IR through `incan_mir_lowering` and compiles it with rustc to `OUTPUT`. A library unit also writes its Loaf beside the rlib (DD-0007).
+- `--check UNIT SYSROOT [--format text|json] [--extern …] [--search …] [--rust-abi …]` checks the unit and prints its report; JSON is the stable `incan check` report.
+- `--identity SYSROOT` verifies the driver's identity against the sysroot, without compiling, and prints its host target.
+- `--rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR]` writes the ABI cache of the named crates: every public item's Rust facts, read from rustc's crate metadata (DD-0009).
 
-Build-time identity inputs are `INCAN_DRIVER_SYSROOT`, `INCAN_DRIVER_RUSTC_IDENTITY` (complete `rustc -vV` output), `INCAN_DRIVER_LIBRARY` (a relative sysroot library path), and `INCAN_DRIVER_LIBRARY_DIGEST` (SHA-256 of those exact library bytes). Missing inputs are refusals. These inputs and declared unit permissions must enter Oven's build identity; setting them as untracked ambient variables is insufficient.
+Checking reads the Rust facts of `rust::` imports from the ABI caches it is given, and reads any path they do not cover from rustc's metadata of the unit's own crates, with the same extractor (`src/rust_facts.rs`).
 
-## Oven build and conformance
+The plan types and the lowering's entry points come from `incan_mir_lowering::caller::incan`; no Rust mirror of the plan is kept. Declarations are injected AST items with diverging placeholders, and bodies are supplied through `mir_built`.
 
-The manifest declares `rustc_private`, `rustc-dev`, and `rustc_driver` on the executable unit. Oven requires pinned rustc 1.98.0 with rustc-dev installed. It strips ambient bootstrap permission, then grants only the declared normalized crate name with `-Zallow-features=rustc_private`. The grant is receipt-bound and records rustc's bootstrap-derived `Cheat` permission. Driver-built Rust units use the session callback instead.
+The unit description's `kind` selects `program` (the default), `library` or `test`. Every kind uses the same checked-source and Body IR pipeline and the lowering's `unit_plan` entry. `--library` remains a bootstrap spelling for the library kind. Test collection uses the compilation session's marker semantics; lowering maps collected functions to native entries, which the adapter registers with rustc's test harness. The compiler writes `<OUTPUT>.tests.json` with each entry's source name, native name, skip reason and expected-failure reason for Oven to execute and report.
 
-Oven composes the executable's `thiserror` and `sha2` closure with its sibling Incan plan caller closure. The first driver build does not require a preexisting driver. At startup, the executable checks the complete compiler identity, canonical sysroot, and the path and bytes of the loaded rustc-dev driver library. Ambient bootstrap permission is a startup refusal.
+## Identity
 
-The scalar conformance root builds the plan and driver in one Oven invocation, prepares the Incan-authored output fixture through its caller facet, and checks debug and release native output, overflow source location, malformed-plan refusal and startup refusal:
+The driver links the toolchain's own `rustc_driver` and verifies it before it compiles anything. Oven builds it with three inputs: `INCAN_DRIVER_RUSTC_IDENTITY` (the complete `rustc -vV` output), `INCAN_DRIVER_LIBRARY` (the library's path in the sysroot) and `INCAN_DRIVER_LIBRARY_DIGEST` (SHA-256 of its bytes), and gives the binary a runpath to that library through the `sysroot` link beside its `bin` directory, then to the building machine's sysroot. Identity is content, never location: the driver accepts any sysroot whose compiler output and loaded library bytes match, so an installed toolchain runs against the same rustc at any path. Before compilation it refuses another compiler, another loaded library and any `RUSTC_BOOTSTRAP`. `--identity SYSROOT` runs only this verification and prints the host target.
 
-```sh
-make test-one TEST_ROOT=loaves/compiler/incan_driver/tests/native_driver_project_tests.rs
-```
+Each compilation verifies identity once, before checking, and passes the proven `DriverIdentity` to the native adapter. Every compilation invocation still checks the complete compiler identity, the actual loaded library path inside the sysroot and ambient bootstrap permission. The library's SHA-256 proof can be reused across processes for an unchanged file state.
 
-The root selects installed rustc 1.98.0 with rustc-dev, because ordinary compiler-suite compiler closures omit rustc-dev metadata. Its publisher capability applies only to explicit Oven bakes.
+An installed driver stores one optional `driver-library.proof` beside its toolchain's `toolchain.json`, above the executable's `bin` directory. The proof binds the canonical library path (losslessly encoded), device, inode, size, nanosecond modification and change times, and expected build digest. A miss hashes the opened library in bounded chunks; both the descriptor and path must retain the same state before the proof is published. Any changed key requires hashing again. Missing, malformed or unreadable proof data means a miss; failed writes leave compilation dependent on the successful hash. Publication uses a private temporary file and atomic rename, so concurrent driver starts cannot admit a partial proof. Uninstalled drivers hash without storing a proof.
 
-This hand-filled scalar plan does not supply Body IR lowering or a resident driver. Those remain stages 3c and 3d; the normal compiler route has not changed.
+The toolchain home is trusted installation state: its owner can replace the executable and its proof. The proof detects file-state changes; it is not an attestation against an actor able to forge toolchain-home files or filesystem metadata. `INCAN_TRACE_DIR` records one `verify_identity` span per compilation and a `cached` field on the loaded-library proof event.
+
+The manifest declares `rustc_private`, `rustc-dev` and `rustc_driver` on the executable; Oven requires the pinned rustc 1.98.0 with rustc-dev installed.
+
+`sh tests/verify_identity.sh DRIVER SYSROOT UNIT NEW_SCRATCH_DIRECTORY` exercises proof reuse, invalidation, storage failures, concurrent starts and startup refusals. Run it from this Loaf's directory with a program unit description produced by Oven. It copies the driver into its own scratch installation and leaves the supplied toolchain and sysroot unchanged. The test requires `jq` and `xxd`; supported loader tests run on macOS and Linux.

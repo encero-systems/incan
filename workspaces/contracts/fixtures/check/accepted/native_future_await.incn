@@ -1,0 +1,11 @@
+# behavior: awaiting a native Rust future checks with its associated output type
+# expect-accepted:
+
+import std.async
+from rust::std::future import ready
+
+
+async def main() -> None:
+    """Use the native future's int output in an annotated local."""
+    value: int = await ready(7)
+    assert value == 7

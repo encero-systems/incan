@@ -337,6 +337,7 @@ nav:
           - Oven and toolchain ownership map: contributing/explanation/oven_toolchain_ownership_map.md
           - "Post-mortem: v0.5.1": contributing/explanation/postmortem_v051.md
           - Incapunk docs theme: contributing/explanation/incapunk_docs_theme.md
+          - Readable Incan: contributing/explanation/readable-incan.md
           - Readable, maintainable Rust: contributing/explanation/readable-maintainable-rust.md
           - "std.testing internals": contributing/explanation/stdlib_testing_internals.md
       - Reference:
@@ -360,6 +361,7 @@ nav:
           - "DD-0003: Replacement program output contract": design_records/0003_replacement_program_output_contract.md
           - "DD-0004: Pinned native compiler driver": design_records/0004_native_route_through_the_pinned_rustc.md
           - "DD-0005: Cargo-free development contract": design_records/0005_cargo_free_development_contract.md
+          - "DD-0010: The dev.8 release toolchain and CI": design_records/0010_dev8_toolchain_and_ci.md
       - Whitepapers:
           - Overview: whitepapers/index.md
           - Incan ecosystem north star: whitepapers/incan_ecosystem_north_star.md

@@ -1,6 +1,11 @@
-# behavior: executes source local fieldless enum values through a direct callable
+# behavior: fieldless enum values retain equality, inequality, function arguments and exhaustive matching through source calls
 # expect-stdout:
 #   42
+#   42
+#   42
+#   42
+#   false
+#   false
 
 
 """Executes source local fieldless enum values through a direct callable."""
@@ -20,6 +25,30 @@ def normal_enum_values() -> int:
   return score(Signal.Ready, Signal.Stop)
 
 
+def classify(signal: Signal) -> int:
+    """Match both variants of the declared fieldless enum."""
+    match signal:
+        case Signal.Ready:
+            return 42
+        case Signal.Stop:
+            return 0
+
+
+def matched() -> int:
+    """Construct the variant at the call boundary."""
+    return classify(Signal.Ready)
+
+
+def unequal_variants() -> bool:
+    """Keep distinct variants unequal."""
+    return Signal.Ready == Signal.Stop
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(normal_enum_values())
+    println(normal_enum_values())
+    println(normal_enum_values())
+    println(matched())
+    println(unequal_variants())
+    println(unequal_variants())

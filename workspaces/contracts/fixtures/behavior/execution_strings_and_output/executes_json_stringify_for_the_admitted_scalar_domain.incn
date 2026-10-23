@@ -1,6 +1,9 @@
-# behavior: executes json stringify for the admitted scalar domain
+# behavior: JSON scalar rendering preserves a negative integer, a boolean, escaped Unicode text and None
 # expect-stdout:
 #   -9223372036854775807
+#   true
+#   "line\né\t\\\""
+#   null
 
 
 """Executes json stringify for the admitted scalar domain."""
@@ -24,3 +27,6 @@ def absent() -> str:
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(negative())
+    println(truth())
+    println(escaped())
+    println(absent())

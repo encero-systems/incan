@@ -44,7 +44,7 @@ pub enum RustItemKind {
     },
     /// A `trait` definition and its associated items.
     Trait(RustTraitInfo),
-    /// A procedural derive macro and the exact trait implementations observed on its compiler-owned probe.
+    /// An exported procedural macro, with any independently observed derive probe implementations.
     Macro(RustMacroInfo),
     /// Placeholder for Rust items not yet represented by a narrower metadata variant.
     Unsupported { description: String },
@@ -56,7 +56,7 @@ pub struct RustItemMetadata {
     /// Canonical path as Incan already models it, e.g. `std::collections::HashMap`.
     pub canonical_path: String,
     /// Underlying Rust definition path after resolving re-exports, when rust-analyzer can provide one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub definition_path: Option<String>,
     pub visibility: RustVisibility,
     pub kind: RustItemKind,
@@ -76,6 +76,18 @@ pub enum RustCollectionFamily {
 }
 
 impl RustCollectionFamily {
+    /// The standard native owner of a source collection projection. Borrowed Dict and Set values use the same
+    /// metadata-selected method contracts as their owned Rust counterparts.
+    #[must_use]
+    pub const fn canonical_path(self) -> &'static str {
+        match self {
+            Self::HashMap => "std::collections::HashMap",
+            Self::BTreeMap => "std::collections::BTreeMap",
+            Self::HashSet => "std::collections::HashSet",
+            Self::BTreeSet => "std::collections::BTreeSet",
+        }
+    }
+
     /// Classify a canonical Rust path into a supported collection family.
     #[must_use]
     pub fn for_canonical_path(path: &str) -> Option<Self> {
@@ -128,59 +140,6 @@ impl RustItemMetadata {
     }
 }
 
-/// Borrow shape for a metadata-free external method compatibility policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MetadataFreeMethodArgBorrowPolicy {
-    Shared,
-    Mutable,
-    /// Preserve string literals as `&str` and adapt owned Incan strings with `.as_str()`.
-    StringAsStr,
-}
-
-/// Receiver class used by metadata-free external method compatibility policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MetadataFreeReceiverClass {
-    IoValue,
-    EncodingInstance,
-    TokenizerInstance,
-    ExternalAssociated,
-}
-
-/// Argument class used by metadata-free external method compatibility policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MetadataFreeArgClass {
-    StringBuffer,
-    ByteBuffer,
-    Any,
-}
-
-/// Borrow compatibility rule for one metadata-free Rust method surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MetadataFreeMethodBorrowRule {
-    pub methods: &'static [&'static str],
-    pub receiver: MetadataFreeReceiverClass,
-    pub arg: MetadataFreeArgClass,
-    pub policy: MetadataFreeMethodArgBorrowPolicy,
-}
-
-/// One parameter in a metadata-free Rust method signature.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MetadataFreeMethodParamRule {
-    pub name: Option<&'static str>,
-    pub type_display: &'static str,
-}
-
-/// Complete callable signature for one metadata-free Rust method surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MetadataFreeMethodSignatureRule {
-    pub receiver_path: &'static str,
-    pub method: &'static str,
-    pub params: &'static [MetadataFreeMethodParamRule],
-    pub return_type: &'static str,
-    pub is_async: bool,
-    pub is_unsafe: bool,
-}
-
 /// One parameter in a registry-backed Rust free-function signature.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RustFunctionParamRule {
@@ -197,78 +156,6 @@ pub struct RustFunctionSignatureRule {
     pub is_async: bool,
     pub is_unsafe: bool,
 }
-
-/// Metadata-free external method borrow policies used when rust-inspect metadata is unavailable.
-pub const METADATA_FREE_METHOD_BORROW_RULES: &[MetadataFreeMethodBorrowRule] = &[
-    MetadataFreeMethodBorrowRule {
-        methods: &["read_to_string"],
-        receiver: MetadataFreeReceiverClass::IoValue,
-        arg: MetadataFreeArgClass::StringBuffer,
-        policy: MetadataFreeMethodArgBorrowPolicy::Mutable,
-    },
-    MetadataFreeMethodBorrowRule {
-        methods: &["read", "read_to_end", "read_exact", "read_buf", "read_buf_exact"],
-        receiver: MetadataFreeReceiverClass::IoValue,
-        arg: MetadataFreeArgClass::ByteBuffer,
-        policy: MetadataFreeMethodArgBorrowPolicy::Mutable,
-    },
-    MetadataFreeMethodBorrowRule {
-        methods: &["write"],
-        receiver: MetadataFreeReceiverClass::IoValue,
-        arg: MetadataFreeArgClass::ByteBuffer,
-        policy: MetadataFreeMethodArgBorrowPolicy::Shared,
-    },
-    MetadataFreeMethodBorrowRule {
-        methods: &["write_all"],
-        receiver: MetadataFreeReceiverClass::IoValue,
-        arg: MetadataFreeArgClass::Any,
-        policy: MetadataFreeMethodArgBorrowPolicy::Shared,
-    },
-    MetadataFreeMethodBorrowRule {
-        methods: &["for_label", "encode", "decode"],
-        receiver: MetadataFreeReceiverClass::EncodingInstance,
-        arg: MetadataFreeArgClass::Any,
-        policy: MetadataFreeMethodArgBorrowPolicy::Shared,
-    },
-    MetadataFreeMethodBorrowRule {
-        methods: &["encode"],
-        receiver: MetadataFreeReceiverClass::TokenizerInstance,
-        arg: MetadataFreeArgClass::StringBuffer,
-        policy: MetadataFreeMethodArgBorrowPolicy::StringAsStr,
-    },
-    MetadataFreeMethodBorrowRule {
-        methods: &["decode"],
-        receiver: MetadataFreeReceiverClass::ExternalAssociated,
-        arg: MetadataFreeArgClass::ByteBuffer,
-        policy: MetadataFreeMethodArgBorrowPolicy::Shared,
-    },
-];
-
-/// Metadata-free external method signatures used when rust-inspect metadata is unavailable.
-pub const METADATA_FREE_METHOD_SIGNATURE_RULES: &[MetadataFreeMethodSignatureRule] = &[
-    MetadataFreeMethodSignatureRule {
-        receiver_path: "encoding_rs::Encoding",
-        method: "for_label",
-        params: &[MetadataFreeMethodParamRule {
-            name: Some("label"),
-            type_display: "&[u8]",
-        }],
-        return_type: "Option<&'static encoding_rs::Encoding>",
-        is_async: false,
-        is_unsafe: false,
-    },
-    MetadataFreeMethodSignatureRule {
-        receiver_path: "std::path::Path",
-        method: "new",
-        params: &[MetadataFreeMethodParamRule {
-            name: Some("path"),
-            type_display: "&impl AsRef<std::ffi::OsStr>",
-        }],
-        return_type: "&std::path::Path",
-        is_async: false,
-        is_unsafe: false,
-    },
-];
 
 /// Authoritative signatures for compiler-owned runtime helpers whose source typing must be cache-independent.
 pub const COMPILER_OWNED_FUNCTION_SIGNATURE_RULES: &[RustFunctionSignatureRule] = &[
@@ -398,30 +285,6 @@ pub const METADATA_FREE_FUNCTION_SIGNATURE_RULES: &[RustFunctionSignatureRule] =
     },
 ];
 
-/// Return conservative callable metadata for Rust surfaces the stdlib must compile against even when rust-inspect
-/// cannot recover full crate metadata in generated smoke projects.
-#[must_use]
-pub fn metadata_free_method_signature(rust_path: &str, method: &str) -> Option<RustFunctionSig> {
-    let rule = METADATA_FREE_METHOD_SIGNATURE_RULES
-        .iter()
-        .find(|rule| rule.receiver_path == rust_path && rule.method == method)?;
-    Some(RustFunctionSig {
-        receiver_contract: None,
-        type_params: Vec::new(),
-        params: rule
-            .params
-            .iter()
-            .map(|param| RustParam {
-                name: param.name.map(str::to_string),
-                type_display: param.type_display.to_string(),
-            })
-            .collect(),
-        return_type: rule.return_type.to_string(),
-        is_async: rule.is_async,
-        is_unsafe: rule.is_unsafe,
-    })
-}
-
 /// Return conservative callable metadata for Rust free functions whose signatures are stable but unavailable through
 /// rust-inspect's Cargo-workspace view.
 #[must_use]
@@ -449,6 +312,7 @@ pub fn compiler_owned_function_signature(rust_path: &str) -> Option<RustFunction
 fn function_signature_from_rule(rule: &RustFunctionSignatureRule) -> RustFunctionSig {
     RustFunctionSig {
         receiver_contract: None,
+        bounds: Vec::new(),
         type_params: Vec::new(),
         params: rule
             .params
@@ -487,6 +351,9 @@ pub struct RustFunctionSig {
     /// rustc.
     #[serde(default)]
     pub type_params: Vec<String>,
+    /// Declared trait predicates, including callable inputs and associated output equalities.
+    #[serde(default)]
+    pub bounds: Vec<RustTraitBound>,
     pub params: Vec<RustParam>,
     pub return_type: String,
     pub is_async: bool,
@@ -509,6 +376,12 @@ pub struct RustReceiverContract {
 pub struct RustMethodSig {
     pub name: String,
     pub signature: RustFunctionSig,
+    /// The enclosing impl's type parameters in native argument order, before the method's own parameters.
+    #[serde(default)]
+    pub impl_type_params: Vec<String>,
+    /// The impl's self type with its declared parameters, used to infer arguments from a checked receiver.
+    #[serde(default)]
+    pub impl_self_type: Option<String>,
 }
 
 /// One trait implementation rust-inspect can associate with a concrete Rust type.
@@ -517,8 +390,38 @@ pub struct RustImplementedTrait {
     /// Canonical Rust trait path, for example `std::fmt::Display`.
     pub path: String,
     /// Whether the implementation is proven for `&mut Self` instead of `Self`.
-    #[serde(default, skip_serializing_if = "bool_is_false")]
+    #[serde(default)]
     pub mutable_reference: bool,
+    /// Impl self template; conditional implementations are candidates, not unconditional proof.
+    pub self_type: String,
+    /// Native impl type binders, before substitution into the trait reference.
+    pub type_params: Vec<String>,
+    /// Trait arguments after Self, in native declaration order.
+    pub type_arguments: Vec<String>,
+    /// Conditions that must hold before this implementation applies.
+    pub bounds: Vec<RustTraitBound>,
+    /// Associated type definitions instantiated with the impl's identity arguments.
+    pub associated_type_bindings: Vec<RustAssociatedTypeBinding>,
+}
+
+/// A Rust trait predicate with its exact Self, arguments, and associated type equalities.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RustTraitBound {
+    /// The type constrained by this predicate, usually a declared generic parameter.
+    pub self_type: String,
+    /// Canonical trait identity from rustc metadata.
+    pub path: String,
+    /// Type arguments after Self; lifetimes carry no layout.
+    pub type_arguments: Vec<String>,
+    /// Projection equalities, including FnOnce::Output for closure expressions.
+    pub associated_type_bindings: Vec<RustAssociatedTypeBinding>,
+}
+
+impl RustImplementedTrait {
+    /// Whether this record proves a closed implementation without solving generic predicates.
+    pub fn is_unconditional(&self) -> bool {
+        self.type_params.is_empty() && self.bounds.is_empty()
+    }
 }
 
 /// One concrete associated-type value attached to an inspected trait implementation.
@@ -536,20 +439,59 @@ pub struct RustExpandedDeriveTrait {
     /// Canonical Rust trait path implemented by the expansion.
     pub path: String,
     /// Concrete associated-type values declared by the generated implementation.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub associated_type_bindings: Vec<RustAssociatedTypeBinding>,
 }
 
-/// Semantic output observed by expanding one procedural derive macro on a compiler-owned empty probe type.
+/// The invocation form of an exported procedural macro, which selects where a source declaration may name it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RustMacroForm {
+    /// `#[derive(Name)]` on a type declaration.
+    Derive,
+    /// `#[name(...)]` on an item declaration.
+    Attribute,
+}
+
+/// An exported procedural macro and, for a derive, optional semantic output observed on a compiler-owned probe type.
+/// An empty output list grants passthrough to rustc only, never an assumed implementation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustMacroInfo {
+    /// The invocation forms this export supports. Facts written before attribute macros were inspected record only
+    /// derives, so an absent field means a derive.
+    #[serde(default = "RustMacroInfo::derive_forms")]
+    pub forms: Vec<RustMacroForm>,
     /// Trait implementations observed from the macro expansion on the compiler-owned probe.
     ///
     /// A derive macro may emit more than one implementation, so this remains a collection rather than assuming the
     /// macro shares a name or canonical path with a single trait. The generated-Rust build remains authoritative for
     /// any input-sensitive behavior or predicates attached to those implementations on the real Incan-authored type.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub expanded_traits: Vec<RustExpandedDeriveTrait>,
+}
+
+impl RustMacroInfo {
+    /// The forms of a derive-only export, the default for facts that predate attribute macros.
+    fn derive_forms() -> Vec<RustMacroForm> {
+        vec![RustMacroForm::Derive]
+    }
+
+    /// An export of exactly the given forms, with no observed expansion.
+    pub fn with_forms(forms: Vec<RustMacroForm>) -> Self {
+        Self {
+            forms,
+            expanded_traits: Vec::new(),
+        }
+    }
+
+    /// Whether the export can appear in `#[derive(...)]`.
+    pub fn is_derive(&self) -> bool {
+        self.forms.contains(&RustMacroForm::Derive)
+    }
+
+    /// Whether the export can appear as `#[name(...)]` on an item.
+    pub fn is_attribute(&self) -> bool {
+        self.forms.contains(&RustMacroForm::Attribute)
+    }
 }
 
 /// One associated-type equality required by a structural mutable-reference implementation.
@@ -1316,14 +1258,22 @@ pub enum RustPayloadCarrier {
 
 /// One enum variant and its payload field types.
 ///
-/// Payload shapes are normalized for matching. For example, prost-style `Box<T>` payloads are recorded as `T` because
-/// that is what Incan binds in constructor patterns; the stripped carrier is remembered in `field_carriers`.
+/// Payload shapes retain source-facing pattern types. Exact native displays preserve storage before normalization,
+/// and `field_carriers` records wrappers omitted from the shapes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustVariantInfo {
     /// Variant name as it appears in Rust.
     pub name: String,
-    /// Positional payload field shapes in declaration order.
+    /// Payload field shapes in declaration order, for both tuple and struct variants.
     pub fields: Vec<RustTypeShape>,
+    /// Exact native payload templates, before source shape normalization. Direct-route patterns retain integer
+    /// widths, references and native owner binders from these displays; an absent record grants no payload layout.
+    #[serde(default)]
+    pub field_type_displays: Vec<String>,
+    /// Field names in declaration order for a struct variant; empty for tuple and unit variants. Names select the
+    /// same payload slots as `fields`, independently of the order written in a source pattern.
+    #[serde(default)]
+    pub field_names: Vec<String>,
     /// Storage carrier per payload field, parallel to `fields`. Entries an older cache did not record mean
     /// [`RustPayloadCarrier::Direct`].
     #[serde(default)]
@@ -1347,16 +1297,16 @@ pub struct RustMutableReferenceTypeParam {
     /// Name of the owner generic parameter, for example `T` in `Foreign<T: ForeignData>`.
     pub type_param: String,
     /// Unparameterized trait paths the supplied argument can satisfy without adding a reference.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub direct_trait_bounds: Vec<String>,
     /// Mutable-reference implementations admitted by the owner's direct trait bounds.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub mutable_reference_candidates: Vec<RustMutableReferenceCandidate>,
     /// Tuple arities for which the direct owner trait composes element-by-element.
     ///
     /// Consumers may recurse into tuple leaves only when the foreign trait itself declares the corresponding
     /// structural implementation. An empty list keeps composite arguments fail-closed.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub tuple_composition_arities: Vec<usize>,
 }
 
@@ -1364,41 +1314,45 @@ pub struct RustMutableReferenceTypeParam {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustMutableReferenceCandidate {
     /// Trait paths the inner `T` must satisfy for this `&mut T` implementation to apply.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub required_traits: Vec<String>,
     /// Canonical associated-type equalities represented by this metadata record.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub required_associated_type_bindings: Vec<RustAssociatedTypeRequirement>,
     /// Whether the complete source predicate set is represented by `required_traits` and associated-type bindings.
     ///
     /// False is deliberately fail-closed: a direct consumer must defer to the Rust trait solver instead of reducing
     /// an unsupported generic, const, lifetime, or higher-ranked predicate to a trait-name match.
-    #[serde(default, skip_serializing_if = "bool_is_false")]
+    #[serde(default)]
     pub fallback_is_complete: bool,
 }
 
 /// Method, field, and variant surface for a Rust ADT or builtin type.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct RustTypeInfo {
+    /// Whether this owner declares lifetime parameters. Erasing their labels does not authorize a borrowed source
+    /// signature: that boundary requires a retained lifetime contract.
+    #[serde(default)]
+    pub has_lifetime_params: bool,
     /// Source-declared type parameters in declaration order, with lifetimes elided.
     ///
     /// These belong to the Rust type declaration, not to one method. Associated calls such as
     /// `Fft.new[f32](...)` specialize this receiver surface while method-level generic parameters remain recorded on
     /// [`RustFunctionSig`].
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub type_params: Vec<String>,
     /// Declared default type argument for each source type parameter, aligned with [`Self::type_params`].
     ///
     /// The vector is empty when no type parameter has a default. Otherwise `None` preserves a required parameter that
     /// precedes a later default, while `Some` carries the canonical Rust type display used when source omits that
     /// argument.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub type_param_defaults: Vec<Option<String>>,
     /// Source-owned rules for generic parameters that admit a mutable-reference implementation.
     ///
     /// They let the frontend distinguish an owned foreign argument from a mutable-reference alternative without
     /// provider-specific matching. Complete foreign obligation checking remains with rustc.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub mutable_reference_type_params: Vec<RustMutableReferenceTypeParam>,
     /// Exact unconditional trait implementations emitted by successfully expanded Rust derive macros.
     ///
@@ -1406,38 +1360,33 @@ pub struct RustTypeInfo {
     /// resolves the generated `impl` syntax through HIR and records its actual trait identity plus concrete
     /// associated-type values here. Derive macro names and unexpanded source attributes supply no implementation
     /// evidence; conditional generated implementations remain solver-only.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub expanded_derive_traits: Vec<RustExpandedDeriveTrait>,
     /// Whether the declaration contains const parameters that occupy Rust turbofish positions.
     ///
     /// Incan v0.5 can specialize type-only receivers. Retaining this fact makes const-bearing owners fail closed
     /// rather than shifting a later type argument into a const slot.
-    #[serde(default, skip_serializing_if = "bool_is_false")]
+    #[serde(default)]
     pub has_const_params: bool,
     /// Pretty-printed target type when this item is a Rust `type` alias.
     ///
     /// Ordinary structs, enums, traits, and builtins leave this empty. Alias targets are metadata, not a substitute
     /// type identity: callers should use them only when the alias itself is the expected surface and the target shape
     /// is needed for contextual typing or boundary planning.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub alias_target: Option<String>,
     /// Completeness of the recorded type surface.
-    #[serde(default, skip_serializing_if = "RustTypeMetadataCompleteness::is_complete")]
+    #[serde(default)]
     pub metadata_completeness: RustTypeMetadataCompleteness,
     /// Public inherent methods and associated functions.
     pub methods: Vec<RustMethodSig>,
     /// Trait implementations rust-inspect can prove for this Rust type.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub implemented_traits: Vec<RustImplementedTrait>,
     /// Public fields for struct/union-like types.
     pub fields: Vec<RustFieldInfo>,
     /// Enum variants when the type is an enum; empty for non-enums.
     pub variants: Vec<RustVariantInfo>,
-}
-
-/// Return whether a serialized compatibility flag is disabled.
-fn bool_is_false(value: &bool) -> bool {
-    !value
 }
 
 /// Whether Rust type metadata came from a full HIR extraction or from a partial syntax fallback.
@@ -1499,14 +1448,27 @@ pub enum RustTraitAssoc {
     Constant { name: String, type_display: String },
 }
 
+/// A native trait's declared callable surface and implementation templates. Templates belong to the trait's ABI
+/// too, so a later extension trait can describe implementations on a type whose own ABI was compiled earlier.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustTraitInfo {
+    /// Whether rustc's Rust 2024 prelude imports this exact trait identity.
+    pub is_in_prelude: bool,
+    /// Trait type binders after Self, in native declaration order.
+    pub type_params: Vec<String>,
+    /// Supertrait predicates and associated output equalities on this trait's Self parameter.
+    #[serde(default)]
+    pub bounds: Vec<RustTraitBound>,
+    /// Associated functions, types, and constants declared by this trait.
     pub items: Vec<RustTraitAssoc>,
+    /// Positive implementation templates supplied by the native trait's metadata; predicates remain obligations.
+    #[serde(default)]
+    pub implementations: Vec<RustImplementedTrait>,
     /// Co-located derive-macro namespace metadata for this same Rust path, when invoked by the project.
     ///
     /// Rust permits a trait and derive macro to share a spelling. Keeping the macro expansion separate prevents an
     /// ordinary trait-namespace lookup from hiding a macro that implements a differently named trait.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub derive_macro: Option<RustMacroInfo>,
 }
 
@@ -1803,20 +1765,6 @@ pub fn run_inline<D: FnMut(&mut Data, &OutputCallbackInfo)>(callback: D) {
     }
 
     #[test]
-    fn metadata_free_method_signature_preserves_path_new_borrow_shape() -> Result<(), String> {
-        let signature = metadata_free_method_signature("std::path::Path", "new")
-            .ok_or_else(|| "std::path::Path::new should have a metadata-free signature".to_string())?;
-
-        assert_eq!(signature.return_type, "&std::path::Path");
-        assert_eq!(signature.params.len(), 1);
-        assert_eq!(signature.params[0].name.as_deref(), Some("path"));
-        assert_eq!(signature.params[0].type_display, "&impl AsRef<std::ffi::OsStr>");
-        assert!(!signature.is_async);
-        assert!(!signature.is_unsafe);
-        Ok(())
-    }
-
-    #[test]
     fn metadata_free_function_signature_preserves_stdin_receiver_type() -> Result<(), String> {
         let Some(signature) = metadata_free_function_signature("std::io::stdin") else {
             return Err("std::io::stdin should have a metadata-free signature".to_string());
@@ -1858,6 +1806,7 @@ const STD_REEXPORT_ROOTS: &[(&str, &str)] = &[
     ("std::string::", "alloc::string::"),
     ("std::rc::", "alloc::rc::"),
     ("std::cell::", "core::cell::"),
+    ("std::iter::", "core::iter::"),
     // Only the `alloc`-defined items of `std::sync`; `Mutex`, `RwLock`, and friends are `std`'s own.
     ("std::sync::Arc", "alloc::sync::Arc"),
     ("std::sync::Weak", "alloc::sync::Weak"),

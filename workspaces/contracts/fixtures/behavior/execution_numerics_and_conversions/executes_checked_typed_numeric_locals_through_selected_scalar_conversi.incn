@@ -1,5 +1,8 @@
-# behavior: executes checked typed numeric locals through selected scalar conversions
+# behavior: typed f32, f64 and u128 locals convert through str, int, float and a captured closure expression
 # expect-stdout:
+#   1.2345679
+#   1
+#   10.0
 #   1.2345679
 
 
@@ -10,6 +13,28 @@ def program_result() -> str:
   return str(value)
 
 
+def integer_result() -> int:
+    """Convert a typed double-precision local to int."""
+    value: f64 = 1.23456789
+    return int(value)
+
+
+def float_result() -> float:
+    """Convert an unsigned wide local to float."""
+    value: u128 = 10
+    return float(value)
+
+
+def closure_result() -> str:
+    """Render a captured typed single-precision local."""
+    value: f32 = 1.23456789
+    render: () -> str = () => str(value)
+    return render()
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(program_result())
+    println(integer_result())
+    println(float_result())
+    println(closure_result())

@@ -1,0 +1,101 @@
+# behavior: native receivers, associated functions and traits keep their owners: Rust associated functions infer owner arguments, select alias Default and preserve transparent rusttype fields, native method receivers retain checked borrows, associated constructors remain callable as stored values and imported method defaults retain native carriers, Rust From accepts borrowed text while blanket traits preserve reusable values, declared native bounds retain generic calls and native iteration retains enumeration positions, and native argument iterators yield their declared Item through loops and list comprehensions
+# expect-stdout:
+#   allocated
+#   1
+#   1
+#   2
+#   hello
+#   hello
+#   hello
+#   true
+
+"""Observe native receivers through associated functions, inherent methods, blanket traits and iterators."""
+
+from rust::std::collections import VecDeque
+from rust::std::env import args, args_os
+from rust::std::hash import Hash as NativeHash, Hasher, DefaultHasher
+from rust::std::os::raw import c_int
+from rust::std::rc import Rc
+from rust::std::string import String as RustString
+from rust::std import time as native_time
+from rust::std::time import Duration
+from std.io import BytesIO
+
+
+type AllocationHandle = rusttype Rc[int]:
+    """Name the imported Rust allocation without adding a wrapper."""
+
+
+model Allocation:
+    """Keep an imported allocation in a source model field."""
+
+    raw: AllocationHandle
+
+
+def native_hash[T with NativeHash](value: T) -> u64:
+    """Use a declared native trait bound without requiring a nominal receiver owner."""
+    mut hasher = DefaultHasher.new()
+    NativeHash.hash(value, hasher)
+    return hasher.finish()
+
+
+def show_associated_functions() -> None:
+    """Keep the inferred Rust allocation alive until the function returns."""
+    value = Rc.new(7)
+    allocation = Allocation(raw=value)
+    assert Rc.strong_count(allocation.raw) > 0usize
+    zero = c_int.default()
+    assert zero.eq(0i32)
+    println("allocated")
+
+
+def show_argument_iteration() -> None:
+    """Consume argument iterators through both iteration spellings."""
+    mut count = 0
+    for argument in args_os():
+        match argument.into_string():
+            Ok(_) => count += 1
+            Err(_) => println("invalid argument")
+    println(count)
+    arguments = [argument for argument in args()]
+    println(len(arguments))
+
+
+def show_receiver_methods() -> None:
+    """Read a duration through its inherent Rust method."""
+    value = Duration.from_secs(2)
+    println(value.as_secs())
+    construct = Duration.from_secs
+    assert construct(3u64).as_secs() == 3u64
+    assert construct(4u64).as_secs() == 4u64
+    qualified = native_time.Duration.from_secs
+    assert qualified(5u64).as_secs() == 5u64
+    match BytesIO(b"abc").read():
+        Ok(data) => assert data == b"abc"
+        Err(_) => assert false
+
+
+def show_trait_methods() -> None:
+    """Use native trait methods and keep their owners readable after each call."""
+    text = RustString.from("hello")
+    borrowed_copy = RustString.from(text.as_str())
+    println(borrowed_copy.to_string())
+    converted: str = text.into()
+    println(converted.to_string())
+    println(text)
+    println(Duration.from_secs(3).eq(Duration.from_secs(3)))
+    mut queue: VecDeque[i64] = VecDeque.new()
+    queue.push_back(3i64)
+    mut seen = 0
+    for index, _value in enumerate(queue.iter()):
+        seen += index + 1
+    assert seen == 1
+    assert native_hash(7) == native_hash(7)
+
+
+def main() -> None:
+    """Run each receiver observation in the order of the cases it carries."""
+    show_associated_functions()
+    show_argument_iteration()
+    show_receiver_methods()
+    show_trait_methods()

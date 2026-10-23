@@ -1,7 +1,6 @@
 //! Provide frozen (deeply immutable) runtime types for RFC 008.
 //!
-//! These types are designed for **compile-time construction** by referencing baked `'static` data that the Incan
-//! compiler emits for module-level consts.
+//! These types reference baked `'static` data or computed constant storage kept for the lifetime of the program.
 //!
 //! ## Notes
 //! - All frozen collection wrappers are backed by `'static` slices.
@@ -162,6 +161,7 @@ impl core::ops::Index<usize> for FrozenBytes {
 /// ## Notes
 /// - Backed by `&'static [T]`, so `T` must be `'static`.
 /// - This is a *read-only* wrapper (no `push`, `pop`, etc.).
+/// - Copying or cloning the wrapper shares its immutable storage without requiring either trait on its elements.
 ///
 /// ## Examples
 /// ```rust
@@ -171,12 +171,28 @@ impl core::ops::Index<usize> for FrozenBytes {
 /// const L: FrozenList<i64> = FrozenList::new(&DATA);
 /// assert_eq!(L.get(1), Some(&20));
 /// ```
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub struct FrozenList<T: 'static> {
     data: &'static [T],
 }
 
+// Copying the immutable slice handle never copies or clones an element.
+// Deriving these traits would require T: Copy or T: Clone, rejecting a frozen model list read from a descriptor field.
+impl<T: 'static> Copy for FrozenList<T> {}
+
+impl<T: 'static> Clone for FrozenList<T> {
+    /// Share the same immutable program-lifetime storage without cloning its elements.
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
 impl<T: 'static> FrozenList<T> {
+    /// Keep values computed once (a computed constant's) as the frozen list's storage for the rest of the program.
+    pub fn leak(values: Vec<T>) -> Self {
+        Self::new(Box::leak(values.into_boxed_slice()))
+    }
+
     /// Construct a frozen list from a baked `'static` slice.
     pub const fn new(data: &'static [T]) -> Self {
         Self { data }

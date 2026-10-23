@@ -1,12 +1,63 @@
-# behavior: debug formatting of a union prints the held member rather than a compiler-generated variant name
+# behavior: Debug formatting borrows source and native enum owners and structural fields through their retained implementations (#2256)
 # expect-stdout:
 #   7
 #   "text"
+#   Text("hello")
+#   Text("hello")
+#   Empty
+#   Empty
+#   Text("field")
+#   Text("field")
+#   Start(2)
+#   Start(2)
+#   Text("indexed")
+#   Start(3)
+
+from rust::std::io import SeekFrom
+
+
+enum Note:
+    """Retain an owned payload while Debug reads the enum through a shared parameter."""
+
+    Text(str)
+    Empty
+
+
+model Holder:
+    """Keep source and native enums behind shared structural field projections."""
+
+    note: Note
+    position: SeekFrom
+
+
+def show_fields(value: &Holder) -> None:
+    """Format each field twice while retaining the shared enclosing owner."""
+    println(f"{value.note:?}")
+    println(f"{value.note:?}")
+    println(f"{value.position:?}")
+    println(f"{value.position:?}")
+
+
+def show_note(value: &Note) -> None:
+    """Read either variant repeatedly without cloning or consuming its payload."""
+    println(f"{value:?}")
+    println(f"{value:?}")
+
+
+def show_indexed(values: &list[Holder]) -> None:
+    """Format materialized source and native enum elements through their retained Debug implementations."""
+    println(f"{values[0].note:?}")
+    println(f"{values[-1].position:?}")
 
 def show(value: int | str) -> None:
     println(f"{value:?}")
 
 
 def main() -> None:
+    """Observe both existing union members and both source enum variants."""
     show(7)
     show("text")
+    show_note(Note.Text("hello"))
+    show_note(Note.Empty)
+    show_fields(Holder(note=Note.Text("field"), position=SeekFrom.Start(2)))
+    show_indexed([Holder(note=Note.Text("indexed"), position=SeekFrom.Start(3))])

@@ -276,6 +276,40 @@ pub(super) fn collect_statics(
         .collect()
 }
 
+/// Retain every `const` the checker did not evaluate to a retained constant (a list of model values, for one) as
+/// read-only computed storage beside the module's statics: reads of it are its global place.
+pub(super) fn collect_computed_constants(
+    program: &ast::Program,
+    lowering_facts: &BodyIrLoweringFacts<'_, '_>,
+    retained: &[bir::ConstantDeclaration],
+) -> Vec<bir::StaticDeclaration> {
+    let type_info = lowering_facts.type_info;
+    program
+        .declarations
+        .iter()
+        .filter_map(|declaration| {
+            let ast::Declaration::Const(item) = &declaration.node else {
+                return None;
+            };
+            let canonical = type_info
+                .declarations
+                .declaration_identities
+                .get(&(declaration.span.start, declaration.span.end))?
+                .clone();
+            if retained.iter().any(|constant| constant.canonical == canonical) {
+                return None;
+            }
+            let ty = semantic_type_from_resolved(type_info.expr_type(item.value.span)?);
+            let body = lower_constant_initializer_body(item, declaration.span, &canonical, &ty, lowering_facts);
+            Some(bir::StaticDeclaration {
+                canonical,
+                ty,
+                initial: bir::StaticInitializer::Computed(Box::new(body)),
+            })
+        })
+        .collect()
+}
+
 /// Recognize the empty `Set()` constructor only from the checker's canonical constructor fact; every other
 /// initializer must be a literal.
 fn static_initializer(
@@ -463,37 +497,10 @@ pub(super) fn collect_local_enum_declarations(
                     .collect(),
                 variants,
                 derives: type_info.declarations.enum_derives.get(&value.name)?.clone(),
-                named_type_identities: enum_payload_type_identities(type_info),
+                named_type_identities: parameter_types::retained_type_identities(type_info),
             })
         })
         .collect()
-}
-
-/// Align checked aliases with normalized payload names without choosing between distinct declarations sharing one name.
-pub(super) fn enum_payload_type_identities(
-    type_info: &TypeCheckInfo,
-) -> std::collections::BTreeMap<String, CanonicalSymbolId> {
-    let original = &type_info.declarations.named_type_identities;
-    let mut bindings = original.clone();
-    let mut normalized = std::collections::BTreeMap::new();
-    let mut ambiguous = std::collections::BTreeSet::new();
-    for identity in original.values() {
-        let name = &identity.declaration_name;
-        if normalized.get(name).is_some_and(|previous| previous != identity)
-            || original.get(name).is_some_and(|previous| previous != identity)
-        {
-            ambiguous.insert(name.clone());
-        }
-        normalized.entry(name.clone()).or_insert_with(|| identity.clone());
-    }
-    for (name, identity) in normalized {
-        if ambiguous.contains(&name) {
-            bindings.remove(&name);
-        } else {
-            bindings.insert(name, identity);
-        }
-    }
-    bindings
 }
 
 /// Collect the source expressions a synthesized partial needs to retain target defaults in Body IR: a function's
@@ -557,7 +564,7 @@ pub(super) struct PublishedNewtypeReturn {
     pub(super) declaration: bir::NominalDeclaration,
 }
 
-/// Retain public, nongeneric newtype results by the checked method declaration that returns them. Missing layouts
+/// Retain public, nongeneric newtype results from governed or compiled method declarations. Missing layouts
 /// and conflicting copies remain explicit denials; no type is selected from a method or field spelling.
 pub(super) fn collect_published_newtype_returns(
     context: &[bir::BodyIrModule],
@@ -565,7 +572,7 @@ pub(super) fn collect_published_newtype_returns(
     let mut returns = HashMap::new();
     let mut newtype_methods = HashSet::new();
     for module in context {
-        for body in &module.bodies {
+        for body in module.callable_declaration_frames() {
             let Some(identity) = body.canonical.as_ref().filter(|identity| {
                 identity.kind == SemanticSourceTargetKind::Method
                     && identity.namespace == incan_semantics_core::SymbolNamespace::Member
@@ -622,15 +629,24 @@ fn declared_newtype_return_owner(body: &bir::Body) -> Option<&CanonicalSymbolId>
         .filter(|owner| owner.kind == SemanticSourceTargetKind::Newtype)
 }
 
-/// Retain a nongeneric source callable's exact return carrier before its private aliases leave the providing module.
+/// Retain a nongeneric function's or checker-selected validation hook's exact declaration return carrier before its
+/// private aliases leave the provider. Ordinary method results keep their consumer's checked specialization.
 /// Generic callable results keep the consumer's checked instantiation facts; unresolved producer results never
 /// replace a consumer's type. The canonical key identifies the selected declaration, not a written import spelling.
 pub(super) fn collect_published_callable_returns(
     context: &[bir::BodyIrModule],
+    facts: &TypeCheckInfo,
 ) -> HashMap<CanonicalSymbolId, IncanType> {
+    let hooks = facts
+        .expressions
+        .validated_newtype_coercions
+        .values()
+        .flat_map(|coercion| &coercion.steps)
+        .filter_map(|step| step.ctor_identity.as_ref())
+        .collect::<HashSet<_>>();
     context
         .iter()
-        .flat_map(|module| &module.bodies)
+        .flat_map(|module| module.callable_declaration_frames())
         .filter(|body| body.type_parameters.is_empty())
         .filter(|body| {
             !matches!(
@@ -640,7 +656,8 @@ pub(super) fn collect_published_callable_returns(
         })
         .filter_map(|body| {
             let identity = body.canonical.as_ref()?;
-            (identity.kind == SemanticSourceTargetKind::Function).then(|| (identity.clone(), body.return_type.clone()))
+            (identity.kind == SemanticSourceTargetKind::Function || hooks.contains(identity))
+                .then(|| (identity.clone(), body.return_type.clone()))
         })
         .collect()
 }
@@ -652,7 +669,7 @@ pub(super) fn collect_published_callable_defaults(
 ) -> HashMap<CanonicalSymbolId, Vec<bir::CallableParamDefault>> {
     context
         .iter()
-        .flat_map(|module| &module.bodies)
+        .flat_map(|module| module.callable_declaration_frames())
         .filter_map(|body| {
             let identity = body.canonical.as_ref()?;
             Some((
@@ -775,6 +792,7 @@ pub(super) fn collect_local_nominal_declarations(
                 name: name.clone(),
                 fields: fields.iter().map(|field| field.node.name.clone()).collect(),
                 field_identities,
+                owned_callable_fields: Vec::new(),
                 field_public: fields
                     .iter()
                     .map(|field| {
@@ -873,11 +891,12 @@ fn nominal_derives(name: &str, class: bool, type_info: &TypeCheckInfo) -> Option
     Some(derives)
 }
 
-/// Replace only an inherited class's physical fields with the checked parent-first layout and ancestor identities.
+/// Retain class reflection and the checked parent-first field layout with ancestor identities.
 fn retain_inherited_layout(
     mut retained: bir::NominalDeclaration,
     type_info: &TypeCheckInfo,
 ) -> Option<bir::NominalDeclaration> {
+    retain_class_reflection(&mut retained, type_info);
     let Some(facts) = type_info.declarations.body_ir_class_inheritance.get(&retained.name) else {
         return Some(retained);
     };
@@ -905,6 +924,36 @@ fn retain_inherited_layout(
     retained.class_inheritance = Some(facts.inheritance.clone());
     retained.has_field_defaults = false;
     Some(retained)
+}
+
+/// Retain a class's public field policy and presentation metadata from its checked parent-first layout.
+/// These slots also govern typed overlays, so inherited and local fields share the same visibility decision.
+fn retain_class_reflection(retained: &mut bir::NominalDeclaration, facts: &TypeCheckInfo) {
+    let Some(layout) = facts.declarations.class_layouts.get(&retained.name) else {
+        return;
+    };
+    retained.reflection_fields = Some(
+        layout
+            .fields
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, field)| (field.visibility == ast::Visibility::Public).then_some(slot))
+            .collect(),
+    );
+    retained.reflection_metadata = Some(
+        layout
+            .fields
+            .iter()
+            .filter(|field| field.visibility == ast::Visibility::Public)
+            .map(|field| bir::FieldMetadata {
+                name: field.name.clone(),
+                alias: field.alias.clone(),
+                description: field.description.clone(),
+                type_name: field.surface_type_name.clone().unwrap_or_else(|| field.ty.to_string()),
+                has_default: field.default.is_some(),
+            })
+            .collect(),
+    );
 }
 
 /// Project checked adoptions after inference, retaining lexical binders before resolving runtime carrier names.
@@ -978,9 +1027,9 @@ fn collect_plain_newtype(
         }
         derives.push("Copy".to_owned());
     }
-    for selection in newtype_derives::checked_newtype_derives(newtype, type_info)? {
-        if !derives.contains(&selection) {
-            derives.push(selection);
+    for selection in type_info.declarations.body_ir_newtype_derives.get(&newtype.name)? {
+        if !derives.contains(selection) {
+            derives.push(selection.clone());
         }
     }
     let newtype_deserialize = match checked_deserialize {
@@ -1001,6 +1050,7 @@ fn collect_plain_newtype(
         name: newtype.name.clone(),
         fields: vec!["0".to_owned()],
         field_types: vec![underlying],
+        owned_callable_fields: Vec::new(),
         field_public: vec![true],
         field_aliases: vec![None],
         reflection_fields: None,

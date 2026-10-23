@@ -1,0 +1,21 @@
+# behavior: an error propagated after an awaited helper exits async main with its message
+# expect-stdout:
+# expect-stderr-contains:
+#   awaited failure
+# expect-exit: 1
+
+import std.async
+from std.async.time import sleep
+
+
+async def fail_after_a_tick() -> Result[None, str]:
+    """Fail after suspension so propagation crosses the executor boundary."""
+    await sleep(0.001)
+    return Err("awaited failure")
+
+
+async def main() -> Result[None, str]:
+    """Propagate the helper error before the following statement."""
+    await fail_after_a_tick()?
+    println("unreachable")
+    return Ok(None)

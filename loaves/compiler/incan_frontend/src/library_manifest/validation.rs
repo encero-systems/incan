@@ -1265,6 +1265,18 @@ fn validate_rust_abi(raw: &RawLibraryManifest) -> Result<(), LibraryManifestErro
             abi.schema_version, RUST_ABI_SCHEMA_VERSION
         )));
     }
+    if let Some(digest) = &abi.cache_digest
+        && !digest.strip_prefix("sha256:").is_some_and(|hex| {
+            hex.len() == 64
+                && hex
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
+    {
+        return Err(LibraryManifestError::Invalid(
+            "rust_abi.cache_digest must be a SHA-256 digest".into(),
+        ));
+    }
     let mut paths = HashSet::new();
     for item in &abi.items {
         if item.canonical_path.trim().is_empty() {

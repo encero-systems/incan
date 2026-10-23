@@ -315,6 +315,19 @@ const COLLECTION_ANNOTATION_REQUIRES_TYPE_ARGUMENTS: DiagnosticCatalogEntry = Di
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/language/"),
 };
 
+const RUST_BORROW_WITHOUT_LIFETIME_CONTRACT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0120",
+    title: "Borrowed Rust signature requires a lifetime contract",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A borrowed source signature contains a lifetime-bearing Rust type without a retained lifetime contract.",
+    explanation: "Rust lifetime arguments are erased for local native values. A source parameter borrowing a lifetime-bearing native owner needs the relationship between that borrow and the owner's regions. DD-0006 refuses that signature until the compiler retains a lifetime contract, before it reaches rustc.",
+    examples: &["from rust::regex import Captures\n\ndef observe(value: &Captures) -> None:\n    pass"],
+    common_causes: &["Passing a regex capture value through a shared source parameter."],
+    fixes: &["Keep the borrowed native value local to its creating function, or pass an owned value."],
+    docs_url: None,
+};
+
 const RUST_OWNER_TYPE_ARGS_NOT_INFERRED: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-T0105",
     title: "Rust type arguments cannot be inferred",
@@ -727,6 +740,7 @@ const CATALOG: &[DiagnosticCatalogEntry] = &[
     VALUE_WITHOUT_PRINTED_FORM,
     COLLECTION_ANNOTATION_REQUIRES_TYPE_ARGUMENTS,
     RUST_OWNER_TYPE_ARGS_NOT_INFERRED,
+    RUST_BORROW_WITHOUT_LIFETIME_CONTRACT,
     CALLABLE_MARKER_NOT_SUPPORTED,
     ROUTE_HANDLER_RETURN_NOT_RESPONSE,
     ROUTE_HANDLER_PARAMETER_UNBOUND,

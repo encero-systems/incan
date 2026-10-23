@@ -1,4 +1,4 @@
-# behavior: a dependency type published at its declaring module, at a directory facade and at the package root is one type to its consumer: a value spelled through one path is accepted where another is expected, a model reached only as the element type of another model's list field has its declaration's fields and methods even when the root publishes a different model under its name, and a pattern names a type imported after the signature that returns it (#1561)
+# behavior: a dependency's declarations keep one identity through every module that republishes them: a type published at its declaring module, at a directory facade and at the package root is one type to its consumer, a value spelled through one path is accepted where another is expected, a model reached only as the element type of another model's list field has its declaration's fields and methods even when the root publishes a different model under its name, and a pattern names a type imported after the signature that returns it (#1561); a module that re-exports a dependency's renamed function under a further name hands its consumers a callable name (#1751); a dependency whose root-level and nested modules re-export another module's declarations spelled from the package root (`crate.inner`), through two modules and under a new name, for a function, a model, an enum and a const, builds, and its consumer uses each name through every module that publishes it (#1561); and a library can call a sibling module through a bare module import while its own script shares that module (#2237)
 # expect-stdout:
 #   2
 #   0 a#0
@@ -9,52 +9,27 @@
 #   z#9 9
 #   b 99 root
 #   found 3
+#   42
+#   hi root
+#   hi middle
+#   hi inner
+#   hi outer
+#   hi renamed
+#   hi relabel
+#   hi relay
+#   warm 3 root text
+#   cool 3 middle text
+#   hello world
 
-from pub::recall import SearchProfile, best_outcome, build_index, entry_id, entry_id_text, exact_query, Outcome
-from pub::recall import Nomination as RootNomination, Candidate
-from pub::recall.search import Nomination as FacadeNomination, SearchProfile as FacadeProfile
-from pub::recall.search.models import Nomination as DeclaredNomination
-
-
-def root_label(nomination: RootNomination) -> str:
-    return nomination.label()
-
-
-def facade_rank(nomination: FacadeNomination) -> int:
-    return nomination.rank
-
-
-def profile_name(profile: FacadeProfile) -> str:
-    match profile:
-        case FacadeProfile.Exact:
-            return "exact"
-        case FacadeProfile.Approximate:
-            return "approximate"
+from library_module_import import run_library_module_import
+from renamed_export import run_renamed_export
+from submodule_reexports import run_submodule_reexports
+from type_identity import run_type_identity
 
 
 def main() -> None:
-    match build_index([entry_id("a"), entry_id("b"), entry_id("c")]):
-        case Ok(index):
-            match exact_query(index, 2):
-                case Ok(result):
-                    println(len(result.nominations))
-                    println(f"{result.nominations[0].rank} {result.nominations[0].label()}")
-                    println(f"{entry_id_text(result.nominations[1].entry_id)} {result.nominations[1].relevance_bps}")
-                    first = result.nominations[0]
-                    println(f"{root_label(first)} {facade_rank(first)}")
-                    declared: DeclaredNomination = first
-                    println(f"{declared.rank} {len(result.candidates) - 1}")
-                    println(f"{profile_name(result.profile)} {profile_name(SearchProfile.Exact)}")
-                    rooted: RootNomination = FacadeNomination(entry_id=entry_id("z"), rank=9, relevance_bps=1)
-                    println(f"{root_label(rooted)} {facade_rank(rooted)}")
-                    root_candidate = Candidate(label="root")
-                    println(f"{entry_id_text(result.candidates[1].entry_id)} {result.candidates[1].score} {root_candidate.label}")
-                case Err(error):
-                    println(error.message())
-            match best_outcome(index):
-                case Outcome.Found(RootNomination(rank=rank)):
-                    println(f"found {rank}")
-                case Outcome.Missing:
-                    println("missing")
-        case Err(error):
-            println(error.message())
+    """Run each re-export observation in the order of the cases it carries."""
+    run_type_identity()
+    run_renamed_export()
+    run_submodule_reexports()
+    run_library_module_import()

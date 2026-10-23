@@ -1,0 +1,53 @@
+# behavior: model list defaults are fresh owned values; supplied fields and temporary owners stay usable, supplied expressions run before defaults, and function defaults keep their behavior (#2116)
+# expect-stdout:
+#   1 0
+#   1 2 0
+#   1 2 0
+#   temporary
+#   supplied
+#   default
+#   1 1
+#   parameter
+#   1 1
+
+model Values:
+    """Two independently defaulted lists."""
+    tags: list[str] = []
+    notes: list[str] = []
+
+
+def tracked(label: str) -> list[str]:
+    """Expose evaluation order while returning a temporary list owner."""
+    println(label)
+    return [label]
+
+
+model Traced:
+    """Evaluate an explicit list before the other field's default."""
+    tags: list[str]
+    notes: list[str] = tracked("default")
+
+
+def count_default(tags: list[str] = tracked("parameter")) -> int:
+    """Keep the ordinary shared function-parameter default boundary."""
+    return len(tags)
+
+
+def main() -> None:
+    """Check list ownership, temporary fields and default evaluation order."""
+    mut first = Values()
+    second = Values()
+    first.tags.append("first")
+    println(f"{len(first.tags)} {len(second.tags)}")
+    source = ["original"]
+    mut supplied = Values(tags=source)
+    supplied.tags.append("added")
+    println(f"{len(source)} {len(supplied.tags)} {len(supplied.notes)}")
+    mut from_field = Values(tags=first.tags)
+    from_field.tags.append("copied")
+    println(f"{len(first.tags)} {len(from_field.tags)} {len(from_field.notes)}")
+    temporary = Values(tags=Values(tags=["temporary"]).tags)
+    println(temporary.tags[0])
+    traced = Traced(tags=tracked("supplied"))
+    println(f"{len(traced.tags)} {len(traced.notes)}")
+    println(f"{count_default()} {count_default(first.tags)}")

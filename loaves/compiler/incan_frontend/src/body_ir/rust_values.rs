@@ -1,148 +1,84 @@
 //! Rust values a program holds (DD-0006).
 //!
 //! A checked Rust type with no Incan meaning (`std::sync::Arc<T>`, `core::str::error::Utf8Error`) becomes the opaque
-//! nominal of its Rust item, generic over the written arguments. Instantiations close like any generic nominal, and the
-//! driver stores each one as the item itself. Rust types with an Incan meaning (collections, strings, options) never
-//! reach this module: the checker already resolved them to their Incan types.
+//! nominal of its Rust item, generic over the arguments and metadata defaults retained by its accepting checker.
+//! Instantiations close like
+//! any generic nominal, and the driver stores each one as the item itself; the items a compilation holds are read from
+//! its laid-out Body IR types (`incan_semantics_core::body_ir::held_rust_items`). Native types with an admitted Incan
+//! meaning (collections, strings, options) already have that checked storage; copying it never reclassifies the type.
 
-use std::cell::RefCell;
-use std::collections::BTreeMap;
+use super::{IncanType, TypeCheckInfo, bir};
 
-use incan_semantics_core::CanonicalSymbolId;
-
-use super::{IncanType, TypeCheckInfo, bir, semantic_type_from_resolved};
-use crate::resolved_type_subst::map_resolved_type_leaves;
-use crate::symbols::ResolvedType;
-
-/// Project a Rust type display onto the opaque nominal of its item, or `None` when the display names no Rust item
-/// (`dyn` objects, references and function types keep their Rust spelling and refuse where they are laid out).
-pub(super) fn project(display: &str, facts: &TypeCheckInfo) -> Option<IncanType> {
-    if let Some(checked) = checked_name(display.trim(), facts) {
-        return Some(checked);
-    }
-    let (identity, arguments) = rust_item(display, facts)?;
-    let name = identity.declaration_name;
-    if arguments.is_empty() {
-        return Some(IncanType::Named(name));
-    }
-    let args = arguments
+/// Retain selected public native layouts using their checked field identities and type binders. The adapter verifies
+/// the complete instantiated foreign layout; these facts never authorize a guessed partial field projection.
+pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::NominalDeclaration> {
+    let mut layouts: Vec<_> = facts.rust.checked_layouts.iter().collect();
+    layouts.sort_by_key(|(path, _)| *path);
+    layouts
         .into_iter()
-        .map(|argument| argument_type(argument, facts))
-        .collect();
-    Some(IncanType::Generic { base: name, args })
-}
-
-/// Opaque declarations for every Rust item the module's checked types hold, one per item.
-///
-/// An item written with two different argument counts has no single layout and yields none; its uses refuse.
-pub(super) fn collect(type_info: &TypeCheckInfo) -> Vec<bir::NominalDeclaration> {
-    let mut arities: BTreeMap<CanonicalSymbolId, Option<usize>> = BTreeMap::new();
-    for ty in checked_types(type_info) {
-        for display in rust_displays(ty) {
-            record_items(display.as_str(), type_info, &mut arities);
-        }
-    }
-    arities
-        .into_iter()
-        .filter_map(|(identity, arity)| bir::native_opaque_nominal(&identity, arity?))
+        .filter_map(|(path, layout)| {
+            let identity = bir::rust_item_identity(path)?;
+            let mut declaration = bir::native_opaque_nominal(&identity, layout.type_parameters.len())?;
+            declaration.type_parameters = layout.type_parameters.clone();
+            declaration.fields = layout.fields.iter().filter_map(|field| field.name.clone()).collect();
+            declaration.field_identities = layout.field_identities.clone();
+            declaration.field_types = layout
+                .fields
+                .iter()
+                .map(|field| super::parameter_types::checked_parameter_type(&field.ty, facts, &layout.type_parameters))
+                .collect();
+            declaration.field_public = vec![true; declaration.fields.len()];
+            if layout.is_copy {
+                declaration.derives.push("Copy".into());
+            }
+            Some(declaration)
+        })
         .collect()
 }
 
-/// Every checked type a module's Body IR lays out: expressions, call results, signatures and model fields.
-fn checked_types(type_info: &TypeCheckInfo) -> impl Iterator<Item = &ResolvedType> {
-    let signatures = type_info.declarations.function_bindings.values().flat_map(|binding| {
-        binding
-            .params
-            .iter()
-            .map(|param| &param.ty)
-            .chain([&binding.return_type])
-    });
-    type_info
-        .expressions
-        .expr_types
-        .values()
-        .chain(type_info.calls.inferred_call_result_types.values())
-        .chain(signatures)
-        .chain(type_info.declarations.model_field_types.values())
-}
-
-/// The Rust displays anywhere inside `ty`, through the one structural type walk.
-fn rust_displays(ty: &ResolvedType) -> Vec<String> {
-    let found = RefCell::new(Vec::new());
-    map_resolved_type_leaves(ty, &|node| {
-        if let ResolvedType::RustPath(display) = node {
-            found.borrow_mut().push(display.clone());
-        }
-        None
-    });
-    found.into_inner()
-}
-
-/// Record the Rust item a display names and, through its argument displays, every nested Rust item.
-fn record_items(display: &str, facts: &TypeCheckInfo, arities: &mut BTreeMap<CanonicalSymbolId, Option<usize>>) {
-    let Some((identity, arguments)) = rust_item(display, facts) else {
-        return;
-    };
-    let arity = arguments.len();
-    arities
-        .entry(identity)
-        .and_modify(|known| {
-            if *known != Some(arity) {
-                *known = None;
-            }
+/// Project complete checked native enum templates through the same storage boundary used by native call signatures.
+pub(super) fn enum_declarations(facts: &TypeCheckInfo) -> Vec<bir::EnumDeclaration> {
+    let mut layouts = facts.rust.checked_enums.iter().collect::<Vec<_>>();
+    layouts.sort_by_key(|(path, _)| *path);
+    layouts
+        .into_iter()
+        .filter_map(|(path, layout)| {
+            let variants = layout
+                .variants
+                .iter()
+                .map(|(name, fields, _)| {
+                    (
+                        name.clone(),
+                        fields
+                            .iter()
+                            .map(|field| {
+                                super::parameter_types::checked_parameter_type(field, facts, &layout.type_parameters)
+                            })
+                            .collect(),
+                    )
+                })
+                .collect();
+            bir::native_enum_declaration(path, layout.type_parameters.clone(), variants)
         })
-        .or_insert(Some(arity));
-    for argument in arguments {
-        record_items(argument, facts, arities);
-    }
+        .collect()
 }
 
-/// The Rust item a display names with its top-level argument displays, or `None` for a display that is not a path.
-///
-/// The item is keyed on its public path whichever spelling the display uses (an import or a definition path), so one
-/// Rust item has one identity and the driver resolves it through public modules.
-fn rust_item<'a>(display: &'a str, facts: &TypeCheckInfo) -> Option<(CanonicalSymbolId, Vec<&'a str>)> {
-    let display = display.trim().trim_start_matches("::");
-    let (path, arguments) = match display.split_once('<') {
-        Some((path, rest)) => (
-            path.trim(),
-            incan_lang::interop::split_top_level_rust_args(rest.strip_suffix('>')?),
-        ),
-        None => (display, Vec::new()),
-    };
-    // A builtin's carrier and an SDK runtime surface already have their own storage; they are never a second layout.
-    if incan_semantics_core::RuntimeBuiltinType::from_carrier_path(path).is_some()
-        || incan_lang::lang::surface::types::from_runtime_rust_path(path).is_some()
+/// Copy the accepting checker's structural storage. Bare native item paths already carry their complete identity;
+/// displays with arguments or references require a retained checker fact and never start another parser.
+pub(super) fn project(display: &str, facts: &TypeCheckInfo) -> Option<IncanType> {
+    if let Some(checked) = facts
+        .rust
+        .storage_types
+        .get(&IncanType::RustInteropPath(display.to_owned()))
     {
-        return None;
+        return Some(checked.clone());
     }
-    let path = facts.rust.item_public_paths.get(path).map_or(path, String::as_str);
+    let path = facts
+        .rust
+        .item_public_paths
+        .get(display)
+        .map_or(display, String::as_str);
     let identity = bir::rust_item_identity(path)?;
-    bir::native_opaque_nominal(&identity, arguments.len())?;
-    Some((identity, arguments))
-}
-
-/// The Body IR type of one written argument display: the checker's own Rust display conversion, projected again so
-/// nested Rust items and checked Incan names close too.
-fn argument_type(argument: &str, facts: &TypeCheckInfo) -> IncanType {
-    if let Some(checked) = checked_name(argument.trim(), facts) {
-        return checked;
-    }
-    let resolved = crate::typechecker::TypeChecker::new().resolved_type_from_rust_display(argument);
-    super::runtime_nominals::project_type(semantic_type_from_resolved(&resolved), facts)
-}
-
-/// A checked Incan alias or nominal that a Rust display spells by its bare name (`HashMap<String, TextCallback>`).
-///
-/// The checker writes Incan type arguments of a Rust generic into its display by name; this reads them back from the
-/// checked facts rather than from the spelling's shape.
-fn checked_name(name: &str, facts: &TypeCheckInfo) -> Option<IncanType> {
-    if let Some(target) = facts.type_alias_target(name) {
-        return Some(super::parameter_types::checked_semantic_type(target, facts));
-    }
-    facts
-        .declarations
-        .named_type_identities
-        .contains_key(name)
-        .then(|| IncanType::Named(name.to_owned()))
+    let name = bir::native_opaque_name(&identity)?;
+    Some(IncanType::Named(name))
 }

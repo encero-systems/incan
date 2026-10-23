@@ -17,8 +17,20 @@ struct ReturnSignature {
     hidden_inputs: Vec<(usize, usize)>,
 }
 
+/// Immutable declaration and checker facts for one refinement pass. Original local types constrain propagation;
+/// retained signatures and owners may include authenticated dependency context.
+struct ReturnContext<'facts> {
+    nominals: &'facts [&'facts bir::NominalDeclaration],
+    implementations: &'facts [&'facts bir::TraitImplementation],
+    signatures: &'facts HashMap<CanonicalSymbolId, ReturnSignature>,
+    facts: &'facts TypeCheckInfo,
+    original: &'facts [IncanType],
+}
+
 /// Refine opaque frames and checked call results to one concrete witness, propagating through canonical calls.
 /// The finite iteration bound follows the number of source bodies; unresolved cycles retain their named refusal.
+/// Context records were checked at their source or authenticated when loaded. Their slot and implementation can
+/// belong to different modules, so a module-local physical declaration check cannot validate that joined relation.
 pub(super) fn retain_returns(
     module: &mut bir::BodyIrModule,
     program: &ast::Program,
@@ -32,7 +44,7 @@ pub(super) fn retain_returns(
             signatures.insert(identity.clone(), signature(body));
         }
     }
-    for body in context.iter().flat_map(|module| &module.bodies) {
+    for body in context.iter().flat_map(|module| module.callable_declaration_frames()) {
         if let Some(identity) = &body.canonical {
             signatures.entry(identity.clone()).or_insert_with(|| signature(body));
         }
@@ -42,10 +54,18 @@ pub(super) fn retain_returns(
         .iter()
         .map(|body| body.locals.iter().map(|local| local.ty.clone()).collect::<Vec<_>>())
         .collect::<Vec<_>>();
+    // The checked slot can belong to another module or Loaf. Local-only implementation validation would discard
+    // that selection before its published default can supply the return carrier; native admission validates the
+    // complete project separately. No record or signature is reconstructed here.
     let implementations = module
         .trait_implementations
         .iter()
-        .filter(|implementation| module.is_well_formed_trait_implementation(implementation))
+        .chain(context.iter().flat_map(|module| &module.trait_implementations))
+        .collect::<Vec<_>>();
+    let nominals = module
+        .nominal_declarations
+        .iter()
+        .chain(context.iter().flat_map(|module| &module.nominal_declarations))
         .collect::<Vec<_>>();
     for _ in 0..=module.bodies.len() {
         let mut changed = false;
@@ -53,12 +73,14 @@ pub(super) fn retain_returns(
             refine_block(
                 &mut body.block.stmts,
                 &mut body.locals,
-                &body.named_type_identities,
-                &module.nominal_declarations,
-                &implementations,
-                &signatures,
-                facts,
-                original,
+                &mut body.named_type_identities,
+                &ReturnContext {
+                    nominals: &nominals,
+                    implementations: &implementations,
+                    signatures: &signatures,
+                    facts,
+                    original,
+                },
             );
             let Some(identity) = &body.canonical else { continue };
             let Some(retained) = signatures.get_mut(identity) else {
@@ -174,20 +196,19 @@ fn signature(body: &bir::Body) -> ReturnSignature {
 
 /// Follow checked carriers through every same-frame block, leaving projected or unknown values open. Closure and
 /// generator bodies own different local arenas and remain separate.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "The recursive pass needs the original checked signatures and current carrier outputs at the same time."
-)]
 fn refine_block(
     statements: &mut [bir::Statement],
     locals: &mut [bir::LocalDecl],
-    identities: &BTreeMap<String, CanonicalSymbolId>,
-    nominals: &[bir::NominalDeclaration],
-    implementations: &[&bir::TraitImplementation],
-    signatures: &HashMap<CanonicalSymbolId, ReturnSignature>,
-    facts: &TypeCheckInfo,
-    original: &[IncanType],
+    identities: &mut BTreeMap<String, CanonicalSymbolId>,
+    context: &ReturnContext<'_>,
 ) {
+    let ReturnContext {
+        nominals,
+        implementations,
+        signatures,
+        facts,
+        original,
+    } = context;
     for statement in statements {
         match &mut statement.kind {
             bir::StatementKind::Assign {
@@ -195,26 +216,8 @@ fn refine_block(
                 ..
             } => {
                 for arm in arms {
-                    refine_block(
-                        &mut arm.guard_stmts,
-                        locals,
-                        identities,
-                        nominals,
-                        implementations,
-                        signatures,
-                        facts,
-                        original,
-                    );
-                    refine_block(
-                        &mut arm.body_stmts,
-                        locals,
-                        identities,
-                        nominals,
-                        implementations,
-                        signatures,
-                        facts,
-                        original,
-                    );
+                    refine_block(&mut arm.guard_stmts, locals, identities, context);
+                    refine_block(&mut arm.body_stmts, locals, identities, context);
                 }
             }
             bir::StatementKind::Assign { place, rvalue } if place.projection.is_empty() => {
@@ -260,6 +263,10 @@ fn refine_block(
                 }
                 let carrier = call_carrier(callee, args, statement.span, locals, signatures, facts);
                 let may_refine = trait_type(&locals[local.index()].ty, identities)
+                    || matches!(callee, bir::Callee::Method(target)
+                        if locals[local.index()].origin == bir::LocalOrigin::Temporary
+                            && target.canonical.as_ref().and_then(|id| signatures.get(id))
+                                .is_some_and(|signature| signature.original == IncanType::SelfType))
                     || matches!(callee, bir::Callee::Function(bir::CallableTarget::Named(target))
                         if target.canonical.as_ref().and_then(|id| signatures.get(id))
                             .is_some_and(|signature| original[local.index()] == signature.original
@@ -268,10 +275,9 @@ fn refine_block(
                     locals[local.index()].ty = carrier;
                 }
                 if let bir::Callee::Method(target) = callee
-                    && let Some((declared, carrier)) =
+                    && let Some(carrier) =
                         method_return_witness(target, args, locals, identities, nominals, implementations, signatures)
                     && locals[local.index()].origin == bir::LocalOrigin::Temporary
-                    && locals[local.index()].ty == declared
                 {
                     locals[local.index()].ty = carrier;
                 }
@@ -279,69 +285,36 @@ fn refine_block(
             bir::StatementKind::If {
                 then_block, else_block, ..
             } => {
-                refine_block(
-                    &mut then_block.stmts,
-                    locals,
-                    identities,
-                    nominals,
-                    implementations,
-                    signatures,
-                    facts,
-                    original,
-                );
+                refine_block(&mut then_block.stmts, locals, identities, context);
                 if let Some(block) = else_block {
-                    refine_block(
-                        &mut block.stmts,
-                        locals,
-                        identities,
-                        nominals,
-                        implementations,
-                        signatures,
-                        facts,
-                        original,
-                    );
+                    refine_block(&mut block.stmts, locals, identities, context);
                 }
             }
             bir::StatementKind::Race { arms, .. } => {
                 for arm in arms {
-                    refine_block(
-                        &mut arm.body.stmts,
-                        locals,
-                        identities,
-                        nominals,
-                        implementations,
-                        signatures,
-                        facts,
-                        original,
-                    );
+                    refine_block(&mut arm.body.stmts, locals, identities, context);
                 }
             }
-            bir::StatementKind::Loop { body } | bir::StatementKind::UnsafeRegion { body, .. } => refine_block(
-                &mut body.stmts,
-                locals,
-                identities,
-                nominals,
-                implementations,
-                signatures,
-                facts,
-                original,
-            ),
+            bir::StatementKind::Loop { body } | bir::StatementKind::UnsafeRegion { body, .. } => {
+                refine_block(&mut body.stmts, locals, identities, context)
+            }
             _ => {}
         }
     }
 }
 
-/// Instantiate a generic source method's proven return using its exact owner/adoption and checked method arguments.
-/// Unknown receivers, unretained slots, conflicting implementations and unresolved binders grant no representation.
+/// Instantiate a selected source method's executable return using its exact owner/adoption and checked arguments.
+/// A published body already carries its refined return ABI, so the consumer must not require its former opaque
+/// annotation to survive publication. Unknown receivers, conflicting slots and unresolved binders grant no witness.
 fn method_return_witness(
     target: &bir::MethodTarget,
     args: &[bir::ArgumentElement],
     locals: &[bir::LocalDecl],
-    identities: &BTreeMap<String, CanonicalSymbolId>,
-    nominals: &[bir::NominalDeclaration],
+    identities: &mut BTreeMap<String, CanonicalSymbolId>,
+    nominals: &[&bir::NominalDeclaration],
     implementations: &[&bir::TraitImplementation],
     signatures: &HashMap<CanonicalSymbolId, ReturnSignature>,
-) -> Option<(IncanType, IncanType)> {
+) -> Option<IncanType> {
     let selected = target.canonical.as_ref()?;
     if selected.kind != SemanticSourceTargetKind::Method {
         return None;
@@ -381,7 +354,12 @@ fn method_return_witness(
                 ))
             })
             .collect::<Option<HashMap<_, _>>>()?;
-        bindings = trait_bindings;
+        let own_method = record.implementation.origin == owner.canonical.origin
+            && owner.canonical.declaration_span.start <= record.implementation.declaration_span.start
+            && record.implementation.declaration_span.end <= owner.canonical.declaration_span.end;
+        if !own_method {
+            bindings = trait_bindings;
+        }
         signature
     } else {
         if selected.origin != owner.canonical.origin
@@ -392,9 +370,6 @@ fn method_return_witness(
         }
         signatures.get(selected)?
     };
-    if !signature.opaque || signature.parameters.is_empty() || signature.carrier == signature.original {
-        return None;
-    }
     let method_parameters = signature
         .parameters
         .iter()
@@ -406,10 +381,40 @@ fn method_return_witness(
     for (parameter, argument) in method_parameters.into_iter().zip(&target.type_args) {
         bindings.insert(parameter.clone(), argument.clone());
     }
-    Some((
-        instantiate_witness(&signature.original, &bindings, &receiver)?,
-        instantiate_witness(&signature.carrier, &bindings, &receiver)?,
-    ))
+    let carrier = instantiate_witness(&signature.carrier, &bindings, &receiver)?;
+    retain_witness_identities(&carrier, &signature.identities, identities).then_some(carrier)
+}
+
+/// Carry only a selected executable return's named owners into the receiving frame, including generic heads.
+/// Conflicting caller bindings grant no carrier; unrelated names from the producer's namespace are never imported.
+fn retain_witness_identities(
+    ty: &IncanType,
+    source: &BTreeMap<String, CanonicalSymbolId>,
+    destination: &mut BTreeMap<String, CanonicalSymbolId>,
+) -> bool {
+    let name = match ty {
+        IncanType::Named(name) | IncanType::Generic { base: name, .. } => Some(name),
+        _ => None,
+    };
+    if let Some((name, identity)) = name.and_then(|name| source.get(name).map(|identity| (name, identity))) {
+        if destination.get(name).is_some_and(|previous| previous != identity) {
+            return false;
+        }
+        destination.insert(name.clone(), identity.clone());
+    }
+    match ty {
+        IncanType::Generic { args, .. } | IncanType::Tuple(args) => args
+            .iter()
+            .all(|argument| retain_witness_identities(argument, source, destination)),
+        IncanType::Ref(inner) | IncanType::RefMut(inner) => retain_witness_identities(inner, source, destination),
+        IncanType::Function { params, return_type } => {
+            params
+                .iter()
+                .all(|parameter| retain_witness_identities(&parameter.ty, source, destination))
+                && retain_witness_identities(return_type, source, destination)
+        }
+        _ => true,
+    }
 }
 
 /// Resolve the exact checked nominal before canonical carrier bindings have been added to the body table.
@@ -417,10 +422,10 @@ fn method_return_witness(
 fn retained_return_owner<'module>(
     name: &str,
     identities: &BTreeMap<String, CanonicalSymbolId>,
-    nominals: &'module [bir::NominalDeclaration],
+    nominals: &[&'module bir::NominalDeclaration],
 ) -> Option<&'module bir::NominalDeclaration> {
     let direct = identities.get(name);
-    nominals.iter().find(|owner| {
+    nominals.iter().copied().find(|owner| {
         if direct == Some(&owner.canonical) {
             return true;
         }
@@ -471,7 +476,8 @@ fn refresh_hidden_arguments(
     if target.type_args.len() != signature.parameters.len() {
         return;
     }
-    let bir::ArgumentBinding::Resolved { arguments, .. } = &target.binding else {
+    // Hidden carriers map by slot, so a declaration-order binding of a named call supplies them as well.
+    let Some(arguments) = target.binding.slot_arguments() else {
         return;
     };
     for (slot, parameter) in &signature.hidden_inputs {
@@ -502,8 +508,12 @@ fn call_carrier(
             substitute(&signature.carrier, &signature.parameters, &target.type_args)
         }
         bir::Callee::Method(target) => {
-            let selected = facts.calls.body_ir_self_result_methods.get(&(span.start, span.end))?;
-            if target.canonical.as_ref() != Some(selected) {
+            let selected = target.canonical.as_ref()?;
+            let declared_self = signatures
+                .get(selected)
+                .is_some_and(|signature| signature.original == IncanType::SelfType);
+            if !declared_self && facts.calls.body_ir_self_result_methods.get(&(span.start, span.end)) != Some(selected)
+            {
                 return None;
             }
             let bir::ArgumentElement::One(receiver) = args.first()? else {
@@ -640,18 +650,16 @@ mod carrier_identity_tests {
             .map_err(|errors| format!("{errors:?}"))?;
         let module = crate::body_ir::build_body_ir_module_v0(&program, &path, checker.type_info());
         let owner = module.nominal_declarations.first().ok_or("missing source owner")?;
+        let nominals = module.nominal_declarations.iter().collect::<Vec<_>>();
         let key = bir::nominal_carrier_key(&owner.canonical).ok_or("missing carrier key")?;
         let mut identities = BTreeMap::new();
-        assert!(retained_return_owner(&key, &identities, &module.nominal_declarations).is_none());
+        assert!(retained_return_owner(&key, &identities, &nominals).is_none());
         identities.insert(owner.name.clone(), owner.canonical.clone());
-        assert_eq!(
-            retained_return_owner(&key, &identities, &module.nominal_declarations),
-            Some(owner)
-        );
+        assert_eq!(retained_return_owner(&key, &identities, &nominals), Some(owner));
         let mut foreign = owner.canonical.clone();
         foreign.origin = incan_semantics_core::SymbolOrigin::Module(vec!["foreign".to_owned()]);
         identities.insert(key.clone(), foreign);
-        assert!(retained_return_owner(&key, &identities, &module.nominal_declarations).is_none());
+        assert!(retained_return_owner(&key, &identities, &nominals).is_none());
         Ok(())
     }
 }

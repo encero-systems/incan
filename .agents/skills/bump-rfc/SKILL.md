@@ -98,7 +98,7 @@ After the `## Layers affected` section, add two new sections: `## Implementation
 ### Phase 4: Stdlib + Tests
 
 - Add stdlib declarations (if applicable).
-- Add parser, typechecker, codegen snapshot, and integration tests.
+- Extend existing contract cases for semantic acceptance/refusal and observable execution across the affected stages. Add a case only when no same-area case can carry the behavior; keep the whole suite under about 3,000 tests. Name guarded bugs in `# behavior:` and use one producer Loaf carrying all declarations per library case.
 - Update docs.
 ```
 
@@ -139,11 +139,10 @@ After the `## Layers affected` section, add two new sections: `## Implementation
 
 ### Tests
 
-- [ ] Parser unit test for `<construct>`.
-- [ ] Typechecker unit test: valid usage.
-- [ ] Typechecker unit test: invalid usage → correct diagnostic.
-- [ ] Codegen snapshot test: `<construct>` in expression position.
-- [ ] Integration test (end-to-end compile + run).
+- [ ] Existing check cases extended for accepted syntax and valid usage.
+- [ ] Existing check cases extended for invalid usage → correct diagnostic code.
+- [ ] Existing behavior cases extended for `<construct>` in expression position and observable execution.
+- [ ] Smallest relevant case/area selectors pass during development; affected whole families pass at commit points, per `workspaces/contracts/README.md`.
 
 ### Docs
 

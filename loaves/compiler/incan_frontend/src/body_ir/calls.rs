@@ -5,6 +5,7 @@ use super::primitives::*;
 use super::*;
 use incan_lang::lang::builtins::BuiltinFnId;
 use incan_lang::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
+use incan_lang::lang::surface::result_methods::ResultMethodId;
 use incan_lang::lang::surface::{dict_methods, list_methods, set_methods};
 use incan_semantics_core::SymbolOrigin;
 
@@ -158,6 +159,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// A bare identifier follows [`named_static_receiver_type`]. An explicitly instantiated nominal (`Box[int]`) is
     /// the checker's applied type for the whole receiver, so an associated call closes the owner's type parameters at
     /// exactly those arguments; an application the checker did not type as that nominal is a value receiver.
+    /// Qualified generic heads must agree with the receiver's checked declaration identity, not its source spelling.
     pub(super) fn static_receiver_type(
         &self,
         recv: &ast::Spanned<ast::Expr>,
@@ -172,22 +174,28 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         match &recv.node {
             ast::Expr::Ident(name) => {
-                let checked = named_static_receiver_type(name, self.type_info.resolved_identity(recv.span)?)?;
+                let identity = self.type_info.resolved_identity(recv.span)?;
+                let checked = named_static_receiver_type(name, identity)?;
                 if let Some(ty @ IncanType::Generic { base, .. }) =
                     self.type_overrides.get(&(recv.span.start, recv.span.end))
-                    && base == name
+                    && parameter_types::retained_nominal_identity(base, self.type_info) == Some(identity)
                 {
                     return Some(ty.clone());
                 }
-                Some(checked)
+                Some(self.type_info.qualify_semantic_type(checked))
             }
             ast::Expr::Index(owner, _) => {
                 let ast::Expr::Ident(name) = &owner.node else {
                     return None;
                 };
-                named_static_receiver_type(name, self.type_info.resolved_identity(owner.span)?)?;
+                let identity = self.type_info.resolved_identity(owner.span)?;
+                named_static_receiver_type(name, identity)?;
                 match self.resolve_ty(recv.span) {
-                    IncanType::Generic { base, args } if base == *name => Some(IncanType::Generic { base, args }),
+                    IncanType::Generic { base, args }
+                        if parameter_types::retained_nominal_identity(&base, self.type_info) == Some(identity) =>
+                    {
+                        Some(IncanType::Generic { base, args })
+                    }
                     _ => None,
                 }
             }
@@ -217,15 +225,26 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         {
             return bir::Operand::Place(source);
         }
-        if source.fact == bir::OwnershipFact::Move
-            && source.place.projection.is_empty()
-            && let Some(local) = source.place.local_id()
+        self.retain_argument_borrow(&mut source, true);
+        bir::Operand::Place(source)
+    }
+
+    /// Retain a checked reference boundary's owner and passing mode without copying or snapshotting the referent.
+    /// The caller selects shared versus exclusive from its declared parameter or binding type, including for foreign
+    /// receivers.
+    pub(super) fn retain_argument_borrow(&mut self, read: &mut bir::PlaceOperand, mutable: bool) {
+        if read.fact == bir::OwnershipFact::Move
+            && read.place.projection.is_empty()
+            && let Some(local) = read.place.local_id()
         {
             self.moved_out.remove(&local);
         }
-        source.fact = bir::OwnershipFact::MutBorrow;
-        source.last_use = false;
-        bir::Operand::Place(source)
+        read.fact = if mutable {
+            bir::OwnershipFact::MutBorrow
+        } else {
+            bir::OwnershipFact::Borrow
+        };
+        read.last_use = false;
     }
 
     /// Retain the caller's owner when a checked method-chain input passes its shared receiver reference.
@@ -245,14 +264,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let bir::ArgumentElement::One(bir::Operand::Place(read)) = element else {
                 continue;
             };
-            if read.fact == bir::OwnershipFact::Move
-                && read.place.projection.is_empty()
-                && let Some(local) = read.place.local_id()
-            {
-                self.moved_out.remove(&local);
-            }
-            read.fact = bir::OwnershipFact::Borrow;
-            read.last_use = false;
+            self.retain_argument_borrow(read, false);
         }
     }
 
@@ -326,18 +338,29 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 Some(order) => order[position],
                 None => (position, &planned[position]),
             };
-            let mut operand = if mut_slots.get(*slot).copied().unwrap_or(false) {
+            let reference = match slot_types.get(*slot) {
+                Some(IncanType::Ref(_)) => Some(false),
+                Some(IncanType::RefMut(_)) => Some(true),
+                _ => None,
+            };
+            let mut operand = if let Some(adjusted) = self.lower_adjusted_argument(expr, scope, out) {
+                adjusted?
+            } else if reference.is_some() || mut_slots.get(*slot).copied().unwrap_or(false) {
                 self.lower_expr_to_operand(expr, scope, out)
             } else {
                 self.lower_boundary_value(expr, slot_types.get(*slot), scope, out)
             };
-            if mut_slots.get(*slot).copied().unwrap_or(false) {
+            if let Some(mutable) = reference {
+                if let bir::Operand::Place(read) = &mut operand {
+                    self.retain_argument_borrow(read, mutable);
+                }
+            } else if mut_slots.get(*slot).copied().unwrap_or(false) {
                 operand = self.borrow_for_mut_parameter(operand);
             } else {
                 operand = self.owned_parameter_operand(expr, operand);
                 operand = self.retain_evaluated_value_read(expr, operand, scope, out);
             }
-            self.retain_pending_argument_read(&operand);
+            self.retain_pending_operand_read(&operand);
             if let Some(entry) = lowered.get_mut(*slot) {
                 *entry = Some((operand, written_position));
             }
@@ -370,10 +393,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         Ok((operands, binding))
     }
 
-    /// Keep a local owner's deferred argument read live until its enclosing argument list is fully evaluated.
-    /// Copy scalars and hidden temporary values need no owner reservation. The caller restores its stack boundary,
-    /// preserving reservations made by an outer call while releasing those belonging to a completed nested call.
-    fn retain_pending_argument_read(&mut self, operand: &bir::Operand) {
+    /// Keep a local owner's deferred operand read live until the enclosing operation is fully evaluated.
+    /// Calls, aggregates, dictionary writes, and comprehensions share this reservation. Copy scalars and hidden
+    /// temporary values need none. The caller restores its stack boundary, preserving reservations made by an
+    /// enclosing operation.
+    pub(super) fn retain_pending_operand_read(&mut self, operand: &bir::Operand) {
         let bir::Operand::Place(read) = operand else {
             return;
         };
@@ -655,23 +679,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .calls
             .body_ir_reexport_calls
             .get(&(call_span.start, call_span.end));
-        let selected = self.type_info.resolved_identity(callee_span);
-        let imported = self.type_info.resolved_import_identity(name);
-        // A facade can export a function whose name also names its declaring module. A checked member import
-        // selects that SDK declaration; an ordinary module import never receives this supplemental identity.
-        let canonical = match (selected, imported) {
-            (Some(module), Some(function))
-                if module.kind == SemanticSourceTargetKind::Module
-                    && function.kind == SemanticSourceTargetKind::Function
-                    && module.origin == function.origin =>
-            {
-                Some(function.clone())
-            }
-            _ => selected
-                .cloned()
-                .or_else(|| reexport.map(|call| call.canonical.clone()))
-                .or_else(|| imported.cloned()),
-        };
+        let canonical = self
+            .type_info
+            .resolved_call_identity(name, callee_span, reexport.map(|call| &call.canonical))
+            .cloned();
         let builtin = self.type_info.resolved_builtin_call(call_span);
         let canonical_builtin_id = canonical.as_ref().and_then(canonical_builtin);
         if builtin != canonical_builtin_id && (builtin.is_some() || canonical_builtin_id.is_some()) {
@@ -896,7 +907,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     }
 
     /// Refuse a supplied computation that would precede an observable omitted default. Canonically matched local
-    /// literal defaults and declaration-owned, statement-free copy constants have no source effect to reorder.
+    /// literal defaults and declaration-owned literal construction have no source effect to reorder.
     /// The checked local source or declaring frame supplies this evidence; absent or unproven defaults stay refused.
     fn construction_interleaves_default_effects(
         &self,
@@ -925,13 +936,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         && !(local_source.is_some() && self.field_default_is_literal(owner, prior))
                         && defaults
                             .and_then(|frame| frame.params.get(prior))
-                            .is_none_or(|parameter| {
-                                !parameter.ty.abi_v0_facts().ownership.is_trivially_copy()
-                                    || !matches!(&parameter.default,
-                                    bir::CallableParamDefault::Source(computation)
-                                        if computation.stmts.is_empty()
-                                            && matches!(computation.result, bir::Operand::Constant(_)))
-                            })
+                            .is_none_or(|parameter| !defaults::is_literal_default(&parameter.default))
                 })
         })
     }
@@ -1019,9 +1024,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         let contextual_types = self.retain_constructor_argument_carriers(canonical.as_ref(), field_count, &planned);
         let single_field =
-            self.single_field_checked_ingress(canonical.as_ref(), &planned, field_count, scope, hir_span_value, out);
+            self.single_checked_field_ingress(canonical.as_ref(), &planned, field_count, scope, hir_span_value, out);
         let lowered = match single_field {
-            Some(value) => Ok((vec![value], bir::ArgumentBinding::resolved_positional(1))),
+            Some(lowered) => lowered,
             None => self.lower_planned_args(&planned, field_count, &[], &[], scope, out),
         };
         self.restore_constructor_argument_carriers(contextual_types);
@@ -1227,7 +1232,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return None;
         };
         if self.bindings.contains_key(enum_name)
-            || !matches!(self.type_info.ident_kind(base.span), Some(IdentKind::TypeName))
+            || !matches!(
+                self.type_info.ident_kind(base.span),
+                Some(IdentKind::TypeName | IdentKind::RustImport)
+            )
         {
             return None;
         }
@@ -1236,10 +1244,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .resolved_identity(variant_span)
             .filter(|identity| identity.kind == SemanticSourceTargetKind::Variant)?
             .clone();
+        let enum_canonical = match &variant_canonical.origin {
+            SymbolOrigin::RustCrate(path) => bir::rust_item_identity(&path.join("::")),
+            _ => self.type_info.resolved_identity(base.span).cloned(),
+        };
         Some(bir::EnumVariantTarget {
             enum_name: enum_name.clone(),
             variant_name: variant_canonical.declaration_name.clone(),
-            enum_canonical: self.type_info.resolved_identity(base.span).cloned(),
+            enum_canonical,
             variant_canonical,
             binding: bir::ArgumentBinding::resolved_positional(0),
         })
@@ -1296,17 +1308,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         )
     }
 
-    /// Return the exact retained target for a qualified local RFC 032 value-enum member, if this spelling is safe to
-    /// materialize directly.
+    /// Return the exact retained target for a qualified local RFC 032 value-enum member or variant alias.
     ///
     /// The source-local registry is deliberately the only lookup used here. A function-local binding wins over a
-    /// same-spelling declaration, and any import, alias, ordinary enum, payload member, or behavior-bearing enum is
-    /// absent from the registry. The resulting rvalue stores both declaration identities for runtime revalidation;
-    /// it does not make the spelling itself an execution authority.
+    /// same-spelling declaration, and imported owners and ordinary enums are absent from this registry. The checked
+    /// member identity selects the physical variant, so aliases add no storage slots or lookup policy. The resulting
+    /// rvalue stores both declaration identities for runtime revalidation; spelling grants no execution authority.
     pub(super) fn local_value_enum_variant_target(
         &self,
         base: &ast::Spanned<ast::Expr>,
-        variant_name: &str,
         access_span: ast::Span,
     ) -> Option<bir::ValueEnumVariantTarget> {
         let ast::Expr::Ident(enum_name) = &base.node else {
@@ -1322,16 +1332,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .local_value_enum_declarations
             .values()
             .find(|declaration| self.type_info.resolved_identity(base.span) == Some(&declaration.canonical))?;
-        if self.type_info.resolved_identity(base.span) != Some(&declaration.canonical) {
-            return None;
-        }
+        let identity = self.type_info.resolved_identity(access_span)?;
         let variant = declaration
             .variants
             .iter()
-            .find(|variant| variant.name == variant_name)?;
-        if self.type_info.resolved_identity(access_span) != Some(&variant.canonical) {
-            return None;
-        }
+            .find(|variant| variant.canonical == *identity)?;
         Some(bir::ValueEnumVariantTarget {
             enum_declaration_id: declaration.direct_declaration_id.clone(),
             enum_canonical: declaration.canonical.clone(),
@@ -1489,6 +1494,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
         if let Some(value) = self.lower_diverging_error_helper(callee, type_args, args, span, scope, out) {
+            return value;
+        }
+        if let Some(owner) = self.type_info.body_ir_native_constructor_identity(span)
+            && incan_semantics_core::body_ir::native_nominal_item(owner)
+                .is_some_and(|path| self.type_info.rust.checked_layouts.contains_key(&path))
+        {
+            let name = owner.declaration_name.clone();
+            return self.lower_nominal_construction(&name, args, span, callee.span, scope, out);
+        }
+        if let Some(value) = self.lower_checked_rust_call(None, args, span, scope, out) {
             return value;
         }
         if let Some(value) = self.lower_testing_raises_call(callee, type_args, args, span, scope, out) {
@@ -1675,7 +1690,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
 
         if let Some(&local) = self.bindings.get(&name) {
-            let local_ty = self.locals[local.index()].ty.clone();
+            let checked = self.resolve_ty(callee.span);
+            let storage = &self.locals[local.index()].ty;
+            let local_ty = if matches!(storage, IncanType::Generic { base, .. } if base == "Union") {
+                checked.clone()
+            } else {
+                storage.clone()
+            };
             let IncanType::Function { params, return_type: _ } = local_ty else {
                 return self.unsupported_operand(
                     format!("call to non-callable local `{name}`"),
@@ -1689,7 +1710,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             // Source evaluation observes the callable value before its arguments. The target read also performs the
             // one ownership/last-use decision for that lexical environment, which `CallableTarget::Local` preserves
             // for a later executor instead of re-deriving it from the local's source spelling.
-            let place = bir::Place::from_local(local);
+            let mut place = bir::Place::from_local(local);
+            super::carrier_projection::retain_checked_narrowing(&mut place, &self.locals[local.index()].ty, &checked);
             let (fact, last_use) = self.ownership_fact_for_place(&place, &self.locals[local.index()].ty.clone());
             let (mut operands, binding) =
                 match self.bind_declared_args(&format!("local callable `{name}`"), Some(slots), args, scope, out) {
@@ -2294,6 +2316,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
+        if let Some(value) = self.lower_checked_rust_call(Some(recv), args, span, scope, out) {
+            return value;
+        }
+        if let Some(target) = self.checked_enum_variant_target(recv, name, span) {
+            return self.lower_enum_variant_call(target, args, span, scope, out);
+        }
         if self.type_info.resolved_builtin_call(span) == Some(BuiltinFnId::IsInstance) {
             return self.lower_checked_isinstance_call(type_args, args, span, scope, out);
         }
@@ -2473,9 +2501,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     }
 
     /// Read consuming carriers before their defaults and borrow checked immutable constant values from typed
-    /// temporaries. Ordinary receivers retain borrowed places. Real global storage stays delayed because legacy
-    /// evaluates a static wrapper's arguments before locking and cloning storage. A checked static decorator factory
-    /// keeps the checker's selected mut-self fact.
+    /// temporaries. Result transformations retain the same ownership policy, so fresh native errors need no Clone
+    /// implementation. Ordinary receivers retain borrowed places. Real global storage stays delayed because legacy
+    /// evaluates a static wrapper's arguments before locking and cloning storage. Every method receiver retains the
+    /// checker's selected mut-self fact, including projected static receivers.
     fn lower_method_receiver(
         &mut self,
         receiver: &ast::Spanned<ast::Expr>,
@@ -2485,13 +2514,22 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
-        if intrinsic_carrier.is_some() && matches!(name, "unwrap" | "unwrap_or") {
+        let transforms_result = matches!(
+            self.checked_result_method(call_span),
+            Some(
+                ResultMethodId::Map
+                    | ResultMethodId::MapErr
+                    | ResultMethodId::AndThen
+                    | ResultMethodId::OrElse
+                    | ResultMethodId::Inspect
+                    | ResultMethodId::InspectErr
+            )
+        );
+        if transforms_result || (intrinsic_carrier.is_some() && matches!(name, "unwrap" | "unwrap_or")) {
             return self.lower_consumed_carrier_receiver(receiver, scope, out);
         }
-        if let ast::Expr::Field(base, member) = &receiver.node
-            && self
-                .local_value_enum_variant_target(base, member, receiver.span)
-                .is_some()
+        if let ast::Expr::Field(base, _member) = &receiver.node
+            && self.local_value_enum_variant_target(base, receiver.span).is_some()
         {
             return self.lower_expr_to_operand(receiver, scope, out);
         }
@@ -2516,12 +2554,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .type_info
             .resolved_identity(call_span)
             .is_some_and(collection_method_changes_receiver)
-            || (self
-                .type_info
-                .declarations
-                .body_ir_decorator_static_receivers
-                .contains_key(&key)
-                && self.type_info.calls.mutable_receiver_method_calls.contains(&key));
+            || self.type_info.calls.mutable_receiver_method_calls.contains(&key);
         let fact = if mutable {
             bir::OwnershipFact::MutBorrow
         } else {
@@ -2770,9 +2803,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
-        if let Some(target) = self.checked_enum_variant_target(recv, name, span) {
-            return self.lower_enum_variant_call(target, args, span, scope, out);
-        }
         let spelling = match &recv.node {
             ast::Expr::Ident(owner) => format!("{owner}.{name}"),
             _ => name.to_string(),

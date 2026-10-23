@@ -1,0 +1,43 @@
+"""A bounded pool for fresh child invocations, independent of compilation groups."""
+
+from rust::std::process import Child
+from rust::std::time import Instant
+from std.fs import Path
+from run import Outcome, collect, launch
+
+
+pub model Invocation:
+    """One executable, its arguments, and the case's working directory."""
+
+    pub program: str
+    pub arguments: list[str]
+    pub project: Path
+    pub selector: Option[str]
+
+
+pub def invoke_many(requests: list[Invocation], jobs: int) -> list[Result[Outcome, str]]:
+    """
+    Run at most `jobs` children at once, collecting their streams and preserving input order.
+
+    1. The requests are taken in waves of `jobs`.
+    2. Every child of a wave is started before any is collected, so the wave runs together. They are stacked last
+       request first, so that popping the stack yields them in request order.
+    3. The wave's children are collected in request order, against the clock that started the wave.
+    """
+    mut outcomes: list[Result[Outcome, str]] = []
+    mut offset = 0
+    # 1. The requests are taken in waves of at most `jobs`, each finished before the next begins.
+    while offset < len(requests):
+        mut workers: list[Result[Child, str]] = []
+        clock = Instant.now()
+        end = min([offset + jobs, len(requests)])
+        # 2. The wave starts together, stacked last request first so that popping the stack yields request order.
+        for index in range(end - 1, offset - 1, -1):
+            request = requests[index]
+            workers.append(launch(request.program, request.arguments, request.project, request.selector))
+        # 3. The wave's children are collected in request order, against the clock that started the wave.
+        while len(workers) > 0:
+            request = requests[offset + len(outcomes) % jobs]
+            outcomes.append(collect(workers.pop(), request.project, clock))
+        offset += jobs
+    return outcomes

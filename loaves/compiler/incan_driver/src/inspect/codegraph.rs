@@ -5,6 +5,7 @@
 //! modules, declarations, imports, exports, containment, and diagnostics without introducing a storage/indexing engine
 //! into the compiler.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
@@ -38,6 +39,7 @@ use incan_frontend::ast::{
     RaceForBody, Span, Spanned, Statement, SurfaceExprPayload, SurfaceStmtPayload, TypeParam, Visibility,
 };
 use incan_frontend::diagnostics::{self, StableDiagnostic};
+use incan_frontend::library_manifest::LibraryManifest;
 use incan_frontend::module::logical_module_segments_from_file;
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::registry_metadata::{
@@ -51,10 +53,14 @@ use incan_frontend::typechecker::{
 use incan_lang::version::INCAN_VERSION;
 
 use crate::diagnostics::CliDiagnosticFailure;
-use crate::modules::{collect_modules_detailed_with_session, collect_modules_detailed_with_session_at_path};
+use crate::loaf_publication::PublicationFacts;
+use crate::modules::{
+    collect_library_modules_detailed_with_session, collect_modules_detailed_with_session,
+    collect_modules_detailed_with_session_at_path,
+};
 use crate::session::{CompilationAnalysis, CompilationSession};
 use crate::sources::read_source;
-use crate::unit::UnitDescription;
+use crate::unit::{UnitDescription, UnitKind};
 
 /// A failure while producing codegraph records.
 ///
@@ -108,10 +114,63 @@ pub fn collect_codegraph_records(
     units: &[UnitDescription],
     allow_errors: bool,
 ) -> CodegraphResult<Vec<CodegraphRecord>> {
+    collect_codegraph_records_with_rust(path, units, allow_errors, None)
+}
+
+/// Export the same graph with the unit's exact Rust facts source, so interop inspection checks against the crates
+/// selected for compilation rather than silently losing checked references.
+pub fn collect_codegraph_records_with_rust(
+    path: &Path,
+    units: &[UnitDescription],
+    allow_errors: bool,
+    rust: Option<&crate::session::RustFactsSetup>,
+) -> CodegraphResult<Vec<CodegraphRecord>> {
+    Ok(collect_codegraph_with_interface(path, units, allow_errors, rust)?.0)
+}
+
+/// Project a compiled library's graph from the exact checking pass and Body IR used by compilation. This boundary
+/// performs no collection, type checking or Body IR construction, and records only the owning unit's authored modules.
+pub fn collect_checked_unit_codegraph(
+    unit: &UnitDescription,
+    session: &CompilationSession,
+    modules: &[ParsedModule],
+    analysis: &CompilationAnalysis,
+    bodies: &mut [incan_semantics_core::body_ir::BodyIrModule],
+) -> Vec<CodegraphRecord> {
+    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::checked_unit_codegraph", modules = modules.len()).entered();
+    let package = CodegraphPackage {
+        name: Some(unit.package.clone()),
+        version: Some(unit.version.clone()),
+        root_path: Some(path_string(&unit.project_root)),
+    };
+    let mut builder = CodegraphBuilder::new(&unit.source, Some(package), false);
+    builder.semantic_contexts = vec![codegraph_semantic_context(&unit.project_root, session)];
+    builder.set_semantic_snapshots(Cow::Borrowed(analysis.semantic_snapshots()));
+    builder.set_lowered_declaration_facts(bodies.iter_mut().flat_map(body_declaration_facts).collect());
+    builder.set_registry_metadata(checked_registry_metadata_by_path(analysis, modules, &unit.package));
+    builder.set_capabilities(checked_capabilities_by_path(analysis, modules));
+    builder.set_c_abi_artifacts(checked_c_abi_by_path(analysis, modules));
+    builder.seed_canonical_target_ids(modules);
+    for module in modules {
+        builder.collect_parsed_module(module, Vec::new());
+    }
+    builder.finish()
+}
+
+/// Export checked facts and, for a library entry, its checked interface from one analysis pass. The interface has
+/// no executable or native artifact claim and is intended only for checking downstream inspection units.
+pub fn collect_codegraph_with_interface(
+    path: &Path,
+    units: &[UnitDescription],
+    allow_errors: bool,
+    rust: Option<&crate::session::RustFactsSetup>,
+) -> CodegraphResult<(Vec<CodegraphRecord>, Option<LibraryManifest>)> {
     let mut sessions = UnitSessions::new(units);
+    sessions.rust = rust;
     let package = package_identity(&sessions, path);
     let package_name = package.as_ref().and_then(|package| package.name.clone());
     let mut builder = CodegraphBuilder::new(path, package, allow_errors);
+    let mut interface = None;
     builder.semantic_contexts = collect_codegraph_semantic_contexts(&mut sessions, allow_errors)?;
 
     if path.is_dir() {
@@ -121,7 +180,7 @@ pub fn collect_codegraph_records(
             return Err(CodegraphError::failure(render_diagnostics(&analysis.diagnostics)));
         }
         if analysis.diagnostics.is_empty() {
-            builder.set_semantic_snapshots(analysis.semantic_snapshots_by_path);
+            builder.set_semantic_snapshots(Cow::Owned(analysis.semantic_snapshots_by_path));
             builder.set_lowered_declaration_facts(analysis.signatures_by_identity);
             builder.set_registry_metadata(analysis.registry_metadata_by_path);
             builder.set_capabilities(analysis.capabilities_by_path);
@@ -161,13 +220,20 @@ pub fn collect_codegraph_records(
         }
     } else {
         let session = sessions.for_file(path)?;
-        match collect_modules_detailed_with_session(path.to_path_buf(), session) {
+        let modules = if session.unit().kind == UnitKind::Library {
+            collect_library_modules_detailed_with_session(path.to_path_buf(), session)
+        } else {
+            collect_modules_detailed_with_session(path.to_path_buf(), session)
+        };
+        match modules {
             Ok(modules) => {
+                session.resolve_rust_facts(&modules)?;
                 let analysis = typecheck_diagnostics_and_info(session, &modules, package_name.as_deref())?;
                 if !analysis.diagnostics.is_empty() && !allow_errors {
                     return Err(CodegraphError::failure(render_diagnostics(&analysis.diagnostics)));
                 }
-                builder.set_semantic_snapshots(analysis.semantic_snapshots_by_path);
+                interface = analysis.interface;
+                builder.set_semantic_snapshots(Cow::Owned(analysis.semantic_snapshots_by_path));
                 builder.set_lowered_declaration_facts(analysis.signatures_by_identity);
                 builder.set_registry_metadata(analysis.registry_metadata_by_path);
                 builder.set_capabilities(analysis.capabilities_by_path);
@@ -189,10 +255,12 @@ pub fn collect_codegraph_records(
         }
     }
 
-    Ok(builder.finish())
+    Ok((builder.finish(), interface))
 }
 
 struct CheckedCodegraphAnalysis {
+    /// Checking-only interface; it authenticates no native library or executable body.
+    interface: Option<LibraryManifest>,
     diagnostics: Vec<StableDiagnostic>,
     semantic_snapshots_by_path: BTreeMap<PathBuf, SemanticModuleSnapshot>,
     /// Signatures derived by lowering, keyed by the identity that owns each one.
@@ -227,6 +295,7 @@ fn directory_modules_diagnostics_and_info(
         );
         match collected {
             Ok(modules) => {
+                session.resolve_rust_facts(&modules)?;
                 for module in &modules {
                     if file_set.contains(&module.file_path) {
                         modules_by_path
@@ -276,6 +345,7 @@ fn directory_modules_diagnostics_and_info(
     Ok((
         modules_by_path.into_values().collect(),
         CheckedCodegraphAnalysis {
+            interface: None,
             diagnostics,
             semantic_snapshots_by_path: if has_diagnostics {
                 BTreeMap::new()
@@ -321,8 +391,35 @@ fn typecheck_diagnostics_and_info(
     modules: &[ParsedModule],
     package_name: Option<&str>,
 ) -> CodegraphResult<CheckedCodegraphAnalysis> {
-    match session.analyze_modules(modules) {
+    let library = session.unit().kind == UnitKind::Library;
+    let mut publication = library.then(|| PublicationFacts::new(&session.unit().package));
+    let analysis = session.analyze_unit(
+        modules,
+        library.then_some(session.unit().package.as_str()),
+        &mut |module, checker| {
+            if let Some(publication) = publication.as_mut() {
+                publication.visit(module, checker, module.file_path == session.unit().source);
+            }
+        },
+    );
+    let interface = if analysis.is_ok() {
+        publication
+            .map(|facts| {
+                let entry = modules
+                    .iter()
+                    .find(|module| module.file_path == session.unit().source)
+                    .ok_or_else(|| CodegraphError::failure("library entry module is missing"))?;
+                facts
+                    .library_manifest(modules, entry, session.unit(), &session.contract_model_bundles)
+                    .map_err(CodegraphError::from)
+            })
+            .transpose()?
+    } else {
+        None
+    };
+    match analysis {
         Ok(analysis) => Ok(CheckedCodegraphAnalysis {
+            interface,
             diagnostics: Vec::new(),
             semantic_snapshots_by_path: analysis.semantic_snapshots().clone(),
             signatures_by_identity: modules
@@ -342,6 +439,7 @@ fn typecheck_diagnostics_and_info(
             c_abi_by_path: checked_c_abi_by_path(&analysis, modules),
         }),
         Err(failure) => Ok(CheckedCodegraphAnalysis {
+            interface: None,
             diagnostics: stable_diagnostics(failure),
             semantic_snapshots_by_path: BTreeMap::new(),
             signatures_by_identity: BTreeMap::new(),
@@ -530,13 +628,16 @@ fn collect_codegraph_semantic_contexts(
 struct UnitSessions<'u> {
     units: &'u [UnitDescription],
     sessions: BTreeMap<PathBuf, CompilationSession>,
+    rust: Option<&'u crate::session::RustFactsSetup>,
 }
 
 impl<'u> UnitSessions<'u> {
+    /// Bind lazily opened sessions to the units Oven selected; an optional Rust source is installed before checking.
     fn new(units: &'u [UnitDescription]) -> Self {
         Self {
             units,
             sessions: BTreeMap::new(),
+            rust: None,
         }
     }
 
@@ -550,14 +651,17 @@ impl<'u> UnitSessions<'u> {
     }
 
     /// The session of the unit that contains `file`.
-    fn for_file(&mut self, file: &Path) -> CodegraphResult<&CompilationSession> {
+    fn for_file(&mut self, file: &Path) -> CodegraphResult<&mut CompilationSession> {
         let unit = self.unit_for(file)?;
         if !self.sessions.contains_key(&unit.project_root) {
-            self.sessions
-                .insert(unit.project_root.clone(), CompilationSession::new(unit)?);
+            let mut session = CompilationSession::new(unit)?;
+            if let Some(rust) = self.rust {
+                session = session.with_rust_facts(rust)?;
+            }
+            self.sessions.insert(unit.project_root.clone(), session);
         }
         self.sessions
-            .get(&unit.project_root)
+            .get_mut(&unit.project_root)
             .ok_or_else(|| CodegraphError::failure(format!("no session for {}", unit.project_root.display())))
     }
 }
@@ -594,7 +698,7 @@ pub fn normalize_input_path(path: &Path) -> CodegraphResult<PathBuf> {
     }
 }
 
-struct CodegraphBuilder {
+struct CodegraphBuilder<'analysis> {
     records: Vec<CodegraphRecord>,
     diagnostics: Vec<StableDiagnostic>,
     file_ids: BTreeMap<String, String>,
@@ -607,7 +711,7 @@ struct CodegraphBuilder {
     package: Option<CodegraphPackage>,
     semantic_contexts: Vec<CodegraphSemanticContext>,
     next_body_fact_index: usize,
-    semantic_snapshots_by_path: BTreeMap<PathBuf, SemanticModuleSnapshot>,
+    semantic_snapshots_by_path: Cow<'analysis, BTreeMap<PathBuf, SemanticModuleSnapshot>>,
     /// Signatures for every declaration the export lowered, keyed by the identity that owns each one.
     ///
     /// Populated only where the modules actually lowered. A declaration with no entry exports an identity whose
@@ -642,7 +746,7 @@ fn namespace_id(namespace_path: &[String]) -> String {
     }
 }
 
-impl CodegraphBuilder {
+impl<'analysis> CodegraphBuilder<'analysis> {
     /// Create a record builder for one strict or tolerant export.
     fn new(root_path: &Path, package: Option<CodegraphPackage>, allow_errors: bool) -> Self {
         Self {
@@ -663,7 +767,7 @@ impl CodegraphBuilder {
             package,
             semantic_contexts: Vec::new(),
             next_body_fact_index: 0,
-            semantic_snapshots_by_path: BTreeMap::new(),
+            semantic_snapshots_by_path: Cow::Owned(BTreeMap::new()),
             registry_metadata_by_path: BTreeMap::new(),
             capabilities_by_path: BTreeMap::new(),
             c_abi_by_path: BTreeMap::new(),
@@ -704,8 +808,12 @@ impl CodegraphBuilder {
         )
     }
 
-    /// Attach session-owned semantic facts for checked body target population.
-    fn set_semantic_snapshots(&mut self, semantic_snapshots_by_path: BTreeMap<PathBuf, SemanticModuleSnapshot>) {
+    /// Borrow the compilation's checked facts, or own the snapshots returned by a standalone inspection pass.
+    /// Graph construction never mutates these facts or copies their module-wide identity tables.
+    fn set_semantic_snapshots(
+        &mut self,
+        semantic_snapshots_by_path: Cow<'analysis, BTreeMap<PathBuf, SemanticModuleSnapshot>>,
+    ) {
         self.stable_contexts_by_identity.clear();
         for snapshot in semantic_snapshots_by_path.values() {
             for subject in snapshot.facts.subjects() {
@@ -761,7 +869,15 @@ impl CodegraphBuilder {
                 if let Some(canonical) = canonical
                     && canonical.declaration_span.start == declaration.span.start
                     && canonical.declaration_span.end == declaration.span.end
-                    && matches!(&canonical.origin, SymbolOrigin::Module(path) if path == &module.path_segments)
+                    && match &canonical.origin {
+                        SymbolOrigin::Module(path) => path == &module.path_segments,
+                        SymbolOrigin::Package { library, module_path } => {
+                            module_path == &module.path_segments
+                                && self.package.as_ref().and_then(|package| package.name.as_deref())
+                                    == Some(library.as_str())
+                        }
+                        _ => false,
+                    }
                 {
                     self.canonical_target_ids.insert(canonical, declaration_id);
                 }
@@ -798,6 +914,7 @@ impl CodegraphBuilder {
                     file_path: path.to_path_buf(),
                     source,
                     ast,
+                    gated_exports: Vec::new(),
                 };
                 self.collect_module_records_with_degraded(&module, &file_id, true);
             }
@@ -2438,8 +2555,6 @@ fn lowered_declaration_facts(
     type_info: &incan_frontend::typechecker::TypeCheckInfo,
     session: &CompilationSession,
 ) -> BTreeMap<CanonicalSymbolId, LoweredDeclarationFacts> {
-    use incan_semantics_core::semantic_digest::{body_docstring, body_without_docstring, semantic_digest};
-
     let Ok(provider_operations) = incan_frontend::body_ir::ProviderOperationCatalog::from_loaves(session.loaves())
     else {
         return BTreeMap::new();
@@ -2448,20 +2563,31 @@ fn lowered_declaration_facts(
         modules: &[],
         provider_operations: &provider_operations,
         registry_package: Some(session.unit().package.as_str()),
+        library_package: None,
     };
-    let body_ir =
+    let mut body_ir =
         incan_frontend::body_ir::build_body_ir_module(&module.ast, &module.path_segments, type_info, &context);
+    body_declaration_facts(&mut body_ir)
+}
+
+/// Read signatures and digests from checked Body IR once. Digesting temporarily detaches a leading docstring and
+/// restores it before returning, so compilation receives the identical body without a deep projection clone.
+fn body_declaration_facts(
+    body_ir: &mut incan_semantics_core::body_ir::BodyIrModule,
+) -> BTreeMap<CanonicalSymbolId, LoweredDeclarationFacts> {
+    use incan_semantics_core::semantic_digest::{body_docstring, body_semantic_digest, semantic_digest};
+
     body_ir
         .bodies
-        .iter()
+        .iter_mut()
         .filter_map(|body| {
-            let canonical = body.canonical.as_ref()?;
+            let canonical = body.canonical.clone()?;
             // A body that will not digest contributes nothing rather than contributing a wrong answer: a consumer
             // reads the absent digest as changed, which costs a rebuild, where a wrong digest costs a wrong build.
-            let semantic = semantic_digest(&body_without_docstring(body)).ok()?;
+            let semantic = body_semantic_digest(body).ok()?;
             let documentation = body_docstring(body).and_then(|text| semantic_digest(&text).ok());
             Some((
-                canonical.clone(),
+                canonical,
                 LoweredDeclarationFacts {
                     signature: DeclarationSignature::from_callable_types(
                         body.params.iter().map(|param| &param.ty),

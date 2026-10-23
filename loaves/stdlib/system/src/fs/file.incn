@@ -63,7 +63,7 @@ pub class File with BinaryReader:
             match file.read_to_end(buf):
                 Ok(_) => return Ok(buf)
                 Err(err) => return Err(_io_error(self.path, err))
-        match Read.by_ref(file).take(size).read_to_end(buf):
+        match Read.by_ref(file).take(size.saturating_resize[u64]()).read_to_end(buf):
             Ok(_) => return Ok(buf)
             Err(err) => return Err(_io_error(self.path, err))
 

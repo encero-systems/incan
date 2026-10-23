@@ -1,6 +1,6 @@
-"""Checked function frames that contribute nominal layouts without adding executable bodies."""
+"""Checked callable frames that contribute nominal layouts without adding executable bodies."""
 
-from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind
+from rust::incan_semantics_core import CanonicalSymbolId as RustCanonicalSymbolId, IncanType as RustType, SemanticSourceTargetKind
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     Body,
@@ -8,7 +8,6 @@ from rust::incan_semantics_core::body_ir import (
     StatementKind,
     Callee,
     CallableTarget,
-    NamedCallableTarget,
     StaticInitializer,
     Rvalue,
     MatchArm,
@@ -17,15 +16,31 @@ from type_parameters import substitute, instantiate
 
 
 model ScheduledFrame:
-    """One canonical source function and the checked arguments closing its frame, with its call ancestry."""
+    """One canonical source callable and the checked arguments closing its frame, with its call ancestry."""
 
     body: Body
     arguments: list[RustType]
     ancestors: list[str]
 
 
+pub def declaration_storage(module: &BodyIrModule) -> list[RustType]:
+    """Project frozen return, parameter and local types from imported default frames, without copying or scheduling their implementation bodies."""
+    mut types: list[RustType] = []
+    for callable in module.loaf_callables:
+        match callable.declaration_frame.as_ref():
+            None => pass
+            Some(boxed) =>
+                body: &Body = boxed.as_ref()
+                types.append(body.return_type.clone())
+                for parameter in body.params:
+                    types.append(parameter.ty.clone())
+                for local in body.locals:
+                    types.append(local.ty.clone())
+    return types
+
+
 pub def nominal_frames(module: &BodyIrModule) -> Result[list[Body], str]:
-    """Inventory function, computed-static and closed source-call frames without granting execution or altering module bodies."""
+    """Inventory function, method, computed-static and closed source-call frames without granting execution or altering module bodies."""
     mut frames: list[Body] = []
     mut pending: list[ScheduledFrame] = []
     for body in module.bodies:
@@ -42,9 +57,14 @@ pub def nominal_frames(module: &BodyIrModule) -> Result[list[Body], str]:
     while cursor < len(pending):
         request = pending[cursor]
         cursor += 1
-        # This inventory closes layout types only; executable callable ownership is selected by call lowering.
-        frame = instantiate(request.body, request.arguments, [])?
-        frames.append(frame.clone())
+        # This inventory closes layout types only; executable callable ownership is selected by call lowering. A method
+        # or property whose owner placeholders the recorded arguments leave open grants no layout.
+        match instantiate(request.body, request.arguments, []):
+            Err(error) =>
+                if not owner_dependent(request.body):
+                    return Err(error)
+                continue
+            Ok(frame) => frames.append(frame.clone())
         match request.body.canonical:
             Some(identity) =>
                 ancestry = request.ancestors + [identity.render_compact()]
@@ -58,6 +78,13 @@ pub def nominal_frames(module: &BodyIrModule) -> Result[list[Body], str]:
                 )?
             None => return Err("unsupported Body IR nominal frame without canonical identity")
     return Ok(frames)
+
+
+def owner_dependent(body: &Body) -> bool:
+    """Methods and properties close their owner's placeholders through the receiver; plain functions never do."""
+    match body.canonical:
+        Some(identity) => return identity.kind != SemanticSourceTargetKind.Function
+        None => return false
 
 
 def append_static_frame(mut frames: list[Body], body: &Body) -> None:
@@ -95,13 +122,23 @@ def schedule_statement(
                     match callable:
                         CallableTarget.Named(target) => schedule_call(
                             module,
-                            target,
+                            target.canonical,
+                            target.type_args,
                             names,
                             arguments,
                             pending,
                             ancestors,
                         )?
                         _ => pass
+                Callee.Method(target) => schedule_call(
+                    module,
+                    target.canonical,
+                    target.type_args,
+                    names,
+                    arguments,
+                    pending,
+                    ancestors,
+                )?
                 _ => pass
         StatementKind.Assign(place=_destination, rvalue=value) =>
             schedule_value(module, value, names, arguments, pending, ancestors)?
@@ -161,25 +198,30 @@ def schedule_arm(
 
 def schedule_call(
     module: &BodyIrModule,
-    target: &NamedCallableTarget,
+    canonical: &Option[RustCanonicalSymbolId],
+    type_args: &list[RustType],
     names: list[str],
     arguments: list[RustType],
     mut pending: list[ScheduledFrame],
     ancestors: list[str],
 ) -> Result[None, str]:
-    """Select a source template by complete identity and its recorded arguments; unresolved or recursive calls grant no layouts."""
-    match target.canonical:
+    """Select a source callable by complete identity and its recorded arguments; unresolved or recursive calls grant no layouts."""
+    if len(type_args) == 0:
+        return Ok(None)
+    match canonical:
         None => return Ok(None)
         Some(identity) =>
-            if identity.kind != SemanticSourceTargetKind.Function or identity.render_compact() in ancestors:
+            if identity.kind != SemanticSourceTargetKind.Function and identity.kind != SemanticSourceTargetKind.Method and identity.kind != SemanticSourceTargetKind.Property:
                 return Ok(None)
-            match checked_function_body(module, target)?:
+            if identity.render_compact() in ancestors:
+                return Ok(None)
+            match checked_callable_body(module, identity)?:
                 None => return Ok(None)
                 Some(body) =>
-                    if len(body.type_parameters) == 0 or len(body.type_parameters) != len(target.type_args):
+                    if len(body.type_parameters) == 0 or len(body.type_parameters) != len(type_args):
                         return Ok(None)
                     mut closed: list[RustType] = []
-                    for argument in target.type_args:
+                    for argument in type_args:
                         match substitute(argument, names, arguments):
                             Ok(value) => closed.append(value.clone())
                             Err(_error) => return Ok(None)
@@ -195,29 +237,52 @@ def schedule_call(
 pub def closed_arguments(arguments: list[RustType]) -> bool:
     """Reject unresolved placeholders in nominal argument trees; native carrier admission still validates other kinds."""
     for argument in arguments:
-        match argument:
-            RustType.TypeVar(_name) => return false
-            RustType.Generic(base=_base, args=elements) =>
-                if not closed_arguments(elements):
-                    return false
-            RustType.Tuple(elements) =>
-                if not closed_arguments(elements):
-                    return false
-            RustType.SelfType => return false
-            RustType.Infer => return false
-            RustType.Unknown => return false
-            _ => pass
+        if not closed_type(argument):
+            return false
     return true
 
 
-def checked_function_body(module: &BodyIrModule, target: &NamedCallableTarget) -> Result[Option[Body], str]:
-    """Resolve one admitted function identity uniquely across retained project bodies; the entry module owns only a subset."""
+pub def closed_type(ty: &RustType) -> bool:
+    """Require every structural component to be closed, including borrowed referents and callable inputs and output."""
+    match ty:
+        RustType.TypeVar(_name) => return false
+        RustType.Generic(base=_base, args=elements) =>
+            for element in elements:
+                if not closed_type(element):
+                    return false
+            return true
+        RustType.Tuple(elements) =>
+            for element in elements:
+                if not closed_type(element):
+                    return false
+            return true
+        RustType.Ref(inner) => return closed_type(inner)
+        RustType.RefMut(inner) => return closed_type(inner)
+        RustType.NativeArray(element=element, length=_length) => return closed_type(element)
+        RustType.TypeToken(inner) => return closed_type(inner)
+        RustType.Function(params=parameters, return_type=result) =>
+            for parameter in parameters:
+                if not closed_type(parameter.ty):
+                    return false
+            return closed_type(result)
+        RustType.SelfType => return false
+        RustType.Infer => return false
+        RustType.Unknown => return false
+        _ => return true
+
+
+def checked_callable_body(module: &BodyIrModule, identity: &RustCanonicalSymbolId) -> Result[Option[Body], str]:
+    """Resolve an admitted identity across retained bodies. Owner-dependent method copies grant no frame without an exact receiver selection."""
     mut selected: Option[Body] = None
+    canonical = Some(identity.clone())
     for body in module.bodies:
-        if body.canonical != target.canonical:
+        if body.canonical != canonical:
             continue
         match selected:
-            Some(_previous) => return Err("unsupported Body IR ambiguous canonical nominal frame")
+            Some(_previous) =>
+                if identity.kind == SemanticSourceTargetKind.Function:
+                    return Err("unsupported Body IR ambiguous canonical nominal frame")
+                return Ok(None)
             None =>
                 selected = Some(body.clone())
     return Ok(selected)

@@ -5,9 +5,11 @@ use crate::plan::{BinaryOp, Constant, Operand, OperandKind, Place, PlanType, Pro
 use crate::spans::Sources;
 use crate::types::native_type;
 use rustc_abi::FieldIdx;
+use rustc_hir::def::{CtorKind, DefKind};
+use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
 use rustc_middle::mir::{self, interpret::Scalar};
-use rustc_middle::ty::TyCtxt;
+use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_span::Span;
 
 /// Convert a prevalidated signed index without truncation.
@@ -90,6 +92,22 @@ pub fn operand<'tcx>(
 /// Encode fixed-width scalar constants without changing their bit representation.
 fn constant<'tcx>(tcx: TyCtxt<'tcx>, value: &Constant, span: Span) -> Result<mir::Operand<'tcx>, PlanError> {
     Ok(match value {
+        Constant::RustItem(path, carrier) => {
+            let def = crate::callees::constant(tcx, path)?;
+            let actual = tcx.erase_and_anonymize_regions(tcx.type_of(def).instantiate_identity().skip_normalization());
+            if actual != tcx.erase_and_anonymize_regions(native_type(tcx, carrier)?) {
+                return Err(PlanError::Invalid {
+                    function: path.clone(),
+                    reason: "Rust constant carrier differs from its checked type".into(),
+                });
+            }
+            let const_ = native_constant(tcx, def, actual)?;
+            mir::Operand::Constant(Box::new(mir::ConstOperand {
+                span,
+                user_ty: None,
+                const_,
+            }))
+        }
         Constant::Int(value) => mir::Operand::const_from_scalar(tcx, tcx.types.i64, Scalar::from_i64(*value), span),
         Constant::Numeric(text, ty) => numeric_constant(tcx, text, ty, span)?,
         Constant::Float(value) => {
@@ -117,6 +135,41 @@ fn constant<'tcx>(tcx: TyCtxt<'tcx>, value: &Constant, span: Span) -> Result<mir
             }))
         }
     })
+}
+
+/// Preserve ordinary constants for rustc evaluation, but realize a unit variant through its exact ADT index.
+/// A unit constructor is not a const item and cannot enter `Instance::try_resolve`; rustc's value-tree conversion
+/// determines the enum representation without assuming a discriminant width or layout.
+fn native_constant<'tcx>(tcx: TyCtxt<'tcx>, def: DefId, actual: Ty<'tcx>) -> Result<mir::Const<'tcx>, PlanError> {
+    if !matches!(tcx.def_kind(def), DefKind::Ctor(_, CtorKind::Const)) {
+        return Ok(mir::Const::Unevaluated(
+            mir::UnevaluatedConst::new(def, tcx.mk_args(&[])),
+            actual,
+        ));
+    }
+    let ty::Adt(adt, _) = actual.kind() else {
+        return Err(PlanError::Invalid {
+            function: tcx.def_path_str(def),
+            reason: "native unit constructor requires an ADT carrier".into(),
+        });
+    };
+    let variant = adt.variant_index_with_ctor_id(def);
+    if !adt.variant(variant).fields.is_empty() {
+        return Err(PlanError::Invalid {
+            function: tcx.def_path_str(def),
+            reason: "native unit constructor exposes payload fields".into(),
+        });
+    }
+    let index = ty::Const::new_value(
+        tcx,
+        ty::ValTree::from_scalar_int(tcx, variant.as_u32().into()),
+        tcx.types.u32,
+    );
+    let valtree = ty::ValTree::from_branches(tcx, [index]);
+    Ok(mir::Const::Val(
+        tcx.valtree_to_const_val(ty::Value { ty: actual, valtree }),
+        actual,
+    ))
 }
 
 /// Construct the dependency-owned frozen wrapper only after verifying its single static string field.
@@ -274,6 +327,11 @@ pub fn rvalue<'tcx>(
             )
         }
         RvalueKind::Discriminant(value) => mir::Rvalue::Discriminant(place(tcx, value)?),
+        RvalueKind::IsVariant(..) => {
+            return Err(PlanError::UnknownCallee(
+                "variant test requires statement expansion".into(),
+            ));
+        }
         RvalueKind::FrozenText(text) => frozen_text(tcx, sources, text)?,
         RvalueKind::FrozenBytes(values) => frozen_bytes(tcx, values, rustc_span::DUMMY_SP)?,
         RvalueKind::FrozenCollection(ty, values) => crate::frozen_values::construct(tcx, ty, values)?,
@@ -357,10 +415,19 @@ pub fn rvalue<'tcx>(
                     reason: "model construction requires an ADT destination".into(),
                 });
             };
-            let operands = elements
+            let mut operands = elements
                 .iter()
                 .map(|value| operand(tcx, sources, value))
                 .collect::<Result<Vec<_>, _>>()?;
+            if matches!(value, RvalueKind::Model(..))
+                && let Some(marker) = crate::generic_layouts::marker_type(tcx, *definition, args, operands.len())
+            {
+                operands.push(mir::Operand::Constant(Box::new(mir::ConstOperand {
+                    span: rustc_span::DUMMY_SP,
+                    user_ty: None,
+                    const_: mir::Const::Val(mir::ConstValue::ZeroSized, marker),
+                })));
+            }
             mir::Rvalue::Aggregate(
                 Box::new(mir::AggregateKind::Adt(
                     definition.did(),

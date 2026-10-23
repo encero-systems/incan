@@ -9,6 +9,7 @@ which directives a family admits is the family's rule (`families.incn`).
 
 # The directives the header accepts.
 const DIRECTIVES: FrozenList[str] = [
+    "graph-commands",
     "behavior",
     "retires",
     "expect-stdout",
@@ -20,11 +21,14 @@ const DIRECTIVES: FrozenList[str] = [
     "expect-dependencies",
     "expect-std-packages",
     "expect-active-features",
+    "expect-formatted",
     "pending",
 ]
 
 # The directives whose lines follow them as an indented block.
 const BLOCKS: FrozenList[str] = [
+    "graph-commands",
+    "expect-formatted",
     "expect-stdout",
     "expect-stdout-contains",
     "expect-stderr-contains",

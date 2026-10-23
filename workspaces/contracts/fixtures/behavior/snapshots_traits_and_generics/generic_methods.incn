@@ -1,12 +1,23 @@
-# behavior: generic instance methods on a class, a generic model, a trait default, a two-parameter method and a newtype each return the argument they were given
+# behavior: generic instance methods preserve checked type arguments on ordinary receivers and when another generic method infers a shared borrow
 # expect-stdout:
 #   1 shelf b true 1.5
+#   borrowed
+#   borrowed
 
 """Generic instance methods should lower through class impls."""
 
 
 class Box:
     def get[T with Clone](self, value: T) -> T:
+        return value
+
+    def inspect[T with Display](self, value: &T) -> str:
+        """Format an inferred shared borrow without consuming its caller's value."""
+        return f"{value}"
+
+    def confirm[T with (Clone, Display)](self, value: T) -> T:
+        """Infer another method's binder through its shared-reference parameter."""
+        println(self.inspect(value))
         return value
 
 
@@ -48,3 +59,5 @@ def main() -> None:
     wrapper: Wrapper[int] = Wrapper(1)
     echoed_float: float = wrapper.echo(1.5)
     println(f"{value} {shelf_value} {swapped} {echoed_bool} {echoed_float}")
+    confirmed: str = box.confirm("borrowed")
+    println(confirmed)

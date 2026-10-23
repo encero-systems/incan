@@ -1,4 +1,4 @@
-# behavior: a list of a Clone-only model drains through pop() and copies through clone() with the copy independent of the original
+# behavior: model lists drain through pop and clone independently; explicit cloning of indexed enum fields preserves a mutable owner (#2256)
 # expect-stdout:
 #   2
 #   1
@@ -30,7 +30,37 @@ def clone_nodes(nodes: List[Node]) -> List[Node]:
     return copy
 
 
+@derive(Clone)
+enum Action:
+    """Keep an owned enum payload in an indexed model field."""
+
+    Ready(str)
+    Empty
+
+
+model Frame:
+    """Own the enum whose explicit clone is read through a mutable list."""
+
+    pub action: Action
+
+
+def check_indexed_clones(mut frames: list[Frame], index: int) -> None:
+    """Clone a selected field repeatedly while preserving its container and payload."""
+    copied = frames[index].action.clone()
+    repeated = frames[-1].action.clone()
+    assert len(frames) == 1
+    match copied:
+        Action.Ready(text) => assert text == "kept"
+        Action.Empty => assert false
+    match repeated:
+        Action.Ready(text) => assert text == "kept"
+        Action.Empty => assert false
+
+
 def main() -> None:
+    """Observe list cloning and indexed field cloning with both source owners retained."""
+    mut frames = [Frame(action=Action.Ready("kept"))]
+    check_indexed_clones(frames, 0)
     drain_items()
     nodes = [Node(id=1), Node(id=2)]
     mut copy = clone_nodes(nodes)

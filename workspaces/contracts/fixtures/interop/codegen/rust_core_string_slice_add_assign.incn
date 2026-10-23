@@ -1,9 +1,18 @@
-# behavior: a str returned by a Rust core helper is appended to a local with += (#896)
+# behavior: generated code for imported Rust items stays valid: a str returned by a Rust core helper is appended to a local with += (#896), a closure passed to a Rust Option's map calls a local function, the same one a direct call in the function reaches (#1492), an unused rust::std import does not stop a program while an aliased rust::std module import is read through its alias, and a Rust std module imported from the rust::std root is called through its binding
 # expect-stdout:
 #   a
 #   ab
+#   code 1
+#   code 7
+#   3
+#   done
+#   3
 
+import rust::std::collections::HashMap
+import rust::std::f64::consts as consts
 from rust::incan_std_core::strings import str_slice_byte_range
+from rust::std import cmp
+from rust::std::option import Option as RustOption
 
 
 def concat_slice(text: str) -> str:
@@ -12,6 +21,42 @@ def concat_slice(text: str) -> str:
     return out
 
 
-def main() -> None:
+def describe(code: int) -> str:
+    return f"code {code}"
+
+
+pub def run(value: RustOption[int]) -> RustOption[str]:
+    direct = describe(1)
+    println(direct)
+    return value.map((code) => describe(code))
+
+
+pub def maximum(a: int, b: int) -> int:
+    return cmp.max(a, b)
+
+
+def show_slice_append() -> None:
     println(concat_slice("abc"))
     println(concat_slice("abc") + "b")
+
+
+def show_option_map_closure() -> None:
+    match run(RustOption.Some(7)):
+        Some(text) => println(text)
+        None => println("none")
+
+
+def show_unused_and_aliased_imports() -> None:
+    println(int(consts.PI))
+    println("done")
+
+
+def show_root_module() -> None:
+    println(maximum(2, 3))
+
+
+def main() -> None:
+    show_slice_append()
+    show_option_map_closure()
+    show_unused_and_aliased_imports()
+    show_root_module()

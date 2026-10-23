@@ -38,9 +38,11 @@ Do not write to the canonical `.agents/state/review-report.md`.
    - `.unwrap()` / `.expect()` in tests
    - `panic!`-driven helper/control flow where `Result` + assertions would be clearer
    - missing targeted tests for new CLI, lifecycle, or semantic behavior
-   - stale snapshots or missing integration coverage when behavior changed end-to-end
+   - stale contract expectations or missing execution coverage when behavior changed end-to-end
 3. Only flag a coverage gap when the new behavior or branch is not exercised anywhere in the touched tests. If integration coverage already exercises the behavior, do not demand redundant parser/unit duplication without a concrete reason.
 4. Keep this pass focused on test quality and coverage, not general code quality.
+5. Check `AGENTS.md`'s budget: the whole suite (contract cases, Rust unit tests, and Incan test functions) stays under about 3,000 tests. Extend an existing case before adding one; add only when no same-area case can carry the behavior. Never add a case per bug: name the guarded bug in `# behavior:`. A library case has one producer Loaf carrying every declaration it needs.
+6. Check verification evidence against `workspaces/contracts/README.md`: smallest case or area selectors during development, affected whole families at commit points, and no regression of baseline passing cases. The fast local gate is `make pre-commit-fast`; Oven owns execution, and Cargo commands are not supported.
 
 ## Slice report shape
 

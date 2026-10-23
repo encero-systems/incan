@@ -11,7 +11,7 @@ use super::TypeChecker;
 use crate::typechecker::LoopContextKind;
 use crate::typechecker::helpers::result_ty;
 use incan_lang::interop::RustItemKind;
-use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId, TASK_JOIN_ERROR_TYPE_NAME};
+use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 
 impl TypeChecker {
@@ -48,6 +48,26 @@ impl TypeChecker {
     fn await_output_type(&mut self, expr: &Spanned<Expr>, ty: &ResolvedType) -> Option<ResolvedType> {
         if self.expr_is_async_call_realization(expr) {
             return Some(ty.clone());
+        }
+        if self.rust_associated_type(ty, "std::future::Future", "Output").is_none()
+            && let Some(future) = self.rust_associated_type(ty, "std::future::IntoFuture", "IntoFuture")
+        {
+            let output = self.rust_associated_type(&future, "std::future::Future", "Output")?;
+            self.type_info.rust.await_conversions.insert(
+                (expr.span.start, expr.span.end),
+                crate::typechecker::RustCheckedCall {
+                    storage: None,
+                    source_type_parameters: self.native_call_type_parameters(),
+                    receiver_adjustments: Vec::new(),
+                    path: "std::future::IntoFuture::into_future".into(),
+                    type_arguments: vec![ty.clone()],
+                    parameters: vec![crate::symbols::CallableParam::positional(ty.clone())],
+                    return_type: future,
+                    result_item_path: None,
+                    has_receiver: true,
+                },
+            );
+            return Some(output);
         }
         self.await_output_type_from_type(ty)
     }
@@ -174,26 +194,22 @@ impl TypeChecker {
 
     /// Resolve the output type yielded by awaiting a checked awaitable type.
     pub(in crate::typechecker) fn await_output_type_from_type(&self, ty: &ResolvedType) -> Option<ResolvedType> {
+        if let Some(output) = self.rust_associated_type(ty, "std::future::Future", "Output") {
+            return Some(output);
+        }
+        if let Some(future) = self.rust_associated_type(ty, "std::future::IntoFuture", "IntoFuture") {
+            return self.rust_associated_type(&future, "std::future::Future", "Output");
+        }
         if let Some(name) = self.generic_placeholder_name(ty) {
             return self.await_output_type_from_active_bound(name);
         }
         match ty {
-            ResolvedType::Unknown | ResolvedType::RustPath(_) => Some(ResolvedType::Unknown),
+            ResolvedType::Unknown => Some(ResolvedType::Unknown),
             ResolvedType::TypeVar(name) => self.await_output_type_from_active_bound(name),
             ResolvedType::Generic(name, args)
                 if builtin_traits::from_str(name.as_str()) == Some(TraitId::Awaitable) && args.len() == 1 =>
             {
                 args.first().cloned()
-            }
-            ResolvedType::Generic(name, args)
-                if surface_types::from_str(name.as_str()) == Some(SurfaceTypeId::JoinHandle) && args.len() == 1 =>
-            {
-                args.first().map(|output| {
-                    result_ty(
-                        output.clone(),
-                        ResolvedType::Named(TASK_JOIN_ERROR_TYPE_NAME.to_string()),
-                    )
-                })
             }
             ResolvedType::Named(name) => self
                 .instantiated_trait_args_for_type(name, &[], builtin_traits::as_str(TraitId::Awaitable))

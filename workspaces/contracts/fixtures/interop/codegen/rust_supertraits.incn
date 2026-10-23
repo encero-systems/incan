@@ -39,7 +39,7 @@ model Count with Number:
 
 @derive(json)
 pub model Config with DecodeReady:
-    value: int
+    pub value: int
 
 
 def show(label: Label) -> str:

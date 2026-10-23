@@ -17,6 +17,7 @@ Own:
 - hardcoded behavior that should extend canonical registries
 - compiler/runtime semantic drift
 - split-brain decision surfaces where local/imported/reexported/package/test/vocab/generated-Rust paths can make different decisions for the same semantic concept
+- design records that log mechanisms instead of decisions: a record changes only when a decision changes, in a sentence or two, and keeps decisions, boundaries, consequences, and non-goals under about 1,000 words; mechanisms belong in commit messages and rustdoc, never a paragraph per commit
 
 Do not own:
 

@@ -1,0 +1,13 @@
+# behavior: a named native variant matches its explicit Rust discriminant instead of treating its tag as an index
+# expect-stdout:
+#   7
+
+from rust::tags import Message, message
+
+
+def main() -> None:
+    """Select the native variant using its actual explicit tag."""
+    value = message()
+    match value:
+        Message.Record(value=number) => println(number)
+        _ => println("other")

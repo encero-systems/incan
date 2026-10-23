@@ -1,0 +1,19 @@
+[project]
+name = "registry_alias"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[rust-dependencies]
+foreign_math = { package = "libm", version = "0.2", optional = true }
+unused = { package = "libm", version = "999", optional = true }
+checksum = { package = "crc32fast", version = "1" }
+sha2 = { version = "0.10" }
+
+[project.features]
+default = ["math"]
+math = ["dep:foreign_math"]
+
+[dependencies]
+serde_json = { loaf = "crates-io/serde_json", version = "1.0", features = ["raw_value", "unbounded_depth"] }

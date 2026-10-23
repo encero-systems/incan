@@ -1,7 +1,27 @@
-# behavior: `in` tests list membership and `not in` tests dict key absence (parity corpus case 22)
+# behavior: `in` and `not in` read whole lists and indexed list fields without changing their owners (#2256, parity corpus case 22)
 # expect-stdout:
 #   true
 #   true
+#   true
+#   true
+#   false
+#   true
+#   2
+
+model Labels:
+    """Keep membership candidates inside a list element's field."""
+
+    names: list[str]
+
+
+def has_label(values: &list[Labels], index: int, name: str) -> bool:
+    """Read a dynamically selected field while preserving the shared owner."""
+    return name in values[index].names
+
+
+def lacks_label(values: &list[Labels], index: int, name: str) -> bool:
+    """Negate membership in the same indexed storage."""
+    return name not in values[index].names
 
 """`in` tests list membership and `not in` tests dict key absence (parity corpus case 22)."""
 def has_item(xs: List[int], v: int) -> bool:
@@ -18,3 +38,9 @@ def main() -> None:
     """Print the fixture values in the expected order."""
     println(has_item([1, 2], 2))
     println(lacks_key({"a": 1}, "b"))
+    values = [Labels(names=["Clone", "Debug"]), Labels(names=["Default"])]
+    println(has_label(values, 0, "Clone"))
+    println(lacks_label(values, -1, "Clone"))
+    println(has_label(values, -1, "Debug"))
+    println(has_label(values, 0, "Debug"))
+    println(len(values))

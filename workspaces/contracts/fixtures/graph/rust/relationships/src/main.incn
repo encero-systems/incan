@@ -1,0 +1,33 @@
+# behavior: Rust definitions, grouped imports without blank hits, aliases, receiver-resolved methods and direct and indirect calls are inspected without running the program. Broken Rust source is named by one warning and contributes no facts, and --strict refuses it.
+# graph-commands:
+#   . --query defs helper
+#   . --query callers helper
+#   . --query callees caller
+#   . --query refs helper
+#   . --query imports rust_relationships
+#   . --query defs leaf
+#   . --query callers leaf
+#   . --query callees indirect
+#   . --query callees dynamic
+#   . --query refs Widget
+#   . --query callees dependency_method
+#   . --query defs value --limit 1
+#   . --query defs rust_relationships::provider::helper
+#   . --query callees closure_caller
+# expect-stdout-contains:
+#   declaration rust_relationships::provider::helper src/lib.rs:4
+#   call rust_relationships::caller src/lib.rs:28
+#   call rust_relationships::provider::helper src/lib.rs:28
+#   call rust_relationships::<rust_relationships::Widget>::value src/lib.rs:29
+#   reference rust_relationships::provider::helper src/lib.rs:28
+#   import rust_relationships::provider::helper src/lib.rs:9
+#   declaration graph_provider::leaf deps/provider/src/lib.rs:2
+#   call rust_relationships::caller src/lib.rs:29
+#   call graph_provider::leaf src/lib.rs:29
+#   call <indirect> src/lib.rs:33
+#   call rust_relationships::Value::value src/lib.rs:42
+#   reference rust_relationships::Widget src/lib.rs:46
+#   call graph_provider::<graph_provider::Gadget>::value src/lib.rs:56
+#   … 4 more
+#   call rust_relationships::closure_caller src/lib.rs:61
+#   call rust_relationships::provider::helper src/lib.rs:61

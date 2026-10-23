@@ -25,22 +25,15 @@ from pub::incan_mir_plan import (
 from pub::incan_mir_plan import assign as plan_assign, block as plan_block, place as plan_place
 from pub::incan_mir_plan import tuple_element_type
 from type_parameters import Instance
+from program_context import ProgramContext
 from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId as RustCanonicalSymbolId
 from rust::incan_semantics_core::body_ir import (
     NominalDeclaration as RustNominalDeclaration,
     EnumDeclaration as RustEnumDeclaration,
-    StaticDeclaration as RustStaticDeclaration,
     ValueEnumDeclaration as RustValueEnumDeclaration,
     DecoratedBinding as RustDecoratedBinding,
     Body as RustBody,
 )
-
-
-pub model DisplayFunction:
-    """One validated shared-receiver source body or SDK item rendering a retained nominal as owned text."""
-
-    pub owner: int
-    pub callee: CalleeKind
 
 
 pub model Builder:
@@ -57,11 +50,13 @@ pub model Builder:
     `generator_handle` is the provisional yield-handle slot in a producer, or -1 in an ordinary function; completed producer plans move it into their parameter slot.
     `type_parameters` and `type_arguments` retain the current closed declaration binding; `instances` records checked calls that need their own concrete native function.
     `function_pointer_locals` lists the return slot, function-typed parameters, and explicitly annotated locals whose callables are stored as reified function pointers; other callable locals keep their inferred function-item type.
+    `reference_values` lists logical reference values whose slots hold the reference itself, independently of source receiver storage that borrows an owned value.
     `name` is the plan symbol of the function being built, which prefixes the functions its closures synthesize; `synthesized` collects those lifted bodies and constructors for the enclosing plan.
     `step_element` is the element type of the generator expression whose lifted step this frame builds, or None in every other frame; a step's yield returns its one accepted element instead of suspending.
     `iteration_locals` lists the frame slots Body IR polls with a builtin `IterNext`, so an iterator's materialization is recognized by its slot rather than by its read.
     `step_bindings` lists the Body IR locals a generator-expression step binds from its arguments, and `step_clauses` each later `for` clause of that step: its iterator local, its source local, and the locals bound before it.
     `partial_callables` pairs each local holding a closure whose parameters carry defaults with one flag per declared parameter, marking those whose input is preceded by a supplied flag.
+    Helpers borrow this frame with `mut builder: Builder`, including read-only helpers: the bootstrap does not coerce an owned model to an explicitly shared reference. Passing a frame by value would copy its declaration tables and all accumulated blocks on every operand read.
     """
 
     pub locals: list[Local]
@@ -87,6 +82,8 @@ pub model Builder:
     # One unproven assignment closes a slot at every control-flow join, even if another assignment was scalar-only.
     pub unproven_closures: list[int]
     pub nominals: list[RustNominalDeclaration]
+    # Source frames share dispatch mappings and body positions; external-only synthetic frames have no source dispatch.
+    pub program: ProgramContext
     pub enums: list[RustEnumDeclaration]
     pub unions: list[RustType]
     # Deferred defaults reserve a declaration-local frame within the caller.
@@ -96,7 +93,6 @@ pub model Builder:
     # Only a closure with a retained consuming contract may transfer its zip into a capture-free generator step.
     pub consuming_closure_frame: bool
     pub intrinsics: list[EnumDeclaration]
-    pub statics: list[RustStaticDeclaration]
     pub generator_handle: int
     pub value_enums: list[RustValueEnumDeclaration]
     pub instances: list[Instance]
@@ -114,9 +110,6 @@ pub model Builder:
     pub iteration_locals: list[int] = []
     pub step_bindings: list[int] = []
     pub step_clauses: list[tuple[int, int, list[int]]] = []
-    pub display_functions: list[DisplayFunction] = []
-    # One validated comparison symbol frame per nominal, shared with the declaration's native ABI bridges.
-    pub comparison_functions: list[list[str]] = []
     # Lexical Body IR scopes identify owners that survive a loop body, including its enclosing result place.
     pub scoped_locals: list[tuple[int, int]] = []
     pub scope_parents: list[tuple[int, int]] = []
@@ -134,6 +127,8 @@ pub model Builder:
     pub initializing_decorator: Option[RustCanonicalSymbolId] = None
     pub cached_decorator: int = -1
     pub callable_name_dynamic_profile: bool = false
+    # Slots whose checked value is itself a reference, rather than an owned source value stored behind a receiver borrow.
+    pub reference_values: list[int] = []
 
     def new_block(mut self, span: SourceSpan) -> int:
         """Allocate a block before connecting edges, preserving index stability."""
@@ -169,7 +164,7 @@ pub def forget_owned(mut builder: Builder, index: int) -> None:
     builder.moved_tuple_fields = [(local, slot) for local, slot in builder.moved_tuple_fields if local != index]
 
 
-def remaining_owned_places(builder: Builder, index: int, span: SourceSpan) -> list[Place]:
+def remaining_owned_places(mut builder: Builder, index: int, span: SourceSpan) -> list[Place]:
     """Drop a whole owner unless checked tuple transfers have left only individual initialized fields."""
     mut has_transfers = false
     for position in range(len(builder.moved_tuple_fields)):
@@ -270,7 +265,7 @@ pub def terminate_call(
     destination: Place,
     span: SourceSpan,
 ) -> None:
-    """Emit a call that continues in a fresh block and unwinds through the current owners' cleanup chain."""
+    """Emit a call with the current owners' unwind cleanup; a Never destination closes its unreachable continuation without reading its storage."""
     # A moved argument is the callee's to drop now, so it leaves the owners before the cleanup chain is built.
     forget_moved_arguments(builder, arguments)
     continuation = builder.new_block(span)
@@ -284,6 +279,8 @@ pub def terminate_call(
     )
     builder.finish(call, span)
     builder.current = continuation
+    if place_type(builder.locals, destination) == PlanType.Never:
+        builder.finish(TerminatorKind.Unreachable, span)
 
 
 pub def read_place(place: Place, moved: bool, span: SourceSpan) -> Operand:
@@ -293,7 +290,7 @@ pub def read_place(place: Place, moved: bool, span: SourceSpan) -> Operand:
     return Operand(kind=OperandKind.Copy(place), span=span)
 
 
-pub def value_type(builder: Builder, operand: Operand) -> Result[PlanType, str]:
+pub def value_type(mut builder: Builder, operand: Operand) -> Result[PlanType, str]:
     """Read a materialized value's plan type without consulting source syntax or frontend policy."""
     match operand.kind:
         OperandKind.Copy(place) => return Ok(place_type(builder.locals, place))
@@ -301,6 +298,7 @@ pub def value_type(builder: Builder, operand: Operand) -> Result[PlanType, str]:
         OperandKind.Literal(constant) =>
             match constant:
                 Constant.Numeric(_text, ty) => return Ok(ty)
+                Constant.RustItem(_path, ty) => return Ok(ty)
                 Constant.Int(_value) => return Ok(PlanType.Int)
                 Constant.Float(_value) => return Ok(PlanType.Float)
                 Constant.Bool(_value) => return Ok(PlanType.Bool)

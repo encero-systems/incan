@@ -6,6 +6,7 @@ from rust::incan_semantics_core import (
     SemanticSourceTargetKind,
     function_type,
     generic,
+    native_array_type,
 )
 from rust::incan_semantics_core::body_ir import Body, LocalId as RustLocalId
 from symbols import type_component
@@ -22,7 +23,7 @@ pub model Instance:
 
 
 pub def substitute(ty: &RustType, names: list[str], arguments: list[RustType]) -> Result[RustType, str]:
-    """Substitute declared placeholders without inferring bindings from operands or source spelling."""
+    """Substitute declared placeholders through structural types and references without inferring bindings from operands or source spelling."""
     match ty:
         RustType.TypeVar(name) =>
             for index in range(len(names)):
@@ -32,6 +33,15 @@ pub def substitute(ty: &RustType, names: list[str], arguments: list[RustType]) -
         RustType.Named(name) =>
             # A named declaration is not a placeholder, even when its spelling matches a type parameter.
             return Ok(ty.clone())
+        RustType.Ref(inner) =>
+            concrete: RustType = substitute(inner, names, arguments)?
+            return Ok(RustType.Ref(concrete.clone()))
+        RustType.RefMut(inner) =>
+            concrete: RustType = substitute(inner, names, arguments)?
+            return Ok(RustType.RefMut(concrete.clone()))
+        RustType.NativeArray(element=element, length=length) =>
+            concrete: RustType = substitute(element, names, arguments)?
+            return Ok(native_array_type(concrete, length.clone()))
         RustType.Generic(base=base, args=elements) =>
             mut concrete: list[RustType] = []
             for element in elements:

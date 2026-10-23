@@ -1,8 +1,0 @@
-# behavior: hashed non membership operations remain refused
-# expect-stdout:
-#   {1: 2}
-
-"""Hashed non membership operations remain refused."""
-def main() -> None:
-  """Print the fixture values in the expected order."""
-  println({1: 2})

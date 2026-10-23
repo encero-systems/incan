@@ -15,29 +15,42 @@ from tuples import tuple_element
 from enums import enum_type
 from closures import semantic_input
 from decls import library_enum_item
+from lists import exclusive_reference, list_parameter_type
 
 
 pub def native_source_type(
-    nominals: list[NominalDeclaration],
-    enums: list[RustEnumDeclaration],
-    unions: list[RustType],
+    mut nominals: list[NominalDeclaration],
+    mut enums: list[RustEnumDeclaration],
+    mut unions: list[RustType],
     ty: &RustType,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Use retained carrier identity before recursively resolving collection elements; never reopen source syntax."""
-    for index in range(len(intrinsics)):
-        if intrinsics[index].source_type == str(ty):
-            return Ok(PlanType.Enum(len(enums) + index, intrinsics[index].name))
+    source_type = str(ty)
+    mut index = 0
+    for declaration in intrinsics:
+        if declaration.source_type == source_type:
+            return Ok(PlanType.Enum(len(enums) + index, declaration.name))
+        index += 1
     match enum_type(enums, ty):
         Some(result) => return Ok(result)
         None => pass
     match ty:
+        RustType.NativeArray(element=element, length=length) =>
+            # The bootstrap binds Rust enum scalar fields by reference; copy the checked integer before conversion.
+            count = length.clone()
+            if count > 9223372036854775807u64:
+                return Err("unsupported Body IR native array length exceeds the plan integer range")
+            return Ok(PlanType.NativeArray([native_source_type(nominals, enums, unions, element, intrinsics)?], int(count)))
+        RustType.RustInteropPath(path) =>
+            if str(path) == "str":
+                return Ok(PlanType.NativeStr)
         RustType.Ref(inner) =>
+            if is_native_str(inner):
+                return Ok(PlanType.StrRef)
             return shared_receiver_type(native_source_type(nominals, enums, unions, inner, intrinsics)?)
         RustType.RefMut(inner) =>
-            match native_source_type(nominals, enums, unions, inner, intrinsics)?:
-                PlanType.Model(index, name) => return Ok(PlanType.ModelMutRef(index, name))
-                _ => return Err("unsupported Body IR mutable callable receiver outside a nominal layout")
+            return mutable_receiver_type(native_source_type(nominals, enums, unions, inner, intrinsics)?)
         RustType.Unsupported(description) => return Err(f"unsupported Body IR type {description}")
         RustType.NativeBuiltin(RuntimeBuiltinType.ValidationError) => return Ok(PlanType.ValidationError)
         RustType.Function(params=parameters, return_type=result) =>
@@ -48,6 +61,8 @@ pub def native_source_type(
             signature.append(native_source_type(nominals, enums, unions, result, intrinsics)?)
             return Ok(PlanType.FunctionPointer(signature))
         RustType.Generic(base=base, args=arguments) =>
+            if base == "[]" and len(arguments) == 1:
+                return Ok(PlanType.NativeSlice([native_source_type(nominals, enums, unions, arguments[0], intrinsics)?]))
             if base == "Awaitable" and len(arguments) == 1:
                 return Ok(PlanType.Future([native_source_type(nominals, enums, unions, arguments[0], intrinsics)?]))
             if base == "List" and len(arguments) == 1:
@@ -83,24 +98,72 @@ pub def native_source_type(
     return model_type(nominals, ty)
 
 
-pub def shared_receiver_type(ty: PlanType) -> Result[PlanType, str]:
-    """Borrow the exact retained nominal, text or scalar carrier; other shared source layouts remain refused."""
+pub def stored_field_type(
+    mut nominals: list[NominalDeclaration],
+    mut enums: list[RustEnumDeclaration],
+    mut unions: list[RustType],
+    declaration: &NominalDeclaration,
+    slot: int,
+    mut intrinsics: list[EnumDeclaration],
+) -> Result[PlanType, str]:
+    """Use the Body IR field's owning callable fact at every construction and projection of its closed owner."""
+    ty = native_source_type(nominals, enums, unions, declaration.field_types[slot], intrinsics)?
+    owned: bool = declaration.owns_callable_field(slot)
+    if owned:
+        match ty:
+            PlanType.FunctionPointer(signature) => return Ok(PlanType.Closure(signature))
+            _ => return Err("invalid Body IR owned callable field without a function signature")
+    return Ok(ty)
+
+
+def is_native_str(ty: &RustType) -> bool:
+    """Recognize the checker's unsized Rust str referent before ordinary owned-text projection."""
     match ty:
+        RustType.RustInteropPath(path) => return str(path) == "str"
+        _ => return false
+
+
+pub def shared_receiver_type(ty: PlanType) -> Result[PlanType, str]:
+    """Borrow the exact retained nominal, text, scalar or collection carrier through the ordinary parameter layout."""
+    match ty:
+        PlanType.Tuple(elements) => return Ok(PlanType.TupleRef(elements))
+        PlanType.StrRef => return Ok(PlanType.ScalarRef([ty]))
+        PlanType.NativeArray(elements, length) => return Ok(PlanType.NativeArrayRef(elements, length))
+        PlanType.NativeSlice(elements) => return Ok(PlanType.SliceRef(elements))
+        PlanType.FunctionPointer(_signature) => return Ok(PlanType.ScalarRef([ty]))
         PlanType.Model(index, name) => return Ok(PlanType.ModelRef(index, name))
         PlanType.Enum(index, name) => return Ok(PlanType.EnumRef(index, name))
+        PlanType.ValidationError => return Ok(PlanType.ValidationErrorRef)
         PlanType.String => return Ok(PlanType.StringRef)
         _ => pass
+    collection = list_parameter_type(ty, false)
+    if collection != ty:
+        return Ok(collection)
     if ty in [PlanType.Int, PlanType.Float, PlanType.I8, PlanType.I16, PlanType.I32, PlanType.I128, PlanType.ISize, PlanType.USize, PlanType.U8, PlanType.U16, PlanType.U32, PlanType.U64, PlanType.U128, PlanType.F32, PlanType.F64, PlanType.Bool, PlanType.Decimal, PlanType.FrozenStr, PlanType.FrozenBytes]:
         return Ok(PlanType.ScalarRef([ty]))
     return Err("unsupported Body IR shared SDK receiver carrier")
 
 
+pub def mutable_receiver_type(ty: PlanType) -> Result[PlanType, str]:
+    """Reuse exclusive source parameter storage for native references, retaining scalar reference carriers explicitly."""
+    match ty:
+        PlanType.NativeArray(elements, length) => return Ok(PlanType.NativeArrayMutRef(elements, length))
+        PlanType.NativeSlice(elements) => return Ok(PlanType.SliceMutRef(elements))
+        _ => pass
+    match exclusive_reference(ty):
+        Some(reference) => return Ok(reference)
+        None => pass
+    match shared_receiver_type(ty)?:
+        PlanType.ScalarRef(elements) => return Ok(PlanType.ScalarMutRef(elements))
+        _ => return Err("unsupported Body IR mutable callable receiver carrier")
+
+
 pub def callable_parameter_type(
-    nominals: list[NominalDeclaration],
-    enums: list[RustEnumDeclaration],
-    unions: list[RustType],
+    mut nominals: list[NominalDeclaration],
+    mut enums: list[RustEnumDeclaration],
+    mut unions: list[RustType],
     parameter: &IncanCallableParam,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Translate checked callable parameter kinds into the same native collection storage their Body IR frames retain."""
     element = native_source_type(nominals, enums, unions, parameter.ty, intrinsics)?
@@ -113,7 +176,7 @@ pub def callable_parameter_type(
         IncanCallableParamKind.RestKeyword => return Ok(PlanType.Dict(ListLeaf.Str, collection_leaf(element)?))
 
 
-def numeric_newtype_iterator(nominals: list[NominalDeclaration], element: &RustType) -> Option[PlanType]:
+def numeric_newtype_iterator(mut nominals: list[NominalDeclaration], element: &RustType) -> Option[PlanType]:
     """Retain an integer newtype's exact owned generator leaf through the same canonical layout as its list items."""
     match element:
         RustType.Named(name) =>
@@ -133,10 +196,10 @@ def numeric_newtype_iterator(nominals: list[NominalDeclaration], element: &RustT
 
 
 def hashed_leaf(
-    nominals: list[NominalDeclaration],
-    enums: list[RustEnumDeclaration],
+    mut nominals: list[NominalDeclaration],
+    mut enums: list[RustEnumDeclaration],
     ty: &RustType,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[ListLeaf, str]:
     """
     Admit an enum set element or dictionary key only when its retained layout hashes.
@@ -162,21 +225,23 @@ def hashed_leaf(
             if base == "Option" or base == "Result":
                 for argument in arguments:
                     hashed_leaf(nominals, enums, argument, intrinsics)?
-                for index in range(len(intrinsics)):
-                    carrier = intrinsics[index]
-                    if carrier.carrier == str(base) and carrier.source_type == str(ty):
+                source_type = str(ty)
+                mut index = 0
+                for carrier in intrinsics:
+                    if carrier.carrier == str(base) and carrier.source_type == source_type:
                         return Ok(ListLeaf.Enum(len(enums) + index, carrier.name))
+                    index += 1
                 return Err(f"unsupported Body IR unretained carrier hashed key {ty}")
         _ => pass
     return hashed_element(nominals, ty)
 
 
 def layout_tuple_type(
-    nominals: list[NominalDeclaration],
-    enums: list[RustEnumDeclaration],
-    unions: list[RustType],
+    mut nominals: list[NominalDeclaration],
+    mut enums: list[RustEnumDeclaration],
+    mut unions: list[RustType],
     elements: &list[RustType],
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Resolve each tuple element in the retained layout context, so a list or carrier element keeps its identity."""
     # Legacy emits a singleton literal as a parenthesized scalar; do not admit a different native layout.
@@ -190,11 +255,11 @@ def layout_tuple_type(
 
 
 def zip_pair_type(
-    nominals: list[NominalDeclaration],
-    enums: list[RustEnumDeclaration],
-    unions: list[RustType],
+    mut nominals: list[NominalDeclaration],
+    mut enums: list[RustEnumDeclaration],
+    mut unions: list[RustType],
     element: &RustType,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Option[PlanType]:
     """Admit a checked pair iterator, such as `zip`'s, through its element tuple's retained layout."""
     match element:
@@ -207,11 +272,11 @@ def zip_pair_type(
 
 
 def pair_layout(
-    nominals: list[NominalDeclaration],
-    enums: list[RustEnumDeclaration],
-    unions: list[RustType],
+    mut nominals: list[NominalDeclaration],
+    mut enums: list[RustEnumDeclaration],
+    mut unions: list[RustType],
     elements: &list[RustType],
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Option[PlanType]:
     """Lay out both pair components in the retained context; any other arity or element keeps its refusal."""
     if len(elements) != 2:
@@ -225,7 +290,7 @@ pub def collection_leaf(ty: PlanType) -> Result[ListLeaf, str]:
     """
     Keep exact source nominal and intrinsic carrier identities alongside the existing primitive leaves.
 
-    An owned list or dictionary held by another collection, such as a dictionary's list values, is a collection leaf.
+    An owned list, set or dictionary held by another collection is a collection leaf.
     """
     match ty:
         PlanType.Int => return Ok(ListLeaf.Int)
@@ -235,12 +300,20 @@ pub def collection_leaf(ty: PlanType) -> Result[ListLeaf, str]:
         PlanType.FrozenStr => return Ok(ListLeaf.FrozenStr)
         PlanType.FrozenBytes => return Ok(ListLeaf.FrozenBytes)
         PlanType.U8 => return Ok(ListLeaf.U8)
+        PlanType.USize => return Ok(ListLeaf.USize)
         PlanType.Unit => return Ok(ListLeaf.Unit)
         PlanType.Decimal => return Ok(ListLeaf.Decimal)
         PlanType.Tuple(elements) => return Ok(ListLeaf.Tuple(elements))
         PlanType.Model(owner, name) => return Ok(ListLeaf.Model(owner, name))
         PlanType.Enum(owner, name) => return Ok(ListLeaf.Enum(owner, name))
+        PlanType.EnumRef(_owner, _name) => return Ok(ListLeaf.Reference([ty]))
+        PlanType.ModelRef(_owner, _name) => return Ok(ListLeaf.Reference([ty]))
+        PlanType.StringRef => return Ok(ListLeaf.Reference([ty]))
+        PlanType.StrRef => return Ok(ListLeaf.Reference([ty]))
+        PlanType.ScalarRef(_elements) => return Ok(ListLeaf.Reference([ty]))
+        PlanType.SliceRef(_elements) => return Ok(ListLeaf.Reference([ty]))
         PlanType.FunctionPointer(signature) => return Ok(ListLeaf.FunctionPointer(signature))
         PlanType.List(leaf, depth) => return Ok(ListLeaf.List([leaf], depth))
         PlanType.Dict(key, value) => return Ok(ListLeaf.Dict([key, value]))
-        _ => return Err("unsupported Body IR collection element representation")
+        PlanType.Set(element) => return Ok(ListLeaf.Set([element]))
+        _ => return Err(f"unsupported Body IR collection element representation {ty:?}")

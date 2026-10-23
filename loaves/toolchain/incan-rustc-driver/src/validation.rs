@@ -4,9 +4,9 @@ use std::collections::BTreeSet;
 
 use crate::error::PlanError;
 use crate::plan::{
-    BinaryOp, Callee, CalleeKind, Constant, Function, ListLeaf, Operand, OperandKind, Place, Plan, PlanType,
-    Projection, RvalueKind, SizedNumeric, SourceSpan, StatementKind, TerminatorKind, UnaryOp, Unwind, list_leaf_type,
-    range_field_types, tuple_element_type,
+    BinaryOp, Callee, CalleeKind, Constant, Function, GenericLayoutType, ListLeaf, Operand, OperandKind, Place, Plan,
+    PlanType, Projection, RvalueKind, SizedNumeric, SourceSpan, StatementKind, TerminatorKind, UnaryOp, Unwind,
+    list_leaf_type, range_field_types, tuple_element_type,
 };
 
 /// Copyable comparison mirror of the Incan-owned sized carrier enum.
@@ -49,6 +49,13 @@ fn numeric(kind: &SizedNumeric) -> Numeric {
 /// A local comparison vocabulary; the public types remain the Incan Loaf's own types.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Scalar {
+    NativeStr,
+    NativeSlice(Vec<Scalar>),
+    NativeArray(Vec<Scalar>, i64),
+    NativeArrayRef(Vec<Scalar>, i64),
+    NativeArrayMutRef(Vec<Scalar>, i64),
+    SliceRef(Vec<Scalar>),
+    SliceMutRef(Vec<Scalar>),
     UnitFunction,
     Int,
     Float,
@@ -68,16 +75,20 @@ enum Scalar {
     CheckedNumeric(Numeric),
     Bool,
     Unit,
+    Never,
     EnumTag,
     Enum(i64),
     EnumRef(i64),
     EnumMutRef(i64),
     CheckedInt,
     Tuple(Vec<Scalar>),
+    /// A shared reference keeps every tuple field's layout and owns none of its values.
+    TupleRef(Vec<Scalar>),
     TupleMutRef(Vec<Scalar>),
     String,
     StringRef,
     ScalarRef(Vec<Scalar>),
+    ScalarMutRef(Vec<Scalar>),
     StringMutRef,
     Decimal,
     FrozenStr,
@@ -130,6 +141,8 @@ enum Scalar {
 /// Comparison mirror of scalar and tuple leaves; the public plan remains Incan-authored.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Leaf {
+    /// One exact shared-reference carrier, never an owned copy of its referent.
+    Reference(Vec<Scalar>),
     FunctionPointer(Vec<Scalar>),
     Int,
     Float,
@@ -139,6 +152,7 @@ enum Leaf {
     Model(i64),
     Enum(i64),
     U8,
+    USize,
     Unit,
     Decimal,
     FrozenStr,
@@ -147,6 +161,8 @@ enum Leaf {
     List(Vec<Leaf>, i64),
     /// An owned nested dictionary preserves key/value arity instead of indexing an unchecked vector.
     Dict(Vec<Leaf>),
+    /// An owned nested set preserves its element arity for validation.
+    Set(Vec<Leaf>),
 }
 
 impl Leaf {
@@ -165,7 +181,9 @@ impl Leaf {
             ),
             ListLeaf::Model(index, _) => Leaf::Model(*index),
             ListLeaf::Enum(index, _) => Leaf::Enum(*index),
+            ListLeaf::Reference(elements) => Leaf::Reference(elements.iter().map(scalar).collect()),
             ListLeaf::U8 => Leaf::U8,
+            ListLeaf::USize => Leaf::USize,
             ListLeaf::Unit => Leaf::Unit,
             ListLeaf::Decimal => Leaf::Decimal,
             ListLeaf::FrozenStr => Leaf::FrozenStr,
@@ -173,6 +191,7 @@ impl Leaf {
             ListLeaf::FunctionPointer(signature) => Leaf::FunctionPointer(signature.iter().map(scalar).collect()),
             ListLeaf::List(elements, depth) => Leaf::List(elements.iter().map(Leaf::of).collect(), *depth),
             ListLeaf::Dict(elements) => Leaf::Dict(elements.iter().map(Leaf::of).collect()),
+            ListLeaf::Set(elements) => Leaf::Set(elements.iter().map(Leaf::of).collect()),
         }
     }
 }
@@ -185,7 +204,19 @@ fn tuple_leaf(element: &crate::plan::TupleElement) -> Leaf {
 /// Compare source-authored types without requiring a Rust derive on Incan types.
 fn scalar(ty: &PlanType) -> Scalar {
     match ty {
+        PlanType::NativeStr => Scalar::NativeStr,
+        PlanType::NativeSlice(elements) => Scalar::NativeSlice(elements.iter().map(scalar).collect()),
+        PlanType::NativeArray(elements, length) => Scalar::NativeArray(elements.iter().map(scalar).collect(), *length),
+        PlanType::NativeArrayRef(elements, length) => {
+            Scalar::NativeArrayRef(elements.iter().map(scalar).collect(), *length)
+        }
+        PlanType::NativeArrayMutRef(elements, length) => {
+            Scalar::NativeArrayMutRef(elements.iter().map(scalar).collect(), *length)
+        }
+        PlanType::SliceRef(elements) => Scalar::SliceRef(elements.iter().map(scalar).collect()),
+        PlanType::SliceMutRef(elements) => Scalar::SliceMutRef(elements.iter().map(scalar).collect()),
         PlanType::ScalarRef(elements) => Scalar::ScalarRef(elements.iter().map(scalar).collect()),
+        PlanType::ScalarMutRef(elements) => Scalar::ScalarMutRef(elements.iter().map(scalar).collect()),
         PlanType::Future(outputs) => Scalar::Future(outputs.iter().map(scalar).collect()),
         PlanType::UnitFunction => Scalar::UnitFunction,
         PlanType::ZipIterator(left, right) => Scalar::ZipIterator(tuple_leaf(left), tuple_leaf(right)),
@@ -221,6 +252,12 @@ fn scalar(ty: &PlanType) -> Scalar {
                 .map(|element| scalar(&tuple_element_type(element.clone())))
                 .collect(),
         ),
+        PlanType::TupleRef(elements) => Scalar::TupleRef(
+            elements
+                .iter()
+                .map(|element| scalar(&tuple_element_type(element.clone())))
+                .collect(),
+        ),
         PlanType::TupleMutRef(elements) => Scalar::TupleMutRef(
             elements
                 .iter()
@@ -245,6 +282,7 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::USize => Scalar::USize,
         PlanType::Bool => Scalar::Bool,
         PlanType::Unit => Scalar::Unit,
+        PlanType::Never => Scalar::Never,
         PlanType::CheckedInt => Scalar::CheckedInt,
         PlanType::String => Scalar::String,
         PlanType::Decimal => Scalar::Decimal,
@@ -294,6 +332,31 @@ fn invalid(function: &Function, reason: impl Into<String>) -> PlanError {
 /// This pass checks references, signatures, scalar expression types, and cleanup edges. It is not an ownership
 /// checker: stage 3c must only submit checked bodies, and rustc's borrow checker remains a backstop.
 pub fn validate(plan: &Plan, library: bool) -> Result<(), PlanError> {
+    validate_declarations(plan, library)?;
+    for function in &plan.functions {
+        validate_callable(plan, function)?;
+    }
+    Ok(())
+}
+
+/// Collect each function's first adapter refusal after the shared declaration context has passed validation.
+/// A declaration failure is returned alone because individual function checks require that context.
+pub(crate) fn refusals(plan: &Plan, library: bool) -> Vec<PlanError> {
+    if let Err(error) = validate_declarations(plan, library) {
+        return vec![error];
+    }
+    plan.functions
+        .iter()
+        .filter_map(|function| match validate_callable(plan, function) {
+            Ok(()) => None,
+            Err(error @ PlanError::Invalid { .. }) => Some(error),
+            Err(error) => Some(invalid(function, error.to_string())),
+        })
+        .collect()
+}
+
+/// Validate names, declarations, extern signatures and the entrypoint before any callable body is inspected.
+fn validate_declarations(plan: &Plan, library: bool) -> Result<(), PlanError> {
     span(&plan.span)?;
     let mut names = BTreeSet::new();
     for function in &plan.functions {
@@ -303,6 +366,7 @@ pub fn validate(plan: &Plan, library: bool) -> Result<(), PlanError> {
     }
     validate_models(plan)?;
     validate_enums(plan)?;
+    validate_generic_models(plan)?;
     library_model_order(plan)?;
     crate::checked_json::validate_roots(plan)?;
     crate::checked_json::validate_source_roots(plan)?;
@@ -320,8 +384,11 @@ pub fn validate(plan: &Plan, library: bool) -> Result<(), PlanError> {
             validate_model_type(plan, ty)?;
         }
         let segments: Vec<_> = external.path.split("::").collect();
-        if segments.len() < 2
-            || !segments.iter().all(|segment| identifier(segment))
+        if incan_semantics_core::body_ir::rust_item_identity(&external.path).is_none()
+            || !segments
+                .iter()
+                .filter(|segment| **segment != "[]")
+                .all(|segment| identifier(segment))
             || !paths.insert((
                 external.path.clone(),
                 external.type_arguments.iter().map(scalar).collect::<Vec<_>>(),
@@ -336,7 +403,8 @@ pub fn validate(plan: &Plan, library: bool) -> Result<(), PlanError> {
             .parameters
             .iter()
             .any(|ty| !external_signature_type(&scalar(ty)))
-            || !external_signature_type(&scalar(&external.return_type))
+            || (!matches!(external.return_type, PlanType::Never)
+                && !external_signature_type(&scalar(&external.return_type)))
         {
             return Err(PlanError::Invalid {
                 function: external.path.clone(),
@@ -345,7 +413,7 @@ pub fn validate(plan: &Plan, library: bool) -> Result<(), PlanError> {
         }
     }
     // A library unit has no entry point; an executable must have exactly the binary main Rust accepts.
-    if !library {
+    if !library && plan.programs.is_empty() {
         let main = plan
             .functions
             .iter()
@@ -360,12 +428,29 @@ pub fn validate(plan: &Plan, library: bool) -> Result<(), PlanError> {
             ));
         }
     }
-    for function in &plan.functions {
-        validate_closure_constructor(function)?;
-        crate::shared_callables::validate(function)?;
-        validate_function(plan, function)?;
+    for name in &plan.programs {
+        let entry = plan
+            .functions
+            .iter()
+            .find(|function| function.name == *name)
+            .ok_or_else(|| PlanError::UnknownCallee(name.clone()))?;
+        if !entry.parameters.is_empty()
+            || (scalar(&entry.return_type) != Scalar::Unit && !entry_result(plan, &entry.return_type))
+        {
+            return Err(invalid(
+                entry,
+                "selected program entry must take no parameters and return unit or a unit Result",
+            ));
+        }
     }
     Ok(())
+}
+
+/// Apply the same closure, callable-storage and body checks in ordinary compilation and diagnostic enumeration.
+fn validate_callable(plan: &Plan, function: &Function) -> Result<(), PlanError> {
+    validate_closure_constructor(function)?;
+    crate::shared_callables::validate(function)?;
+    validate_function(plan, function)
 }
 
 /// Whether a binary main's result is a standard `Result` with a unit success and a text or SDK-owned error.
@@ -414,9 +499,19 @@ fn span(source: &SourceSpan) -> Result<(), PlanError> {
     Ok(())
 }
 
-/// Check the parameter-local convention and all nodes in one function.
+/// Check the parameter-local convention and all nodes in one function. Exact shared scalar inputs borrow caller
+/// storage; return types keep their separate lifetime and representation gate.
 fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> {
     span(&function.span)?;
+    if std::iter::once(&function.return_type)
+        .chain(function.parameters.iter().map(|parameter| &parameter.ty))
+        .any(|ty| borrowed_alias_in_source_type(plan, ty, &mut BTreeSet::new()))
+    {
+        return Err(invalid(
+            function,
+            "native borrowed carrier in a source signature requires a retained lifetime contract",
+        ));
+    }
     validate_future_constructor(plan, function)?;
     if function.blocks.is_empty() || function.blocks[0].cleanup {
         return Err(invalid(
@@ -438,17 +533,28 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
         if !identifier(&parameter.name) || !parameters.insert(&parameter.name) {
             return Err(invalid(function, "parameter name is invalid or duplicated"));
         }
-        if !(source_signature_type(&scalar(&parameter.ty))
-            || matches!(
-                scalar(&parameter.ty),
-                Scalar::ModelRef(_) | Scalar::ModelMutRef(_) | Scalar::EnumRef(_)
-            ))
-            || scalar(&parameter.ty) != scalar(&function.locals[index + 1].ty)
-        {
-            return Err(invalid(function, "parameter local differs from its declaration"));
+        if !source_parameter_type(&scalar(&parameter.ty)) {
+            return Err(invalid(
+                function,
+                format!("parameter `{}` has unsupported type {:?}", parameter.name, parameter.ty),
+            ));
+        }
+        if scalar(&parameter.ty) != scalar(&function.locals[index + 1].ty) {
+            return Err(invalid(
+                function,
+                format!(
+                    "parameter `{}` local {:?} differs from its declaration {:?}",
+                    parameter.name,
+                    function.locals[index + 1].ty,
+                    parameter.ty
+                ),
+            ));
         }
     }
     for local in &function.locals {
+        if matches!(local.ty, PlanType::NativeStr | PlanType::NativeSlice(_)) {
+            return Err(invalid(function, "unsized native referent cannot occupy a value frame"));
+        }
         span(&local.span)?;
         validate_model_type(plan, &local.ty)?;
         validate_array_length(plan, function, scalar(&local.ty))?;
@@ -459,6 +565,7 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
             span(&statement.span)?;
             match &statement.kind {
                 StatementKind::Assign(destination, value) => {
+                    writable_tuple_place(function, destination)?;
                     span(&value.span)?;
                     let expected = place(plan, function, destination)?;
                     let result = rvalue(plan, function, &value.kind, expected.clone())?;
@@ -568,15 +675,30 @@ fn local(function: &Function, index: i64) -> Result<Scalar, PlanError> {
         })
 }
 
-/// Require a field path's root to have its explicit owned shape, or a receiver or exclusive enum reference to one.
+/// Reject assignments and call results that would write through a shared tuple reference.
+///
+/// Replacing a whole reference slot is distinct from changing its referent; projections preserve the shared root's
+/// read-only capability even after their pointee type has been recovered.
+fn writable_tuple_place(function: &Function, destination: &Place) -> Result<(), PlanError> {
+    if !matches!(destination.projection, Projection::Whole)
+        && matches!(local(function, destination.local)?, Scalar::TupleRef(_))
+    {
+        return Err(invalid(function, "cannot write through a shared tuple reference"));
+    }
+    Ok(())
+}
+
+/// Recover a field path's owned shape from a shared or exclusive nominal or tuple reference; non-dereferenced roots
+/// keep their retained shape. Shared enum and tuple receivers permit reads; mutable reborrows remain guarded by
+/// `borrow_result`.
 fn field_owner(function: &Function, ty: Scalar, dereference: bool) -> Result<Scalar, PlanError> {
     if !dereference {
         return Ok(ty);
     }
     match ty {
         Scalar::ModelRef(owner) | Scalar::ModelMutRef(owner) => Ok(Scalar::Model(owner)),
-        Scalar::EnumMutRef(owner) => Ok(Scalar::Enum(owner)),
-        Scalar::TupleMutRef(elements) => Ok(Scalar::Tuple(elements)),
+        Scalar::EnumRef(owner) | Scalar::EnumMutRef(owner) => Ok(Scalar::Enum(owner)),
+        Scalar::TupleRef(elements) | Scalar::TupleMutRef(elements) => Ok(Scalar::Tuple(elements)),
         _ => Err(invalid(
             function,
             "field dereference requires a nominal receiver reference",
@@ -668,7 +790,11 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
         }
         Projection::Deref(field_type) => {
             let pointee = match ty {
-                Scalar::ScalarRef(elements) => {
+                Scalar::SliceRef(elements) | Scalar::SliceMutRef(elements) => Scalar::NativeSlice(elements),
+                Scalar::NativeArrayRef(elements, length) | Scalar::NativeArrayMutRef(elements, length) => {
+                    Scalar::NativeArray(elements, length)
+                }
+                Scalar::ScalarRef(elements) | Scalar::ScalarMutRef(elements) => {
                     let [inner] = elements.as_slice() else {
                         return Err(invalid(function, "unsupported scalar reference arity"));
                     };
@@ -683,9 +809,9 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
                 }
                 Scalar::GeneratorMutRef(leaf, depth) => Scalar::Generator(leaf, depth),
                 Scalar::ListIntoIterMutRef(leaf, depth) => Scalar::ListIntoIter(leaf, depth),
-                Scalar::StringMutRef => Scalar::String,
+                Scalar::StringRef | Scalar::StringMutRef => Scalar::String,
                 Scalar::EnumMutRef(owner) => Scalar::Enum(owner),
-                Scalar::TupleMutRef(elements) => Scalar::Tuple(elements),
+                Scalar::TupleRef(elements) | Scalar::TupleMutRef(elements) => Scalar::Tuple(elements),
                 Scalar::ListRef(leaf, depth) | Scalar::ListMutRef(leaf, depth) => Scalar::List(leaf, depth),
                 Scalar::SetRef(leaf) | Scalar::SetMutRef(leaf) => Scalar::Set(leaf),
                 Scalar::DictRef(key, value) | Scalar::DictMutRef(key, value) => Scalar::Dict(key, value),
@@ -762,6 +888,16 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
     match &value.kind {
         OperandKind::Copy(value) => {
             let ty = place(plan, function, value)?;
+            if let Scalar::Model(index) = ty
+                && plan
+                    .models
+                    .get(usize::try_from(index).map_err(|_| invalid(function, "invalid Copy model index"))?)
+                    .is_some_and(|model| {
+                        !model.library_item.is_empty() && model.derives.iter().any(|derive| derive == "Copy")
+                    })
+            {
+                return Ok(ty);
+            }
             if matches!(ty, Scalar::Enum(index) if enum_declaration(plan, index).is_none_or(|value| !value.derives.iter().any(|name| name == "Copy")))
             {
                 return Err(invalid(function, "non-Copy enum cannot be copied"));
@@ -780,6 +916,7 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
                         | Scalar::StringArray(_)
                         | Scalar::Model(_)
                         | Scalar::StringMutRef
+                        | Scalar::SliceMutRef(_)
                         | Scalar::EnumMutRef(_)
                         | Scalar::TupleMutRef(_)
                         | Scalar::List(_, _)
@@ -796,6 +933,7 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
         }
         OperandKind::Move(value) => place(plan, function, value),
         OperandKind::Literal(value) => Ok(match value {
+            Constant::RustItem(_, ty) => scalar(ty),
             Constant::Int(_) => Scalar::Int,
             Constant::Numeric(_, ty) => scalar(ty),
             Constant::Float(_) => Scalar::Float,
@@ -809,6 +947,7 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
 /// Reject implicit copies of any recursively owned value, including tuple string fields.
 fn owns_values(ty: &Scalar) -> bool {
     match ty {
+        Scalar::ScalarMutRef(_) | Scalar::SliceMutRef(_) | Scalar::ModelMutRef(_) => true,
         Scalar::String
         | Scalar::StringArray(_)
         | Scalar::Model(_)
@@ -903,6 +1042,20 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             }
             Ok(Scalar::EnumTag)
         }
+        RvalueKind::IsVariant(value, variant) => {
+            let Scalar::Enum(owner) = place(plan, function, value)? else {
+                return Err(invalid(function, "variant test requires an enum"));
+            };
+            let declaration = enum_declaration(plan, owner).ok_or_else(|| invalid(function, "unknown tested enum"))?;
+            if usize::try_from(*variant)
+                .ok()
+                .and_then(|index| declaration.variants.get(index))
+                .is_none()
+            {
+                return Err(invalid(function, "unknown tested variant"));
+            }
+            Ok(Scalar::Bool)
+        }
         RvalueKind::TagToInt(value) => {
             require(
                 function,
@@ -939,20 +1092,19 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             Ok(expected)
         }
         RvalueKind::FunctionItem(callee) => {
-            let CalleeKind::Planned(name) = &callee.kind else {
-                return Err(invalid(function, "function item requires a planned source declaration"));
+            let name = match &callee.kind {
+                CalleeKind::Planned(name) | CalleeKind::External(name) => name,
+                _ => return Err(invalid(function, "function item requires a retained declaration")),
             };
             let (mut parameters, result) = signature(plan, function, callee)?;
             parameters.push(result);
             Ok(Scalar::FunctionItem(name.clone(), parameters))
         }
         RvalueKind::ClosureObject(value) => match place(plan, function, value)? {
-            Scalar::Closure(signature) if matches!(value.projection, Projection::Whole) => {
-                Ok(Scalar::ClosureRef(signature))
-            }
+            Scalar::Closure(signature) => Ok(Scalar::ClosureRef(signature)),
             _ => Err(invalid(
                 function,
-                "callable-object borrow requires a whole owned closure",
+                "callable-object borrow requires an owned closure payload",
             )),
         },
         RvalueKind::ReifyFunction(value) => {
@@ -1132,6 +1284,18 @@ fn borrow_result(plan: &Plan, function: &Function, value: &Place, mutable: bool)
                 }
                 Ok(Scalar::EnumMutRef(index))
             }
+            ty if scalar_referent(&ty) => {
+                if shared_reference(&local(function, value.local)?) {
+                    return Err(invalid(function, "cannot mutably reborrow a shared scalar"));
+                }
+                Ok(Scalar::ScalarMutRef(vec![ty]))
+            }
+            Scalar::NativeSlice(elements) => {
+                if shared_reference(&local(function, value.local)?) {
+                    return Err(invalid(function, "cannot mutably reborrow a shared slice"));
+                }
+                Ok(Scalar::SliceMutRef(elements))
+            }
             _ => Err(invalid(
                 function,
                 "mutable borrow requires a collection or nominal value",
@@ -1140,6 +1304,7 @@ fn borrow_result(plan: &Plan, function: &Function, value: &Place, mutable: bool)
     }
     match ty {
         Scalar::ZipIterator(left, right) => Ok(Scalar::ZipIteratorRef(left, right)),
+        Scalar::Tuple(elements) => Ok(Scalar::TupleRef(elements)),
         Scalar::GeneratorYield(leaf, depth) => Ok(Scalar::GeneratorYieldRef(leaf, depth)),
         Scalar::Enum(index) => Ok(Scalar::EnumRef(index)),
         Scalar::Model(index) => Ok(Scalar::ModelRef(index)),
@@ -1147,6 +1312,8 @@ fn borrow_result(plan: &Plan, function: &Function, value: &Place, mutable: bool)
         Scalar::Set(leaf) => Ok(Scalar::SetRef(leaf)),
         Scalar::Dict(key, value) => Ok(Scalar::DictRef(key, value)),
         Scalar::String => Ok(Scalar::StringRef),
+        Scalar::NativeSlice(elements) => Ok(Scalar::SliceRef(elements)),
+        Scalar::NativeArray(elements, length) => Ok(Scalar::NativeArrayRef(elements, length)),
         Scalar::ValidationError => Ok(Scalar::ValidationErrorRef),
         Scalar::FrozenCollection(name, elements) => Ok(Scalar::FrozenCollectionRef(name, elements)),
         Scalar::StringArray(count) => Ok(Scalar::StringArrayRef(count)),
@@ -1161,6 +1328,9 @@ fn shared_reference(ty: &Scalar) -> bool {
     matches!(
         ty,
         Scalar::StringRef
+            | Scalar::NativeArrayRef(_, _)
+            | Scalar::TupleRef(_)
+            | Scalar::SliceRef(_)
             | Scalar::ScalarRef(_)
             | Scalar::FrozenCollectionRef(_, _)
             | Scalar::ValidationErrorRef
@@ -1176,31 +1346,49 @@ fn shared_reference(ty: &Scalar) -> bool {
     )
 }
 
-/// Source signatures expose scalars, owned text and the exclusive text reference a `mut str` parameter receives,
-/// models, callables, and tuples of admitted types; formatting views stay internal. A function pointer's inputs also
-/// admit shared and exclusive model references retained by method decorators, as receiver frames do.
+/// Source inputs additionally admit checked borrows of owned text and exact copyable scalar referents. Owned return
+/// and stored-value admission remain governed by `source_signature_type` rather than this parameter-only boundary.
+fn source_parameter_type(ty: &Scalar) -> bool {
+    if let Scalar::ScalarRef(elements) = ty {
+        return matches!(elements.as_slice(), [inner] if scalar_referent(inner));
+    }
+    source_signature_type(ty)
+        || matches!(
+            ty,
+            Scalar::StringRef | Scalar::ModelRef(_) | Scalar::ModelMutRef(_) | Scalar::EnumRef(_)
+        )
+}
+
+/// Source signatures expose scalars, owned text, explicit shared text and validation-error references, and the
+/// exclusive text reference a `mut str` parameter receives, models, callables, and tuples of admitted types; formatting
+/// views stay internal. Exact native slice references can cross a closed source type parameter without becoming owned
+/// lists. Metadata-validated native references retain their exact carrier. A function pointer's inputs follow the
+/// same checked reference-parameter contract as source receiver frames. Uninhabited results preserve divergence.
 fn source_signature_type(ty: &Scalar) -> bool {
+    if let Scalar::NativeArray(elements, length) = ty {
+        return *length >= 0 && matches!(elements.as_slice(), [element] if source_signature_type(element));
+    }
     if let Scalar::TypeToken(elements) = ty {
         return matches!(
             elements.as_slice(),
             [Scalar::Int | Scalar::Float | Scalar::Bool | Scalar::String]
         );
     }
+    if let Scalar::SliceRef(elements) | Scalar::SliceMutRef(elements) = ty {
+        return matches!(elements.as_slice(), [element] if source_signature_type(element));
+    }
 
     if let Scalar::Future(outputs) = ty {
         return matches!(outputs.as_slice(), [output] if source_signature_type(output));
     }
-    if let Scalar::TupleMutRef(elements) = ty {
+    if let Scalar::TupleRef(elements) | Scalar::TupleMutRef(elements) = ty {
         return source_signature_type(&Scalar::Tuple(elements.clone()));
     }
     if let Scalar::FunctionPointer(signature) = ty {
         let Some((result, inputs)) = signature.split_last() else {
             return false;
         };
-        return source_signature_type(result)
-            && inputs.iter().all(|input| {
-                source_signature_type(input) || matches!(input, Scalar::ModelRef(_) | Scalar::ModelMutRef(_))
-            });
+        return source_signature_type(result) && inputs.iter().all(source_parameter_type);
     }
     if let Scalar::Closure(signature) | Scalar::ClosureOnce(signature) | Scalar::ClosureRef(signature) = ty {
         return callable_object_signature(signature);
@@ -1221,7 +1409,21 @@ fn source_signature_type(ty: &Scalar) -> bool {
                     | Scalar::List(_, _)
                     | Scalar::Model(_)
                     | Scalar::Enum(_)
-            ) || (matches!(element, Scalar::Tuple(_)) && source_signature_type(element))
+            ) || (matches!(
+                element,
+                Scalar::ScalarRef(_)
+                    | Scalar::ScalarMutRef(_)
+                    | Scalar::StrRef
+                    | Scalar::StringRef
+                    | Scalar::StringMutRef
+                    | Scalar::EnumRef(_)
+                    | Scalar::EnumMutRef(_)
+                    | Scalar::ModelRef(_)
+                    | Scalar::ModelMutRef(_)
+                    | Scalar::SliceRef(_)
+                    | Scalar::SliceMutRef(_)
+            ) && external_signature_type(element))
+                || (matches!(element, Scalar::Tuple(_)) && source_signature_type(element))
                 || (matches!(element, Scalar::FunctionPointer(_)) && source_signature_type(element))
         });
     }
@@ -1230,6 +1432,7 @@ fn source_signature_type(ty: &Scalar) -> bool {
             ty,
             Scalar::Int
                 | Scalar::UnitFunction
+                | Scalar::Never
                 | Scalar::ZipIterator(_, _)
                 | Scalar::ZipIteratorMutRef(_, _)
                 | Scalar::Generator(_, _)
@@ -1239,6 +1442,7 @@ fn source_signature_type(ty: &Scalar) -> bool {
                 | Scalar::Bool
                 | Scalar::Unit
                 | Scalar::String
+                | Scalar::StringRef
                 | Scalar::StringMutRef
                 | Scalar::EnumMutRef(_)
                 | Scalar::Decimal
@@ -1246,6 +1450,7 @@ fn source_signature_type(ty: &Scalar) -> bool {
                 | Scalar::FrozenBytes
                 | Scalar::FrozenCollection(_, _)
                 | Scalar::ValidationError
+                | Scalar::ValidationErrorRef
                 | Scalar::Model(_)
                 | Scalar::Enum(_)
                 | Scalar::List(_, _)
@@ -1264,7 +1469,16 @@ fn source_signature_type(ty: &Scalar) -> bool {
 /// metadata checking erases, and the exclusive model and enum references a checked element reborrow returns.
 /// Concrete owned list iterators and their polling references cross only these native trait-call boundaries.
 fn external_signature_type(ty: &Scalar) -> bool {
-    if let Scalar::ScalarRef(elements) = ty {
+    if let Scalar::NativeArray(elements, length)
+    | Scalar::NativeArrayRef(elements, length)
+    | Scalar::NativeArrayMutRef(elements, length) = ty
+    {
+        return *length >= 0 && matches!(elements.as_slice(), [element] if native_sequence_element(element));
+    }
+    if let Scalar::SliceRef(elements) | Scalar::SliceMutRef(elements) = ty {
+        return matches!(elements.as_slice(), [element] if native_sequence_element(element));
+    }
+    if let Scalar::ScalarRef(elements) | Scalar::ScalarMutRef(elements) = ty {
         return matches!(elements.as_slice(), [inner] if scalar_referent(inner));
     }
     source_signature_type(ty)
@@ -1289,12 +1503,21 @@ fn external_signature_type(ty: &Scalar) -> bool {
         )
 }
 
-/// The scalar reference carrier only borrows exact numeric, Boolean, decimal or frozen primitive storage.
+/// The scalar reference carrier borrows exact primitive storage, a sized native text reference, or a function pointer.
 fn scalar_referent(ty: &Scalar) -> bool {
+    if matches!(ty, Scalar::FunctionPointer(_)) {
+        return source_signature_type(ty);
+    }
     sized_numeric(ty).is_some()
         || matches!(
             ty,
-            Scalar::Int | Scalar::Float | Scalar::Bool | Scalar::Decimal | Scalar::FrozenStr | Scalar::FrozenBytes
+            Scalar::Int
+                | Scalar::Float
+                | Scalar::Bool
+                | Scalar::Decimal
+                | Scalar::FrozenStr
+                | Scalar::FrozenBytes
+                | Scalar::StrRef
         )
 }
 
@@ -1403,7 +1626,7 @@ fn validate_closure_constructor(function: &Function) -> Result<(), PlanError> {
         return Err(refused());
     }
     // Each capture comes from its own parameter. Consuming environments move every capture; reusable environments move
-    // owned text, lists, and models and copy scalars.
+    // the snapshots selected by Incan's capture policy and copy scalars.
     let forwarded = arguments.iter().enumerate().all(|(index, argument)| {
         let (moved, place) = match &argument.kind {
             OperandKind::Copy(place) => (false, place),
@@ -1413,7 +1636,7 @@ fn validate_closure_constructor(function: &Function) -> Result<(), PlanError> {
         let owned = function
             .parameters
             .get(index)
-            .is_some_and(|parameter| crate::closures::owned_capture(&parameter.ty));
+            .is_some_and(|parameter| crate::plan::owned_capture(parameter.ty.clone()));
         moved == (owned || consumes_environment)
             && matches!(place.projection, Projection::Whole)
             && usize::try_from(place.local).ok() == Some(index + 1)
@@ -1855,11 +2078,8 @@ fn terminator(plan: &Plan, function: &Function, value: &TerminatorKind, cleanup:
                         "await destination",
                     )?;
                 }
-                Scalar::Model(owner)
-                    if model(plan, owner)
-                        .is_some_and(|model| model.library_item == "incan_std_async::task::JoinHandle") =>
-                {
-                    // The SDK Future implementation supplies its exact join-result type; coroutine expansion checks it.
+                Scalar::Model(_) => {
+                    // The checked suspension retains the output; coroutine expansion verifies Future::poll against it.
                     place(plan, function, destination)?;
                 }
                 _ => {
@@ -1885,6 +2105,7 @@ fn terminator(plan: &Plan, function: &Function, value: &TerminatorKind, cleanup:
             edge(function, *true_target, cleanup)
         }
         TerminatorKind::Call(callee, arguments, destination, target, action) => {
+            writable_tuple_place(function, destination)?;
             if matches!(callee.kind, CalleeKind::SpawnGenerator(..)) && !arguments.is_empty() {
                 validate_generator_constructor(function, arguments)?;
             }
@@ -2016,17 +2237,33 @@ fn hashable_payload(plan: &Plan, ty: &Scalar, carrier: i64) -> bool {
 /// changes the existing carrier recursion or nominal cycle rules.
 fn checked_list_leaf_type(leaf: &ListLeaf) -> Result<PlanType, PlanError> {
     let valid = match leaf {
+        ListLeaf::Reference(elements) => matches!(
+            elements.as_slice(),
+            [PlanType::EnumRef(..)
+                | PlanType::ModelRef(..)
+                | PlanType::StringRef
+                | PlanType::StrRef
+                | PlanType::ScalarRef(_)
+                | PlanType::SliceRef(_)]
+        ),
         ListLeaf::List(elements, _) => elements.len() == 1,
+        ListLeaf::Set(elements) => elements.len() == 1,
         ListLeaf::Dict(elements) => elements.len() == 2,
         _ => true,
     };
     if !valid {
         return Err(PlanError::Invalid {
             function: "collection leaf".into(),
-            reason: "nested collection leaf requires exactly one list child or two dictionary children".into(),
+            reason: "collection leaf has invalid child arity or reference carrier".into(),
         });
     }
     Ok(list_leaf_type(leaf.clone()))
+}
+
+/// Whether a native array or slice may hold this element: any source signature type, or a sized text reference
+/// (`[&str; N]`), which source signatures reach only through parameters.
+fn native_sequence_element(element: &Scalar) -> bool {
+    source_signature_type(element) || matches!(element, Scalar::StrRef)
 }
 
 /// Validate retained nominal identities and the exact shape of nested and borrowed native carriers before MIR
@@ -2045,6 +2282,40 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
     }
 
     match ty {
+        PlanType::NativeArray(elements, length)
+        | PlanType::NativeArrayRef(elements, length)
+        | PlanType::NativeArrayMutRef(elements, length) => {
+            if *length < 0 || elements.len() != 1 {
+                return Err(PlanError::Invalid {
+                    function: "native array".into(),
+                    reason: "array requires one element type and a nonnegative length".into(),
+                });
+            }
+            for element in elements {
+                if !native_sequence_element(&scalar(element)) {
+                    return Err(PlanError::Unsupported {
+                        function: "native array".into(),
+                        reason: "unsupported array element".into(),
+                    });
+                }
+                validate_model_type(plan, element)?;
+            }
+        }
+        PlanType::NativeSlice(elements) | PlanType::SliceRef(elements) | PlanType::SliceMutRef(elements) => {
+            let [element] = elements.as_slice() else {
+                return Err(PlanError::Invalid {
+                    function: "native slice".into(),
+                    reason: "slice requires one element".into(),
+                });
+            };
+            if !native_sequence_element(&scalar(element)) {
+                return Err(PlanError::Unsupported {
+                    function: "native slice".into(),
+                    reason: "unsupported slice element".into(),
+                });
+            }
+            validate_model_type(plan, element)?;
+        }
         PlanType::Future(outputs) => {
             let [output] = outputs.as_slice() else {
                 return Err(PlanError::Invalid {
@@ -2060,11 +2331,11 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
             }
             validate_model_type(plan, output)?;
         }
-        PlanType::ScalarRef(elements) => {
+        PlanType::ScalarRef(elements) | PlanType::ScalarMutRef(elements) => {
             if !matches!(elements.as_slice(), [inner] if scalar_referent(&scalar(inner))) {
                 return Err(PlanError::Unsupported {
                     function: "scalar reference".into(),
-                    reason: "scalar reference requires one numeric, Boolean, decimal or frozen referent".into(),
+                    reason: "scalar reference requires one admitted sized scalar referent".into(),
                 });
             }
         }
@@ -2115,7 +2386,7 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
             validate_model_type(plan, &checked_list_leaf_type(key)?)?;
             validate_model_type(plan, &checked_list_leaf_type(value)?)?;
         }
-        PlanType::Tuple(elements) | PlanType::TupleMutRef(elements) => {
+        PlanType::Tuple(elements) | PlanType::TupleRef(elements) | PlanType::TupleMutRef(elements) => {
             for element in elements {
                 validate_model_type(plan, &tuple_element_type(element.clone()))?;
             }
@@ -2151,23 +2422,13 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
         }
     }
     if let PlanType::FunctionItem(name, signature) = ty {
-        let function = plan
-            .functions
-            .iter()
-            .find(|function| function.name == *name)
-            .ok_or_else(|| PlanError::UnknownCallee(name.clone()))?;
         let actual: Vec<_> = signature.iter().map(scalar).collect();
-        let expected: Vec<_> = function
-            .parameters
-            .iter()
-            .map(|parameter| scalar(&parameter.ty))
-            .chain(std::iter::once(scalar(&function.return_type)))
-            .collect();
+        let expected = declared_function_item_signature(plan, name)?;
         if actual != expected {
-            return Err(invalid(
-                function,
-                "function item signature differs from its declaration",
-            ));
+            return Err(PlanError::Invalid {
+                function: name.clone(),
+                reason: "function item signature differs from its declaration".into(),
+            });
         }
     }
     if let PlanType::Closure(signature)
@@ -2212,6 +2473,30 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
     Ok(())
 }
 
+/// Read the exact signature of a retained local or compiled function item. External declarations undergo the same
+/// metadata verification as ordinary calls before MIR construction; a missing declaration grants no item type.
+fn declared_function_item_signature(plan: &Plan, name: &str) -> Result<Vec<Scalar>, PlanError> {
+    if let Some(function) = plan.functions.iter().find(|function| function.name == name) {
+        return Ok(function
+            .parameters
+            .iter()
+            .map(|parameter| scalar(&parameter.ty))
+            .chain(std::iter::once(scalar(&function.return_type)))
+            .collect());
+    }
+    let external = plan
+        .externals
+        .iter()
+        .find(|external| external.path == name && external.type_arguments.is_empty())
+        .ok_or_else(|| PlanError::UnknownCallee(name.into()))?;
+    Ok(external
+        .parameters
+        .iter()
+        .map(scalar)
+        .chain(std::iter::once(scalar(&external.return_type)))
+        .collect())
+}
+
 /// Require static data to match every retained storage argument before native allocation or declaration injection.
 fn validate_frozen_values(
     plan: &Plan,
@@ -2247,14 +2532,17 @@ fn validate_frozen_values(
     Ok(())
 }
 
-/// Validate the shape-specific derive vocabulary without accepting duplicate selections or reflection on tuples. Serde
-/// derives fit either shape (a tuple wrapper serializes as its wrapped value), and so does Copy, which rustc admits
-/// only when every field is Copy.
+/// Validate the shape-specific derive vocabulary without accepting duplicate selections or reflection on tuples.
+/// A tuple newtype carries only the automatic derives its checker proved for the underlying value; owning a native
+/// non-Clone value never requires a Clone selection. Debug follows the checker's selection, including private native
+/// adapters and callable fields that omit it; the adapter never reconstructs that policy. Serde and Copy selections fit
+/// either shape and remain subject to rustc's trait checks. Qualified macro paths are checked selections from native
+/// dependency facts; rustc validates their derive namespace and expands them on the real type.
 fn valid_nominal_derives(derives: &[String], tuple: bool) -> bool {
     let required: &[&str] = if tuple {
-        &["Debug", "Clone"]
+        &[]
     } else {
-        &["Debug", "Clone", "FieldInfo", "IncanClass"]
+        &["Clone", "FieldInfo", "IncanClass"]
     };
     required
         .iter()
@@ -2263,19 +2551,22 @@ fn valid_nominal_derives(derives: &[String], tuple: bool) -> bool {
             "Debug" | "Clone" | "Eq" | "PartialEq" | "Hash" | "Ord" | "PartialOrd" | "Default" | "Display" => true,
             "serde::Serialize" | "serde::Deserialize" | "Copy" => true,
             "FieldInfo" | "IncanClass" => !tuple,
-            _ => false,
+            _ => derive.contains("::") && valid_library_item(derive),
         })
         && derives.iter().collect::<BTreeSet<_>>().len() == derives.len()
 }
 
-/// A stdlib layout names a crate item by an identifier path below a crate root; its derives and storage belong to the
-/// crate that compiled it.
+/// A compiled layout names an item below its owning crate; a provider's own generic instantiations name `crate`.
 fn valid_library_item(library_item: &str) -> bool {
     if library_item.is_empty() {
         return true;
     }
     let segments: Vec<_> = library_item.split("::").collect();
-    segments.len() >= 2 && segments.iter().all(|segment| identifier(segment))
+    segments.len() >= 2
+        && segments
+            .iter()
+            .enumerate()
+            .all(|(index, segment)| (index == 0 && *segment == "crate") || identifier(segment))
 }
 
 /// Accept serde field names only as one entry per named field of a declaration that derives serde, the only derive
@@ -2290,19 +2581,77 @@ fn valid_serde_names(declaration: &crate::plan::ModelDeclaration, tuple: bool) -
                 .any(|derive| matches!(derive.as_str(), "serde::Serialize" | "serde::Deserialize")))
 }
 
+/// Admit generic ADT binders and field types before AST injection, rejecting collisions with concrete layouts and
+/// functions. Native layout verification separately validates every concrete alias against its instantiated ADT.
+fn validate_generic_models(plan: &Plan) -> Result<(), PlanError> {
+    let mut names: BTreeSet<_> = plan
+        .functions
+        .iter()
+        .map(|value| value.name.as_str())
+        .chain(plan.models.iter().map(|value| value.name.as_str()))
+        .chain(plan.enums.iter().map(|value| value.name.as_str()))
+        .collect();
+    for model in &plan.generic_models {
+        span(&model.span)?;
+        let parameters = model.parameters.iter().map(String::as_str).collect::<BTreeSet<_>>();
+        let mut fields = BTreeSet::new();
+        if !identifier(&model.name)
+            || !identifier(&model.source_name)
+            || !names.insert(&model.name)
+            || parameters.is_empty()
+            || parameters.len() != model.parameters.len()
+            || parameters.iter().any(|name| !identifier(name))
+            || model.derives.iter().any(|name| {
+                !matches!(
+                    name.as_str(),
+                    "Clone" | "Debug" | "PartialEq" | "Eq" | "PartialOrd" | "Ord" | "Hash"
+                ) && !(name.contains("::") && valid_library_item(name))
+            })
+            || model.fields.iter().any(|field| {
+                !identifier(&field.name) || !fields.insert(&field.name) || !generic_field_type(&field.ty, &parameters)
+            })
+        {
+            return Err(PlanError::Invalid {
+                function: model.name.clone(),
+                reason: "invalid generic ADT declaration".into(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// A generic field may mention only its declared binders, complete concrete carriers, and explicit nominal paths.
+fn generic_field_type(ty: &GenericLayoutType, parameters: &BTreeSet<&str>) -> bool {
+    match ty {
+        GenericLayoutType::Parameter(name) => parameters.contains(name.as_str()),
+        GenericLayoutType::Concrete(ty) => source_signature_type(&scalar(ty)),
+        GenericLayoutType::Tuple(elements) => elements.iter().all(|element| generic_field_type(element, parameters)),
+        GenericLayoutType::FunctionPointer(signature) => {
+            !signature.is_empty() && signature.iter().all(|element| generic_field_type(element, parameters))
+        }
+        GenericLayoutType::Applied(name, arguments) => {
+            name.split("::").enumerate().all(|(index, segment)| {
+                (index == 0 && matches!(segment, "crate" | "core" | "std" | "alloc")) || identifier(segment)
+            }) && arguments
+                .iter()
+                .all(|argument| generic_field_type(argument, parameters))
+        }
+    }
+}
+
 /// Validate model and newtype metadata before declaration injection; size cycles are checked separately.
-/// Function-pointer fields keep their complete validated signatures and Copy storage. Captured callable objects remain
-/// a named unsupported refusal distinct from malformed metadata.
+/// Function-pointer fields keep Copy storage, while reusable captured callables own their environments. Borrowed
+/// and consuming callable fields require separate lifetime and invocation contracts and remain refused.
 fn validate_models(plan: &Plan) -> Result<(), PlanError> {
     let mut names: BTreeSet<_> = plan.functions.iter().map(|function| function.name.clone()).collect();
     for declaration in &plan.models {
         span(&declaration.span)?;
         let tuple = declaration.fields.len() == 1 && declaration.fields[0].name == "0";
-        // A stdlib layout's derives belong to the crate that compiled it; the plan records none of its own.
+        // A native Copy capability is verified against the linked type; no derives are synthesized on its alias.
         let derives_valid = if declaration.library_item.is_empty() {
             valid_nominal_derives(&declaration.derives, tuple)
         } else {
-            declaration.derives.is_empty()
+            declaration.derives.is_empty() || declaration.derives == ["Copy"]
         };
         if !identifier(&declaration.name)
             || !names.insert(declaration.name.clone())
@@ -2322,7 +2671,9 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
             });
         }
         for argument in &declaration.library_type_arguments {
-            if !source_signature_type(&scalar(argument)) {
+            if !matches!(argument, PlanType::NativeStr | PlanType::NativeSlice(_))
+                && !external_signature_type(&scalar(argument))
+            {
                 return Err(PlanError::Invalid {
                     function: declaration.name.clone(),
                     reason: "unsupported SDK alias type argument".into(),
@@ -2337,23 +2688,16 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
                 reason: "native type arguments on a source-owned model".into(),
             });
         }
-        for argument in &declaration.library_type_arguments {
-            if !source_signature_type(&scalar(argument)) {
+        for field in &declaration.fields {
+            if declaration.library_item.is_empty()
+                && borrowed_alias_in_source_type(plan, &field.ty, &mut BTreeSet::new())
+            {
                 return Err(PlanError::Unsupported {
                     function: declaration.name.clone(),
-                    reason: "stdlib layout argument has no admitted native type".into(),
+                    reason: "native borrowed carrier in a source field requires a retained lifetime contract".into(),
                 });
             }
-            validate_model_type(plan, argument)?;
-        }
-        for field in &declaration.fields {
             span(&field.span)?;
-            if matches!(field.ty, PlanType::Closure(_) | PlanType::ClosureRef(_)) {
-                return Err(PlanError::Invalid {
-                    function: declaration.name.clone(),
-                    reason: "unsupported callable model field declaration".into(),
-                });
-            }
             if (!tuple && !identifier(&field.name))
                 || !fields.insert(&field.name)
                 || !source_signature_type(&scalar(&field.ty))
@@ -2363,10 +2707,7 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
                     reason: "invalid model field declaration".into(),
                 });
             }
-            if matches!(
-                field.ty,
-                PlanType::Closure(_) | PlanType::ClosureOnce(_) | PlanType::ClosureRef(_)
-            ) {
+            if matches!(field.ty, PlanType::ClosureOnce(_) | PlanType::ClosureRef(_)) {
                 return Err(PlanError::Invalid {
                     function: declaration.name.clone(),
                     reason: "unsupported callable model field declaration".into(),
@@ -2378,8 +2719,8 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
     Ok(())
 }
 
-/// Order SDK aliases after their owned argument dependencies, rejecting unretained borrows and transparent cycles.
-/// Alias lifetime scope differs from function parameters; field-size recursion remains with `validate_value_layouts`.
+/// Order native aliases after their argument dependencies, including referents, before metadata type queries run.
+/// Local loans still require native MIR checking; aliases introduce no source lifetime binders.
 pub(crate) fn library_model_order(plan: &Plan) -> Result<Vec<usize>, PlanError> {
     let mut visiting = BTreeSet::new();
     let mut complete = BTreeSet::new();
@@ -2460,6 +2801,8 @@ fn enum_declaration(plan: &Plan, index: i64) -> Option<&crate::plan::EnumDeclara
 }
 
 /// Reject malformed enum layouts and unsupported derives; validate exact forward references before size-cycle checks.
+/// Native Option/Result carriers and library enums retain their checked borrowed payloads; source-owned enum fields
+/// remain limited to source signature types.
 fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
     let mut names: BTreeSet<_> = plan
         .functions
@@ -2505,14 +2848,14 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
             || (declaration.library_item.is_empty() && !declaration.library_type_arguments.is_empty())
             || (!declaration.library_item.is_empty()
                 && (!declaration.carrier.is_empty()
-                    || !declaration.derives.is_empty()
+                    || declaration.derives.iter().any(|derive| derive != "Clone")
                     || !declaration.raw_kind.is_empty()))
             || declaration.derives.iter().any(|name| match name.as_str() {
                 "Debug" | "Clone" | "Copy" | "PartialEq" | "Eq" | "PartialOrd" | "Ord" | "Hash" => false,
                 "serde::Serialize" | "serde::Deserialize" => {
                     !declaration.carrier.is_empty() || declaration.member_debug
                 }
-                _ => true,
+                _ => !(name.contains("::") && valid_library_item(name)),
             })
         {
             return Err(error());
@@ -2530,7 +2873,8 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
             }
             for field in &variant.fields {
                 validate_model_type(plan, field)?;
-                if !source_signature_type(&scalar(field)) {
+                let native = !declaration.carrier.is_empty() || !declaration.library_item.is_empty();
+                if !(source_signature_type(&scalar(field)) || (native && external_signature_type(&scalar(field)))) {
                     return Err(error());
                 }
             }
@@ -2643,29 +2987,30 @@ fn visit_value_layout(
     Ok(())
 }
 
-/// Walk owned argument shapes before AST materialization; an alias cannot invent lifetimes for borrowed components.
+/// Collect model aliases required by an argument before AST materialization. A native enum alias depends on its type
+/// arguments, not its payload fields; a Box-linked native enum must not become an invented alias dependency cycle.
 fn library_argument_models(
     plan: &Plan,
     ty: &PlanType,
     enums: &mut BTreeSet<i64>,
     models: &mut BTreeSet<usize>,
 ) -> Result<(), PlanError> {
-    if library_argument_is_borrowed(ty) {
-        return Err(PlanError::Unsupported {
-            function: "stdlib layout argument".into(),
-            reason: "borrowed stdlib layout argument has no retained lifetime contract".into(),
-        });
-    }
     match ty {
-        PlanType::Model(index, _) => {
+        PlanType::Model(index, _) | PlanType::ModelRef(index, _) | PlanType::ModelMutRef(index, _) => {
             models.insert(usize::try_from(*index).map_err(|_| PlanError::Unsupported {
                 function: "stdlib layout argument".into(),
                 reason: "argument model index is negative".into(),
             })?);
         }
-        PlanType::Enum(index, _) => {
+        PlanType::Enum(index, _) | PlanType::EnumRef(index, _) | PlanType::EnumMutRef(index, _) => {
             if enums.insert(*index) {
                 if let Some(declaration) = enum_declaration(plan, *index) {
+                    if !declaration.library_item.is_empty() {
+                        for argument in &declaration.library_type_arguments {
+                            library_argument_models(plan, argument, enums, models)?;
+                        }
+                        return Ok(());
+                    }
                     for field in declaration.variants.iter().flat_map(|variant| &variant.fields) {
                         library_argument_models(plan, field, enums, models)?;
                     }
@@ -2673,12 +3018,16 @@ fn library_argument_models(
             }
         }
         PlanType::List(leaf, _)
+        | PlanType::ListRef(leaf, _)
+        | PlanType::ListMutRef(leaf, _)
         | PlanType::Set(leaf)
+        | PlanType::SetRef(leaf)
+        | PlanType::SetMutRef(leaf)
         | PlanType::Generator(leaf, _)
         | PlanType::GeneratorYield(leaf, _) => {
             library_argument_models(plan, &checked_list_leaf_type(leaf)?, enums, models)?;
         }
-        PlanType::Dict(left, right) => {
+        PlanType::Dict(left, right) | PlanType::DictRef(left, right) | PlanType::DictMutRef(left, right) => {
             library_argument_models(plan, &checked_list_leaf_type(left)?, enums, models)?;
             library_argument_models(plan, &checked_list_leaf_type(right)?, enums, models)?;
         }
@@ -2692,6 +3041,14 @@ fn library_argument_models(
             }
         }
         PlanType::CallableArguments(signature)
+        | PlanType::ScalarRef(signature)
+        | PlanType::ScalarMutRef(signature)
+        | PlanType::NativeSlice(signature)
+        | PlanType::NativeArray(signature, _)
+        | PlanType::NativeArrayRef(signature, _)
+        | PlanType::NativeArrayMutRef(signature, _)
+        | PlanType::SliceRef(signature)
+        | PlanType::SliceMutRef(signature)
         | PlanType::Closure(signature)
         | PlanType::ClosureOnce(signature)
         | PlanType::SharedCallable(signature)
@@ -2709,12 +3066,94 @@ fn library_argument_models(
     Ok(())
 }
 
-/// A free SDK alias has no retained lifetime binders, so borrowed argument components remain unadmitted.
-/// Function parameter eligibility alone is insufficient because its lifetime elision scope differs from an alias.
+/// Find erased loans inside native aliases before a source signature or field could expose them without lifetime
+/// binders. Local adapters remain subject to native signature and MIR borrow checking; this gate proves no loan scope.
+fn borrowed_alias_in_source_type(plan: &Plan, ty: &PlanType, seen: &mut BTreeSet<(bool, i64)>) -> bool {
+    match ty {
+        PlanType::Model(index, _) | PlanType::ModelRef(index, _) | PlanType::ModelMutRef(index, _) => {
+            if !seen.insert((false, *index)) {
+                return false;
+            }
+            let Some(model) = usize::try_from(*index).ok().and_then(|index| plan.models.get(index)) else {
+                return true;
+            };
+            model.library_type_arguments.iter().any(|argument| {
+                library_argument_is_borrowed(argument) || borrowed_alias_in_source_type(plan, argument, seen)
+            }) || model
+                .fields
+                .iter()
+                .any(|field| borrowed_alias_in_source_type(plan, &field.ty, seen))
+        }
+        PlanType::Enum(index, _) | PlanType::EnumRef(index, _) | PlanType::EnumMutRef(index, _) => {
+            if !seen.insert((true, *index)) {
+                return false;
+            }
+            let Some(declaration) = enum_declaration(plan, *index) else {
+                return true;
+            };
+            declaration.library_type_arguments.iter().any(|argument| {
+                library_argument_is_borrowed(argument) || borrowed_alias_in_source_type(plan, argument, seen)
+            }) || declaration
+                .variants
+                .iter()
+                .flat_map(|variant| &variant.fields)
+                .any(|field| {
+                    ((!declaration.carrier.is_empty() || !declaration.library_item.is_empty())
+                        && library_argument_is_borrowed(field))
+                        || borrowed_alias_in_source_type(plan, field, seen)
+                })
+        }
+        PlanType::List(leaf, _)
+        | PlanType::ListRef(leaf, _)
+        | PlanType::ListMutRef(leaf, _)
+        | PlanType::Set(leaf)
+        | PlanType::SetRef(leaf)
+        | PlanType::SetMutRef(leaf)
+        | PlanType::Generator(leaf, _)
+        | PlanType::GeneratorYield(leaf, _) => {
+            checked_list_leaf_type(leaf).map_or(true, |element| borrowed_alias_in_source_type(plan, &element, seen))
+        }
+        PlanType::Dict(left, right) | PlanType::DictRef(left, right) | PlanType::DictMutRef(left, right) => {
+            [left, right].into_iter().any(|leaf| {
+                checked_list_leaf_type(leaf).map_or(true, |element| borrowed_alias_in_source_type(plan, &element, seen))
+            })
+        }
+        PlanType::Tuple(elements) | PlanType::TupleRef(elements) | PlanType::TupleMutRef(elements) => elements
+            .iter()
+            .any(|element| borrowed_alias_in_source_type(plan, &tuple_element_type(element.clone()), seen)),
+        PlanType::NativeSlice(elements)
+        | PlanType::NativeArray(elements, _)
+        | PlanType::NativeArrayRef(elements, _)
+        | PlanType::NativeArrayMutRef(elements, _)
+        | PlanType::SliceRef(elements)
+        | PlanType::SliceMutRef(elements)
+        | PlanType::ScalarRef(elements)
+        | PlanType::ScalarMutRef(elements)
+        | PlanType::CallableArguments(elements)
+        | PlanType::Future(elements)
+        | PlanType::FunctionPointer(elements)
+        | PlanType::FunctionItem(_, elements)
+        | PlanType::Closure(elements)
+        | PlanType::ClosureOnce(elements)
+        | PlanType::ClosureRef(elements)
+        | PlanType::SharedCallable(elements)
+        | PlanType::FrozenCollection(_, elements)
+        | PlanType::FrozenCollectionRef(_, elements)
+        | PlanType::TypeToken(elements) => elements
+            .iter()
+            .any(|element| borrowed_alias_in_source_type(plan, element, seen)),
+        _ => false,
+    }
+}
+
+/// Identify a native reference held as a generic argument, whose source-facing alias would need lifetime binders.
 fn library_argument_is_borrowed(ty: &PlanType) -> bool {
     matches!(
         ty,
         PlanType::ScalarRef(..)
+            | PlanType::ScalarMutRef(..)
+            | PlanType::SliceRef(..)
+            | PlanType::SliceMutRef(..)
             | PlanType::FrozenCollectionRef(..)
             | PlanType::ModelRef(..)
             | PlanType::ModelMutRef(..)

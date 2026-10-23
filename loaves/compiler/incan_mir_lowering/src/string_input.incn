@@ -5,13 +5,14 @@ from rust::incan_semantics_core import IncanType as RustType
 # Keep inferred empty Builder field element types in scope until #2010 is resolved.
 from pub::incan_mir_plan import BasicBlock, Local, PlanType, EnumDeclaration, ExternalFunction, Function, SourceSpan
 from frame import Builder
+from program_context import synthetic_program_context
 
 
 pub def owned_string_frame(
     module: &BodyIrModule,
     name: str,
     result: PlanType,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
     span: SourceSpan,
 ) -> Builder:
     """Keep the sole input owned until a planned call or construction consumes it, with one local cleanup ledger."""
@@ -19,6 +20,7 @@ pub def owned_string_frame(
     empty_type_arguments: list[RustType] = []
     empty_decorated_bindings: list[RustDecoratedBinding] = []
     mut builder = Builder(
+        program=synthetic_program_context(module),
         locals=[Local(ty=result, span=span), Local(ty=PlanType.String, span=span)],
         parameter_count=1,
         blocks=[],
@@ -43,8 +45,7 @@ pub def owned_string_frame(
         unions=empty_unions,
         local_offset=0,
         consuming_closure_frame=false,
-        intrinsics=intrinsics,
-        statics=module.static_declarations,
+        intrinsics=list(intrinsics),
         generator_handle=-1,
         value_enums=module.value_enum_declarations,
         instances=[],

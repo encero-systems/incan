@@ -14,7 +14,7 @@ from type_parameters import substitute
 
 
 pub def sdk_owned_callable_bindings(
-    builder: Builder,
+    mut builder: Builder,
     delegation: &LoafCallable,
     binding: &RustBinding,
     arguments: &list[RustArgument],
@@ -72,7 +72,7 @@ pub def sdk_owned_callable_bindings(
         _ => return Ok([])
 
 
-def require_plain_sdk_callable(builder: Builder, argument: &RustArgument) -> Result[None, str]:
+def require_plain_sdk_callable(mut builder: Builder, argument: &RustArgument) -> Result[None, str]:
     """Refuse a partial callable whose extra supplied flags are absent from the SDK's checked input signature."""
     match argument.as_one():
         Some(RustOperand.Place(read)) =>
@@ -88,7 +88,7 @@ def require_plain_sdk_callable(builder: Builder, argument: &RustArgument) -> Res
 
 
 pub def sdk_callable_type(
-    builder: Builder,
+    mut builder: Builder,
     original: &RustType,
     names: list[str],
     closed: list[RustType],
@@ -106,7 +106,7 @@ pub def sdk_callable_type(
 
 
 pub def sdk_callable_type_arguments(
-    builder: Builder,
+    mut builder: Builder,
     delegation: &LoafCallable,
     names: list[str],
     closed: list[RustType],
@@ -127,7 +127,7 @@ pub def sdk_callable_type_arguments(
     return Ok(result)
 
 
-def argument_storage(builder: Builder, argument: &RustArgument) -> Result[Option[PlanType], str]:
+def argument_storage(mut builder: Builder, argument: &RustArgument) -> Result[Option[PlanType], str]:
     """Inspect a proven frame local without reading it, executing an index, or manufacturing a projected field ABI."""
     match argument.as_one():
         Some(RustOperand.Place(read)) =>

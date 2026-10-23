@@ -1,4 +1,4 @@
-//! Preserve checker-ordered, source-local newtype ingress without changing legacy coercion facts.
+//! Preserve checker-ordered newtype ingress using each selected owner's retained declaration.
 
 use super::args::fixed_elements;
 use super::{BodyBuilder, HirSourceSpan, IncanType, SemanticSourceTargetKind, ValidatedNewtypeCoercionInfo, ast, bir};
@@ -32,13 +32,15 @@ impl BodyBuilder<'_, '_> {
             return self.unsupported_typed_operand(description.into(), target, scope, span, out);
         }
 
-        // ---- Context: each step needs its source-local canonical tuple layout ----
+        // ---- Context: each step needs its checker-selected canonical tuple layout ----
         let declarations = coercion
             .steps
             .iter()
             .map(|step| {
+                let owner = step.owner_identity.as_ref()?;
                 self.local_nominal_declarations
-                    .get(&step.newtype_name)
+                    .values()
+                    .find(|declaration| &declaration.canonical == owner)
                     .filter(|declaration| {
                         declaration.canonical.kind == SemanticSourceTargetKind::Newtype
                             && declaration.fields == ["0"]
@@ -80,13 +82,7 @@ impl BodyBuilder<'_, '_> {
                     .unwrap_or_else(|| declaration.name.clone()),
             );
             if step.ctor.is_some() {
-                let Some(identity) = step.ctor_identity.as_ref().filter(|identity| {
-                    self.type_info
-                        .declarations
-                        .newtype_construction
-                        .get(&step.newtype_name)
-                        .is_some_and(|facts| facts.checked_constructor_identity.as_ref() == Some(identity))
-                }) else {
+                let Some(identity) = step.ctor_identity.as_ref() else {
                     return self.unsupported_typed_operand(
                         "validated-newtype coercion hook identity".into(),
                         target,

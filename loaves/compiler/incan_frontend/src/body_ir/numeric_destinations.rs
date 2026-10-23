@@ -2,6 +2,7 @@
 
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_lang::numeric_values::numeric_type_losslessly_widens_to;
+use incan_semantics_core::body_ir::nominal_carrier_key;
 
 use super::operators::numeric_carrier_id;
 use super::primitives::collection_member_types;
@@ -54,8 +55,9 @@ pub(super) fn collection_numeric_destination(source: &IncanType, collection: &In
 impl BodyBuilder<'_, '_> {
     /// Evaluate a boundary value once and retain a numeric conversion selected by its checked destination.
     ///
-    /// Explicit destination types belong to bindings and callable slots; otherwise the recorded value destination
-    /// covers field writes and constructor fields. Expressions without either fact retain their existing operand.
+    /// Explicit conversion decisions precede ordinary lossless destination adaptation. Destination types belong to
+    /// bindings and callable slots; otherwise the recorded value destination covers field writes and constructor
+    /// fields. Expressions without either fact retain their existing operand.
     pub(super) fn lower_boundary_value(
         &mut self,
         expr: &ast::Spanned<ast::Expr>,
@@ -64,6 +66,15 @@ impl BodyBuilder<'_, '_> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let operand = self.lower_expr_to_operand(expr, scope, out);
+        if let Some(destination) = self
+            .type_info
+            .expressions
+            .numeric_conversion_destinations
+            .get(&(expr.span.start, expr.span.end))
+        {
+            let destination = self.checked_type(destination);
+            return self.push_assign_temp(bir::Rvalue::Use(operand), destination, scope, hir_span(expr.span), out);
+        }
         let recorded = self
             .type_info
             .value_destination_type(expr.span)
@@ -96,9 +107,90 @@ impl BodyBuilder<'_, '_> {
                 .map_or_else(|| self.resolve_ty(expr.span), |local| local.ty.clone()),
             _ => self.resolve_ty(expr.span),
         };
+        if let IncanType::Ref(borrowed) = &source
+            && self.is_source_nominal(borrowed)
+            && self.same_nominal_carrier(borrowed, destination)
+        {
+            return self.materialize_borrowed_value(expr, operand, destination, scope, out);
+        }
         let Some(member) = numeric_destination(&source, destination) else {
             return operand;
         };
         self.push_assign_temp(bir::Rvalue::Use(operand), member, scope, hir_span(expr.span), out)
+    }
+
+    /// Whether `ty` names a nominal declared in source, by its carrier key or by a source name that has one. A type
+    /// imported from Rust keeps its native copy semantics, so a borrow of it is never cloned for a destination.
+    fn is_source_nominal(&self, ty: &IncanType) -> bool {
+        let (IncanType::Named(name) | IncanType::Generic { base: name, .. }) = ty else {
+            return false;
+        };
+        name.starts_with("__incan_carrier_")
+            || self
+                .type_info
+                .declarations
+                .named_type_identities
+                .get(name)
+                .and_then(nominal_carrier_key)
+                .is_some()
+    }
+
+    /// Whether two types name one source nominal with the same arguments, when one is spelled by its source name and
+    /// the other by the carrier key that native storage froze for the declaration.
+    fn same_nominal_carrier(&self, left: &IncanType, right: &IncanType) -> bool {
+        let carrier = |name: &String| {
+            self.type_info
+                .declarations
+                .named_type_identities
+                .get(name)
+                .and_then(nominal_carrier_key)
+                .unwrap_or_else(|| name.clone())
+        };
+        match (left, right) {
+            (IncanType::Named(left), IncanType::Named(right)) => carrier(left) == carrier(right),
+            (
+                IncanType::Generic {
+                    base: left,
+                    args: left_args,
+                },
+                IncanType::Generic {
+                    base: right,
+                    args: right_args,
+                },
+            ) => {
+                carrier(left) == carrier(right)
+                    && left_args.len() == right_args.len()
+                    && left_args
+                        .iter()
+                        .zip(right_args)
+                        .all(|(left, right)| self.same_nominal_carrier(left, right))
+            }
+            _ => left == right,
+        }
+    }
+
+    /// Clone a borrowed source model or class into the owned value its checked destination requires.
+    ///
+    /// The checker admitted the borrow where an owned value is needed; the read of the borrowed place carries the
+    /// clone fact, and the owned temporary is the value the destination binds.
+    fn materialize_borrowed_value(
+        &mut self,
+        expr: &ast::Spanned<ast::Expr>,
+        mut operand: bir::Operand,
+        destination: &IncanType,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        if let bir::Operand::Place(read) = &mut operand {
+            read.fact = bir::OwnershipFact::Clone;
+            read.last_use = false;
+        }
+        self.push_assign_temp(
+            bir::Rvalue::Use(operand),
+            destination.clone(),
+            scope,
+            hir_span(expr.span),
+            out,
+        )
     }
 }

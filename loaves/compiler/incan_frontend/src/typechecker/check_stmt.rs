@@ -95,9 +95,16 @@ pub(in crate::typechecker) enum TupleShape {
 /// underdetermined, and `T` can be instantiated as `int`. Incan's bounds are trait-based, so no caller can promise
 /// a tuple shape. This does not affect `tuple[K, V]`, whose *elements* are type variables but whose shape is
 /// known; that takes the [`TupleShape::Tuple`] arm above.
+/// A shared tuple reference binds a shared reference to each component, preserving the native iterator's borrow.
 pub(in crate::typechecker) fn classify_tuple_shape(ty: &ResolvedType) -> TupleShape {
     match ty {
         ResolvedType::Tuple(types) => TupleShape::Tuple(types.clone()),
+        ResolvedType::Ref(inner) => match classify_tuple_shape(inner) {
+            TupleShape::Tuple(types) => {
+                TupleShape::Tuple(types.into_iter().map(|ty| ResolvedType::Ref(Box::new(ty))).collect())
+            }
+            _ => TupleShape::NotTuple,
+        },
         ResolvedType::Generic(name, args)
             if matches!(collection_type_id(name.as_str()), Some(CollectionTypeId::Tuple)) =>
         {
@@ -682,7 +689,7 @@ impl TypeChecker {
             // `rust::substrait::proto::Plan`) assigns a field through the same metadata that answers a read of it,
             // and the expected field type drives the value's boundary coercions exactly as a constructor argument
             // would.
-            ResolvedType::RustPath(path) => match self.rust_path_field_type(path, field) {
+            ResolvedType::RustPath(path) => match self.rust_path_field_type(path, field, field_assign.target_span) {
                 Some(expected_ty) => {
                     self.record_expr_type(field_assign.target_span, expected_ty.clone());
                     let value_ty = self.check_expr_with_expected(&field_assign.value, Some(&expected_ty));
@@ -1002,6 +1009,7 @@ impl TypeChecker {
         }
         self.record_read_only_binding(is_mutable, target_span);
         self.record_write_target_identity(target_span, &assign.name);
+        self.retain_rust_value_binding(&assign.name, &assign.value);
         self.retain_body_ir_assignment_value(assign);
         self.note_function_value_binding(target_span, &assign.value);
         self.bind_c_abi_output_slot_assignment(&assign.name, assign.value.span);
@@ -1307,7 +1315,40 @@ impl TypeChecker {
         }
     }
 
-    /// Check a return statement against the active function context.
+    /// Record the existing native usize-to-int return conversion only for a retained Rust call. The exact native
+    /// signature remains unchanged; Body IR consumes this decision without widening ordinary source compatibility.
+    fn record_native_usize_return(
+        &mut self,
+        expr: Option<&Spanned<Expr>>,
+        actual: &ResolvedType,
+        expected: &ResolvedType,
+    ) -> bool {
+        if *expected != ResolvedType::Int
+            || *actual != ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::USize)
+        {
+            return false;
+        }
+        let Some(mut expr) = expr else { return false };
+        let boundary_span = expr.span;
+        while let Expr::Paren(inner) = &expr.node {
+            expr = inner;
+        }
+        let accepted = self
+            .type_info
+            .rust
+            .checked_calls
+            .get(&(expr.span.start, expr.span.end))
+            .is_some_and(|call| &call.return_type == actual);
+        if accepted {
+            self.type_info
+                .expressions
+                .numeric_conversion_destinations
+                .insert((boundary_span.start, boundary_span.end), expected.clone());
+        }
+        accepted
+    }
+
+    /// Check a return statement against the active function context, including an authenticated native usize result.
     fn check_return(&mut self, expr: Option<&Spanned<Expr>>, span: Span) {
         if matches!(self.current_yield_context, super::YieldContext::Generator { .. }) {
             if let Some(expr) = expr {
@@ -1325,8 +1366,9 @@ impl TypeChecker {
             ResolvedType::Unit
         };
 
-        if let Some(expected) = self.symbols.current_return_type()
-            && !self.types_compatible(&return_ty, expected)
+        if let Some(expected) = self.symbols.current_return_type().cloned()
+            && !self.types_compatible(&return_ty, &expected)
+            && !self.record_native_usize_return(expr, &return_ty, &expected)
         {
             self.errors.push(errors::return_type_mismatch(
                 &expected.to_string(),
@@ -2235,6 +2277,7 @@ impl TypeChecker {
             }
         }
         match iter_ty {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.infer_iterator_element_type(inner),
             ResolvedType::FrozenList(elem) | ResolvedType::FrozenSet(elem) => elem.as_ref().clone(),
             ResolvedType::FrozenDict(key, _) => key.as_ref().clone(),
             ResolvedType::Generic(name, args) => {
@@ -2272,16 +2315,15 @@ impl TypeChecker {
     /// Infer a loop item type from an iterable expression, falling back to structural `__iter__` / `__next__` hooks.
     ///
     /// Every `for` statement and comprehension clause iterates through here, so this is also where iterating a
-    /// generator that a caller-visible `mut` parameter holds is recorded as a change to the parameter.
+    /// generator that a caller-visible `mut` parameter holds is recorded as a change to the parameter. Builtin
+    /// iterator values retain builtin polling. Native iterator items come from the retained `Iterator::Item`
+    /// projection; structural hooks are selected only by the custom protocol resolver.
     pub fn infer_iterator_element_type_from_expr(
         &mut self,
         iter_expr: &Spanned<Expr>,
         iter_ty: &ResolvedType,
     ) -> ResolvedType {
         self.note_mut_param_iteration(iter_expr, iter_ty);
-        if iter_ty.iterator_item_type().is_some() {
-            self.retain_body_ir_iterator_hooks(iter_ty, iter_expr.span);
-        }
         if iter_ty.iterator_item_type().is_some()
             && let Expr::Ident(name) = &iter_expr.node
         {
@@ -2290,6 +2332,15 @@ impl TypeChecker {
         let elem_ty = self.infer_iterator_element_type(iter_ty);
         if !matches!(elem_ty, ResolvedType::Unknown) || matches!(iter_ty, ResolvedType::Unknown) {
             return elem_ty;
+        }
+        if let Some(item) = self.retain_rust_iteration_hooks(iter_expr, iter_ty) {
+            if let Expr::Ident(name) = &iter_expr.node {
+                self.consumed_iterator_bindings.insert(name.clone(), iter_expr.span);
+            }
+            return item;
+        }
+        if let Some(item) = self.rust_associated_type(iter_ty, "std::iter::Iterator", "Item") {
+            return item;
         }
         if self.is_user_operator_receiver(iter_ty) {
             return self

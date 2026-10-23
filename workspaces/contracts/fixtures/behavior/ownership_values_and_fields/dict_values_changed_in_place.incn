@@ -1,4 +1,4 @@
-# behavior: a changing method, an element or field assignment, a mut self method and a loop reach a dict value in place, under a literal, a variable and an int key, through a tuple in the value, a nested dict, a list of dicts, a field of self and a mut dict parameter
+# behavior: dict mutations reach values in place through nested storage; an owned read through a newtype field copies the dictionary without moving its borrowed owner (#2256)
 # expect-stdout:
 #   [11, 2, 3]
 #   [4, 5]
@@ -9,6 +9,19 @@
 #   [[11], [11]]
 #   17
 #   1
+
+type EncodedCounts = newtype dict[str, int]
+
+
+class Book:
+    """Own a dictionary behind a nominal wrapper."""
+    pub counts: EncodedCounts
+
+    def snapshot(self) -> dict[str, int]:
+        """Read a nested dictionary field into an independent owned local."""
+        counts = self.counts.0
+        return counts
+
 
 class Counter:
     pub count: int
@@ -30,6 +43,10 @@ def bump_all(mut counters: dict[str, Counter]) -> None:
 
 
 def main() -> None:
+    book = Book(counts=EncodedCounts({"a": 1}))
+    mut copied = book.snapshot()
+    copied["a"] = 2
+    assert book.counts.0["a"] == 1
     mut d: dict[str, list[int]] = {"a": [1]}
     d["a"].append(2)
     key = "a"

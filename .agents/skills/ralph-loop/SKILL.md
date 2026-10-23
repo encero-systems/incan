@@ -31,6 +31,9 @@ Keep `orchestrate-parallel-work` generic. Use this skill as the opinionated wrap
 - Require workers and the orchestrator to maintain a persistent review report at `.agents/state/review-report.md` inside each worktree so findings survive across loops.
 - Require touched `.incn` source to pass `review-incan-source-quality`; Incan implementation work is not done when it merely compiles if the authored source reads like Rust-shaped scaffolding instead of well-written Python.
 - The orchestrator commits, pushes, and opens the PR once integration is verified. Workers commit to their own branch only; publishing is the orchestrator's job, so accepted slice work never sits unpushed in a worker sandbox.
+- In Incan, workers and the orchestrator run `make us-english-check` before every commit, including merge commits.
+- Incan's whole suite stays under about 3,000 tests. Extend an existing case before adding one; add only when no same-area case can carry the behavior. Never add a case per bug: name it in `# behavior:`. A library case has one producer Loaf carrying every declaration it needs. Give workers these limits so parallel slices do not multiply equivalent cases.
+- Incan design records change only when a decision changes, in a sentence or two. Keep decisions, boundaries, consequences, and non-goals under about 1,000 words; mechanisms belong in commit messages and rustdoc, never a paragraph per commit.
 
 ## PDCA model
 
@@ -288,7 +291,7 @@ Example shape:
 - [ ] Remove CLI-local env schema parsing
 - [ ] Add internal manifest override discovery
 - [ ] Make env overlays affect nested `incan lock`
-- [ ] Add focused tests
+- [ ] Extend existing focused contract cases; add only when no same-area case can carry the behavior
 - [ ] Run slice verification
 - [ ] Run slice review/fix loop
 ```

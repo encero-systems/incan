@@ -12,6 +12,7 @@
 
 use crate::ast::*;
 use crate::diagnostics::errors;
+use incan_lang::interop::RustItemKind;
 use incan_semantics_core::{DecoratorFeature, SurfaceFeatureKey};
 
 use super::TypeChecker;
@@ -110,6 +111,36 @@ impl TypeChecker {
         if rust_module.is_some() && rust_extern_items.is_empty() && !has_trait_declarations && !has_rust_crate_imports {
             let directive_span = rust_module.as_ref().map_or(Span::default(), |d| d.span);
             self.warnings.push(errors::unused_rust_module(directive_span));
+        }
+        self.record_native_attribute_externs(program);
+    }
+
+    /// Record each `@rust.extern` function whose Rust item is an exported attribute macro (#2256).
+    ///
+    /// The facade declares the macro's Incan-side signature so source decorators can name it; the macro itself runs in
+    /// rustc on the item it decorates, so the declaration has no function to delegate to. The decision rests on the
+    /// inspected item kind of the exact `rust.module` path, never on the declaration's name or crate.
+    fn record_native_attribute_externs(&mut self, program: &Program) {
+        let Some(rust_module) = &program.rust_module_path else {
+            return;
+        };
+        for declaration in &program.declarations {
+            let Declaration::Function(function) = &declaration.node else {
+                continue;
+            };
+            if !self.has_rust_extern_decorator(&function.decorators) {
+                continue;
+            }
+            let path = format!("{}::{}", rust_module.node, function.name);
+            let Some(metadata) = self.rust_item_metadata_for_path(&path) else {
+                continue;
+            };
+            if matches!(&metadata.kind, RustItemKind::Macro(info) if info.is_attribute()) {
+                self.type_info.declarations.native_attribute_externs.insert(
+                    (declaration.span.start, declaration.span.end),
+                    metadata.canonical_path.clone(),
+                );
+            }
         }
     }
 

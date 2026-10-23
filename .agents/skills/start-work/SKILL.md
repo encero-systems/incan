@@ -22,6 +22,8 @@ If none is provided, ask the user what they want to work on.
 
 **Commit your own work.** Use the repo's message convention (`chore|bugfix|feature - <issue_id(s)> <description>`), push the branch, and open the PR when the work is ready. Do not leave finished work uncommitted waiting for the maintainer.
 
+Run `make us-english-check` before every commit, including a merge commit.
+
 Still off-limits on your own initiative:
 
 - anything that overwrites or deletes uncommitted work — `git checkout -- <path>`, `git restore <path>`, `git clean`, `git reset --hard`, `stash drop`

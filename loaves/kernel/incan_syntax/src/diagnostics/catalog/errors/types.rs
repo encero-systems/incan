@@ -321,6 +321,14 @@ pub fn unknown_decorator(path: &str, span: Span) -> CompileError {
         .with_hint("Import the module alias or use a fully qualified decorator path")
 }
 
+/// Report a decorator argument that an attribute macro cannot receive: only literals, constants and lists of them.
+pub fn native_attribute_argument_unsupported(macro_path: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Arguments of the attribute macro `{macro_path}` must be literals, constants or lists of them"),
+        span,
+    )
+}
+
 /// Report a user-defined decorator on a declaration kind that keeps decorators compiler-owned.
 pub fn user_defined_decorator_unsupported_target(path: &str, kind: &str, span: Span) -> CompileError {
     CompileError::type_error(
@@ -1583,6 +1591,12 @@ pub fn supertrait_bound_invalid(span: Span) -> CompileError {
     )
 }
 
+/// Refuse a type used as a callable when no checked constructor supplies its value semantics.
+pub fn type_constructor_unavailable(type_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Type '{type_name}' has no constructor"), span)
+        .with_hint("Use an associated constructor or an explicit conversion method")
+}
+
 /// Emitted when a trait is used like a concrete type in a constructor call (RFC 042: traits are abstract).
 pub fn cannot_instantiate_trait(trait_name: &str, span: Span) -> CompileError {
     CompileError::type_error(
@@ -2358,6 +2372,17 @@ pub fn rust_item_shape_not_supported(path: &str, description: &str, span: Span) 
     )
     .with_hint("Import a module, type, function, or constant instead")
     .with_note("RFC 041 intentionally limits which Rust item shapes are typechecked directly")
+}
+
+/// A borrowed source signature names a lifetime-bearing Rust owner without a retained lifetime contract.
+pub fn rust_borrow_without_lifetime_contract(path: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Borrowed Rust type `rust::{path}` in a source signature requires a retained lifetime contract"),
+        span,
+    )
+    .with_stable_code("INCAN-T0120")
+    .with_note("DD-0006 excludes borrowed Rust signatures whose lifetime relationships are not retained")
+    .with_hint("Keep the borrowed value inside the function that creates it, or pass an owned value")
 }
 
 /// A Rust associated call tries to specialize a receiver whose turbofish contains const-generic slots.

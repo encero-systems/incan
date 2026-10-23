@@ -20,7 +20,7 @@ pub def model_list_read(mut builder: Builder, source: &RustPlace, span: SourceSp
             return Ok(Some(prefixed_list_read(builder, source, count, span)?))
 
 
-pub def structural_prefix(builder: Builder, source: &RustPlace) -> Result[Option[tuple[int, bool]], str]:
+pub def structural_prefix(mut builder: Builder, source: &RustPlace) -> Result[Option[tuple[int, bool]], str]:
     """
     Count the leading field, payload and tuple-element steps of a place rooted at a model, enum or tuple.
 
@@ -42,6 +42,8 @@ pub def structural_prefix(builder: Builder, source: &RustPlace) -> Result[Option
                 PlanType.Tuple(_elements) =>
                     ty = root
                 PlanType.TupleMutRef(elements) =>
+                    ty = PlanType.Tuple(elements)
+                PlanType.TupleRef(elements) =>
                     ty = PlanType.Tuple(elements)
                 PlanType.ModelRef(owner, name) =>
                     ty = PlanType.Model(owner, name)
@@ -65,11 +67,12 @@ pub def structural_prefix(builder: Builder, source: &RustPlace) -> Result[Option
     return Ok(Some((count, through_tuple)))
 
 
-pub def prefix_place(builder: Builder, source: &RustPlace, count: int, span: SourceSpan) -> Result[OperandPlace, str]:
+pub def prefix_place(mut builder: Builder, source: &RustPlace, count: int, span: SourceSpan) -> Result[OperandPlace, str]:
     """Project the first `count` structural steps of a place without reading or copying anything."""
+    mut frame_locals = builder.locals[builder.local_offset:]
     mut place = model_prefix(
         builder.nominals,
-        builder.locals[builder.local_offset:],
+        frame_locals,
         source,
         count,
         span,

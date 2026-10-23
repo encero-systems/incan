@@ -2,7 +2,6 @@
 
 from rust::incan_semantics_core::body_ir import BodyIrModule, NominalDeclaration
 from traits import specialize_project_traits
-from canonical_nominals import qualify_nominal_modules
 
 
 pub def project_context(
@@ -10,8 +9,7 @@ pub def project_context(
     entry: int,
 ) -> Result[tuple[BodyIrModule, list[BodyIrModule]], str]:
     """Retain original canonical identities while joining layouts and specialized bodies for native planning."""
-    qualified = qualify_nominal_modules(modules)?
-    mut context = qualified[entry].clone()
+    mut context = modules[entry].clone()
     context.bodies.clear()
     context.nominal_declarations.clear()
     context.enum_declarations.clear()
@@ -24,8 +22,8 @@ pub def project_context(
     context.loaf_callables.clear()
     context.native_union_declarations.clear()
     mut checked: list[BodyIrModule] = []
-    for module in qualified:
-        specialized = specialize_project_traits(module, qualified)?
+    for module in modules:
+        specialized = specialize_project_traits(module, modules)?
         # The imported Rust type has Clone, but List.append cannot prove that trait for a named opaque value.
         # An explicit interop clone is an owned call result and retains the module for both planning views.
         checked.append(specialized.clone())
@@ -35,7 +33,10 @@ pub def project_context(
         for index in range(len(module.nominal_declarations)):
             mut declaration = module.nominal_declarations[index].clone()
             # A producer-retained carrier key names the exact canonical owner; older unqualified layouts stay refused.
-            declaration.name = declaration.carrier_name()
+            if len(declaration.type_parameters) == 0:
+                declaration.name = declaration.carrier_name()
+            else:
+                declaration.name = declaration.template_carrier_name()
             if not retains_nominal(context, declaration)?:
                 context.nominal_declarations.push(declaration.clone())
         for index in range(len(module.enum_declarations)):

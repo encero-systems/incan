@@ -1,0 +1,9 @@
+pub type Percentile = newtype float:
+    """A fraction with an observable validation hook."""
+
+    def from_underlying(value: float) -> Result[Percentile, ValidationError]:
+        """Validate external construction while allowing the hook's raw wrap."""
+        println("validated")
+        if value < 0.0 or value > 1.0:
+            return Err(ValidationError("percentile out of range"))
+        return Ok(Percentile(value))

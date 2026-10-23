@@ -64,8 +64,8 @@ impl TypeChecker {
     ///
     /// The spelling is resolved to its declaring module and source name as a bound is
     /// ([`Self::trait_bound_module_path`], [`Self::trait_bound_source_name`]); a known spelling of the stdlib trait
-    /// (`Serialize`, `json.Serialize`) also counts, so a facade re-export the resolution does not follow is never
-    /// taken for a missing trait.
+    /// (`Serialize`, `json.Serialize`) is a fallback only when no checked module or semantic trait owns it. A local
+    /// marker with that name never acquires the JSON protocol.
     fn names_json_protocol(
         &self,
         spelling: &str,
@@ -80,10 +80,13 @@ impl TypeChecker {
             .map(str::to_string)
             .or_else(|| self.trait_bound_source_name(spelling))
             .unwrap_or_else(|| spelling.to_string());
-        let by_identity = module_path
-            .as_deref()
-            .and_then(|path| stdlib::stdlib_json_trait_id_for_identity(path, &source_name));
-        by_identity == Some(protocol) || stdlib::stdlib_json_trait_id(spelling) == Some(protocol)
+        match module_path {
+            Some(path) => stdlib::stdlib_json_trait_id_for_identity(&path, &source_name) == Some(protocol),
+            None => {
+                self.lookup_semantic_trait_info(spelling).is_none()
+                    && stdlib::stdlib_json_trait_id(spelling) == Some(protocol)
+            }
+        }
     }
 
     /// Return whether a type's trait adoptions, which include what its derives adopt, provide the `std.serde.json`

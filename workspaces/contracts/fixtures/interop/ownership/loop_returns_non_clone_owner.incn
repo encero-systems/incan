@@ -1,0 +1,53 @@
+# behavior: Rust values that cannot be copied keep a single owner: return and break transfer an enclosing non-Clone value on terminal loop paths, a Rust standard-output handle is handed to an Incan function that declares its parameter mut and the function runs with it, and a Rust standard-input handle assigned to a second name is used through that name and the program continues
+# expect-stdout:
+#   false
+#   false
+#   used
+#   handle taken over
+
+from rust::std::io import Stdout, stdin, stdout
+from rust::std::sync import Mutex
+
+
+def make() -> Mutex[int]:
+    """Return an owned mutex without cloning it."""
+    value = Mutex.new(7)
+    while true:
+        return value
+
+
+def make_with_break() -> Mutex[int]:
+    """Move the owner through the value of a loop expression."""
+    value = Mutex.new(9)
+    return loop:
+        break value
+
+
+def use_handle(mut output: Stdout) -> str:
+    _ = output.lock()
+    return "used"
+
+
+def show_loop_returns() -> None:
+    """Observe the transferred native owner."""
+    value = make()
+    println(value.is_poisoned())
+    other = make_with_break()
+    println(other.is_poisoned())
+
+
+def show_mut_parameter() -> None:
+    println(use_handle(stdout()))
+
+
+def show_reassigned_handle() -> None:
+    input = stdin()
+    handle = input
+    _ = handle.lock()
+    println("handle taken over")
+
+
+def main() -> None:
+    show_loop_returns()
+    show_mut_parameter()
+    show_reassigned_handle()

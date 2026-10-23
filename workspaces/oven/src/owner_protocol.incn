@@ -1,0 +1,390 @@
+"""
+The wire protocol between a command and its project owner (`incan.owner/1`).
+
+One JSON document per frame, in each direction: eight ASCII decimal digits giving the payload's length in bytes, then
+the payload, at most `MAX_FRAME` bytes. A request is answered by exactly one reply; progress, diagnostics and the
+completed executable's path travel in the reply's own fields, never mixed into one another. The client sends what it
+resolved (command, entry, profile, features), never a unit description.
+"""
+
+from rust::std::fs import Permissions, set_permissions
+from rust::std::io import ErrorKind, Read, Write
+from rust::std::os::unix::fs import PermissionsExt
+from rust::std::os::unix::net import UnixListener, UnixStream
+from rust::std::cell import RefCell
+from rust::std::rc import Rc
+from rust::std::string import String as RustString
+from rust::std::time import Duration
+from std.json import JsonValue, parse
+from json_fields import boolean, field, strings, text_field
+
+
+pub const PROTOCOL: str = "incan.owner/1"
+# The largest payload either side accepts.
+pub const MAX_FRAME: int = 16777216
+const HEADER_DIGITS: int = 8
+# Read and write permission for the owner alone (octal 600).
+const OWNER_ONLY: u32 = 384
+
+
+pub model Request:
+    """What a command asks of its owner."""
+
+    # `run`, `build` or `test` prepare an executable; `status`, `idle` and `stop` are lifecycle requests.
+    pub command: str
+    pub generation: str
+    # The entry source, absolute.
+    pub path: str = ""
+    pub profile: str = "debug"
+    pub features: list[str] = []
+    pub default_features: bool = true
+    pub all_features: bool = false
+
+    def to_json(self) -> JsonValue:
+        """The request as it travels."""
+        return JsonValue.object(
+            {
+                "schema": JsonValue.string(PROTOCOL),
+                "command": JsonValue.string(self.command),
+                "generation": JsonValue.string(self.generation),
+                "path": JsonValue.string(self.path),
+                "profile": JsonValue.string(self.profile),
+                "features": JsonValue.array([JsonValue.string(name) for name in self.features]),
+                "default_features": JsonValue.bool(self.default_features),
+                "all_features": JsonValue.bool(self.all_features),
+            },
+        )
+
+
+pub model Reply:
+    """What an owner answers."""
+
+    # `done` (the request ran; `exit` says how it ended), `fallback` (the owner does not serve this input; run it in
+    # the command), `refused` (the request was not valid), `retiring` (the owner is exiting).
+    pub status: str
+    pub generation: str = ""
+    pub pid: int = 0
+    pub exit: int = 0
+    # The executable a `done` run, build or test request completed.
+    pub binary: str = ""
+    # What the compiler printed for the request, kept apart.
+    pub stdout: str = ""
+    pub stderr: str = ""
+    # The lines of Oven's reasoning for the request.
+    pub trace: list[str] = []
+    pub reason: str = ""
+
+    def to_json(self) -> JsonValue:
+        """The reply as it travels."""
+        return JsonValue.object(
+            {
+                "schema": JsonValue.string(PROTOCOL),
+                "status": JsonValue.string(self.status),
+                "generation": JsonValue.string(self.generation),
+                "pid": JsonValue.int(self.pid),
+                "exit": JsonValue.int(self.exit),
+                "binary": JsonValue.string(self.binary),
+                "stdout": JsonValue.string(self.stdout),
+                "stderr": JsonValue.string(self.stderr),
+                "trace": JsonValue.array([JsonValue.string(line) for line in self.trace]),
+                "reason": JsonValue.string(self.reason),
+            },
+        )
+
+
+pub def prepares_executable(command: str) -> bool:
+    """Whether a command asks the owner for an executable, rather than for something about the owner itself."""
+    return command in ["run", "build", "test"]
+
+
+pub def digits_only(text: str) -> bool:
+    """Whether every character of `text` is an ASCII decimal digit."""
+    for index in range(len(text)):
+        if text[index] not in "0123456789":
+            return false
+    return true
+
+
+pub def request_of(document: JsonValue) -> Result[Request, str]:
+    """
+    A request document; the first field that is missing or of another kind refuses it.
+
+    1. The document carries this protocol's schema.
+    2. Every field of the request is present and of its kind.
+    """
+    # 1. A document of another schema is not a request at all.
+    check_schema(document, "request")?
+    # 2. Fields are read in the order the request declares them, so the first bad one is the one named.
+    return Ok(
+        Request(
+            command=text_of(document, "command")?,
+            generation=text_of(document, "generation")?,
+            path=text_of(document, "path")?,
+            profile=text_of(document, "profile")?,
+            features=strings_of(document, "features")?,
+            default_features=flag_of(document, "default_features")?,
+            all_features=flag_of(document, "all_features")?,
+        ),
+    )
+
+
+pub def reply_of(document: JsonValue) -> Result[Reply, str]:
+    """
+    A reply document; the first field that is missing or of another kind refuses it.
+
+    1. The document carries this protocol's schema.
+    2. Every field of the reply is present and of its kind.
+    """
+    # 1. A document of another schema is not a reply at all.
+    check_schema(document, "reply")?
+    # 2. Fields are read in the order the reply declares them, so the first bad one is the one named.
+    return Ok(
+        Reply(
+            status=text_of(document, "status")?,
+            generation=text_of(document, "generation")?,
+            pid=number(document, "pid")?,
+            exit=number(document, "exit")?,
+            binary=text_of(document, "binary")?,
+            stdout=text_of(document, "stdout")?,
+            stderr=text_of(document, "stderr")?,
+            trace=strings_of(document, "trace")?,
+            reason=text_of(document, "reason")?,
+        ),
+    )
+
+
+def check_schema(document: JsonValue, kind: str) -> Result[None, str]:
+    """Refuse a document that is not a `kind` of this protocol."""
+    if text_of(document, "schema")? != PROTOCOL:
+        return Err(f"not a {kind} of {PROTOCOL}")
+    return Ok(None)
+
+
+def text_of(document: JsonValue, name: str) -> Result[str, str]:
+    """A string field of a document."""
+    return text_field(document, name, []).map_err(refusal)
+
+
+def strings_of(document: JsonValue, name: str) -> Result[list[str], str]:
+    """A field of a document that is an array of strings."""
+    return strings(field(document, name, []).map_err(refusal)?, [name]).map_err(refusal)
+
+
+def flag_of(document: JsonValue, name: str) -> Result[bool, str]:
+    """A boolean field of a document."""
+    return boolean(field(document, name, []).map_err(refusal)?, [name]).map_err(refusal)
+
+
+def number(document: JsonValue, name: str) -> Result[int, str]:
+    """A whole-number field of a document."""
+    match document.get(name):
+        Some(value) =>
+            match value.as_int():
+                Some(whole) => return Ok(whole)
+                None => return Err(f"`{name}` is not a whole number")
+        None => return Err(f"no `{name}`")
+
+
+def refusal(failed: list[str]) -> str:
+    """The field path that failed, as text."""
+    return f"`{'.'.join(failed)}` is missing or of another kind"
+
+
+pub class Connection:
+    """One end of an owner socket, speaking frames."""
+
+    # Shared and interior-mutable, because a foreign socket can be neither cloned nor copied.
+    pub stream: Rc[RefCell[UnixStream]]
+
+    def send(mut self, document: JsonValue) -> Result[None, str]:
+        """
+        Write one frame.
+
+        1. Encode the document, refusing one over the bound.
+        2. Write the eight-digit length header.
+        3. Write the payload.
+        """
+        # 1. The bound is checked before anything is written.
+        payload = document.to_json().map_err((error) => error.message())?.encode("utf-8")
+        if len(payload) > MAX_FRAME:
+            return Err(f"a frame of {len(payload)} bytes exceeds the {MAX_FRAME} allowed")
+        # 2. The header states the payload's length.
+        self.write_part(padded(len(payload)).encode("utf-8"), "the frame header")?
+        # 3. The payload follows.
+        return self.write_part(payload, "the frame")
+
+    def write_part(mut self, part: bytes, what: str) -> Result[None, str]:
+        """Write all of one part of a frame; a failure names the part."""
+        match self.stream.borrow_mut().write_all(part):
+            Ok(_) => return Ok(None)
+            Err(error) => return Err(f"cannot write {what}: {error}")
+
+    def receive(mut self) -> Result[JsonValue, str]:
+        """
+        Read one frame. A header that is not a length, a length over the bound or a payload cut short refuses it.
+
+        1. Read the eight-digit header and take the length it states.
+        2. Read exactly that many payload bytes.
+        3. Decode them as UTF-8 JSON.
+        """
+        # 1. The length is validated before any buffer of that size exists.
+        mut header = zeros(HEADER_DIGITS)
+        match self.stream.borrow_mut().read_exact(header):
+            Ok(_) => pass
+            Err(error) => return Err(f"cannot read the frame header: {error}")
+        size = length_of(header)?
+        # 2. A payload cut short is an error, not a shorter frame.
+        mut payload = zeros(size)
+        match self.stream.borrow_mut().read_exact(payload):
+            Ok(_) => pass
+            Err(error) => return Err(f"cannot read a frame of {size} bytes: {error}")
+        # 3. The payload is a JSON document in UTF-8.
+        match RustString.from_utf8(payload):
+            Ok(text) => return parse(str(text)).map_err((error) => error.message())
+            Err(_) => return Err("the frame is not UTF-8")
+
+    def send_quietly(mut self, document: JsonValue) -> None:
+        """Send a frame whose delivery nobody checks: a peer that has gone away needs no answer."""
+        _ = self.send(document)
+
+    def discard_reply(mut self) -> None:
+        """Read and drop the peer's answer to a message for which only the peer's presence mattered."""
+        _ = self.receive()
+
+    def wait_at_most(mut self, seconds: u64) -> None:
+        """Bound each read by `seconds`; 0 removes the bound, which a long build needs."""
+        mut limit: Option[Duration] = None
+        if seconds != 0:
+            limit = Some(Duration.from_secs(seconds))
+        # A timeout the system refuses leaves the socket unbounded, which only delays a stuck peer's refusal.
+        _ = self.stream.borrow_mut().set_read_timeout(limit)
+
+    def write_at_most(mut self, seconds: u64) -> None:
+        """Bound each write by `seconds`."""
+        # A timeout the system refuses leaves the socket unbounded, which only delays a stuck peer's refusal.
+        _ = self.stream.borrow_mut().set_write_timeout(Some(Duration.from_secs(seconds)))
+
+
+pub def length_of(header: bytes) -> Result[int, str]:
+    """
+    The payload length a frame header states, within the bound.
+
+    1. The header is text.
+    2. It is exactly eight decimal digits.
+    3. The length they spell does not exceed `MAX_FRAME`.
+    """
+    # 1. A header is text; bytes that are not UTF-8 are no length.
+    text = header_text(header)?
+    # 2. A length is exactly eight decimal digits, nothing shorter and nothing signed.
+    if len(text) != HEADER_DIGITS:
+        return Err("the frame header is not eight digits")
+    if not digits_only(text):
+        return Err("the frame header is not a length")
+    # 3. The length they spell is within the bound, so no buffer of unbounded size is ever allocated.
+    size = int(text)
+    if size > MAX_FRAME:
+        return Err(f"a frame of {size} bytes exceeds the {MAX_FRAME} allowed")
+    return Ok(size)
+
+
+def header_text(header: bytes) -> Result[str, str]:
+    """A frame header as text."""
+    match RustString.from_utf8(header):
+        Ok(found) => return Ok(str(found))
+        Err(_) => return Err("the frame header is not text")
+
+
+pub def padded(size: int) -> str:
+    """A length as the eight decimal digits of a frame header."""
+    mut text = str(size)
+    while len(text) < HEADER_DIGITS:
+        text = "0" + text
+    return text
+
+
+def zeros(count: int) -> bytes:
+    """A buffer of `count` bytes to read into."""
+    if count == 0:
+        return "".encode("utf-8")
+    mut text = "0"
+    while len(text) < count:
+        text = text + text
+    return text[0:count].encode("utf-8")
+
+
+pub def connection(stream: UnixStream) -> Connection:
+    """Speak frames over `stream`."""
+    return Connection(stream=Rc.new(RefCell.new(stream)))
+
+
+pub class Listener:
+    """A listening owner socket."""
+
+    pub socket: Rc[RefCell[UnixListener]]
+
+    def accept(mut self) -> Result[Connection, str]:
+        """Take the next client."""
+        match self.socket.borrow_mut().accept():
+            Ok(accepted) =>
+                stream, peer = accepted
+                return Ok(connection(stream))
+            Err(error) => return Err(f"cannot accept: {error}")
+
+    def poll(mut self) -> Result[Option[Connection], str]:
+        """The next client if one is waiting, without waiting for one; the listener must be non-blocking."""
+        match self.socket.borrow_mut().accept():
+            Ok(accepted) =>
+                stream, peer = accepted
+                return Ok(Some(connection(stream)))
+            Err(error) =>
+                if error.kind() == ErrorKind.WouldBlock:
+                    return Ok(None)
+                return Err(f"cannot accept: {error}")
+
+    def stop_blocking(mut self, path: str) -> Result[None, str]:
+        """Make `accept` return at once when no client waits, which `poll` relies on."""
+        match self.socket.borrow_mut().set_nonblocking(true):
+            Ok(_) => return Ok(None)
+            Err(error) => return Err(f"cannot poll {path}: {error}")
+
+
+pub def listen(path: str, blocking: bool) -> Result[Listener, str]:
+    """
+    Listen at a socket path, readable and writable by its owner alone.
+
+    1. Bind the socket.
+    2. Restrict the socket file to its owner.
+    3. Unless the caller blocks in `accept`, make the listener non-blocking so `poll` can ask without waiting.
+    """
+    # 1. A socket listens at `path`, or the error says why it cannot.
+    socket = bind(path)?
+    mut listener = Listener(socket=Rc.new(RefCell.new(socket)))
+    # 2. No other user can connect to the owner or read what it is sent.
+    match set_permissions(path, Permissions.from_mode(OWNER_ONLY)):
+        Ok(_) => pass
+        Err(error) => return Err(f"cannot restrict {path}: {error}")
+    # 3. A polled listener returns at once when no client waits.
+    if not blocking:
+        listener.stop_blocking(path)?
+    return Ok(listener)
+
+
+def bind(path: str) -> Result[UnixListener, str]:
+    """A socket listening at `path`."""
+    match UnixListener.bind(path):
+        Ok(socket) => return Ok(socket)
+        Err(error) => return Err(f"cannot listen at {path}: {error}")
+
+
+pub def dial(path: str) -> Result[Connection, str]:
+    """Connect to a socket path; the error says why, so a caller can tell a stale socket from a refused one."""
+    match UnixStream.connect(path):
+        Ok(stream) => return Ok(connection(stream))
+        Err(error) => return Err(f"cannot connect to {path}: {error}")
+
+
+pub def stale(path: str) -> bool:
+    """Whether connecting to `path` found nothing alive there: no listener, or no socket any more."""
+    match UnixStream.connect(path):
+        Ok(_) => return false
+        Err(error) => return error.kind() == ErrorKind.ConnectionRefused or error.kind() == ErrorKind.NotFound

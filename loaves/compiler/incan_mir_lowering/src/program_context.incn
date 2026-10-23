@@ -1,0 +1,51 @@
+"""Immutable program mappings shared by ordinary, instantiated, and lifted function frames."""
+
+from rust::std::sync import Arc
+from pub::incan_mir_plan import CalleeKind
+from body_index import BodyIndex, empty_body_index
+from rust::incan_semantics_core::body_ir import BodyIrModule, StaticDeclaration, Body as RustBody
+from rust::incan_semantics_core import IncanType as RustType
+from rust::std::collections import BTreeSet
+from rust::std::ops import Index
+from rust::std::primitive import usize
+
+
+pub model DisplayFunction:
+    """One validated source body or SDK item rendering a retained nominal through a shared receiver."""
+
+    pub owner: int
+    pub callee: CalleeKind
+
+
+pub model ProgramContext:
+    """Share ordered program tables and checked body positions without copying their contents into each frame."""
+
+    pub body_indices: BodyIndex
+    # This immutable copy keeps the specialized module's order, so the checked index selects the same executable facts.
+    pub bodies: Arc[list[RustBody]]
+    pub display_functions: Arc[list[DisplayFunction]]
+    pub statics: Arc[list[StaticDeclaration]]
+    pub comparison_functions: Arc[list[list[str]]]
+    pub union_types: Arc[BTreeSet[RustType]]
+
+
+pub def synthetic_program_context(module: &BodyIrModule) -> ProgramContext:
+    """Keep module storage but no dispatch mappings for external-only synthetic frames."""
+    functions: list[DisplayFunction] = []
+    bodies: list[RustBody] = []
+    comparisons: list[list[str]] = []
+    unions: BTreeSet[RustType] = BTreeSet.new()
+    return ProgramContext(
+        body_indices=empty_body_index(),
+        bodies=Arc.new(bodies),
+        display_functions=Arc.new(functions),
+        statics=Arc.new(list(module.static_declarations)),
+        comparison_functions=Arc.new(comparisons),
+        union_types=Arc.new(unions),
+    )
+
+
+pub def body_at(bodies: &list[RustBody], index: int) -> &RustBody:
+    """Borrow one body without copying its statements; the index must come from this table's matching checked body index."""
+    slot: usize = index.wrapping_resize()
+    return Index.index(bodies, slot)

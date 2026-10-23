@@ -38,6 +38,13 @@ pub def is_computed_static(declaration: &StaticDeclaration) -> bool:
         _ => return false
 
 
+pub def has_native_static_cell(declaration: &StaticDeclaration) -> bool:
+    """Use guarded adapter storage for computed values and literal dictionaries, without making literals effectful."""
+    match declaration.initial:
+        StaticInitializer.Dict(_entries) => return true
+        _ => return is_computed_static(declaration)
+
+
 pub def static_owner(declaration: &StaticDeclaration) -> str:
     """The declaring module of a static, read from its canonical identity."""
     match canonical_module_identity(declaration.canonical):
@@ -45,11 +52,13 @@ pub def static_owner(declaration: &StaticDeclaration) -> str:
         None => return ""
 
 
-pub def module_static_key(statics: list[StaticDeclaration], owner: str) -> int:
+pub def module_static_key(statics: &list[StaticDeclaration], owner: str) -> int:
     """The first computed static slot module `owner` declares, which keys its initialization, or -1 for none."""
-    for slot in range(len(statics)):
-        if is_computed_static(statics[slot]) and static_owner(statics[slot]) == owner:
+    mut slot = 0
+    for declaration in statics:
+        if is_computed_static(declaration) and static_owner(declaration) == owner:
             return slot
+        slot += 1
     return -1
 
 
@@ -65,7 +74,7 @@ pub def module_initializer_name(key: int) -> str:
 
 pub def initialize_module_statics(mut builder: Builder, owner: str, span: SourceSpan) -> None:
     """Call module `owner`'s static initializer, as legacy calls `__incan_init_module_statics` at a function entry."""
-    key = module_static_key(builder.statics, owner)
+    key = module_static_key(builder.program.statics.as_ref(), owner)
     if key < 0:
         return
     output = temporary(builder, PlanType.Unit, span)
@@ -89,7 +98,7 @@ pub def module_initialization_externals(span: SourceSpan) -> list[ExternalFuncti
     )]
 
 
-pub def module_initializer(statics: list[StaticDeclaration], key: int, span: SourceSpan) -> Function:
+pub def module_initializer(statics: &list[StaticDeclaration], key: int, span: SourceSpan) -> Function:
     """
     Build the initializer of the module keyed `key`: claim the module's initialization, and when this is the first
     claim, force its computed statics in declaration order before recording it complete.
@@ -99,9 +108,11 @@ pub def module_initializer(statics: list[StaticDeclaration], key: int, span: Sou
     """
     owner = static_owner(statics[key])
     mut forced: list[int] = []
-    for slot in range(len(statics)):
-        if is_computed_static(statics[slot]) and static_owner(statics[slot]) == owner:
+    mut slot = 0
+    for declaration in statics:
+        if is_computed_static(declaration) and static_owner(declaration) == owner:
             forced.append(slot)
+        slot += 1
     # Blocks: 0 claims, 1 branches, then one block per forced static, the completion record, and the return.
     done = 2 + len(forced) + 1
     claim = TerminatorKind.Call(
@@ -148,8 +159,10 @@ pub def module_initializer(statics: list[StaticDeclaration], key: int, span: Sou
 pub def enters_module_initialization(body: &Body) -> bool:
     """
     Report whether a body initializes its module's statics on entry: every function and method does, as in legacy,
-    but a computed static's own initializer does not, because the module's initialization is what runs it.
+    but a computed static's or constant's own initializer does not, because the module's initialization is what runs
+    it.
     """
     match body.canonical:
-        Some(identity) => return identity.kind != SemanticSourceTargetKind.Static
+        Some(identity) =>
+            return identity.kind != SemanticSourceTargetKind.Static and identity.kind != SemanticSourceTargetKind.Const
         None => return true

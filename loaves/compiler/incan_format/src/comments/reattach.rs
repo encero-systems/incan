@@ -134,9 +134,12 @@ pub(super) fn reattach_comments(source: &str, formatted: &str) -> String {
 }
 
 /// Emit a source comment block at its formatted anchor, including its preserved leading readability gap.
+///
+/// A root-level block after a suite opens the next top-level section, so it takes the two blank lines that separate
+/// top-level declarations whatever gap the source had.
 fn emit_anchored_block(out_lines: &mut NormalizedLineBuffer, block: &AnchoredStandaloneBlock) {
     if block.after_root_suite {
-        out_lines.set_root_blank_lines(block.root_blank_lines_before);
+        out_lines.set_root_blank_lines(2);
     } else if block.blank_line_before {
         out_lines.ensure_blank_line_before(block.indent);
     }

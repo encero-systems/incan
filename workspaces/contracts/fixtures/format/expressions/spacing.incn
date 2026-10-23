@@ -1,0 +1,23 @@
+# behavior: Annotations, arithmetic operators, parameters, call arguments and list elements receive canonical spacing, and ordinary strings use double quotes.
+# expect-formatted:
+#   const ITEMS: list[int] = [1, 2, 3]
+#   const TEXT: str = "hello"
+#
+#
+#   def add(a: int, b: int) -> int:
+#       """Add the two parameters."""
+#       return a + b
+#
+#
+#   def greet() -> None:
+#       """Print two greeting words."""
+#       println("hello", "world")
+
+const ITEMS:list[int]=[1,2,3]
+const TEXT:str='hello'
+def add(a:int,b:int)->int:
+    """Add the two parameters."""
+    return a+b
+def greet()->None:
+    """Print two greeting words."""
+    println('hello','world')

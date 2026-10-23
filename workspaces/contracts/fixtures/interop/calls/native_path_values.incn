@@ -1,0 +1,84 @@
+# behavior: native Path values keep their unsized and borrowed carriers: a native Cow retains its unsized text argument and resolves its associated owned output, a native option payload keeps its borrowed path component and text carriers through string conversion and output, a Rust Default constructor supplies an owned value usable by its inherent methods, an Incan int return converts a Rust usize result through the ordinary int conversion, and a native directory iterator retains its Result Item and allows methods on successful entries
+# expect-stdout:
+#   a/b
+#   file.txt
+#   folder/file.txt
+#   folder/file.txt
+#   true
+#   true
+#   true
+#   true
+
+"""Observe native path values through borrowed, owned and defaulted carriers."""
+
+from rust::std::fs import read_dir
+from rust::std::mem import size_of_val
+from rust::std::path import Path, PathBuf
+
+
+def size() -> int:
+    """Return one native size through an Incan integer signature."""
+    return size_of_val("leaf")
+
+
+def text_size() -> int:
+    """Convert a parenthesized native method result at its declared return boundary."""
+    path = Path.new("leaf")
+    return ((path.as_os_str().len()))
+
+
+def show_owned_text() -> None:
+    """Own a path display through Cow's ToOwned projection without exposing native enum variants."""
+    println(Path.new("a/b").to_string_lossy().into_owned())
+
+
+def show_borrowed_component() -> None:
+    """Read a borrowed native path component without moving its unsized referent."""
+    path = Path.new("folder/file.txt")
+    match path.file_name():
+        Some(name) => println(name.to_string_lossy().into_owned())
+        None => println("missing")
+    maybe_text = path.to_str()
+    match maybe_text:
+        Some(text) => println(text)
+        None => println("missing text")
+    match maybe_text:
+        Some(text) => println(text)
+        None => println("missing text")
+
+
+def show_default_constructor() -> None:
+    """Read the empty path produced by its declared native Default implementation."""
+    path = PathBuf.default()
+    println(path.as_os_str().len() == 0)
+
+
+def show_usize_returns() -> None:
+    """Compare the implicit return boundary with the explicit conversion."""
+    println(size() == int(size_of_val("leaf")))
+    println(text_size() == 4)
+
+
+def show_directory_iteration() -> None:
+    """Read entries from the materialized contract project without assuming their order."""
+    mut count = 0
+    match read_dir("."):
+        Ok(entries) =>
+            for entry in entries:
+                match entry:
+                    Ok(value) =>
+                        text = value.path().to_string_lossy().into_owned()
+                        if len(text) > 0:
+                            count += 1
+                    Err(_) => println("entry error")
+        Err(_) => println("directory error")
+    println(count > 0)
+
+
+def main() -> None:
+    """Run each path observation in the order of the cases it carries."""
+    show_owned_text()
+    show_borrowed_component()
+    show_default_constructor()
+    show_usize_returns()
+    show_directory_iteration()

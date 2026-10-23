@@ -12,6 +12,7 @@
 use crate::plan::{CalleeKind, Function, ListLeaf, PlanType, StaticCell, TerminatorKind, tuple_element_type};
 use crate::{declarations, error::PlanError, plan::Plan};
 use rustc_ast as ast;
+use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_span::{Ident, Span, Symbol};
 use std::collections::BTreeSet;
 use thin_vec::{ThinVec, thin_vec};
@@ -43,7 +44,7 @@ pub(crate) fn method_target<'plan>(plan: &'plan Plan, slot: i64, name: &str) -> 
             });
         }
     };
-    if cell.ty != carrier || !guard_owned_result(plan, &method.return_type, &mut BTreeSet::new()) {
+    if cell.ty != carrier || !guard_owned_result(plan, &method.return_type, &mut BTreeSet::new(), None) {
         return Err(PlanError::Invalid {
             function: method.name.clone(),
             reason: "unsupported static method carrier or escaping result".into(),
@@ -52,10 +53,16 @@ pub(crate) fn method_target<'plan>(plan: &'plan Plan, slot: i64, name: &str) -> 
     Ok(method)
 }
 
-/// Admit only result storage with a complete owned layout; borrowed fields and opaque or recursive layouts cannot
-/// escape the static guard. SDK forwarding functions obey the same rule as planned source methods.
-fn guard_owned_result(plan: &Plan, ty: &PlanType, visiting: &mut BTreeSet<(bool, i64)>) -> bool {
-    if incan_mir_lowering::caller::incan::numeric_carrier(ty.clone()) {
+/// Require owned source layouts and defer opaque native ownership to the exact metadata type. Preflight has no
+/// native type context; `verify_method_results` must discharge those provisional native results before MIR is built.
+/// Borrowed source fields and recursive source layouts remain refused.
+fn guard_owned_result(
+    plan: &Plan,
+    ty: &PlanType,
+    visiting: &mut BTreeSet<(bool, i64)>,
+    tcx: Option<TyCtxt<'_>>,
+) -> bool {
+    if incan_mir_lowering::numeric_carrier(ty.clone()) {
         return true;
     }
     match ty {
@@ -72,10 +79,16 @@ fn guard_owned_result(plan: &Plan, ty: &PlanType, visiting: &mut BTreeSet<(bool,
             elements.as_slice(),
             [PlanType::Int | PlanType::Float | PlanType::Bool | PlanType::String]
         ),
-        PlanType::List(leaf, depth) => *depth > 0 && guard_owned_leaf(plan, leaf, visiting),
+        // A frozen collection is a view of `'static` storage: it borrows nothing from the guarded cell.
+        PlanType::FrozenCollection(..) => true,
+        PlanType::List(leaf, depth) => *depth > 0 && guard_owned_leaf(plan, leaf, visiting, tcx),
+        PlanType::Set(leaf) => guard_owned_leaf(plan, leaf, visiting, tcx),
+        PlanType::Dict(key, value) => {
+            guard_owned_leaf(plan, key, visiting, tcx) && guard_owned_leaf(plan, value, visiting, tcx)
+        }
         PlanType::Tuple(elements) => elements
             .iter()
-            .all(|element| guard_owned_result(plan, &tuple_element_type(element.clone()), visiting)),
+            .all(|element| guard_owned_result(plan, &tuple_element_type(element.clone()), visiting, tcx)),
         PlanType::Model(index, name) => {
             if !visiting.insert((false, *index)) {
                 return false;
@@ -85,11 +98,14 @@ fn guard_owned_result(plan: &Plan, ty: &PlanType, visiting: &mut BTreeSet<(bool,
                 .and_then(|index| plan.models.get(index))
                 .is_some_and(|model| {
                     model.name == *name
-                        && (model.library_item.is_empty() || !model.fields.is_empty())
-                        && model
-                            .fields
-                            .iter()
-                            .all(|field| guard_owned_result(plan, &field.ty, visiting))
+                        && if model.library_item.is_empty() {
+                            model
+                                .fields
+                                .iter()
+                                .all(|field| guard_owned_result(plan, &field.ty, visiting, tcx))
+                        } else {
+                            native_result_is_owned(tcx, ty)
+                        }
                 });
             visiting.remove(&(false, *index));
             admitted
@@ -103,13 +119,17 @@ fn guard_owned_result(plan: &Plan, ty: &PlanType, visiting: &mut BTreeSet<(bool,
                 .and_then(|index| plan.enums.get(index))
                 .is_some_and(|owner| {
                     owner.name == *name
-                        && !owner.variants.is_empty()
-                        && owner.variants.iter().all(|variant| {
-                            variant
-                                .fields
-                                .iter()
-                                .all(|field| guard_owned_result(plan, field, visiting))
-                        })
+                        && if !owner.library_item.is_empty() {
+                            native_result_is_owned(tcx, ty)
+                        } else {
+                            !owner.variants.is_empty()
+                                && owner.variants.iter().all(|variant| {
+                                    variant
+                                        .fields
+                                        .iter()
+                                        .all(|field| guard_owned_result(plan, field, visiting, tcx))
+                                })
+                        }
                 });
             visiting.remove(&(true, *index));
             admitted
@@ -118,31 +138,97 @@ fn guard_owned_result(plan: &Plan, ty: &PlanType, visiting: &mut BTreeSet<(bool,
     }
 }
 
-/// Recurse through an owned list's exact element representation without accepting borrowed model fields.
-fn guard_owned_leaf(plan: &Plan, leaf: &ListLeaf, visiting: &mut BTreeSet<(bool, i64)>) -> bool {
+/// Recurse through each owned collection's exact element representation without accepting borrowed model fields.
+fn guard_owned_leaf(
+    plan: &Plan,
+    leaf: &ListLeaf,
+    visiting: &mut BTreeSet<(bool, i64)>,
+    tcx: Option<TyCtxt<'_>>,
+) -> bool {
     match leaf {
-        ListLeaf::Model(index, name) => guard_owned_result(plan, &PlanType::Model(*index, name.clone()), visiting),
-        ListLeaf::Enum(index, name) => guard_owned_result(plan, &PlanType::Enum(*index, name.clone()), visiting),
-        ListLeaf::Tuple(elements) => guard_owned_result(plan, &PlanType::Tuple(elements.clone()), visiting),
+        ListLeaf::Reference(_) => false,
+        ListLeaf::Model(index, name) => guard_owned_result(plan, &PlanType::Model(*index, name.clone()), visiting, tcx),
+        ListLeaf::Enum(index, name) => guard_owned_result(plan, &PlanType::Enum(*index, name.clone()), visiting, tcx),
+        ListLeaf::Tuple(elements) => guard_owned_result(plan, &PlanType::Tuple(elements.clone()), visiting, tcx),
         ListLeaf::List(elements, depth) => {
             *depth > 0
                 && elements.len() == 1
-                && elements.iter().all(|element| guard_owned_leaf(plan, element, visiting))
+                && elements
+                    .iter()
+                    .all(|element| guard_owned_leaf(plan, element, visiting, tcx))
         }
         ListLeaf::Dict(elements) => {
-            elements.len() == 2 && elements.iter().all(|element| guard_owned_leaf(plan, element, visiting))
+            elements.len() == 2
+                && elements
+                    .iter()
+                    .all(|element| guard_owned_leaf(plan, element, visiting, tcx))
+        }
+        ListLeaf::Set(elements) => {
+            elements.len() == 1
+                && elements
+                    .iter()
+                    .all(|element| guard_owned_leaf(plan, element, visiting, tcx))
         }
         ListLeaf::Int
         | ListLeaf::Float
         | ListLeaf::Bool
         | ListLeaf::Str
         | ListLeaf::U8
+        | ListLeaf::USize
         | ListLeaf::Unit
         | ListLeaf::Decimal
         | ListLeaf::FrozenStr
         | ListLeaf::FrozenBytes
         | ListLeaf::FunctionPointer(_) => true,
     }
+}
+
+/// Discharge provisional native results against rustc's exact instantiated type. An opaque ADT can hide borrowed
+/// storage only through its lifetime or type arguments; no nonstatic region may escape the guard. Function pointers
+/// own their pointer independently of the argument and result lifetimes bound by their callable signature.
+fn native_result_is_owned(tcx: Option<TyCtxt<'_>>, planned: &PlanType) -> bool {
+    let Some(tcx) = tcx else { return true };
+    crate::types::native_type(tcx, planned).is_ok_and(native_type_is_owned)
+}
+
+/// Inspect native ownership arguments, including metadata defaults and expanded aliases, without guessing hidden
+/// fields or accepting erased lifetimes. Unresolved projections and pointer carriers grant no ownership proof.
+fn native_type_is_owned(value: Ty<'_>) -> bool {
+    match value.kind() {
+        ty::Adt(_, arguments) => arguments.iter().all(|argument| match argument.kind() {
+            ty::GenericArgKind::Lifetime(region) => region.is_static(),
+            ty::GenericArgKind::Type(value) => native_type_is_owned(value),
+            ty::GenericArgKind::Const(_) => true,
+        }),
+        ty::Tuple(elements) => elements.iter().all(native_type_is_owned),
+        ty::Array(element, _) | ty::Slice(element) => native_type_is_owned(*element),
+        ty::Ref(region, element, _) => region.is_static() && native_type_is_owned(*element),
+        ty::Bool | ty::Char | ty::Int(_) | ty::Uint(_) | ty::Float(_) | ty::Str | ty::Never | ty::FnPtr(..) => true,
+        _ => false,
+    }
+}
+
+/// Validate every selected static method result after native aliases resolve and before any planned MIR is built.
+/// This is the ownership half of `method_target`; a provisional opaque result is never executable without it.
+pub(crate) fn verify_method_results(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), PlanError> {
+    for function in &plan.functions {
+        for block in &function.blocks {
+            let TerminatorKind::Call(callee, ..) = &block.terminator.kind else {
+                continue;
+            };
+            let CalleeKind::StaticMethod(slot, name) = &callee.kind else {
+                continue;
+            };
+            let method = method_target(plan, *slot, name)?;
+            if !guard_owned_result(plan, &method.return_type, &mut BTreeSet::new(), Some(tcx)) {
+                return Err(PlanError::Invalid {
+                    function: name.clone(),
+                    reason: "static method result contains a borrowed or unresolved native carrier".into(),
+                });
+            }
+        }
+    }
+    Ok(())
 }
 /// Declare each selected guarded method once. Caller arguments are evaluated before this accessor acquires its guard;
 /// mutation, panic poisoning and guard release then follow the legacy StaticCell call shape.

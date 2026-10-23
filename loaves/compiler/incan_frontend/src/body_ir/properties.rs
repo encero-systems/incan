@@ -17,6 +17,8 @@ pub(super) fn lower_getter_body(
     facts: &BodyIrLoweringFacts<'_, '_>,
 ) -> Option<bir::Body> {
     let source = property.node.body.as_ref()?;
+    let checked_receiver = facts.type_info.qualify_semantic_type(receiver_ty.clone());
+    let receiver_ty = &checked_receiver;
 
     // ---- Checked getter frame ----
     let binding = facts
@@ -94,6 +96,7 @@ pub(super) fn lower_getter_body(
         panic_facts: builder.panic_facts,
         is_async: false,
         extern_delegation: None,
+        native_attributes: Vec::new(),
     })
 }
 

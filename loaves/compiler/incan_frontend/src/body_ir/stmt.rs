@@ -84,13 +84,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.lower_chained_assignment(chained_assignment, remaining, scope, span, out)
             }
             ast::Statement::Return(value) => {
-                // A returned `Ok(...)` or `Err(...)` builds the sides the declared return type settles for it.
-                let value = value.as_ref().map(|returned| {
-                    let destination = self.owner_return_type.clone();
-                    self.settle_open_result_value(returned, &destination);
-                    let operand = self.lower_boundary_value(returned, Some(&destination), scope, out);
-                    self.owned_parameter_operand(returned, operand)
-                });
+                let value = value
+                    .as_ref()
+                    .map(|returned| self.lower_return_operand(returned, scope, out));
                 out.push(bir::Statement {
                     kind: bir::StatementKind::Return { value },
                     span,
@@ -132,6 +128,23 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
             other => self.push_unsupported_stmt(unsupported_stmt_label(other), span, out),
         }
+    }
+
+    /// Read a return value on a terminal function path, where enclosing loops cannot repeat the read.
+    /// New loops inside the return expression still establish their own repeated-read scopes. Borrowed receivers and
+    /// parameters retain their normal ownership rules, and Result constructors use the declared return channels.
+    fn lower_return_operand(
+        &mut self,
+        returned: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let destination = self.owner_return_type.clone();
+        self.settle_open_result_value(returned, &destination);
+        let enclosing_loops = std::mem::take(&mut self.loop_scopes);
+        let operand = self.lower_boundary_value(returned, Some(&destination), scope, out);
+        self.loop_scopes = enclosing_loops;
+        self.owned_parameter_operand(returned, operand)
     }
 
     /// Retain a source acknowledgment and its operations without introducing an Incan binding or drop scope.
@@ -181,7 +194,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// An inferred binding of a nongeneric source call retains its providing module's closed return carrier, so a
     /// private import alias in the producer cannot become a consumer-side storage type.
     /// Inferred SDK task bindings likewise keep the checked call's executable output; explicitly annotated bindings
-    /// keep their declared contract.
+    /// keep their declared contract. A shared-reference binding retains a borrow fact and keeps its source owner
+    /// initialized rather than transferring it into the new binding.
     ///
     /// A Result constructor rebind whose legacy payload is missing retains a named refusal even when Body IR keeps
     /// the local's closed carrier.
@@ -231,7 +245,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         ty = self.retained_result_binding_type(assignment, ty, out);
         let materializes_range = self.expr_has_materialized_range_layout(&assignment.value);
         self.settle_open_result_value(&assignment.value, &ty);
-        let value = self.lower_boundary_value(&assignment.value, Some(&ty), scope, out);
+        let mut value = self.lower_boundary_value(&assignment.value, Some(&ty), scope, out);
+        if matches!(ty, IncanType::Ref(_))
+            && let bir::Operand::Place(read) = &mut value
+        {
+            self.retain_argument_borrow(read, false);
+        }
         // An awaited method can retain its closed output only after its future has been constructed. Preserve that
         // checked native constraint through an inferred binding without changing an explicit annotation.
         if assignment.ty.is_none()
@@ -405,6 +424,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// A write checking resolved to a user-defined `__setitem__` is that method's call, in the same order. Static
     /// storage is the exception: legacy computes the assigned value before it locks the storage to write the entry, so
     /// the value is lowered before the index there, and the index is the last read of what it names.
+    /// A deferred index read reserves its owner until the value has been evaluated, as an earlier call argument does.
     pub(super) fn lower_index_assignment(
         &mut self,
         index_assignment: &ast::IndexAssignmentStmt,
@@ -429,8 +449,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .is_some()
             .then(|| self.lower_boundary_value(&index_assignment.value, None, scope, out));
         let index_operand = self.lower_expr_to_operand(&index_assignment.index, scope, out);
+        let pending_start = self.pending_argument_reads.len();
+        self.retain_pending_operand_read(&index_operand);
         place.projection.push(bir::PlaceElem::Index(Box::new(index_operand)));
         if !place.permits_write() {
+            self.pending_argument_reads.truncate(pending_start);
             let target = place.global().map_or_else(
                 || "index assignment target".to_string(),
                 |global| global.identity.render_compact(),
@@ -442,6 +465,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             Some(value) => value,
             None => self.lower_boundary_value(&index_assignment.value, None, scope, out),
         };
+        self.pending_argument_reads.truncate(pending_start);
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
                 place,
@@ -1016,6 +1040,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// on the `Break` statement itself, matching [`bir::StatementKind::Break`]'s documented default. The innermost
     /// context comes from [`Self::loop_break_targets`], which every loop-lowering path pushes/pops around its own
     /// body so a `break` always targets the loop it is lexically inside, never an outer one.
+    /// The exited loop cannot repeat its value read, so that loop's ownership scope is suspended while the value is
+    /// evaluated. Enclosing loops and new loops within the value still protect their own repeated reads.
     pub(super) fn lower_break(
         &mut self,
         value: Option<&ast::Spanned<ast::Expr>>,
@@ -1024,10 +1050,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) {
         let target = self.loop_break_targets.last().copied().flatten();
-        match (value, target) {
-            (Some(expr), Some(result_local)) => {
-                let destination = self.locals[result_local.index()].ty.clone();
-                let operand = self.lower_boundary_value(expr, Some(&destination), scope, out);
+        let destination = target.map(|local| self.locals[local.index()].ty.clone());
+        let exited_loop = self.loop_scopes.pop();
+        let operand = value.map(|expr| self.lower_boundary_value(expr, destination.as_ref(), scope, out));
+        self.loop_scopes.extend(exited_loop);
+        match (operand, target) {
+            (Some(operand), Some(result_local)) => {
                 out.push(bir::Statement {
                     kind: bir::StatementKind::Assign {
                         place: bir::Place::from_local(result_local),
@@ -1040,8 +1068,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     span,
                 });
             }
-            _ => {
-                let operand = value.map(|v| self.lower_boundary_value(v, None, scope, out));
+            (operand, _) => {
                 out.push(bir::Statement {
                     kind: bir::StatementKind::Break { value: operand },
                     span,

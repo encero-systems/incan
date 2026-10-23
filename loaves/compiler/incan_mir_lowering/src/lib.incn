@@ -1,16 +1,19 @@
 """Public facade for the checked Body-IR-to-native-plan lowering Loaf."""
 
 from assertions import lower_assertion
+from rust::incan_semantics_core::body_ir import NativeUnionDeclaration
 from async_ import future_type, validate_futures, construct_future, await_future, async_entry, evaluator_name
 from defaults import default_arguments, default_type
 from numerics import numeric_carrier as checked_numeric_carrier
+pub from closures import owned_capture
 pub from lowering import BodyIrModule
 from lowering import (
-    program_plan as checked_program_plan,
-    library_plan as checked_library_plan,
+    unit_plan as checked_unit_plan,
     program_refusals as checked_program_refusals,
 )
 pub from pub::incan_mir_plan import (
+    AttributeArgument,
+    AttributeValue,
     BasicBlock,
     BinaryOp,
     Callee,
@@ -32,13 +35,16 @@ pub from pub::incan_mir_plan import (
     range_field_types,
     Local,
     ModelDeclaration,
-    MarkerTrait,
+    NativeAttribute,
     Operand,
     OperandKind,
     Parameter,
     Place,
     Plan,
     PlanExport,
+    GenericLayoutType,
+    GenericLayoutField,
+    GenericModelDeclaration,
     PlanType,
     Projection,
     Rvalue,
@@ -55,29 +61,27 @@ pub from pub::incan_mir_plan import (
 )
 
 
-pub def program_plan(
-    modules: &list[BodyIrModule],
-    sources: list[str],
-    files: list[str],
-    entry: int,
+pub model SourceInputs:
+    """Own source text, paths and collected test names across the compiler's Rust caller boundary."""
+
+    pub sources: list[str]
+    pub files: list[str]
+    pub tests: list[str]
+
+
+pub def unit_plan(
+    modules: &list[BodyIrModule], inputs: SourceInputs, entry: int, kind: str,
+    mut published: list[NativeUnionDeclaration],
 ) -> Result[Option[Plan], str]:
-    """Retain a checked missing entry as a semantic CLI outcome after every body lowers; unsupported bodies still fail."""
-    return checked_program_plan(modules, sources, files, entry)
+    """Borrow checked modules and consume their source inputs to lower a program, library or collected test unit."""
+    return checked_unit_plan(modules, inputs.sources, inputs.files, entry, kind, inputs.tests, published)
 
 
-pub def library_plan(
-    modules: &list[BodyIrModule],
-    sources: list[str],
-    files: list[str],
-    entry: int,
-) -> Result[Plan, str]:
-    """Lower a library Loaf's checked bodies through the canonical caller boundary; no `main` is required."""
-    return checked_library_plan(modules, sources, files, entry)
-
-
-pub def program_refusals(modules: &list[BodyIrModule], sources: list[str], files: list[str], entry: int) -> list[str]:
-    """Delegate the census's per-body refusal collection through the canonical caller boundary."""
-    return checked_program_refusals(modules, sources, files, entry)
+pub def program_refusals(
+    modules: &list[BodyIrModule], inputs: SourceInputs, entry: int, progress: bool, selection: str,
+) -> list[str]:
+    """Consume source inputs for complete or exact-body refusal collection, optionally reporting its current body."""
+    return checked_program_refusals(modules, inputs.sources, inputs.files, entry, progress, selection)
 
 
 pub def numeric_carrier(ty: PlanType) -> bool:

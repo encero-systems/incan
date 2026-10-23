@@ -1,13 +1,30 @@
-# behavior: a dependency's function whose defaults name a private const, call a private function or name a private enum's variant takes their values when a consumer omits the arguments, directly and through a partial over the function
+# behavior: a dependency's function whose defaults name a private const, call a private function or name a private enum's variant takes their values when a consumer omits the arguments, directly and through a partial over the function; and a consumer that imports neither a dependency's public model nor its public class omits the arguments whose defaults construct them, directly and through a partial, and calls a partial whose preset constructs the model, each call taking the constructed value, including the private field the model's declaration defaults and a field argument naming a private const; and a computed constant retains a model's static Self-returning trait implementation
 # expect-stdout:
 #   flat of size 2cm
 #   flat of size 3cm
 #   gloss
+#   note of size 4
+#   3
+#   6
+#   t: ace of size 4
+#   120
 
-from pub::shapes import build, default_build, finish
+from pub::shapes import build, count, default_build, finish, show, stacked_twice, tag_ace, Record
+
+
+def accept_record(value: Record) -> None:
+    """Require the model's layout independently of selecting its decoder."""
+    pass
 
 
 def main() -> None:
     println(build(2))
     println(default_build())
     println(finish())
+    println(show())
+    println(count())
+    println(stacked_twice())
+    println(tag_ace(tag="t:"))
+    match Record.decode(b"x"):
+        Ok(value) => println(value.value)
+        Err(error) => println(error)

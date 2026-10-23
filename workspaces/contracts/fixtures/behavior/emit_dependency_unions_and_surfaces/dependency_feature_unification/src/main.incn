@@ -1,0 +1,13 @@
+# behavior: local dependencies share additive feature selections through renamed edges, disable defaults, and leave an inactive optional library unchecked
+# expect-stdout:
+#   42
+#   42
+
+from pub::left_alias import value as left_value
+from pub::right_alias import value as right_value
+
+
+def main() -> None:
+    """Observe both consumers of the same feature-unified library."""
+    println(left_value())
+    println(right_value())

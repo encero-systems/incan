@@ -3,17 +3,19 @@
 from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType
 from rust::incan_semantics_core::body_ir import BodyIrModule
 from pub::incan_mir_plan import PlanType, EnumDeclaration, CalleeKind
-from frame import DisplayFunction
+from program_context import DisplayFunction
 from classes import frame_type, function_name
 from layout_types import native_source_type
 
 
 pub def display_functions(
     module: &BodyIrModule,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[DisplayFunction], str]:
     """Resolve only the retained selected identity with its exact shared receiver and string-returning signature."""
     mut functions: list[DisplayFunction] = []
+    mut nominals = module.nominal_declarations
+    mut enums = module.enum_declarations
     for owner in range(len(module.nominal_declarations)):
         declaration = module.nominal_declarations[owner]
         match declaration.display_method:
@@ -26,7 +28,7 @@ pub def display_functions(
                         continue
                     if not string_result(body.return_type):
                         continue
-                    if frame_type(module, body.locals[0], intrinsics)? != PlanType.ModelRef(owner, str(declaration.name)):
+                    if frame_type(nominals, enums, body.locals[0], intrinsics)? != PlanType.ModelRef(owner, str(declaration.name)):
                         continue
                     for retained in functions:
                         if retained.owner == owner:
@@ -43,8 +45,8 @@ pub def display_functions(
                     if len(delegation.parameters) != 1 or not string_result(delegation.return_type):
                         continue
                     receiver = native_source_type(
-                        module.nominal_declarations,
-                        module.enum_declarations,
+                        list(module.nominal_declarations),
+                        list(module.enum_declarations),
                         [],
                         delegation.parameters[0],
                         intrinsics,

@@ -1,29 +1,84 @@
-# behavior: enumerate lists are zero based and preserve tuple forms
+# behavior: enumerate preserves zero-based tuple forms, explicit builtin calls and ordinary item reads for lists, bytes and text; frozen slices and indexed byte conversions retain their values (#2256)
 # expect-stdout:
 #   0
 #   10
 #   1
 #   20
 #   34
+#   0
+#   1
+#   0
+#   0:65
+#   1:90
+#   0:x
+#   1:y
+#   90
+#   x
+#   true
 
 
 """Enumerate lists are zero based and preserve tuple forms."""
+
+const LETTERS: FrozenStr = "xy"
+const BYTE_LETTERS: bytes = b"AZ"
+
+
 def enumerate_profile() -> int:
-  """Print enumeration indices and values while summing them."""
-  values = [10, 20]
-  mut total = 0
-  for pair in enumerate(values):
-    println(pair.0)
-    println(pair.1)
-    total += pair.0 + pair.1
-  empty: list[int] = []
-  for empty_index, empty_value in enumerate(empty):
-    total += empty_index + empty_value
-  for index, value in enumerate([3]):
-    total += index + value
-  return total
+    """Print enumeration indices and values while summing them."""
+    values = [10, 20]
+    mut total = 0
+    for pair in enumerate(values):
+        println(pair.0)
+        println(pair.1)
+        total += pair.0 + pair.1
+    empty: list[int] = []
+    for empty_index, empty_value in enumerate(empty):
+        total += empty_index + empty_value
+    for index, value in enumerate([3]):
+        total += index + value
+    return total
+
+
+def byte_at(values: bytes, offset: int) -> int:
+    """Read an exact byte through a borrowed byte parameter and convert its value to int."""
+    return int(values[offset])
+
+
+def explicit_namespace_enumerate() -> int:
+    """Call enumerate through its explicit builtin namespace."""
+    mut total = 0
+    for pair in std.builtins.enumerate([1]):
+        total += pair.0
+    return total
+
+
+def enumerated_item() -> int:
+    """Read an item through the ordinary enumerate call."""
+    values = [1]
+    mut total = 0
+    for pair in enumerate(values):
+        total += pair.1
+    return total
+
+
+def enumerated_text() -> int:
+    """Read the index yielded from string enumeration."""
+    mut total = 0
+    for pair in enumerate("x"):
+        total += pair.0
+    return total
 
 
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(enumerate_profile())
+    println(explicit_namespace_enumerate())
+    println(enumerated_item())
+    println(enumerated_text())
+    for index, value in enumerate(b"AZ"):
+        println(f"{index}:{int(value)}")
+    for index, value in enumerate(LETTERS):
+        println(f"{index}:{value}")
+    println(byte_at(b"AZ", 1))
+    println(LETTERS[0:1])
+    println(BYTE_LETTERS[1:2] == b"Z")

@@ -4,6 +4,8 @@ use super::{
     BodyBuilder, IncanType, SemanticSourceTargetKind, TypeCheckInfo, ast, bir, decorated_bindings,
     semantic_type_from_resolved,
 };
+use crate::resolved_type_subst::{map_resolved_type_leaves, substitute_resolved_type, type_param_subst_map};
+use crate::symbols::ResolvedType;
 use incan_semantics_core::IncanCallableParamKind;
 
 /// Preserve the already checked source role independently from its element or packed carrier type.
@@ -21,26 +23,49 @@ pub(super) fn source_parameter_kind(kind: ast::ParamKind) -> IncanCallableParamK
 /// Only checker-minted canonical bindings authorize this projection. Distinct checked owners sharing a source name
 /// retain separate identity-encoded carrier keys instead of collapsing their imported aliases.
 pub(super) fn checked_semantic_type(ty: &crate::symbols::ResolvedType, facts: &TypeCheckInfo) -> IncanType {
+    let ty = expand_rusttype_aliases(ty, facts);
     retain_checked_nominal_names(
-        super::runtime_nominals::project_type(semantic_type_from_resolved(ty), facts),
+        super::runtime_nominals::project_type(facts.semantic_type(&ty), facts),
         facts,
     )
 }
 
 /// Classify declaration binders before SDK and builtin storage projection so a same-spelled parameter keeps its own
-/// category.
+/// category. Classify leaves exposed by structural Rust projection too, so a `Node<T>` display cannot close `T`
+/// as a nominal before the declaration's own binders are applied.
 pub(super) fn checked_parameter_type(
     ty: &crate::symbols::ResolvedType,
     facts: &TypeCheckInfo,
     parameters: &[String],
 ) -> IncanType {
+    let ty = expand_rusttype_aliases(ty, facts);
     retain_checked_nominal_names(
-        super::runtime_nominals::project_type(
-            retain_parameter_type(semantic_type_from_resolved(ty), parameters),
-            facts,
+        retain_parameter_type(
+            super::runtime_nominals::project_type(
+                facts.qualify_semantic_type(retain_parameter_type(semantic_type_from_resolved(&ty), parameters)),
+                facts,
+            ),
+            parameters,
         ),
         facts,
     )
+}
+
+/// Substitute a transparent native alias before nominal source names enter Body IR. These declarations add no
+/// wrapper layout or constructor; the metadata-selected Rust owner supplies their complete representation.
+fn expand_rusttype_aliases(ty: &crate::symbols::ResolvedType, facts: &TypeCheckInfo) -> crate::symbols::ResolvedType {
+    map_resolved_type_leaves(ty, &|leaf| {
+        let (name, arguments) = match leaf {
+            ResolvedType::Named(name) => (name, &[][..]),
+            ResolvedType::Generic(name, arguments) => (name, arguments.as_slice()),
+            _ => return None,
+        };
+        let (parameters, template) = facts.rust.type_aliases.get(name)?;
+        Some(substitute_resolved_type(
+            template,
+            &type_param_subst_map(parameters, arguments),
+        ))
+    })
 }
 
 /// Retain signature storage only where both the current module and its checked provider context agree on provenance.
@@ -53,7 +78,7 @@ pub(super) fn checked_context_type(
     refuse_runtime_conflicts(checked_parameter_type(ty, facts, parameters), conflicts)
 }
 
-/// Collect same-spelled source types from the already checked provider modules, including function-only imports.
+/// Collect same-spelled source types from checked provider declarations, including compiled function-only imports.
 pub(super) fn runtime_name_conflicts(context: &[bir::BodyIrModule]) -> std::collections::BTreeSet<String> {
     context
         .iter()
@@ -89,8 +114,7 @@ pub(super) fn runtime_name_conflicts(context: &[bir::BodyIrModule]) -> std::coll
                 .chain(module.trait_declarations.iter())
                 .chain(
                     module
-                        .bodies
-                        .iter()
+                        .callable_declaration_frames()
                         .flat_map(|body| body.named_type_identities.values()),
                 )
                 .chain(
@@ -135,6 +159,10 @@ fn refuse_runtime_conflicts(ty: IncanType, conflicts: &std::collections::BTreeSe
                 .collect(),
         ),
         IncanType::Ref(inner) => IncanType::Ref(Box::new(refuse_runtime_conflicts(*inner, conflicts))),
+        IncanType::NativeArray { element, length } => IncanType::NativeArray {
+            element: Box::new(refuse_runtime_conflicts(*element, conflicts)),
+            length,
+        },
         IncanType::RefMut(inner) => IncanType::RefMut(Box::new(refuse_runtime_conflicts(*inner, conflicts))),
         IncanType::TypeToken(inner) => IncanType::TypeToken(Box::new(refuse_runtime_conflicts(*inner, conflicts))),
         IncanType::Function {
@@ -174,13 +202,22 @@ fn retain_checked_nominal_names(ty: IncanType, facts: &TypeCheckInfo) -> IncanTy
                 IncanType::NativeBuiltin(incan_semantics_core::RuntimeBuiltinType::ValidationError)
             }
         }
-        IncanType::Named(name) => retained_nominal_name(name, facts),
+        IncanType::Named(name) => IncanType::Named(name),
         IncanType::Generic { base, args } => {
             let base = facts
                 .declarations
                 .body_ir_native_type_identities
                 .get(&base)
                 .map_or(base.clone(), |owner| owner.declaration_name.clone());
+            // A provider-qualified Incan base is a checked nominal, not a Rust item whose crate is named `pub`.
+            let base = if crate::typechecker::split_canonical_public_library_type_name(&base).is_some() {
+                match facts.qualify_semantic_type(IncanType::Named(base)) {
+                    IncanType::Named(name) => name,
+                    refused => return refused,
+                }
+            } else {
+                base
+            };
             let mut args: Vec<_> = args
                 .into_iter()
                 .map(|ty| retain_checked_nominal_names(ty, facts))
@@ -197,6 +234,10 @@ fn retain_checked_nominal_names(ty: IncanType, facts: &TypeCheckInfo) -> IncanTy
                 .collect(),
         ),
         IncanType::Ref(inner) => IncanType::Ref(Box::new(retain_checked_nominal_names(*inner, facts))),
+        IncanType::NativeArray { element, length } => IncanType::NativeArray {
+            element: Box::new(retain_checked_nominal_names(*element, facts)),
+            length,
+        },
         IncanType::RefMut(inner) => IncanType::RefMut(Box::new(retain_checked_nominal_names(*inner, facts))),
         IncanType::TypeToken(inner) => IncanType::TypeToken(Box::new(retain_checked_nominal_names(*inner, facts))),
         IncanType::Function {
@@ -215,79 +256,33 @@ fn retain_checked_nominal_names(ty: IncanType, facts: &TypeCheckInfo) -> IncanTy
     }
 }
 
-/// Preserve a checked alias's owner when another checked binding has the same declaration name. An application
-/// binding colliding with the encoded key refuses rather than acquiring another declaration's storage identity.
-fn retained_nominal_name(name: String, facts: &TypeCheckInfo) -> IncanType {
-    let Some(identity) = facts
-        .declarations
-        .named_type_identities
-        .get(&name)
-        .or_else(|| facts.declarations.body_ir_native_type_identities.get(&name))
-    else {
-        return IncanType::Named(name);
-    };
-    if has_nominal_name_conflict(identity, facts) {
-        let encoded = incan_semantics_core::encode_incan_symbol_identity(identity);
-        if facts
-            .declarations
-            .named_type_identities
-            .get(&encoded)
-            .is_some_and(|other| other != identity)
-        {
-            return IncanType::Unsupported("ambiguous canonical nominal carrier name".into());
-        }
-        return IncanType::Named(encoded);
-    }
-    IncanType::Named(identity.declaration_name.clone())
-}
-
-/// Detect distinct checked model or class owners, without treating two aliases of one declaration as a collision.
-fn has_nominal_name_conflict(identity: &super::CanonicalSymbolId, facts: &TypeCheckInfo) -> bool {
-    matches!(
-        identity.kind,
-        SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class
-    ) && facts
-        .declarations
-        .named_type_identities
-        .values()
-        .any(|other| other.declaration_name == identity.declaration_name && other != identity)
-}
-
-/// Carry the checked binding proof beside every identity-encoded Body IR carrier key. The original checker table
-/// remains immutable, and source lookalikes never overwrite a retained binding.
+/// Copy the checker's complete carrier binding proof; Body IR neither mints carrier keys nor adds aliases.
 pub(super) fn retained_type_identities(
     facts: &TypeCheckInfo,
 ) -> std::collections::BTreeMap<String, super::CanonicalSymbolId> {
     let mut identities = facts.declarations.named_type_identities.clone();
-    for identity in facts.declarations.named_type_identities.values() {
-        if has_nominal_name_conflict(identity, facts) {
-            let encoded = incan_semantics_core::encode_incan_symbol_identity(identity);
-            identities.entry(encoded).or_insert_with(|| identity.clone());
+    for call in facts.rust.checked_calls.values().chain(
+        facts
+            .rust
+            .iteration_hooks
+            .values()
+            .flat_map(|hooks| [&hooks.iter, &hooks.next]),
+    ) {
+        for call in call.receiver_adjustments.iter().chain(std::iter::once(call)) {
+            if let Some(storage) = &call.storage {
+                identities.extend(storage.identities.clone());
+            }
         }
     }
     identities
 }
 
-/// Resolve a retained carrier through its checked binding or the kernel's nominal carrier key.
-///
-/// A provider may encode its carrier even when the consumer has no local name collision. Encoded keys select only
-/// nominal identities already present in the consumer's checker; decoding a spelling grants no authority. A source
-/// binding that collides with another checked owner's encoded key refuses rather than selecting either owner.
+/// Read the checker-retained owner of a source binding or carrier key without decoding or rebuilding a name.
 pub(super) fn retained_nominal_identity<'facts>(
     name: &str,
     facts: &'facts TypeCheckInfo,
 ) -> Option<&'facts super::CanonicalSymbolId> {
-    let direct = facts.declarations.named_type_identities.get(name);
-    let encoded = facts.declarations.named_type_identities.values().find(|identity| {
-        bir::nominal_carrier_key(identity).as_deref() == Some(name)
-            || (has_nominal_name_conflict(identity, facts)
-                && incan_semantics_core::encode_incan_symbol_identity(identity) == name)
-    });
-    match encoded {
-        Some(owner) if direct.is_none_or(|binding| binding == owner) => Some(owner),
-        Some(_) => None,
-        None => direct,
-    }
+    facts.declarations.named_type_identities.get(name)
 }
 
 /// Refuse bare provider leaves that share a builtin's name until exact annotation and signature provenance survives
@@ -333,6 +328,10 @@ pub(super) fn retain_parameter_type(ty: IncanType, parameters: &[String]) -> Inc
                 .collect(),
         ),
         IncanType::Ref(inner) => IncanType::Ref(Box::new(retain_parameter_type(*inner, parameters))),
+        IncanType::NativeArray { element, length } => IncanType::NativeArray {
+            element: Box::new(retain_parameter_type(*element, parameters)),
+            length,
+        },
         IncanType::RefMut(inner) => IncanType::RefMut(Box::new(retain_parameter_type(*inner, parameters))),
         IncanType::TypeToken(inner) => IncanType::TypeToken(Box::new(retain_parameter_type(*inner, parameters))),
         IncanType::Function { params, return_type } => IncanType::Function {
@@ -376,11 +375,9 @@ impl BodyBuilder<'_, '_> {
 
     /// Retain an owned value read from a field at a return or by-value argument boundary.
     ///
-    /// A field projection cannot move from its owner, which is often borrowed. The legacy ownership policy clones it in
-    /// value position: an open parameter field, whose concrete Copy instances can later implement that clone as a
-    /// copy, and a model or class field reached through field projections alone (#241), whose checked derives include
-    /// Clone. Formatting and mutable argument boundaries retain their distinct borrow facts rather than being converted
-    /// by this helper.
+    /// A field projection cannot move from its owner, which is often borrowed. A value position clones an open
+    /// parameter field or a checked Clone nominal field, including an enum field. Formatting and mutable argument
+    /// boundaries retain their distinct borrow facts.
     pub(super) fn owned_parameter_operand(
         &self,
         expr: &ast::Spanned<ast::Expr>,
@@ -400,7 +397,7 @@ impl BodyBuilder<'_, '_> {
         }
     }
 
-    /// Whether a by-value read of `place` clones a retained model or class value whose checked derives include Clone.
+    /// Whether a by-value field read clones its checker-selected nominal owner, whose retained derives include Clone.
     ///
     /// Only a path of field projections qualifies; an element or payload read keeps its own representation path.
     fn clones_nominal_field_read(&self, place: &bir::Place, ty: &IncanType) -> bool {
@@ -409,17 +406,26 @@ impl BodyBuilder<'_, '_> {
             IncanType::Generic { base, .. } => base,
             _ => return false,
         };
-        place
+        if !place
             .projection
             .iter()
             .all(|element| matches!(element, bir::PlaceElem::Field { .. }))
-            && self.local_nominal_declarations.values().any(|declaration| {
-                declaration.name == *name
-                    && matches!(
-                        declaration.canonical.kind,
-                        SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class
-                    )
-                    && declaration.derives.iter().any(|derive| derive == "Clone")
-            })
+        {
+            return false;
+        }
+        let Some(identity) = retained_nominal_identity(name, self.type_info) else {
+            return false;
+        };
+        self.local_nominal_declarations.values().any(|declaration| {
+            declaration.canonical == *identity
+                && matches!(
+                    declaration.canonical.kind,
+                    SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class
+                )
+                && declaration.derives.iter().any(|derive| derive == "Clone")
+        }) || self
+            .local_enum_declarations
+            .get(identity)
+            .is_some_and(|declaration| declaration.derives.iter().any(|derive| derive == "Clone"))
     }
 }

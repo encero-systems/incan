@@ -1,5 +1,13 @@
-# behavior: scalar set key kinds execute
+# behavior: membership supports integer, boolean, Unicode and None set keys, both membership operators and typed empty set or dictionary construction
 # expect-stdout:
+#   true
+#   true
+#   true
+#   true
+#   true
+#   true
+#   true
+#   true
 #   true
 
 """Scalar set key kinds execute."""
@@ -8,6 +16,68 @@ def program_result() -> bool:
   return 2 in {1, 2}
 
 
+def boolean_key() -> bool:
+    """Test a boolean set key."""
+    return true in {false, true}
+
+
+def text_key() -> bool:
+    """Test a Unicode text set key."""
+    return "café" in {"café"}
+
+
+def unit_value() -> None:
+    """Supply a concrete None value for a set key."""
+    pass
+
+
+def unit_key() -> bool:
+    """Find a concrete None value in a set."""
+    values = {unit_value()}
+    return unit_value() in values
+
+
+def both_membership_forms() -> bool:
+    """Use non-membership in a branch before positive membership."""
+    xs = {1, 2}
+    if 3 not in xs:
+        return 1 in xs
+    return false
+
+
+def empty_set() -> bool:
+    """Test absence in an explicitly typed empty set."""
+    values: set[int] = Set()
+    return 1 not in values
+
+
+def empty_dict_literal() -> bool:
+    """Test absence in an explicitly typed dictionary literal."""
+    values: dict[str, int] = {}
+    return "missing" not in values
+
+
+def empty_dict_constructor() -> bool:
+    """Test absence in an explicitly typed dictionary constructor."""
+    values: dict[str, int] = Dict()
+    return "missing" not in values
+
+
+def set_and_dict_membership() -> bool:
+    """Read set members and dictionary keys rather than dictionary values."""
+    values = {1, 2}
+    mapping = {1: 20}
+    return 1 in values and 3 not in values and 1 in mapping and 20 not in mapping
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(program_result())
+    println(boolean_key())
+    println(text_key())
+    println(unit_key())
+    println(both_membership_forms())
+    println(empty_set())
+    println(empty_dict_literal())
+    println(empty_dict_constructor())
+    println(set_and_dict_membership())

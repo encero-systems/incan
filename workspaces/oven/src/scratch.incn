@@ -1,0 +1,8 @@
+"""Temporary directories for the contracts that write files."""
+
+from std.tempfile import TemporaryDirectory
+
+
+pub def scratch_directory() -> Result[TemporaryDirectory, str]:
+    """A fresh temporary directory, removed when the returned value goes out of scope."""
+    return TemporaryDirectory.try_new().map_err((error) => error.message())

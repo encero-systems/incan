@@ -60,22 +60,17 @@ from text_plan import clone_text
 from numerics import numeric_carrier
 from unions import lower_union_declaration
 from type_parameters import substitute
-from nominal_frames import closed_arguments
+from nominal_frames import closed_arguments, closed_type, declaration_storage
 
 
 pub def variant_condition(mut builder: Builder, source: Place, slot: int, span: SourceSpan) -> Operand:
-    """Read a standard or source enum discriminant through the shared plan vocabulary."""
-    raw = temporary(builder, PlanType.EnumTag, span)
-    tag = temporary(builder, PlanType.Int, span)
+    """Test a checked variant through the adapter's native discriminant comparison."""
     condition = temporary(builder, PlanType.Bool, span)
-    builder.emit(plan_assign(raw, RvalueKind.Discriminant(source), span))
-    builder.emit(plan_assign(tag, RvalueKind.TagToInt(read_place(raw, false, span)), span))
-    literal = Operand(kind=OperandKind.Literal(Constant.Int(slot)), span=span)
-    builder.emit(plan_assign(condition, RvalueKind.Binary(BinaryOp.Equal, read_place(tag, false, span), literal), span))
+    builder.emit(plan_assign(condition, RvalueKind.IsVariant(source, slot), span))
     return read_place(condition, false, span)
 
 
-pub def result_layout(builder: Builder, ty: PlanType) -> Result[tuple[int, EnumDeclaration], str]:
+pub def result_layout(mut builder: Builder, ty: PlanType) -> Result[tuple[int, EnumDeclaration], str]:
     """Require a retained concrete Result carrier before reading its variant payload layout."""
     match ty:
         PlanType.Enum(owner, _name) =>
@@ -96,7 +91,8 @@ pub def propagate_result(
 ) -> Result[None, str]:
     """Move the selected payload once; error returns drop every other initialized owner before returning."""
     _owner, input = result_layout(builder, frame_place_type(builder.locals, source))?
-    output_owner, output = result_layout(builder, builder.locals[0].ty)?
+    output_type = builder.locals[0].ty
+    output_owner, output = result_layout(builder, output_type)?
     if input.variants[1].fields != output.variants[1].fields:
         return Err("unsupported Body IR TryPropagate error conversion")
     failure = builder.new_block(span)
@@ -162,12 +158,19 @@ pub def intrinsic_pattern(declaration: EnumDeclaration, pattern: &RustPattern) -
 pub def intrinsic_declarations(module: &BodyIrModule, file: str) -> Result[list[EnumDeclaration], str]:
     """Collect concrete declaration, frame and computed-static carriers; function instances add closed layouts when scheduled."""
     mut declarations: list[EnumDeclaration] = []
+    for ty in declaration_storage(module):
+        if closed_type(ty):
+            retain_carrier(module, declarations, ty, file)?
     for delegation in module.loaf_callables:
-        if len(delegation.type_parameters) != 0:
+        if len(delegation.type_parameters) != 0 or not closed_arguments(delegation.native_type_arguments):
             continue
         for parameter in delegation.parameters:
-            retain_carrier(module, declarations, parameter, file)?
-        retain_carrier(module, declarations, delegation.return_type, file)?
+            if closed_type(parameter):
+                retain_carrier(module, declarations, parameter, file)?
+        # A checked native instantiation may still contain its enclosing source function's binders. Its closed
+        # function frame schedules those carriers; the declaration template does not authorize an open layout.
+        if closed_type(delegation.return_type):
+            retain_carrier(module, declarations, delegation.return_type, file)?
     for declaration in module.nominal_declarations:
         for ty in declaration.field_types:
             retain_carrier(module, declarations, ty, file)?
@@ -201,7 +204,9 @@ pub def retain_body_carriers(
         match retain_carrier(module, declarations, body.locals[index].ty, file):
             Ok(_value) => pass
             Err(reason) => return Err(f"{reason} in {body.name} local {index} carrier")
-    retain_iteration_poll_carriers(module, declarations, body, body.block, taking_iterator_locals(body.block), file)?
+    match retain_iteration_poll_carriers(module, declarations, body, body.block, taking_iterator_locals(body.block), file):
+        Ok(_value) => pass
+        Err(reason) => return Err(f"{reason} in {body.name} iteration carriers")
     return Ok(None)
 
 
@@ -331,7 +336,7 @@ def retain_call_carriers(
     destination: &Option[RustPlace],
     file: str,
 ) -> Result[None, str]:
-    """Retain closed published free-function signatures, including carriers absent from locals such as Option[Unit] for a None argument."""
+    """Retain closed source and published free-function signatures, including carriers absent from locals such as Option[Unit] for a None argument."""
     match target.canonical:
         Some(identity) =>
             if identity.kind != SemanticSourceTargetKind.Function:
@@ -339,6 +344,21 @@ def retain_call_carriers(
         None => return Ok(None)
     if not closed_arguments(target.type_args):
         return Ok(None)
+    for candidate in module.bodies:
+        if target.canonical != candidate.canonical or len(candidate.type_parameters) != len(target.type_args):
+            continue
+        mut parameters: list[RustType] = []
+        for parameter in candidate.params:
+            parameters.append(parameter.ty.clone())
+        retain_closed_signature(
+            module,
+            declarations,
+            parameters,
+            candidate.return_type,
+            candidate.type_parameters,
+            target.type_args,
+            file,
+        )?
     for delegation in module.loaf_callables:
         if target.canonical != Some(delegation.canonical.clone()):
             continue
@@ -355,11 +375,25 @@ def retain_call_carriers(
                 Some(_receiver) => pass
         if len(closed) != len(delegation.type_parameters):
             return Err("unsupported Body IR SDK carrier type argument arity")
-        for parameter in delegation.parameters:
-            instantiated: RustType = substitute(parameter, delegation.type_parameters, closed)?
-            retain_carrier(module, declarations, instantiated, file)?
-        closed_result: RustType = substitute(delegation.return_type, delegation.type_parameters, closed)?
-        retain_carrier(module, declarations, closed_result, file)?
+        retain_closed_signature(module, declarations, delegation.parameters, delegation.return_type, delegation.type_parameters, closed, file)?
+    return Ok(None)
+
+
+def retain_closed_signature(
+    module: &BodyIrModule,
+    mut declarations: list[EnumDeclaration],
+    parameters: list[RustType],
+    result: &RustType,
+    names: list[str],
+    arguments: list[RustType],
+    file: str,
+) -> Result[None, str]:
+    """Close a retained callable's signature from checked type arguments before any operand needs its carrier."""
+    for parameter in parameters:
+        instantiated: RustType = substitute(parameter, names, arguments)?
+        retain_carrier(module, declarations, instantiated, file)?
+    closed_result: RustType = substitute(result, names, arguments)?
+    retain_carrier(module, declarations, closed_result, file)?
     return Ok(None)
 
 
@@ -385,15 +419,16 @@ pub def retain_carrier(
                 if retained.source_type == str(ty):
                     return Ok(None)
             if base == "Union":
-                declarations.append(lower_union_declaration(module, ty, file, declarations)?)
+                declaration = lower_union_declaration(module, ty, file, declarations)?
+                declarations.append(declaration)
                 return Ok(None)
             if (base == "Option" and len(arguments) != 1) or (base == "Result" and len(arguments) != 2):
                 return Err(f"unsupported Body IR type {ty}")
             mut fields: list[PlanType] = []
-            for argument in arguments:
-                fields.append(
-                    native_source_type(module.nominal_declarations, module.enum_declarations, [], argument, declarations)?,
-                )
+            for index in range(len(arguments)):
+                match native_source_type(list(module.nominal_declarations), list(module.enum_declarations), [], arguments[index], declarations):
+                    Ok(field) => fields.append(field)
+                    Err(reason) => return Err(f"{reason} in {base} payload {index} of {ty}")
             mut variants = [EnumVariant(name="None", fields=[]), EnumVariant(name="Some", fields=[fields[0]])]
             if base == "Result":
                 variants = [EnumVariant(name="Ok", fields=[fields[0]]), EnumVariant(name="Err", fields=[fields[1]])]
@@ -419,7 +454,7 @@ pub def retain_carrier(
     return Ok(None)
 
 
-pub def carrier_layout(builder: Builder, ty: PlanType) -> Result[tuple[int, EnumDeclaration], str]:
+pub def carrier_layout(mut builder: Builder, ty: PlanType) -> Result[tuple[int, EnumDeclaration], str]:
     """Resolve only a retained standard carrier, keeping source enums on their existing canonical path."""
     match ty:
         PlanType.Enum(owner, _name) =>
@@ -473,20 +508,19 @@ pub def none_operand(mut builder: Builder, ty: PlanType, span: SourceSpan) -> Re
     return Ok(read_place(output, true, span))
 
 
-pub def borrowed_runtime_value(
+pub def borrowed_native_value(
     mut builder: Builder,
-    name: str,
+    path: str,
     source: Place,
     ty: PlanType,
     reference_type: PlanType,
     result_type: PlanType,
     span: SourceSpan,
 ) -> Place:
-    """Instantiate a native runtime helper against one checked carrier or payload type and its shared reference."""
+    """Instantiate one native callee against a checked carrier or payload type and its shared reference."""
     reference = temporary(builder, reference_type, span)
     builder.emit(plan_assign(reference, RvalueKind.Borrow(source), span))
     output = temporary(builder, result_type, span)
-    path = f"incan_native_runtime::{name}"
     builder.externals.append(
         ExternalFunction(path=path, type_arguments=[ty], parameters=[reference_type], return_type=result_type, span=span),
     )
@@ -500,9 +534,9 @@ pub def format_carrier(mut builder: Builder, source: Place, span: SourceSpan) ->
     owner, declaration = carrier_layout(builder, frame_place_type(builder.locals, source))?
     ty = PlanType.Enum(owner, declaration.name)
     return Ok(
-        borrowed_runtime_value(
+        borrowed_native_value(
             builder,
-            "format_carrier",
+            "incan_native_runtime::format_carrier",
             source,
             ty,
             PlanType.EnumRef(owner, declaration.name),
@@ -513,12 +547,13 @@ pub def format_carrier(mut builder: Builder, source: Place, span: SourceSpan) ->
 
 
 pub def carrier_payload_value(mut builder: Builder, place: Place, span: SourceSpan) -> Result[Operand, str]:
-    """Copy primitive payloads and clone an owned active payload without consuming its borrowed carrier."""
+    """Copy primitive, function-pointer and immutable scalar-reference payloads, or clone an owned active payload."""
     ty = frame_place_type(builder.locals, place)
     if numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit:
         return Ok(read_place(place, false, span))
     match ty:
         PlanType.FunctionPointer(_signature) => return Ok(read_place(place, false, span))
+        PlanType.ScalarRef(_elements) => return Ok(read_place(place, false, span))
         _ => pass
     mut reference_type = PlanType.StringRef
     match ty:
@@ -536,7 +571,7 @@ pub def carrier_payload_value(mut builder: Builder, place: Place, span: SourceSp
         PlanType.Model(owner, name) =>
             reference_type = PlanType.ModelRef(owner, name)
         _ => return Err("unsupported Body IR intrinsic payload clone type")
-    output = borrowed_runtime_value(builder, "clone_carrier_payload", place, ty, reference_type, ty, span)
+    output = borrowed_native_value(builder, "core::clone::Clone::clone", place, ty, reference_type, ty, span)
     return Ok(read_place(output, true, span))
 
 

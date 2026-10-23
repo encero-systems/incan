@@ -27,7 +27,7 @@ rust.module("incan_std_web")
 
 # Re-export Axum response tuple structs directly.
 # This preserves constructor ergonomics (`Json(value)`, `Html("<h1>...")`) in user code.
-from rust::axum import Json
+pub from rust::axum import Json
 """
 `Json[T]` — serialize `T` as JSON and set `Content-Type: application/json`.
 
@@ -44,7 +44,7 @@ Example:
     ```
 """
 
-from rust::axum::response import Html
+pub from rust::incan_std_web import Html
 """
 `Html` — return an HTML body with `Content-Type: text/html`.
 

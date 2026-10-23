@@ -1,9 +1,12 @@
-# behavior: a Rust Duration stored in a model field is handed to Rust methods that take the value and that compare against it, and the field is still readable afterwards
+# behavior: Rust values keep their owners when they reach Rust and Incan code: a Rust Duration stored in a model field is handed to Rust methods that take the value and that compare against it, and the field is still readable afterwards; and an Incan str extended in place with a String returned by a Rust function, and two such results joined, produce the concatenated text
 # expect-stdout:
 #   3
 #   false
 #   2
+#   el
+#   hello
 
+from rust::incan_std_core::strings import str_slice_byte_range
 from rust::std::time import Duration
 
 
@@ -11,9 +14,29 @@ model Timeout:
     value: Duration
 
 
-def main() -> None:
+def append_range(text: str, start: int, end: int) -> str:
+    mut out = ""
+    out += str_slice_byte_range(text, start, end)
+    return out
+
+
+def join_ranges(text: str, start: int, middle: int, end: int) -> str:
+    return str_slice_byte_range(text, start, middle) + str_slice_byte_range(text, middle, end)
+
+
+def show_duration_fields() -> None:
     timeout = Timeout(value=Duration.from_secs(2))
     base = Duration.from_secs(1)
     println(base.saturating_add(timeout.value).as_secs())
     println(base.eq(timeout.value))
     println(timeout.value.as_secs())
+
+
+def show_string_concatenation() -> None:
+    println(append_range("hello", 1, 3))
+    println(join_ranges("hello", 0, 2, 5))
+
+
+def main() -> None:
+    show_duration_fields()
+    show_string_concatenation()

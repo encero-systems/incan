@@ -202,15 +202,16 @@ def emit_field_metadata(
     return Err("unsupported Body IR field metadata SDK layout")
 
 
-def reflected_field(builder: Builder, owner: int, source: Place, slot: int, span: SourceSpan) -> Result[Place, str]:
+def reflected_field(mut builder: Builder, owner: int, source: Place, slot: int, span: SourceSpan) -> Result[Place, str]:
     """Project only an in-range retained source field using its canonical declared type."""
     if slot < 0 or slot >= len(builder.nominals[owner].fields):
         return Err("unsupported Body IR reflection field slot")
+    field_type = builder.nominals[owner].field_types[slot]
     ty = native_source_type(
         builder.nominals,
         builder.enums,
         builder.unions,
-        builder.nominals[owner].field_types[slot],
+        field_type,
         builder.intrinsics,
     )?
     return appended_field(source, FieldProjection(slot=slot, ty=ty), span)
@@ -222,7 +223,7 @@ def scalar_reflection_type(ty: PlanType) -> bool:
 
 
 def validate_reflection_fields(
-    builder: Builder,
+    mut builder: Builder,
     owner: int,
     receiver: Place,
     fields: list[int],
@@ -315,12 +316,13 @@ def field_value(
         PlanType.Enum(owner, _name) =>
             if not is_union_carrier(builder, owner):
                 return Err("unsupported Body IR reflection typed overlay")
+            member = value_type(builder, value)?
             slot = union_slot(
                 builder.nominals,
                 builder.enums,
                 builder.unions,
                 owner,
-                value_type(builder, value)?,
+                member,
                 builder.intrinsics,
             )?
             output = temporary(builder, expected, span)

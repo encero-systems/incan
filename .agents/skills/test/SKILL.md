@@ -15,14 +15,15 @@ Identify which compiler stages are affected by the current changes:
 | New semantic rule or validation | Typechecker |
 | New or changed codegen output | Lowering, Emission |
 | Stdlib addition | Typechecker (loader), Emission, possibly Runtime |
-| CLI behavior | Integration tests |
-| Formatter change | Property tests, integration tests |
+| CLI behavior | Project, testing, or behavior contracts |
+| Formatter change | Format contracts (exact text, check immutability, idempotency) |
 
 For non-trivial changes, do a quick pattern intake before writing or changing tests:
 
 - Identify the active area and downstream stages the behavior must survive.
 - Read 2-3 nearby tests or fixtures that already cover a similar behavior shape.
 - Name the source-of-truth boundary, such as the RFC, diagnostics catalog, stdlib registry, ownership policy, CLI reference, or docs contract.
+- Use `incan inspect codegraph PATH --query defs TERM` or `--query callers TERM` for declaration and call relationships before grep.
 - Pick the narrowest failing test first, then the downstream verification that proves the behavior reaches the right stage.
 
 ## Step 2: Pick the right tests to write
@@ -30,168 +31,92 @@ For non-trivial changes, do a quick pattern intake before writing or changing te
 ### Decision tree
 
 ```text
-Did you change the parser?
-  → Add a test to the subject's module under loaves/kernel/incan_syntax/src/parser/tests/ (shared helpers live in helpers.rs)
+Did you change syntax, semantic validation, or a diagnostic?
+  → Extend a check contract for acceptance or stable diagnostic codes
 
-Did you change the typechecker?
-  → Add a test to the subject's module under loaves/compiler/incan_frontend/src/typechecker/tests/ (shared helpers live in helpers.rs)
+Did you change lowering or runtime behavior?
+  → Extend a behavior contract that runs the program and checks output
 
-Did you change lowering or emission (codegen output)?
-  → Add a .incn file in loaves/compiler/incan_emit/tests/codegen_snapshots/
-  → Add a test function in loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs
-  → Run: INSTA_UPDATE=1 cargo test -p incan_emit --test codegen_snapshot_tests
+Did you change imports across Loaves or Rust interop?
+  → Extend a library or interop contract at that boundary
 
-Did you change end-to-end behavior (CLI, build, multi-file)?
-  → Add a test in loaves/toolchain/incan-cli/tests/integration_tests.rs
+Did you change unit description, test execution, or formatting?
+  → Extend a project, testing, or format contract respectively
 
-Did you change the formatter?
-  → Property tests in loaves/compiler/incan_format/tests/property_tests.rs verify idempotency
-  → Also add a codegen snapshot if formatting affects output
-
-Did you add a diagnostic?
-  → Add a fixture in loaves/compiler/incan_test_support/fixtures/invalid/ that triggers it
-  → Add an integration test that asserts the diagnostic message
+Did you change codegraph inspection?
+  → Extend a graph contract
 ```
 
 ### What to always do
 
-For any pipeline feature (parser through emission), write **both**:
+Follow `AGENTS.md`'s test budget: the whole suite stays under about 3,000 tests, including contract cases, Rust unit tests, and Incan test functions. Extend an existing case in the same area before adding one; a new case is justified only when none can carry the behavior. Never add a case per bug: name the guarded bug in its `# behavior:` line. A library case has one producer Loaf carrying every declaration it needs.
 
-1. A **unit test** at the stage you changed (parser or typechecker)
-2. A **codegen snapshot test** that exercises the feature in expressions, not just declarations
+For pipeline features, prove semantic acceptance/refusal and observable execution where relevant. Do not demand a second unit test when an existing contract already exercises the behavior without a concrete coverage gap.
 
 ## Step 3: Write the tests
 
-### Parser test pattern
+### Acceptance contract pattern
 
-Directory: `loaves/kernel/incan_syntax/src/parser/tests/` — one module per subject (for example `expressions.rs`, `patterns_and_matching.rs`, `modules_and_imports.rs`); a module starts with `use super::*;`, which brings in the parser namespace and crate imports from `mod.rs` and the shared helpers from `helpers.rs` (a module whose tests spell everything as `crate::` paths omits it). Add a test to the module whose subject it belongs to, and keep every module under the inventory's 1,500-line split threshold.
+Cases live under `workspaces/contracts/fixtures/<family>/<area>/`. Read `workspaces/contracts/README.md` for the permitted layouts and headers. Extend the nearest case; a case states what a user observes and never names a route or build step.
 
-```rust
-#[test]
-fn test_parse_my_feature() -> Result<(), Vec<CompileError>> {
-    let source = r#"
-model Example:
-    field: str
-"#;
-    let program = parse_str(source)?;
-    assert_eq!(program.declarations.len(), 1);
-    Ok(())
-}
-```
+```incan
+# behavior: A function may return its declared string type
+# expect-accepted:
 
-Helpers available from `helpers.rs`: `parse_str(source)`, `parse_str_err(source, context)`, `require_source_span(source, needle, occurrence)` and the `require_*_decl` accessors; `parse_str_with_module_path(source, path)` is private to `modules_and_imports.rs`.
-
-### Typechecker test pattern
-
-Directory: `loaves/compiler/incan_frontend/src/typechecker/tests/` — one module per subject (for example `traits.rs`, `narrowing_and_matching.rs`, `rust_imports_and_types.rs`); every module starts with `use super::*;`, which brings in the crate imports from `mod.rs` and the shared helpers from `helpers.rs`. Add a test to the module whose subject it belongs to, and keep every module under the inventory's 1,500-line split threshold.
-
-```rust
-#[test]
-fn test_my_feature_valid() {
-    assert_check_ok(r#"
 def example() -> str:
+    """Return a string with the declared type."""
     return "hello"
-"#);
-}
-
-#[test]
-fn test_my_feature_invalid() {
-    let result = check_str(r#"
-def example() -> int:
-    return "hello"
-"#);
-    assert!(result.is_err());
-    let errs = result.unwrap_err();
-    assert!(errs.iter().any(|e| e.message.contains("expected")));
-}
 ```
 
-Helpers available: `check_str(source)`, `assert_check_ok(source)`, `check_str_with_library_index(source, index)`.
+For refusals, use `# expect-diagnostic: <CODE>` with the actual stable code from the diagnostics catalog. Do not mix diagnostic expectations with run expectations. Cover accepted and refused forms where the semantic boundary requires both.
 
 **Important**: test functions that do fallible work must return `Result` and use `?`. Never use `.unwrap()` or `.expect()`.
 
-### Codegen snapshot test pattern
-
-1. Create `loaves/compiler/incan_emit/tests/codegen_snapshots/my_feature.incn`:
+### Execution contract pattern
 
 ```incan
+# behavior: A function result is printed by its caller
+# expect-stdout:
+#   hello
+
 def example() -> str:
+    """Return the caller's greeting."""
     return "hello"
+
+def main() -> None:
+    """Print the function result."""
+    println(example())
 ```
 
-2. Add to `loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs`:
+### Boundary contract pattern
 
-```rust
-#[test]
-fn test_my_feature_codegen() {
-    let source = load_test_file("my_feature");
-    let rust_code = generate_rust(&source);
-    insta::assert_snapshot!("my_feature", rust_code);
-}
-```
+Use a library project case for path dependencies and imported declarations, with one producer Loaf carrying all required declarations. Use an interop case for `rust::` imports. Put assertions at the consumer boundary rather than relying on checker acceptance alone.
 
-3. Generate the snapshot:
+### Tooling contract pattern
 
-```bash
-INSTA_UPDATE=1 cargo test -p incan_emit --test codegen_snapshot_tests -- test_my_feature_codegen
-```
-
-4. Review: `cargo insta review` or check `loaves/compiler/incan_emit/tests/snapshots/codegen_snapshot_tests__my_feature.snap`.
-
-Helpers available: `load_test_file(name)` (loads from `loaves/compiler/incan_emit/tests/codegen_snapshots/<name>.incn`), `generate_rust(source)`, `generate_rust_with_widgets_manifest(source)` (for library import tests).
-
-### Integration test pattern
-
-File: `loaves/toolchain/incan-cli/tests/integration_tests.rs`
-
-```rust
-#[test]
-fn test_my_feature_compiles() -> Result<(), Vec<String>> {
-    compile_source(r#"
-def main():
-    let x: str = "hello"
-    print(x)
-"#)
-}
-```
-
-Helpers available: `compile_source(source)`, `compile_file(path)`.
-
-### Invalid fixture pattern
-
-1. Create `loaves/compiler/incan_test_support/fixtures/invalid/my_error_case.incn` with code that should fail.
-2. Add an integration test that asserts the expected diagnostic.
+The `project` family compares unit descriptions; `testing` checks per-test outcomes; `format` checks exact text, check immutability, and repeated-format stability; `graph` checks inspection results and invalidation. Reuse their existing cases and supported header directives from the contracts README.
 
 ## Step 4: Run the tests
 
 ### During development (targeted)
 
 ```bash
-# Run a specific test
-cargo test -p incan_emit --test codegen_snapshot_tests -- test_my_feature
-
-# Run all typechecker tests
-cargo test -p incan_frontend --lib typechecker::tests
-
-# Run all parser tests
-cargo test -p incan_syntax --lib parser::tests
-
-# Run integration tests
-cargo test -p incan-cli --test integration_tests
+# Replace INCAN with the compiler under test and SELECTOR with family/area/name or family/area
+incan run workspaces/contracts/src/main.incn -- INCAN workspaces/contracts/fixtures SELECTOR
 ```
 
-### Before finishing (full suite)
+### At commit points (affected whole families)
 
 ```bash
-# Full test suite
-make test
+# Replace FAMILY with the affected whole-family selector; pass several when needed
+incan run workspaces/contracts/src/main.incn -- INCAN workspaces/contracts/fixtures FAMILY
 
-# Full pre-commit gate (full checks + smoke-test-fast)
-make pre-commit
-
-# Update all snapshots if codegen changed
-INSTA_UPDATE=1 cargo test -p incan_emit --test codegen_snapshot_tests
+# Rust formatting and fast local gate; these do not run contracts
+make fmt
+make pre-commit-fast
 ```
+
+`make fmt-check`, `make us-english-check`, and `make rustdoc-gate` are also available separately. Run `make us-english-check` before every commit. Oven builds and runs units; never run Cargo. Verify commands against the Makefile and `workspaces/oven/src/main.incn`.
 
 ## Step 5: Verify
 
@@ -199,8 +124,10 @@ After tests pass, check:
 
 - [ ] No `.unwrap()` or `.expect()` in test code (clippy will reject them)
 - [ ] Test functions that do fallible work return `Result`
-- [ ] Codegen snapshots are updated (no pending `cargo insta review`)
+- [ ] Observable expectations match the language contract; baseline passing cases still pass
 - [ ] Both valid and invalid cases are covered for new diagnostics
+- [ ] Existing cases were extended before adding any, and the suite remains under about 3,000 tests
+- [ ] Guarded bugs appear in `# behavior:` and each library case has one producer Loaf
 
 ## Rust compiler error workflow
 

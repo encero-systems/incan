@@ -13,10 +13,8 @@ pub(super) struct AnchoredStandaloneBlock {
     pub indent: usize,
     pub lines: Vec<String>,
     pub blank_line_before: bool,
-    /// A root-level block following a suite retains its gaps and waits for the suite to end.
+    /// A root-level block following a suite opens the next top-level section and waits for the suite to end.
     pub after_root_suite: bool,
-    /// Source gap before a root-level block, capped by the output buffer's two-line policy.
-    pub root_blank_lines_before: usize,
     /// Source gap between a root-level leading block and its following declaration.
     pub root_blank_lines_after: usize,
 }
@@ -41,7 +39,6 @@ struct PendingStandaloneBlock {
     lines: Vec<String>,
     saw_blank_after: bool,
     saw_blank_before: bool,
-    blank_lines_before: usize,
     blank_lines_after: usize,
 }
 
@@ -53,7 +50,6 @@ impl PendingStandaloneBlock {
             lines: vec![line.trim_end().to_string()],
             saw_blank_after: false,
             saw_blank_before: blank_lines_before > 0,
-            blank_lines_before,
             blank_lines_after: 0,
         }
     }
@@ -206,7 +202,6 @@ fn finalize_pending_standalone_block(
                     && last_code_at_indent
                         .get(&0)
                         .is_some_and(|(anchor, _)| anchor.ends_with(':')),
-                root_blank_lines_before: if block.indent == 0 { block.blank_lines_before } else { 0 },
                 root_blank_lines_after: if block.indent == 0 { block.blank_lines_after } else { 0 },
             });
         }
@@ -219,11 +214,6 @@ fn finalize_pending_standalone_block(
                     lines,
                     blank_line_before: block.saw_blank_before,
                     after_root_suite: block.indent == 0 && prev_anchor.ends_with(':'),
-                    root_blank_lines_before: if block.indent == 0 && prev_anchor.ends_with(':') {
-                        block.blank_lines_before
-                    } else {
-                        0
-                    },
                     root_blank_lines_after: if block.indent == 0 && prev_anchor.ends_with(':') {
                         block.blank_lines_after
                     } else {

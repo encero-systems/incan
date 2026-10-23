@@ -11,51 +11,47 @@ from rust::incan_semantics_core::body_ir import (
 from pub::incan_mir_plan import (
     EnumDeclaration,
     ModelDeclaration,
-    MarkerTrait,
     FieldMetadata,
     Parameter,
     SourceSpan,
     PlanType,
     ListLeaf,
 )
-from unions import native_source_type, collect_unions
+from unions import collect_unions
+from layout_types import stored_field_type
 from checked_json_contracts import checked_deserialize_name
 from comparison_methods import comparison_functions
 from fallible_methods import fallible_methods
 from iterator_methods import iterator_methods
 from callable_methods import callable_methods
-from marker_traits import checked_marker_traits
+from marker_traits import validate_marker_traits
 from nominal_instances import NominalInstance
-from library_model_arguments import library_model_arguments
+from library_model_arguments import library_model_arguments, local_generic_item
 from string_conversion_contracts import conversion_name, conversion_trait
+from symbols import model_symbol
 
 
-pub def static_slot(declarations: list[StaticDeclaration], value: &GlobalPlace) -> Result[int, str]:
+pub def static_slot(declarations: &list[StaticDeclaration], value: &GlobalPlace) -> Result[int, str]:
     """Resolve global storage only by retained canonical identity and exact checked carrier."""
-    for slot in range(len(declarations)):
-        declaration = declarations[slot]
+    mut slot = 0
+    for declaration in declarations:
         if declaration.canonical == value.identity and declaration.ty == value.ty:
             return Ok(slot)
+        slot += 1
     return Err(f"unsupported Body IR unretained global storage `{value.identity.declaration_name}`")
 
 
 pub def static_accessors(ty: PlanType) -> Result[tuple[str, str], str]:
     """
-    Name persistent primitive, flat-list and hashed-collection cells after checked carrier admission.
+    Name persistent primitive, flat-list and set cells after checked carrier admission.
 
-    The runtime keeps a typed cell per carrier, so a hashed carrier without one stays refused by name.
+    Literal dictionaries use native guarded cells; the remaining carriers use typed runtime cells.
     """
     match ty:
         PlanType.List(leaf, depth) =>
             if depth != 1:
                 return Err("unsupported Body IR nested static list carrier")
             return static_list_accessors(leaf)
-        PlanType.Dict(key, value) =>
-            if key == ListLeaf.Str and value == ListLeaf.Int:
-                return Ok(
-                    ("incan_native_runtime::read_static_text_int_dict", "incan_native_runtime::write_static_text_int_dict"),
-                )
-            return Err("unsupported Body IR static dictionary carrier")
         PlanType.Set(leaf) =>
             if leaf == ListLeaf.Int:
                 return Ok(("incan_native_runtime::read_static_int_set", "incan_native_runtime::write_static_int_set"))
@@ -86,11 +82,26 @@ def static_list_accessors(leaf: ListLeaf) -> Result[tuple[str, str], str]:
     return Ok((f"incan_native_runtime::read_static_{name}_list", f"incan_native_runtime::write_static_{name}_list"))
 
 
+pub def publish_local_layouts(mut models: list[ModelDeclaration], mut enums: list[EnumDeclaration]) -> None:
+    """Expose canonical native ABI items for a compiled Loaf; its checked manifest retains source visibility.
+
+    Private layouts can appear in compiled callable signatures or governed defaults. Linked layouts already belong
+    to their selected artifact and keep its visibility.
+    """
+    for index in range(len(models)):
+        if models[index].library_item == "":
+            models[index].public = true
+    for index in range(len(enums)):
+        if enums[index].library_item == "":
+            enums[index].public = true
+
+
 pub def lower_model_declarations(
     module: &BodyIrModule,
     file: str,
-    intrinsics: list[EnumDeclaration] = [],
+    mut intrinsics: list[EnumDeclaration] = [],
     nominal_instances: list[NominalInstance] = [],
+    publish_generics: bool = false,
 ) -> Result[list[ModelDeclaration], str]:
     """
     Retain checked field layout and derives for admitted plain model, class, and newtype declarations.
@@ -98,13 +109,15 @@ pub def lower_model_declarations(
     A derived Default is built at each `default()` call from the declared field defaults, so the native struct never
     derives Default: a Rust derive would give every field its zero value instead.
     """
-    unions = collect_unions(module)
+    mut unions = collect_unions(module)
     reached = serde_propagation(module)?
     mut models: list[ModelDeclaration] = []
     comparisons = comparison_functions(module, intrinsics)?
     for owner in range(len(module.nominal_declarations)):
         declaration = module.nominal_declarations[owner]
-        item = library_item(declaration)
+        mut item = library_item(declaration)
+        if publish_generics and item == "" and len(declaration.type_parameters) != 0:
+            item = local_generic_item(declaration, nominal_instances)?
         mut library_arguments: list[PlanType] = []
         mut checked_deserialize = ""
         mut string_conversion_root = ""
@@ -125,27 +138,14 @@ pub def lower_model_declarations(
         mut field_public = declaration.field_public
         mut serde_names: list[str] = []
         if item != "":
-            if len(declaration.native_type_arguments) == 0:
-                library_arguments = library_model_arguments(module, declaration, nominal_instances, intrinsics)?
-            else:
-                mut arguments: list[RustType] = []
-                for argument in declaration.native_type_arguments:
-                    arguments.append(argument.clone())
-                for argument in arguments:
-                    library_arguments.append(
-                        native_source_type(
-                            module.nominal_declarations,
-                            module.enum_declarations,
-                            unions,
-                            argument,
-                            intrinsics,
-                        )?,
-                    )
+            library_arguments = library_model_arguments(module, declaration, nominal_instances, intrinsics)?
             fields = library_fields(module, declaration, file, intrinsics)
             if len(fields) != len(declaration.fields):
                 field_public = []
-            # The SDK crate already derives and implements everything its layout carries.
+            # Native Copy is a checked capability, verified again against rustc rather than derived on this alias.
             derives = []
+            if "Copy" in declaration.derives:
+                derives.append("Copy")
         else:
             # Only a plain newtype takes a propagated serde derive; another reached nominal keeps its own derives.
             if len(declaration.fields) == 1 and str(declaration.fields[0]) == "0":
@@ -153,11 +153,12 @@ pub def lower_model_declarations(
             serde_names = serde_field_names(declaration)
             for slot in range(len(declaration.fields)):
                 mut ty = PlanType.Unit
-                match native_source_type(
-                    module.nominal_declarations,
-                    module.enum_declarations,
+                match stored_field_type(
+                    list(module.nominal_declarations),
+                    list(module.enum_declarations),
                     unions,
-                    declaration.field_types[slot],
+                    declaration,
+                    slot,
                     intrinsics,
                 ):
                     Ok(resolved) =>
@@ -167,12 +168,11 @@ pub def lower_model_declarations(
                     Parameter(name=str(declaration.fields[slot]), ty=ty, span=SourceSpan(file=file, line=1, column=1)),
                 )
         callable_name, callable_signature = callable_methods(module, owner, intrinsics)?
-        mut markers: list[MarkerTrait] = []
         if item == "":
-            markers = checked_marker_traits(declaration)?
+            validate_marker_traits(declaration)?
         models.append(
             ModelDeclaration(
-                name=str(declaration.name),
+                name=model_symbol(str(declaration.name)),
                 public=declaration.public or item != "",
                 fields=fields,
                 field_public=field_public,
@@ -189,7 +189,6 @@ pub def lower_model_declarations(
                 iterator=iterator_methods(module, owner, intrinsics)?,
                 callable_method=callable_name,
                 callable_signature=callable_signature,
-                marker_traits=markers,
                 string_conversion_root=string_conversion_root,
                 string_conversion_trait=string_conversion_trait,
             ),
@@ -311,7 +310,7 @@ def library_fields(
     module: &BodyIrModule,
     declaration: &NominalDeclaration,
     file: str,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> list[Parameter]:
     """
     A stdlib layout's fields when the plan can carry every one of them, otherwise none.
@@ -320,14 +319,15 @@ def library_fields(
     the plan cannot carry refuses while lowering; the driver's plan validation rejects any projection into an opaque
     layout.
     """
-    unions = collect_unions(module)
+    mut unions = collect_unions(module)
     mut fields: list[Parameter] = []
     for slot in range(len(declaration.fields)):
-        match native_source_type(
-            module.nominal_declarations,
-            module.enum_declarations,
+        match stored_field_type(
+            list(module.nominal_declarations),
+            list(module.enum_declarations),
             unions,
-            declaration.field_types[slot],
+            declaration,
+            slot,
             intrinsics,
         ):
             Ok(ty) =>

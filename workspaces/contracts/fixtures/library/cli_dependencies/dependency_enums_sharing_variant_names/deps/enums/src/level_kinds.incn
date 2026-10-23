@@ -1,0 +1,6 @@
+@derive(Clone, Eq)
+pub enum Level(str):
+    """Retain text values under the library submodule's enum identity."""
+
+    Quiet = "quiet"
+    Loud = "loud"

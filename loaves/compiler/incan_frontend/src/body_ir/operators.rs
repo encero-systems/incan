@@ -19,10 +19,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.retain_evaluated_value_read(expression, value, scope, out)
     }
 
-    /// Capture a global scalar or owned-text value at its evaluation point before a later operand or argument can
-    /// mutate storage. Mutable arguments and live collection handles retain their separate borrowing contracts.
-    /// Enum reads still require the admitted declaration identity; numeric, boolean and text carriers come from the
-    /// checked expression.
+    /// Capture scalar projections and owned text at their evaluation point before a later operand can borrow their
+    /// owner or consume its final read. Whole scalar locals and already captured temporaries need no snapshot.
+    /// Mutable arguments and live collection handles retain their separate borrowing contracts. Global enum reads
+    /// still require the admitted declaration identity; numeric, boolean and text carriers come from the checked
+    /// expression.
     pub(super) fn retain_evaluated_value_read(
         &mut self,
         expression: &ast::Spanned<ast::Expr>,
@@ -33,10 +34,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let bir::Operand::Place(read) = &value else {
             return value;
         };
-        if read.place.global().is_none() {
-            return value;
-        }
         let ty = self.resolve_ty(expression.span);
+        let global = read.place.global().is_some();
+        if !global && read.place.projection.is_empty() {
+            let temporary = read
+                .place
+                .local_id()
+                .and_then(|local| self.locals.get(local.index()))
+                .is_some_and(|local| matches!(local.origin, bir::LocalOrigin::Temporary));
+            if temporary || !matches!(ty, IncanType::Primitive(IncanPrimitiveType::Str)) {
+                return value;
+            }
+        }
         if numeric_carrier_id(&ty).is_some()
             || matches!(
                 ty,
@@ -44,6 +53,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             )
         {
             return self.push_assign_temp(bir::Rvalue::Use(value), ty, scope, hir_span(expression.span), out);
+        }
+        if !global {
+            return value;
         }
         let IncanType::Named(name) = &ty else {
             return value;
@@ -136,6 +148,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.lower_collection_equality_operand(lhs, scope, out),
                 self.lower_collection_equality_operand(rhs, scope, out),
             )
+        } else if is_string_like(&lhs_ty)
+            && is_string_like(&rhs_ty)
+            && matches!(string_helper_for_binop(op), Some(helper) if !matches!(helper, bir::HelperOp::StrConcat))
+        {
+            (
+                self.lower_text_comparison_operand(lhs, scope, out),
+                self.lower_text_comparison_operand(rhs, scope, out),
+            )
         } else {
             (
                 self.lower_binary_operand(lhs, scope, out),
@@ -154,6 +174,26 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             hir_span_value,
             out,
         )
+    }
+
+    /// Borrow local text for a non-consuming comparison while capturing global and projected values before later
+    /// effects. The read still decrements its ordinary countdown, but cannot mark the compared owner as transferred
+    /// along a short-circuit branch that falls through to another comparison.
+    fn lower_text_comparison_operand(
+        &mut self,
+        expression: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let mut value = self.lower_expr_to_operand(expression, scope, out);
+        if let bir::Operand::Place(read) = &mut value
+            && read.place.global().is_none()
+            && read.place.projection.is_empty()
+        {
+            self.retain_argument_borrow(read, false);
+            return value;
+        }
+        self.retain_evaluated_value_read(expression, value, scope, out)
     }
 
     /// Materialize one comparison place and retain its shared read without marking source storage as moved.

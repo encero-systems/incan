@@ -7,3 +7,32 @@ pub const DEFAULT_NAME: str = "default"
 
 pub def make_widget(name: str) -> Widget:
     return Widget(name=name)
+
+
+pub model Mapper[T, U]:
+    """Retain a callback whose input and result use this model's type parameters."""
+
+    pub transform: (T) -> U
+
+    def apply(self, value: T) -> U:
+        """Apply the stored callback to one value."""
+        transform = self.transform
+        return transform(value)
+
+
+pub trait Catalog[T with Clone]:
+    def item(self) -> T: ...
+
+
+pub trait OrderedCatalog[T with Clone] with Catalog[T]:
+    def ordered(self) -> Self: ...
+
+
+pub model Parcel[T with Clone] with OrderedCatalog:
+    pub value: T
+
+    def item(self) -> T:
+        return self.value
+
+    def ordered(self) -> Self:
+        return self

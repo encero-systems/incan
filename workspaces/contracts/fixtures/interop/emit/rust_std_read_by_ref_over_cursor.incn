@@ -10,7 +10,7 @@ from rust::std::io import Cursor, Read
 from rust::std::rc import Rc
 
 
-def read_all(input: Cursor[bytes]) -> str:
+def read_all(mut input: Cursor[bytes]) -> str:
     mut text = ""
     Read.by_ref(input).read_to_string(text)
     return text

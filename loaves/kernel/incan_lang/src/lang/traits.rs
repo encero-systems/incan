@@ -188,7 +188,8 @@ pub fn from_str(name: &str) -> Option<TraitId> {
         .map(|t| t.id)
 }
 
-/// Resolve a bare, canonical source-qualified, or generated-provider spelling to a builtin trait identifier.
+/// Resolve a bare, canonical source-qualified, compiled-Loaf, or generated-provider spelling to a builtin trait
+/// identifier.
 ///
 /// Qualified lookup uses each source-owned trait's registered module instead of accepting any `std.derives` path with a
 /// familiar final segment. This keeps source and generated-provider identities exact while preventing an unrelated
@@ -208,9 +209,41 @@ pub fn from_qualified_str(name: &str) -> Option<TraitId> {
         return Some(canonical);
     }
 
+    if let Some((package, item)) = name.strip_prefix("pub::").and_then(|path| path.split_once("::")) {
+        let module = source_module.strip_prefix("std.")?;
+        let root = module.split('.').next()?;
+        let policy = super::standard_packages::standard_package_namespace_policy(package)?;
+        let compiled_item = format!("{}::{}", module.replace('.', "::"), as_str(canonical));
+        return (policy.namespace_roots.contains(&root) && item == compiled_item).then_some(canonical);
+    }
+
     let generated_module = generated_module(canonical)?;
     let generated_suffix = format!("::__incan_std::{generated_module}::{}", as_str(canonical));
     name.ends_with(&generated_suffix).then_some(canonical)
+}
+
+/// Resolve a checked bound's standard trait identity, including its public Loaf namespace.
+/// Bound identity does not establish an executable iterator carrier; value representation lookup stays separate.
+pub fn from_bound_str(name: &str) -> Option<TraitId> {
+    if let Some(id) = from_qualified_str(name) {
+        return Some(id);
+    }
+    let canonical = name.rsplit("::").next().and_then(from_str)?;
+    let source_module = source_module(canonical)?;
+    let generated_module = generated_module(canonical)?;
+    let root = source_module.strip_prefix("std.")?.split('.').next()?;
+    super::standard_packages::STANDARD_PACKAGE_NAMESPACE_POLICIES
+        .iter()
+        .any(|policy| {
+            policy.namespace_roots.contains(&root)
+                && name
+                    == format!(
+                        "pub::{}::{generated_module}::{}",
+                        policy.package_name,
+                        as_str(canonical)
+                    )
+        })
+        .then_some(canonical)
 }
 
 /// Return the canonical source module for a source-owned builtin trait.

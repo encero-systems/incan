@@ -1,8 +1,12 @@
-# behavior: a validated newtype's from_underlying hook accepts a positive value and refuses a non-positive one, and an int argument coerces through the same hook
+# behavior: a validated newtype's hook accepts and refuses inputs, argument coercion uses it, and one checked model field preserves the hook result alongside ordinary fields
 # expect-stdout:
 #   ok 1
 #   err value must be positive
 #   accepted 1
+#   hook 3
+#   count 9
+#   count 11
+#   hook 5
 
 type Positive = newtype int:
     def from_underlying(value: int) -> Result[Self, ValidationError]:
@@ -15,6 +19,27 @@ def accept(value: Positive) -> None:
     println(f"accepted {value.0}")
 
 
+type Shifted = newtype int:
+    """Make a successful hook observable through its transformed result."""
+
+    def from_underlying(value: int) -> Result[Self, ValidationError]:
+        """Increment the supplied value once."""
+        println(f"hook {value}")
+        return Ok(Shifted(value + 1))
+
+
+model CheckedRecord:
+    """Combine one checked field with an ordinary constructor field."""
+    value: Shifted
+    count: int
+
+
+def observe_count(value: int) -> int:
+    """Expose the ordinary field's evaluation position."""
+    println(f"count {value}")
+    return value
+
+
 def main() -> None:
     match Positive.from_underlying(1):
         Ok(value) => println(f"ok {value.0}")
@@ -23,3 +48,9 @@ def main() -> None:
         Ok(value) => println(f"ok {value.0}")
         Err(error) => println(f"err {error}")
     accept(1)
+    ordered = CheckedRecord(value=3, count=observe_count(9))
+    named = CheckedRecord(count=observe_count(11), value=5)
+    assert ordered.value.0 == 4
+    assert ordered.count == 9
+    assert named.value.0 == 6
+    assert named.count == 11

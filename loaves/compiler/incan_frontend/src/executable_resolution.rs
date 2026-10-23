@@ -22,7 +22,7 @@ use incan_semantics_core::body_ir::BodyIrModule;
 use incan_semantics_core::executable_representation::{
     DeclarationCoverage, ExecutableDeclaration, ExecutableRepresentationError, SurfaceIndex, require_supported_version,
 };
-use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, SymbolOrigin, canonical_module_identity};
+use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin, canonical_module_identity};
 
 use crate::library_manifest::LibraryManifest;
 use crate::library_manifest::public_identities::public_executable_identities;
@@ -134,7 +134,11 @@ pub fn resolve_loaf_declarations(
     if requested.is_empty() {
         return Ok(ResolvedExecutableModules::default());
     }
-    resolve_from_catalog(&catalog(loaves)?, requested, true)
+    let resolved = resolve_from_catalog(&catalog(loaves)?, requested, true)?;
+    for package in resolved.package_versions.keys() {
+        loaves.note_resolved_package(package);
+    }
+    Ok(resolved)
 }
 
 /// One artifact per package name across the index; two instances of one package refuse rather than replacing each
@@ -254,9 +258,21 @@ fn resolve_from_catalog(
         }));
         let (offset, length) = (*offset, *length);
         let declaration = surface.read(package, &identity, offset, length)?;
+        if let ExecutableDeclaration::NominalWithTraits(_, implementations) = &declaration {
+            // Lazy defaults are declaration requirements, even when the consumer never spells their trait. An
+            // uncovered unused default contributes no body, just as an uncovered source-adoption root does.
+            pending.extend(
+                implementations
+                    .iter()
+                    .filter(|implementation| implementation.implementation == implementation.method)
+                    .map(|implementation| (implementation.method.clone(), false, true)),
+            );
+        }
         let owner = canonical_module_identity(&identity)
             .ok_or_else(|| package.unusable(malformed("declaration has no module owner")))?;
-        let module = modules.entry(owner.clone()).or_insert_with(|| empty_module(owner));
+        let module = modules
+            .entry(owner.clone())
+            .or_insert_with(|| BodyIrModule::declarations_only(owner));
         retain_declaration(module, declaration);
         resolved.decoded_declarations += 1;
         resolved.payload_bytes_read += length;
@@ -271,33 +287,24 @@ fn resolve_from_catalog(
     Ok(resolved)
 }
 
-/// Assemble only selected fragments under their checked canonical module owner, without source reconstruction.
-fn empty_module(owner: String) -> BodyIrModule {
-    BodyIrModule {
-        string_conversion_contract: incan_semantics_core::body_ir::StringConversionContract::Unselected,
-        decorated_bindings: Vec::new(),
-        entrypoint_effects: Vec::new(),
-        constant_declarations: Vec::new(),
-        type_alias_declarations: Vec::new(),
-        trait_declarations: Vec::new(),
-        trait_implementations: Vec::new(),
-        module_id: CompilerNodeId::module(owner),
-        loaf_callables: Vec::new(),
-        native_union_declarations: Vec::new(),
-        enum_declarations: Vec::new(),
-        static_declarations: Vec::new(),
-        nominal_declarations: Vec::new(),
-        fieldless_enum_declarations: Vec::new(),
-        value_enum_declarations: Vec::new(),
-        bodies: Vec::new(),
-    }
-}
-
 /// Retain the selected payload's original declaration kind and associated checked trait or enum context.
 fn retain_declaration(module: &mut BodyIrModule, declaration: ExecutableDeclaration) {
     match declaration {
         ExecutableDeclaration::Body(body) => {
             module.bodies.push(*body);
+        }
+        ExecutableDeclaration::NativeBody { body, callables } => {
+            module.bodies.push(*body);
+            for callable in callables {
+                if !module.loaf_callables.contains(&callable) {
+                    module.loaf_callables.push(callable);
+                }
+            }
+        }
+        ExecutableDeclaration::CompiledCallable(frame) => {
+            if let Some(callable) = incan_semantics_core::body_ir::LoafCallable::from_body(&frame) {
+                module.loaf_callables.push(callable);
+            }
         }
         ExecutableDeclaration::DecoratedBody { body, binding, storage } => {
             module.bodies.push(*body);

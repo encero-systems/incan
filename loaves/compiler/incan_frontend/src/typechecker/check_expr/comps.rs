@@ -200,6 +200,27 @@ impl TypeChecker {
         ResolvedType::Function(param_types, Box::new(return_ty))
     }
 
+    /// Infer implicit closure parameters only when the expected union contains one callable shape of that arity.
+    /// Competing callable shapes retain ordinary closure checking rather than selecting one by member order.
+    pub(in crate::typechecker::check_expr) fn check_closure_with_union_expected(
+        &mut self,
+        params: &[Spanned<Param>],
+        body: &Spanned<Expr>,
+        members: &[ResolvedType],
+        span: Span,
+    ) -> ResolvedType {
+        let mut candidates = members.iter().filter_map(|member| match member {
+            ResolvedType::Function(inputs, result) if inputs.len() == params.len() => Some((inputs, result)),
+            _ => None,
+        });
+        if let Some((inputs, result)) = candidates.next()
+            && candidates.next().is_none()
+        {
+            return self.check_closure_with_expected(params, body, inputs, result, span);
+        }
+        self.check_closure(params, body, span)
+    }
+
     /// Type-check a closure expression against an expected function shape.
     pub(in crate::typechecker::check_expr) fn check_closure_with_expected(
         &mut self,

@@ -93,7 +93,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let mut seen: HashMap<String, bir::LocalId> = HashMap::new();
             let mut saved_bindings: Vec<(String, Option<bir::LocalId>)> = Vec::new();
             let enclosing_in_place = std::mem::replace(&mut self.in_place_pattern, in_place);
-            let pattern = self.lower_match_pattern(
+            let mut pattern = self.lower_match_pattern(
                 &arm.node.pattern,
                 &scrutinee_ty,
                 &scrutinee_place,
@@ -103,6 +103,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 &mut saved_bindings,
             );
             self.in_place_pattern = enclosing_in_place;
+            if arm.node.guard.is_none() {
+                self.retain_owned_native_payload_move(&scrutinee_place, &mut pattern);
+            }
 
             // ---- Guard and body see this arm's own pattern bindings, shadowing any outer binding of the same name
             // ----
@@ -165,6 +168,84 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         )
     }
 
+    /// Transfer a single owned native payload from an unguarded match on a fresh Option/Result temporary or the last
+    /// read of an owned native iterator item or owned parameter. No later read can reuse that carrier, and a successful
+    /// arm has no other payload to preserve. Borrowed parameters, loop-reused carriers, nested patterns and guards
+    /// retain their facts. Checked non-Clone tuple newtypes retain the same transfer boundary as their native
+    /// payload.
+    fn retain_owned_native_payload_move(&mut self, source: &bir::Place, pattern: &mut bir::Pattern) {
+        if !source.projection.is_empty() {
+            return;
+        }
+        let Some(id) = source.local_id() else {
+            return;
+        };
+        let Some(local) = self.locals.get(id.index()) else {
+            return;
+        };
+        let owned_last_read = (self.native_enum_payload_bindings.contains(&id)
+            || local.origin == bir::LocalOrigin::Parameter)
+            && !self.is_borrowed_parameter(id)
+            && !self.loop_reuses_local(id)
+            && !self.pending_argument_reads.contains(&id)
+            && self.remaining_reads.get(&id).is_some_and(|remaining| *remaining == 1);
+        if (local.origin != bir::LocalOrigin::Temporary && !owned_last_read)
+            || !matches!(&local.ty, IncanType::Generic { base, .. } if matches!(collections::from_str(base), Some(CollectionTypeId::Option | CollectionTypeId::Result)))
+        {
+            return;
+        }
+        let fields = match pattern {
+            bir::Pattern::Result { fields, .. } => fields,
+            bir::Pattern::Enum { name, fields, .. } if name == "Option" => fields,
+            _ => return,
+        };
+        let [bir::Pattern::Var(binding)] = fields.as_mut_slice() else {
+            return;
+        };
+        let Some(payload) = self.locals.get(binding.local.index()) else {
+            return;
+        };
+        let native = self.payload_needs_owned_transfer(&payload.ty);
+        if native
+            && matches!(
+                binding.fact,
+                bir::OwnershipFact::Borrow | bir::OwnershipFact::Clone | bir::OwnershipFact::Move
+            )
+        {
+            binding.fact = bir::OwnershipFact::Move;
+            self.native_enum_payload_bindings.insert(binding.local);
+        }
+    }
+
+    /// Identify native owners and checked non-Clone tuple newtypes through owned carrier arguments.
+    /// References never grant an owned transfer, and source declarations are selected by retained canonical identity.
+    fn payload_needs_owned_transfer(&self, ty: &IncanType) -> bool {
+        let name = match ty {
+            IncanType::Generic { base, args } => {
+                if args.iter().any(|argument| self.payload_needs_owned_transfer(argument)) {
+                    return true;
+                }
+                base
+            }
+            IncanType::Tuple(fields) => {
+                return fields.iter().any(|field| self.payload_needs_owned_transfer(field));
+            }
+            IncanType::Named(name) => name,
+            _ => return false,
+        };
+        if bir::rust_item_identity(name).is_some() {
+            return true;
+        }
+        parameter_types::retained_nominal_identity(name, self.type_info).is_some_and(|identity| {
+            self.local_nominal_declarations
+                .values()
+                .find(|declaration| &declaration.canonical == identity)
+                .is_some_and(|declaration| {
+                    declaration.fields == ["0"] && !declaration.derives.iter().any(|derive| derive == "Clone")
+                })
+        })
+    }
+
     /// Return whether the `match`, `if let` or `while let` over the scrutinee at `span` matches it in place.
     ///
     /// The checker records a scrutinee when an arm changes a part of a writable place through a name the pattern
@@ -185,6 +266,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Restoring is what makes `if let`'s scoping honest: the pattern's names belong to the `then` branch only, and
     /// an `else` branch lowered afterwards must not see them. `in_place` is [`Self::matches_in_place`] for the
     /// construct's scrutinee; it applies to the pattern only, never to patterns nested in the body.
+    /// Unguarded statement arms use the same checked native payload transfer as expression matches; a fresh owned
+    /// Option/Result temporary must not require cloning its payload merely because the source spells `if let`.
     #[allow(clippy::too_many_arguments)] // The scrutinee's type, place and in-place fact travel together into one arm.
     pub(super) fn lower_statement_pattern_arm(
         &mut self,
@@ -200,7 +283,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let mut seen: HashMap<String, bir::LocalId> = HashMap::new();
         let mut saved_bindings: Vec<(String, Option<bir::LocalId>)> = Vec::new();
         let enclosing_in_place = std::mem::replace(&mut self.in_place_pattern, in_place);
-        let lowered_pattern = self.lower_match_pattern(
+        let mut lowered_pattern = self.lower_match_pattern(
             pattern,
             scrutinee_ty,
             scrutinee_place,
@@ -210,6 +293,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             &mut saved_bindings,
         );
         self.in_place_pattern = enclosing_in_place;
+        self.retain_owned_native_payload_move(scrutinee_place, &mut lowered_pattern);
 
         let mut body_stmts = Vec::new();
         self.lower_block_into(body, arm_scope, &mut body_stmts);
@@ -313,7 +397,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         local
                     }
                 };
-                let (mut fact, last_use) = self.ownership_fact_for_place(place, expected_ty);
+                let (mut fact, mut last_use) = self.ownership_fact_for_place(place, expected_ty);
+                if fact == bir::OwnershipFact::Borrow && self.temporary_native_payload(place, expected_ty) {
+                    fact = bir::OwnershipFact::Move;
+                    last_use = true;
+                    self.native_enum_payload_bindings.insert(local);
+                }
                 // An arm changes this part of the scrutinee through the name, so the name borrows the part itself.
                 if self.in_place_pattern
                     && !place.projection.is_empty()
@@ -369,7 +458,27 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
     }
 
-    /// Dispatch a checked constructor through its carrier, nominal and enum identity boundaries.
+    /// A temporary Option/Result owns its native payload and has no source binding that can observe a later read.
+    /// Preserve that move as a Body IR fact rather than asking native lowering to invent Clone for foreign resources.
+    fn temporary_native_payload(&self, place: &bir::Place, ty: &IncanType) -> bool {
+        let native = match ty {
+            IncanType::Named(name) | IncanType::Generic { base: name, .. } => bir::rust_item_identity(name).is_some(),
+            _ => false,
+        };
+        native
+            && place.projection.len() == 1
+            && place
+                .local_id()
+                .and_then(|id| self.locals.get(id.index()))
+                .is_some_and(|local| {
+                    local.origin == bir::LocalOrigin::Temporary
+                        && matches!(&local.ty, IncanType::Generic { base, .. } if base == "Option" || base == "Result")
+                })
+    }
+
+    /// Dispatch a checked constructor through its carrier, nominal and enum identity boundaries. References expose
+    /// the retained referent layout for constructor selection; payload binding types and ownership remain checked
+    /// independently by `lower_match_pattern`.
     #[allow(clippy::too_many_arguments)] // Carries one pattern and its recursive lowering context.
     fn lower_constructor_pattern(
         &mut self,
@@ -383,6 +492,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         seen: &mut HashMap<String, bir::LocalId>,
         saved_bindings: &mut Vec<(String, Option<bir::LocalId>)>,
     ) -> bir::Pattern {
+        let mut expected_ty = expected_ty;
+        while let IncanType::Ref(inner) | IncanType::RefMut(inner) = expected_ty {
+            expected_ty = inner;
+        }
+        if let Some(value) = self.lower_rust_enum_pattern(name, args, place, arm_scope, reads, seen, saved_bindings) {
+            return value;
+        }
         if let Some(value) =
             self.lower_union_pattern(pattern, name, args, place, arm_scope, reads, seen, saved_bindings)
         {
@@ -405,6 +521,57 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return value;
         }
         self.lower_generic_constructor_pattern(name, args, expected_ty, place, arm_scope, reads, seen, saved_bindings)
+    }
+
+    /// Order native payload patterns by the checker's selected metadata fields, filling unnamed storage with wildcards.
+    /// A native variant identity authorizes no source-spelling lookup or guessed positional field.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_rust_enum_pattern(
+        &mut self,
+        name: &ast::Spanned<ast::Ident>,
+        args: &[ast::PatternArg],
+        place: &bir::Place,
+        arm_scope: bir::ScopeId,
+        reads: &PatternReadScope<'_>,
+        seen: &mut HashMap<String, bir::LocalId>,
+        saved_bindings: &mut Vec<(String, Option<bir::LocalId>)>,
+    ) -> Option<bir::Pattern> {
+        let identity = self.type_info.resolved_identity(name.span)?.clone();
+        let incan_semantics_core::SymbolOrigin::RustCrate(path) = &identity.origin else {
+            return None;
+        };
+        let layout = self.type_info.rust.checked_enums.get(&path.join("::"))?;
+        let (_, types, names) = layout
+            .variants
+            .iter()
+            .find(|(variant, _, _)| *variant == identity.declaration_name)?;
+        let mut fields = vec![bir::Pattern::Wildcard; types.len()];
+        for (position, arg) in args.iter().enumerate() {
+            let (slot, pattern) = match arg {
+                ast::PatternArg::Positional(pattern) => (position, pattern),
+                ast::PatternArg::Named(field, pattern) => (names.iter().position(|name| *name == field.node)?, pattern),
+            };
+            let mut field_place = place.clone();
+            field_place
+                .projection
+                .push(bir::PlaceElem::structural_field(slot.to_string()));
+            let lowered = self.lower_match_pattern(
+                pattern,
+                &IncanType::Unknown,
+                &field_place,
+                arm_scope,
+                reads,
+                seen,
+                saved_bindings,
+            );
+            *fields.get_mut(slot)? = lowered;
+        }
+        Some(bir::Pattern::Enum {
+            canonical: Some(identity.clone()),
+            name: String::new(),
+            variant: identity.declaration_name,
+            fields,
+        })
     }
 
     /// Retain the checked union member and optional carrier before projecting payload bindings.

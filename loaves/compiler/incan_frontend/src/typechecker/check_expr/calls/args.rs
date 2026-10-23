@@ -31,8 +31,24 @@ struct CallArgumentValidationContext<'a> {
 }
 
 impl TypeChecker {
+    /// Infer a call argument's binders through the outer shared borrow already admitted by argument compatibility.
+    /// Matching reference arguments retain structural inference. This adjustment belongs to argument binding rather
+    /// than general type inference, where applying a borrow to a return type would change the checked contract.
+    fn infer_call_argument_type_param_bindings(
+        &self,
+        expected: &ResolvedType,
+        actual: &ResolvedType,
+        bindings: &mut std::collections::HashMap<String, ResolvedType>,
+    ) {
+        let expected = match expected {
+            ResolvedType::Ref(inner) if !matches!(actual, ResolvedType::Ref(_) | ResolvedType::RefMut(_)) => inner,
+            _ => expected,
+        };
+        self.infer_type_param_bindings(expected, actual, bindings);
+    }
+
     /// Return the expression carried by a call argument.
-    pub(in crate::typechecker::check_expr::calls) fn call_arg_expr(arg: &CallArg) -> &Spanned<Expr> {
+    pub(in crate::typechecker::check_expr) fn call_arg_expr(arg: &CallArg) -> &Spanned<Expr> {
         match arg {
             CallArg::Positional(e)
             | CallArg::Named(_, e)
@@ -431,7 +447,7 @@ impl TypeChecker {
                     if let Some(&normal_idx) = positional_param_indices.get(positional_index) {
                         let (_, param) = normal_params[normal_idx];
                         normal_bound_spans[normal_idx] = Some(arg_span);
-                        self.infer_type_param_bindings(&param.ty, arg_ty, type_bindings);
+                        self.infer_call_argument_type_param_bindings(&param.ty, arg_ty, type_bindings);
                         self.emit_arg_type_mismatch_if_needed(
                             callee,
                             param.name(),
@@ -442,7 +458,7 @@ impl TypeChecker {
                         );
                         positional_index += 1;
                     } else if let Some(param) = rest_positional {
-                        self.infer_type_param_bindings(&param.ty, arg_ty, type_bindings);
+                        self.infer_call_argument_type_param_bindings(&param.ty, arg_ty, type_bindings);
                         self.emit_arg_type_mismatch_if_needed(
                             callee,
                             param.name(),
@@ -472,7 +488,7 @@ impl TypeChecker {
                             if let Some(&normal_idx) = positional_param_indices.get(positional_index) {
                                 let (_, param) = normal_params[normal_idx];
                                 normal_bound_spans[normal_idx] = Some(item_span);
-                                self.infer_type_param_bindings(&param.ty, item_ty, type_bindings);
+                                self.infer_call_argument_type_param_bindings(&param.ty, item_ty, type_bindings);
                                 self.emit_arg_type_mismatch_if_needed(
                                     callee,
                                     param.name(),
@@ -483,7 +499,7 @@ impl TypeChecker {
                                 );
                                 positional_index += 1;
                             } else if let Some(param) = rest_positional {
-                                self.infer_type_param_bindings(&param.ty, item_ty, type_bindings);
+                                self.infer_call_argument_type_param_bindings(&param.ty, item_ty, type_bindings);
                                 self.emit_arg_type_mismatch_if_needed(
                                     callee,
                                     param.name(),
@@ -502,7 +518,7 @@ impl TypeChecker {
                             if let Some(&normal_idx) = positional_param_indices.get(positional_index) {
                                 let (_, param) = normal_params[normal_idx];
                                 normal_bound_spans[normal_idx] = Some(arg_span);
-                                self.infer_type_param_bindings(&param.ty, item_ty, type_bindings);
+                                self.infer_call_argument_type_param_bindings(&param.ty, item_ty, type_bindings);
                                 self.emit_arg_type_mismatch_if_needed(
                                     callee,
                                     param.name(),
@@ -513,7 +529,7 @@ impl TypeChecker {
                                 );
                                 positional_index += 1;
                             } else if let Some(param) = rest_positional {
-                                self.infer_type_param_bindings(&param.ty, item_ty, type_bindings);
+                                self.infer_call_argument_type_param_bindings(&param.ty, item_ty, type_bindings);
                                 self.emit_arg_type_mismatch_if_needed(
                                     callee,
                                     param.name(),
@@ -528,7 +544,7 @@ impl TypeChecker {
                         }
                     } else if let Some(param) = rest_positional {
                         let expected = list_ty(param.ty.clone());
-                        self.infer_type_param_bindings(&expected, arg_ty, type_bindings);
+                        self.infer_call_argument_type_param_bindings(&expected, arg_ty, type_bindings);
                         self.emit_arg_type_mismatch_if_needed(
                             callee,
                             param.name(),
@@ -561,7 +577,7 @@ impl TypeChecker {
                             continue;
                         }
                         normal_bound_spans[normal_idx] = Some(arg_span);
-                        self.infer_type_param_bindings(&param.ty, arg_ty, type_bindings);
+                        self.infer_call_argument_type_param_bindings(&param.ty, arg_ty, type_bindings);
                         self.emit_arg_type_mismatch_if_needed(
                             callee,
                             param.name(),
@@ -571,7 +587,7 @@ impl TypeChecker {
                             compatibility,
                         );
                     } else if let Some(param) = rest_keyword {
-                        self.infer_type_param_bindings(&param.ty, arg_ty, type_bindings);
+                        self.infer_call_argument_type_param_bindings(&param.ty, arg_ty, type_bindings);
                         self.emit_arg_type_mismatch_if_needed(
                             callee,
                             param.name(),
@@ -625,7 +641,7 @@ impl TypeChecker {
                                         continue;
                                     }
                                     normal_bound_spans[normal_idx] = Some(value.span);
-                                    self.infer_type_param_bindings(&param.ty, value_ty, type_bindings);
+                                    self.infer_call_argument_type_param_bindings(&param.ty, value_ty, type_bindings);
                                     self.emit_arg_type_mismatch_if_needed(
                                         callee,
                                         param.name(),
@@ -635,7 +651,7 @@ impl TypeChecker {
                                         compatibility,
                                     );
                                 } else if let Some(param) = rest_keyword {
-                                    self.infer_type_param_bindings(&param.ty, value_ty, type_bindings);
+                                    self.infer_call_argument_type_param_bindings(&param.ty, value_ty, type_bindings);
                                     self.emit_arg_type_mismatch_if_needed(
                                         callee,
                                         param.name(),
@@ -649,7 +665,7 @@ impl TypeChecker {
                                         .push(errors::unknown_keyword_argument(callee, name, key.span));
                                 }
                             } else if let Some(param) = rest_keyword {
-                                self.infer_type_param_bindings(&param.ty, value_ty, type_bindings);
+                                self.infer_call_argument_type_param_bindings(&param.ty, value_ty, type_bindings);
                                 self.emit_arg_type_mismatch_if_needed(
                                     callee,
                                     param.name(),
@@ -665,7 +681,7 @@ impl TypeChecker {
                         }
                     } else if let Some(param) = rest_keyword {
                         let expected = dict_ty(ResolvedType::Str, param.ty.clone());
-                        self.infer_type_param_bindings(&expected, arg_ty, type_bindings);
+                        self.infer_call_argument_type_param_bindings(&expected, arg_ty, type_bindings);
                         self.emit_arg_type_mismatch_if_needed(
                             callee,
                             param.name(),
@@ -702,7 +718,9 @@ impl TypeChecker {
         }
     }
 
-    /// Emit a call-argument mismatch unless RFC 017 allows a validated-newtype coercion at this argument span.
+    /// Validate a source call argument, retaining metadata-selected dereferences and owned target materialization at
+    /// this boundary. An owned value at a shared parameter is borrowed by Body IR's retained parameter contract;
+    /// assignment compatibility does not acquire these adjustments. RFC 017 coercions stay scoped to this span.
     fn emit_arg_type_mismatch_if_needed(
         &mut self,
         callee: &str,
@@ -712,7 +730,21 @@ impl TypeChecker {
         span: Span,
         compatibility: CallArgumentCompatibility,
     ) {
-        if !self.types_compatible(actual, expected)
+        // ---- Native argument adjustments ----
+        if self.retain_argument_dereferences(actual, expected, span).is_some() {
+            return;
+        }
+
+        // ---- Source compatibility ----
+        let compatible = match expected {
+            ResolvedType::Ref(inner) if !matches!(actual, ResolvedType::Ref(_) | ResolvedType::RefMut(_)) => {
+                self.types_compatible(actual, inner)
+            }
+            _ => self.types_compatible(actual, expected),
+        };
+
+        // ---- Boundary coercions and refusal ----
+        if !compatible
             && !(compatibility == CallArgumentCompatibility::CheckedCIntegerBridge
                 && Self::checked_c_integer_bridge_compatible(actual, expected))
         {

@@ -26,7 +26,7 @@ pub def standard_comparison_slot(identity: &CanonicalSymbolId, name: str) -> boo
         _ => return false
 
 
-pub def comparison_functions(module: &BodyIrModule, intrinsics: list[EnumDeclaration]) -> Result[list[list[str]], str]:
+pub def comparison_functions(module: &BodyIrModule, mut intrinsics: list[EnumDeclaration]) -> Result[list[list[str]], str]:
     """Retain one borrowed equality body, and all four owned ordering bodies when a checked source Ord slot is supplied."""
     mut owners: list[list[str]] = []
     for owner in range(len(module.nominal_declarations)):
@@ -59,7 +59,7 @@ def comparison_body(
     owner: int,
     name: str,
     borrowed: bool,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[str, str]:
     """Resolve a selected non-generic implementation with its exact shared receiver and legacy other-operand ABI."""
     declaration = module.nominal_declarations[owner]
@@ -82,7 +82,7 @@ def comparison_body(
                 if body.canonical != Some(identity.clone()) or len(body.params) != 2:
                     continue
                 first = body.locals[int(body.params[0].local.index())]
-                match frame_type(module, first, intrinsics):
+                match frame_type(list(module.nominal_declarations), list(module.enum_declarations), first, intrinsics):
                     Ok(receiver) =>
                         if receiver == PlanType.ModelRef(owner, str(declaration.name)):
                             validate_comparison_body(module, body, owner, borrowed, intrinsics)?
@@ -96,7 +96,7 @@ def validate_comparison_body(
     body: &Body,
     owner: int,
     borrowed: bool,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[None, str]:
     """Admit only concrete bool functions with the validated source owner's two native input carriers."""
     if len(body.type_parameters) != 0 or len(body.params) != 2:
@@ -111,7 +111,9 @@ def validate_comparison_body(
         match body.params[1].default:
             CallableParamDefault.Required => pass
             _ => return Err("unsupported Body IR native equality with a defaulted other operand")
-    if frame_type(module, first, intrinsics)? != reference or frame_type(module, second, intrinsics)? != expected:
+    mut nominals = module.nominal_declarations
+    mut enums = module.enum_declarations
+    if frame_type(nominals, enums, first, intrinsics)? != reference or frame_type(nominals, enums, second, intrinsics)? != expected:
         return Err("unsupported Body IR native comparison input ABI")
     if body.return_type != RustType.Primitive(IncanPrimitiveType.Bool):
         return Err("unsupported Body IR native comparison result ABI")
@@ -141,7 +143,7 @@ pub def source_equality_value(module: &BodyIrModule, target: &MethodTarget, body
 
 pub def enum_comparison_functions(
     module: &BodyIrModule,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[list[str]], str]:
     """Select enum bridges from checked standard slots and their retained borrowed equality ABI, never variant order."""
     mut owners: list[list[str]] = []
@@ -171,7 +173,7 @@ pub def enum_comparison_functions(
 pub def attach_enum_comparisons(
     module: &BodyIrModule,
     mut declarations: list[EnumDeclaration],
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[None, str]:
     """Attach checked source bridges and remove only native comparison derives replaced by those exact bodies."""
     selected = enum_comparison_functions(module, intrinsics)?
@@ -191,7 +193,7 @@ def enum_comparison_body(
     owner: int,
     name: str,
     borrowed: bool,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[str, str]:
     """Require the unique checked enum slot body and its exact two-input bool ABI before planning a native bridge."""
     declaration = module.enum_declarations[owner]
@@ -219,7 +221,9 @@ def enum_comparison_body(
                     other = reference
                 first = body.locals[int(body.params[0].local.index())]
                 second = body.locals[int(body.params[1].local.index())]
-                if frame_type(module, first, intrinsics)? != reference or frame_type(module, second, intrinsics)? != other:
+                mut nominals = module.nominal_declarations
+                mut enums = module.enum_declarations
+                if frame_type(nominals, enums, first, intrinsics)? != reference or frame_type(nominals, enums, second, intrinsics)? != other:
                     continue
                 match body.params[1].default:
                     CallableParamDefault.Required => return Ok(function_name(module, body))

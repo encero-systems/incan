@@ -1,0 +1,121 @@
+"""
+A command asking its project's resident owner for the executable it needs.
+
+The command sends what it resolved (the command, the entry, the profile and the features), never a unit description, and
+the owner answers with the path of the completed executable; the command then becomes that program itself, or runs the
+tests itself. Whatever goes wrong with the owner (it cannot be reached, started or understood, or it does not serve the
+unit) is a reason to prepare the executable in the command's own process, exactly as before, and is traced.
+
+`OVEN_OWNER=off` never uses an owner. Disposable projects, such as a contract run's, set it.
+"""
+
+from rust::std::io import Write, stderr, stdout
+from rust::std::string import String as RustString
+from std.environ import get_or
+from std.fs import Path
+from observation import trace
+from owner_endpoint import ask, endpoint_for
+from owner_protocol import Reply, Request
+from unit import project_root_of
+
+
+pub def owned(
+    command: str,
+    entry: Path,
+    profile: str,
+    features: list[str],
+    default_features: bool,
+    all_features: bool,
+) -> Option[Reply]:
+    """
+    The owner's reply once it has made the executable (`reply.exit` says whether the compiler accepted the unit);
+    `None` when the command should make it itself.
+
+    1. `OVEN_OWNER=off` never uses an owner.
+    2. Ask the owner; any failure to reach, start or understand it is traced and leaves the work to the command.
+    """
+    # 1. A command that opted out never touches an owner, and a disposable project sets it.
+    if get_or("OVEN_OWNER", "") == "off":
+        return None
+    # 2. A failure to reach, start or understand the owner is traced, and the command does the work itself.
+    match asked(command, entry, profile, features, default_features, all_features):
+        Ok(found) => return found
+        Err(reason) =>
+            trace(f"owner unavailable: {reason}")
+            return None
+
+
+def asked(
+    command: str,
+    entry: Path,
+    profile: str,
+    features: list[str],
+    default_features: bool,
+    all_features: bool,
+) -> Result[Option[Reply], str]:
+    """
+    Put the request to the project's owner. An owner is started only for a project an earlier command already
+    prepared, so a project that is built once (a contract case, a scratch file) never gets a resident process.
+
+    1. Resolve the entry and the project it belongs to.
+    2. Find the project's owner and describe what is wanted.
+    3. Ask, starting an owner only for a project that was prepared before.
+    4. An owner that did not serve the request leaves the work to the command; one that did has its output echoed.
+    """
+    # 1. The entry is an absolute path, and the project it belongs to is known.
+    absolute = entry.absolute().map_err((error) => f"{entry.0}: {error.message()}")?
+    root = project_of(absolute)
+    # 2. The owner is the one for this project, and the request states what the command resolved.
+    endpoint = endpoint_for(root.0)?
+    request = Request(
+        command=command,
+        generation=endpoint.generation,
+        path=absolute.0,
+        profile=profile,
+        features=features,
+        default_features=default_features,
+        all_features=all_features,
+    )
+    # 3. An owner is started only for a project that was prepared before, so a project built once gets none.
+    match ask(endpoint, request, was_prepared(root))?:
+        None => return Ok(None)
+        Some(reply) =>
+            # 4. The command prepares the unit itself unless the owner did; what the compiler printed is shown.
+            if reply.status != "done":
+                trace(f"owner did not serve this ({reply.status}): {reply.reason}")
+                return Ok(None)
+            echo(reply.stdout, reply.stderr)
+            return Ok(Some(reply))
+
+
+def project_of(entry: Path) -> Path:
+    """The project an entry belongs to, or the entry's own directory when it belongs to none."""
+    match project_root_of(entry):
+        Some(found) => return found
+        None => return entry.parent()
+
+
+def was_prepared(root: Path) -> bool:
+    """Whether an earlier command already prepared a unit of this project, which is what justifies an owner for it."""
+    return root.joinpath("target").joinpath("incan").joinpath("observations").is_dir()
+
+
+def echo(printed: str, complained: str) -> None:
+    """Show what the compiler printed, on the streams it printed it to."""
+    # A closed stream cannot be told about, so a failed write is ignored.
+    if printed != "":
+        mut out = stdout()
+        _ = out.write_all(RustString.from(printed).into_bytes())
+    if complained != "":
+        mut err = stderr()
+        _ = err.write_all(RustString.from(complained).into_bytes())
+
+
+pub def status_code(code: int) -> i32:
+    """An exit status as the process type. Incan has no conversion from `int` to `i32`; statuses are 0 to 255."""
+    if code < 0 or code > 255:
+        return 1
+    mut status: i32 = 0
+    for step in range(code):
+        status += 1
+    return status

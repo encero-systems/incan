@@ -1,0 +1,12 @@
+# behavior: renaming an imported newtype preserves its validation hook and owned result (#2009)
+# expect-stdout:
+#   validated
+#   0.5
+
+from percentile import Percentile as Fraction
+
+
+def main() -> None:
+    """Invoke the declaring type's hook despite its different local spelling."""
+    checked = Fraction(0.5)
+    println(checked.0)

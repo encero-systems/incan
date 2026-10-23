@@ -1,8 +1,12 @@
-# behavior: `?` routes an Err to the caller, `match` dispatches Ok and Err, and a tuple payload matches Ok
+# behavior: Result propagation and matching retain Ok, Err and tuple payloads through direct source callers
 # expect-stdout:
 #   2
 #   0
 #   42
+#   2
+#   2
+#   2
+#   2
 
 """`?` routes an Err to the caller, `match` dispatches Ok and Err, and a tuple payload matches Ok."""
 enum Failure:
@@ -63,3 +67,7 @@ def main() -> None:
     println(routed())
     println(failed())
     println(tuple_payload())
+    println(routed())
+    println(routed())
+    println(routed())
+    println(routed())

@@ -1,12 +1,19 @@
-"""Empty native standard traits selected from complete checked canonical source adoptions."""
+"""Check empty source marker adoptions; serde derives supply their native supertrait obligations."""
 
 from rust::incan_semantics_core import CanonicalSymbolId, SymbolOrigin, SymbolNamespace, SemanticSourceTargetKind
 from rust::incan_semantics_core::body_ir import NominalDeclaration
-from pub::incan_mir_plan import MarkerTrait
 
 
-pub def checked_marker_traits(declaration: &NominalDeclaration) -> Result[list[MarkerTrait], str]:
-    """Require the actual standard identity, empty checked slots and arguments, and its already retained serde derive."""
+@derive(Clone, PartialEq)
+enum MarkerTrait:
+    """The closed source marker contracts whose serde obligations are checked here."""
+
+    TomlSerialize
+    TomlDeserialize
+
+
+pub def validate_marker_traits(declaration: &NominalDeclaration) -> Result[None, str]:
+    """Require canonical source identity, empty slots and arguments, and the retained serde derive. Empty Incan markers have no additional native layout or operation and must not introduce a dependency on their own provider."""
     mut result: list[MarkerTrait] = []
     for adoption in declaration.trait_adoptions:
         match standard_marker(adoption.trait_identity):
@@ -24,7 +31,7 @@ pub def checked_marker_traits(declaration: &NominalDeclaration) -> Result[list[M
                 if marker in result:
                     return Err("unsupported Body IR duplicate native TOML marker adoption")
                 result.append(marker)
-    return Ok(result)
+    return Ok(None)
 
 
 def standard_marker(identity: &CanonicalSymbolId) -> Option[MarkerTrait]:
@@ -41,7 +48,7 @@ def standard_marker(identity: &CanonicalSymbolId) -> Option[MarkerTrait]:
 
 
 def standard_marker_origin(origin: &SymbolOrigin) -> bool:
-    """Authenticate the SDK origin through its explicit Rust type, retaining the struct-pattern import."""
+    """Authenticate the source package and module rather than a same-named local declaration."""
     match origin:
         SymbolOrigin.Package(library=library, module_path=path) =>
             return library == "incan_stdlib_data" and len(path) == 1 and path[0] == "toml"

@@ -19,7 +19,7 @@ from trait_links import contains
 pub def callable_methods(
     module: &BodyIrModule,
     owner: int,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[tuple[str, list[PlanType]], str]:
     """Require one actual Callable1 adoption, one complete checked slot, and its exact immutable source ABI."""
     declaration = module.nominal_declarations[owner]
@@ -55,8 +55,8 @@ pub def callable_methods(
             for argument in arguments:
                 signature.append(
                     native_source_type(
-                        module.nominal_declarations,
-                        module.enum_declarations,
+                        list(module.nominal_declarations),
+                        list(module.enum_declarations),
                         collect_unions(module),
                         argument,
                         intrinsics,
@@ -72,16 +72,18 @@ pub def callable_methods(
                         continue
                     receiver = body.locals[int(body.params[0].local.index())]
                     value = body.locals[int(body.params[1].local.index())]
-                    if frame_type(module, receiver, intrinsics)? != PlanType.ModelRef(owner, str(declaration.name)):
+                    mut nominals = module.nominal_declarations
+                    mut enums = module.enum_declarations
+                    if frame_type(nominals, enums, receiver, intrinsics)? != PlanType.ModelRef(owner, str(declaration.name)):
                         continue
                     result = native_source_type(
-                        module.nominal_declarations,
-                        module.enum_declarations,
+                        list(module.nominal_declarations),
+                        list(module.enum_declarations),
                         collect_unions(module),
                         body.return_type,
                         intrinsics,
                     )?
-                    if frame_type(module, value, intrinsics)? != signature[0] or result != signature[1]:
+                    if frame_type(nominals, enums, value, intrinsics)? != signature[0] or result != signature[1]:
                         return Err("unsupported Body IR native Callable1 source signature")
                     return Ok((function_name(module, body), signature))
     return Err("unsupported Body IR unavailable native Callable1 source body")

@@ -60,9 +60,9 @@ fn generator_signature_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
     })
 }
 
-/// Build a shared scalar reference only after plan preflight validates its single referent; malformed arity stays an
-/// inferred error type.
-fn scalar_reference_ast(elements: &[PlanType], span: Span) -> ast::TyKind {
+/// Build an exact shared or mutable scalar reference after plan preflight validates its single referent; malformed
+/// arity stays an inferred error type.
+fn scalar_reference_ast(elements: &[PlanType], mutable: bool, span: Span) -> ast::TyKind {
     let [inner] = elements else {
         return ast::TyKind::Infer;
     };
@@ -70,7 +70,11 @@ fn scalar_reference_ast(elements: &[PlanType], span: Span) -> ast::TyKind {
         None,
         ast::MutTy {
             ty: ty(inner, span),
-            mutbl: ast::Mutability::Not,
+            mutbl: if mutable {
+                ast::Mutability::Mut
+            } else {
+                ast::Mutability::Not
+            },
         },
     )
 }
@@ -107,18 +111,48 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
         return ty;
     }
     let kind = match kind {
-        PlanType::ScalarRef(elements) => scalar_reference_ast(elements, span),
+        PlanType::ScalarRef(elements) => scalar_reference_ast(elements, false, span),
+        PlanType::ScalarMutRef(elements) => scalar_reference_ast(elements, true, span),
         PlanType::Future(arguments) => {
             let name = arguments.first().map(crate::futures::alias_name).unwrap_or_default();
             ast::TyKind::Path(None, ast::Path::from_ident(ident(&name, span)))
         }
         PlanType::String => ast::TyKind::Path(None, standard_path(&["string", "String"], span)),
+        PlanType::StringRef => ast::TyKind::Ref(
+            None,
+            ast::MutTy {
+                ty: ty(&PlanType::String, span),
+                mutbl: ast::Mutability::Not,
+            },
+        ),
+        PlanType::NativeStr => ast::TyKind::Path(None, ast::Path::from_ident(ident("str", span))),
+        PlanType::NativeSlice(elements) => elements
+            .first()
+            .map_or(ast::TyKind::Infer, |element| ast::TyKind::Slice(ty(element, span))),
+        PlanType::SliceRef(elements) | PlanType::SliceMutRef(elements) => ast::TyKind::Ref(
+            None,
+            ast::MutTy {
+                ty: ty(&PlanType::NativeSlice(elements.clone()), span),
+                mutbl: if matches!(kind, PlanType::SliceMutRef(_)) {
+                    ast::Mutability::Mut
+                } else {
+                    ast::Mutability::Not
+                },
+            },
+        ),
         PlanType::CallableArguments(inputs) => ast::TyKind::Tup(inputs.iter().map(|input| ty(input, span)).collect()),
         PlanType::Tuple(elements) => ast::TyKind::Tup(
             elements
                 .iter()
                 .map(|element| ty(&tuple_element_type(element.clone()), span))
                 .collect(),
+        ),
+        PlanType::TupleRef(elements) => ast::TyKind::Ref(
+            None,
+            ast::MutTy {
+                ty: ty(&PlanType::Tuple(elements.clone()), span),
+                mutbl: ast::Mutability::Not,
+            },
         ),
         PlanType::TupleMutRef(elements) => ast::TyKind::Ref(
             None,
@@ -168,6 +202,7 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
             },
         ),
         PlanType::Unit => ast::TyKind::Tup(ThinVec::new()),
+        PlanType::Never => ast::TyKind::Never,
         PlanType::UnitFunction => ast::TyKind::FnPtr(Box::new(ast::FnPtrTy {
             safety: ast::Safety::Default,
             ext: ast::Extern::None,
@@ -189,11 +224,15 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
                 },
             },
         ),
-        PlanType::StringMutRef => ast::TyKind::Ref(
+        PlanType::StringRef | PlanType::StringMutRef => ast::TyKind::Ref(
             None,
             ast::MutTy {
                 ty: ty(&PlanType::String, span),
-                mutbl: ast::Mutability::Mut,
+                mutbl: if matches!(kind, PlanType::StringMutRef) {
+                    ast::Mutability::Mut
+                } else {
+                    ast::Mutability::Not
+                },
             },
         ),
         PlanType::EnumRef(index, name) | PlanType::EnumMutRef(index, name) => ast::TyKind::Ref(
@@ -438,15 +477,18 @@ fn generator_ty(name: &str, leaf: &ListLeaf, depth: i64, span: Span) -> Box<ast:
 }
 
 /// Select the private reusable Fn alias or construct the distinct consuming FnOnce object structurally.
-/// The reusable alias retains rustc-owned bound-input lifetimes; consuming environments never acquire its clone ABI.
+/// The reusable alias retains rustc-owned bound-input lifetimes and is rooted at the crate so fields inside concrete
+/// layout namespaces see the same object type. Consuming environments never acquire its clone ABI.
 pub(crate) fn callable_object_ast(signature: &[PlanType], span: Span, consumes_environment: bool) -> Box<ast::Ty> {
     if !consumes_environment {
+        let mut path = ast::Path::from_ident(ident("crate", span));
+        path.segments.push(ast::PathSegment::from_ident(ident(
+            &crate::cloneable_closures::alias_name(signature),
+            span,
+        )));
         return Box::new(ast::Ty {
             id: ast::DUMMY_NODE_ID,
-            kind: ast::TyKind::Path(
-                None,
-                ast::Path::from_ident(ident(&crate::cloneable_closures::alias_name(signature), span)),
-            ),
+            kind: ast::TyKind::Path(None, path),
             span,
             tokens: None,
         });
@@ -486,32 +528,8 @@ fn function_pointer_ast(signature: &[PlanType], span: Span) -> ast::TyKind {
     let Some((result, parameters)) = signature.split_last() else {
         unreachable!("preflight rejects empty function-pointer signatures");
     };
-    let inputs = parameters
-        .iter()
-        .map(|parameter| ast::Param {
-            attrs: ThinVec::new(),
-            ty: ty(parameter, span),
-            pat: Box::new(ast::Pat {
-                id: ast::DUMMY_NODE_ID,
-                kind: ast::PatKind::Wild,
-                span,
-                tokens: None,
-            }),
-            id: ast::DUMMY_NODE_ID,
-            span,
-            is_placeholder: false,
-        })
-        .collect();
-    ast::TyKind::FnPtr(Box::new(ast::FnPtrTy {
-        safety: ast::Safety::Default,
-        ext: ast::Extern::None,
-        generic_params: ThinVec::new(),
-        decl: Box::new(ast::FnDecl {
-            inputs,
-            output: ast::FnRetTy::Ty(ty(result, span)),
-        }),
-        decl_span: span,
-    }))
+    let inputs = parameters.iter().map(|parameter| ty(parameter, span)).collect();
+    crate::ast_build::function_pointer(inputs, ty(result, span), span).kind
 }
 
 /// A diverging placeholder satisfies every admitted signature; `mir_built` replaces its body.
@@ -614,9 +632,13 @@ pub(crate) fn item(kind: ast::ItemKind, span: Span) -> Box<ast::Item> {
     })
 }
 
-/// Load each admitted external crate so canonical path resolution sees its module tree.
+/// Load metadata without reserving a source type's name at the crate root. The original dependency alias remains
+/// available in the extern prelude and on the anonymous HIR declaration for exact native crate resolution.
 pub fn external_crate(name: &str, span: Span) -> Box<ast::Item> {
-    item(ast::ItemKind::ExternCrate(None, ident(name, span)), span)
+    item(
+        ast::ItemKind::ExternCrate(Some(Symbol::intern(name)), ident("_", span)),
+        span,
+    )
 }
 
 /// Name the private namespace containing one source-named concrete layout; preflight checks its root collision.
@@ -633,13 +655,7 @@ pub(crate) fn model_items(
     span: Span,
 ) -> Vec<Box<ast::Item>> {
     if !model.library_item.is_empty() {
-        return vec![library_alias(
-            &model.name,
-            &model.library_item,
-            model.public,
-            &model.library_type_arguments,
-            span,
-        )];
+        return vec![library_alias(&model.name, model.public, span)];
     }
     let mut declaration = self::model(model, span);
     for derive in model.derives.iter().filter(|derive| derive.as_str() != "Display") {
@@ -692,25 +708,10 @@ pub(crate) fn model_items(
     vec![module, alias]
 }
 
-/// Name a stdlib layout's or enum's compiled crate item under the plan's name, so MIR uses that crate's own ADT and
-/// nothing about its storage is declared here.
-fn library_alias(name: &str, library_item: &str, public: bool, arguments: &[PlanType], span: Span) -> Box<ast::Item> {
-    let mut segments = library_item.split("::");
-    let mut path = ast::Path::from_ident(ident(segments.next().unwrap_or_default(), span));
-    for segment in segments {
-        path.segments.push(ast::PathSegment::from_ident(ident(segment, span)));
-    }
-    if !arguments.is_empty()
-        && let Some(last) = path.segments.last_mut()
-    {
-        last.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
-            span,
-            args: arguments
-                .iter()
-                .map(|argument| ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(argument, span))))
-                .collect(),
-        })));
-    }
+/// Declare a native layout's alias shell. The adapter supplies its exact metadata type through `type_of`, including
+/// erased Rust lifetime arguments. Reconstructing its target in AST would create a second generic binding contract
+/// and require source lifetime binders that are deliberately absent from Body IR.
+fn library_alias(name: &str, public: bool, span: Span) -> Box<ast::Item> {
     let mut alias = item(
         ast::ItemKind::TyAlias(Box::new(ast::TyAlias {
             defaultness: ast::Defaultness::Implicit,
@@ -720,7 +721,7 @@ fn library_alias(name: &str, library_item: &str, public: bool, arguments: &[Plan
             bounds: Vec::new(),
             ty: Some(Box::new(ast::Ty {
                 id: ast::DUMMY_NODE_ID,
-                kind: ast::TyKind::Path(None, path),
+                kind: ast::TyKind::Tup(ThinVec::new()),
                 span,
                 tokens: None,
             })),
@@ -843,7 +844,7 @@ fn model_tokens(model: &crate::plan::ModelDeclaration, span: Span) -> ast::token
 /// `#[serde(rename = "name")]` before a field in the derive input, as legacy writes it for an aliased field.
 ///
 /// The attribute exists only for serde's derive, which reads it as its helper; the injected AST field needs none.
-fn serde_rename_tokens(name: &str, span: Span) -> Vec<ast::tokenstream::AttrTokenTree> {
+pub(crate) fn serde_rename_tokens(name: &str, span: Span) -> Vec<ast::tokenstream::AttrTokenTree> {
     use ast::token::{Delimiter, Lit, LitKind, Token, TokenKind};
     use ast::tokenstream::{AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, Spacing};
     let literal = Lit::new(LitKind::Str, Symbol::intern(&name.escape_default().to_string()), None);
@@ -872,7 +873,7 @@ fn serde_rename_tokens(name: &str, span: Span) -> Vec<ast::tokenstream::AttrToke
 }
 
 /// Turn an admitted AST identifier into a token with the same source span and hygiene.
-fn name_token(name: &str, span: Span) -> ast::tokenstream::AttrTokenTree {
+pub(crate) fn name_token(name: &str, span: Span) -> ast::tokenstream::AttrTokenTree {
     ast::tokenstream::AttrTokenTree::Token(
         ast::token::Token::from_ast_ident(ident(name, span)),
         ast::tokenstream::Spacing::Alone,
@@ -880,7 +881,7 @@ fn name_token(name: &str, span: Span) -> ast::tokenstream::AttrTokenTree {
 }
 
 /// Emit declaration keywords as keywords rather than the raw identifiers inferred for reserved AST names.
-fn keyword_token(name: &str, span: Span) -> ast::tokenstream::AttrTokenTree {
+pub(crate) fn keyword_token(name: &str, span: Span) -> ast::tokenstream::AttrTokenTree {
     ast::tokenstream::AttrTokenTree::Token(
         ast::token::Token::new(
             ast::token::TokenKind::Ident(Symbol::intern(name), ast::token::IdentIsRaw::No),
@@ -892,7 +893,7 @@ fn keyword_token(name: &str, span: Span) -> ast::tokenstream::AttrTokenTree {
 
 /// Mirror admitted paths, tuples, references, slices, and function-pointer signatures into procedural derive tokens
 /// while preserving explicit lifetimes.
-fn type_tokens(ty: &ast::Ty) -> Vec<ast::tokenstream::AttrTokenTree> {
+pub(crate) fn type_tokens(ty: &ast::Ty) -> Vec<ast::tokenstream::AttrTokenTree> {
     use ast::token::{Delimiter, Token, TokenKind};
     use ast::tokenstream::{AttrTokenStream, AttrTokenTree, DelimSpacing, DelimSpan, Spacing};
     match &ty.kind {
@@ -1150,16 +1151,10 @@ fn hashed_type(name: &str, leaves: &[&ListLeaf], span: Span) -> Box<ast::Ty> {
 /// Inject source-ordered unit and tuple variants as AST nodes; executable bodies still enter only through MIR.
 pub fn enum_declaration(value: &crate::plan::EnumDeclaration, span: Span) -> Box<ast::Item> {
     if !value.carrier.is_empty() {
-        return carrier_alias(value, span);
+        return library_alias(&value.name, value.public, span);
     }
     if !value.library_item.is_empty() {
-        return library_alias(
-            &value.name,
-            &value.library_item,
-            value.public,
-            &value.library_type_arguments,
-            span,
-        );
+        return library_alias(&value.name, value.public, span);
     }
     let variants = value
         .variants
@@ -1212,37 +1207,6 @@ pub fn enum_declaration(value: &crate::plan::EnumDeclaration, span: Span) -> Box
     declaration.vis = visibility(value.public, span);
     declaration.tokens = Some(enum_tokens(value, span));
     declaration
-}
-
-/// Alias a checked concrete standard carrier so enum MIR uses the standard ADT, including its ABI and discriminants.
-fn carrier_alias(value: &crate::plan::EnumDeclaration, span: Span) -> Box<ast::Item> {
-    let fields: Vec<_> = value.variants.iter().flat_map(|variant| &variant.fields).collect();
-    let mut path = standard_path(&[if value.carrier == "Option" { "option" } else { "result" }], span);
-    let mut carrier = ast::PathSegment::from_ident(ident(&value.carrier, span));
-    carrier.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
-        span,
-        args: fields
-            .iter()
-            .map(|field| ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(field, span))))
-            .collect(),
-    })));
-    path.segments.push(carrier);
-    item(
-        ast::ItemKind::TyAlias(Box::new(ast::TyAlias {
-            defaultness: ast::Defaultness::Implicit,
-            ident: ident(&value.name, span),
-            generics: ast::Generics::default(),
-            after_where_clause: ast::WhereClause::default(),
-            bounds: Vec::new(),
-            ty: Some(Box::new(ast::Ty {
-                id: ast::DUMMY_NODE_ID,
-                kind: ast::TyKind::Path(None, path),
-                span,
-                tokens: None,
-            })),
-        })),
-        span,
-    )
 }
 
 /// Preserve enum tokens for derives from the exact planned layout without parsing generated Rust source.

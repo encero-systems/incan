@@ -37,6 +37,9 @@ mod builtins;
 mod constructors;
 mod generic_bounds;
 mod rust_boundary;
+mod rust_callable_bounds;
+mod rust_layouts;
+mod rust_predicate_inference;
 mod task_arguments;
 
 pub(in crate::typechecker::check_expr) use generic_bounds::first_open_type_param;
@@ -60,7 +63,8 @@ fn rust_path_last_segment_looks_like_type(path: &str) -> bool {
 }
 
 impl TypeChecker {
-    /// Retain a nongeneric variant's checked positional payload signature for both constructor call spellings.
+    /// Read a nongeneric variant's declared positional payload signature for contextual checking and both constructor
+    /// spellings.
     ///
     /// Generic variants need a concrete instantiation before they can claim declaration-slot types.
     pub(in crate::typechecker::check_expr) fn checked_enum_variant_parameters(
@@ -116,7 +120,8 @@ impl TypeChecker {
     ///
     /// Contextual return hints are part of the generic call plan, not a desugaring special case. They let direct
     /// source, vocab-produced AST, and nested call arguments all use the same inference path when a destination
-    /// type is known.
+    /// type is known. A type without a construction contract delegates to constructor checking, which refuses the
+    /// call instead of admitting an unknown result that cannot cross into Body IR.
     pub(in crate::typechecker::check_expr) fn check_call_with_expected(
         &mut self,
         callee: &Spanned<Expr>,
@@ -204,7 +209,12 @@ impl TypeChecker {
                     self.errors
                         .push(errors::explicit_call_site_type_args_not_supported(span));
                 }
-                self.check_call_args(args);
+                match variant_params.as_deref() {
+                    Some(parameters) => {
+                        self.check_call_arg_types_for_params(args, parameters);
+                    }
+                    None => self.check_call_args(args),
+                }
                 // Retain the checked positional payload surface for Body IR's declaration-slot binder.
                 if let Some(parameters) = variant_params {
                     self.type_info.record_call_site_callable_params_exact(span, &parameters);
@@ -298,7 +308,13 @@ impl TypeChecker {
                         );
                         let identity = self.type_info.resolved_identity(callee.span).cloned();
                         self.check_capturing_call_arguments(identity.as_ref(), &callable, &info.params, args);
-                        self.retain_body_ir_async_call_target(&info, span, callee.span, errors_before_call);
+                        self.retain_body_ir_async_call_target(
+                            info.is_async,
+                            &source_name,
+                            span,
+                            callee.span,
+                            errors_before_call,
+                        );
                         result
                     }
                     (SymbolKind::FunctionOverloads(overloads), _) => self
@@ -381,18 +397,7 @@ impl TypeChecker {
                 return ResolvedType::Unknown;
             }
 
-            // RFC 054: a generic standard-library function reached through a surface-function import, such as
-            // `channel[str](4)`, takes explicit type arguments as any generic function does, so a call that writes
-            // them is checked against the function's declaration below.
-            let explicit_generic_surface_call = !type_args.is_empty()
-                && self.active_surface_function_import(name).is_some()
-                && self.lookup_symbol(name).is_some_and(
-                    |symbol| matches!(&symbol.kind, SymbolKind::Function(info) if !info.type_params.is_empty()),
-                );
-            let errors_before_builtin = self.errors.len();
-            if !explicit_generic_surface_call
-                && let Some(result) = self.check_builtin_call(name, args, span, expected_return_ty)
-            {
+            if let Some(result) = self.check_builtin_call(name, args, span, expected_return_ty) {
                 if !type_args.is_empty() {
                     self.errors
                         .push(errors::explicit_call_site_type_args_not_supported(span));
@@ -402,12 +407,14 @@ impl TypeChecker {
                     && let Some(identity) = self.symbols.builtin_function_identity(builtin)
                 {
                     self.type_info.record_resolved_identity(callee.span, identity);
-                } else if incan_lang::lang::surface::constructors::from_str(name).is_some() {
-                    // Constructor checking has already excluded source shadowing; retain that selected builtin binding
-                    // for Body IR.
+                } else if incan_lang::lang::surface::constructors::from_str(name).is_some()
+                    || self.active_surface_function_import(name).is_some()
+                {
+                    // Constructor checking has already excluded source shadowing, and an active surface-function
+                    // import is the binding lookup selects. Retain that binding's proven identity at the callee, so
+                    // Body IR never recovers it from the import's local name.
                     self.record_direct_callee_identity(name, callee.span);
                 }
-                self.retain_body_ir_surface_call_arguments(name, args, span, errors_before_builtin);
                 return result;
             }
 
@@ -505,7 +512,7 @@ impl TypeChecker {
                             _ => None,
                         };
                         let Some(mut fields) = ctor_fields else {
-                            return ResolvedType::Unknown;
+                            return self.check_constructor(name, args, span);
                         };
                         self.record_direct_callee_identity(name, callee.span);
                         if let Some((_, type_bindings)) = &constructor_context {
@@ -556,7 +563,7 @@ impl TypeChecker {
                         let result =
                             self.validate_function_call(name, &func_info, type_args, args, span, expected_return_ty);
                         self.check_capturing_call_arguments(declaration.as_ref(), name, &func_info.params, args);
-                        self.retain_body_ir_async_call_target(&func_info, span, callee.span, first_error);
+                        self.retain_body_ir_async_call_target(func_info.is_async, name, span, callee.span, first_error);
                         if let Some(declaration) = declaration {
                             self.attach_related_declaration_to_new_errors(first_error, &declaration);
                         }
@@ -2218,14 +2225,12 @@ impl TypeChecker {
         let is_default = |path: &str| {
             traits::rust_paths(TraitId::Default).contains(&path) || path == traits::as_str(TraitId::Default)
         };
-        type_info
-            .implemented_traits
+        type_info.implemented_traits.iter().any(|implemented| {
+            implemented.is_unconditional() && !implemented.mutable_reference && is_default(implemented.path.as_str())
+        }) || type_info
+            .expanded_derive_traits
             .iter()
-            .any(|implemented| !implemented.mutable_reference && is_default(implemented.path.as_str()))
-            || type_info
-                .expanded_derive_traits
-                .iter()
-                .any(|implemented| is_default(implemented.path.as_str()))
+            .any(|implemented| is_default(implemented.path.as_str()))
     }
 
     /// Type-check a call to an imported Rust named-field struct using rust-inspect field metadata.
@@ -2320,10 +2325,18 @@ impl TypeChecker {
         }
 
         if !has_shape_error {
+            let retained = if omitted_fields {
+                None
+            } else {
+                self.retain_rust_construction(path, type_info, args, &selected_fields, span)
+            };
             self.type_info
                 .record_rust_named_field_constructor_fields(span, selected_fields);
             if omitted_fields {
                 self.type_info.record_rust_named_field_constructor_fills_defaults(span);
+            }
+            if let Some(result) = retained {
+                return result;
             }
         }
         ResolvedType::RustPath(path.to_string())

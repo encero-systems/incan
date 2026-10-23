@@ -59,13 +59,16 @@ mod helpers;
 mod json_member_requirements;
 mod mut_arguments;
 mod mut_marker;
+mod native_lifetimes;
 mod native_newtype_facts;
+mod native_storage;
 mod nominal_type_param_bounds;
 mod reachability;
 mod receiver_change;
 mod reserved_names;
 mod trait_bound_relations;
 mod type_info;
+pub(crate) use type_info::RustCheckedCall;
 mod union_member_identity;
 mod validate_rust_module;
 mod web_routes;
@@ -109,8 +112,7 @@ use helpers::{collection_name, collection_type_id, render_resolved_type_as_rust_
 use incan_lang::interop::{
     RUST_NEVER_TYPE_DISPLAY, RustExpandedDeriveTrait, RustFunctionSig, RustItemKind, RustItemMetadata,
     RustMutableReferenceCandidate, RustMutableReferenceTypeParam, RustParam, RustPayloadCarrier, RustTypeShape,
-    metadata_free_method_signature, render_rust_type_shape_path, rust_display_is_owned_string,
-    split_top_level_rust_args, strip_rust_borrow_lifetimes,
+    render_rust_type_shape_path, rust_display_is_owned_string, split_top_level_rust_args, strip_rust_borrow_lifetimes,
 };
 use incan_lang::lang::builtins::{self, BuiltinFnId};
 use incan_lang::lang::c_abi;
@@ -169,6 +171,9 @@ pub struct LoopContext {
 pub struct TypeAliasTarget {
     pub type_params: Vec<String>,
     pub target: ResolvedType,
+    /// Nominal leaves accepted in the alias's declaring scope. Importing the alias retains these owners even when
+    /// the consumer never imports the member types themselves.
+    pub nominal_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
 }
 
 /// Source member categories registered through the RFC 120 member-name authority.
@@ -268,7 +273,7 @@ impl ResolvedDependencyMember {
     }
 }
 
-/// Canonical nominal identity for one type exported through a compiled public-library dependency.
+/// Canonical identity for one type or trait exported through a compiled public-library dependency.
 ///
 /// Local aliases and provider-qualified internal signature spellings map to this value. Admitted artifacts compare
 /// by their exact selected instance and canonical declaration. Legacy metadata without canonical evidence retains
@@ -466,6 +471,16 @@ struct AnnotationOwner {
     declared_type_params: Vec<String>,
 }
 
+/// A callable's original type templates, retained before imports, receiver arguments, or partial application specialize
+/// them. Type-parameter positions never grant a declaration-owned nominal identity to a caller's substitution.
+struct DeclarationCallableTypes {
+    /// Parameter templates in declaration order, including their source binding labels.
+    params: Vec<CallableParam>,
+    /// Original return template before call-site substitution.
+    return_type: ResolvedType,
+}
+
+/// Collect and check a program while retaining accepted semantic facts for Body IR and analysis consumers.
 pub struct TypeChecker {
     /// Symbol table populated during the first pass.
     pub symbols: SymbolTable,
@@ -691,6 +706,11 @@ pub struct TypeChecker {
     /// spelling and span would invent a second declaration. This cache preserves the symbol table's authoritative
     /// answer across the dependency boundary.
     pub dependency_direct_member_identities: HashMap<String, HashMap<String, CanonicalSymbolId>>,
+    /// Nominal bindings captured in a source declaration's own scope before its signature enters a consumer.
+    /// Contextual empty values use these bindings rather than the caller's same-spelled declarations.
+    declaration_nominal_scopes: HashMap<CanonicalSymbolId, std::collections::BTreeMap<String, CanonicalSymbolId>>,
+    /// Original callable signatures before receiver or trait arguments replace their declaration-owned binders.
+    declaration_callables: HashMap<CanonicalSymbolId, DeclarationCallableTypes>,
     /// Re-export links a dependency module publishes, keyed by module cache key then exported name.
     ///
     /// A facade does not own what it re-exports, so an identity must follow this link to the declaring module instead
@@ -842,6 +862,15 @@ pub struct TypeChecker {
     nested_type_compatibility_depth: Cell<usize>,
     /// Successful canonical Rust ABI lookups made by this checker, including inferred receiver and return types.
     rust_metadata_queries: RefCell<BTreeSet<String>>,
+    /// Native signature types already resolved by this checker, keyed by metadata display and owner path.
+    ///
+    /// Resolution depends only on the Rust facts and path normalization, which are fixed for a checker's lifetime.
+    /// Without this cache, an owner's type arguments are re-derived from their displays at every level of generic
+    /// nesting, which doubles the work per level.
+    native_signature_types: RefCell<HashMap<(String, String), ResolvedType>>,
+    /// Native iteration protocol calls already selected by this checker, keyed by owner, trait, method and the
+    /// source type parameters in scope. Selection scans every implementation of the protocol trait.
+    native_iteration_calls: RefCell<HashMap<(String, String, String, String), Option<type_info::RustCheckedCall>>>,
     /// Actual complete-type lookup requests observed by this isolated checker in demand regression tests.
     #[cfg(test)]
     rust_complete_type_lookup_requests: Cell<usize>,
@@ -944,6 +973,8 @@ impl TypeChecker {
             dependency_direct_member_symbols: HashMap::new(),
             dependency_direct_member_type_aliases: HashMap::new(),
             dependency_direct_member_identities: HashMap::new(),
+            declaration_nominal_scopes: HashMap::new(),
+            declaration_callables: HashMap::new(),
             dependency_member_reexports: HashMap::new(),
             body_ir_dependency_pub_reexports: HashMap::new(),
             dependency_module_path_segments: HashMap::new(),
@@ -981,6 +1012,8 @@ impl TypeChecker {
             type_compatibility_depth: Cell::new(0),
             nested_type_compatibility_depth: Cell::new(0),
             rust_metadata_queries: RefCell::new(BTreeSet::new()),
+            native_signature_types: RefCell::new(HashMap::new()),
+            native_iteration_calls: RefCell::new(HashMap::new()),
             #[cfg(test)]
             rust_complete_type_lookup_requests: Cell::new(0),
         }
@@ -1145,26 +1178,30 @@ impl TypeChecker {
     }
 
     /// Resolve Rust metadata through the selected shipped ABI or inspection authority and retain successful demand.
-    pub fn rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+    pub fn rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<Arc<RustItemMetadata>> {
         let metadata = self.lookup_rust_item_metadata_for_path(canonical_path)?;
         self.record_rust_metadata_query(canonical_path);
         Some(metadata)
     }
 
     /// Return Rust item metadata from the shipped ABI of the Loaves the checker reaches.
-    fn lookup_rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+    fn lookup_rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<Arc<RustItemMetadata>> {
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
         let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
         self.loaves.rust_abi_item(lookup_path)
     }
 
     /// Return Rust item metadata from the shipped ABI of the Loaves the checker reaches.
-    pub fn rust_item_metadata_for_method_call(&self, canonical_path: &str, _method: &str) -> Option<RustItemMetadata> {
+    pub fn rust_item_metadata_for_method_call(
+        &self,
+        canonical_path: &str,
+        _method: &str,
+    ) -> Option<Arc<RustItemMetadata>> {
         self.rust_item_metadata_for_path(canonical_path)
     }
 
     /// Return complete type metadata from the shipped ABI of the Loaves the checker reaches.
-    pub fn rust_item_metadata_for_complete_type(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+    pub fn rust_item_metadata_for_complete_type(&self, canonical_path: &str) -> Option<Arc<RustItemMetadata>> {
         #[cfg(test)]
         self.rust_complete_type_lookup_requests
             .set(self.rust_complete_type_lookup_requests.get() + 1);
@@ -1183,6 +1220,9 @@ impl TypeChecker {
     /// path while rejecting obviously non-item spellings before hitting the metadata cache/extractor.
     fn rust_metadata_lookup_path(canonical_path: &str) -> Option<&str> {
         let trimmed = canonical_path.trim();
+        if trimmed == "[]" {
+            return Some(trimmed);
+        }
         if trimmed.is_empty() || trimmed == "{unknown}" {
             return None;
         }
@@ -1240,7 +1280,7 @@ impl TypeChecker {
     ///
     /// Rust metadata may qualify an inferred lifetime through the owner module (for example, `crate::'_`). Preserve
     /// real type arguments while eliding both plain and qualified lifetime placeholders before nominal comparison.
-    fn rust_generic_arg_is_lifetime(arg: &str) -> bool {
+    pub(crate) fn rust_generic_arg_is_lifetime(arg: &str) -> bool {
         let candidate = arg.trim().rsplit("::").next().unwrap_or(arg.trim());
         let Some(name) = candidate.strip_prefix('\'') else {
             return false;
@@ -1334,7 +1374,7 @@ impl TypeChecker {
     }
 
     /// Return already-attached or cache-only metadata for one canonical Rust identity path.
-    fn known_rust_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+    fn known_rust_metadata_for_path(&self, canonical_path: &str) -> Option<Arc<RustItemMetadata>> {
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
         if let Some(metadata) = self.symbols.all_symbols().iter().find_map(|sym| {
             let SymbolKind::RustItem(info) = &sym.kind else {
@@ -1353,7 +1393,7 @@ impl TypeChecker {
     /// Return the Rust definition metadata for a canonical path.
     fn rust_definition_for_path(&self, canonical_path: &str) -> Option<String> {
         self.known_rust_metadata_for_path(canonical_path)
-            .and_then(|metadata| metadata.definition_path)
+            .and_then(|metadata| metadata.definition_path.clone())
     }
 
     /// Resolve inspected default type arguments without inventing defaults for metadata that omitted them.
@@ -1383,12 +1423,26 @@ impl TypeChecker {
     /// rust-inspect extraction from this path would leak a heavy workspace/indexing concern into ordinary semantic
     /// checks.
     fn rust_identity_for_type(&self, ty: &ResolvedType) -> Option<RustTypeIdentity> {
+        let nominal = match ty {
+            ResolvedType::Named(name) => Some((name, &[][..])),
+            ResolvedType::Generic(name, arguments) => Some((name, arguments.as_slice())),
+            _ => None,
+        };
+        if let Some((name, arguments)) = nominal
+            && let Some(TypeInfo::Newtype(info)) = self.lookup_semantic_type_info(name)
+            && info.is_rusttype
+        {
+            let bindings = type_param_subst_map(&info.type_params, arguments);
+            let underlying = substitute_resolved_type(&info.underlying, &bindings);
+            let path = self.rust_path_for_rusttype_underlying(&underlying)?;
+            return self.rust_identity_for_type(&ResolvedType::RustPath(path));
+        }
         match ty {
             ResolvedType::RustPath(path) => {
                 let (base, args) = self.rust_path_base_and_args(path);
                 let metadata = self.known_rust_metadata_for_path(base.as_str());
                 let definition = metadata.as_ref().and_then(|metadata| metadata.definition_path.clone());
-                let defaults = self.rust_type_param_defaults(metadata.as_ref());
+                let defaults = self.rust_type_param_defaults(metadata.as_deref());
                 Some((base, definition, args, defaults))
             }
             ResolvedType::Named(name) => {
@@ -1400,7 +1454,7 @@ impl TypeChecker {
                     .clone()
                     .or_else(|| self.rust_item_metadata_for_path(info.path.as_str()));
                 let definition = metadata.as_ref().and_then(|metadata| metadata.definition_path.clone());
-                let defaults = self.rust_type_param_defaults(metadata.as_ref());
+                let defaults = self.rust_type_param_defaults(metadata.as_deref());
                 Some((
                     Self::normalize_rust_namespace_path(info.path.as_str()).to_string(),
                     definition,
@@ -1409,6 +1463,14 @@ impl TypeChecker {
                 ))
             }
             ResolvedType::Generic(name, args) => {
+                if name.contains("::") {
+                    let arguments = args
+                        .iter()
+                        .map(render_resolved_type_as_rust_arg)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return self.rust_identity_for_type(&ResolvedType::RustPath(format!("{name}<{arguments}>")));
+                }
                 let SymbolKind::RustItem(info) = &self.lookup_symbol(name)?.kind else {
                     return None;
                 };
@@ -1417,7 +1479,7 @@ impl TypeChecker {
                     .clone()
                     .or_else(|| self.rust_item_metadata_for_path(info.path.as_str()));
                 let definition = metadata.as_ref().and_then(|metadata| metadata.definition_path.clone());
-                let defaults = self.rust_type_param_defaults(metadata.as_ref());
+                let defaults = self.rust_type_param_defaults(metadata.as_deref());
                 Some((
                     Self::normalize_rust_namespace_path(info.path.as_str()).to_string(),
                     definition,
@@ -1562,7 +1624,7 @@ impl TypeChecker {
             .collect()
     }
 
-    /// Return the canonical public-library identity and generic arguments carried by one named type spelling.
+    /// Return the canonical public-library identity and generic arguments carried by one named type or trait spelling.
     fn public_library_type_identity_for_type<'a>(
         &'a self,
         ty: &'a ResolvedType,
@@ -1582,9 +1644,9 @@ impl TypeChecker {
 
     /// Compare provider-qualified public-library identities before ordinary nominal spelling equality.
     ///
-    /// Returning `None` leaves non-provider types on the ordinary compatibility path. When both sides carry compiled
-    /// provider identity, the dependency and source declaration must match and generic arguments are compared
-    /// recursively through the same compatibility rules.
+    /// Returning `None` leaves non-provider types and distinct trait-related declarations on the ordinary compatibility
+    /// path, where adoption and supertrait relations are checked. Equal provider identities compare their generic
+    /// arguments recursively; distinct nominal owners remain incompatible.
     fn public_library_type_identities_compatible(
         &self,
         actual: &ResolvedType,
@@ -1592,7 +1654,18 @@ impl TypeChecker {
     ) -> Option<bool> {
         let (actual_identity, actual_args) = self.public_library_type_identity_for_type(actual)?;
         let (expected_identity, expected_args) = self.public_library_type_identity_for_type(expected)?;
-        if actual_identity != expected_identity || actual_args.len() != expected_args.len() {
+        if actual_identity != expected_identity {
+            if [actual_identity, expected_identity].iter().any(|identity| {
+                identity
+                    .canonical
+                    .as_ref()
+                    .is_some_and(|canonical| canonical.kind == SemanticSourceTargetKind::Trait)
+            }) {
+                return None;
+            }
+            return Some(false);
+        }
+        if actual_args.len() != expected_args.len() {
             return Some(false);
         }
         Some(
@@ -1859,22 +1932,26 @@ impl TypeChecker {
         None
     }
 
-    /// Resolve a Rust callable bound display into an Incan function type.
+    /// Resolve a safe Rust function pointer or callable bound display into an Incan function type.
     ///
     /// Rust generic callback parameters often surface as `impl FnMut(&mut T, &U)` or through a generic bound that is
     /// normalized to that display. Treating those as ordinary type variables lets by-value Incan function values reach
     /// rustc and fail there. This resolver preserves the callback input borrow shape so the frontend can reject
     /// incompatible named callbacks before emission.
     fn resolved_function_type_from_rust_callable_bound_display(&self, rust_ty: &str) -> Option<ResolvedType> {
-        let body = Self::rust_callable_bound_body(rust_ty)?;
-        let body = body
-            .strip_prefix("std::ops::")
-            .or_else(|| body.strip_prefix("core::ops::"))
-            .unwrap_or(body);
-        let after_name = ["FnOnce", "FnMut", "Fn"]
-            .into_iter()
-            .find_map(|name| body.strip_prefix(name))?
-            .trim_start();
+        let after_name = if let Some(pointer) = rust_ty.trim().strip_prefix("fn") {
+            pointer.trim_start()
+        } else {
+            let body = Self::rust_callable_bound_body(rust_ty)?;
+            let body = body
+                .strip_prefix("std::ops::")
+                .or_else(|| body.strip_prefix("core::ops::"))
+                .unwrap_or(body);
+            ["FnOnce", "FnMut", "Fn"]
+                .into_iter()
+                .find_map(|name| body.strip_prefix(name))?
+                .trim_start()
+        };
         if !after_name.starts_with('(') {
             return None;
         }
@@ -1957,18 +2034,19 @@ impl TypeChecker {
     /// Expand a Rust type alias applied to `args` into its target display, or `None` when `base` names no alias.
     ///
     /// The alias item records its target with the alias's own parameters; substituting the written arguments gives the
-    /// aliased type exactly, including arms the alias spelling omits.
+    /// aliased type exactly, including arms the alias spelling omits. Shipped caches and check-time extraction expose
+    /// the same alias contract; a dependency without a shipped cache must retain its target too.
     fn rust_alias_expansion(&self, base: &str, args: &[&str]) -> Option<String> {
         if !base.contains("::") {
             return None;
         }
         let lookup_path = Self::rust_metadata_lookup_path(base)?;
-        let metadata = self.loaves.rust_abi_item(lookup_path)?;
+        let metadata = self.known_rust_metadata_for_path(lookup_path)?;
         self.record_rust_metadata_query(base);
-        let RustItemKind::Type(info) = metadata.kind else {
+        let RustItemKind::Type(info) = &metadata.kind else {
             return None;
         };
-        let target = info.alias_target?;
+        let target = info.alias_target.as_deref()?;
         if info.type_params.len() != args.len() {
             return None;
         }
@@ -2114,8 +2192,8 @@ impl TypeChecker {
     /// Return callable-parameter metadata for one rust-inspect-backed enum variant constructor.
     ///
     /// Rust enum variants are callable constructors at the source surface, but they are not ordinary inherent
-    /// functions. Carrying their payload shapes through the same callable metadata path keeps backend argument
-    /// ownership planning target-driven instead of guessing from the source expression shape.
+    /// functions. Named fields retain their metadata names and declaration order for ordinary argument binding;
+    /// tuple payloads remain positional. The same payload contract directs downstream ownership planning.
     pub fn rust_variant_callable_params(&self, rust_path: &str, variant: &str) -> Option<Vec<CallableParam>> {
         let metadata = self.rust_item_metadata_for_path(rust_path)?;
         let RustItemKind::Type(info) = &metadata.kind else {
@@ -2126,7 +2204,14 @@ impl TypeChecker {
             variant
                 .fields
                 .iter()
-                .map(|field| CallableParam::positional(self.resolved_type_from_rust_shape(field)))
+                .enumerate()
+                .map(|(index, field)| {
+                    let ty = self.resolved_type_from_rust_shape(field);
+                    match variant.field_names.get(index) {
+                        Some(name) => CallableParam::named(name, ty, ParamKind::Normal),
+                        None => CallableParam::positional(ty),
+                    }
+                })
                 .collect(),
         )
     }
@@ -2163,12 +2248,6 @@ impl TypeChecker {
 
     /// Resolve a Rust-origin associated function signature (must not take `self`) from cached metadata.
     pub fn rust_associated_function_signature(&self, rust_path: &str, method: &str) -> Option<RustFunctionSig> {
-        // Stable metadata-free contracts override a degraded rust-analyzer display. This particularly matters for
-        // sysroot APIs such as `Path::new<S: AsRef<OsStr> + ?Sized>(&S)`, where preserving the source borrow shape is
-        // required for generated Rust to compile even when the inspector inferred a concrete owned value.
-        if let Some(signature) = metadata_free_method_signature(rust_path, method) {
-            return Some(signature);
-        }
         let sig = self.rust_method_signature(rust_path, method)?;
         if Self::rust_signature_has_receiver(&sig) {
             return None;
@@ -2182,6 +2261,8 @@ impl TypeChecker {
     /// primitive spellings and `Option` / `Result` wrappers are recognized, including namespaced aliases whose
     /// trailing segment is `Option` or `Result`. Nested generics, lifetimes, and crate paths otherwise become
     /// [`ResolvedType::RustPath`] (or [`ResolvedType::Unknown`] when empty); lowering relies on rustc for fidelity.
+    /// Native scalar names precede source import lookup, and metadata-selected transparent aliases retain their
+    /// target carrier rather than inventing a nominal layout for a public primitive path.
     ///
     /// ## `Result<T, E>` parsing
     ///
@@ -2193,6 +2274,26 @@ impl TypeChecker {
         let normalized = Self::compact_rust_display(display.as_str());
         if normalized == RUST_NEVER_TYPE_DISPLAY {
             return ResolvedType::Never;
+        }
+        // Native scalar names are metadata vocabulary, independent of same-spelled source imports.
+        if let Some(id) = numerics::from_str(&normalized)
+            && numerics::as_str(id) == normalized
+        {
+            return match id {
+                NumericTypeId::I64 => ResolvedType::Int,
+                NumericTypeId::F64 => ResolvedType::Float,
+                NumericTypeId::Bool => ResolvedType::Bool,
+                id => ResolvedType::Numeric(id),
+            };
+        }
+        // Public primitive re-exports are transparent aliases. A nominal alias keeps its public spelling: its expansion
+        // can include default arguments that no public path names.
+        if !normalized.contains('<')
+            && let Some(expanded) = self.rust_alias_expansion(&normalized, &[])
+            && expanded != normalized
+            && expanded.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        {
+            return self.resolved_type_from_rust_display(&expanded);
         }
         if let Some(callable) = self.resolved_function_type_from_rust_callable_bound_display(display.as_str()) {
             return callable;
@@ -2221,28 +2322,23 @@ impl TypeChecker {
         if rust_display_is_owned_string(normalized.as_str()) {
             return ResolvedType::Str;
         }
+        if let Some(inner) = display.strip_prefix('(').and_then(|inner| inner.strip_suffix(')'))
+            && inner.contains(',')
+        {
+            return ResolvedType::Tuple(
+                Self::split_top_level_generic_args(inner)
+                    .into_iter()
+                    .map(|element| self.resolved_type_from_rust_display(element))
+                    .collect(),
+            );
+        }
         match normalized.as_str() {
             "{unknown}" => ResolvedType::Unknown,
-            "bool" => ResolvedType::Bool,
-            "f64" => ResolvedType::Float,
-            "i64" => ResolvedType::Int,
-            "f32" => ResolvedType::Numeric(NumericTypeId::F32),
-            "i8" => ResolvedType::Numeric(NumericTypeId::I8),
-            "i16" => ResolvedType::Numeric(NumericTypeId::I16),
-            "i32" => ResolvedType::Numeric(NumericTypeId::I32),
-            "i128" => ResolvedType::Numeric(NumericTypeId::I128),
-            "isize" => ResolvedType::Numeric(NumericTypeId::ISize),
-            "u8" => ResolvedType::Numeric(NumericTypeId::U8),
-            "u16" => ResolvedType::Numeric(NumericTypeId::U16),
-            "u32" => ResolvedType::Numeric(NumericTypeId::U32),
-            "u64" => ResolvedType::Numeric(NumericTypeId::U64),
-            "u128" => ResolvedType::Numeric(NumericTypeId::U128),
-            "usize" => ResolvedType::Numeric(NumericTypeId::USize),
             "str" | "&str" => ResolvedType::Str,
             "Vec<u8>" | "std::vec::Vec<u8>" | "alloc::vec::Vec<u8>" | "&[u8]" => ResolvedType::Bytes,
             "()" => ResolvedType::Unit,
             _ if normalized.ends_with('>') => {
-                if let Some((base, args)) = Self::rust_generic_base_and_args(normalized.as_str()) {
+                if let Some((base, args)) = Self::rust_generic_base_and_args(display.as_str()) {
                     let tail = base.rsplit("::").next().unwrap_or(base);
                     match collection_type_id(tail) {
                         Some(CollectionTypeId::Option) => {
@@ -2279,17 +2375,20 @@ impl TypeChecker {
                         _ => {}
                     }
                     if let Some(structural) = self
-                        .resolved_structural_rust_param_display(normalized.as_str(), |checker, arg| {
+                        .resolved_structural_rust_param_display(display.as_str(), |checker, arg| {
                             checker.resolved_type_from_rust_display(arg)
                         })
                     {
                         return structural;
                     }
+                    if let Some(source) = self.resolved_source_generic_from_rust_display(base, &args) {
+                        return source;
+                    }
                 }
                 if self.lookup_type_info(normalized.as_str()).is_some() {
                     ResolvedType::Named(normalized)
                 } else {
-                    ResolvedType::RustPath(normalized)
+                    ResolvedType::RustPath(display)
                 }
             }
             _ if !normalized.is_empty() => {
@@ -2303,6 +2402,30 @@ impl TypeChecker {
             }
             _ => ResolvedType::Unknown,
         }
+    }
+
+    /// Name a source model, class, enum or newtype instance that a Rust display spells with angle brackets
+    /// (`Node<T>`), so the checked type keeps the declaration instead of an opaque Rust path. An argument that names a
+    /// type parameter of the enclosing declaration stays that parameter.
+    fn resolved_source_generic_from_rust_display(&self, base: &str, args: &[&str]) -> Option<ResolvedType> {
+        if !matches!(
+            self.lookup_semantic_type_info(base),
+            Some(TypeInfo::Model(_) | TypeInfo::Class(_) | TypeInfo::Enum(_) | TypeInfo::Newtype(_))
+        ) {
+            return None;
+        }
+        let arguments = args
+            .iter()
+            .map(|argument| {
+                let parameter = ResolvedType::Named(argument.trim().to_owned());
+                if self.active_type_param_name(&parameter).is_some() {
+                    parameter
+                } else {
+                    self.resolved_type_from_rust_display(argument)
+                }
+            })
+            .collect();
+        Some(ResolvedType::Generic(base.to_owned(), arguments))
     }
 
     /// Return a Rust generic parameter display when rust-analyzer reports a by-value generic boundary.
@@ -2359,12 +2482,12 @@ impl TypeChecker {
                 ResolvedType::Ref(Box::new(inner_ty))
             };
         }
-        if let Some(structural) = self.resolved_structural_rust_param_display(normalized.as_str(), |checker, arg| {
+        if let Some(structural) = self.resolved_structural_rust_param_display(display.as_str(), |checker, arg| {
             checker.resolved_param_type_from_rust_display(arg)
         }) {
             return structural;
         }
-        self.resolved_type_from_rust_display(normalized.as_str())
+        self.resolved_type_from_rust_display(display.as_str())
     }
 
     /// Convert a Rust parameter display into a resolved type after expanding crate-relative paths for its owner.
@@ -2386,18 +2509,16 @@ impl TypeChecker {
     pub fn resolved_rust_boundary_target_from_param_display(&self, rust_ty: &str) -> ResolvedType {
         let trimmed = rust_ty.trim();
         let display = Self::rust_display_without_lifetimes(trimmed);
-        let normalized = Self::compact_rust_display(&display);
         if let Some(callable) = self.resolved_function_type_from_rust_callable_bound_display(display.as_str()) {
             return callable;
         }
         if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(display.as_str()) {
-            let inner_normalized = Self::compact_rust_display(inner);
             let inner_ty = match inner {
                 "str" => ResolvedType::Str,
                 "[u8]" => ResolvedType::Bytes,
                 "String" | "std::string::String" | "alloc::string::String" => ResolvedType::RustPath(inner.to_string()),
                 "Vec<u8>" | "std::vec::Vec<u8>" | "alloc::vec::Vec<u8>" => ResolvedType::RustPath(inner.to_string()),
-                _ => self.resolved_type_from_rust_display(inner_normalized.as_str()),
+                _ => self.resolved_type_from_rust_display(inner),
             };
             return if is_mut {
                 ResolvedType::RefMut(Box::new(inner_ty))
@@ -2405,12 +2526,12 @@ impl TypeChecker {
                 ResolvedType::Ref(Box::new(inner_ty))
             };
         }
-        if let Some(structural) = self.resolved_structural_rust_param_display(normalized.as_str(), |checker, arg| {
+        if let Some(structural) = self.resolved_structural_rust_param_display(display.as_str(), |checker, arg| {
             checker.resolved_rust_boundary_target_from_param_display(arg)
         }) {
             return structural;
         }
-        self.resolved_param_type_from_rust_display(normalized.as_str())
+        self.resolved_param_type_from_rust_display(display.as_str())
     }
 
     /// Convert a Rust boundary target after expanding crate-relative paths for its owner.
@@ -2494,7 +2615,8 @@ impl TypeChecker {
         self.type_info.expressions.expr_types.insert((span.start, span.end), ty);
     }
 
-    /// Project named leaves through the module/provider type binding retained by the accepting compilation.
+    /// Project named leaves through the module/provider or native metadata binding retained by this compilation,
+    /// retaining an inspected runtime carrier's identity before Body IR normalizes its dedicated builtin type.
     fn collect_expression_type_identities(
         &self,
         ty: &ResolvedType,
@@ -2502,6 +2624,7 @@ impl TypeChecker {
         identities: &mut std::collections::BTreeMap<Vec<usize>, CanonicalSymbolId>,
     ) {
         match ty {
+            ResolvedType::RustPath(display) => self.collect_rust_expression_type_identities(display, path, identities),
             ResolvedType::Named(name) => {
                 // Resolved nominal types keep their accepted module/provider binding even when a local value
                 // shadows the source alias. Provider-only return types may have no lexical symbol at all.
@@ -2542,6 +2665,61 @@ impl TypeChecker {
         }
     }
 
+    /// Retain native leaf identities at checking, using the same signature type walk as native call carriers.
+    /// Opaque generic owners contribute their argument leaves; an exact native item query authorizes a nominal
+    /// leaf. Unsupported displays confer no identity, and registered runtime builtins keep their existing authority.
+    fn collect_rust_expression_type_identities(
+        &self,
+        display: &str,
+        path: &mut Vec<usize>,
+        identities: &mut std::collections::BTreeMap<Vec<usize>, CanonicalSymbolId>,
+    ) {
+        let resolved = self.native_rust_signature_type(display, "");
+        if resolved != ResolvedType::RustPath(display.to_owned()) {
+            self.collect_expression_type_identities(&resolved, path, identities);
+            return;
+        }
+        if let Some((base, arguments)) = Self::rust_generic_base_and_args(display) {
+            for (index, argument) in arguments
+                .into_iter()
+                .filter(|argument| !Self::rust_generic_arg_is_lifetime(argument))
+                .enumerate()
+            {
+                path.push(index);
+                self.collect_expression_type_identities(
+                    &self.native_rust_signature_type(argument, base),
+                    path,
+                    identities,
+                );
+                path.pop();
+            }
+            return;
+        }
+        if let Some(builtin) = incan_semantics_core::RuntimeBuiltinType::from_carrier_path(display) {
+            let identity = self
+                .type_info
+                .body_ir_runtime_types
+                .values()
+                .find(|identity| {
+                    incan_semantics_core::RuntimeBuiltinType::from_identity(identity).as_ref() == Some(&builtin)
+                })
+                .cloned()
+                .or_else(|| incan_semantics_core::body_ir::rust_item_identity(display));
+            if let Some(identity) = identity {
+                identities.insert(path.clone(), identity);
+            }
+            return;
+        }
+        let Some(metadata) = self.rust_item_metadata_for_path(display) else {
+            return;
+        };
+        if matches!(metadata.kind, RustItemKind::Type(_))
+            && let Some(identity) = incan_semantics_core::body_ir::rust_item_identity(&metadata.canonical_path)
+        {
+            identities.insert(path.clone(), identity);
+        }
+    }
+
     /// Record `destination` as the type the value at `value_span` is written to, when the value's type `value_ty` is
     /// compatible with it and the destination is an `Option` (after alias expansion) or the value is numeric (#1858,
     /// RFC 009).
@@ -2558,8 +2736,11 @@ impl TypeChecker {
         destination: &ResolvedType,
     ) {
         let destination = self.expand_type_aliases(destination.clone());
-        let adapts =
-            destination.is_option() || (numeric_type_id_for_compat(value_ty).is_some() && *value_ty != destination);
+        let materializes = !matches!(destination, ResolvedType::Ref(_) | ResolvedType::RefMut(_))
+            && self.borrowed_source_value_materializes(value_ty);
+        let adapts = destination.is_option()
+            || (numeric_type_id_for_compat(value_ty).is_some() && *value_ty != destination)
+            || materializes;
         if !adapts || !self.types_compatible(value_ty, &destination) {
             return;
         }
@@ -2567,6 +2748,26 @@ impl TypeChecker {
             .expressions
             .value_destination_types
             .insert((value_span.start, value_span.end), destination);
+    }
+
+    /// Whether `borrowed` is a shared reference to a source model, or to a class that derives `Clone`: the language
+    /// copies such values on demand, so a write site or call slot that needs an owned value takes a clone of it. A
+    /// type imported from Rust keeps its own copy and clone semantics and is never materialized here.
+    pub(in crate::typechecker) fn borrowed_source_value_materializes(&self, borrowed: &ResolvedType) -> bool {
+        let ResolvedType::Ref(inner) = borrowed else {
+            return false;
+        };
+        let (ResolvedType::Named(name) | ResolvedType::Generic(name, _)) = inner.as_ref() else {
+            return false;
+        };
+        if self.rust_canonical_path_for_nominal_receiver(name, None).is_some() {
+            return false;
+        }
+        match self.lookup_semantic_type_info(name) {
+            Some(TypeInfo::Model(_)) => true,
+            Some(TypeInfo::Class(_)) => self.type_implements_trait(name, "Clone"),
+            _ => false,
+        }
     }
 
     /// Record the final checked type selected for one assignment binding.
@@ -2847,7 +3048,8 @@ impl TypeChecker {
             .any(|(name, _)| self.trait_name_matches(name, supertrait_name))
     }
 
-    /// Return whether two visible trait spellings refer to the same source trait.
+    /// Return whether two visible trait spellings refer to the same source trait. Standard imports and retained
+    /// public Loaf paths compare through the owning manifest's declaration identity before their source paths.
     fn trait_name_matches(&self, candidate: &str, expected: &str) -> bool {
         if candidate == expected {
             return true;
@@ -2870,7 +3072,17 @@ impl TypeChecker {
             self.resolve_bound_trait_path(candidate),
             self.resolve_bound_trait_path(expected),
         ) {
-            (Some(candidate), Some(expected)) => candidate == expected,
+            (Some(candidate), Some(expected)) => {
+                match (
+                    self.loaf_member_identity(&candidate.0, &candidate.1)
+                        .or_else(|| self.package_trait_declaration(&candidate.0, &candidate.1)),
+                    self.loaf_member_identity(&expected.0, &expected.1)
+                        .or_else(|| self.package_trait_declaration(&expected.0, &expected.1)),
+                ) {
+                    (Some(candidate), Some(expected)) => candidate == expected,
+                    _ => candidate == expected,
+                }
+            }
             (Some(_), None) | (None, Some(_)) => false,
             (None, None) => {
                 candidate.rsplit('.').next().unwrap_or(candidate) == expected.rsplit('.').next().unwrap_or(expected)
@@ -3436,7 +3648,8 @@ impl TypeChecker {
     ///
     /// This records all visible trait and method-alias symbols (local and imported), not just declarations in the
     /// current module, so lowering can resolve supertrait graphs, generic trait arity, and same-type method aliases
-    /// across module boundaries.
+    /// across module boundaries. Newtype construction retains the selected hook's checked signature and identity
+    /// so imported validation calls use the declaring module's contract.
     fn record_trait_metadata_for_lowering(&mut self) {
         self.type_info.traits.direct_supertraits.clear();
         self.type_info.traits.type_params.clear();
@@ -3444,6 +3657,7 @@ impl TypeChecker {
         self.type_info.traits.default_method_identities.clear();
         self.type_info.declarations.type_method_rebindings.clear();
         self.type_info.declarations.newtype_construction.clear();
+        self.type_info.rust.type_aliases.clear();
         self.type_info.derivations.derivable_modules = self.dependency_derivable_modules.clone();
         self.type_info.derivations.trait_rust_derive_paths = self.dependency_trait_rust_derive_paths.clone();
         let mut method_rebindings = Vec::new();
@@ -3479,6 +3693,15 @@ impl TypeChecker {
                     method_rebindings.push((sym.name.clone(), aliases));
                     if !info.is_rusttype {
                         newtype_construction.push((sym.name.clone(), info.clone()));
+                    } else if let Some((path, _, arguments, _)) =
+                        self.rust_identity_for_type(&ResolvedType::Named(sym.name.clone()))
+                    {
+                        let template =
+                            self.rust_inference_type(&ResolvedType::Generic(path, arguments), &info.type_params);
+                        self.type_info
+                            .rust
+                            .type_aliases
+                            .insert(sym.name.clone(), (info.type_params.clone(), template));
                     }
                     adopted_traits.extend(info.trait_adoptions.clone());
                 }
@@ -3488,6 +3711,7 @@ impl TypeChecker {
                 _ => {}
             }
         }
+        self.record_standard_trait_metadata_for_lowering();
         for (qualified_trait_name, info) in &self.dependency_module_traits {
             for (method_name, method) in &info.methods {
                 self.type_info
@@ -3526,14 +3750,27 @@ impl TypeChecker {
             let supports_string_conversion = self
                 .temporary_trait_capability_supports_type(string_conversion, &concrete_type)
                 .unwrap_or(false);
-            let checked_constructor = Self::validated_newtype_ctor_name(&name, &info);
-            let checked_constructor_identity = checked_constructor
+            let declared_name = self
+                .symbols
+                .module_type_identity(&name)
+                .map_or(name.as_str(), |identity| identity.declaration_name.as_str());
+            let checked_constructor = Self::validated_newtype_ctor_name(declared_name, &info);
+            let checked_constructor_binding = checked_constructor
                 .as_deref()
                 .and_then(|constructor| info.methods.get(constructor))
-                .and_then(|method| method.identity.clone());
+                .map(|method| Self::newtype_constructor_binding(method, concrete_type.clone()));
+            let checked_constructor_identity = checked_constructor_binding
+                .as_ref()
+                .and_then(|binding| binding.identity.clone());
             let automatic_derives = self.newtype_automatic_derive_names(&name, &info);
             let mut explicit_derives = info.derives.clone();
             Self::append_implied_derives(&mut explicit_derives);
+            if self.append_native_rust_derives(&name, &mut explicit_derives) {
+                self.type_info
+                    .declarations
+                    .rust_native_derive_types
+                    .insert(name.clone());
+            }
             // Legacy forwards a std.serde.json protocol the newtype adopts into its derives after the explicit ones.
             for derive in self.adopted_json_derives(&info.trait_adoptions) {
                 if !explicit_derives.iter().any(|existing| existing == derive) {
@@ -3549,11 +3786,39 @@ impl TypeChecker {
                     underlying: info.underlying.clone(),
                     checked_constructor,
                     checked_constructor_identity,
+                    checked_constructor_binding,
                     constraints: info.constraints.clone(),
                     implicit_coercion_enabled: info.implicit_coercion_enabled,
                     supports_string_conversion,
                 },
             );
+        }
+    }
+
+    /// Retain loaded standard supertraits under their declaring module, without exposing their bare names in source.
+    /// An imported Ord's Eq slots must survive even when the consumer imports no Eq or declares its own Eq.
+    fn record_standard_trait_metadata_for_lowering(&mut self) {
+        for (name, info) in &self.standard_traits {
+            let Some(module) = info
+                .methods
+                .values()
+                .filter_map(|method| method.identity.as_ref())
+                .find_map(|identity| self.standard_declaring_module(identity))
+            else {
+                continue;
+            };
+            let key = format!("{}.{name}", module.join("."));
+            self.type_info
+                .traits
+                .direct_supertraits
+                .insert(key.clone(), info.supertraits.clone());
+            self.type_info
+                .traits
+                .type_params
+                .insert(key.clone(), info.type_params.clone());
+            for (method_name, method) in &info.methods {
+                self.type_info.traits.record_method(&key, method_name, method);
+            }
         }
     }
 
@@ -5150,6 +5415,19 @@ impl TypeChecker {
         })?;
         module_path.extend(nested_module.iter().cloned());
 
+        // A Rust item a Loaf module re-exports is that Rust item, spelled qualified or not.
+        if let Some((library, rest)) = self.loaf_module(&module_path)
+            && let Ok(Some(member)) = self.resolve_pub_library_module_symbol_member(&library, &rest, name)
+            && let SymbolKind::RustItem(info) = &member.kind
+            && let Some(identity) = member.canonical.clone()
+        {
+            return Some(QualifiedTypeReferenceInfo {
+                identity,
+                module_path,
+                resolved: ResolvedType::RustPath(info.path.clone()),
+            });
+        }
+
         // Compiler-known surface types have no source declaration for the stdlib cache to return. Their registry
         // ownership is nevertheless the same proof a direct `from std.web import Html` uses, so retain that stable
         // builtin identity and canonical resolved spelling for a qualified annotation as well (#1824).
@@ -5255,11 +5533,63 @@ impl TypeChecker {
             .map(|param| param.name.clone())
             .collect::<Vec<_>>();
         let target = self.resolve_type_checked(&alias.target);
-        self.type_aliases
-            .insert(alias.name.clone(), TypeAliasTarget { type_params, target });
+        let mut nominal_identities = std::collections::BTreeMap::new();
+        self.retain_alias_nominal_identities(&target, &mut nominal_identities);
+        self.type_aliases.insert(
+            alias.name.clone(),
+            TypeAliasTarget {
+                type_params,
+                target,
+                nominal_identities,
+            },
+        );
     }
 
-    /// Expand transparent source type aliases inside a resolved type.
+    /// Snapshot alias leaves while their declaration's lexical bindings are active. A consumer must not look up an
+    /// expanded alias's unimported member in its own scope or infer its owner from a project-wide spelling search.
+    fn retain_alias_nominal_identities(
+        &self,
+        ty: &ResolvedType,
+        identities: &mut std::collections::BTreeMap<String, CanonicalSymbolId>,
+    ) {
+        match ty {
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _) => {
+                if let Some(identity) = self.named_type_reference_identity(name) {
+                    identities.insert(name.clone(), identity);
+                }
+                if let ResolvedType::Generic(_, arguments) = ty {
+                    for argument in arguments {
+                        self.retain_alias_nominal_identities(argument, identities);
+                    }
+                }
+            }
+            ResolvedType::Tuple(items) => {
+                for item in items {
+                    self.retain_alias_nominal_identities(item, identities);
+                }
+            }
+            ResolvedType::Function(parameters, result) => {
+                for parameter in parameters {
+                    self.retain_alias_nominal_identities(&parameter.ty, identities);
+                }
+                self.retain_alias_nominal_identities(result, identities);
+            }
+            ResolvedType::Ref(inner)
+            | ResolvedType::RefMut(inner)
+            | ResolvedType::TypeToken(inner)
+            | ResolvedType::FrozenList(inner)
+            | ResolvedType::FrozenSet(inner) => {
+                self.retain_alias_nominal_identities(inner, identities);
+            }
+            ResolvedType::FrozenDict(key, value) => {
+                self.retain_alias_nominal_identities(key, identities);
+                self.retain_alias_nominal_identities(value, identities);
+            }
+            _ => {}
+        }
+    }
+
+    /// Expand transparent source type aliases inside a resolved type. A nominal Rust alias keeps its public spelling.
     fn expand_type_aliases(&self, ty: ResolvedType) -> ResolvedType {
         let mut expanding = HashSet::new();
         self.expand_type_aliases_inner(ty, &mut expanding)
@@ -5522,7 +5852,7 @@ impl TypeChecker {
         let Some(metadata) = self.rust_item_metadata_for_complete_type(&info.path) else {
             return;
         };
-        let RustItemKind::Type(type_info) = metadata.kind else {
+        let RustItemKind::Type(type_info) = &metadata.kind else {
             return;
         };
         let resolved_args = source_args
@@ -5667,7 +5997,7 @@ impl TypeChecker {
         // from a terminal name; retain the imported path only when the defining item is unavailable.
         Some(
             self.rust_item_metadata_for_complete_type(imported_path.as_str())
-                .and_then(|metadata| metadata.definition_path)
+                .and_then(|metadata| metadata.definition_path.clone())
                 .unwrap_or(imported_path),
         )
     }
@@ -5689,10 +6019,10 @@ impl TypeChecker {
             let Some(metadata) = self.rust_item_metadata_for_complete_type(path.as_str()) else {
                 return false;
             };
-            let RustItemKind::Type(info) = metadata.kind else {
+            let RustItemKind::Type(info) = &metadata.kind else {
                 return false;
             };
-            info.expanded_derive_traits
+            info.expanded_derive_traits.clone()
         } else {
             let local_name = match ty {
                 ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name,
@@ -5750,13 +6080,14 @@ impl TypeChecker {
     }
 
     /// Return probe-observed derive expansion output carried by inspected trait or macro metadata.
-    fn rust_metadata_derive_outputs(metadata: RustItemMetadata) -> Vec<RustExpandedDeriveTrait> {
-        match metadata.kind {
+    fn rust_metadata_derive_outputs(metadata: Arc<RustItemMetadata>) -> Vec<RustExpandedDeriveTrait> {
+        match &metadata.kind {
             RustItemKind::Trait(trait_info) => trait_info
                 .derive_macro
-                .map(|macro_info| macro_info.expanded_traits)
+                .as_ref()
+                .map(|macro_info| macro_info.expanded_traits.clone())
                 .unwrap_or_default(),
-            RustItemKind::Macro(macro_info) => macro_info.expanded_traits,
+            RustItemKind::Macro(macro_info) => macro_info.expanded_traits.clone(),
             _ => Vec::new(),
         }
     }
@@ -5831,10 +6162,11 @@ impl TypeChecker {
         let RustItemKind::Type(type_info) = &metadata.kind else {
             return false;
         };
-        type_info
-            .implemented_traits
-            .iter()
-            .any(|implemented| implemented.path == required_trait && implemented.mutable_reference == mutable_reference)
+        type_info.implemented_traits.iter().any(|implemented| {
+            implemented.is_unconditional()
+                && implemented.path == required_trait
+                && implemented.mutable_reference == mutable_reference
+        })
     }
 
     /// Match local type derivations and adoptions to an exact inspected Rust trait identity.
@@ -6927,9 +7259,11 @@ impl TypeChecker {
         // can be decided before any call or body is checked (#1561).
         self.plan_closure_holding_callables(program);
 
-        // Direct-route call facts need the already collected native owners while checking their arguments and
-        // results. Keep this snapshot private; the ordinary nominal tables retain their final successful-check timing.
+        // Direct-route call and pattern facts need the already collected native owners and their public paths while
+        // checking arguments and results. Keep this snapshot private; ordinary nominal tables retain their final
+        // successful-check timing.
         self.type_info.declarations.body_ir_native_type_identities = self.checked_native_nominal_type_identities();
+        self.type_info.rust.item_public_paths = self.checked_rust_item_public_paths();
 
         // Second pass: check consts first so their resolved types are available to later checks.
         self.validate_source_type_names = true;
@@ -6996,6 +7330,7 @@ impl TypeChecker {
 
         if fatal.is_empty() {
             self.record_public_type_bridge_roots(program);
+            self.publish_rust_storage_types(program);
             self.type_info.body_ir_newtypes = native_newtype_facts::project(program, &self.type_info);
             self.publish_body_ir_empty_lists();
             Ok(())
@@ -7048,11 +7383,79 @@ impl TypeChecker {
         self.type_info.declarations.body_ir_native_type_identities = self.checked_native_nominal_type_identities();
         self.type_info.body_ir_runtime_types = self.checked_body_ir_runtime_types();
         self.type_info.rust.item_public_paths = self.checked_rust_item_public_paths();
+        self.type_info.rust.owner_parameters = self.checked_rust_owner_parameters();
     }
 
-    /// Map each imported Rust item's import and definition spellings to its public import path, once, from the
-    /// metadata import collection already attached; no extraction runs here.
+    /// Retain checked native default templates at the checker boundary. Only successfully demanded type metadata
+    /// contributes facts; Body IR never starts a second metadata query to choose an owner's argument count.
+    fn checked_rust_owner_parameters(&self) -> HashMap<String, Vec<(String, Option<ResolvedType>)>> {
+        let mut owners = HashMap::new();
+        for path in self.observed_rust_metadata_queries() {
+            let Some(metadata) = self.lookup_rust_item_metadata_for_path(&path) else {
+                continue;
+            };
+            let RustItemKind::Type(info) = &metadata.kind else {
+                continue;
+            };
+            let parameters = info
+                .type_params
+                .iter()
+                .enumerate()
+                .map(|(index, name)| {
+                    let default = info.type_param_defaults.get(index).and_then(Option::as_deref);
+                    (
+                        name.clone(),
+                        default.map(|default| self.native_rust_signature_type(default, &path)),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let public = self
+                .type_info
+                .rust
+                .item_public_paths
+                .get(&path)
+                .cloned()
+                .unwrap_or(path);
+            owners.insert(public, parameters);
+        }
+        owners
+    }
+
+    /// Map imported Rust spellings to one public carrier per admitted type definition and bound extern namespace.
+    /// Choosing the smallest public path makes the carrier independent of symbol iteration order while keeping
+    /// private defining paths out of executable identities. A canonical defining path has no separate definition
+    /// alias in rustc metadata. All facts come from the collected import metadata.
     fn checked_rust_item_public_paths(&self) -> HashMap<String, String> {
+        // ---- Public representatives of native definitions ----
+        let mut type_paths: HashMap<(String, String), String> = HashMap::new();
+        for symbol in self.symbols.all_symbols() {
+            let SymbolKind::RustItem(info) = &symbol.kind else {
+                continue;
+            };
+            let metadata = info
+                .metadata
+                .clone()
+                .or_else(|| self.rust_item_metadata_for_path(info.path.as_str()));
+            let Some(metadata) = metadata else {
+                continue;
+            };
+            if !matches!(metadata.kind, RustItemKind::Type(_)) {
+                continue;
+            }
+            let definition = metadata.definition_path.as_ref().unwrap_or(&metadata.canonical_path);
+            let public = Self::normalize_rust_namespace_path(&info.path).to_owned();
+            let domain = public.split("::").next().unwrap_or("").to_owned();
+            type_paths
+                .entry((domain, definition.clone()))
+                .and_modify(|selected| {
+                    if public < *selected {
+                        *selected = public.clone();
+                    }
+                })
+                .or_insert(public);
+        }
+
+        // ---- Source spellings and defining paths ----
         let mut paths = HashMap::new();
         for symbol in self.symbols.all_symbols() {
             let SymbolKind::RustItem(info) = &symbol.kind else {
@@ -7063,10 +7466,23 @@ impl TypeChecker {
                 .metadata
                 .clone()
                 .or_else(|| self.rust_item_metadata_for_path(info.path.as_str()));
-            if let Some(definition) = metadata.and_then(|metadata| metadata.definition_path) {
-                paths.entry(definition).or_insert_with(|| public.clone());
+            let domain = public.split("::").next().unwrap_or("").to_owned();
+            let canonical = metadata
+                .as_ref()
+                .filter(|metadata| matches!(metadata.kind, RustItemKind::Type(_)))
+                .map(|metadata| metadata.definition_path.as_ref().unwrap_or(&metadata.canonical_path))
+                .and_then(|definition| type_paths.get(&(domain, definition.clone())))
+                .cloned()
+                .unwrap_or_else(|| public.clone());
+            if let Some(definition) = metadata.and_then(|metadata| metadata.definition_path.clone()) {
+                paths.entry(definition).or_insert_with(|| canonical.clone());
             }
-            paths.insert(public.clone(), public);
+            if self.lookup_symbol(&symbol.name).is_some_and(
+                |selected| matches!(&selected.kind, SymbolKind::RustItem(selected) if selected.path == info.path),
+            ) {
+                paths.insert(symbol.name.clone(), canonical.clone());
+            }
+            paths.insert(public, canonical);
         }
         paths
     }
@@ -7137,6 +7553,14 @@ impl TypeChecker {
                 identities.insert(name.clone(), identity.clone());
             }
         }
+        // Generated reflection calls retain their published runtime carrier without introducing a source binding.
+        for (name, identity) in &self.type_info.declarations.body_ir_native_type_identities {
+            if matches!(identity.origin, SymbolOrigin::Package { .. })
+                && incan_semantics_core::body_ir::native_nominal_item(identity).is_some()
+            {
+                identities.insert(name.clone(), identity.clone());
+            }
+        }
         identities
     }
 
@@ -7184,6 +7608,37 @@ impl TypeChecker {
                     .entry(symbol.name.clone())
                     .or_insert_with(|| identity.clone());
             }
+        }
+        let mut ambiguous = HashSet::new();
+        for (name, alias) in &self.type_aliases {
+            let active_alias = self.symbols.lookup(name).and_then(|id| self.symbols.get(id));
+            if !active_alias.is_some_and(|symbol| matches!(symbol.kind, SymbolKind::Type(TypeInfo::TypeAlias))) {
+                continue;
+            }
+            for (leaf, identity) in &alias.nominal_identities {
+                if identities.get(leaf).is_some_and(|bound| bound != identity) {
+                    ambiguous.insert(leaf.clone());
+                } else {
+                    identities.insert(leaf.clone(), identity.clone());
+                }
+            }
+        }
+        for name in ambiguous {
+            identities.remove(&name);
+        }
+        let carriers = identities
+            .values()
+            .chain(
+                self.declaration_nominal_scopes
+                    .values()
+                    .flat_map(|scope| scope.values()),
+            )
+            .filter_map(|identity| {
+                incan_semantics_core::body_ir::nominal_carrier_key(identity).map(|key| (key, identity.clone()))
+            })
+            .collect::<Vec<_>>();
+        for (key, identity) in carriers {
+            identities.entry(key).or_insert(identity);
         }
         identities
     }
@@ -7589,6 +8044,12 @@ impl TypeChecker {
                 direct_projections.insert(name, projection.clone());
             }
         }
+        let scope = self.checked_nominal_type_identities();
+        for (name, kind) in &direct_symbols {
+            if let Some(identity) = direct_identities.get(name) {
+                self.retain_declaration_nominal_scope(identity, kind, &scope);
+            }
+        }
         for declaration in &module_ast.declarations {
             let Declaration::TypeAlias(alias) = &declaration.node else {
                 continue;
@@ -7625,6 +8086,51 @@ impl TypeChecker {
             .insert(module_name.to_string(), direct_identities);
         self.dependency_direct_member_partial_projections
             .insert(module_name.to_string(), direct_projections);
+    }
+
+    /// Retain a declaration and its own methods' lexical nominal bindings before imports or trait adoption copy them.
+    /// A facade cannot replace the original scope, and inherited methods keep their declaring module's scope.
+    fn retain_declaration_nominal_scope(
+        &mut self,
+        identity: &CanonicalSymbolId,
+        kind: &SymbolKind,
+        scope: &std::collections::BTreeMap<String, CanonicalSymbolId>,
+    ) {
+        let scope = self
+            .declaration_nominal_scopes
+            .entry(identity.clone())
+            .or_insert_with(|| scope.clone())
+            .clone();
+        if let SymbolKind::Function(function) = kind {
+            self.declaration_callables
+                .entry(identity.clone())
+                .or_insert_with(|| DeclarationCallableTypes {
+                    params: function.params.clone(),
+                    return_type: function.return_type.clone(),
+                });
+        }
+        let methods = match kind {
+            SymbolKind::Type(TypeInfo::Model(info)) => &info.methods,
+            SymbolKind::Type(TypeInfo::Class(info)) => &info.methods,
+            SymbolKind::Type(TypeInfo::Newtype(info)) => &info.methods,
+            SymbolKind::Type(TypeInfo::Enum(info)) => &info.methods,
+            SymbolKind::Trait(info) => &info.methods,
+            _ => return,
+        };
+        for method in methods.values() {
+            let Some(member) = &method.identity else { continue };
+            if member.origin == identity.origin {
+                self.declaration_nominal_scopes
+                    .entry(member.clone())
+                    .or_insert_with(|| scope.clone());
+                self.declaration_callables
+                    .entry(member.clone())
+                    .or_insert_with(|| DeclarationCallableTypes {
+                        params: method.params.clone(),
+                        return_type: method.return_type.clone(),
+                    });
+            }
+        }
     }
 
     /// Cache exact provider traits referenced by dependency-owned type adoptions.
@@ -8196,9 +8702,15 @@ impl TypeChecker {
     /// declaration itself is not imported as a symbol.
     fn register_dependency_derivable_metadata(&mut self, module_name: &str, module_ast: &Program) {
         let mut module_paths = vec![module_name.to_string()];
-        let dotted_module_path = module_name.replace('_', ".");
-        if dotted_module_path != module_name {
-            module_paths.push(dotted_module_path);
+        if let Some(segments) = self.canonical_owner_segments(module_name) {
+            let dotted = segments.join(".");
+            if !module_paths.contains(&dotted) {
+                module_paths.push(dotted);
+            }
+            let public = std::iter::once("std".to_owned()).chain(segments).collect::<Vec<_>>();
+            if self.owns_standard_module(&public) {
+                module_paths.push(public.join("."));
+            }
         }
         let traits = Self::derivable_traits_from_program(module_ast);
         if !traits.is_empty() {
@@ -8218,7 +8730,13 @@ impl TypeChecker {
                         .insert(format!("{module_path}.{}", tr.name), info.clone());
                 }
             }
-            let paths = Self::rust_derive_paths_from_trait(tr);
+            let mut paths = Self::rust_derive_paths_from_trait(tr);
+            if paths.is_empty()
+                && let Some(module) = &module_ast.rust_module_path
+                && let Some(path) = self.checked_native_derive_macro(&format!("{}::{}", module.node, tr.name))
+            {
+                paths.push(path);
+            }
             if paths.is_empty() {
                 continue;
             }
@@ -8624,6 +9142,7 @@ impl TypeChecker {
             .and_then(|method| method.identity.clone());
         steps.push(ValidatedNewtypeCoercionStep {
             newtype_name: target_name.clone(),
+            owner_identity: self.checked_nominal_type_identities().get(target_name).cloned(),
             ctor,
             ctor_identity,
             constraints: if Self::validated_newtype_ctor_name(target_name, &newtype).is_some() {
@@ -8639,6 +9158,24 @@ impl TypeChecker {
     /// Return whether a source value can be passed to a newtype's underlying constructor without primitive parsing.
     fn validated_newtype_source_matches_underlying(actual: &ResolvedType, underlying: &ResolvedType) -> bool {
         matches!(actual, ResolvedType::Unknown | ResolvedType::TypeVar(_)) || actual == underlying
+    }
+
+    /// Retain a selected hook in the consumer's owner binding, including when an import renamed that owner.
+    /// The caller must first validate the hook through `validated_newtype_ctor_name`; only its proven Ok owner is
+    /// rebound, preserving the original parameters, error type, and canonical method identity.
+    fn newtype_constructor_binding(method: &MethodInfo, owner: ResolvedType) -> type_info::FunctionBindingInfo {
+        let mut return_type = method.return_type.clone();
+        if let ResolvedType::Generic(_, arguments) = &mut return_type
+            && let Some(success) = arguments.first_mut()
+        {
+            *success = owner;
+        }
+        type_info::FunctionBindingInfo {
+            is_async: method.is_async,
+            params: method.params.clone(),
+            return_type,
+            identity: method.identity.clone(),
+        }
     }
 
     /// Return the canonical checked-construction hook for a newtype when the collected method shape is usable.
@@ -9050,6 +9587,13 @@ impl TypeChecker {
             (ResolvedType::Ref(a), ResolvedType::Ref(b))
             | (ResolvedType::RefMut(a), ResolvedType::Ref(b))
             | (ResolvedType::RefMut(a), ResolvedType::RefMut(b)) => self.nested_types_compatible(a, b),
+            // A borrowed source model or class becomes an owned value where one is required; Body IR clones it there.
+            (ResolvedType::Ref(inner), expected)
+                if !matches!(expected, ResolvedType::Ref(_) | ResolvedType::RefMut(_))
+                    && self.borrowed_source_value_materializes(actual) =>
+            {
+                self.types_compatible(inner, expected)
+            }
             // Frozen const-eval values are compatible with their frozen wrappers. Ordinary runtime strings do not
             // implicitly become frozen values here; const-eval is responsible for freezing literal values first.
             (ResolvedType::FrozenStr, ResolvedType::FrozenStr) => true,
@@ -9240,7 +9784,7 @@ impl Default for TypeChecker {
 }
 
 /// Return whether a declaration participates in public module import collection.
-fn is_public_decl(decl: &Spanned<Declaration>) -> bool {
+pub(crate) fn is_public_decl(decl: &Spanned<Declaration>) -> bool {
     match &decl.node {
         Declaration::Capability(c) => matches!(c.visibility, Visibility::Public),
         Declaration::Const(c) => matches!(c.visibility, Visibility::Public),
@@ -9262,7 +9806,7 @@ fn is_public_decl(decl: &Spanned<Declaration>) -> bool {
 }
 
 /// Return the root symbol name declared by a declaration, when it has one.
-fn declaration_name(decl: &Spanned<Declaration>) -> Option<&str> {
+pub(crate) fn declaration_name(decl: &Spanned<Declaration>) -> Option<&str> {
     match &decl.node {
         Declaration::Capability(c) => Some(c.name.as_str()),
         Declaration::Const(c) => Some(c.name.as_str()),

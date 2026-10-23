@@ -20,11 +20,14 @@ use incan_frontend::contract_metadata::{
     CanonicalModelBundle, materialize_contract_models, read_project_model_bundles,
 };
 use incan_frontend::hir::build_semantic_module_snapshot_v0;
-use incan_frontend::loaf_index::LoafIndex;
+use incan_frontend::loaf_index::{LIBRARY_MANIFEST_EXTENSION, LoafIndex};
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::testing_markers::{TestingMarkerSemantics, testing_marker_semantics_from_manifest};
 use incan_frontend::typechecker::{TypeCheckInfo, TypeChecker};
 use incan_frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
+
+mod loaf_reach;
+use loaf_reach::NativeLoafReach;
 
 /// The build profile a command reads Loaf artifacts for unless it names another.
 pub const DEFAULT_PROFILE: &str = "debug";
@@ -33,8 +36,8 @@ pub const DEFAULT_PROFILE: &str = "debug";
 /// lowers from, and its portable semantic snapshot, which tooling reads.
 #[derive(Debug, Clone)]
 pub struct CompilationAnalysis {
-    type_info_by_path: BTreeMap<PathBuf, TypeCheckInfo>,
-    type_info_by_module_path: BTreeMap<Vec<String>, TypeCheckInfo>,
+    type_info_by_path: BTreeMap<PathBuf, Arc<TypeCheckInfo>>,
+    type_info_by_module_path: BTreeMap<Vec<String>, Arc<TypeCheckInfo>>,
     semantic_snapshots_by_path: BTreeMap<PathBuf, incan_semantics_core::SemanticModuleSnapshot>,
 }
 
@@ -60,14 +63,14 @@ impl CompilationAnalysis {
     /// Return the paired checked products for one collected source file.
     pub fn module_analysis_for_path(&self, path: &Path) -> Option<CompilationModuleAnalysis<'_>> {
         Some(CompilationModuleAnalysis {
-            type_info: self.type_info_by_path.get(path)?,
+            type_info: self.type_info_by_path.get(path)?.as_ref(),
             semantic_snapshot: self.semantic_snapshots_by_path.get(path)?,
         })
     }
 
     /// Return the checked facts of one collected source file.
     pub fn type_info_for_path(&self, path: &Path) -> Option<&TypeCheckInfo> {
-        self.type_info_by_path.get(path)
+        self.type_info_by_path.get(path).map(Arc::as_ref)
     }
 
     /// Return the checked facts of one compiler module identity.
@@ -75,7 +78,7 @@ impl CompilationAnalysis {
     /// Identity is distinct from a source file path because the test runner may create multiple compiler modules rooted
     /// at the same file.
     pub fn type_info_for_module_path(&self, path: &[String]) -> Option<&TypeCheckInfo> {
-        self.type_info_by_module_path.get(path)
+        self.type_info_by_module_path.get(path).map(Arc::as_ref)
     }
 
     /// Return portable HIR and semantic fact snapshots keyed by source path.
@@ -84,12 +87,31 @@ impl CompilationAnalysis {
     }
 }
 
+/// Rust facts: the checker's view of the Rust items a unit imports, keyed by path.
+pub type RustFacts = BTreeMap<String, incan_lang::interop::RustItemMetadata>;
+
+/// Where a session reads the Rust facts no ABI cache holds: the compiler's own rustc, over the unit's crates. The
+/// caches answer first; a source is asked only for the paths they leave uncovered, so a crate never has two answers.
+pub trait RustFactsSource: std::fmt::Debug + Send + Sync {
+    /// Facts for `paths`.
+    fn facts(&self, paths: &BTreeSet<String>) -> Result<RustFacts, String>;
+}
+
+/// Where one session's Rust facts come from: the ABI caches of the crates the unit links, then the source.
+#[derive(Debug, Clone, Default)]
+pub struct RustFactsSetup {
+    pub caches: Vec<PathBuf>,
+    pub source: Option<Arc<dyn RustFactsSource>>,
+}
+
 /// Shared source-analysis context for the pinned driver, the compiler's commands and the language server.
 ///
 /// The session owns the unit-level inputs that affect parsing and checking, so no stage re-derives the Loaves,
 /// vocabulary or checked contract metadata.
 #[derive(Debug, Clone)]
 pub struct CompilationSession {
+    /// Where Rust facts no ABI cache holds come from, when the compiler can read them.
+    rust_facts_source: Option<Arc<dyn RustFactsSource>>,
     /// Vocabulary module map shared across cloned sessions; fresh source and guest state remain local.
     pub(crate) vocab_runtime: Arc<Mutex<Option<vocab_desugar_pass::WasmDesugarerRuntime>>>,
     /// The unit as the Oven describes it.
@@ -108,6 +130,8 @@ pub struct CompilationSession {
     pub library_imported_vocab: parser::ImportedLibraryVocab,
     pub library_imported_dsl_surfaces: parser::ImportedLibraryDslSurfaces,
     pub contract_model_bundles: Vec<CanonicalModelBundle>,
+    /// An unchanged native unit may reuse its previous canonical lookup footprint, never its checking result.
+    native_loaf_reach: Option<NativeLoafReach>,
 }
 
 impl CompilationSession {
@@ -115,23 +139,87 @@ impl CompilationSession {
     ///
     /// Every Loaf is compiled before its consumer is checked (DD-0005), so a Loaf without an artifact refuses here.
     pub fn new(unit: &UnitDescription) -> CliResult<Self> {
+        Self::open(unit, false, None)
+    }
+
+    /// Open a native program session using prior canonical reachability only while every observed input generation
+    /// and the compiler are unchanged. Source analysis, declaration closure and lowering still run anew.
+    pub fn for_native_program(unit: &UnitDescription) -> CliResult<Self> {
+        Self::open(unit, false, NativeLoafReach::capture(unit))
+    }
+
+    /// Retain dependency demand after native declaration closure, without storing acceptance or execution outcomes.
+    /// Guest desugarers and unsupported input domains keep the full index on every invocation.
+    pub fn retain_native_loaf_reachability(&self) {
+        let Some(reach) = &self.native_loaf_reach else {
+            return;
+        };
+        if !self
+            .vocab_runtime
+            .lock()
+            .map(|runtime| runtime.as_ref().is_none_or(|runtime| !runtime.has_compiled_guests()))
+            .unwrap_or(false)
+        {
+            return;
+        }
+        let _ = reach.retain(&self.unit, self.loaves.requested_keys());
+    }
+
+    /// Open a parsing-only session for formatting without preparing native dependencies or checked model bundles.
+    ///
+    /// Available Loaf manifests still supply the vocabulary through the ordinary index. Missing manifests supply no
+    /// vocabulary; syntax that needs them must refuse at parsing rather than inventing a source-based replacement.
+    /// Checking and compilation must use [`Self::new`], which requires every reached artifact.
+    pub fn for_formatting(unit: &UnitDescription) -> CliResult<Self> {
+        Self::open(unit, true, None)
+    }
+
+    /// Initialize the shared parser context from Loaf artifacts; only formatting may omit absent manifests.
+    fn open(
+        unit: &UnitDescription,
+        formatting: bool,
+        mut native_loaf_reach: Option<NativeLoafReach>,
+    ) -> CliResult<Self> {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::open_session", input = %unit.source.display()).entered();
-        let entries = unit
-            .loaves
-            .iter()
-            .map(|loaf| {
-                if loaf.standard {
-                    LoafIndex::standard(&loaf.name, &loaf.dir)
-                } else {
-                    LoafIndex::dependency(&loaf.key, &loaf.name, &loaf.dir)
-                }
-            })
-            .collect::<Result<Vec<_>, _>>()
+        let mut entries = Vec::new();
+        let selected = native_loaf_reach.as_mut().and_then(|reach| reach.selected(unit));
+        tracing::debug!(target: "incan::invocation", retained = selected.is_some(), loaves = ?selected, "canonical Loaf reachability");
+        for loaf in &unit.loaves {
+            let key = if loaf.standard { &loaf.name } else { &loaf.key };
+            if selected.as_ref().is_some_and(|keys| !keys.contains(key)) {
+                continue;
+            }
+            let manifest = loaf.dir.join(format!("{}.{LIBRARY_MANIFEST_EXTENSION}", loaf.name));
+            if formatting
+                && !manifest
+                    .try_exists()
+                    .map_err(|error| CliError::failure(format!("{}: {error}", manifest.display())))?
+            {
+                continue;
+            }
+            let entry = if loaf.standard {
+                LoafIndex::standard(&loaf.name, &loaf.dir)
+            } else {
+                LoafIndex::dependency(&loaf.key, &loaf.name, &loaf.dir)
+            }
             .map_err(|error| CliError::failure(error.to_string()))?;
-        let loaves = Arc::new(LoafIndex::new(entries).map_err(|error| CliError::failure(error.to_string()))?);
-        let contract_model_bundles = read_project_model_bundles(&unit.project_root, &unit.contract_models)
-            .map_err(|error| CliError::failure(error.to_string()))?;
+            entries.push(entry);
+        }
+        let mut loaves = LoafIndex::new(entries).map_err(|error| CliError::failure(error.to_string()))?;
+        if native_loaf_reach.is_some() {
+            loaves.enable_request_tracking();
+        }
+        let loaves = Arc::new(loaves);
+        // The implicit prelude also owns the linked string-conversion and entry-initialization contracts.
+        let _ = loaves.owner_of(&[stdlib::STDLIB_ROOT.to_owned(), "prelude".to_owned()]);
+        let contract_model_bundles = if formatting {
+            Vec::new()
+        } else {
+            read_project_model_bundles(&unit.project_root, &unit.contract_models)
+                .map_err(|error| CliError::failure(error.to_string()))?
+        };
         Ok(Self {
+            rust_facts_source: None,
             vocab_runtime: Arc::default(),
             source_root: unit.source_root.clone(),
             library_imported_vocab: loaves.imported_vocab(),
@@ -143,6 +231,7 @@ impl CompilationSession {
             declared_features: unit.declared_features.clone(),
             contract_model_bundles,
             unit: unit.clone(),
+            native_loaf_reach,
         })
     }
 
@@ -154,6 +243,43 @@ impl CompilationSession {
     /// The compiled Loaves the program imports from.
     pub fn loaves(&self) -> &Arc<LoafIndex> {
         &self.loaves
+    }
+
+    /// Read the Rust facts of the unit's crates from their ABI caches and ask the setup's source for any path they
+    /// leave uncovered.
+    pub fn with_rust_facts(mut self, setup: &RustFactsSetup) -> CliResult<Self> {
+        for cache in &setup.caches {
+            let bytes = std::fs::read(cache).map_err(|error| {
+                CliError::failure(format!("cannot read the ABI cache {}: {error}", cache.display()))
+            })?;
+            let decoded = incan_lang::interop::RustAbiCache::decode(&bytes)
+                .map_err(|error| CliError::failure(format!("{}: {error}", cache.display())))?;
+            Arc::make_mut(&mut self.loaves).add_rust_abi_cache(Arc::new(decoded));
+        }
+        Arc::make_mut(&mut self.loaves).declare_rust_crates(self.unit.rust_crates.iter().cloned());
+        self.rust_facts_source = setup.source.clone();
+        Ok(self)
+    }
+
+    /// Before checking: the facts of the Rust paths `modules` import that neither a Loaf nor an ABI cache holds, from
+    /// the session's source. Without a source, an uncovered path keeps no facts and its uses refuse where checked.
+    /// Dynamic extraction opts out of retained Loaf demand: a generic facts source has no complete file-generation
+    /// observation. Explicit ABI caches and manifest facts remain covered by the unit's native observations.
+    pub fn resolve_rust_facts(&mut self, modules: &[ParsedModule]) -> CliResult<()> {
+        let Some(source) = self.rust_facts_source.clone() else {
+            return Ok(());
+        };
+        let uncovered = imported_rust_paths(modules)
+            .into_iter()
+            .filter(|path| self.loaves.rust_abi_item(path).is_none())
+            .collect::<BTreeSet<_>>();
+        if uncovered.is_empty() {
+            return Ok(());
+        }
+        self.native_loaf_reach = None;
+        let facts = source.facts(&uncovered).map_err(CliError::failure)?;
+        Arc::make_mut(&mut self.loaves).add_rust_facts(facts);
+        Ok(())
     }
 
     /// The standard package the program is, when it is one.
@@ -194,7 +320,8 @@ impl CompilationSession {
         let mut semantic_snapshots_by_path = BTreeMap::new();
         for (module, type_info) in modules.iter().zip(type_infos) {
             let snapshot = build_semantic_module_snapshot_v0(&module.ast, &module.path_segments, &type_info);
-            type_info_by_path.insert(module.file_path.clone(), type_info.clone());
+            let type_info = Arc::new(type_info);
+            type_info_by_path.insert(module.file_path.clone(), Arc::clone(&type_info));
             type_info_by_module_path.insert(module.path_segments.clone(), type_info);
             semantic_snapshots_by_path.insert(module.file_path.clone(), snapshot);
         }
@@ -345,4 +472,90 @@ impl CompilationSession {
             }
         }
     }
+}
+
+/// The Rust items a `rust.module` facade names: potential derive exports named by its traits, and the items its
+/// `@rust.extern` functions delegate to. Missing exports supply no derive permission; checking still requires an
+/// inspected derive macro item. An extern function's item is inspected to learn whether it is a callable function or
+/// an attribute macro that the declaration only names.
+fn facade_rust_paths(
+    rust_module: &str,
+    declarations: &[incan_frontend::ast::Spanned<incan_frontend::ast::Declaration>],
+    paths: &mut BTreeSet<String>,
+) {
+    use incan_frontend::ast::Declaration;
+    for declaration in declarations {
+        match &declaration.node {
+            Declaration::Trait(trait_) => {
+                paths.insert(format!("{rust_module}::{}", trait_.name));
+            }
+            Declaration::Function(function)
+                if function
+                    .decorators
+                    .iter()
+                    .any(|decorator| decorator.node.path.segments == ["rust", "extern"]) =>
+            {
+                paths.insert(format!("{rust_module}::{}", function.name));
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The Rust paths a unit imports, including those its `rust.module` facades name.
+fn imported_rust_paths(modules: &[ParsedModule]) -> BTreeSet<String> {
+    use incan_frontend::ast::{Declaration, DecoratorArg, Expr, ImportKind, Literal};
+    let mut paths = BTreeSet::new();
+    for module in modules {
+        if let Some(rust_module) = &module.ast.rust_module_path {
+            facade_rust_paths(&rust_module.node, &module.ast.declarations, &mut paths);
+        }
+        for declaration in &module.ast.declarations {
+            let decorators = match &declaration.node {
+                Declaration::Model(value) => value.decorators.as_slice(),
+                Declaration::Class(value) => value.decorators.as_slice(),
+                Declaration::Newtype(value) => value.decorators.as_slice(),
+                Declaration::Enum(value) => value.decorators.as_slice(),
+                Declaration::Trait(value) => value.decorators.as_slice(),
+                _ => &[],
+            };
+            for decorator in decorators {
+                if decorator.node.path.segments != ["rust", "derive"] {
+                    continue;
+                }
+                for argument in &decorator.node.args {
+                    if let DecoratorArg::Positional(expression) = argument
+                        && let Expr::Literal(Literal::String(path)) = &expression.node
+                        && path.contains("::")
+                    {
+                        paths.insert(path.clone());
+                    }
+                }
+            }
+            let Declaration::Import(import) = &declaration.node else {
+                continue;
+            };
+            match &import.kind {
+                ImportKind::RustCrate { crate_name, path, .. } => {
+                    let segments = std::iter::once(crate_name.clone()).chain(path.iter().cloned());
+                    paths.insert(segments.collect::<Vec<_>>().join("::"));
+                }
+                ImportKind::RustFrom {
+                    crate_name,
+                    path,
+                    items,
+                    ..
+                } => {
+                    for item in items {
+                        let segments = std::iter::once(crate_name.clone())
+                            .chain(path.iter().cloned())
+                            .chain(std::iter::once(item.name.clone()));
+                        paths.insert(segments.collect::<Vec<_>>().join("::"));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    paths
 }

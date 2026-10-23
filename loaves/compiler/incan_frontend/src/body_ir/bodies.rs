@@ -167,7 +167,8 @@ fn lower_declaration_statements(
 /// never joins the module's bodies; a consumer runs it at most once, where legacy initializes the static.
 /// A sole local registry with checked literal method descriptions retains its registrations on this same value before
 /// publication. No intermediate source computation can observe that bounded profile, so initialization remains
-/// once-only.
+/// once-only. Scope cleanup may follow the terminal return; registrations precede that return without discarding
+/// its trailing drop facts.
 pub(super) fn lower_static_initializer_body(
     program: &ast::Program,
     storage: &ast::StaticDecl,
@@ -198,17 +199,42 @@ pub(super) fn lower_static_initializer_body(
         storage.value.span,
     )];
     let (mut stmts, _) = lower_declaration_statements(&mut builder, None, &source, root_scope, hir_span(decl_span));
-    if let Some(bir::Statement {
-        kind: bir::StatementKind::Return { value: Some(value) },
-        ..
-    }) = stmts.last()
+    let terminal = stmts
+        .iter()
+        .rposition(|statement| !matches!(statement.kind, bir::StatementKind::Drop { .. }));
+    if let Some(index) = terminal
+        && let bir::StatementKind::Return { value: Some(value) } = &stmts[index].kind
     {
         let value = value.clone();
-        if let Some(returned) = stmts.pop() {
-            registry_descriptions::append_registrations(&mut builder, program, storage, &value, root_scope, &mut stmts);
-            stmts.push(returned);
-        }
+        let returned = stmts.remove(index);
+        let mut cleanup = stmts.split_off(index);
+        registry_descriptions::append_registrations(&mut builder, program, storage, &value, root_scope, &mut stmts);
+        stmts.push(returned);
+        stmts.append(&mut cleanup);
     }
+    finish_static_initializer_body(builder, canonical, ty, root_scope, hir_span(decl_span), stmts)
+}
+
+/// Lower a computed constant's initializer as a computed static's: a body with no parameters that returns the value,
+/// under the constant's own identity and declaration-span ids. A constant's initializer has no effects and nothing
+/// writes it, so running it once where the module initializes its storage observes what every read observes.
+pub(super) fn lower_constant_initializer_body(
+    item: &ast::ConstDecl,
+    decl_span: ast::Span,
+    canonical: &CanonicalSymbolId,
+    ty: &IncanType,
+    lowering_facts: &BodyIrLoweringFacts<'_, '_>,
+) -> bir::Body {
+    let mut builder = BodyBuilder::new(lowering_facts, ty.clone());
+    builder
+        .type_overrides
+        .insert((item.value.span.start, item.value.span.end), ty.clone());
+    let root_scope = builder.new_scope(None, hir_span(decl_span));
+    let source = [ast::Spanned::new(
+        ast::Statement::Return(Some(item.value.clone())),
+        item.value.span,
+    )];
+    let (stmts, _) = lower_declaration_statements(&mut builder, None, &source, root_scope, hir_span(decl_span));
     finish_static_initializer_body(builder, canonical, ty, root_scope, hir_span(decl_span), stmts)
 }
 
@@ -259,6 +285,7 @@ pub(super) fn finish_static_initializer_body(
         panic_facts: builder.panic_facts,
         is_async: false,
         extern_delegation: None,
+        native_attributes: Vec::new(),
     }
 }
 
@@ -423,6 +450,13 @@ pub(super) fn lower_function_body(
         panic_facts: builder.panic_facts,
         is_async: function.is_async(),
         extern_delegation,
+        native_attributes: lowering_facts
+            .type_info
+            .declarations
+            .native_attribute_applications
+            .get(&(decl_span.start, decl_span.end))
+            .cloned()
+            .unwrap_or_default(),
     }
 }
 /// Lower one method declaration's body into Body IR v0, or `None` for an abstract method (`body: None` — a trait
@@ -455,6 +489,8 @@ pub(super) fn lower_method_body(
     lowering_facts: &BodyIrLoweringFacts<'_, '_>,
 ) -> Option<bir::Body> {
     let body_stmts = method.body.as_ref()?;
+    let checked_receiver = lowering_facts.type_info.qualify_semantic_type(receiver_ty.clone());
+    let receiver_ty = &checked_receiver;
 
     // Method names are not unique across a module the way top-level function names are (two classes can each
     // declare a method named `new`), so the method's CompilerNodeId is scoped under its owning declaration's name
@@ -637,6 +673,7 @@ pub(super) fn lower_method_body(
         panic_facts: builder.panic_facts,
         is_async: method.is_async(),
         extern_delegation,
+        native_attributes: Vec::new(),
     })
 }
 /// Reconstruct the concrete `self` type for a method declared on `owner_name`, mirroring how

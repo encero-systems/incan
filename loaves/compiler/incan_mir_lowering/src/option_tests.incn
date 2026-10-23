@@ -20,7 +20,7 @@ from frame import Builder, temporary, read_place, literal, appended_field
 from unions import union_test_slots, test_union_tag
 
 
-pub def is_option_carrier(builder: Builder, owner: int) -> bool:
+pub def is_option_carrier(mut builder: Builder, owner: int) -> bool:
     """Whether a retained enum owner is the intrinsic Option carrier rather than a source enum or a union."""
     index = owner - len(builder.enums)
     return index >= 0 and index < len(builder.intrinsics) and builder.intrinsics[index].carrier == "Option"
@@ -47,7 +47,7 @@ pub def option_isinstance(
     return Ok(test_union_tag(builder, tag, [1], span))
 
 
-pub def option_union_payload(builder: Builder, target: PlanType) -> Option[PlanType]:
+pub def option_union_payload(mut builder: Builder, target: PlanType) -> Option[PlanType]:
     """The union an Option carrier holds, when `target` is such an Option; `None` for any other type."""
     match target:
         PlanType.Enum(owner, _name) =>
@@ -108,7 +108,7 @@ def union_payload_test(
     return Ok(RvalueKind.Use(read_place(output, false, span)))
 
 
-pub def is_union_carrier(builder: Builder, owner: int) -> bool:
+pub def is_union_carrier(mut builder: Builder, owner: int) -> bool:
     """Whether a retained enum owner is an anonymous union, the intrinsic carrier without a standard name."""
     index = owner - len(builder.enums)
     return index >= 0 and index < len(builder.intrinsics) and builder.intrinsics[index].carrier == ""

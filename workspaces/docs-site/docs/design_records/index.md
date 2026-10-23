@@ -41,3 +41,5 @@ Start from the [design-record template](TEMPLATE.md) when proposing a new decisi
 | [DD-0006](0006_rust_interop_on_the_direct_route.md)      | Rust interop values and calls on the direct route                                | Draft     | v0.6          |
 | [DD-0007](0007_loaf_artifacts.md)                        | Loaf artifacts and the one consumer index                                        | Draft     | v0.6          |
 | [DD-0008](0008_one_oven_in_incan.md)                     | One Oven, written in Incan                                                       | Draft     | v0.6          |
+| [DD-0009](0009_rust_facts_from_rustc_metadata.md)        | Rust facts are ABI caches read from rustc's metadata                             | Accepted  | v0.6          |
+| [DD-0010](0010_dev8_toolchain_and_ci.md)                 | Publish the completed dev.8 toolchain for CI and later development lanes          | Accepted  | v0.6          |

@@ -25,12 +25,12 @@ from pub::incan_mir_plan import (
     TerminatorKind,
 )
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, forget_owned, place_type, read_place, temporary, track_rvalue_moves
+from frame import Builder, forget_owned, place_type, read_place, temporary, track_rvalue_moves, value_type
 from options import assign_carrier, carrier_layout, carrier_payload_value, replace_owned_destination, variant_condition
 from classes import frame_type, function_name
 from closures import callable_signature
 from layout_types import native_source_type
-from lowering import scalar_place, lower_callable_result, call_closure
+from lowering import scalar_place, lower_callable_result, call_closure, boundary_plan_operand
 from trait_links import contains
 
 
@@ -191,12 +191,13 @@ def transform(
     Move the active payload out of the receiver: the selected side goes to the callback, the other side is rewrapped.
 
     `wrap` rewraps the callback's result in the selected variant; `chain` returns the callback's Result as it is.
+    The untouched payload crosses its checked source boundary, so native borrowed text becomes owned text when required.
     """
     slot = combinator.slot
     output_type = place_type(builder.locals, output)
     owner, result = carrier_layout(builder, output_type)?
-    if result.carrier != "Result" or result.variants[1 - slot].fields != input.variants[1 - slot].fields:
-        return Err("unsupported Body IR Result combinator changing the untouched side")
+    if result.carrier != "Result":
+        return Err("unsupported Body IR Result combinator output carrier")
     payload_type = input.variants[slot].fields[0]
     mut callback_result = output_type
     if combinator.effect == "wrap":
@@ -212,7 +213,11 @@ def transform(
     builder.current = other
     kept_type = input.variants[1 - slot].fields[0]
     kept = Place(local=source.local, projection=Projection.VariantField(1 - slot, 0, kept_type), span=span)
-    assign_carrier(builder, output, owner, 1 - slot, [read_place(kept, true, span)], span)
+    kept_target = result.variants[1 - slot].fields[0]
+    converted = boundary_plan_operand(builder, read_place(kept, true, span), kept_target, span)?
+    if value_type(builder, converted)? != kept_target:
+        return Err("unsupported Body IR Result combinator changing the untouched side")
+    assign_carrier(builder, output, owner, 1 - slot, [converted], span)
     retained = builder.owned
     builder.finish(TerminatorKind.Goto(join), span)
     builder.current = selected
@@ -289,7 +294,7 @@ def call_callable_model(
     body = module.bodies[found[0]]
     if len(body.type_parameters) != 0 or len(body.params) != 2 or body.params[1].mutable:
         return Err("unsupported Body IR Result combinator callback __call__ shape")
-    receiver_type = frame_type(module, body.locals[0], builder.intrinsics)?
+    receiver_type = frame_type(builder.nominals, builder.enums, body.locals[0], builder.intrinsics)?
     match receiver_type:
         PlanType.ModelRef(_owner, _name) => pass
         _ => return Err("unsupported Body IR Result combinator callback __call__ receiver")

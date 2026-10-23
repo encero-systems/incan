@@ -1,0 +1,405 @@
+"""Compile compatible program cases together, bisecting refusals down to isolated cases."""
+
+from std.fs import Path
+from families import command, read_program
+from files import make_directory, read, write
+from fixture import Fixture, fixture_files, materialize, materialize_files
+from group_hints import retain_hint
+from run import Outcome, clear_trace, trace_file, unit_notes
+from workers import Invocation, invoke_many
+
+
+# The largest partition file read back; a bigger one is discarded and discovered again.
+const MAX_PLAN_BYTES: int = 2_000_000
+
+
+model Entry:
+    """A program whose canonical entry can be selected without moving entry setup."""
+
+    fixture: Fixture
+    source: str
+
+
+model GroupProject:
+    """Selected entries and their materialized shared project, prepared or successfully compiled."""
+
+    entries: list[Entry]
+    project: Path
+
+
+pub model BatchOutcomes:
+    """Fresh per-case results and the shared compilation work Oven actually reported."""
+
+    pub outcomes: dict[str, Result[Outcome, str]]
+    pub notes: list[str]
+
+
+pub def run_batches(
+    incan: str,
+    scratch: Path,
+    fixtures: list[Fixture],
+    jobs: int,
+    hint: Option[Path] = None,
+) -> BatchOutcomes:
+    """
+    Use optional case-name partition hints while Oven validates current group inputs; absent cases keep isolation.
+
+    1. Admit the cases whose entry can be compiled together with others; the rest keep their own command.
+    2. Partition them into groups: this scratch's previous partition, or a full-family hint, or one group to discover
+       the partition from.
+    3. Compile the groups. A discovery that compiled several groups packs the successful cases into one more.
+    4. Run every compiled group's cases fresh, and retain the partition for the next run.
+    """
+    # 1. Only the cases whose entry can be compiled together with others are shared; the rest keep their own command.
+    entries, refusals = admitted_entries(fixtures)
+    # 2. The groups come from this scratch's previous partition or a family hint, else one group to learn them from.
+    mut groups: list[list[Entry]] = [entries]
+    mut regroup = true
+    mut plan = scratch.joinpath("batch-empty-groups.tsv")
+    if len(fixtures) > 0:
+        family = fixtures[0].family
+        report_refusals(scratch, family, refusals)
+        plan = scratch.joinpath(f"batch-{family}-groups.tsv")
+        groups, reused = load_groups(plan, hint, entries)
+        regroup = not reused
+    # 3. Every group is compiled, and a discovery that compiled several groups packs their successful cases into one.
+    mut notes: list[str] = []
+    mut partition: list[str] = []
+    mut built: list[GroupProject] = []
+    compile_groups(incan, scratch, groups, built, notes, partition, jobs)
+    if regroup and len(built) > 1:
+        built = packed_groups(incan, scratch, entries, built, notes, partition, jobs)
+    # 4. Each compiled group's cases run fresh, and the partition they came from is kept for the next run.
+    for group in built:
+        partition.append("\t".join([candidate.fixture.case_name() for candidate in group.entries]))
+    mut outcomes: dict[str, Result[Outcome, str]] = {}
+    execute_groups(incan, scratch, built, outcomes, jobs)
+    if len(entries) > 0:
+        match write(plan, "\n".join(partition) + "\n"):
+            Err(error) => println(f"batch plan: {error}")
+            Ok(_) => pass
+        retain_hint(hint, partition)
+    return BatchOutcomes(outcomes=outcomes, notes=notes)
+
+
+def admitted_entries(fixtures: list[Fixture]) -> tuple[list[Entry], list[str]]:
+    """The cases that can be compiled together, and for each of the others a line saying why it cannot."""
+    mut entries: list[Entry] = []
+    mut refusals: list[str] = []
+    for fixture in fixtures:
+        match entry(fixture):
+            Err(reason) => refusals.append(f"{fixture.case_name()}\t{reason}")
+            Ok(candidate) => entries.append(candidate)
+    return (entries, refusals)
+
+
+def report_refusals(scratch: Path, family: str, refusals: list[str]) -> None:
+    """Write the cases that keep their own command, with their reasons, to the scratch directory."""
+    # A scratch that cannot be created fails the write below, which reports it.
+    _ = make_directory(scratch)
+    match write(scratch.joinpath(f"batch-{family}-refusals.tsv"), "\n".join(refusals) + "\n"):
+        Err(error) => println(f"batch report: {error}")
+        Ok(_) => pass
+
+
+def packed_groups(
+    incan: str,
+    scratch: Path,
+    entries: list[Entry],
+    compiled: list[GroupProject],
+    mut notes: list[str],
+    mut partition: list[str],
+    jobs: int,
+) -> list[GroupProject]:
+    """Compile every case of the compiled groups again as one group, which is what a stable partition is."""
+    mut successful: set[str] = set()
+    for group in compiled:
+        for candidate in group.entries:
+            successful.add(candidate.fixture.case_name())
+    joined = [candidate for candidate in entries if candidate.fixture.case_name() in successful]
+    println(f"BATCH-PACK {len(joined)} cases from {len(compiled)} compiled groups")
+    mut packed: list[GroupProject] = []
+    compile_groups(incan, scratch, [joined], packed, notes, partition, jobs)
+    return packed
+
+
+def load_groups(plan: Path, hint: Option[Path], entries: list[Entry]) -> tuple[list[list[Entry]], bool]:
+    """Prefer this scratch's partition, then a full-family hint; missing or unusable rows trigger discovery."""
+    groups, reused = planned_groups(plan, entries)
+    if reused:
+        return (groups, true)
+    match hint:
+        None => pass
+        Some(path) =>
+            hinted, usable = planned_groups(path, entries)
+            if usable:
+                println(f"BATCH-HINT candidates={len(entries)} partitions={len(hinted)}")
+                return (hinted, true)
+    return (groups, false)
+
+
+def planned_groups(plan: Path, entries: list[Entry]) -> tuple[list[list[Entry]], bool]:
+    """
+    Keep previous compilation boundaries, never outcomes; Oven still validates every group's current inputs.
+
+    1. Each row of the plan names the cases of one group; a case belongs to the first row that names it.
+    2. The cases no row names form one group more.
+    3. The partition is reusable when any case was named.
+    """
+    mut groups: list[list[Entry]] = []
+    mut assigned: set[str] = set()
+    # 1. Each row of the plan is one group, and a case belongs to the first row that names it.
+    for line in plan_rows(plan):
+        mut group: list[Entry] = []
+        names = line.split("\t")
+        for candidate in entries:
+            name = candidate.fixture.case_name()
+            if name in names and name not in assigned:
+                group.append(candidate)
+                assigned.add(name)
+        if len(group) > 0:
+            groups.append(group)
+    # 2. The cases no row names form one group more, so none is left out.
+    remaining = [candidate for candidate in entries if candidate.fixture.case_name() not in assigned]
+    if len(remaining) > 0:
+        groups.append(remaining)
+    # 3. The partition is reusable only when some row named a case.
+    return (groups, len(assigned) > 0)
+
+
+def plan_rows(plan: Path) -> list[str]:
+    """The rows of a partition file; a missing, unreadable or oversized one has none."""
+    if not plan.is_file():
+        return []
+    match read(plan):
+        Err(_) => return []
+        Ok(text) =>
+            if len(text) < MAX_PLAN_BYTES:
+                return text.split("\n")
+            return []
+
+
+def entry(fixture: Fixture) -> Result[Entry, str]:
+    """Keep context-observing cases and unproven entry semantics on the canonical isolated path."""
+    if fixture.family not in ["behavior", "interop"] or fixture.shape == "project":
+        return Err("this family or project shape keeps its original command")
+    program = read_program(fixture)?
+    if program.header.accepted or len(program.header.diagnostics) > 0:
+        return Err("check-only cases keep their own diagnostic context")
+    admit_source(program.source)?
+    if fixture.shape == "module":
+        for relative in fixture_files(fixture)?.keys():
+            if relative.startswith("src/") and relative.endswith(".incn"):
+                admit_source(read(fixture.entry.joinpath(relative[4:]))?)?
+    return Ok(Entry(fixture=fixture, source=program.source))
+
+
+def admit_source(source: str) -> Result[None, str]:
+    """Refuse context observations and unproven initialization effects anywhere in a module case."""
+    if "__file__" in source or "current_exe" in source or "import this" in source:
+        return Err("source paths, executable identity and entry effects require isolated compilation")
+    if "static " in source:
+        return Err("computed-static failure precedes canonical main's panic-hook initialization")
+    for line in source.split("\n"):
+        if line.startswith("@"):
+            return Err("decorator initialization has not been proven equivalent before entry setup")
+    return Ok(None)
+
+
+pub def run_separate(
+    incan: str,
+    scratch: Path,
+    fixtures: list[Fixture],
+    mut outcomes: dict[str, Result[Outcome, str]],
+    jobs: int,
+) -> None:
+    """Run check-only, project, library and unbatchable cases under the same worker budget."""
+    mut requests: list[Invocation] = []
+    mut names: list[str] = []
+    for fixture in fixtures:
+        if fixture.case_name() in outcomes or fixture.family in ["format", "graph"]:
+            continue
+        match isolated_request(incan, scratch, fixture):
+            Err(_) =>
+                continue
+            Ok(request) =>
+                requests.append(request)
+                names.append(fixture.case_name())
+    results = invoke_many(requests, jobs)
+    for index in range(len(requests)):
+        outcomes[names[index]] = results[index]
+
+
+def isolated_request(incan: str, scratch: Path, fixture: Fixture) -> Result[Invocation, str]:
+    """Prepare the original command without changing its manifest, entry point or expectations."""
+    program = read_program(fixture)?
+    project = materialize(fixture, scratch)?
+    clear_trace(project)?
+    return Ok(Invocation(program=incan, arguments=command(fixture, program.header), project=project, selector=None))
+
+
+def compile_groups(
+    incan: str,
+    scratch: Path,
+    groups: list[list[Entry]],
+    mut built: list[GroupProject],
+    mut notes: list[str],
+    mut partition: list[str],
+    jobs: int,
+) -> None:
+    """
+    Compile each partition wave through the same child budget used for fresh execution and isolated commands.
+
+    1. A group of one case is not shared: it keeps its own command, and its name is retained as a partition of one.
+    2. Every other group is prepared and compiled in one wave of children.
+    3. A group that compiled cleanly is built. One that did not is split in two for the next wave.
+    """
+    mut pending = groups
+    while len(pending) > 0:
+        mut requests: list[Invocation] = []
+        mut attempts: list[GroupProject] = []
+        mut retry: list[list[Entry]] = []
+        for entries in pending:
+            # 1. A group of one case is not shared: it keeps its own command, and its name is a partition of one.
+            if len(entries) < 2:
+                if len(entries) == 1:
+                    partition.append(entries[0].fixture.case_name())
+                continue
+            # 2. Every other group is prepared, and its build is queued into the one wave of children.
+            match prepare_group(scratch, entries):
+                Err(_) => split_group(entries, retry, "combined preparation failed")
+                Ok(group) =>
+                    arguments = group_arguments("build", group.project, entries)
+                    build = Invocation(program=incan, arguments=arguments, project=group.project, selector=None)
+                    requests.append(build)
+                    attempts.append(group)
+        # 3. A group that compiled cleanly is built, and one that did not is split in two for the next wave.
+        results = invoke_many(requests, jobs)
+        for index in range(len(attempts)):
+            group = attempts[index]
+            for note in unit_notes(trace_file(group.project)):
+                notes.append(note)
+            refusal = compilation_refusal(results[index])
+            if refusal == "":
+                built.append(group)
+            else:
+                split_group(group.entries, retry, refusal)
+        pending = retry
+
+
+def compilation_refusal(result: Result[Outcome, str]) -> str:
+    """Why a combined compilation cannot be shared; empty when it compiled and printed nothing."""
+    match result:
+        Err(_) => return "combined compilation refused"
+        Ok(outcome) =>
+            if outcome.code != Some(0):
+                return "combined compilation refused"
+            if outcome.stdout != "" or outcome.stderr != "":
+                return "compiler output requires isolated attribution"
+            return ""
+
+
+def prepare_group(scratch: Path, entries: list[Entry]) -> Result[GroupProject, str]:
+    """Materialize one attempt without starting a child outside the shared worker budget."""
+    first = entries[0].fixture
+    project = scratch.joinpath(f"batch-{first.family}-{first.area}-{first.name}-{len(entries)}")
+    materialize_group(project, entries)?
+    clear_trace(project)?
+    return Ok(GroupProject(entries=entries, project=project))
+
+
+def split_group(entries: list[Entry], mut retry: list[list[Entry]], refusal: str) -> None:
+    """Retain canonical isolation when preparation, compilation or compiler-output attribution refuses sharing."""
+    first = entries[0].fixture.case_name()
+    last = entries[-1].fixture.case_name()
+    println(f"BATCH-SPLIT {first} .. {last} ({len(entries)} cases): {refusal}; retrying separately")
+    middle = len(entries) // 2
+    retry.append(entries[0:middle])
+    retry.append(entries[middle:])
+
+
+def execute_groups(
+    incan: str,
+    scratch: Path,
+    groups: list[GroupProject],
+    mut outcomes: dict[str, Result[Outcome, str]],
+    jobs: int,
+) -> None:
+    """Run every compiled group's cases through one bounded queue; Oven owns canonical process status."""
+    mut requests: list[Invocation] = []
+    mut names: list[str] = []
+    for group in groups:
+        executable = built_program(group.project, "contract_batch")
+        for index in range(len(group.entries)):
+            fixture = group.entries[index].fixture
+            match materialize(fixture, scratch):
+                Err(_) => pass
+                Ok(case_project) =>
+                    match clear_trace(case_project):
+                        Err(_) =>
+                            continue
+                        Ok(_) => pass
+                    original = built_program(case_project, fixture.name)
+                    arguments = ["_run-built", executable.0, "--argv0", original.0]
+                    requests.append(
+                        Invocation(program=incan, arguments=arguments, project=case_project, selector=Some(str(index))),
+                    )
+                    names.append(fixture.case_name())
+    results = invoke_many(requests, jobs)
+    for index in range(len(requests)):
+        outcomes[names[index]] = results[index]
+
+
+def built_program(project: Path, name: str) -> Path:
+    """Where a debug build of a project stores the program `name`."""
+    return project.joinpath("target").joinpath("incan").joinpath("debug").joinpath("bin").joinpath(name)
+
+
+def group_arguments(command: str, project: Path, entries: list[Entry]) -> list[str]:
+    """Describe selected entries for a shared build; execution uses its already-verified binary through Oven."""
+    mut arguments = [command, project.joinpath("src").joinpath("main.incn").0]
+    for index in range(len(entries)):
+        mut path = f"src/case_{index}.incn"
+        if entries[index].fixture.shape == "module":
+            path = f"src/case_{index}/main.incn"
+        arguments.extend(["--program-entry", path])
+    return arguments
+
+
+def materialize_group(project: Path, entries: list[Entry]) -> Result[None, str]:
+    """
+    Keep each program intact; the unit selects its checked main through canonical entry lowering.
+
+    The group's project holds each case as a module of its own, a manifest, and a `main` that imports them all.
+    """
+    mut files: Dict[str, bytes] = {}
+    files["loaf.toml"] = group_manifest().encode("utf-8")
+    mut imports = ""
+    for index in range(len(entries)):
+        candidate = entries[index]
+        module = f"case_{index}"
+        mut path = f"src/{module}.incn"
+        mut import_path = module
+        if candidate.fixture.shape == "module":
+            original = fixture_files(candidate.fixture)?
+            for relative in sorted([relative for relative in original.keys()]):
+                if relative.startswith("src/"):
+                    files[f"src/{module}/{relative[4:]}"] = original[relative]
+            path = f"src/{module}/main.incn"
+            import_path = f"{module}.main"
+        files[path] = candidate.source.encode("utf-8")
+        imports += f"import {import_path} as selected_{index}\n"
+    files["src/main.incn"] = group_main(imports).encode("utf-8")
+    materialize_files(project, files)?
+    return Ok(None)
+
+
+def group_manifest() -> str:
+    """The manifest of a group's project: one program, `src/main.incn`."""
+    return "[project]\nname = \"contract_batch\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+
+
+def group_main(imports: str) -> str:
+    """The `src/main.incn` of a group's project: the imports of its cases and an entry the selected entries replace."""
+    entry_note = "The unit's selected program entries supply the native process entry."
+    return imports + f"\n\ndef main() -> None:\n    \"\"\"{entry_note}\"\"\"\n    pass\n"

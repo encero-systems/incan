@@ -1,6 +1,8 @@
-# behavior: executes deferred enumerate and zip frames with distinct bindings
+# behavior: deferred enumerate and zip values retain their bindings through defaults, generator functions, captured closures and later generator clauses
 # expect-stdout:
 #   21
+#   9
+#   6
 
 
 """Executes deferred enumerate and zip frames with distinct bindings."""
@@ -22,6 +24,26 @@ def deferred_enumerate_zip() -> int:
   return defaulted_enumeration() + closure_result[0] + generated_first
 
 
+def captured_zip_closure() -> int:
+    """Capture an existing zip value in a closure expression."""
+    outer_pairs = zip([4], [5])
+    closure_values: () -> list[int] = () => (captured_left + captured_right for captured_left, captured_right in outer_pairs).collect()
+    captured_values = closure_values()
+    captured_first = captured_values[0]
+    return captured_first
+
+
+def later_clause_generator_capture() -> int:
+    """Use captured enumeration and zip values in later clauses."""
+    captured_enumeration = enumerate([1])
+    captured_zip = zip([2], [3])
+    generated_values = (outer_value + later_index + later_value + later_left + later_right for outer_value in [0] for later_index, later_value in captured_enumeration for later_left, later_right in captured_zip).collect()
+    generated_first = generated_values[0]
+    return generated_first
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(deferred_enumerate_zip())
+    println(captured_zip_closure())
+    println(later_clause_generator_capture())

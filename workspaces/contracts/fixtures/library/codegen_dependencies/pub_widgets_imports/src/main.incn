@@ -1,16 +1,55 @@
-# behavior: a dependency's model, function and const are usable through `from pub::… import`, with an item alias, and through `import pub::… as` module alias
+# behavior: a dependency's generic declarations and exports reach its consumers: a library model stores a callback using its owner type parameters and separate instantiations preserve the callback's input and result types, a dependency publishes the generic supertrait implied by a bare generic subtrait adoption so consumers can use both contracts, and a dependency's model, function and const are usable through `from pub::… import`, with an item alias, and through `import pub::… as` module alias
 # expect-stdout:
+#   8
+#   v:7
+#   7
+#   9
 #   ok
 #   default
 #   aliased
 
-from pub::widgets import Widget as PublicWidget, make_widget, DEFAULT_NAME
+from pub::widgets import Catalog, DEFAULT_NAME, Mapper, OrderedCatalog, Parcel, Widget as PublicWidget, make_widget
 import pub::widgets as widgets_alias
 
 
-def main() -> None:
+def double(value: int) -> int:
+    """Double one callback input."""
+    return value * 2
+
+
+def label(value: int) -> str:
+    """Render one callback input."""
+    return f"v:{value}"
+
+
+def first(catalog: Catalog[int]) -> int:
+    return catalog.item()
+
+
+def ordered(catalog: OrderedCatalog[int]) -> OrderedCatalog[int]:
+    return catalog.ordered()
+
+
+def show_generic_callable_field() -> None:
+    """Use the same library model with two distinct callback result types."""
+    println(Mapper(transform=double).apply(4))
+    println(Mapper(transform=label).apply(7))
+
+
+def show_implied_supertrait() -> None:
+    println(first(Parcel(value=7)))
+    println(ordered(Parcel(value=9)).item())
+
+
+def show_import_spellings() -> None:
     w: PublicWidget = make_widget("ok")
     println(w.name)
     d: PublicWidget = make_widget(DEFAULT_NAME)
     println(d.name)
     println(widgets_alias.make_widget("aliased").name)
+
+
+def main() -> None:
+    show_generic_callable_field()
+    show_implied_supertrait()
+    show_import_spellings()

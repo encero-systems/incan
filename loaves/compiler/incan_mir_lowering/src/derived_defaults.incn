@@ -76,7 +76,7 @@ pub def lower_derived_default(
 
 
 def receiver_type(
-    builder: Builder,
+    mut builder: Builder,
     target: &NamedCallableTarget,
     destination: &Option[RustPlace],
     span: SourceSpan,

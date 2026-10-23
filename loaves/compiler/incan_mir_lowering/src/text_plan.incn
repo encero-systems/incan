@@ -2,7 +2,7 @@
 
 from pub::incan_mir_plan import Place, PlanType, SourceSpan, Operand, RvalueKind
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, temporary, read_place, text_literal, forget_owned, drop_owned, external_call
+from frame import Builder, temporary, read_place, text_literal, forget_owned, drop_owned, external_call, value_type
 
 
 pub def format_parts(
@@ -53,6 +53,13 @@ pub def clone_text(mut builder: Builder, place: Place, span: SourceSpan) -> Resu
     """Clone a string local into a new owned string through the runtime, borrowing the original."""
     reference = temporary(builder, PlanType.StringRef, span)
     builder.emit(plan_assign(reference, RvalueKind.Borrow(place), span))
+    return clone_text_reference(builder, read_place(reference, false, span), span)
+
+
+pub def clone_text_reference(mut builder: Builder, reference: Operand, span: SourceSpan) -> Result[Place, str]:
+    """Materialize owned display text from an existing shared string reference, retaining the original owner."""
+    if value_type(builder, reference)? != PlanType.StringRef:
+        return Err("unsupported Body IR text clone without a shared string reference")
     result = temporary(builder, PlanType.String, span)
     path = "incan_native_runtime::clone_text"
     external_call(
@@ -60,7 +67,7 @@ pub def clone_text(mut builder: Builder, place: Place, span: SourceSpan) -> Resu
         path,
         [PlanType.StringRef],
         PlanType.String,
-        [read_place(reference, false, span)],
+        [reference],
         result,
         span,
     )
@@ -74,3 +81,33 @@ pub def owned_literal(mut builder: Builder, text: str, span: SourceSpan) -> Plac
     path = "incan_std_core::strings::str_concat"
     external_call(builder, path, [PlanType.StrRef, PlanType.StrRef], PlanType.String, arguments, result, span)
     return result
+
+
+pub def owned_slice_text(mut builder: Builder, value: Operand, span: SourceSpan) -> Place:
+    """Materialize a retained native str view as the owned text the checked source result contract requires."""
+    result = temporary(builder, PlanType.String, span)
+    external_call(
+        builder,
+        "incan_std_core::strings::str_concat",
+        [PlanType.StrRef, PlanType.StrRef],
+        PlanType.String,
+        [value, text_literal("", span)],
+        result,
+        span,
+    )
+    return result
+
+
+pub def owned_borrowed_text(mut builder: Builder, value: Operand, span: SourceSpan) -> Place:
+    """Copy a shared String through its native slice without calling the runtime's own clone wrapper."""
+    view = temporary(builder, PlanType.StrRef, span)
+    external_call(
+        builder,
+        "alloc::string::String::as_str",
+        [PlanType.StringRef],
+        PlanType.StrRef,
+        [value],
+        view,
+        span,
+    )
+    return owned_slice_text(builder, read_place(view, false, span), span)

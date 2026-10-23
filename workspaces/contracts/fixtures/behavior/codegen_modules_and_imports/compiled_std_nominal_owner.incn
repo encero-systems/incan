@@ -1,0 +1,19 @@
+# behavior: a compiled standard nominal retains its provider identity and methods, including value-enum lookup in private dependencies
+# expect-stdout:
+#   leaf.txt
+#   invalid mode refused
+#   missing file refused
+"""Use a path whose canonical native item belongs to the compiled standard package."""
+
+from std.fs import Path
+
+
+def main() -> None:
+    """Call provider methods and refuse invalid file opens through the retained dependency closure."""
+    println(Path("folder/leaf.txt").name())
+    match Path("folder/leaf.txt").open("invalid"):
+        Ok(file) => println("unexpected file")
+        Err(error) => println("invalid mode refused")
+    match Path("folder/leaf.txt").open("r"):
+        Ok(file) => println("unexpected file")
+        Err(error) => println("missing file refused")

@@ -1,9 +1,16 @@
-# behavior: aliasing an import to the reserved root `std` is allowed; only declarations named `std` are refused
+# behavior: a standard module import may bind its own reserved root and resolve a type through that binding
 # expect-accepted:
 
-"""Aliasing an import to reserved root 'std' is allowed (only declarations are rejected)."""
+"""Keep a same-root alias usable through a compiled standard module."""
 
 import std.web as std
 
+
+def keep(response: std.Response) -> std.Response:
+    """Resolve both sides of a signature through the selected module alias."""
+    return response
+
+
 def main() -> None:
+    """Check the module binding without constructing a response."""
     pass

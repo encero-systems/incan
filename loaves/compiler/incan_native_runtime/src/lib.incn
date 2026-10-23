@@ -1,5 +1,9 @@
 """Language formatting and collection helpers used by the direct native route."""
 
+from rust::incan_std_core::strings import float_to_string
+from rust::std::primitive import i64 as RuntimeInt
+from rust::std::string import String as RustString
+
 pub from fallible_defaults import (
     fallible_next,
     fallible_map,
@@ -17,10 +21,11 @@ pub from generic_decorators import cached_text_binding, callable_text_name
 pub from decimals import less_decimal, less_equal_decimal, greater_decimal, greater_equal_decimal
 pub from rust::incan_std_core::num import Decimal128 as DecimalCarrier
 pub from frozen_text import format_frozen
-pub from frozen_text import length_frozen_bytes
+pub from frozen_text import length_frozen_bytes, copy_frozen_bytes
 pub from text_codecs import encode_text, encode_frozen_text, decode_bytes, decode_frozen_bytes
+pub from text_codecs import text_codec_encoding_valid, text_codec_errors_valid
 pub from diverging_errors import raise_value_error
-pub from frozen_collections import frozen_list_length, frozen_list_items, frozen_list_text_items
+pub from frozen_collections import freeze_list, frozen_list_length, frozen_list_items, frozen_list_text_items
 pub from frozen_collections import frozen_list_length_ref, frozen_set_length_ref, frozen_dict_length_ref
 pub from frozen_collections import frozen_set_length, frozen_set_items, frozen_set_text_items
 pub from frozen_collections import frozen_list_byte_items, own_static_bytes
@@ -33,7 +38,6 @@ pub from frozen_collections import (
 )
 pub from frozen_collections import frozen_dict_keys, frozen_dict_text_keys
 pub from raises_assertions import assert_raises_deferred
-pub from raises_assertions import assert_equal, assert_unequal
 pub from rust::incan_std_core::frozen import FrozenStr as FrozenCarrier, FrozenBytes as FrozenBytesCarrier
 pub from newtype_constraints import validate_newtype_constraint
 pub from newtype_hooks import checked_newtype_result
@@ -44,7 +48,7 @@ pub from newtype_sums import add_newtype_sum, checked_sum_result
 pub from validation_errors import make_validation_error, make_coded_validation_error, format_validation_error
 pub from rust::incan_std_core::validation import ValidationError as ValidationErrorCarrier
 pub from carriers import format_carrier, clone_carrier_payload
-pub from async_ import run_async_entry, run_future_entry
+pub from async_ import run_async_entry, run_future_entry, run_result_future_entry
 pub from race_ import race_pair
 pub from generators import (
     poll_generator,
@@ -68,6 +72,7 @@ pub from generators import (
     skip_while_int_generator,
     flat_map_int_generator,
     flat_map_int_set_generator,
+    set_generator,
     map_text_callable_generator,
     flat_map_text_callable_generator,
     any_text_callable_generator,
@@ -119,7 +124,16 @@ pub from model_values import (
     greater_model,
     greater_equal_model,
 )
-pub from tuple_iterators import ZipLists, zip_lists, clone_zip, poll_zip, enumerate_list, enumerate_text, text_items
+pub from tuple_iterators import (
+    ZipLists,
+    zip_lists,
+    clone_zip,
+    poll_zip,
+    enumerate_list,
+    enumerate_bytes,
+    enumerate_text,
+    text_items,
+)
 pub from tuple_iterators import zip_lists_generator
 pub from collections import empty_set, insert_set, length_set, contains_set, clone_set
 pub from collections import equal_set, unequal_set, equal_dict, unequal_dict
@@ -187,6 +201,7 @@ pub from strings import (
     not_contains_text,
     split_text,
     split_default_text,
+    split_whitespace_text,
     join_text,
     concat_text,
     slice_text_bounds,
@@ -310,17 +325,20 @@ pub from integer_helpers import (
 
 pub def format_int(value: int) -> str:
     """Format an integer with the same conversion used by language string interpolation."""
-    return str(value)
+    native: RuntimeInt = value
+    return native.to_string()
 
 
 pub def format_float(value: float) -> str:
     """Preserve the language's float spelling, including visibly integral floats."""
-    return str(value)
+    return float_to_string(value)
 
 
 pub def format_bool(value: bool) -> str:
     """Format a boolean with the language's existing scalar conversion."""
-    return str(value)
+    if value:
+        return "true"
+    return "false"
 
 
 pub def println_text(value: str) -> None:
@@ -330,7 +348,7 @@ pub def println_text(value: str) -> None:
 
 pub def clone_text(value: &str) -> str:
     """Create the owned display text for an already formatted borrowed string."""
-    return str(value)
+    return RustString.from(value)
 
 
 pub def validate_range(start: int, end: int, step: int) -> None:

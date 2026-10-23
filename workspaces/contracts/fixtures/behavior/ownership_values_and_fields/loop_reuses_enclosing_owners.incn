@@ -1,0 +1,80 @@
+# behavior: loops reuse enclosing text and model owners across repeated calls, conditions, continue, and nested loops
+# expect-stdout:
+#   3
+#   4
+#   2
+#   4
+#   2
+#   2
+
+model Word:
+    """One owned text value reused by a loop."""
+
+    text: str
+
+
+def present(text: str) -> bool:
+    """Observe owned text through an ordinary function argument."""
+    return len(text) > 0
+
+
+def repeated(text: str) -> int:
+    """Read a parameter on every iteration although its final textual use is inside the loop."""
+    mut count = 0
+    for index in range(3):
+        if present(text):
+            count += 1
+    return count
+
+
+def condition(text: str) -> int:
+    """Read the same owner in a loop condition and after a continue."""
+    mut count = 0
+    while count < 4 and present(text):
+        count += 1
+        continue
+    return count
+
+
+def nested(word: Word) -> int:
+    """Retain a model while nested loops repeatedly read its field."""
+    mut count = 0
+    for outer in range(2):
+        for inner in range(2):
+            if present(word.text):
+                count += 1
+    return count
+
+
+def returned_loop(text: str) -> int:
+    """A loop inside a return expression still repeats its own reads before producing the return value."""
+    mut iterations = 0
+    mut count = 0
+    return loop:
+        if iterations == 2:
+            break count
+        if present(text):
+            count += 1
+        iterations += 1
+
+
+def outer_loop_after_break(text: str) -> int:
+    """Breaking an inner loop preserves the enclosing loop's repeated owner reads."""
+    mut count = 0
+    for outer in range(2):
+        selected = loop:
+            break text
+        if present(selected):
+            count += 1
+    return count
+
+
+def main() -> None:
+    """Exercise repeated, conditional, and nested reads."""
+    println(repeated("yes"))
+    println(condition("yes"))
+    values = ["a", "", "b"]
+    println(len([value for value in values if present(value)]))
+    println(nested(Word(text="yes")))
+    println(returned_loop("yes"))
+    println(outer_loop_after_break("yes"))

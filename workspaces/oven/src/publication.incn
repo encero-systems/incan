@@ -1,0 +1,26 @@
+"""Atomic publication: write a complete file beside its destination, then rename it into place, so a reader (or an
+interrupted writer) never leaves a half-written file at the destination."""
+
+from rust::std::fs import rename
+from rust::std::process import id
+from std.fs import Path
+
+
+pub def place(staged: Path, path: Path) -> Result[None, str]:
+    """Move a complete file onto `path` in one step; both must be on the same filesystem."""
+    rename(staged.0, path.0).map_err((error) => str(error))?
+    return Ok(None)
+
+
+pub def publish(path: Path, text: str) -> Result[None, str]:
+    """Publish a completed document by atomic rename, allowing concurrent readers to see only complete files."""
+    temporary = Path(f"{path.0}.{id()}.tmp")
+    temporary.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
+    return place(temporary, path)
+
+
+pub def publish_binary(path: Path, content: bytes) -> Result[None, str]:
+    """Publish a complete binary file by atomic rename; graph cache files never contain JSON."""
+    temporary = Path(f"{path.0}.{id()}.tmp")
+    temporary.write_bytes(content).map_err((error) => error.message())?
+    return place(temporary, path)

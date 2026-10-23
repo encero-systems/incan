@@ -1,59 +1,45 @@
-//! Retain complete checked generic call arguments for Body IR without changing legacy inference records.
+//! Retain checked generic call arguments and results shared by expression checking and Body IR.
 
 use std::collections::{HashMap, HashSet};
 
 use super::TypeChecker;
 use crate::ast::{CallArg, Expr, Literal, Span, Spanned};
 use crate::resolved_type_subst::substitute_resolved_type;
-use crate::symbols::{FunctionInfo, MethodInfo, ResolvedType, SymbolKind, TypeBoundInfo, TypeInfo};
+use crate::symbols::{FunctionInfo, MethodInfo, ResolvedType, TypeBoundInfo, TypeInfo};
 use incan_lang::interop::is_rust_capability_bound;
 use incan_lang::lang::surface::constructors::ConstructorId;
 use incan_lang::lang::testing::{self, TestingAssertHelperId};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 impl TypeChecker {
-    /// A surface-import call validates on its builtin path rather than through the ordinary generic validator. Use
-    /// that successful selection and its imported signature with the same private argument producer; source shadows,
-    /// failed calls and non-function bindings publish no instantiation.
-    pub(super) fn retain_body_ir_surface_call_arguments(
-        &mut self,
-        name: &str,
-        args: &[CallArg],
-        span: Span,
-        errors_before: usize,
-    ) {
-        if self.errors.len() != errors_before || self.active_surface_function_import(name).is_none() {
-            return;
-        }
-        let Some(SymbolKind::Function(info)) = self.lookup_symbol(name).map(|symbol| symbol.kind.clone()) else {
-            return;
-        };
-        let identity = self.called_function_identity(name);
-        self.retain_body_ir_call_arguments(&info, args, &HashMap::new(), span, identity.as_ref());
-    }
-
     /// Retain a selected async function call only after its arity, argument, bound and capture checks succeed. The
     /// enclosing module wrapper's earlier diagnostics are included; a missing canonical function grants no contract.
     pub(in crate::typechecker::check_expr) fn retain_body_ir_async_call_target(
         &mut self,
-        info: &FunctionInfo,
+        is_async: bool,
+        name: &str,
         span: Span,
         callee_span: Span,
         errors_before_call: usize,
     ) {
         let key = (span.start, span.end);
         self.type_info.calls.body_ir_async_call_targets.remove(&key);
-        if !info.is_async || self.errors.len() != errors_before_call {
+        if !is_async || self.errors.len() != errors_before_call {
             return;
         }
-        let Some(identity) = self.type_info.resolved_identity(callee_span) else {
+        let Some(identity) = self
+            .type_info
+            .resolved_call_identity(name, callee_span, None)
+            .or_else(|| self.type_info.resolved_import_identity(name))
+            .cloned()
+        else {
             return;
         };
         if identity.kind == SemanticSourceTargetKind::Function {
-            self.type_info
-                .calls
-                .body_ir_async_call_targets
-                .insert(key, identity.clone());
+            if self.type_info.resolved_identity(callee_span).is_none() {
+                self.type_info.record_resolved_identity(callee_span, identity.clone());
+            }
+            self.type_info.calls.body_ir_async_call_targets.insert(key, identity);
         }
     }
 
@@ -88,8 +74,8 @@ impl TypeChecker {
             let Some(actual) = self.type_info.expr_type(expression.span) else {
                 return;
             };
-            let expected = normalized(parameter, &names, &self.type_info);
-            let actual = normalized(actual, &[], &self.type_info);
+            let expected = normalized(parameter, &names, self);
+            let actual = normalized(actual, &[], self);
             if !concrete(&actual) {
                 return;
             }
@@ -99,7 +85,7 @@ impl TypeChecker {
                 return;
             }
         }
-        let output = substitute_resolved_type(&normalized(&result, &names, &self.type_info), &bindings);
+        let output = substitute_resolved_type(&normalized(&result, &names, self), &bindings);
         if !concrete(&output) {
             return;
         }
@@ -145,8 +131,8 @@ impl TypeChecker {
         }
         let mut bindings: HashMap<_, _> = legacy_bindings
             .iter()
-            .filter(|(_, ty)| concrete(&normalized(ty, &names, &self.type_info)))
-            .map(|(name, ty)| (name.clone(), normalized(ty, &names, &self.type_info)))
+            .filter(|(_, ty)| concrete(&normalized(ty, &names, self)))
+            .map(|(name, ty)| (name.clone(), normalized(ty, &names, self)))
             .collect();
         let mut native_binders = HashSet::new();
         let rest = info
@@ -177,23 +163,27 @@ impl TypeChecker {
             else {
                 return;
             };
-            let expected = normalized(&parameter.ty, &names, &self.type_info);
+            let expected = normalized(&parameter.ty, &names, self);
             let actual = testing_argument.unwrap_or_else(|| self.body_ir_argument_type(expression, actual));
+            // A native slice is not the source byte buffer used by legacy inference. Preserve the selected
+            // reference at the source instantiation boundary, before argument storage is chosen.
+            let native_slice = self.body_ir_native_slice_argument(expression);
+            let actual = native_slice.as_ref().unwrap_or(&actual);
             if testing_channel {
                 self.type_info
                     .expressions
                     .body_ir_expr_types
                     .insert(key, actual.clone());
             }
-            let actual = normalized(&actual, &[], &self.type_info);
+            let actual = normalized(actual, &[], self);
             let actual = self.body_ir_adopted_trait_type(&expected, &actual).unwrap_or(actual);
             if let ResolvedType::TypeVar(name) = &expected {
                 let first_actual = native_binders.insert(name.clone());
                 if first_actual
-                    && matches!(&actual, ResolvedType::Generic(base, outputs) if base == "Awaitable" && outputs.len() == 1)
+                    && (native_slice.is_some()
+                        || matches!(&actual, ResolvedType::Generic(base, outputs) if base == "Awaitable" && outputs.len() == 1))
                 {
-                    // Replace only a legacy eventual-output seed, preserving every preceding native argument's
-                    // evidence.
+                    // Replace only a legacy representation seed, preserving every preceding argument's evidence.
                     bindings.remove(name);
                 }
             }
@@ -209,7 +199,7 @@ impl TypeChecker {
                 .calls
                 .body_ir_call_type_arguments
                 .insert((span.start, span.end), arguments);
-            let result = substitute_resolved_type(&normalized(&info.return_type, &names, &self.type_info), &bindings);
+            let result = substitute_resolved_type(&normalized(&info.return_type, &names, self), &bindings);
             self.retain_body_ir_call_parameters(info, &names, &bindings, span);
             tracing::debug!(target: "incan::invocation", identity = ?identity, declared = ?info.return_type, names = ?names, bindings = ?bindings, result = ?result, "direct-route checked call result");
             if concrete(&result) {
@@ -218,13 +208,7 @@ impl TypeChecker {
                     .body_ir_call_result_types
                     .insert((span.start, span.end), result.clone());
             }
-            let runtime_bridge = info
-                .type_param_bound_details
-                .values()
-                .flatten()
-                .any(|bound| self.body_ir_runtime_bridge_bound(bound));
-            let runtime_result = matches!(&info.return_type, ResolvedType::RustPath(path) if crate::body_ir::runtime_nominals::project_resolved_path(path, &self.type_info).is_some());
-            if concrete(&result) && (runtime_bridge || runtime_result || info.is_async) {
+            if concrete(&result) {
                 self.type_info
                     .calls
                     .inferred_call_result_types
@@ -245,7 +229,7 @@ impl TypeChecker {
             .params
             .iter()
             .map(|parameter| crate::symbols::CallableParam {
-                ty: substitute_resolved_type(&normalized(&parameter.ty, names, &self.type_info), bindings),
+                ty: substitute_resolved_type(&normalized(&parameter.ty, names, self), bindings),
                 ..parameter.clone()
             })
             .collect::<Vec<_>>();
@@ -364,6 +348,21 @@ impl TypeChecker {
         selected
     }
 
+    /// Read an exact native slice before source byte-buffer projection. The selected call result takes priority over
+    /// legacy return coercions, matching the carrier Body IR emits; canonical locals use their retained provenance.
+    fn body_ir_native_slice_argument(&self, expression: &Spanned<Expr>) -> Option<ResolvedType> {
+        self.type_info
+            .rust
+            .checked_calls
+            .get(&(expression.span.start, expression.span.end))
+            .map(|call| call.return_type.clone())
+            .or_else(|| self.rust_native_value_type(expression))
+            .filter(|ty| {
+                matches!(ty, ResolvedType::Ref(inner) | ResolvedType::RefMut(inner)
+                if matches!(inner.as_ref(), ResolvedType::Generic(base, _) if base == "[]"))
+            })
+    }
+
     /// Retain a checked async call as a future argument while leaving legacy's eventual-output expression type alone.
     fn body_ir_argument_type(&self, expression: &Spanned<Expr>, actual: &ResolvedType) -> ResolvedType {
         if matches!(actual, ResolvedType::Generic(name, args) if name == "Awaitable" && args.len() == 1) {
@@ -425,7 +424,7 @@ impl TypeChecker {
                     continue;
                 }
                 for (parameter, output) in bound.type_args.iter().zip(outputs) {
-                    self.infer_type_param_bindings(&normalized(parameter, names, &self.type_info), &output, bindings);
+                    self.infer_type_param_bindings(&normalized(parameter, names, self), &output, bindings);
                 }
             }
         }
@@ -456,17 +455,6 @@ impl TypeChecker {
         None
     }
 
-    /// Identify the SDK-owned associated-output contracts independently of any call's actual arguments.
-    fn body_ir_runtime_bridge_bound(&self, bound: &TypeBoundInfo) -> bool {
-        [
-            "incan_std_async::task::RuntimeFuture",
-            "incan_std_async::task::RuntimeFnOnce",
-            "incan_std_async::race::RuntimeRaceCallback",
-        ]
-        .iter()
-        .any(|owner| self.body_ir_runtime_bound_owner(bound, owner))
-    }
-
     /// Match a resolved native owner or an explicit Rust import, so an equal-spelled source import cannot authorize it.
     fn body_ir_runtime_bound_owner(&self, bound: &TypeBoundInfo, owner: &str) -> bool {
         if bound.name.trim_start_matches("::") == owner {
@@ -478,22 +466,15 @@ impl TypeChecker {
     }
 }
 
-/// Normalize checked tuple aliases and only the callee's declared named binders for structural unification.
-pub(super) fn normalized(
-    ty: &ResolvedType,
-    binders: &[String],
-    facts: &crate::typechecker::TypeCheckInfo,
-) -> ResolvedType {
+/// Normalize checked aliases and declared binders in the accepting checker; SDK projection keeps its lexical scope.
+pub(super) fn normalized(ty: &ResolvedType, binders: &[String], checker: &TypeChecker) -> ResolvedType {
     match ty {
         ResolvedType::Named(name) if binders.contains(name) => ResolvedType::TypeVar(name.clone()),
         ResolvedType::RustPath(name) if binders.contains(name) => ResolvedType::TypeVar(name.clone()),
-        ResolvedType::RustPath(path) => crate::body_ir::runtime_nominals::project_resolved_path(path, facts)
-            .map(|carrier| normalized(&carrier, binders, facts))
-            .unwrap_or_else(|| ty.clone()),
         ResolvedType::Generic(name, elements) => {
             let elements = elements
                 .iter()
-                .map(|element| normalized(element, binders, facts))
+                .map(|element| normalized(element, binders, checker))
                 .collect();
             if name == "Tuple" {
                 ResolvedType::Tuple(elements)
@@ -504,27 +485,27 @@ pub(super) fn normalized(
         ResolvedType::Tuple(elements) => ResolvedType::Tuple(
             elements
                 .iter()
-                .map(|element| normalized(element, binders, facts))
+                .map(|element| normalized(element, binders, checker))
                 .collect(),
         ),
-        ResolvedType::Ref(inner) => ResolvedType::Ref(Box::new(normalized(inner, binders, facts))),
-        ResolvedType::RefMut(inner) => ResolvedType::RefMut(Box::new(normalized(inner, binders, facts))),
-        ResolvedType::TypeToken(inner) => ResolvedType::TypeToken(Box::new(normalized(inner, binders, facts))),
+        ResolvedType::Ref(inner) => ResolvedType::Ref(Box::new(normalized(inner, binders, checker))),
+        ResolvedType::RefMut(inner) => ResolvedType::RefMut(Box::new(normalized(inner, binders, checker))),
+        ResolvedType::TypeToken(inner) => ResolvedType::TypeToken(Box::new(normalized(inner, binders, checker))),
         ResolvedType::Function(parameters, result) => ResolvedType::Function(
             parameters
                 .iter()
                 .map(|parameter| crate::symbols::CallableParam {
-                    ty: normalized(&parameter.ty, binders, facts),
+                    ty: normalized(&parameter.ty, binders, checker),
                     ..parameter.clone()
                 })
                 .collect(),
-            Box::new(normalized(result, binders, facts)),
+            Box::new(normalized(result, binders, checker)),
         ),
-        ResolvedType::FrozenList(inner) => ResolvedType::FrozenList(Box::new(normalized(inner, binders, facts))),
-        ResolvedType::FrozenSet(inner) => ResolvedType::FrozenSet(Box::new(normalized(inner, binders, facts))),
+        ResolvedType::FrozenList(inner) => ResolvedType::FrozenList(Box::new(normalized(inner, binders, checker))),
+        ResolvedType::FrozenSet(inner) => ResolvedType::FrozenSet(Box::new(normalized(inner, binders, checker))),
         ResolvedType::FrozenDict(key, value) => ResolvedType::FrozenDict(
-            Box::new(normalized(key, binders, facts)),
-            Box::new(normalized(value, binders, facts)),
+            Box::new(normalized(key, binders, checker)),
+            Box::new(normalized(value, binders, checker)),
         ),
         ty => ty.clone(),
     }

@@ -25,26 +25,32 @@ from pub::incan_mir_plan import (
 from tuples import tuple_type, generic_tuple_type, type_name, tuple_slot
 from pub::incan_mir_plan import tuple_element_type
 from generators import generator_type
-from nominal_instances import nominal_symbol
+from nominal_instances import nominal_symbol, template_base
+from symbols import model_symbol
 from types import primitive_type
 from closures import function_pointer_type
 from layout_types import native_source_type as retained_type
+from layout_types import stored_field_type
 from ranges import range_field
 from unions import union_slot
 
 
-pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Result[PlanType, str]:
+pub def model_type(mut declarations: list[NominalDeclaration], ty: &RustType) -> Result[PlanType, str]:
     """Translate checked scalar, collection, and callable types against retained declarations; refusals preserve the unsupported type and its parameters."""
     match generator_type(ty):
         Some(result) => return result
         None => pass
     match ty:
+        RustType.Never => return Ok(PlanType.Never)
         RustType.RustInteropPath(path) => return Err(f"unsupported Body IR type RustInteropPath {path}")
         RustType.Named(name) =>
-            for index in range(len(declarations)):
-                if declarations[index].name == str(name):
-                    return Ok(PlanType.Model(index, str(name)))
-            source_name = rejected_nominal_name(declarations, str(name))
+            retained_name = str(name)
+            mut index = 0
+            for declaration in declarations:
+                if declaration.name == retained_name:
+                    return Ok(PlanType.Model(index, model_symbol(retained_name)))
+                index += 1
+            source_name = rejected_nominal_name(declarations, retained_name)
             return Err(f"unsupported Body IR nominal type {source_name}")
         RustType.Primitive(primitive) => return primitive_type(primitive)
         RustType.TypeToken(represented) =>
@@ -66,13 +72,13 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
                         element = PlanType.StaticBytes
                     storage.append(element)
                 return Ok(PlanType.FrozenCollection(str(base), storage))
-            for index in range(len(declarations)):
-                declaration = declarations[index]
-                if declaration.type_parameter_count != 0 and declaration.canonical.declaration_name == str(base) and declaration.name == nominal_symbol(
-                    str(base),
-                    arguments,
-                ):
-                    return Ok(PlanType.Model(index, str(declaration.name)))
+            retained_base = str(base)
+            retained_name = nominal_symbol(retained_base, arguments)
+            mut index = 0
+            for declaration in declarations:
+                if declaration.type_parameter_count != 0 and declaration.name == retained_name and template_base(declaration) == retained_base:
+                    return Ok(PlanType.Model(index, model_symbol(str(declaration.name))))
+                index += 1
             if base == "Set" and len(arguments) == 1:
                 return Ok(PlanType.Set(hashed_element(declarations, arguments[0])?))
             if base == "Dict" and len(arguments) == 2:
@@ -98,7 +104,7 @@ pub def model_type(declarations: list[NominalDeclaration], ty: &RustType) -> Res
         _ => return Err(f"unsupported Body IR type {type_name(ty)} ({ty})")
 
 
-def rejected_nominal_name(declarations: list[NominalDeclaration], name: str) -> str:
+def rejected_nominal_name(mut declarations: list[NominalDeclaration], name: str) -> str:
     """Report a rejected carrier's source name only through its retained canonical owner, without granting layout admission."""
     for declaration in declarations:
         match nominal_carrier_key(declaration.canonical):
@@ -109,7 +115,7 @@ def rejected_nominal_name(declarations: list[NominalDeclaration], name: str) -> 
     return name
 
 
-pub def hashed_element(declarations: list[NominalDeclaration], ty: &RustType) -> Result[ListLeaf, str]:
+pub def hashed_element(mut declarations: list[NominalDeclaration], ty: &RustType) -> Result[ListLeaf, str]:
     """
     Admit a retained model as a set element or dictionary key with derived Hash and derived or canonically selected source Eq.
 
@@ -119,10 +125,12 @@ pub def hashed_element(declarations: list[NominalDeclaration], ty: &RustType) ->
     """
     match ty:
         RustType.Named(name) =>
-            for index in range(len(declarations)):
-                declaration = declarations[index]
-                if declaration.name == str(name) and model_equality(declaration) and "Hash" in declaration.derives:
-                    return Ok(ListLeaf.Model(index, str(name)))
+            retained_name = str(name)
+            mut index = 0
+            for declaration in declarations:
+                if declaration.name == retained_name and model_equality(declaration) and "Hash" in declaration.derives:
+                    return Ok(ListLeaf.Model(index, retained_name))
+                index += 1
         _ => pass
     return primitive_leaf(ty, true)
 
@@ -137,29 +145,29 @@ def model_equality(declaration: &NominalDeclaration) -> bool:
 
 
 pub def model_place(
-    declarations: list[NominalDeclaration],
-    locals: list[Local],
+    mut declarations: list[NominalDeclaration],
+    mut locals: list[Local],
     value: &RustPlace,
     span: SourceSpan,
-    enums: list[RustEnumDeclaration],
-    unions: list[RustType],
-    intrinsics: list[EnumDeclaration],
+    mut enums: list[RustEnumDeclaration],
+    mut unions: list[RustType],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[Place, str]:
-    """Require every checker-selected field identity before projecting its retained canonical layout."""
+    """Borrow the frame's tables while requiring each selected field's canonical layout; an unprojected local needs no declaration-table copy."""
     return model_prefix(declarations, locals, value, len(value.projection), span, enums, unions, intrinsics)
 
 
 pub def model_prefix(
-    declarations: list[NominalDeclaration],
-    locals: list[Local],
+    mut declarations: list[NominalDeclaration],
+    mut locals: list[Local],
     value: &RustPlace,
     count: int,
     span: SourceSpan,
-    enums: list[RustEnumDeclaration],
-    unions: list[RustType],
-    intrinsics: list[EnumDeclaration],
+    mut enums: list[RustEnumDeclaration],
+    mut unions: list[RustType],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[Place, str]:
-    """Project a checked leading field path without copying or changing the frontend place."""
+    """Borrow retained tables to project a checked leading field path without copying or changing the frontend place."""
     if count < 0 or count > len(value.projection):
         return Err("invalid Body IR model field prefix length")
     match value.local_id():
@@ -184,6 +192,11 @@ pub def model_prefix(
                 None => pass
             # An enum method's shared receiver reads the whole enum through its reference.
             match locals[index].ty:
+                PlanType.TupleRef(elements) =>
+                    if count == 0:
+                        return Ok(Place(local=index, projection=Projection.Whole, span=span))
+                    fields = field_path(declarations, PlanType.Tuple(elements), value.projection, count, enums, unions, intrinsics)?
+                    return Ok(Place(local=index, projection=Projection.DerefFields(fields), span=span))
                 PlanType.EnumRef(owner, name) =>
                     if count == 0:
                         return Ok(Place(local=index, projection=Projection.Deref(PlanType.Enum(owner, name)), span=span))
@@ -208,13 +221,13 @@ pub def model_prefix(
 
 
 pub def field_path(
-    declarations: list[NominalDeclaration],
+    mut declarations: list[NominalDeclaration],
     root: PlanType,
     projections: list[RustPlaceElem],
     count: int,
-    enums: list[RustEnumDeclaration],
-    unions: list[RustType],
-    intrinsics: list[EnumDeclaration],
+    mut enums: list[RustEnumDeclaration],
+    mut unions: list[RustType],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[FieldProjection], str]:
     """Resolve ordered checked carrier payloads and canonical fields; indices and slices keep their separate lowering."""
     mut ty = root
@@ -227,12 +240,12 @@ pub def field_path(
 
 
 pub def field_projection(
-    declarations: list[NominalDeclaration],
+    mut declarations: list[NominalDeclaration],
     root: PlanType,
     projection: &RustPlaceElem,
-    enums: list[RustEnumDeclaration],
-    unions: list[RustType],
-    intrinsics: list[EnumDeclaration],
+    mut enums: list[RustEnumDeclaration],
+    mut unions: list[RustType],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[FieldProjection, str]:
     """Validate one ordered payload or canonical field through the typed Rust enum boundary required by #459."""
     match projection:
@@ -261,12 +274,15 @@ pub def field_projection(
         PlanType.Model(owner, _name) =>
             declaration = declarations[owner]
             slot = field_slot(projection, declaration)?
-            ty = retained_type(declarations, enums, unions, declaration.field_types[slot], intrinsics)?
+            ty = stored_field_type(declarations, enums, unions, declaration, slot, intrinsics)?
             return Ok(FieldProjection(slot=slot, ty=ty))
         PlanType.Tuple(elements) =>
             slot = tuple_slot(projection, len(elements))?
             return Ok(FieldProjection(slot=slot, ty=tuple_element_type(elements[slot])))
         PlanType.TupleMutRef(elements) =>
+            slot = tuple_slot(projection, len(elements))?
+            return Ok(FieldProjection(slot=slot, ty=tuple_element_type(elements[slot])))
+        PlanType.TupleRef(elements) =>
             slot = tuple_slot(projection, len(elements))?
             return Ok(FieldProjection(slot=slot, ty=tuple_element_type(elements[slot])))
         PlanType.RangeValue => return range_field(projection)
@@ -281,23 +297,22 @@ pub def field_slot(value: &RustPlaceElem, declaration: &NominalDeclaration) -> R
     # Legacy #459-like pattern-only imports require the typed enum parameter until dev.8.
     match value:
         RustPlaceElem.Field(name=name, canonical=canonical, structural=structural) =>
-            # Legacy borrowed-pattern payloads remain references; materialize the owned comparison values until dev.8.
-            if structural.clone():
-                return Err("unsupported Body IR structural model projection")
-            match canonical:
-                Some(identity) =>
-                    for slot in range(len(declaration.fields)):
-                        if declaration.fields[slot] == str(name) and declaration.field_identities[slot] == identity.clone():
-                            return Ok(slot)
-                None => pass
-            return Err(
-                f"unsupported Body IR unproven model field; projection {value:?}; selected owner {declaration.canonical:?}; name {declaration.name:?}; fields {declaration.fields:?}; field identities {declaration.field_identities:?}; field types {declaration.field_types:?}",
-            )
+            if not structural:
+                match canonical:
+                    Some(identity) =>
+                        for slot in range(len(declaration.fields)):
+                            if declaration.fields[slot] == str(name) and declaration.field_identities[slot] == identity.clone():
+                                return Ok(slot)
+                    None => pass
+                return Err(
+                    f"unsupported Body IR unproven model field; projection {value:?}; selected owner {declaration.canonical:?}; name {declaration.name:?}; fields {declaration.fields:?}; field identities {declaration.field_identities:?}; field types {declaration.field_types:?}",
+                )
+            return Err("unsupported Body IR structural model projection")
         _ => return Err("unsupported Body IR model index or slice projection")
 
 
 pub def constructor_index(
-    declarations: list[NominalDeclaration],
+    mut declarations: list[NominalDeclaration],
     target: &ConstructorTarget,
     count: int,
     expected: PlanType,
@@ -347,15 +362,15 @@ def validate_constructor_binding(binding: &ArgumentBinding, count: int, fields: 
 
 
 def receiver_field(
-    declarations: list[NominalDeclaration],
+    mut declarations: list[NominalDeclaration],
     index: int,
     owner: int,
     value: &RustPlace,
     count: int,
     span: SourceSpan,
-    enums: list[RustEnumDeclaration],
-    unions: list[RustType],
-    intrinsics: list[EnumDeclaration],
+    mut enums: list[RustEnumDeclaration],
+    mut unions: list[RustType],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[Place, str]:
     """Project a checked field path through a shared or mutable nominal receiver."""
     fields = field_path(

@@ -14,7 +14,7 @@ from collections import is_collection, collection_arguments
 from model_lists import structural_prefix
 
 
-pub def is_element_place(builder: Builder, source: &RustPlace) -> Result[bool, str]:
+pub def is_element_place(mut builder: Builder, source: &RustPlace) -> Result[bool, str]:
     """
     Whether a local place selects a collection element or text slice rather than storage a native place can name.
 
@@ -27,9 +27,10 @@ pub def is_element_place(builder: Builder, source: &RustPlace) -> Result[bool, s
         None => return Ok(false)
         Some(local) =>
             root = builder.locals[int(local.index()) + 1 + builder.local_offset].ty
-            if is_list(root) or is_collection(root) or root in [PlanType.String, PlanType.StringRef, PlanType.StringMutRef]:
+            if is_list(root) or is_collection(root) or root in [PlanType.String, PlanType.StringRef, PlanType.StringMutRef, PlanType.FrozenStr, PlanType.FrozenBytes]:
                 return Ok(true)
             match root:
+                PlanType.NativeArray(_elements, _length) => return Ok(true)
                 PlanType.FrozenCollection(_name, _elements) => return Ok(true)
                 _ => pass
     match structural_prefix(builder, source)?:
@@ -37,12 +38,12 @@ pub def is_element_place(builder: Builder, source: &RustPlace) -> Result[bool, s
         None => return Ok(false)
 
 
-pub def element_place_type(builder: Builder, source: &RustPlace) -> Result[PlanType, str]:
+pub def element_place_type(mut builder: Builder, source: &RustPlace) -> Result[PlanType, str]:
     """Follow an element place's projections to the type of the value its read materializes, emitting nothing."""
     return element_prefix_type(builder, source, len(source.projection))
 
 
-pub def element_prefix_type(builder: Builder, source: &RustPlace, count: int) -> Result[PlanType, str]:
+pub def element_prefix_type(mut builder: Builder, source: &RustPlace, count: int) -> Result[PlanType, str]:
     """Resolve a checked element prefix once, without reading or borrowing its storage."""
     if count < 0 or count > len(source.projection):
         return Err("invalid Body IR element type prefix length")
@@ -58,6 +59,8 @@ pub def element_prefix_type(builder: Builder, source: &RustPlace, count: int) ->
                     ty = PlanType.Model(owner, name)
                 PlanType.TupleMutRef(elements) =>
                     ty = PlanType.Tuple(elements)
+                PlanType.TupleRef(elements) =>
+                    ty = PlanType.Tuple(elements)
                 PlanType.StringRef =>
                     ty = PlanType.String
                 PlanType.StringMutRef =>
@@ -68,11 +71,16 @@ pub def element_prefix_type(builder: Builder, source: &RustPlace, count: int) ->
             return Ok(ty)
 
 
-def projected_type(builder: Builder, ty: PlanType, projection: &PlaceElem) -> Result[PlanType, str]:
-    """Select one step's type: a collection element, sequence slice, or structural field or tuple element."""
+def projected_type(mut builder: Builder, ty: PlanType, projection: &PlaceElem) -> Result[PlanType, str]:
+    """Select one step's carrier: an indexed Unicode scalar string, collection element, slice, field or tuple element."""
     match projection:
         PlaceElem.Index(_index) =>
+            if ty == PlanType.String:
+                return Ok(PlanType.String)
             match ty:
+                PlanType.NativeArray(elements, _length) =>
+                    if len(elements) == 1:
+                        return Ok(elements[0])
                 PlanType.FrozenCollection(name, elements) =>
                     if name == "FrozenDict" and len(elements) == 2:
                         return Ok(frozen_read_type(elements[1]))
@@ -86,8 +94,10 @@ def projected_type(builder: Builder, ty: PlanType, projection: &PlaceElem) -> Re
             if is_collection(ty):
                 return dictionary_value_type(ty)
         PlaceElem.Slice(start=_start, end=_end, step=_step) =>
-            if ty == PlanType.String:
+            if ty in [PlanType.String, PlanType.FrozenStr]:
                 return Ok(PlanType.String)
+            if ty == PlanType.FrozenBytes:
+                return Ok(PlanType.List(ListLeaf.U8, 1))
             match list_shape(ty):
                 Some((leaf, depth)) => return Ok(PlanType.List(leaf, depth))
                 None => return Err("unsupported Body IR slicing non-list")

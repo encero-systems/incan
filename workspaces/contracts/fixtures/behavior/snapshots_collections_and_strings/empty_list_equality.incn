@@ -1,7 +1,13 @@
-# behavior: an empty list literal compares equal and unequal against a typed list in either operand position (#1493, #1476)
+# behavior: collection equality retains typed empty operands and materializes indexed or sliced operands once in either position (#1493, #1476, #2256)
 # expect-stdout:
 #   true false
 #   ok
+#   true
+#   true
+#   true
+#   true
+#   true
+#   [[1, 2]]
 
 """Issue #1476: an empty list operand carries the checked element type in both positions and both operators."""
 
@@ -19,8 +25,17 @@ def is_not_empty(values: list[str]) -> bool:
 
 
 def main() -> None:
+    """Compare whole and projected collections while keeping their owners readable."""
     println(f"{probe([])} {probe(["x"])}")
     assert is_empty([])
     assert not is_empty(["value"])
     assert is_not_empty(["value"])
     println("ok")
+    rows = [[1, 2]]
+    mapping = {"value": [1, 2]}
+    println(rows[0] == [1, 2])
+    println([1, 2] == rows[-1])
+    println(rows[0] != [2, 1])
+    println(rows[0][:1] == [1])
+    println(mapping["value"] == rows[0])
+    println(rows)

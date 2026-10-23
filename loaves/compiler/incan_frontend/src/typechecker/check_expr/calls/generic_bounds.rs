@@ -94,8 +94,8 @@ impl TypeChecker {
     /// inferred bindings, with any binding a literal argument leaves open closed from the literal's elements, and the
     /// side an `Ok(...)` or `Err(...)` argument leaves open settled. The arguments that bind one type parameter bind it
     /// to one type, and a bounded type parameter no argument fixes is refused (#1561).
-    /// Successful single-function calls additionally retain exact parameter requirements for Body IR without replacing
-    /// ordinary bindings.
+    /// Successful calls share the fully checked native result with enclosing expressions and Body IR, preserving
+    /// associated outputs inferred from future and callable bounds.
     pub(in crate::typechecker::check_expr::calls) fn validate_function_call(
         &mut self,
         func_name: &str,
@@ -154,7 +154,7 @@ impl TypeChecker {
             &info.type_param_bound_details,
             &mut type_bindings,
         );
-        self.infer_type_param_bindings_from_source_callables(&info.type_param_bound_details, &mut type_bindings);
+        self.infer_type_param_bindings_from_source_bounds(&info.type_param_bound_details, &mut type_bindings);
         let arguments = Self::arguments_with_parameter_types(&params_with_explicit, args);
         self.unify_argument_type_bindings(&info.type_params, &arguments, &mut type_bindings);
         let mut instantiation =
@@ -252,8 +252,22 @@ impl TypeChecker {
         }
         if explicit_arity_ok && self.errors.len() == errors_before_call {
             self.retain_body_ir_parameter_requirements(&resolved_params, args, callee_identity.as_ref());
+            let templates =
+                self.contextual_parameter_templates(&resolved_params, callee_identity.as_ref(), &info.params);
+            for ((expression, expected), (_, template)) in Self::arguments_with_parameter_types(&resolved_params, args)
+                .into_iter()
+                .zip(Self::arguments_with_parameter_types(&templates, args))
+            {
+                self.retain_contextual_literal_type(expression, expected, callee_identity.as_ref(), Some(template));
+            }
+            self.retain_declared_nominal_result(call_span, &info.return_type, &type_bindings, callee_identity.as_ref());
         }
-        substitute_resolved_type(&info.return_type, &type_bindings)
+        self.type_info
+            .calls
+            .inferred_call_result_types
+            .get(&(call_span.start, call_span.end))
+            .cloned()
+            .unwrap_or_else(|| substitute_resolved_type(&info.return_type, &type_bindings))
     }
 
     /// Retype a generic call's literal arguments at its instantiation (see
@@ -1014,7 +1028,7 @@ impl TypeChecker {
             &method_info.type_param_bound_details,
             &mut type_bindings,
         );
-        self.infer_type_param_bindings_from_source_callables(&method_info.type_param_bound_details, &mut type_bindings);
+        self.infer_type_param_bindings_from_source_bounds(&method_info.type_param_bound_details, &mut type_bindings);
         let arguments = Self::arguments_with_parameter_types(&params, args);
         self.unify_argument_type_bindings(&method_info.type_params, &arguments, &mut type_bindings);
         let mut instantiation =
@@ -1110,6 +1124,30 @@ impl TypeChecker {
             }
         }
 
+        if self.errors.len() == errors_before_call {
+            let templates = self.contextual_parameter_templates(
+                &resolved_params,
+                method_info.identity.as_ref(),
+                &method_info.params,
+            );
+            for ((expression, expected), (_, template)) in Self::arguments_with_parameter_types(&resolved_params, args)
+                .into_iter()
+                .zip(Self::arguments_with_parameter_types(&templates, args))
+            {
+                self.retain_contextual_literal_type(
+                    expression,
+                    expected,
+                    method_info.identity.as_ref(),
+                    Some(template),
+                );
+            }
+            self.retain_declared_nominal_result(
+                call_site_span,
+                &method_info.return_type,
+                &type_bindings,
+                method_info.identity.as_ref(),
+            );
+        }
         substitute_resolved_type(&return_type, &type_bindings)
     }
 
@@ -1283,32 +1321,57 @@ impl TypeChecker {
         (args.len() == arity + 1).then_some(args)
     }
 
-    /// Infer still-open generic arguments from a function value or nominal callable object and its `CallableN` bound.
-    fn infer_type_param_bindings_from_source_callables(
+    /// Close dependent binders from checked callable signatures, iterable elements and nominal trait adoptions.
+    /// A bound can depend on a binder another bound just closed; the finite pass count follows that dependency set.
+    pub(in crate::typechecker) fn infer_type_param_bindings_from_source_bounds(
         &self,
         bound_details: &std::collections::HashMap<String, Vec<crate::symbols::TypeBoundInfo>>,
         bindings: &mut std::collections::HashMap<String, ResolvedType>,
     ) {
-        for (type_param, bounds) in bound_details {
-            let Some(actual) = bindings.get(type_param).cloned() else {
-                continue;
-            };
-            let Some(bound) = bounds
-                .iter()
-                .find(|bound| self.callable_trait_for_bound(bound).is_some())
-            else {
-                continue;
-            };
-            let Some(callable_args) = self.source_callable_signature_args(&actual, bound) else {
-                continue;
-            };
-            if bound.type_args.len() != callable_args.len() {
-                continue;
+        for _ in 0..=bound_details.len() {
+            let previous = bindings.clone();
+            for (type_param, bounds) in bound_details {
+                let Some(actual) = bindings.get(type_param).cloned() else {
+                    continue;
+                };
+                for bound in bounds {
+                    let Some(arguments) = self.source_bound_arguments(&actual, bound) else {
+                        continue;
+                    };
+                    if bound.type_args.len() != arguments.len() {
+                        continue;
+                    }
+                    for (expected, actual) in bound.type_args.iter().zip(&arguments) {
+                        let expected = substitute_resolved_type(expected, bindings);
+                        self.infer_type_param_bindings(&expected, actual, bindings);
+                    }
+                }
             }
-            for (expected, actual) in bound.type_args.iter().zip(callable_args.iter()) {
-                let expected = substitute_resolved_type(expected, bindings);
-                self.infer_type_param_bindings(&expected, actual, bindings);
+            if *bindings == previous {
+                break;
             }
+        }
+    }
+
+    /// Read a bound's actual arguments from its existing semantic relation, preserving standard protocol identity.
+    fn source_bound_arguments(
+        &self,
+        actual: &ResolvedType,
+        bound: &crate::symbols::TypeBoundInfo,
+    ) -> Option<Vec<ResolvedType>> {
+        if self.callable_trait_for_bound(bound).is_some() {
+            return self.source_callable_signature_args(actual, bound);
+        }
+        if self.bound_is_builtin_trait(bound, TraitId::Iterable) {
+            return self.iterable_protocol_element_type(actual).map(|element| vec![element]);
+        }
+        match actual {
+            ResolvedType::Named(name) => self.instantiated_trait_args_for_type(name, &[], &bound.name),
+            ResolvedType::Generic(name, arguments) => {
+                self.instantiated_trait_args_for_type(name, arguments, &bound.name)
+            }
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.source_bound_arguments(inner, bound),
+            _ => None,
         }
     }
 
@@ -1317,6 +1380,8 @@ impl TypeChecker {
     /// This walks matching container structure recursively so constructor field checks and function calls can recover
     /// bindings such as `T -> String` from shapes like `Boxed[T]` versus `Boxed[String]`. Public-package aliases and
     /// provider-qualified spellings of the same generic declaration share that structure even when their names differ.
+    /// Native re-exports compare by their shared identity; a source collection expands only when the native template
+    /// needs its metadata-defaulted owner slots. Whole type parameters still bind the source argument unchanged.
     pub(in crate::typechecker) fn infer_type_param_bindings(
         &self,
         expected: &ResolvedType,
@@ -1337,6 +1402,10 @@ impl TypeChecker {
             ResolvedType::Generic(name, expected_args) => {
                 if let ResolvedType::Generic(actual_name, actual_args) = actual
                     && (name == actual_name
+                        || (name.contains("::")
+                            && actual_name.contains("::")
+                            && self.rust_native_type_identity_path(name)
+                                == self.rust_native_type_identity_path(actual_name))
                         || self
                             .public_library_type_identities
                             .get(name)
@@ -1352,6 +1421,11 @@ impl TypeChecker {
                     for (e, a) in expected_args.iter().zip(actual_args.iter()) {
                         self.infer_type_param_bindings(e, a, bindings);
                     }
+                } else if let Some(canonical) = self.rust_template_canonical_path(name)
+                    && let Some(expanded) = self.rust_inference_owner_for_template(&canonical, actual)
+                {
+                    let template = ResolvedType::Generic(canonical, expected_args.clone());
+                    self.infer_type_param_bindings(&template, &expanded, bindings);
                 }
             }
             ResolvedType::Function(expected_params, expected_ret) => {

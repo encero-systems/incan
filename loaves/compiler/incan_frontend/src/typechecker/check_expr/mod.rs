@@ -578,7 +578,8 @@ impl TypeChecker {
     /// Resolve an imported callable together with the authored module path used by lowering and codegraph facts.
     ///
     /// A Loaf owns its public modules even when an export is missing: a member it does not publish is not answered
-    /// from anywhere else.
+    /// from anywhere else. During library compilation, its own source functions already carry the package origin;
+    /// that origin is local only when it matches the package the accepting checker is compiling.
     fn resolve_imported_module_function_member_with_source(
         &mut self,
         module_path: &[String],
@@ -595,8 +596,14 @@ impl TypeChecker {
             return None;
         }
         let identity = self.dependency_member_identity(&import_path, member)?;
-        let incan_semantics_core::SymbolOrigin::Module(source_module_path) = identity.origin else {
-            return None;
+        let source_module_path = match identity.origin {
+            incan_semantics_core::SymbolOrigin::Module(path) => path,
+            incan_semantics_core::SymbolOrigin::Package { library, module_path }
+                if self.symbols.package_identity() == Some(library.as_str()) =>
+            {
+                module_path
+            }
+            _ => return None,
         };
         Some((kind, source_module_path))
     }
@@ -800,7 +807,8 @@ impl TypeChecker {
     /// Type-check an expression with an expected destination type when one is already known.
     ///
     /// This is intentionally narrow: only expression forms that benefit from contextual typing without broad inference
-    /// changes should use the hint. Calls record their `mut` arguments as [`Self::check_expr`] does.
+    /// changes should use the hint. `None` denotes unit when its destination is unit, and otherwise retains its
+    /// Option literal meaning. Calls record their `mut` arguments as [`Self::check_expr`] does.
     pub fn check_expr_with_expected(&mut self, expr: &Spanned<Expr>, expected: Option<&ResolvedType>) -> ResolvedType {
         let errors_before = self.errors.len();
         self.refuse_mut_params_held_in(expr);
@@ -835,8 +843,7 @@ impl TypeChecker {
                 self.type_token_value_spans.pop();
                 ty
             }
-            // None constructs the Option its destination already proves. Retaining that type here also fixes
-            // an enclosing intrinsic constructor's payload type without downstream inference.
+            (Expr::Literal(Literal::None), Some(ResolvedType::Unit)) => ResolvedType::Unit,
             (Expr::Literal(Literal::None), Some(expected_ty)) if expected_ty.option_inner_type().is_some() => {
                 expected_ty.clone()
             }
@@ -913,6 +920,9 @@ impl TypeChecker {
             (Expr::Tuple(items), Some(expected_ty)) => self.check_tuple_with_expected(items, expected_ty),
             (Expr::Closure(params, body), Some(ResolvedType::Function(expected_params, expected_ret))) => {
                 self.check_closure_with_expected(params, body, expected_params, expected_ret, expr.span)
+            }
+            (Expr::Closure(params, body), Some(ResolvedType::Generic(base, members))) if base == "Union" => {
+                self.check_closure_with_union_expected(params, body, members, expr.span)
             }
             (Expr::List(elems), expected_ty) => self.check_list_with_expected(elems, expected_ty),
             (Expr::Dict(entries), expected_ty) => self.check_dict_with_expected(entries, expected_ty),

@@ -1,0 +1,9 @@
+[project]
+name = "native_derive_contract"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+xxhash_rust = { loaf = "crates-io/xxhash-rust", version = "0.8", features = ["xxh32"], default-features = true }

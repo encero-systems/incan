@@ -14,10 +14,10 @@
 //!   method whose body hashes its parameter, a requirement inferred into its signature by `hash_key_inference`
 //!   (`INCAN-T0114`, #1758).
 //!
-//! The relation answers [`DeriveSupport::Unknown`] rather than guess: for a type parameter, a Rust-origin type, a
-//! `rusttype`, a runtime type the registry records nothing for, and a derive of a type declared in another module that
-//! its manifest does not list, since a manifest may not list every derive. The refusals never refuse on an unknown
-//! answer.
+//! The relation answers [`DeriveSupport::Unknown`] rather than guess: for a type parameter, a Rust-origin type without
+//! an unconditional native Clone proof, a `rusttype`, a runtime type the registry records nothing for, and a derive of
+//! a type declared in another module that its manifest does not list, since a manifest may not list every derive. The
+//! refusals never refuse on an unknown answer.
 
 use std::collections::HashMap;
 
@@ -26,7 +26,7 @@ use crate::ast::{CallArg, DictEntry, Expr, ListEntry, ParamKind, Span, Spanned, 
 use crate::diagnostics::CompileError;
 use crate::diagnostics::errors::{self, DerivedMember, HashRemedy, HashedCollectionRole};
 use crate::symbols::{
-    CallableParam, EnumInfo, MethodInfo, NewtypeInfo, ResolvedType, SymbolKind, TypeBoundInfo, TypeInfo,
+    CallableParam, ClassInfo, EnumInfo, MethodInfo, NewtypeInfo, ResolvedType, SymbolKind, TypeBoundInfo, TypeInfo,
 };
 use crate::typechecker::helpers::collection_type_id;
 use incan_lang::lang::derives::{self, DeriveId};
@@ -247,15 +247,40 @@ impl TypeChecker {
                 }
                 self.declared_derive_support(ty, name, args, derive, assumed, visiting)
             }
+            ResolvedType::RustPath(_) => self.native_derive_support(ty, derive),
             ResolvedType::Never
             | ResolvedType::Unknown
             | ResolvedType::CallSiteInfer
-            | ResolvedType::RustPath(_)
             | ResolvedType::Function(_, _)
             | ResolvedType::Ref(_)
             | ResolvedType::RefMut(_)
             | ResolvedType::TypeToken(_)
             | ResolvedType::SelfType => DeriveSupport::Unknown,
+        }
+    }
+
+    /// Admit native Clone and Copy only from a complete metadata record's unconditional implementation. Conditional
+    /// templates and absent facts remain unknown; a type name or the presence of a similarly named method is never
+    /// proof.
+    fn native_derive_support(&self, ty: &ResolvedType, derive: DeriveId) -> DeriveSupport {
+        let paths = derives::rust_ownership_trait_paths(derive);
+        if paths.is_empty() {
+            return DeriveSupport::Unknown;
+        }
+        let Some((path, _, _, _)) = self.rust_identity_for_type(ty) else {
+            return DeriveSupport::Unknown;
+        };
+        let Some(metadata) = self.rust_item_metadata_for_complete_type(&path) else {
+            return DeriveSupport::Unknown;
+        };
+        let proven = paths.iter().any(|path| {
+            let definition = self.rust_definition_for_path(path);
+            Self::rust_type_metadata_implements_trait(&metadata, path, definition.as_deref())
+        });
+        if proven {
+            DeriveSupport::Supported
+        } else {
+            DeriveSupport::Unknown
         }
     }
 
@@ -369,8 +394,7 @@ impl TypeChecker {
                 .automatic_nominal_derive(name, &model.derives, &model.traits, derive, false)
                 .map(|derived| derived || Self::dunder_provides(&model.methods, derive)),
             TypeInfo::Class(class) => {
-                // Lowering drops the automatic `Debug` of a private adapter class holding direct Rust state.
-                let opaque_debug = name.starts_with('_') && derive == DeriveId::Debug;
+                let opaque_debug = self.class_omits_automatic_debug(name, class);
                 self.automatic_nominal_derive(name, &class.derives, &class.traits, derive, opaque_debug)
                     .map(|derived| derived || Self::dunder_provides(&class.methods, derive))
             }
@@ -394,8 +418,19 @@ impl TypeChecker {
         }
     }
 
-    /// Whether a `model`, `class` or `enum` implements `derive` through its derives: `Clone` and `Debug` always
-    /// (`opaque_debug` marks the one case lowering drops `Debug`), any other only when declared or implied.
+    /// Whether a private adapter class with direct Rust state omits automatic Debug. Explicit or implied Debug stays
+    /// selected and rustc verifies the native fields' implementations; a private source-only class keeps its derive.
+    pub(in crate::typechecker) fn class_omits_automatic_debug(&self, name: &str, class: &ClassInfo) -> bool {
+        name.starts_with('_')
+            && self.declared_derive(name, &class.derives, &class.traits, DeriveId::Debug) != Some(true)
+            && class
+                .fields
+                .values()
+                .any(|field| crate::symbols::resolved_type_contains_rust_path(&field.ty))
+    }
+
+    /// Whether a `model`, `class` or `enum` implements `derive` through its derives: automatic `Clone` and `Debug`
+    /// except for an opaque adapter's Debug, and other derives only when declared or implied.
     fn automatic_nominal_derive(
         &self,
         name: &str,
@@ -648,14 +683,14 @@ impl TypeChecker {
         }
     }
 
-    /// Append the Rust builtin derives the local type `type_name`'s `@rust.derive(...)` names to a native derive
-    /// selection, by their builtin names, skipping ones already selected.
+    /// Append checked Rust derives selected by the local type's `@rust.derive(...)`, without duplicating an automatic
+    /// or explicit selection. Builtins use native names; dependency macros retain their inspected exported paths.
     ///
     /// Returns whether the selection now covers that decorator completely: `false` when it also names a derive macro
-    /// checking cannot classify, whose expansion no derive name describes, or when collection recorded no facts for
-    /// the type.
-    pub(in crate::typechecker) fn append_rust_builtin_derives(
-        &self,
+    /// checking cannot resolve, or when collection recorded no facts for the type. This grants passthrough only;
+    /// no expansion-dependent trait implementation is inferred.
+    pub(in crate::typechecker) fn append_native_rust_derives(
+        &mut self,
         type_name: &str,
         selected: &mut Vec<String>,
     ) -> bool {
@@ -666,6 +701,22 @@ impl TypeChecker {
             let name = derives::as_str(*derive).to_owned();
             if !selected.contains(&name) {
                 selected.push(name);
+            }
+        }
+        if let Some(paths) = self.local_rust_derive_paths.get(type_name) {
+            for path in paths {
+                if Self::builtin_rust_derive_path(path).is_some() {
+                    continue;
+                }
+                let native_macro = self.checked_native_derive_macro(path);
+                if native_macro.is_some() {
+                    self.type_info.derivations.native_macro_paths.insert(path.clone());
+                }
+                if (matches!(path.as_str(), "serde::Serialize" | "serde::Deserialize") || native_macro.is_some())
+                    && !selected.contains(path)
+                {
+                    selected.push(path.clone());
+                }
             }
         }
         !facts.has_unclassified_rust_derive

@@ -53,22 +53,22 @@ fn decorated_input_type_matches(parameter: &crate::IncanCallableParam, packed: &
 impl BodyIrModule {
     /// Prove a static belongs to this module and its initializer matches its exact retained carrier. A computed
     /// initializer's body must carry the static's own canonical identity and declaration id, so a module cannot attach
-    /// another declaration's body to it.
+    /// another declaration's body to it. A `const` that is not a retained constant is read-only storage of the same
+    /// shape.
     pub fn is_well_formed_static_declaration(&self, declaration: &crate::body_ir::StaticDeclaration) -> bool {
-        if matches!(
-            declaration.canonical.kind,
-            SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Method
-        ) {
-            return self.decorated_bindings.iter().any(|binding| {
-                binding.original_body.canonical.as_ref() == Some(&declaration.canonical)
-                    && self.is_well_formed_decorated_binding(binding)
-            });
-        }
-        let Some(declaration_id) = self.declaration_id_for_canonical(
-            &declaration.canonical,
-            SymbolNamespace::OrdinaryLexical,
-            SemanticSourceTargetKind::Static,
-        ) else {
+        let kind = match declaration.canonical.kind {
+            SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Method => {
+                return self.decorated_bindings.iter().any(|binding| {
+                    binding.original_body.canonical.as_ref() == Some(&declaration.canonical)
+                        && self.is_well_formed_decorated_binding(binding)
+                });
+            }
+            SemanticSourceTargetKind::Const => SemanticSourceTargetKind::Const,
+            _ => SemanticSourceTargetKind::Static,
+        };
+        let Some(declaration_id) =
+            self.declaration_id_for_canonical(&declaration.canonical, SymbolNamespace::OrdinaryLexical, kind)
+        else {
             return false;
         };
         if let StaticInitializer::Computed(body) = &declaration.initial
@@ -216,6 +216,30 @@ impl BodyIrModule {
         {
             return false;
         }
+        if matches!(declaration.canonical.origin, crate::SymbolOrigin::RustCrate(_)) {
+            let Some(expected) = crate::body_ir::native_enum_declaration(
+                &declaration.native_item,
+                declaration.type_parameters.clone(),
+                declaration
+                    .variants
+                    .iter()
+                    .map(|variant| (variant.name.clone(), variant.fields.clone()))
+                    .collect(),
+            ) else {
+                return false;
+            };
+            return declaration == &expected
+                && crate::body_ir::native_nominal_module(&declaration.canonical).as_deref()
+                    == Some(self.module_id.path())
+                && !declaration.variants.is_empty()
+                && declaration
+                    .variants
+                    .iter()
+                    .map(|variant| &variant.name)
+                    .collect::<BTreeSet<_>>()
+                    .len()
+                    == declaration.variants.len();
+        }
         self.declaration_id_for_canonical(
             &declaration.canonical,
             SymbolNamespace::OrdinaryLexical,
@@ -252,6 +276,7 @@ impl BodyIrModule {
                     && variant.canonical.declaration_name == variant.name
             })
     }
+
     /// Whether `id` is a span-derived declaration identity of exactly the shape lowering emits for this module.
     pub fn is_own_span_declaration_id(&self, id: &CompilerNodeId) -> bool {
         if self.module_id.kind() != CompilerNodeKind::Module || id.kind() != CompilerNodeKind::Declaration {
@@ -289,6 +314,36 @@ impl BodyIrModule {
                 identity.declaration_span.start,
                 identity.declaration_span.end,
             )
+        })
+    }
+
+    /// Whether a body is governed by its own type parameters or by the checked parameters of its enclosing owner.
+    /// A receiver method need not repeat its owner's binders on the method declaration; it still requires caller
+    /// instantiation and must not become a compiled nongeneric Loaf callable. An open Self receiver or return slot
+    /// also requires specialization even when its trait and method declare no type parameters.
+    pub fn body_requires_instantiation(&self, body: &Body) -> bool {
+        if !body.type_parameters.is_empty()
+            || body
+                .locals
+                .first()
+                .is_some_and(|local| local.ty == crate::IncanType::SelfType)
+        {
+            return true;
+        }
+        let Some(identity) = &body.canonical else {
+            return false;
+        };
+        if identity.namespace != SymbolNamespace::Member {
+            return false;
+        }
+        self.nominal_declarations.iter().any(|owner| {
+            !owner.type_parameters.is_empty()
+                && owner.canonical.origin == identity.origin
+                && declares_member(&owner.canonical, identity)
+        }) || self.enum_declarations.iter().any(|owner| {
+            !owner.type_parameters.is_empty()
+                && owner.canonical.origin == identity.origin
+                && declares_member(&owner.canonical, identity)
         })
     }
 
@@ -440,9 +495,10 @@ impl BodyIrModule {
                 .all(|binding| is_closed_type(&binding.argument))
     }
 
-    /// Whether a retained source/SDK layout agrees with its canonical identities, or a native carrier exactly
-    /// matches the ABI whitelist and its dedicated physical declaration scope. A selected native equality witness
-    /// must be a member of its model; lowering separately validates that body's executable ABI.
+    /// Whether a retained layout agrees with its canonical identities and physical declaration scope. Native layouts
+    /// either match a fixed carrier or extend an opaque skeleton with public metadata-selected fields, whose exact
+    /// native types rustc verifies. A linked Loaf's item must encode its canonical declaration. A selected native
+    /// equality witness must be a member of its model; lowering separately validates that body's executable ABI.
     pub fn is_well_formed_nominal_declaration(&self, declaration: &NominalDeclaration) -> bool {
         if declaration.trait_adoptions.iter().enumerate().any(|(index, adoption)| {
             adoption.trait_identity.kind != SemanticSourceTargetKind::Trait
@@ -475,7 +531,9 @@ impl BodyIrModule {
             }
         }
         if !declaration.native_item.is_empty()
-            && crate::body_ir::native_nominal_item(&declaration.canonical).as_deref()
+            && crate::body_ir::native_nominal_item(&declaration.canonical)
+                .or_else(|| crate::body_ir::loaf_item_path(&declaration.canonical))
+                .as_deref()
                 != Some(declaration.native_item.as_str())
         {
             return false;
@@ -487,7 +545,7 @@ impl BodyIrModule {
             let exact = crate::body_ir::native_carrier_nominal(&declaration.canonical).or_else(|| {
                 crate::body_ir::native_opaque_nominal(&declaration.canonical, declaration.type_parameter_count)
             });
-            return exact.as_ref() == Some(declaration)
+            return (exact.as_ref() == Some(declaration) || self.is_well_formed_native_struct_layout(declaration))
                 && crate::body_ir::native_nominal_module(&declaration.canonical).as_deref()
                     == Some(self.module_id.path());
         }
@@ -579,6 +637,48 @@ impl BodyIrModule {
                             || self.inherited_field_matches(declaration, index))
                         && identity.declaration_name == *name
                 })
+    }
+
+    /// Validate the identity shape of a retained public native struct layout. Ordered public fields, native binders
+    /// and a Copy capability may extend the opaque declaration; rustc verifies fields, types and the Copy
+    /// implementation.
+    fn is_well_formed_native_struct_layout(&self, declaration: &NominalDeclaration) -> bool {
+        if !matches!(declaration.canonical.origin, crate::SymbolOrigin::RustCrate(_))
+            || (declaration.fields.is_empty() && declaration.derives != ["Copy"])
+            || declaration.fields.len() != declaration.field_types.len()
+            || declaration.fields.len() != declaration.field_identities.len()
+            || declaration.field_public != vec![true; declaration.fields.len()]
+            || declaration.fields.iter().any(String::is_empty)
+            || declaration.fields.iter().collect::<BTreeSet<_>>().len() != declaration.fields.len()
+            || declaration.type_parameters.len() != declaration.type_parameter_count
+            || declaration.type_parameters.iter().any(String::is_empty)
+            || declaration.type_parameters.iter().collect::<BTreeSet<_>>().len() != declaration.type_parameters.len()
+        {
+            return false;
+        }
+        for (name, field) in declaration.fields.iter().zip(&declaration.field_identities) {
+            let mut expected = declaration.canonical.clone();
+            expected.namespace = SymbolNamespace::Member;
+            expected.kind = SemanticSourceTargetKind::Field;
+            expected.declaration_name = name.clone();
+            if *field != expected {
+                return false;
+            }
+        }
+        let Some(mut opaque) =
+            crate::body_ir::native_opaque_nominal(&declaration.canonical, declaration.type_parameter_count)
+        else {
+            return false;
+        };
+        opaque.fields = declaration.fields.clone();
+        opaque.field_types = declaration.field_types.clone();
+        opaque.field_identities = declaration.field_identities.clone();
+        opaque.field_public = declaration.field_public.clone();
+        opaque.type_parameters = declaration.type_parameters.clone();
+        if declaration.derives == ["Copy"] {
+            opaque.derives = declaration.derives.clone();
+        }
+        opaque == *declaration
     }
 
     /// Validate a bounded local class edge and complete ancestor-slot mapping without recursively validating bodies.
@@ -756,7 +856,7 @@ impl BodyIrModule {
                 return false;
             }
             IncanType::Generic {
-                base: declaration.name.clone(),
+                base: declaration.template_carrier_name(),
                 args: vec![underlying.clone()],
             }
         };
@@ -910,7 +1010,7 @@ fn nominal_receiver_type(owner: &NominalDeclaration) -> crate::IncanType {
         crate::IncanType::Named(owner.carrier_name())
     } else {
         crate::IncanType::Generic {
-            base: owner.name.clone(),
+            base: owner.template_carrier_name(),
             args: owner
                 .type_parameters
                 .iter()
@@ -989,16 +1089,6 @@ fn hashed_static_carrier(ty: &IncanType) -> bool {
     primitive_static_carrier(ty) && !matches!(ty, IncanType::Primitive(IncanPrimitiveType::Float))
 }
 
-/// Validate effect-free primitive or flat collection initialization; callers separately prove canonical storage
-/// ownership.
-///
-/// Local storage also admits checked computed bodies. Publication does not yet audit their executable dependencies, so
-/// its boundary retains only literal collections with checked primitive carriers.
-pub(crate) fn static_initializer_matches(declaration: &crate::body_ir::StaticDeclaration) -> bool {
-    !matches!(&declaration.initial, StaticInitializer::Computed(_))
-        && static_initializer_matches_parts(&declaration.ty, &declaration.initial)
-}
-
 /// Validate a literal payload against its exact primitive storage or collection element carrier.
 fn literal_static_carrier_matches(ty: &IncanType, value: &Constant) -> bool {
     matches!(
@@ -1071,9 +1161,10 @@ fn is_owner_bound_type(ty: &IncanType, parameters: &[String]) -> bool {
             params.iter().all(|param| is_owner_bound_type(&param.ty, parameters))
                 && is_owner_bound_type(return_type, parameters)
         }
-        IncanType::TypeToken(inner) | IncanType::Ref(inner) | IncanType::RefMut(inner) => {
-            is_owner_bound_type(inner, parameters)
-        }
+        IncanType::TypeToken(inner)
+        | IncanType::Ref(inner)
+        | IncanType::RefMut(inner)
+        | IncanType::NativeArray { element: inner, .. } => is_owner_bound_type(inner, parameters),
         IncanType::Never
         | IncanType::Primitive(_)
         | IncanType::Named(_)

@@ -13,12 +13,14 @@ from rust::incan_semantics_core::body_ir import (
 from pub::incan_mir_plan import CalleeKind, Operand, OperandKind, Place, PlanType, Projection, RvalueKind, SourceSpan
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, place_type, read_place, temporary, drop_owned, forget_owned, track_rvalue_moves
-from lowering import scalar_place, lower_callable_result, lower_assignment, binary_operator
+from lowering import scalar_place, lower_callable_result, lower_assignment, binary_operator, materialized_receiver
+from element_places import is_element_place, element_place_type
 from numerics import numeric_carrier
 from trait_links import contains
 from options import carrier_payload_value, clone_tuple_operand
 from tuples import is_tuple_type
 from text_plan import clone_text
+from decls import library_enum_item
 
 
 pub def is_derived_clone(target: &MethodTarget) -> bool:
@@ -65,7 +67,7 @@ pub def lower_derived_clone(
     """
     Clone a standard or inferred Clone receiver through its concrete native representation.
 
-    Scalars copy and owned strings clone through the runtime. Models and classes always derive Clone; a source enum's checked derives must name it. Builtin aggregates and synthetic union, Option, and Result carriers use the same native cloning path as a borrowed payload read.
+    Scalars copy and owned strings clone through the runtime. Models and classes always derive Clone; a source enum's checked derives must name it. Builtin aggregates and synthetic union, Option, and Result carriers use the same native cloning path as a borrowed payload read. An indexed receiver follows the ordinary element read once before its selected Clone call.
     """
     if len(arguments) != 1:
         return Err("invalid Body IR Clone arguments")
@@ -73,6 +75,9 @@ pub def lower_derived_clone(
         Some(value) =>
             match value:
                 RustOperand.Place(read) =>
+                    if is_element_place(builder, read.place)?:
+                        source = materialized_receiver(builder, read.place, span)?
+                        return clone_place(builder, source, destination, span)
                     source = scalar_place(builder, read.place, span)?
                     return clone_place(builder, source, destination, span)
                 _ => return Err("unsupported Body IR Clone of a nonplace receiver")
@@ -85,8 +90,31 @@ def clone_place(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Select copying, owned text cloning, or the nominal's own Clone implementation from its native carrier."""
+    """Clone through the retained carrier and its owning implementation; compiled enums do not acquire local derives."""
     ty = place_type(builder.locals, source)
+    match ty:
+        PlanType.StringRef =>
+            reference = temporary(builder, ty, span)
+            builder.emit(plan_assign(reference, RvalueKind.Use(read_place(source, false, span)), span))
+            referent = Place(local=reference.local, projection=Projection.Deref(PlanType.String), span=span)
+            return clone_string_into(builder, referent, destination, span)
+        PlanType.TupleRef(elements) =>
+            if source.projection != Projection.Whole:
+                return Err("unsupported Body IR Clone through a projected tuple reference")
+            referent = Place(local=source.local, projection=Projection.Deref(PlanType.Tuple(elements)), span=span)
+            return clone_builtin_place(builder, referent, destination, span)
+        PlanType.ScalarRef(elements) =>
+            if len(elements) == 1:
+                mut copyable = numeric_carrier(elements[0]) or elements[0] == PlanType.Bool or elements[0] == PlanType.Unit
+                match elements[0]:
+                    PlanType.FunctionPointer(_signature) => copyable = true
+                    _ => pass
+                if copyable:
+                    reference = temporary(builder, ty, span)
+                    builder.emit(plan_assign(reference, RvalueKind.Use(read_place(source, false, span)), span))
+                    pointer = Place(local=reference.local, projection=Projection.Deref(elements[0]), span=span)
+                    return copy_clone_into(builder, pointer, elements[0], destination, span)
+        _ => pass
     if numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit or ty == PlanType.FrozenStr:
         return copy_clone_into(builder, source, ty, destination, span)
     if ty == PlanType.String:
@@ -98,7 +126,11 @@ def clone_place(
         PlanType.Enum(index, name) =>
             if index >= len(builder.enums):
                 return clone_builtin_place(builder, source, destination, span)
-            if index < 0 or "Clone" not in builder.enums[index].derives:
+            if index < 0:
+                return Err("unsupported Body IR enum Clone without a derived Clone")
+            if library_enum_item(builder.enums[index]) != "":
+                return clone_builtin_place(builder, source, destination, span)
+            if "Clone" not in builder.enums[index].derives:
                 return Err("unsupported Body IR enum Clone without a derived Clone")
             reference = PlanType.EnumRef(index, name)
             return clone_into(builder, source, reference, CalleeKind.CloneEnum(index, name), ty, destination, span)
@@ -246,7 +278,7 @@ pub def lower_comparison_dunder(
 
 
 def has_native_comparison(
-    builder: Builder,
+    mut builder: Builder,
     value: &RustOperand,
     operator: BinOp,
     span: SourceSpan,
@@ -260,7 +292,7 @@ def has_native_comparison(
                     mut count = 5
                     if operator == BinOp.Eq or operator == BinOp.Ne:
                         count = 1
-                    return Ok(len(builder.comparison_functions[owner]) >= count)
+                    return Ok(len(builder.program.comparison_functions.as_ref()[owner]) >= count)
                 _ => pass
         _ => pass
     return Ok(false)
@@ -311,7 +343,7 @@ def single_operand(argument: &RustArgumentElement) -> Result[RustOperand, str]:
 
 def declares_own_comparison(
     module: &BodyIrModule,
-    builder: Builder,
+    mut builder: Builder,
     receiver: &RustOperand,
     span: SourceSpan,
 ) -> Result[bool, str]:
@@ -329,7 +361,7 @@ pub def slot_name(target: &MethodTarget) -> str:
 
 pub def receiver_declares_method(
     module: &BodyIrModule,
-    builder: Builder,
+    mut builder: Builder,
     receiver: &RustArgumentElement,
     name: str,
     span: SourceSpan,
@@ -346,16 +378,21 @@ pub def receiver_declares_method(
 
 def declares_own_method(
     module: &BodyIrModule,
-    builder: Builder,
+    mut builder: Builder,
     receiver: &RustOperand,
     names: list[str],
     span: SourceSpan,
 ) -> Result[bool, str]:
-    """Whether the receiver's source nominal or enum declares a method of one of `names` or fills one from a trait."""
+    """Whether the retained receiver type declares a method of one of `names` or fills one from a trait, without evaluating an index."""
     match receiver:
         RustOperand.Place(read) =>
-            source = scalar_place(builder, read.place, span)?
-            match place_type(builder.locals, source):
+            mut ty = PlanType.Unit
+            if is_element_place(builder, read.place)?:
+                ty = element_place_type(builder, read.place)?
+            else:
+                source = scalar_place(builder, read.place, span)?
+                ty = place_type(builder.locals, source)
+            match ty:
                 PlanType.Model(index, _name) => return Ok(owns_method(module, builder.nominals[index].canonical, names))
                 PlanType.Enum(index, _name) =>
                     if index >= 0 and index < len(builder.enums):

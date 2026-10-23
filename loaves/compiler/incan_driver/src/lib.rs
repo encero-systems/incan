@@ -13,6 +13,7 @@ pub mod inspect;
 pub mod invocation_trace;
 pub mod loaf_publication;
 pub mod modules;
+pub mod rust_abi;
 pub mod session;
 pub mod sources;
 pub mod testing;

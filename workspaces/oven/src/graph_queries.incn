@@ -1,0 +1,253 @@
+"""Queries over the compiler's exported facts. No source parsing or inferred call edges live here."""
+
+from std.json import JsonValue
+
+
+model Index:
+    """The declarations and modules a term names, with the identities its hits are matched against."""
+
+    # The ids of the declarations the term names.
+    selected: list[str]
+    # Their proved (stable) and canonical identities.
+    identities: list[str]
+    canonical_targets: list[str]
+    # The ids of the modules whose name or id contains the term.
+    modules: list[str]
+    # Every module and declaration, by id.
+    by_id: Dict[str, JsonValue]
+
+
+pub def query_group(kind: str) -> str:
+    """Read declaration/module identities and only the indexed edge group needed by this query."""
+    if kind == "refs":
+        return "nodes,reference"
+    if kind in ["callers", "callees"]:
+        return "nodes,call"
+    if kind == "imports":
+        return "nodes,import"
+    return "nodes"
+
+
+pub def text(value: JsonValue, key: str) -> str:
+    """Read an optional presentation field; absence never becomes a proved relationship."""
+    match value.get(key):
+        Some(item) =>
+            match item.as_str():
+                Some(result) => return result
+                None => pass
+        None => pass
+    return ""
+
+
+pub def nested(value: JsonValue, key: str) -> JsonValue:
+    """Read an optional structured fact without making absent identities compare equal to a proved one."""
+    match value.get(key):
+        Some(item) => return item
+        None => return JsonValue.null()
+
+
+pub def identity(value: JsonValue) -> str:
+    """Use the compiler's edit-stable identity, preserving its full structured origin and signature."""
+    if text(value, "stable_key") != "":
+        return text(value, "stable_key")
+    stable = nested(value, "stable_identity")
+    match stable.as_object():
+        None => return ""
+        Some(_) => return stable.to_json().unwrap_or("")
+
+
+pub def canonical(value: JsonValue) -> str:
+    """Keep exact checked identity equality within a source snapshot, including imported targets without signatures."""
+    if text(value, "canonical_key") != "":
+        return text(value, "canonical_key")
+    target = nested(value, "canonical_identity")
+    if target.is_null():
+        return ""
+    return target.to_json().unwrap_or("")
+
+
+pub def display(value: JsonValue) -> str:
+    """
+    Show the qualified semantic origin, with the declared name when the origin names only a module.
+
+    1. A record with a label shows it.
+    2. Otherwise the origin's package, module path and path, then the declared name unless the path already ends in it.
+    3. A record with no declared name shows its callee, name or id.
+    """
+    # 1. A record that carries a label shows that label and nothing else.
+    if text(value, "label") != "":
+        return text(value, "label")
+    # 2. Otherwise the origin supplies the package, module path and path that qualify the declared name.
+    stable = nested(value, "stable_identity")
+    origin = nested(stable, "origin")
+    mut segments: list[str] = []
+    if text(origin, "kind") == "package":
+        segments.append(text(origin, "library"))
+        segments = segments + strings_of(nested(origin, "module_path"))
+    segments = segments + strings_of(nested(origin, "path"))
+    name = text(stable, "declaration_name")
+    # 3. Without a declared name the callee, name or id shows; a path already ending in the name is not repeated.
+    if name == "":
+        if text(value, "callee") != "":
+            return text(value, "callee")
+        if text(value, "name") != "":
+            return text(value, "name")
+        return text(value, "id")
+    if "::" in name:
+        return name
+    if len(segments) == 0 or segments[len(segments) - 1] != name:
+        segments.append(name)
+    return "::".join(segments)
+
+
+def strings_of(value: JsonValue) -> list[str]:
+    """The strings of a JSON array; anything else, and the elements that are not strings, give none."""
+    mut result: list[str] = []
+    match value.as_array():
+        Some(items) =>
+            for item in items:
+                match item.as_str():
+                    Some(part) => result.append(part)
+                    None => pass
+        None => pass
+    return result
+
+
+def unchecked(value: JsonValue) -> str:
+    """Mark a fact recovered from a unit that failed checking, so a hit is never read as a checked relationship."""
+    match nested(value, "degraded").as_bool():
+        Some(flag) =>
+            if flag:
+                return " (unchecked)"
+        None => pass
+    return ""
+
+
+def location(value: JsonValue, root: str) -> str:
+    """A source anchor remains separate from the durable declaration identity."""
+    source = nested(value, "span")
+    mut file = text(source, "file")
+    if file.startswith(f"{root}/"):
+        file = file[len(root) + 1:]
+    line = nested(source, "start_line").to_json().unwrap_or("0")
+    if file == "":
+        return "<unknown>:0"
+    return f"{file}:{line}"
+
+
+def matches(record: JsonValue, term: str) -> bool:
+    """Accept a complete compiler identity, a qualified name, or an exact final name component."""
+    label = display(record)
+    parts = label.split("::")
+    by_name = term == label or term == parts[len(parts) - 1]
+    by_id = term == text(record, "id") or term == text(record, "raw_id") or term == identity(record)
+    return by_name or by_id
+
+
+def import_labels(record: JsonValue) -> list[str]:
+    """Display checked bindings or the recorded path; grouped-import stems with neither produce no hit."""
+    mut labels: list[str] = []
+    match nested(record, "bindings").as_array():
+        Some(bindings) =>
+            for binding in bindings:
+                if identity(binding) != "":
+                    label = display(binding)
+                    if label not in labels:
+                        labels.append(label)
+        None => pass
+    path = text(record, "path")
+    if len(labels) == 0 and path != "":
+        labels.append(path)
+    return labels
+
+
+pub def query(records: list[JsonValue], kind: str, term: str, root: str) -> list[str]:
+    """
+    Select definitions and traverse only compiler-proven references, callers, callees or module imports.
+
+    1. Index the declarations and modules the term names.
+    2. A term that names several declarations lists them all, unless the query asks for definitions.
+    3. Each record gives the lines its kind of query selects from it, once each.
+    """
+    # 1. Every declaration and module the term names is found before any record is read for a hit.
+    index = indexed(records, term)
+    # 2. A term that names several declarations lists them all first, unless the query asks only for definitions.
+    mut hits: list[str] = []
+    if kind != "defs" and len(index.selected) > 1:
+        for identifier in index.selected:
+            record = index.by_id[identifier]
+            hits.append(f"declaration {display(record)} {location(record, root)}{unchecked(record)}")
+    # 3. Each record gives the lines its kind of query selects from it, and a line several records give appears once.
+    for record in records:
+        for line in record_lines(record, kind, term, root, index):
+            if line not in hits:
+                hits.append(line)
+    return sorted(hits)
+
+
+def indexed(records: list[JsonValue], term: str) -> Index:
+    """Index every module and declaration by id, the declarations and identities `term` names, and its modules."""
+    mut index = Index(selected=[], identities=[], canonical_targets=[], modules=[], by_id={})
+    for record in records:
+        record_kind = text(record, "record")
+        identifier = text(record, "id")
+        if identifier != "" and record_kind in ["module", "declaration"]:
+            index.by_id[identifier] = record
+        if record_kind == "module":
+            if term in text(record, "name") or term in identifier:
+                index.modules.append(identifier)
+        if record_kind == "declaration" and matches(record, term):
+            index.selected.append(identifier)
+            proved = identity(record)
+            if proved != "":
+                index.identities.append(proved)
+            checked = canonical(record)
+            if checked != "":
+                index.canonical_targets.append(checked)
+    return index
+
+
+def record_lines(record: JsonValue, kind: str, term: str, root: str, index: Index) -> list[str]:
+    """The hit lines one record gives for a kind of query; none unless it is a record of that kind's own sort."""
+    record_kind = text(record, "record")
+    where = f"{location(record, root)}{unchecked(record)}"
+    if kind == "defs":
+        if record_kind == "declaration" and text(record, "id") in index.selected:
+            return [f"{record_kind} {display(record)} {where}"]
+        return []
+    if kind == "imports":
+        if record_kind == "import" and text(record, "module_id") in index.modules:
+            return [f"import {name} {where}" for name in import_labels(record)]
+        return []
+    if kind == "refs":
+        if record_kind == "reference" and names_selection(record, term, index):
+            return [f"{record_kind} {display(record)} {where}"]
+        return []
+    if record_kind != "call":
+        return []
+    if kind == "callers" and names_selection(record, term, index):
+        owner = text(record, "owner_id")
+        mut label = owner
+        if owner in index.by_id:
+            label = display(index.by_id[owner])
+        return [f"{record_kind} {label} {where}"]
+    if kind == "callees" and text(record, "owner_id") in index.selected:
+        target = text(record, "target_id")
+        mut label = display(record)
+        if target in index.by_id:
+            label = display(index.by_id[target])
+        elif label == "":
+            label = text(record, "callee")
+        return [f"{record_kind} {label} {where}"]
+    return []
+
+
+def names_selection(record: JsonValue, term: str, index: Index) -> bool:
+    """Whether a record's target is a declaration the term names, by id, canonical identity or proved identity."""
+    proved = identity(record)
+    checked = canonical(record)
+    if text(record, "target_id") in index.selected:
+        return true
+    if checked != "" and checked in index.canonical_targets:
+        return true
+    return proved != "" and (proved in index.identities or matches(record, term))

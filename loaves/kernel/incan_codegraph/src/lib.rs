@@ -1,11 +1,13 @@
 //! Storage-agnostic codegraph records for Incan tooling.
 //!
-//! This crate owns the JSONL wire shape for compiler-backed codegraph exports. It deliberately has no dependency on
-//! compiler internals, graph databases, embeddings, MCP servers, or storage engines: the compiler extracts facts, and
-//! downstream tools decide how to index or visualize them.
+//! This crate owns the wire shape and portable indexed binary artifacts for compiler-backed codegraph exports. It has
+//! no dependency on compiler internals, graph databases, embeddings, MCP servers, or storage engines: the compiler
+//! extracts facts, and downstream tools decide how to index or visualize them.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+pub mod artifact;
 
 /// Current codegraph JSONL schema version.
 pub const CODEGRAPH_SCHEMA_VERSION: u32 = 9;

@@ -7,3 +7,4 @@ main = "src/main.incn"
 
 [dependencies]
 modulelib = { path = "deps/modulelib" }
+facade = { path = "deps/modulelib" }

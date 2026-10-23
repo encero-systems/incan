@@ -166,8 +166,7 @@ pub type JsonValue = newtype RustJsonValue with Index[str, Option[JsonValue]], I
     @staticmethod
     def string(value: str) -> Self:
         """Construct a JSON string."""
-        construct_string = RustJsonValue.string
-        return JsonValue(construct_string(value))
+        return JsonValue(RustJsonValue.string(value))
 
     @staticmethod
     def str(value: str) -> Self:
@@ -187,8 +186,7 @@ pub type JsonValue = newtype RustJsonValue with Index[str, Option[JsonValue]], I
     @staticmethod
     def parse(source: str) -> Result[Self, JsonError]:
         """Parse JSON text."""
-        parse_native = RustJsonValue.parse
-        return _wrap_raw_result(parse_native(source))
+        return _wrap_raw_result(RustJsonValue.parse(source))
 
     @staticmethod
     def loads(source: str) -> Result[Self, JsonError]:
@@ -581,8 +579,12 @@ def _wrap_raw_list(values: list[RustJsonValue]) -> list[JsonValue]:
 
 
 def _wrap_raw_object(entries: Dict[str, RustJsonValue]) -> Dict[str, JsonValue]:
-    """Wrap raw runtime object entries in source-level `JsonValue` objects."""
-    return {key: JsonValue(entries[key]) for key in entries.keys()}
+    """Wrap raw object values before transferring each key into the resulting dictionary."""
+    mut wrapped: Dict[str, JsonValue] = {}
+    for key in entries.keys():
+        value = JsonValue(entries[key])
+        wrapped[key] = value
+    return wrapped
 
 
 def _unwrap_list(values: list[JsonValue]) -> list[RustJsonValue]:
@@ -591,8 +593,12 @@ def _unwrap_list(values: list[JsonValue]) -> list[RustJsonValue]:
 
 
 def _unwrap_object(entries: Dict[str, JsonValue]) -> Dict[str, RustJsonValue]:
-    """Return the raw runtime values carried by a source-level JSON object."""
-    return {key: entries[key].0 for key in entries.keys()}
+    """Read each raw object value before transferring its key into the resulting dictionary."""
+    mut unwrapped: Dict[str, RustJsonValue] = {}
+    for key in entries.keys():
+        value = entries[key].0
+        unwrapped[key] = value
+    return unwrapped
 
 
 def _json_kind_from_name(name: str) -> JsonKind:

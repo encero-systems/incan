@@ -1,9 +1,6 @@
 //! Source-local checked JSON selection projected only into Body IR reconstruction facts.
 
-use super::{
-    IncanPrimitiveType, IncanType, SemanticSourceTargetKind, TypeCheckInfo, ast, bodies, newtype_derives,
-    parameter_types,
-};
+use super::{IncanPrimitiveType, IncanType, SemanticSourceTargetKind, TypeCheckInfo, ast, bodies, parameter_types};
 use incan_semantics_core::{
     CanonicalSymbolId, CompilerNodeId, RuntimeBuiltinType, SymbolNamespace, body_ir::NewtypeDeserialize,
     canonical_module_identity,
@@ -76,7 +73,7 @@ pub(super) fn checked_deserialize_selection(
     info: &TypeCheckInfo,
 ) -> Option<CanonicalSymbolId> {
     let facts = info.declarations.newtype_construction.get(&source.name)?;
-    let selections = newtype_derives::checked_newtype_derives(source, info)?;
+    let selections = info.declarations.body_ir_newtype_derives.get(&source.name)?;
     if !selections
         .iter()
         .chain(facts.automatic_derives.iter())

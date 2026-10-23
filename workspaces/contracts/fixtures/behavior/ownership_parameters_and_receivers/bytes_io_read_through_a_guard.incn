@@ -1,10 +1,12 @@
-# behavior: reading a bounded number of bytes from a BytesIO buffer returns exactly those bytes, and the next bounded read continues from where the first stopped
+# behavior: bounded BytesIO reads continue from the prior position; native chained readers retain mutable cursor arguments through a generic reader constructor (#2256)
 # expect-stdout:
 #   2 true
 #   4 true
 #   0
+#   4 true
 
 from std.io import BytesIO, IoError
+from rust::std::io import BufReader, Cursor, Read
 
 
 def report(outcome: Result[bytes, IoError], expected: bytes) -> None:
@@ -14,9 +16,17 @@ def report(outcome: Result[bytes, IoError], expected: bytes) -> None:
 
 
 def main() -> None:
+    """Observe bounded and chained reads without losing the borrowed reader's native type."""
     buffer = BytesIO(b"abcdef")
     report(buffer.read(2), b"ab")
     report(buffer.read(10), b"cdef")
     match buffer.read(1):
         Ok(data) => println(len(data))
         Err(error) => println(f"error {error.kind}")
+
+    mut tail = Cursor.new(b"cd")
+    mut joined = BufReader.new(Cursor.new(b"ab").chain(Read.by_ref(tail)))
+    mut data = b""
+    match joined.read_to_end(data):
+        Ok(size) => println(f"{size} {data == b'abcd'}")
+        Err(error) => println(error)

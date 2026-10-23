@@ -161,7 +161,7 @@ def consume(
     return Ok(None)
 
 
-def require_result(builder: Builder, output: Place, result: PlanType) -> Result[None, str]:
+def require_result(mut builder: Builder, output: Place, result: PlanType) -> Result[None, str]:
     """Refuse a consumer whose checked destination does not hold the runtime result."""
     if builder.locals[output.local].ty != result:
         return Err("unsupported Body IR generator consumer result type")

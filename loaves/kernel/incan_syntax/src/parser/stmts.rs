@@ -129,6 +129,9 @@ impl<'a> Parser<'a> {
             Statement::Return(expr)
         } else if self.check_keyword(KeywordId::Break) {
             self.break_stmt()?
+        } else if self.check_keyword(KeywordId::Continue) {
+            self.advance();
+            Statement::Continue
         } else if self.check_keyword(KeywordId::Pass) || self.check(&TokenKind::Punctuation(PunctuationId::Ellipsis)) {
             self.advance();
             Statement::Pass

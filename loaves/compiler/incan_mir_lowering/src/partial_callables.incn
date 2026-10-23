@@ -46,7 +46,7 @@ pub def with_supplied_flags(signature: list[PlanType], flags: list[bool]) -> Res
     return Ok(expanded)
 
 
-pub def partial_flags(builder: Builder, local: int) -> Option[list[bool]]:
+pub def partial_flags(mut builder: Builder, local: int) -> Option[list[bool]]:
     """The default flags recorded for a local that holds a closure whose parameters carry defaults."""
     for entry in builder.partial_callables:
         if entry[0] == local:

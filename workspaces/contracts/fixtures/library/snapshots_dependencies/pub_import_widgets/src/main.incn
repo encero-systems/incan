@@ -1,16 +1,30 @@
-# behavior: a package's model, function and const import by name and through the package module, a package module alias calls the same function, and a package static list is shared through a live alias (RFC 031, RFC 052)
+# behavior: a generic FallibleIterator model from a compiled package is drained by a consumer function that inherits the implementation's bound on the type parameter (#1280), and a package's model, function and const import by name and through the package module, a package module alias calls the same function, and a package static list is shared through a live alias (RFC 031, RFC 052)
 # expect-stdout:
+#   2
 #   default
 #   default
 #   default
 #   2
 
-from pub::widgets import Widget, make_widget, DEFAULT_NAME, SHARED_ITEMS
+from pub::widgets import Widget, make_widget, DEFAULT_NAME, SHARED_ITEMS, Stream
 import pub::widgets
 import pub::widgets as w
 
 
-def main() -> None:
+pub def drain[R](stream: Stream[R]) -> Result[int, str]:
+    mut count = 0
+    for _item in stream?:
+        count += 1
+    return Ok(count)
+
+
+def show_drained_stream() -> None:
+    match drain(Stream(value="text")):
+        Ok(count) => println(count)
+        Err(error) => println(error)
+
+
+def show_package_imports() -> None:
     mut first: Widget = make_widget(DEFAULT_NAME)
     println(first.name)
     println(widgets.make_widget(DEFAULT_NAME).name)
@@ -19,3 +33,8 @@ def main() -> None:
     let live = SHARED_ITEMS
     live.append(2)
     println(len(SHARED_ITEMS))
+
+
+def main() -> None:
+    show_drained_stream()
+    show_package_imports()

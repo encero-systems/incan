@@ -1,5 +1,7 @@
 //! Body IR-only native ABI facts for checked standard comparison implementations.
 
+use std::collections::BTreeSet;
+
 use incan_semantics_core::body_ir::{BodyIrModule, LocalOrigin};
 use incan_semantics_core::{
     CanonicalSymbolId, IncanPrimitiveType, IncanType, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
@@ -20,6 +22,22 @@ pub(super) fn is_standard_slot(identity: &CanonicalSymbolId, name: &str) -> bool
         }
         _ => false,
     }
+}
+
+/// Return published comparison defaults selected by the source modules' checked implementation records.
+/// Native comparison bridges need the complete retained slot set, including defaults no source call names directly.
+/// This grants no implementation from a matching spelling and supplies no replacement for an absent published body.
+pub fn required_published_defaults(modules: &[BodyIrModule]) -> BTreeSet<CanonicalSymbolId> {
+    modules
+        .iter()
+        .flat_map(|module| &module.trait_implementations)
+        .filter(|implementation| implementation.implementation == implementation.method)
+        .filter(|implementation| {
+            matches!(implementation.method.origin, SymbolOrigin::Package { .. })
+                && is_standard_slot(&implementation.method, &implementation.method.declaration_name)
+        })
+        .map(|implementation| implementation.method.clone())
+        .collect()
 }
 
 /// Retain legacy's borrowed other operand only for a concrete nominal or enum body selected for standard Eq's

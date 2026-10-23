@@ -58,6 +58,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+pub use source_comparison::required_published_defaults as required_comparison_defaults;
+
 use incan_lang::lang::keywords::KeywordId;
 use incan_semantics_core::SurfaceFeatureKey;
 use incan_semantics_core::body_ir as bir;
@@ -85,6 +87,16 @@ pub struct BodyIrContext<'a> {
     pub provider_operations: &'a ProviderOperationCatalog,
     /// The compilation's package identity, which explicit registry subjects are keyed by.
     pub registry_package: Option<&'a str>,
+    /// The package a library unit's own declarations belong to; `None` for a program. A library's modules are its
+    /// package's modules (`pub::<package>::<module>`), the identity its consumers read them under.
+    pub library_package: Option<&'a str>,
+}
+
+/// Return the checked SDK helper required by compiler-generated method registrations, before loading package bodies.
+/// This reuses registration admission so dependency discovery cannot select a helper the Body IR producer would not
+/// call.
+pub fn registry_description_helper_identity(info: &TypeCheckInfo) -> Option<CanonicalSymbolId> {
+    registry_descriptions::helper_identity(info)
 }
 
 /// Build Body IR v0 for every top-level function declaration and every non-abstract class/model/trait method in a
@@ -134,19 +146,20 @@ pub fn build_body_ir_module(
     type_info: &TypeCheckInfo,
     context: &BodyIrContext<'_>,
 ) -> bir::BodyIrModule {
-    let mut facts = type_info.clone();
-    nominal_carriers::project_imported_alias_identities(&mut facts, context.modules);
-    let type_info = &facts;
     let provider_operations = context.provider_operations;
     let registry_package = context.registry_package;
+    let module_identity = match context.library_package {
+        Some(package) => incan_semantics_core::package_module_identity(package, module_path),
+        None => body_ir_module_identity(module_path),
+    };
     let retain_nominal_carriers = true;
     let context = context.modules;
-    let module_identity = body_ir_module_identity(module_path);
     let module_id = CompilerNodeId::module(module_identity.clone());
     let function_default_sources = collect_function_default_sources(program, type_info);
     let local_function_declarations = collect_local_function_declarations(program);
     let local_nongeneric_functions = collect_local_nongeneric_function_identities(program, type_info);
-    let enum_declarations = collect_local_enum_declarations(program, &module_identity, type_info);
+    let mut enum_declarations = collect_local_enum_declarations(program, &module_identity, type_info);
+    enum_declarations.extend(rust_values::enum_declarations(type_info));
     let local_enum_declarations = enum_declarations
         .iter()
         .chain(context.iter().flat_map(|module| module.enum_declarations.iter()))
@@ -154,6 +167,7 @@ pub fn build_body_ir_module(
         .collect::<HashMap<_, _>>();
     let local_receiver_methods = collect_local_receiver_methods(program, type_info);
     let mut nominal_declarations = collect_local_nominal_declarations(program, &module_identity, type_info);
+    nominal_declarations.extend(rust_values::declarations(type_info));
     newtype_string_conversion::finalize_candidates(&mut nominal_declarations);
     // Immutable values bind to retained layout skeletons before deferred defaults are attached.
     let constant_declarations = collect::collect_constants(program, type_info, &nominal_declarations);
@@ -193,7 +207,7 @@ pub fn build_body_ir_module(
             local_value_enum_declarations.insert(declaration.canonical.render_compact(), declaration.clone());
         }
     }
-    let published_callable_returns = collect::collect_published_callable_returns(context);
+    let published_callable_returns = collect::collect_published_callable_returns(context, type_info);
     let published_callable_defaults = collect::collect_published_callable_defaults(context);
     let published_newtype_returns = collect::collect_published_newtype_returns(context);
     let published_storage_types = collect::collect_published_storage_types(context);
@@ -235,6 +249,15 @@ pub fn build_body_ir_module(
             match &decl.node {
                 ast::Declaration::Partial(partial) => {
                     vec![partials::lower_source_partial(partial, decl.span, &lowering_facts)]
+                }
+                // An extern naming an attribute macro is applied by rustc to the items it decorates, not called.
+                ast::Declaration::Function(_)
+                    if type_info
+                        .declarations
+                        .native_attribute_externs
+                        .contains_key(&(decl.span.start, decl.span.end)) =>
+                {
+                    Vec::new()
                 }
                 ast::Declaration::Function(function) => {
                     vec![lower_function_body(function, decl.span, &lowering_facts)]
@@ -281,6 +304,11 @@ pub fn build_body_ir_module(
         })
         .collect::<Vec<_>>();
     let mut static_declarations = collect::collect_statics(program, &lowering_facts);
+    static_declarations.extend(collect::collect_computed_constants(
+        program,
+        &lowering_facts,
+        &constant_declarations,
+    ));
     let decorated_bindings =
         decorated_bindings::collect(program, &lowering_facts, &mut bodies, &mut static_declarations);
     apply_top_level_input_contract_refusal(program, &mut bodies);
@@ -288,13 +316,15 @@ pub fn build_body_ir_module(
     for body in &mut bodies {
         representation_facts::retain(body);
     }
-    let enum_declarations = collect_local_enum_declarations(program, &module_identity, type_info);
+    let mut enum_declarations = collect_local_enum_declarations(program, &module_identity, type_info);
+    enum_declarations.extend(rust_values::enum_declarations(type_info));
     static_declarations.sort_by_key(|declaration| declaration.canonical.declaration_span.start);
     registry_effects::collect(program, &lowering_facts, &mut static_declarations);
     let mut module = bir::BodyIrModule {
         string_conversion_contract: bir::StringConversionContract::Unselected,
         decorated_bindings,
         entrypoint_effects: entrypoint_effects::collect(program),
+        program_entrypoints: Vec::new(),
         constant_declarations,
         type_alias_declarations: collect::collect_type_aliases(program, type_info),
         trait_declarations: collect::collect_local_trait_declarations(program, type_info),
@@ -305,7 +335,7 @@ pub fn build_body_ir_module(
             &enum_declarations,
         ),
         enum_declarations,
-        loaf_callables: Vec::new(),
+        loaf_callables: rust_calls::declarations(type_info),
         native_union_declarations: Vec::new(),
         static_declarations,
         module_id,
@@ -318,9 +348,11 @@ pub fn build_body_ir_module(
     let opaque_carriers = opaque_returns::collect(&module, type_info);
     // Retain source trait annotations before local opaque propagation replaces return types with model witnesses.
     trait_values::retain_inputs(&mut module, program, type_info, context);
+    nominal_carriers::retain_return_owners(&mut module, context);
     trait_returns::retain_returns(&mut module, program, type_info, context);
     opaque_returns::retain(&mut module, &opaque_carriers);
     nominal_carriers::retain(&mut module, type_info, context);
+    union_layouts::retain(&mut module);
     module
 }
 
@@ -333,7 +365,7 @@ enum RetainedTypeLeaf {
 }
 
 /// Collect the identity-bearing leaves of `ty` with their structural paths below `path`, through generic arguments and
-/// tuple items, as `ResultVariant::has_complete_canonical_types` walks them.
+/// tuple items and references, as `ResultVariant::has_complete_canonical_types` walks them.
 fn named_leaf_paths(ty: &IncanType, path: &mut Vec<usize>, out: &mut Vec<(Vec<usize>, RetainedTypeLeaf)>) {
     match ty {
         IncanType::Named(name) => out.push((path.clone(), RetainedTypeLeaf::Named(name.clone()))),
@@ -344,6 +376,11 @@ fn named_leaf_paths(ty: &IncanType, path: &mut Vec<usize>, out: &mut Vec<(Vec<us
                 named_leaf_paths(item, path, out);
                 path.pop();
             }
+        }
+        IncanType::Ref(inner) | IncanType::RefMut(inner) | IncanType::NativeArray { element: inner, .. } => {
+            path.push(0);
+            named_leaf_paths(inner, path, out);
+            path.pop();
         }
         _ => {}
     }
@@ -507,21 +544,22 @@ pub fn is_direct_replacement_checked_model(model: &ast::ModelDecl, type_info: &T
     has_checked_native_derives(
         &model.decorators,
         type_info.declarations.body_ir_model_derives.get(&model.name),
-        type_info.declarations.rust_builtin_derive_models.contains(&model.name),
+        type_info.declarations.rust_native_derive_types.contains(&model.name),
+        type_info,
     ) && has_direct_replacement_model_shape(model, Some(type_info))
 }
 
-/// Admit a model or class whose decorators are all the bare builtin `derive` and whose checked native selection
-/// names only derives the direct runtime retains.
+/// Admit a source nominal whose derive decorators are completely described by its checked native selection.
 ///
 /// Checking has already resolved module-qualified JSON protocol derives to their canonical serde paths, so the
 /// selection, not the decorator spelling, decides admission. A declaration without a checked selection stays refused.
-/// `rust_builtins` also admits `@rust.derive(...)` when checking recorded that it names only Rust builtin derives,
-/// which the selection then already contains.
+/// `rust_derives` also admits `@rust.derive(...)` when checking recorded that its complete native selection is
+/// retained, including supported serde derives.
 fn has_checked_native_derives(
     decorators: &[ast::Spanned<ast::Decorator>],
     selection: Option<&Vec<String>>,
-    rust_builtins: bool,
+    rust_derives: bool,
+    type_info: &TypeCheckInfo,
 ) -> bool {
     let Some(names) = selection else {
         return false;
@@ -531,34 +569,35 @@ fn has_checked_native_derives(
         is_lint_suppression_decorator(derive)
             || (derive.name == "derive"
                 && derive.type_args.is_empty()
-                && (derive.path.segments == ["derive"]
-                    || (rust_builtins && derive.path.segments == ["rust", "derive"])))
+                && (derive.path.segments == ["derive"] || (rust_derives && derive.path.segments == ["rust", "derive"])))
     }) && names.iter().all(|name| {
-        matches!(
-            name.as_str(),
-            "Debug"
-                | "Clone"
-                | "Copy"
-                | "Eq"
-                | "PartialEq"
-                | "Hash"
-                | "Ord"
-                | "PartialOrd"
-                | "Default"
-                | "Display"
-                | "FieldInfo"
-                | "IncanClass"
-                | "serde::Serialize"
-                | "serde::Deserialize"
-        )
+        type_info.derivations.native_macro_paths.contains(name)
+            || matches!(
+                name.as_str(),
+                "Debug"
+                    | "Clone"
+                    | "Copy"
+                    | "Eq"
+                    | "PartialEq"
+                    | "Hash"
+                    | "Ord"
+                    | "PartialOrd"
+                    | "Default"
+                    | "Display"
+                    | "FieldInfo"
+                    | "IncanClass"
+                    | "serde::Serialize"
+                    | "serde::Deserialize"
+            )
     })
 }
 
-/// Admit only the builtin `@staticmethod` and `@classmethod` method markers and `@rust.allow` lint suppressions.
+/// Admit builtin static/class method markers, checked `@rust.extern` delegation, and lint suppressions.
 ///
 /// Checking already reflects both markers in the method's facts: a static method has no receiver, and a
-/// classmethod's `cls` is a checked type token whose constructions resolve to the owner. Every other method decorator
-/// rebinds or wraps the method and stays refused.
+/// classmethod's `cls` is a checked type token whose constructions resolve to the owner. Extern validation excludes
+/// instance receivers and real bodies; Body IR retains its exact module/item delegation rather than executing the
+/// placeholder. Every other method decorator rebinds or wraps the method and stays refused.
 pub fn is_direct_replacement_method_decorator(decorator: &ast::Decorator) -> bool {
     is_lint_suppression_decorator(decorator)
         || (decorator.args.is_empty()
@@ -568,6 +607,7 @@ pub fn is_direct_replacement_method_decorator(decorator: &ast::Decorator) -> boo
                 Some(
                     incan_lang::lang::decorators::DecoratorId::StaticMethod
                         | incan_lang::lang::decorators::DecoratorId::ClassMethod
+                        | incan_lang::lang::decorators::DecoratorId::RustExtern
                 )
             ))
 }
@@ -714,6 +754,41 @@ pub fn is_direct_replacement_model_derive(decorator: &ast::Decorator) -> bool {
         })
 }
 
+/// Admit a transparent rusttype only when checking retained its underlying storage and it authors no executable
+/// members, conversions, or trait implementations. It introduces no wrapper layout or constructor.
+pub fn is_direct_native_rusttype_alias(newtype: &ast::NewtypeDecl, type_info: &TypeCheckInfo) -> bool {
+    let alias = if newtype.type_params.is_empty() {
+        IncanType::Named(newtype.name.clone())
+    } else {
+        IncanType::Generic {
+            base: newtype.name.clone(),
+            args: newtype
+                .type_params
+                .iter()
+                .map(|parameter| IncanType::TypeVar(parameter.name.clone()))
+                .collect(),
+        }
+    };
+    newtype.is_rusttype
+        && newtype
+            .decorators
+            .iter()
+            .all(|decorator| is_lint_suppression_decorator(&decorator.node))
+        && newtype.traits.is_empty()
+        && newtype.methods.is_empty()
+        && newtype.rebindings.is_empty()
+        && newtype.method_aliases.is_empty()
+        && newtype.method_partials.is_empty()
+        && newtype.associated_types.is_empty()
+        && newtype.interop_edges.is_empty()
+        && type_info.rust.storage_types.get(&alias).is_some_and(|storage| {
+            !matches!(
+                storage,
+                IncanType::Unknown | IncanType::Unsupported(_) | IncanType::RustInteropPath(_)
+            )
+        })
+}
+
 /// Admit raw tuple wrappers with checked native derives, owner and method parameters, and trait adoptions.
 ///
 /// A trait adopted with type arguments is instantiated from the checker-recorded arguments. Integer primitive
@@ -727,13 +802,13 @@ pub fn is_direct_replacement_model_derive(decorator: &ast::Decorator) -> bool {
 /// method partials require additional representation facts and remain outside this profile. Bare and module-qualified
 /// JSON protocol derives use the checker's canonical serde selections, as on models.
 pub fn is_direct_replacement_checked_newtype(newtype: &ast::NewtypeDecl, type_info: &TypeCheckInfo) -> bool {
-    let selections = newtype_derives::checked_newtype_derives(newtype, type_info);
+    let selections = type_info.declarations.body_ir_newtype_derives.get(&newtype.name);
     let Some(facts) = type_info.declarations.newtype_construction.get(&newtype.name) else {
         return false;
     };
     if (!facts.constraints.is_empty() || facts.checked_constructor.is_some())
         && selections
-            .iter()
+            .into_iter()
             .flatten()
             .chain(facts.automatic_derives.iter())
             .any(|selection| selection == "serde::Deserialize")
@@ -742,7 +817,12 @@ pub fn is_direct_replacement_checked_newtype(newtype: &ast::NewtypeDecl, type_in
         return false;
     }
     !newtype.is_rusttype
-        && has_checked_native_derives(&newtype.decorators, selections.as_ref(), false)
+        && has_checked_native_derives(
+            &newtype.decorators,
+            selections,
+            type_info.declarations.rust_native_derive_types.contains(&newtype.name),
+            type_info,
+        )
         && newtype.rebindings.iter().all(|rebinding| {
             matches!(&rebinding.node.target.node, ast::Expr::Ident(target)
                 if newtype.methods.iter().any(|method| method.node.name == *target))
@@ -778,7 +858,8 @@ pub fn is_direct_replacement_checked_class(class: &ast::ClassDecl, type_info: &T
     has_checked_native_derives(
         &class.decorators,
         type_info.declarations.class_derives.get(&class.name),
-        false,
+        type_info.declarations.rust_native_derive_types.contains(&class.name),
+        type_info,
     ) && (class.extends.is_none()
         || type_info
             .declarations
@@ -853,6 +934,7 @@ pub fn has_direct_native_enum_derives(value: &ast::EnumDecl, type_info: &TypeChe
         .is_some_and(|names| {
             names.iter().all(|name| {
                 (name == "Display" && value.value_type.is_none())
+                    || type_info.derivations.native_macro_paths.contains(name)
                     || matches!(
                         name.as_str(),
                         "Debug"
@@ -878,8 +960,9 @@ fn is_bare_derive(decorator: &ast::Decorator) -> bool {
 /// Determine whether an enum carries the narrow source-local RFC 032 scalar declaration fact.
 ///
 /// The checked native enum layout and its derives accompany this scalar registry. Immutable ordinary and static
-/// methods contribute independent checked bodies and do not change the variants or raw values. Trait dispatch,
-/// aliases, generic substitution, payloads, and other method shapes remain excluded rather than inferred from a layout.
+/// methods contribute independent checked bodies and do not change the variants or raw values. Variant aliases retain
+/// their checker's physical variant identity. Trait dispatch, generic substitution, payloads, and other method shapes
+/// remain excluded rather than inferred from a layout.
 pub fn is_direct_replacement_value_enum(enum_decl: &ast::EnumDecl) -> bool {
     enum_decl
         .decorators
@@ -888,7 +971,6 @@ pub fn is_direct_replacement_value_enum(enum_decl: &ast::EnumDecl) -> bool {
         && enum_decl.type_params.is_empty()
         && enum_decl.value_type.is_some()
         && enum_decl.traits.is_empty()
-        && enum_decl.variant_aliases.is_empty()
         && enum_decl
             .methods
             .iter()
@@ -939,7 +1021,7 @@ const fn hir_span(span: ast::Span) -> HirSourceSpan {
 /// Per-function lowering state: fresh local/scope allocation, current name bindings, and accumulated body-level
 /// facts (runtime requirements, panic facts, which locals have been moved out of their declaring scope).
 struct BodyBuilder<'type_info, 'source> {
-    /// Locals whose selected SDK enum payload layout replaces legacy's opaque Rust pattern placeholder.
+    /// Owned native payload and iterator-item locals whose exact carrier replaces an opaque pattern placeholder.
     native_enum_payload_bindings: HashSet<bir::LocalId>,
     /// Provider-owned method records; the Incan consumer receives their selected identity rather than names to
     /// resolve.
@@ -1015,9 +1097,12 @@ struct BodyBuilder<'type_info, 'source> {
     /// `Ident` occurrences of its name in the declaring scope's statement suffix (see [`count_reads_in_stmts`]).
     /// Decremented on every read; a decrement that reaches zero selects [`bir::OwnershipFact::Move`].
     remaining_reads: HashMap<bir::LocalId, usize>,
-    /// Local owners whose earlier call arguments have been read but are not consumed until that call is emitted.
-    /// Nested argument evaluation cannot move one of these owners out from under the pending outer operand.
+    /// Local owners whose earlier operands remain unread until a call, dictionary write, or comprehension insertion.
+    /// Nested evaluation cannot move one of these owners out from under the pending outer operand.
     pending_argument_reads: Vec<bir::LocalId>,
+    /// Active normalized loop scopes. Reads of enclosing owners must survive the next iteration even at their last
+    /// textual use.
+    loop_scopes: Vec<bir::ScopeId>,
     /// Source-annotated function locals whose Rust representation is a function pointer rather than an inferred item.
     function_pointer_locals: Vec<bir::LocalId>,
     /// Local bindings the checker proved hold capturing callable values rather than function pointers.
@@ -1112,6 +1197,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             external_locals: HashMap::new(),
             remaining_reads: HashMap::new(),
             pending_argument_reads: Vec::new(),
+            loop_scopes: Vec::new(),
             function_pointer_locals: Vec::new(),
             closure_holding_locals: Vec::new(),
             moved_out: HashSet::new(),
@@ -1257,7 +1343,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             IncanType::Generic { args, .. } | IncanType::Tuple(args) => {
                 args.iter().any(|arg| self.leaves_type_open(arg))
             }
-            IncanType::Ref(inner) | IncanType::RefMut(inner) => self.leaves_type_open(inner),
+            IncanType::Ref(inner) | IncanType::RefMut(inner) | IncanType::NativeArray { element: inner, .. } => {
+                self.leaves_type_open(inner)
+            }
             IncanType::Function { params, return_type } => {
                 params.iter().any(|param| self.leaves_type_open(&param.ty)) || self.leaves_type_open(return_type)
             }
@@ -1404,6 +1492,16 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// `Ok("fine")` for a `Result[int | str, str]` destination as the union's `str` member.
     fn fill_open_type_parts(&self, recorded: &IncanType, settled: &IncanType) -> IncanType {
         match (recorded, settled) {
+            (
+                IncanType::NativeArray { element, length },
+                IncanType::NativeArray {
+                    element: settled_element,
+                    length: settled_length,
+                },
+            ) if length == settled_length => IncanType::NativeArray {
+                element: Box::new(self.fill_open_type_parts(element, settled_element)),
+                length: *length,
+            },
             (IncanType::Unknown | IncanType::Infer, _) => settled.clone(),
             (IncanType::TypeVar(name), _) if !self.type_parameters.contains(name) => settled.clone(),
             (_, IncanType::Generic { base, args })
@@ -1692,21 +1790,25 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Select the Duckborrower fact and last-use marker for reading `place`.
     ///
+    /// Explicit shared-reference values copy their pointer, including projected references; exclusive references
+    /// remain transfers or reborrows. This differs from a borrowed ABI slot whose logical source type is an owner.
     /// Projected reads (`.field`, `[index]`) never move: v0 does not track partial-move state, so a non-Copy
-    /// projected read always borrows rather than risking an unsound move out of a place the surrounding code still
-    /// owns. A bare read of a [`bir::LocalOrigin::Receiver`] local (`self`/`mut self`) never moves either, for a
-    /// stronger reason than the projected case: a receiver is always a Rust-level reference at the emission
-    /// boundary, so moving a non-Copy value out of it would not even compile — the only sound way to produce an
-    /// owned value from it is to clone (mirrors the existing backend ownership planner's treatment of non-Copy
-    /// `self` reads in `loaves/compiler/incan_emit/src/ownership.rs`, which this module's own docs cite as precedent).
-    /// A bare read of caller-owned parameter storage, identified by [`Self::is_borrowed_parameter`], never moves for
-    /// the same reason: a collection parameter is a shared binding, or a mutable borrow when declared `mut` (RFC 129).
-    /// An owned value read from it clones; passing it on to a `mut` parameter instead retains a reborrow fact.
-    /// Every other bare local read decrements its remaining-reads countdown; reaching zero selects `Move` (and
-    /// records the local as moved for [`Self::insert_scope_drops`]), otherwise `Clone`. A pending earlier call argument
-    /// keeps its owner alive across later nested argument evaluation, so even its final textual read clones until the
-    /// outer call consumes that operand. A local with no tracked
-    /// countdown (an [`bir::LocalOrigin::External`] reference) gets the explicit [`bir::OwnershipFact::Unknown`].
+    /// projected read borrows rather than risking an unsound move out of a place the surrounding code still owns.
+    /// A checked source enum field instead records an explicit clone when read as a value; reference consumers retain
+    /// their ordinary borrow adjustment. A bare read of a [`bir::LocalOrigin::Receiver`] local (`self`/`mut self`)
+    /// never moves either, for a stronger reason than the projected case: a receiver is always a Rust-level
+    /// reference in the native frame, so moving a non-Copy value out of it is invalid. Producing an owned value
+    /// therefore clones the referent. A bare read of caller-owned parameter storage, identified by
+    /// [`Self::is_borrowed_parameter`], never moves for the same reason: a collection parameter is a shared
+    /// binding, or a mutable borrow when declared `mut` (RFC 129). An owned value read from it clones; passing it
+    /// on to a `mut` parameter instead retains a reborrow fact. Every other bare local read decrements its
+    /// remaining-reads countdown; reaching zero selects `Move` (and records the local as moved for
+    /// [`Self::insert_scope_drops`]), otherwise `Clone`. A pending earlier call argument keeps its owner alive
+    /// across later nested argument evaluation, so even its final textual read clones until the outer call consumes
+    /// that operand. An owner declared outside the active loop also clones at its last textual read, because that
+    /// source read executes again on the next iteration. Loop-local owners can still transfer at their last use. A
+    /// local with no tracked countdown (an [`bir::LocalOrigin::External`] reference) gets the explicit
+    /// [`bir::OwnershipFact::Unknown`].
     ///
     /// Note that [`count_reads_in_stmts`] counts a `.field`/`[index]` occurrence of a name toward that local's
     /// total the same as a bare occurrence, but only bare reads ever decrement the countdown here. A local read
@@ -1714,10 +1816,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// than `Move` — an over-seeded, never-decremented countdown biases toward `Clone`, not toward an unsound
     /// `Move`, consistent with this module's documented last-use approximation.
     fn ownership_fact_for_place(&mut self, place: &bir::Place, ty: &IncanType) -> (bir::OwnershipFact, bool) {
-        let is_copy = ty.abi_v0_facts().ownership.is_trivially_copy();
+        let is_copy = matches!(ty, IncanType::Ref(_)) || ty.abi_v0_facts().ownership.is_trivially_copy();
         if !place.projection.is_empty() {
             let fact = if is_copy {
                 bir::OwnershipFact::Copy
+            } else if self.is_checked_enum_value(ty) {
+                bir::OwnershipFact::Clone
             } else {
                 bir::OwnershipFact::Borrow
             };
@@ -1747,16 +1851,40 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
             return (bir::OwnershipFact::Copy, false);
         }
+        let reused_by_loop = self.loop_reuses_local(local);
         let Some(remaining) = self.remaining_reads.get_mut(&local) else {
             return (bir::OwnershipFact::Unknown, false);
         };
         *remaining = remaining.saturating_sub(1);
-        if *remaining == 0 && !self.pending_argument_reads.contains(&local) {
+        if *remaining == 0 && !self.pending_argument_reads.contains(&local) && !reused_by_loop {
             self.moved_out.insert(local);
             (bir::OwnershipFact::Move, true)
         } else {
             (bir::OwnershipFact::Clone, false)
         }
+    }
+
+    /// Identify storage declared outside the innermost loop, whose textual final read can execute repeatedly.
+    /// Descendants of the loop scope are initialized per iteration and retain ordinary last-use transfers.
+    fn loop_reuses_local(&self, local: bir::LocalId) -> bool {
+        let Some(loop_scope) = self.loop_scopes.last() else {
+            return false;
+        };
+        let Some(declaration) = self.locals.get(local.index()) else {
+            return false;
+        };
+        let mut scope = Some(declaration.scope);
+        while let Some(current) = scope {
+            if current == *loop_scope {
+                return false;
+            }
+            scope = self
+                .scopes
+                .iter()
+                .find(|entry| entry.id == current)
+                .and_then(|entry| entry.parent);
+        }
+        true
     }
 
     /// Whether `local` is a method's `self`/`mut self` receiver, per its recorded [`bir::LocalOrigin`].
@@ -1799,8 +1927,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
     }
 
-    /// Emit explicit `Drop` statements, in reverse declaration order, for every non-Copy `UserBinding`/`Parameter`
-    /// local declared directly in `scope` that was never moved out. This is scoped to locals declared *directly* in
+    /// Emit explicit `Drop` statements in reverse declaration order for every non-Copy owned binding, parameter or
+    /// temporary declared directly in `scope` that was never moved out. A native borrow guard must be released before
+    /// an earlier owner binding, rather than waiting for the final temporary cleanup after that owner's explicit drop.
+    /// This is scoped to locals declared *directly* in
     /// this block — it does not attempt cross-branch or early-return/break drop-obligation dataflow, which needs
     /// full control-flow analysis out of scope for v0 (see [`incan_semantics_core::body_ir`] module docs).
     fn insert_scope_drops(&mut self, stmts: &mut Vec<bir::Statement>, scope: bir::ScopeId) {
@@ -1813,7 +1943,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .filter(|local| {
                 matches!(
                     local.origin,
-                    bir::LocalOrigin::UserBinding | bir::LocalOrigin::Parameter
+                    bir::LocalOrigin::UserBinding | bir::LocalOrigin::Parameter | bir::LocalOrigin::Temporary
                 )
             })
             .filter(|local| !local.ty.abi_v0_facts().ownership.is_trivially_copy())
@@ -1960,7 +2090,6 @@ mod match_;
 mod checked_json;
 mod newtype_string_conversion;
 pub use newtype_string_conversion::compilation_string_conversion_contract;
-mod newtype_derives;
 
 mod newtype_constraints;
 mod newtype_field_ingress;
@@ -1982,6 +2111,7 @@ mod calls;
 mod constructor_carriers;
 pub(crate) mod runtime_nominals;
 mod runtime_storage;
+mod rust_calls;
 mod rust_values;
 mod source_comparison;
 mod type_metadata;
@@ -2020,6 +2150,7 @@ mod registry_effects;
 mod representation_facts;
 mod result_channels;
 mod static_aliases;
+mod union_layouts;
 
 mod bodies;
 mod enum_types;

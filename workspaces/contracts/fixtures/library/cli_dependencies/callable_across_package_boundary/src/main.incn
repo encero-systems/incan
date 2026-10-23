@@ -1,13 +1,42 @@
-# behavior: a `Callable` value from a dependency is passed back across the `pub::` boundary into the dependency's own higher-order function and applied to every element
+# behavior: a dependency's callables cross the package boundary intact: a `Callable` value from a dependency is passed back across the `pub::` boundary into the dependency's own higher-order function and applied to every element, an imported partial called without its target's defaulted residual argument uses that declaration default from the package root and from a nested namespace alike while an explicit argument still overrides it, and a dependency's function whose parameter is `mut` changes the consumer's argument, called directly and passed as a value of a function type that marks the parameter `mut`
 # expect-stdout:
 #   2
 #   3
 #   4
+#   flat of size 3
+#   idx of size 4
+#   tall of size 3
+#   3
+#   6
+#   6
 
-from pub::callability import map_owned, plus_one
+from pub::callability import Counter, default_build, grow, hyperquant, map_owned, new_counter, plus_one
 
 
-def main() -> None:
+def apply(step: (mut Counter, int) -> int, mut counter: Counter) -> int:
+    return step(counter, 3)
+
+
+def show_callable_values() -> None:
     mapped = map_owned([1, 2, 3], plus_one)
     for item in mapped:
         println(item)
+
+
+def show_partial_defaults() -> None:
+    println(default_build())
+    println(hyperquant.default_index())
+    println(default_build(label="tall"))
+
+
+def show_mut_parameters() -> None:
+    mut counter = new_counter(1)
+    println(grow(counter, 2))
+    println(apply(grow, counter))
+    println(counter.value)
+
+
+def main() -> None:
+    show_callable_values()
+    show_partial_defaults()
+    show_mut_parameters()

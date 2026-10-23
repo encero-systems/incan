@@ -1,0 +1,97 @@
+"""Oven's formatting invocation; the compiler owns parsing and the single formatter implementation."""
+
+from std.fs import Path
+from features import FeatureRequest
+from incan_units import format_unit
+from toolchain import Toolchain, load_toolchain
+from unit import describe
+
+const USAGE: str = "usage: incan fmt [--check] PATH..."
+
+
+model FormatRequest:
+    """What `incan fmt` was asked to do: the paths to format, and whether to only check them."""
+
+    pub check: bool
+    pub paths: list[str]
+
+
+pub def format_paths(arguments: list[str]) -> Result[i32, str]:
+    """
+    Format every `.incn` file in the given files and trees, or with `--check` report the files that would change.
+
+    A file that cannot be described or formatted is reported and the others still run. The exit code is 1 when any
+    file failed or, with `--check`, would change.
+    """
+    request = parse_arguments(arguments)?
+    files = discover(request.paths)?
+    toolchain = load_toolchain()?
+    mut code: i32 = 0
+    for file in files:
+        if format_file(file, toolchain, request.check)? != 0:
+            code = 1
+    return Ok(code)
+
+
+def parse_arguments(arguments: list[str]) -> Result[FormatRequest, str]:
+    """Read `--check` and the paths; `--` ends the options, so a path after it may start with `-`."""
+    mut check = false
+    mut paths: list[str] = []
+    mut options = true
+    for argument in arguments:
+        if options and argument == "--":
+            options = false
+        elif options and argument == "--check":
+            check = true
+        elif options and argument.startswith("-"):
+            return Err(f"unknown option `{argument}`; {USAGE}")
+        else:
+            paths.append(argument)
+    if len(paths) == 0:
+        return Err(f"a PATH is required; {USAGE}")
+    return Ok(FormatRequest(check=check, paths=paths))
+
+
+def discover(paths: list[str]) -> Result[list[str], str]:
+    """Every source under the given paths, each once, in a deterministic order."""
+    mut files: list[str] = []
+    for path in paths:
+        for file in sources(Path(path))?:
+            if file not in files:
+                files.append(file)
+    if len(files) == 0:
+        return Err("no .incn files found")
+    return Ok(files)
+
+
+def format_file(file: str, toolchain: Toolchain, check: bool) -> Result[i32, str]:
+    """Format or check one file with its own unit's vocabulary; a file whose unit cannot be described reports why."""
+    match describe(Path(file), "debug", FeatureRequest()):
+        Err(reason) =>
+            println(f"Error formatting {file}: {reason}")
+            return Ok(1)
+        Ok(unit) => return format_unit(unit, toolchain, file, check)
+
+
+def sources(path: Path) -> Result[list[str], str]:
+    """The `.incn` files at `path`, a file or a tree, sorted, without descending into skipped directories."""
+    if path.is_file():
+        if not path.name().endswith(".incn"):
+            return Ok([])
+        absolute = path.resolve().map_err((error) => f"{path.0}: {error.message()}")?
+        return Ok([absolute.0])
+    if not path.is_dir():
+        return Err(f"{path.0}: path does not exist")
+    entries = path.iterdir().map_err((error) => f"{path.0}: {error.message()}")?
+    mut files: list[str] = []
+    for entry in entries:
+        if entry.is_dir() and skipped(entry.name()):
+            continue
+        for file in sources(entry)?:
+            files.append(file)
+    return Ok(sorted(files))
+
+
+def skipped(directory: str) -> bool:
+    """Hidden directories, build output (`target`) and vendored packages (`node_modules`) hold no sources to format."""
+    return directory.startswith(".") or directory == "target" or directory == "node_modules"

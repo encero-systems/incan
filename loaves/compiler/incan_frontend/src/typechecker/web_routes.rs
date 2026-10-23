@@ -16,9 +16,9 @@
 //! parameter decodes the request into `T`, and a `Json[T]` return encodes `T`, so a declared `T` with no JSON form of
 //! its own is refused rather than left to fail the registration.
 
-use crate::ast::{Decorator, DecoratorArg, Expr, FunctionDecl, Literal, ParamKind, Spanned};
+use crate::ast::{Decorator, DecoratorArg, Expr, FunctionDecl, Literal, ParamKind, Spanned, Type};
 use crate::diagnostics::errors;
-use crate::symbols::{ResolvedType, TypeInfo};
+use crate::symbols::{ResolvedType, TypeInfo, resolve_type};
 use incan_lang::lang::stdlib::{self, StdlibJsonTraitId};
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_lang::lang::types::collections::CollectionTypeId;
@@ -165,12 +165,31 @@ impl TypeChecker {
         })
     }
 
+    /// The declared type as the route checks read it.
+    ///
+    /// A web wrapper the program imports as a Rust item (`Query[T]`, `Json[T]`) resolves to a Rust path display, which
+    /// carries no payload to inspect. The written annotation applying a name the active surface import binds still
+    /// does, so the wrapper is rebuilt from it with its payload resolved as written; any other type is kept as is.
+    fn route_declared_type(&self, resolved: &ResolvedType, written: &Spanned<Type>) -> ResolvedType {
+        let (ResolvedType::RustPath(_), Type::Generic(name, arguments)) = (resolved, &written.node) else {
+            return resolved.clone();
+        };
+        if self.active_surface_type_import(name).is_none() {
+            return resolved.clone();
+        }
+        let payloads = arguments
+            .iter()
+            .map(|argument| resolve_type(&argument.node, &self.symbols))
+            .collect();
+        ResolvedType::Generic(name.clone(), payloads)
+    }
+
     /// Check a function's signature against the route registration it declares (#1721, #1722).
     ///
     /// Nothing happens for a function without the route decorator. For a handler, the declared return type must have
     /// a response form, and every ordinary parameter must be bound by a `{name}` capture of the path or supplied by
     /// an extractor type. `return_type` and `param_types` are the resolved annotations `check_function` already
-    /// computed, so the classification here never resolves a type a second time.
+    /// computed; only a Rust-item web wrapper is rebuilt from its written annotation.
     pub(super) fn check_route_handler_signature(
         &mut self,
         func: &FunctionDecl,
@@ -180,6 +199,13 @@ impl TypeChecker {
         let Some(decorator) = self.route_decorator(&func.decorators) else {
             return;
         };
+        let return_type = &self.route_declared_type(return_type, &func.return_type);
+        let param_types = &func
+            .params
+            .iter()
+            .zip(param_types)
+            .map(|(param, resolved)| self.route_declared_type(resolved, &param.node.ty))
+            .collect::<Vec<_>>();
 
         // ---- Return type: the response the route sends ----
         if self.route_type_shape(return_type, RouteRole::Response) == RouteTypeShape::DoesNotFit {

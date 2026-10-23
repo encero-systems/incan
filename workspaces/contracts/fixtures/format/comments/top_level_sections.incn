@@ -1,0 +1,126 @@
+# behavior: A top-level comment opens the next section: two blank lines separate it from the suite before it, and it stays attached to the declaration below it unless the source separates them; this holds after a docstring, a nested match and nested for and match suites.
+# expect-formatted:
+#   def count() -> int:
+#       """
+#       First paragraph.
+#
+#       Second paragraph.
+#       """
+#       return 0
+#
+#
+#   # Section comment
+#   def other() -> int:
+#       return 1
+#
+#
+#   def paragraphs() -> int:
+#       """
+#       First paragraph.
+#
+#       Second paragraph.
+#       """
+#       return 0
+#
+#
+#   # Separated comment
+#
+#
+#   def after_paragraphs() -> int:
+#       """Return the value after the separated comment."""
+#       return 1
+#
+#
+#   def visit(items: list[int]) -> None:
+#       """Visit items through a nested match."""
+#       for item in items:
+#           match item:
+#               _ => pass
+#
+#
+#   # Comment after a match
+#
+#
+#   def after_visit() -> int:
+#       """Return the value after the comment."""
+#       return 2
+#
+#
+#   def tally(items: list[int]) -> int:
+#       """Count zero-valued items in nested suites."""
+#       mut total = 0
+#       for item in items:
+#           match item:
+#               0 => total += 1
+#               _ => pass
+#       return total
+#
+#
+#   # Comment after nested suites
+#
+#
+#   def after_tally() -> int:
+#       """Return the value after the comment."""
+#       return 3
+
+def count() -> int:
+    """
+    First paragraph.
+
+    Second paragraph.
+    """
+    return 0
+# Section comment
+def other() -> int:
+    return 1
+
+
+def paragraphs() -> int:
+    """
+    First paragraph.
+
+    Second paragraph.
+    """
+    return 0
+
+
+# Separated comment
+
+
+def after_paragraphs() -> int:
+    """Return the value after the separated comment."""
+    return 1
+
+
+def visit(items: list[int]) -> None:
+    """Visit items through a nested match."""
+    for item in items:
+        match item:
+            _ => pass
+
+
+# Comment after a match
+
+
+def after_visit() -> int:
+    """Return the value after the comment."""
+    return 2
+
+
+def tally(items: list[int]) -> int:
+    """Count zero-valued items in nested suites."""
+    mut total = 0
+    for item in items:
+        match item:
+            0 =>
+                total += 1
+            _ => pass
+    return total
+
+
+# Comment after nested suites
+
+
+def after_tally() -> int:
+    """Return the value after the comment."""
+    return 3

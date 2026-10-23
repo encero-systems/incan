@@ -1,0 +1,318 @@
+"""Public graph command contracts, including warm-query equality and wire-format agreement."""
+
+from std.fs import Path
+from std.json import JsonValue
+from compare import compare
+from files import (
+    items,
+    json_text,
+    parse_json,
+    read,
+    read_bytes,
+    remove,
+    required,
+    required_text,
+    string_of,
+    write,
+    write_bytes,
+)
+from header import Header
+from run import Outcome, invoke
+
+
+pub def compare_graph(incan: str, project: Path, header: Header) -> Result[list[str], str]:
+    """
+    Run the declared inspections twice, compare warm answers, and compare their observable output.
+
+    1. Each declared inspection runs twice, and the warm second answer must equal the first.
+    2. Their answers together, with the project path removed, meet the header's expectations.
+    3. When every inspection succeeded, the exported documents are checked too.
+    """
+    mut stdout = ""
+    mut stderr = ""
+    mut code: Option[int] = Some(0)
+    mut failures: list[str] = []
+    # 1. Every declared inspection runs twice, and its warm second answer must equal the first.
+    for invocation in header.items("graph-commands"):
+        arguments = ["inspect", "codegraph"] + invocation.split(" ")
+        outcome = invoke(incan, arguments, project)?
+        repeated = invoke(incan, arguments, project)?
+        failures = failures + inspection_failures(invocation, outcome, repeated)
+        stdout += outcome.stdout.replace(f"{project.0}/", "")
+        stderr += outcome.stderr
+        if outcome.code != Some(0):
+            code = outcome.code
+    # 2. The answers together, with the project path removed, meet the header's expectations.
+    for failure in compare("graph", header, Outcome(stdout=stdout, stderr=stderr, code=code)):
+        failures.append(failure)
+    if len(failures) > 0 and stderr.strip() != "":
+        failures.append(stderr)
+    # 3. Only when every inspection succeeded are the exported documents checked as well.
+    if code == Some(0):
+        for failure in check_documents(incan, project)?:
+            failures.append(failure)
+    return Ok(failures)
+
+
+def inspection_failures(invocation: str, outcome: Outcome, repeated: Outcome) -> list[str]:
+    """What is wrong with one inspection: an import hit without identity or path, or a warm answer that differs."""
+    mut failures: list[str] = []
+    for line in outcome.stdout.split("\n"):
+        if line.startswith("import  "):
+            failures.append(f"an import hit has no identity or source path: {invocation}")
+    if repeated.stdout != outcome.stdout or repeated.code != outcome.code:
+        failures.append(f"warm inspection differs: {invocation}")
+    return failures
+
+
+def document(incan: str, project: Path, format: str) -> Result[str, str]:
+    """Read one public export, surfacing compiler refusal rather than comparing an empty document."""
+    result = invoke(incan, ["inspect", "codegraph", ".", "--format", format], project)?
+    if result.code != Some(0):
+        return Err(f"{format} export failed: {result.stderr}")
+    return Ok(result.stdout)
+
+
+def declaration_identities(document: str) -> Result[list[str], str]:
+    """Compare only declaration identities across a position-only source edit; spans must change independently."""
+    mut identities: list[str] = []
+    for record in items(parse_json(document)?)?:
+        if required_text(record, "record")? != "declaration":
+            continue
+        stable = required(record, "stable_identity")?
+        if stable.is_null():
+            return Err("a checked fixture declaration has no stable identity")
+        identities.append(json_text(stable)?)
+    return Ok(sorted(identities))
+
+
+def check_documents(incan: str, project: Path) -> Result[list[str], str]:
+    """
+    JSON and JSONL agree; changed bytes invalidate the cache while declaration identities survive line movement.
+
+    1. The JSON export answers identity queries consistently, built no Incan library, and links its Rust facts.
+    2. The JSONL export holds the same records as the JSON one.
+    3. A source edit changes the export's spans, not its declaration identities; broken source is exported as an
+       unchecked unit, and refused with `--strict`.
+    4. A unit that fails checking costs its siblings nothing, and a published provider graph is read as published.
+    """
+    # 1. The JSON export answers identity queries consistently, built no Incan library, and links its Rust facts.
+    original = document(incan, project, "json")?
+    check_identity_queries(incan, project, original)?
+    for artifact in project.rglob("*.incnbody").map_err((error) => error.message())?:
+        return Err(f"graph inspection compiled an Incan library: {artifact.0}")
+    check_rust_links(original)?
+    # 2. The JSONL export holds exactly the records the JSON export does.
+    jsonl = document(incan, project, "jsonl")?
+    lines = json_lines(jsonl)?
+    canonical = json_text(parse_json(original)?)?
+    mut failures: list[str] = []
+    if canonical != json_text(JsonValue.array(lines))?:
+        failures.append("JSON and JSONL exports disagree")
+    # 3. A source edit changes the export's spans but not its declaration identities, and broken source is unchecked.
+    failures = failures + check_source_edits(incan, project, original)?
+    # 4. A failing unit costs its siblings nothing, and a published provider graph is read as it was published.
+    check_tolerant_export(incan, project)?
+    check_published_graph(incan, project)?
+    return Ok(failures)
+
+
+def json_lines(text: str) -> Result[list[JsonValue], str]:
+    """The JSON value on each nonempty line of a JSONL document."""
+    mut lines: list[JsonValue] = []
+    for line in text.split("\n"):
+        if line != "":
+            lines.append(parse_json(line)?)
+    return Ok(lines)
+
+
+def check_source_edits(incan: str, project: Path, original: str) -> Result[list[str], str]:
+    """
+    Edit the project's source and restore it: a moved line reuses no stale span and keeps declaration identities, and
+    broken source is exported as an unchecked unit with a warning, while `--strict` refuses it.
+    """
+    mut source = project.joinpath("src").joinpath("lib.rs")
+    if not source.is_file():
+        source = project.joinpath("src").joinpath("main.incn")
+    before = read(source)?
+    mut failures: list[str] = []
+    write(source, f"\n{before}")?
+    moved = document(incan, project, "json")?
+    if original == moved:
+        failures.append("source edit reused stale source spans")
+    if declaration_identities(original)? != declaration_identities(moved)?:
+        failures.append("line movement changed a declaration identity")
+    write(source, "this is invalid in both languages {")?
+    invalid = invoke(incan, ["inspect", "codegraph", ".", "--format", "json"], project)?
+    refused = invoke(incan, ["inspect", "codegraph", ".", "--strict"], project)?
+    write(source, before)?
+    if refused.code == Some(0):
+        failures.append("strict export of broken source reused a checked cached graph")
+    if invalid.code != Some(0) or "is unchecked" not in invalid.stderr or invalid.stdout.strip() == original.strip():
+        failures.append(f"broken source was not exported as an unchecked unit with a warning: {invalid.stderr}")
+    return Ok(failures)
+
+
+def check_tolerant_export(incan: str, project: Path) -> Result[None, str]:
+    """
+    A unit that fails checking is named in one warning and contributes only unchecked facts, never costing the others.
+
+    1. Add a function that does not type check to the context unit, and ask four questions about it.
+    2. A sibling unit's answer is unchanged, and the failing unit is named by exactly one warning.
+    3. The failing unit's own facts are marked unchecked, a warm query repeats the warning, and `--strict` refuses.
+    """
+    source = project.joinpath("context").joinpath("src").joinpath("lib.incn")
+    if not source.is_file():
+        return Ok(None)
+    # 1. A function that does not type check is added to the context unit, and four questions are asked about it.
+    before = read(source)?
+    write(source, before + "\n\npub def refused() -> int:\n    return \"not an int\"\n")?
+    query = ["inspect", "codegraph", ".", "--query", "defs"]
+    sibling = invoke(incan, query + ["checked_helper"], project)?
+    broken = invoke(incan, query + ["contextual_helper"], project)?
+    repeated = invoke(incan, query + ["contextual_helper"], project)?
+    strict = invoke(incan, query + ["contextual_helper", "--strict"], project)?
+    write(source, before)?
+    # 2. A sibling unit's answer is unchanged, and the failing unit is named by exactly one warning.
+    warnings = [line for line in sibling.stderr.split("\n") if line.startswith("warning:")]
+    if sibling.code != Some(0) or "graph_checked::main::checked_helper" not in sibling.stdout:
+        return Err(f"a failing sibling unit changed a checked answer: {sibling.stderr}")
+    if "(unchecked)" in sibling.stdout:
+        return Err(f"a failing sibling unit changed a checked answer: {sibling.stderr}")
+    if len(warnings) != 1 or "graph_context is unchecked" not in warnings[0]:
+        return Err(f"a failing unit was not named by exactly one warning line: {sibling.stderr}")
+    # 3. The failing unit's facts are marked unchecked, a warm query repeats the warning, and `--strict` refuses.
+    if broken.code != Some(0) or "contextual_helper" not in broken.stdout or "(unchecked)" not in broken.stdout:
+        return Err(f"an unchecked unit's parseable facts were not marked: {broken.stdout}{broken.stderr}")
+    if repeated.stdout != broken.stdout or repeated.stderr != broken.stderr or repeated.code != broken.code:
+        return Err("a warm query dropped or changed the unchecked warning")
+    if strict.code == Some(0) or "graph_context" not in strict.stderr:
+        return Err(f"strict export accepted a unit that fails checking: {strict.stderr}")
+    return Ok(None)
+
+
+def check_identity_queries(incan: str, project: Path, document: str) -> Result[None, str]:
+    """Unique short names and their full exported IDs select the same checked callers, across package boundaries."""
+    records = items(parse_json(document)?)?
+    declarations = [record for record in records if string_field(record, "record") == "declaration"]
+    for declaration in declarations:
+        match declaration.get("span"):
+            Some(span) =>
+                if not string_field(span, "file").startswith(f"{project.0}/"):
+                    continue
+            None =>
+                continue
+        name = string_field(declaration, "name")
+        if name == "" or len([item for item in declarations if string_field(item, "name") == name]) != 1:
+            continue
+        identifier = string_field(declaration, "id")
+        short = invoke(incan, ["inspect", "codegraph", ".", "--query", "callers", name], project)?
+        if short.stdout == "":
+            continue
+        full = invoke(incan, ["inspect", "codegraph", ".", "--query", "callers", identifier], project)?
+        if short.code != Some(0) or full.code != Some(0) or short.stdout != full.stdout:
+            return Err(f"full declaration ID and short name select different callers: {name}")
+    return Ok(None)
+
+
+def check_published_graph(incan: str, project: Path) -> Result[None, str]:
+    """
+    An explicitly built provider ships a portable binary graph; consumers read it despite unbuilt source edits.
+
+    1. Build the provider. Its compiled Loaf carries a version-one binary graph that names no physical project root.
+    2. A consumer reads the published graph, though the provider's source has since become invalid.
+    3. A corrupt published graph is refused, not silently replaced or reused.
+    4. A provider with no published graph is exported once, and the export is stable.
+    """
+    provider = project.joinpath("deps").joinpath("checked")
+    source = provider.joinpath("src").joinpath("lib.incn")
+    if not source.is_file():
+        return Ok(None)
+    # 1. The provider's compiled Loaf carries a version-one binary graph that names no physical project root.
+    built = invoke(incan, ["build", source.0], project)?
+    if built.code != Some(0):
+        return Err(f"provider build failed: {built.stderr}")
+    artifacts = provider.joinpath("target").joinpath("incan").joinpath("loaves").joinpath("graph_checked")
+    graph = artifacts.joinpath("debug").joinpath("graph_checked.incngraph")
+    check_binary_graph(read_bytes(graph)?, project)?
+    # 2. A consumer reads the published graph, though the provider's source has since become invalid.
+    arguments = ["inspect", "codegraph", ".", "--query", "defs", "checked_helper"]
+    original = invoke(incan, arguments, project)?
+    before = read(source)?
+    write(source, "invalid dependency source {")?
+    published = invoke(incan, arguments, project)?
+    if original.code != Some(0) or published.code != Some(0) or original.stdout != published.stdout:
+        return Err(f"published dependency graph was rechecked from source: {published.stderr}")
+    write(source, before)?
+    # 3. A corrupt published graph is refused, never silently replaced or reused.
+    write_bytes(graph, b"\x7f\x00\x00\x00")?
+    corrupt = invoke(incan, arguments, project)?
+    if corrupt.code == Some(0):
+        return Err("a corrupt published graph was silently replaced or reused")
+    # 4. A provider with no published graph is exported once, and a second export gives the same answer.
+    remove(graph)?
+    legacy = invoke(incan, arguments, project)?
+    repeated = invoke(incan, arguments, project)?
+    stable = legacy.stdout == repeated.stdout and legacy.code == repeated.code
+    if legacy.code != Some(0) or legacy.stdout != original.stdout or not stable:
+        return Err(f"older artifact did not receive a stable cached graph export: {legacy.stderr}")
+    return Ok(None)
+
+
+def check_binary_graph(data: bytes, project: Path) -> Result[None, str]:
+    """A published graph starts with the version-one header and never contains the physical project root."""
+    if data[:4] != b"\x01\x00\x00\x00":
+        return Err("compiled Loaf has no version-one binary graph")
+    needle = project.0.encode("utf-8")
+    for offset in range(len(data) - len(needle) + 1):
+        if data[offset:offset + len(needle)] == needle:
+            return Err("compiled Loaf graph contains a physical project root")
+    return Ok(None)
+
+
+def string_field(value: JsonValue, key: str) -> str:
+    """Read an optional wire string for referential-integrity checks."""
+    match value.get(key):
+        Some(item) =>
+            match item.as_str():
+                Some(text) => return text
+                None => pass
+        None => pass
+    return ""
+
+
+def check_rust_links(document: str) -> Result[None, str]:
+    """
+    Resolved Rust targets and navigable caller owners link to declarations, including dependency methods and closure
+    expressions.
+
+    1. Collect the Rust declarations and the crates they belong to.
+    2. Every Rust call has a declaration as its owner, and one that resolves into a represented crate has a declaration
+       as its target.
+    """
+    records = items(parse_json(document)?)?
+    # 1. The Rust declarations are collected, with the crates they belong to.
+    mut declarations: Dict[str, bool] = {}
+    mut crates: list[str] = []
+    for record in records:
+        if string_field(record, "record") != "declaration" or string_field(record, "language") != "rust":
+            continue
+        declarations[string_field(record, "id")] = true
+        stable = required(record, "stable_identity")?
+        path = items(required(required(stable, "origin")?, "path")?)?
+        if len(path) > 0:
+            root = string_of(path[0])?
+            if root not in crates:
+                crates.append(root)
+    # 2. Every Rust call is owned by a declaration, and one resolving into a represented crate targets a declaration.
+    for record in records:
+        if string_field(record, "record") != "call" or string_field(record, "language") != "rust":
+            continue
+        owner = string_field(record, "owner_id")
+        if owner != "" and owner not in declarations:
+            return Err(f"Rust call has no navigable declaration owner: {owner}")
+        callee = string_field(record, "callee")
+        for root in crates:
+            if callee.startswith(f"{root}::") and string_field(record, "target_id") not in declarations:
+                return Err(f"resolved Rust call has no declaration in its represented crate: {callee}")
+    return Ok(None)

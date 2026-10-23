@@ -33,7 +33,13 @@ use crate::body_ir::{
 /// Version 20 appends the canonical diverging ValueError helper operation.
 /// Version 21 is the Loaf representation (DD-0007): Loaf callables replace standard-library delegations, enum
 /// declarations name their compiled item, and modules no longer carry re-exported names.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 21;
+/// Version 22 appends metadata-selected native Rust constants with their checked carrier types.
+/// Version 23 appends builtin codec label guards; their conditional evaluation is retained in ordinary Body IR blocks.
+/// Version 24 distinguishes compiled callable contracts from caller-instantiated executable bodies.
+/// Version 25 retains callable union payload signatures and producer-owned captured environment aliases.
+/// Version 26 appends native fixed-size arrays with their checked element storage and evaluated length.
+/// Version 27 retains checked native callable signatures with deferred executable bodies.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 27;
 
 /// Largest index this format admits, in bytes.
 ///
@@ -220,13 +226,37 @@ pub enum ExecutableDeclaration {
         /// Only explicit original-callable reads select this implementation under the same declared binders.
         binding: Box<crate::body_ir::DecoratedBinding>,
     },
+    /// Authenticated signature and defaults of a compiled item. Its empty statement block is never executable.
+    CompiledCallable(Box<Body>),
+    /// Deferred checked meaning and the exact native instantiations its calls select.
+    NativeBody {
+        /// The generic or otherwise caller-instantiated source frame.
+        body: Box<Body>,
+        /// Checker-produced signatures, matched by canonical identity and native type arguments.
+        callables: Vec<crate::body_ir::LoafCallable>,
+    },
 }
 
 impl ExecutableDeclaration {
-    /// Canonical identity carried by this fragment; it must agree with the index identity used to select it.
+    /// Canonical identity carried by this fragment; it must agree with the selecting index. Native-body records may
+    /// transport only exact Rust callable identities, never authorize a package declaration outside that index.
     pub fn identity(&self) -> Option<&CanonicalSymbolId> {
         match self {
             Self::Body(body) => body.canonical.as_ref(),
+            Self::NativeBody { body, callables } => (!callables.is_empty()
+                && callables.iter().all(|callable| {
+                    matches!(callable.canonical.origin, crate::SymbolOrigin::RustCrate(_))
+                        && crate::body_ir::rust_item_identity(&callable.item).as_ref() == Some(&callable.canonical)
+                        && callable.type_parameters.is_empty()
+                        && callable.parameter_defaults.is_empty()
+                        && callable.declaration_frame.is_none()
+                }))
+            .then_some(body.canonical.as_ref())
+            .flatten(),
+            Self::CompiledCallable(frame) => (frame.block.stmts.is_empty()
+                && crate::body_ir::LoafCallable::from_body(frame).is_some())
+            .then_some(frame.canonical.as_ref())
+            .flatten(),
             Self::InvocationDecoratedBody { body, binding } => {
                 let identity = body.canonical.as_ref()?;
                 (binding.initialization == crate::body_ir::DecoratedInitialization::PerInvocation
@@ -468,6 +498,10 @@ fn project_declarations(
     declarations: &mut BTreeMap<CanonicalSymbolId, DeclarationCoverage>,
 ) -> Result<BTreeMap<CanonicalSymbolId, AdmittedDeclaration>, ExecutableRepresentationError> {
     let mut admitted = BTreeMap::new();
+    let native_callables = modules
+        .iter()
+        .flat_map(|module| &module.loaf_callables)
+        .collect::<Vec<_>>();
     for module in modules {
         for value in &module.static_declarations {
             if !declarations.contains_key(&value.canonical) {
@@ -538,7 +572,7 @@ fn project_declarations(
             let projected = if unrepresentable.contains(identity) {
                 Err(CoverageReason::UnsupportedConstruct)
             } else {
-                publication::project_callable(body, module, library, public)
+                publication::project_callable(body, module, library, public, &native_callables)
             };
             match projected {
                 Ok((declaration, requirements)) => {
@@ -780,7 +814,7 @@ fn record_type_context_members(
         };
         for required in &required_members {
             if let Some(owner) =
-                publication::generated_value_getter_owner(required, std::slice::from_ref(value), library)
+                publication::generated_value_enum_member_owner(required, std::slice::from_ref(value), library)
             {
                 declarations.insert((*required).clone(), DeclarationCoverage::TypeContext { owner });
             }
@@ -800,6 +834,8 @@ fn record_type_context_members(
             }
             ExecutableDeclaration::Enum(value) => value.variants.iter().map(|variant| &variant.canonical).collect(),
             ExecutableDeclaration::Body(_)
+            | ExecutableDeclaration::NativeBody { .. }
+            | ExecutableDeclaration::CompiledCallable(_)
             | ExecutableDeclaration::DecoratedBody { .. }
             | ExecutableDeclaration::InvocationDecoratedBody { .. }
             | ExecutableDeclaration::Trait(_)
@@ -932,14 +968,7 @@ impl SurfaceIndex {
                             crate::SemanticSourceTargetKind::Method,
                             crate::SemanticSourceTargetKind::Trait
                         )
-                    ) || (identity.kind == crate::SemanticSourceTargetKind::Method
-                        && owner.kind == crate::SemanticSourceTargetKind::Enum
-                        && identity.namespace == crate::SymbolNamespace::Member
-                        && owner.namespace == crate::SymbolNamespace::OrdinaryLexical
-                        && identity.declaration_name == "value"
-                        && identity.scope_discriminant == owner.scope_discriminant
-                        && identity.declaration_span == owner.declaration_span
-                        && owner.declaration_span.end > owner.declaration_span.start))
+                    ) || publication::is_generated_value_enum_member(identity, owner))
                     || !matches!(self.execution_coverage(owner), Ok(DeclarationCoverage::Covered { .. })))
             {
                 return Err(malformed(
@@ -1088,6 +1117,7 @@ impl<'bytes> SurfaceReader<'bytes> {
     pub fn declaration(&self, identity: &CanonicalSymbolId) -> Result<Body, ExecutableRepresentationError> {
         match self.fragment(identity)? {
             ExecutableDeclaration::Body(body)
+            | ExecutableDeclaration::NativeBody { body, .. }
             | ExecutableDeclaration::DecoratedBody { body, .. }
             | ExecutableDeclaration::InvocationDecoratedBody { body, .. } => Ok(*body),
             _ => Err(malformed(
@@ -1152,12 +1182,12 @@ mod tests {
         }
     }
 
-    /// Build a checked, empty unit function with a stable canonical identity and no callable signature proof; it has
-    /// executable coverage distinct from an uncovered export.
+    /// Build a governed template with a stable identity so codec and body-audit tests retain executable statements.
+    /// Tests of compiled contracts explicitly clear this fixture binder.
     fn body(name: &str, ordinal: usize) -> Body {
         let identity = identity(name, ordinal);
         Body {
-            type_parameters: Vec::new(),
+            type_parameters: vec!["Fixture".into()],
             decl_id: CompilerNodeId::declaration_span(
                 "lib",
                 identity.declaration_span.start,
@@ -1186,6 +1216,7 @@ mod tests {
             panic_facts: Vec::new(),
             is_async: false,
             extern_delegation: None,
+            native_attributes: Vec::new(),
         }
     }
 
@@ -1194,6 +1225,7 @@ mod tests {
         BodyIrModule {
             decorated_bindings: Vec::new(),
             entrypoint_effects: Vec::new(),
+            program_entrypoints: Vec::new(),
             string_conversion_contract: crate::body_ir::StringConversionContract::Unselected,
             constant_declarations: Vec::new(),
             type_alias_declarations: Vec::new(),
@@ -1326,6 +1358,34 @@ mod tests {
             reader.declaration(&identity("public", 1))?.direct_call_id.path(),
             "pub::probe::lib#decl.100..199"
         );
+        Ok(())
+    }
+
+    /// Native implementation calls do not enter compiled contracts; governed bodies still need a portable closure.
+    #[test]
+    fn compiled_contract_excludes_native_implementation() -> Result<(), Box<dyn std::error::Error>> {
+        let mut native = identity("serialize", 9);
+        native.origin = SymbolOrigin::RustCrate(vec!["serde_json".into()]);
+        let mut compiled = body("compiled", 1);
+        compiled.type_parameters.clear();
+        compiled.block.stmts.push(call(native.clone()));
+        let mut governed = body("governed", 2);
+        governed.block.stmts.push(call(native));
+        let bytes = publish(
+            &module(vec![compiled, governed]),
+            &BTreeSet::from([identity("compiled", 1), identity("governed", 2)]),
+        )?;
+        let reader = SurfaceReader::open(&bytes)?;
+        let ExecutableDeclaration::CompiledCallable(frame) = reader.fragment(&identity("compiled", 1))? else {
+            return Err("compiled callable contract missing".into());
+        };
+        assert!(frame.block.stmts.is_empty());
+        assert!(frame.locals.is_empty());
+        assert!(reader.declaration(&identity("compiled", 1)).is_err());
+        assert!(matches!(
+            reader.index().coverage(&identity("governed", 2))?,
+            DeclarationCoverage::Uncovered(CoverageReason::UnsupportedConstruct)
+        ));
         Ok(())
     }
 
@@ -1700,6 +1760,7 @@ mod tests {
             field_identities: vec![field.clone()],
             field_aliases: Vec::new(),
             field_types: vec![IncanType::TypeVar("T".into())],
+            owned_callable_fields: Vec::new(),
             field_public: vec![true],
             reflection_fields: None,
             display_method: None,
@@ -1839,6 +1900,7 @@ mod tests {
             fields: vec!["private_field".into()],
             field_identities: vec![field.clone()],
             field_types: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
+            owned_callable_fields: Vec::new(),
             field_public: vec![false],
             field_aliases: Vec::new(),
             reflection_fields: None,
@@ -1981,6 +2043,7 @@ mod tests {
             fields: vec![],
             field_identities: vec![],
             field_types: vec![],
+            owned_callable_fields: Vec::new(),
             field_public: vec![],
             field_aliases: Vec::new(),
             reflection_fields: None,

@@ -68,6 +68,10 @@ pub struct BodyIrModule {
     /// not lend their effects to a different entry module.
     #[serde(default)]
     pub entrypoint_effects: Vec<EntrypointEffect>,
+    /// Canonical mains explicitly selected by the unit for separate process invocations, in selector order. This
+    /// invocation-only selection is never published in a Loaf's positional executable representation.
+    #[serde(skip)]
+    pub program_entrypoints: Vec<CanonicalSymbolId>,
     /// Consumer invocation's source-import union and authenticated linked conversion contract, retained only on its
     /// final entry module. Ordinary source builders and published fragments leave this unselected.
     #[serde(default)]
@@ -81,14 +85,14 @@ pub struct BodyIrModule {
     /// Checked source-local nongeneric enum layouts, including canonical payload variants and selected derives.
     #[serde(default)]
     pub enum_declarations: Vec<EnumDeclaration>,
-    /// The callables of the linked Loaves this module calls, as their declaration records state them (DD-0007).
-    /// A call of one names the Loaf's compiled item.
+    /// External callables: linked Loaf declarations (DD-0007) and checker-selected Rust instantiations (DD-0006).
+    /// Each record names the exact compiled item and signature the native adapter must verify.
     #[serde(default)]
     pub loaf_callables: Vec<LoafCallable>,
-    /// Exact anonymous union layouts admitted from a selected SDK artifact's emitted-definition table.
+    /// Checked source union payload contracts and exact layouts admitted from selected Loaf artifacts.
     ///
-    /// These records preserve the producer's native owner, name, and ordered payloads. An ordinary semantic Union
-    /// without this representation remains source-owned; a consumer must never infer SDK ownership from its hash.
+    /// A local symbol retains source ownership; a qualified item preserves the selected producer's native owner and
+    /// ordered payloads. A consumer must never infer Loaf ownership from a wrapper's hash.
     #[serde(default)]
     pub native_union_declarations: Vec<NativeUnionDeclaration>,
     /// Source-local persistent storage, including RFC 036 replacement callables, with literal or computed
@@ -240,9 +244,10 @@ pub fn decorated_signature_uses_parameters(ty: &IncanType, parameters: &[String]
         IncanType::Generic { args, .. } | IncanType::Tuple(args) => args
             .iter()
             .any(|argument| decorated_signature_uses_parameters(argument, parameters)),
-        IncanType::Ref(inner) | IncanType::RefMut(inner) | IncanType::TypeToken(inner) => {
-            decorated_signature_uses_parameters(inner, parameters)
-        }
+        IncanType::Ref(inner)
+        | IncanType::RefMut(inner)
+        | IncanType::TypeToken(inner)
+        | IncanType::NativeArray { element: inner, .. } => decorated_signature_uses_parameters(inner, parameters),
         _ => false,
     }
 }
@@ -267,26 +272,33 @@ pub enum StaticInitializer {
     Computed(Box<Body>),
 }
 
-/// One producer-owned anonymous union whose physical representation was admitted by the frontend provider plan.
+/// One anonymous union whose payload order and callable ownership were retained before native lowering.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NativeUnionDeclaration {
-    /// Consumer semantic type whose nominal leaves have already been matched to the admitted artifact.
+    /// Checked semantic union whose nominal leaves retain canonical declaration identities.
     pub ty: IncanType,
-    /// Exact qualified Rust item selected from the admitted producer's final emitted table.
+    /// A source-local native symbol, or the exact qualified item admitted from a selected producer.
     pub rust_item: String,
-    /// Payload types in producer variant order; lowering must preserve this order even if local names differ.
+    /// Payload types in retained variant order; lowering preserves this order even if local names differ.
     pub members: Vec<IncanType>,
+    /// Callable members own reusable captured environments instead of function-pointer storage.
+    #[serde(default)]
+    pub closure_members: Vec<IncanType>,
+    /// Published callable object aliases, in the same order as `closure_members`.
+    #[serde(default)]
+    pub closure_items: Vec<String>,
 }
 
-/// A callable a linked Loaf declares, as its declaration record states it (DD-0007). A consumer calls the Loaf's
-/// compiled item; the driver checks the signature recorded here against the rlib's metadata.
+/// An external callable: a linked Loaf declaration (DD-0007) or a checker-selected Rust instantiation (DD-0006).
+/// The driver verifies its recorded signature against the exact compiled item's metadata.
 ///
-/// Every field is encoded, including empty vectors, because the executable representation uses positional records.
+/// Published fields use positional records. The declaration frame is a transient view projected from a loaded body,
+/// and is not an additional publication or a second copy of the executable representation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LoafCallable {
     /// Exact declaration identity selected by checking, independent of the caller's spelling.
     pub canonical: CanonicalSymbolId,
-    /// The compiled item, `<crate>::<encoded identity>` ([`loaf_item_path`]).
+    /// The compiled item: a Loaf's encoded identity ([`loaf_item_path`]) or the checked public Rust item path.
     pub item: String,
     /// Declaration-order parameter types; argument binding still belongs to the call site.
     pub parameters: Vec<IncanType>,
@@ -296,18 +308,23 @@ pub struct LoafCallable {
     /// instantiates them with its checked type arguments, in the same order; a nongeneric callee has none.
     #[serde(default)]
     pub type_parameters: Vec<String>,
-    /// Declaration-owned native instantiation for an explicit trait implementation, Self first and then the trait's
-    /// arguments. Owner placeholders close through `type_parameters` at the receiver. Empty keeps the function or
-    /// owner-binder instantiation; consumers must not reconstruct these arguments from names.
+    /// Native instantiation for an explicit trait implementation, or a checker-selected Rust call. Trait arguments
+    /// start with Self and close owner placeholders through `type_parameters`. A Rust call has an already-instantiated
+    /// signature and retains the impl's native arguments before the method's arguments. Consumers must not reconstruct
+    /// these arguments from names.
     #[serde(default)]
     pub native_type_arguments: Vec<IncanType>,
     /// What each parameter takes when a call omits it, in `parameters` order, a method's receiver first.
     ///
     /// A parameter without a default is [`CallableParamDefault::Required`]. A default is a
-    /// [`CallableParamDefault::Source`] computation without statements whose result is the constant the call passes,
-    /// or [`CallableParamDefault::Unsupported`] when it is not such a constant.
+    /// [`CallableParamDefault::Source`] computation, evaluated in [`Self::declaration_frame`] when it has
+    /// statements, or a directly usable constant otherwise. An unavailable computation is explicitly Unsupported.
     #[serde(default)]
     pub parameter_defaults: Vec<CallableParamDefault>,
+    /// Checked parameter passing, callable representation and default storage from the authenticated loaded body.
+    /// Its ordinary statements are cleared; consumers compile no copy of the function's implementation.
+    #[serde(skip)]
+    pub declaration_frame: Option<Box<Body>>,
 }
 
 /// The crate a Loaf compiles to (DD-0007): its package name in lowercase, with every character other than an ASCII
@@ -345,17 +362,44 @@ pub fn loaf_item_path(canonical: &CanonicalSymbolId) -> Option<String> {
 
 impl LoafCallable {
     /// The declaration record of a Loaf's callable body: its parameters, result, type parameters and defaults, and the
-    /// compiled item its package identity names. `None` for a body no Loaf declares.
+    /// compiled item its package identity names. Async items expose a future constructor rather than the resumed
+    /// body output, so consumers use the same retained boxed-future ABI as calls within the declaring package.
+    /// `None` for a body no Loaf declares or a governed template that must first close its named type parameters or
+    /// open `Self` receiver at the checked adopter.
     pub fn from_body(body: &Body) -> Option<Self> {
+        if !body.type_parameters.is_empty() || body.locals.first().is_some_and(|local| local.ty == IncanType::SelfType)
+        {
+            return None;
+        }
         let canonical = body.canonical.clone()?;
         let item = loaf_item_path(&canonical)?;
+        let mut frame = body.clone();
+        frame.block.stmts.clear();
         Some(Self {
             item,
-            parameters: body.params.iter().map(|param| param.ty.clone()).collect(),
-            return_type: body.return_type.clone(),
+            parameters: body
+                .params
+                .iter()
+                .map(
+                    |param| match body.locals.get(param.local.index()).map(|local| &local.origin) {
+                        Some(LocalOrigin::Receiver { mutable: false }) => IncanType::Ref(Box::new(param.ty.clone())),
+                        Some(LocalOrigin::Receiver { mutable: true }) => IncanType::RefMut(Box::new(param.ty.clone())),
+                        _ => param.ty.clone(),
+                    },
+                )
+                .collect(),
+            return_type: if body.is_async {
+                IncanType::Generic {
+                    base: "Awaitable".into(),
+                    args: vec![body.return_type.clone()],
+                }
+            } else {
+                body.return_type.clone()
+            },
             type_parameters: body.type_parameters.clone(),
             native_type_arguments: Vec::new(),
             parameter_defaults: body.params.iter().map(|param| param.default.clone()).collect(),
+            declaration_frame: Some(Box::new(frame)),
             canonical,
         })
     }
@@ -367,6 +411,40 @@ impl LoafCallable {
 }
 
 impl BodyIrModule {
+    /// A module that only declares, filled by its caller: a Loaf module's resolved declarations, or the Rust items a
+    /// program holds (DD-0006). It has no bodies, storage or effects of its own.
+    pub fn declarations_only(owner: String) -> Self {
+        Self {
+            string_conversion_contract: StringConversionContract::Unselected,
+            decorated_bindings: Vec::new(),
+            entrypoint_effects: Vec::new(),
+            program_entrypoints: Vec::new(),
+            constant_declarations: Vec::new(),
+            type_alias_declarations: Vec::new(),
+            trait_declarations: Vec::new(),
+            trait_implementations: Vec::new(),
+            module_id: CompilerNodeId::module(owner),
+            loaf_callables: Vec::new(),
+            native_union_declarations: Vec::new(),
+            enum_declarations: Vec::new(),
+            static_declarations: Vec::new(),
+            nominal_declarations: Vec::new(),
+            fieldless_enum_declarations: Vec::new(),
+            value_enum_declarations: Vec::new(),
+            bodies: Vec::new(),
+        }
+    }
+
+    /// Read signatures and defaults from governed bodies and authenticated compiled declaration frames. Compiled
+    /// frames contribute declaration facts only; execution and instance scheduling must keep using `bodies`.
+    pub fn callable_declaration_frames(&self) -> impl Iterator<Item = &Body> {
+        self.bodies.iter().chain(
+            self.loaf_callables
+                .iter()
+                .filter_map(|callable| callable.declaration_frame.as_deref()),
+        )
+    }
+
     /// Resolve a canonical callable identity to the body that declares it, when this module owns the declaration.
     ///
     /// This is the consumer seam for [`CanonicalSymbolId`]: a backend asks *which declaration was selected* and gets
@@ -549,6 +627,11 @@ pub struct NominalDeclaration {
     pub field_identities: Vec<CanonicalSymbolId>,
     /// Checked field types in the same canonical order, including private layout dependencies.
     pub field_types: Vec<IncanType>,
+    /// Derived closed field slots that substituted a declared generic value with an environment-capable callable.
+    /// Publications retain the original templates instead; specializing a loaded template recreates these facts.
+    /// Explicit function fields remain function pointers; construction and projection use this same owning ABI.
+    #[serde(skip)]
+    pub owned_callable_fields: Vec<usize>,
     /// Checker-resolved public visibility, in the same order as the fields.
     pub field_public: Vec<bool>,
     /// Checked RFC 021 field aliases in the same order, `None` where a field declares none. A serde form names an
@@ -623,8 +706,8 @@ pub fn native_nominal_item(identity: &CanonicalSymbolId) -> Option<String> {
         {
             return None;
         }
-        // A web extractor or response is stored as its stdlib carrier; any other Rust item is stored as itself.
-        return Some(web_carrier_item(path).map_or_else(|| path.join("::"), str::to_owned));
+        // A Rust item is stored as itself.
+        return Some(path.join("::"));
     }
     if let Some(builtin) = crate::RuntimeBuiltinType::from_identity(identity) {
         return Some(builtin.carrier_path().to_owned());
@@ -637,18 +720,6 @@ pub fn native_nominal_item(identity: &CanonicalSymbolId) -> Option<String> {
         && identity.declaration_name == "FieldInfo"
         && identity.kind == crate::SemanticSourceTargetKind::Class)
         .then(|| "incan_std_core::reflection::FieldInfo".to_owned())
-}
-
-/// The stdlib web carrier that stores an axum extractor or response, with its public tuple payload.
-fn web_carrier_item(path: &[String]) -> Option<&'static str> {
-    let path = path.iter().map(String::as_str).collect::<Vec<_>>();
-    match path.as_slice() {
-        ["axum", "Json"] => Some("incan_stdlib_web::web::response::Json"),
-        ["axum", "extract", "Query"] => Some("incan_stdlib_web::web::request::Query"),
-        ["axum", "extract", "Path"] => Some("incan_stdlib_web::web::request::Path"),
-        ["axum", "response", "Html"] => Some("incan_stdlib_web::web::response::Html"),
-        _ => None,
-    }
 }
 
 /// Physical direct-route declaration scope of a retained runtime carrier, or the existing source/package scope.
@@ -675,64 +746,29 @@ pub fn native_builtin_nominal(identity: &CanonicalSymbolId) -> Option<NominalDec
     native_carrier_nominal(identity)
 }
 
-/// Exact direct-route ABI of a compiler-known runtime carrier. ValidationError stays opaque; Json/Query/Path retain
-/// their public tuple payload and binder, while Html retains its fixed String specialization. Derive facts match the
-/// runtime implementations; field/constructor operations additionally require checker-owned use-site facts.
+/// Exact direct-route ABI of a compiler-known runtime carrier. ValidationError stays opaque, with no field,
+/// constructor or display operation; those require explicit Body IR runtime operations. Every Rust item, the web
+/// extractors and responses included, is a Rust value laid out from its inspected facts instead.
 pub fn native_carrier_nominal(identity: &CanonicalSymbolId) -> Option<NominalDeclaration> {
-    if !matches!(
-        identity.origin,
-        crate::SymbolOrigin::Builtin | crate::SymbolOrigin::RustCrate(_)
-    ) {
-        return None;
-    }
-    if let crate::SymbolOrigin::RustCrate(path) = &identity.origin
-        && web_carrier_item(path).is_none()
-    {
+    if identity.origin != crate::SymbolOrigin::Builtin {
         return None;
     }
     let native_item = native_nominal_item(identity)?;
     let module = native_nominal_module(identity)?;
-    let mut fields = Vec::new();
-    let mut field_identities = Vec::new();
-    let mut field_types = Vec::new();
-    let mut type_parameters = Vec::new();
-    let mut native_type_arguments = Vec::new();
-    let mut derives = vec!["Debug".to_owned(), "Clone".to_owned()];
-    if identity.origin == crate::SymbolOrigin::Builtin {
-        derives.extend(["PartialEq".to_owned(), "Eq".to_owned()]);
-    } else {
-        fields.push("0".to_owned());
-        field_identities.push(CanonicalSymbolId {
-            namespace: crate::SymbolNamespace::Member,
-            origin: identity.origin.clone(),
-            declaration_name: "0".to_owned(),
-            kind: crate::SemanticSourceTargetKind::Field,
-            scope_discriminant: None,
-            declaration_span: crate::HirSourceSpan::new(0, 0),
-        });
-        if identity.declaration_name == "Html" {
-            let string = IncanType::Primitive(crate::IncanPrimitiveType::Str);
-            field_types.push(string.clone());
-            native_type_arguments.push(string);
-        } else {
-            type_parameters.push("T".to_owned());
-            field_types.push(IncanType::TypeVar("T".to_owned()));
-        }
-    }
-    let field_public = vec![true; fields.len()];
-    let type_parameter_count = type_parameters.len();
+    let derives = ["Debug", "Clone", "PartialEq", "Eq"].map(str::to_owned).to_vec();
     Some(NominalDeclaration {
         trait_adoptions: Vec::new(),
         native_item,
         class_inheritance: None,
-        native_type_arguments,
+        native_type_arguments: Vec::new(),
         direct_declaration_id: CompilerNodeId::declaration_span(&module, 0, 0),
         canonical: identity.clone(),
         name: identity.declaration_name.clone(),
-        fields,
-        field_identities,
-        field_types,
-        field_public,
+        fields: Vec::new(),
+        field_identities: Vec::new(),
+        field_types: Vec::new(),
+        owned_callable_fields: Vec::new(),
+        field_public: Vec::new(),
         field_aliases: Vec::new(),
         reflection_fields: None,
         reflection_metadata: None,
@@ -746,22 +782,27 @@ pub fn native_carrier_nominal(identity: &CanonicalSymbolId) -> Option<NominalDec
         newtype_string_conversion: NewtypeStringConversion::Unselected,
         derives,
         named_type_identities: Default::default(),
-        type_parameters,
-        type_parameter_count,
+        type_parameters: Vec::new(),
+        type_parameter_count: 0,
     })
 }
 
-/// Opaque storage of a Rust item a program holds as a value (DD-0006): the item itself, with `arity` written type
-/// arguments and no fields or derives, so a value is moved, borrowed and passed but never projected into.
-///
-/// Web carriers keep their payload shape through [`native_carrier_nominal`]; every other Rust item uses this one.
-pub fn native_opaque_nominal(identity: &CanonicalSymbolId, arity: usize) -> Option<NominalDeclaration> {
+/// The name a Rust item's opaque nominal is laid out under, and the name a held value's type carries: the item's
+/// path (`std::fs::File`). No Incan name can spell it, so a Rust item never shares a name with an Incan declaration.
+pub fn native_opaque_name(identity: &CanonicalSymbolId) -> Option<String> {
     let crate::SymbolOrigin::RustCrate(path) = &identity.origin else {
         return None;
     };
-    if web_carrier_item(path).is_some() {
+    Some(path.join("::"))
+}
+
+/// Opaque storage of a Rust item a program holds as a value (DD-0006): the item itself, with `arity` written type
+/// arguments and no fields or derives, so a value is moved, borrowed and passed but never projected into. It is named
+/// [`native_opaque_name`].
+pub fn native_opaque_nominal(identity: &CanonicalSymbolId, arity: usize) -> Option<NominalDeclaration> {
+    let crate::SymbolOrigin::RustCrate(_) = &identity.origin else {
         return None;
-    }
+    };
     let native_item = native_nominal_item(identity)?;
     let module = native_nominal_module(identity)?;
     let type_parameters = (0..arity).map(|index| format!("T{index}")).collect::<Vec<_>>();
@@ -772,10 +813,11 @@ pub fn native_opaque_nominal(identity: &CanonicalSymbolId, arity: usize) -> Opti
         native_type_arguments: Vec::new(),
         direct_declaration_id: CompilerNodeId::declaration_span(&module, 0, 0),
         canonical: identity.clone(),
-        name: identity.declaration_name.clone(),
+        name: native_opaque_name(identity)?,
         fields: Vec::new(),
         field_identities: Vec::new(),
         field_types: Vec::new(),
+        owned_callable_fields: Vec::new(),
         field_public: Vec::new(),
         field_aliases: Vec::new(),
         reflection_fields: None,
@@ -795,11 +837,105 @@ pub fn native_opaque_nominal(identity: &CanonicalSymbolId, arity: usize) -> Opti
     })
 }
 
-/// The canonical identity of a Rust item named by its path (`std::sync::Arc`), as a program's Rust import records it.
+/// The opaque nominals required by storage and checked external signatures (DD-0006), including their native type
+/// arguments. Each item retains its checked argument count; a callee's item path alone requires no value layout.
+/// An item held with two different argument counts has no single layout and is left out; its uses refuse.
+pub fn held_rust_items(modules: &[BodyIrModule]) -> Vec<NominalDeclaration> {
+    let mut arities = std::collections::BTreeMap::<String, Option<usize>>::new();
+    let mut record = |ty: &IncanType| record_held_rust_items(ty, &mut arities);
+    for module in modules {
+        for callable in &module.loaf_callables {
+            callable.parameters.iter().for_each(&mut record);
+            callable.native_type_arguments.iter().for_each(&mut record);
+            record(&callable.return_type);
+            if let Some(frame) = &callable.declaration_frame {
+                record_held_rust_frame(frame, &mut record);
+            }
+        }
+        for body in &module.bodies {
+            record_held_rust_frame(body, &mut record);
+        }
+        for declaration in &module.nominal_declarations {
+            declaration.field_types.iter().for_each(&mut record);
+        }
+        for declaration in &module.enum_declarations {
+            for variant in &declaration.variants {
+                variant.fields.iter().for_each(&mut record);
+            }
+        }
+        for storage in &module.static_declarations {
+            record(&storage.ty);
+            if let StaticInitializer::Computed(body) = &storage.initial {
+                record_held_rust_frame(body, &mut record);
+            }
+        }
+    }
+    arities
+        .into_iter()
+        .filter_map(|(path, arity)| native_opaque_nominal(&rust_item_identity(&path)?, arity?))
+        .collect()
+}
+
+/// Retain every declared storage type in an executable or imported default frame without granting its statements
+/// execution.
+fn record_held_rust_frame(body: &Body, record: &mut impl FnMut(&IncanType)) {
+    record(&body.return_type);
+    body.locals.iter().for_each(|local| record(&local.ty));
+    body.params.iter().for_each(|param| record(&param.ty));
+}
+
+/// Record the Rust items `ty` names anywhere inside it: a type a Rust value carries is named by its item's path.
+fn record_held_rust_items(ty: &IncanType, arities: &mut std::collections::BTreeMap<String, Option<usize>>) {
+    match ty {
+        IncanType::Named(name) => note_held_rust_item(name, 0, arities),
+        IncanType::Generic { base, args } => {
+            note_held_rust_item(base, args.len(), arities);
+            args.iter().for_each(|arg| record_held_rust_items(arg, arities));
+        }
+        IncanType::Tuple(items) => items.iter().for_each(|item| record_held_rust_items(item, arities)),
+        IncanType::Function { params, return_type } => {
+            params
+                .iter()
+                .for_each(|param| record_held_rust_items(&param.ty, arities));
+            record_held_rust_items(return_type, arities);
+        }
+        IncanType::TypeToken(inner)
+        | IncanType::Ref(inner)
+        | IncanType::RefMut(inner)
+        | IncanType::NativeArray { element: inner, .. } => {
+            record_held_rust_items(inner, arities);
+        }
+        _ => {}
+    }
+}
+
+/// Note one Rust item a type names with its written argument count; a second, different count unsets it.
+fn note_held_rust_item(path: &str, arity: usize, arities: &mut std::collections::BTreeMap<String, Option<usize>>) {
+    if rust_item_identity(path).is_none() {
+        return;
+    }
+    arities
+        .entry(path.to_owned())
+        .and_modify(|known| {
+            if *known != Some(arity) {
+                *known = None;
+            }
+        })
+        .or_insert(Some(arity));
+}
+
+/// The canonical identity of a metadata-selected Rust item (`std::sync::Arc`). Native slice methods use the internal
+/// `[]::method` owner because slices have no nominal item path; no other nonidentifier segment is admitted.
 pub fn rust_item_identity(path: &str) -> Option<CanonicalSymbolId> {
     let segments = path.split("::").map(str::to_owned).collect::<Vec<_>>();
     let name = segments.last()?.clone();
-    if segments.len() < 2 || segments.iter().any(|segment| !is_rust_identifier(segment)) {
+    let slice_method = segments.len() == 2 && segments[0] == "[]";
+    if segments.len() < 2
+        || segments
+            .iter()
+            .enumerate()
+            .any(|(index, segment)| !(slice_method && index == 0) && !is_rust_identifier(segment))
+    {
         return None;
     }
     Some(CanonicalSymbolId {
@@ -900,7 +1036,7 @@ pub struct FieldlessEnumDeclaration {
     pub variants: Vec<FieldlessEnumVariantDeclaration>,
 }
 
-/// Canonical payload layout of a checked source or SDK enum; generic templates retain their ordered binders.
+/// Canonical payload layout of a checked source, SDK or native enum; generic templates retain their ordered binders.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnumDeclaration {
     /// The compiled item a linked Loaf declares this enum as (DD-0007); empty for an enum this compilation declares.
@@ -922,7 +1058,7 @@ pub struct EnumDeclaration {
     /// layout instead; only an SDK package owner and native metadata validation authorize this alias representation.
     #[serde(default)]
     pub native_type_arguments: Vec<IncanType>,
-    /// Source-ordered variants; native discriminants use these exact indices.
+    /// Declaration-ordered variants; each index selects rustc's actual discriminant value for native matching.
     pub variants: Vec<EnumVariantDeclaration>,
     /// Explicit and automatic derives selected by the checker.
     pub derives: Vec<String>,
@@ -942,6 +1078,59 @@ pub struct EnumVariantDeclaration {
     pub name: String,
     /// Checked payload types in declaration order.
     pub fields: Vec<IncanType>,
+}
+
+/// Canonical member identity and physical declaration coordinate for a selected native enum variant. Native items
+/// have no source span, so the owner path and variant name supply the unique declaration scope instead.
+pub fn native_enum_variant(path: &str, name: &str) -> Option<(CanonicalSymbolId, CompilerNodeId)> {
+    let owner = rust_item_identity(path)?;
+    if !is_rust_identifier(name) {
+        return None;
+    }
+    let module = native_nominal_module(&owner)?;
+    let mut identity = owner;
+    identity.namespace = crate::SymbolNamespace::Member;
+    identity.kind = crate::SemanticSourceTargetKind::Variant;
+    identity.declaration_name = name.to_owned();
+    Some((
+        identity,
+        CompilerNodeId::declaration_span(&format!("{module}::variant::{name}"), 0, 0),
+    ))
+}
+
+/// Retain a complete metadata-selected Rust enum through the ordinary enum vocabulary. The native item and exact
+/// variant identities authorize an alias only after the adapter verifies the instantiated foreign payload layout.
+pub fn native_enum_declaration(
+    path: &str,
+    type_parameters: Vec<String>,
+    variants: Vec<(String, Vec<IncanType>)>,
+) -> Option<EnumDeclaration> {
+    let canonical = rust_item_identity(path)?;
+    let module = native_nominal_module(&canonical)?;
+    let variants = variants
+        .into_iter()
+        .map(|(name, fields)| {
+            let (canonical, direct_declaration_id) = native_enum_variant(path, &name)?;
+            Some(EnumVariantDeclaration {
+                direct_declaration_id,
+                canonical,
+                name,
+                fields,
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(EnumDeclaration {
+        native_item: path.to_owned(),
+        direct_declaration_id: CompilerNodeId::declaration_span(&module, 0, 0),
+        canonical,
+        name: path.to_owned(),
+        public: true,
+        type_parameters,
+        native_type_arguments: Vec::new(),
+        variants,
+        derives: Vec::new(),
+        named_type_identities: Default::default(),
+    })
 }
 
 /// One canonical zero-payload member of a retained fieldless normal enum.
@@ -1126,6 +1315,49 @@ pub struct Body {
     /// there is nothing a consumer could execute by mistake. A consumer either calls the named Rust item or refuses
     /// the call; it must never run the empty block as if it were the function.
     pub extern_delegation: Option<ExternDelegation>,
+    /// Native attribute macros the source declaration applies, in written order (#2256).
+    ///
+    /// The checker selects each from a decorator that names an exported attribute macro in the providing Loaf's
+    /// facts. rustc expands them on the declaration; Body IR retains only the selection and the written arguments,
+    /// never a prediction of the expansion.
+    ///
+    /// Not part of a published body: rustc has expanded the macro when the providing unit compiled, and a consumer
+    /// never re-applies it, so the executable representation of a Loaf keeps its layout.
+    #[serde(skip)]
+    pub native_attributes: Vec<NativeAttribute>,
+}
+
+/// One native attribute macro application: `#[path(arguments)]` on a source declaration.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeAttribute {
+    /// Canonical Rust path of the exported attribute macro, such as `incan_web_macros::route`.
+    pub path: String,
+    /// The decorator's arguments in written order.
+    pub arguments: Vec<NativeAttributeArgument>,
+}
+
+/// One argument of a native attribute application, positional when `name` is `None`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeAttributeArgument {
+    /// The keyword the argument was written under.
+    pub name: Option<String>,
+    /// The argument's value.
+    pub value: NativeAttributeValue,
+}
+
+/// A literal value an attribute macro receives as a Rust literal, or a list of them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum NativeAttributeValue {
+    /// A string literal.
+    Text(String),
+    /// An integer literal.
+    Int(i64),
+    /// A floating-point literal.
+    Float(f64),
+    /// A boolean literal.
+    Bool(bool),
+    /// A bracketed list of values.
+    List(Vec<NativeAttributeValue>),
 }
 
 /// The Rust item an `@rust.extern` declaration delegates to.
@@ -1753,6 +1985,8 @@ pub enum Constant {
     None,
     /// A checked immutable sized-integer newtype value with its exact constructor and complete numeric payload.
     NumericNewtype(Box<NumericNewtypeConstant>),
+    /// A metadata-selected public Rust constant, evaluated by rustc with its exact checked carrier.
+    RustItem(String, IncanType),
 }
 
 /// Pure newtype data accepted by the declaring const checker, without a runtime call or module initialization.
@@ -1882,6 +2116,7 @@ impl Constant {
     /// text, so a snapshot can never read a `bytes` constant as the `str` constant it is not.
     fn render_snapshot(&self) -> String {
         match self {
+            Self::RustItem(path, ty) => format!("const<rust::{path}: {ty}>"),
             Self::FrozenAggregate(ty, values) => format!("const<{ty}>({values:?})"),
             Self::TypeToken(ty) => format!("const<Type[{ty}]>"),
             Self::Int(v) => format!("const({v})"),
@@ -2266,8 +2501,8 @@ pub struct ResultVariant {
 
 impl ResultVariant {
     /// Require exactly one declaration identity for every named payload-type leaf before execution. The exact
-    /// builtin ValidationError identity uses the same admitted runtime carrier boundary as nominal declarations;
-    /// arbitrary builtin names and malformed identities confer no executable layout.
+    /// builtin ValidationError and checked native item identities use the same admitted runtime carrier boundary
+    /// as nominal declarations; arbitrary names and malformed identities confer no executable layout.
     pub fn has_complete_canonical_types(&self) -> bool {
         /// Collect named leaves using the same structural child positions retained in the type facts.
         fn paths(
@@ -2289,6 +2524,11 @@ impl ResultVariant {
                         path.pop();
                     }
                 }
+                IncanType::Ref(inner) | IncanType::RefMut(inner) | IncanType::NativeArray { element: inner, .. } => {
+                    path.push(0);
+                    paths(inner, path, out);
+                    path.pop();
+                }
                 _ => {}
             }
         }
@@ -2299,7 +2539,11 @@ impl ResultVariant {
             && required.iter().all(|(path, builtin)| {
                 self.canonical_types.get(path).is_some_and(|identity| {
                     if let Some(builtin) = builtin {
-                        return crate::RuntimeBuiltinType::from_identity(identity).as_ref() == Some(builtin);
+                        let selected = crate::RuntimeBuiltinType::from_identity(identity).or_else(|| {
+                            native_nominal_item(identity)
+                                .and_then(|path| crate::RuntimeBuiltinType::from_carrier_path(&path))
+                        });
+                        return selected.as_ref() == Some(builtin);
                     }
                     identity.scope_discriminant.is_none()
                         && ((matches!(
@@ -2311,8 +2555,10 @@ impl ResultVariant {
                         ) && matches!(
                             identity.origin,
                             crate::SymbolOrigin::Module(_) | crate::SymbolOrigin::Package { .. }
-                        )) || (identity.origin == crate::SymbolOrigin::Builtin
-                            && native_nominal_item(identity).is_some()))
+                        )) || (matches!(
+                            identity.origin,
+                            crate::SymbolOrigin::Builtin | crate::SymbolOrigin::RustCrate(_)
+                        ) && native_nominal_item(identity).is_some()))
                 })
             })
     }
@@ -3320,6 +3566,19 @@ impl ArgumentBinding {
         }
     }
 
+    /// Return the slot records of either resolved binding, one per surrounding argument operand in operand order.
+    ///
+    /// Both [`Self::Resolved`] and [`Self::ResolvedDeclarationOrder`] pair operand `i` with `arguments[i]`, so a
+    /// consumer that only maps declared slots to already evaluated operands reads them the same way. A consumer that
+    /// sequences evaluation or ownership must still match the variant. [`Self::UnresolvedPositional`] makes no slot
+    /// claim and yields `None`.
+    pub fn slot_arguments(&self) -> Option<&[BoundArgument]> {
+        match self {
+            Self::Resolved { arguments, .. } | Self::ResolvedDeclarationOrder { arguments, .. } => Some(arguments),
+            Self::UnresolvedPositional => None,
+        }
+    }
+
     /// Render the non-trivial parts of this binding as snapshot suffixes.
     ///
     /// Slot and written-order lists are each emitted only when they differ from the identity mapping, and defaults
@@ -4103,6 +4362,10 @@ pub enum HelperOp {
     CallableName,
     /// Invoke the canonical core ValueError primitive without a result; consumers must terminate the normal edge.
     RaiseValueError,
+    /// Test a builtin codec's encoding label before evaluating later policy or receiver expressions.
+    TextCodecEncodingValid,
+    /// Test a builtin decoder's error policy after its encoding guard and before its receiver.
+    TextCodecErrorsValid,
 }
 
 impl HelperOp {
@@ -4144,6 +4407,8 @@ impl HelperOp {
             Self::NewtypeSumExtract => "newtype_sum_extract",
             Self::CallableName => "callable_name",
             Self::RaiseValueError => "raise_value_error",
+            Self::TextCodecEncodingValid => "text_codec_encoding_valid",
+            Self::TextCodecErrorsValid => "text_codec_errors_valid",
             Self::StrConcat => "str_concat",
             Self::StrEq => "str_eq",
             Self::StrNe => "str_ne",
@@ -4733,15 +4998,61 @@ pub fn nominal_carrier_key(identity: &CanonicalSymbolId) -> Option<String> {
 }
 
 impl NominalDeclaration {
+    /// Read a closed field's retained callable storage through the bootstrap's signed slot boundary. Invalid slots
+    /// grant no owning representation.
+    pub fn owns_callable_field(&self, slot: i64) -> bool {
+        let Ok(slot) = usize::try_from(slot) else { return false };
+        self.owned_callable_fields.contains(&slot)
+    }
+
+    /// Preserve the generic value category when closing a nominal's field types. A callable substituted for a
+    /// declared value binder owns its captured environment, even though its checked signature is a function type.
+    /// This boundary does not authorize a borrowed or consuming callable, or alter explicitly written function fields.
+    pub fn retain_owned_callable_fields(&mut self, template: &Self) {
+        self.owned_callable_fields.clear();
+        if matches!(template.canonical.origin, crate::SymbolOrigin::RustCrate(_)) {
+            return;
+        }
+        self.owned_callable_fields = template
+            .field_types
+            .iter()
+            .zip(&self.field_types)
+            .enumerate()
+            .filter_map(|(slot, (original, closed))| {
+                let IncanType::TypeVar(name) = original else {
+                    return None;
+                };
+                (template.type_parameters.contains(name) && matches!(closed, IncanType::Function { .. }))
+                    .then_some(slot)
+            })
+            .collect();
+        // A generic template's automatic Debug is conditional on its actual field types. Owning an erased
+        // callable preserves invocation and cloning, but grants no Debug implementation for the function value.
+        if !self.owned_callable_fields.is_empty() {
+            self.derives.retain(|derive| derive != "Debug");
+        }
+    }
+
+    /// Read the declaration's generic base independently of a concrete instance's generated layout name. A checked
+    /// carrier binding supplies source ownership; opaque native declarations retain their public Rust type path.
+    pub fn template_carrier_name(&self) -> String {
+        self.retained_carrier_key()
+            .or_else(|| native_opaque_name(&self.canonical))
+            .unwrap_or_else(|| self.canonical.declaration_name.clone())
+    }
+
+    /// Require the checker's exact binding before exposing an encoded source carrier key.
+    fn retained_carrier_key(&self) -> Option<String> {
+        nominal_carrier_key(&self.canonical).filter(|key| self.named_type_identities.get(key) == Some(&self.canonical))
+    }
+
     /// Read the producer-retained carrier key only when its complete identity agrees with this nongeneric layout.
     ///
     /// Older publications keep their source name and are still refused if project assembly finds an ambiguity.
     /// Generic templates retain their existing specialization keys; a missing or altered carrier map grants nothing.
     pub fn carrier_name(&self) -> String {
-        nominal_carrier_key(&self.canonical)
-            .filter(|key| {
-                self.type_parameter_count == 0 && self.named_type_identities.get(key) == Some(&self.canonical)
-            })
+        self.retained_carrier_key()
+            .filter(|_| self.type_parameter_count == 0)
             .unwrap_or_else(|| self.name.clone())
     }
 }
@@ -4919,6 +5230,7 @@ mod tests {
             panic_facts: Vec::new(),
             is_async: false,
             extern_delegation: None,
+            native_attributes: Vec::new(),
         }
     }
 
@@ -5598,6 +5910,7 @@ mod tests {
         let module = BodyIrModule {
             decorated_bindings: Vec::new(),
             entrypoint_effects: Vec::new(),
+            program_entrypoints: Vec::new(),
             string_conversion_contract: StringConversionContract::Unselected,
             constant_declarations: Vec::new(),
             type_alias_declarations: Vec::new(),

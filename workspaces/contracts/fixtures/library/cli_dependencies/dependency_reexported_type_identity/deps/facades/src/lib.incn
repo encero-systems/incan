@@ -1,0 +1,29 @@
+"""Public facade over identifiers, search profiles, greetings, calculations and composition."""
+
+pub from ids import (
+    EntryId,
+    entry_id,
+    entry_id_text,
+)
+pub from labels import Candidate
+pub from search import (
+    MAX_TOP_K,
+    ExactResult,
+    Index,
+    Nomination,
+    Outcome,
+    SearchError,
+    SearchErrorKind,
+    SearchProfile,
+    best_outcome,
+    build_index,
+    exact_query,
+)
+pub from middle import (
+    Greeting,
+    Tone,
+    LOUDNESS,
+)
+pub from relabel import wave
+pub from calculations import calculate as facade_calculate
+pub from compose import compose

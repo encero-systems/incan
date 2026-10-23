@@ -1,4 +1,4 @@
-# behavior: a generic value, a list element, a callable, a str and a list of callables stay usable through the original binding after being bound to an alias
+# behavior: generic values and callable aliases stay usable, including callbacks with text and enum captures stored by a generic method in a returned owner
 # expect-stdout:
 #   ab:ab
 #   z:z:z
@@ -6,6 +6,39 @@
 #   4:4
 #   abab
 #   1:6
+
+from std.traits.callable import Callable1
+
+
+enum Offset:
+    """Keep an owned enum payload in a reusable callback's environment."""
+    Text(str)
+
+
+def amount(offset: Offset) -> int:
+    """Read the payload without consuming its callback's next invocation."""
+    match offset:
+        Offset.Text(text) => return len(text)
+
+
+@derive(Clone)
+model Adapter[F with (Clone, Callable1[int, int])]:
+    """Keep a callback's captured environment alive through owner aliases."""
+
+    callback: F
+
+    def apply(self, value: int) -> int:
+        """Invoke a stored callback after its factory frame has returned."""
+        callback = self.callback
+        return callback(value)
+
+
+class Factory:
+    """Construct generic owners through a method with a callable type parameter."""
+
+    def keep[F with (Clone, Callable1[int, int])](self, callback: F) -> Adapter[F]:
+        """Transfer the callback and its environment into the returned owner."""
+        return Adapter(callback=callback)
 
 pub def preserve_generic_alias[T](value: T) -> tuple[T, T]:
     alias = value
@@ -59,3 +92,17 @@ def main() -> None:
     mappers = preserve_callable_list_alias(double)
     first_mapper = mappers[0]
     println(f"{len(mappers)}:{first_mapper(3)}")
+    increment = 3
+    prefix = "own"
+    adapter = Factory().keep((value) => value + increment + len(prefix))
+    assert adapter.apply(4) == 10
+    retained = adapter
+    assert retained.apply(5) == 11
+    assert adapter.apply(6) == 12
+    assert prefix == "own"
+    pointer = Factory().keep(double)
+    assert pointer.apply(4) == 8
+    offset = Offset.Text("own")
+    enumerated = Factory().keep((value) => value + amount(offset))
+    assert enumerated.apply(4) == 7
+    assert enumerated.apply(5) == 8

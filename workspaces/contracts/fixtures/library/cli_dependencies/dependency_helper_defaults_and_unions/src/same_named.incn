@@ -1,0 +1,12 @@
+"""A consumer reaching same-named declarations of two dependency modules."""
+
+from pub::unions.first import Product as FirstProduct, label as first_label
+from pub::unions.second import Product as SecondProduct, label as second_label
+
+
+pub def run_same_named() -> None:
+    """Pass each module's own `Product` and an int to that module's union."""
+    println(first_label(FirstProduct(value=1)))
+    println(first_label(2))
+    println(second_label(SecondProduct(value="two")))
+    println(second_label(3))

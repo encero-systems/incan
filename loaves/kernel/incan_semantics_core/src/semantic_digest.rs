@@ -365,44 +365,34 @@ impl ser::SerializeStructVariant for StructDigest<'_> {
     }
 }
 
-/// Return a body with its docstring removed, ready to digest.
+/// Digest checked body meaning without cloning its locals, statements or identity tables.
 ///
-/// An Incan docstring is a bare string expression at the head of a body, exactly as in Python, and it survives
-/// lowering as a leading `StatementKind::Expr` whose operand is a string constant. It reaches generated Rust as a
-/// `///` line, which cannot change a compiled artifact, so it must not change the semantic digest.
+/// An Incan docstring is a bare string expression at the head of a body and survives lowering as a leading
+/// `StatementKind::Expr` whose operand is a string constant. Documentation does not change executable meaning and must
+/// not enter the semantic digest.
 ///
-/// Documentation is still *output* — for published reference docs and for a manifest surface it is the product —
-/// which is why RFC 106 gives it a separate `doc_digest` rather than discarding it. This function only decides
-/// what the *semantic* digest covers.
+/// Documentation remains output for published reference docs and manifest surfaces, so RFC 106 gives it a separate
+/// `doc_digest`. This function detaches a leading docstring during serialization and restores it before returning,
+/// including on a serialization error; every other field remains borrowed in place.
 ///
-/// The rule is deliberately narrow: only a leading bare string expression, only at the head of the body. A string
-/// expression anywhere else is a real statement, and dropping it would hide a change.
-pub fn body_without_docstring(body: &crate::body_ir::Body) -> crate::body_ir::Body {
-    use crate::body_ir::{Constant, Operand, StatementKind};
-
-    let mut projected = body.clone();
-    let is_docstring = projected
-        .block
-        .stmts
-        .first()
-        .map(|statement| {
-            matches!(
-                &statement.kind,
-                StatementKind::Expr {
-                    value: Operand::Constant(Constant::Str(_))
-                }
-            )
-        })
-        .unwrap_or(false);
-    if is_docstring {
-        projected.block.stmts.remove(0);
+/// Only a leading bare string expression is documentation. A string expression anywhere else remains a real statement.
+///
+/// # Errors
+///
+/// Returns a serialization error after restoring the complete input body.
+pub fn body_semantic_digest(body: &mut crate::body_ir::Body) -> Result<String, DigestError> {
+    if body_docstring(body).is_none() {
+        return semantic_digest(body);
     }
-    projected
+    let docstring = body.block.stmts.remove(0);
+    let digest = semantic_digest(body);
+    body.block.stmts.insert(0, docstring);
+    digest
 }
 
 /// Extract a body's docstring, if it has one.
 ///
-/// The counterpart to [`body_without_docstring`]: what that removes, this returns, so a caller can compute RFC
+/// The counterpart to [`body_semantic_digest`]: what that excludes, this returns, so a caller can compute RFC
 /// 106's separate `doc_digest` over the same definition of what documentation is.
 pub fn body_docstring(body: &crate::body_ir::Body) -> Option<&str> {
     use crate::body_ir::{Constant, Operand, StatementKind};

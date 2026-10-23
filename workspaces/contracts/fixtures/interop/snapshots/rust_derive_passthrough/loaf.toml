@@ -1,0 +1,9 @@
+[project]
+name = "rust_derive_passthrough"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+serde = { loaf = "crates-io/serde", version = "1", features = ["derive"] }

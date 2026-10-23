@@ -1,12 +1,20 @@
-# behavior: route-decorated async handlers with typed path extractors remain callable functions that compute from their parameters, with std.web imported and no framework surfaced (RFC 023)
+# behavior: route-decorated async handlers with typed path extractors stay callable functions that compute from their parameters, and the running server reaches each route with the extracted segments and refuses a method the route does not declare (RFC 023)
 # expect-stdout:
 #   2029
 #   7
+#   HTTP/1.1 200 OK|2029
+#   HTTP/1.1 200 OK|7
+#   HTTP/1.1 405 Method Not Allowed|
 
-"""Web route passthrough fixture for RFC 023."""
+"""Web route registration fixture for RFC 023."""
 
 import std.async
-from std.web import route, GET, POST
+from rust::std::io import Read, Write
+from rust::std::net import TcpStream
+from rust::std::process import exit, id
+from rust::std::thread import sleep, spawn
+from rust::std::time import Duration
+from std.web import App, route, GET, POST
 
 
 @route("/posts/{year}/{month}", methods=[GET])
@@ -20,6 +28,44 @@ async def create_user(id: int) -> str:
     return str(id)
 
 
+def port() -> int:
+    """A loopback port derived from the process, so concurrent runs of this case do not share one."""
+    return 20000 + int(id()) % 20000
+
+
+def serve() -> None:
+    """Run the server, which blocks until the process ends."""
+    App.run(host="127.0.0.1", port=port())
+
+
+def exchange(mut stream: TcpStream, method: str, path: str) -> str:
+    """Send one request and report the response's status line and body."""
+    request = f"{method} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    written = stream.write_all(request.encode())
+    mut reply = ""
+    received = stream.read_to_string(reply)
+    lines = reply.split("\r\n")
+    return f"{lines[0]}|{lines[len(lines) - 1]}"
+
+
+def fetch(method: str, path: str) -> str:
+    """Request a path, waiting for the server thread to bind its port."""
+    mut attempts = 0
+    while attempts < 80:
+        match TcpStream.connect(f"127.0.0.1:{port()}"):
+            Ok(stream) => return exchange(stream, method, path)
+            Err(_) =>
+                sleep(Duration.from_millis(250))
+                attempts += 1
+    return "server never answered"
+
+
 async def main() -> None:
     println(await get_posts(2024, 5))
     println(await create_user(7))
+    worker = spawn(serve)
+    println(fetch("GET", "/posts/2024/5"))
+    println(fetch("POST", "/users/7"))
+    println(fetch("GET", "/users/7"))
+    # The server thread never returns, so the process ends here.
+    exit(0i32)

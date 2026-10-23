@@ -20,7 +20,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     }
 
     /// Retain the checker's constant tuple index, including negative literals, before flattening ordinary expressions.
-    /// Non-tuple indexing keeps its existing evaluation and ownership behavior.
+    /// Other indexes capture checked scalar projections and owned text when evaluated, keeping a deferred receiver's
+    /// key alive across its later call arguments without changing the key's ownership decision.
     fn lower_checked_index_operand(
         &mut self,
         base: &ast::Spanned<ast::Expr>,
@@ -33,7 +34,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         {
             return bir::Operand::Constant(bir::Constant::Int(value));
         }
-        self.lower_expr_to_operand(index, scope, out)
+        let value = self.lower_expr_to_operand(index, scope, out);
+        self.retain_evaluated_value_read(index, value, scope, out)
     }
 
     /// Retain a known web carrier's tuple payload before its checked source field. The runtime owner comes from the
@@ -101,6 +103,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// conflict refusal, before selecting the canonical layout. They never parse a key or use later name bindings.
     /// A provider method's checked nongeneric newtype return can supply that authority without a consumer import,
     /// but its own return binding and retained layout must agree; conflicting copies or bindings deny the projection.
+    /// A checked nongeneric newtype identity also authenticates its wrapped slot before its declaring module's body
+    /// is built. Final layout validation still requires that exact owner; module ordering supplies no second identity.
     pub(super) fn lower_checked_field_projection(
         &self,
         base: &ast::Spanned<ast::Expr>,
@@ -123,16 +127,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         };
         if name == "0"
             && let IncanType::Generic { base: owner, args } = &ty
-            && let Some(identity) = self
-                .type_info
-                .declarations
-                .named_type_identities
-                .get(owner)
+            && let Some(identity) = parameter_types::retained_nominal_identity(owner, self.type_info)
                 .filter(|identity| identity.kind == SemanticSourceTargetKind::Newtype)
         {
             if let Some(declaration) = self.local_nominal_declarations.values().find(|declaration| {
                 declaration.canonical == *identity
-                    && declaration.name == *owner
+                    && declaration.template_carrier_name() == *owner
                     && declaration.type_parameters.len() == args.len()
                     && declaration.fields == ["0"]
             }) && (self.type_info.body_ir_newtypes.field_owner(span, self.type_info) == Some(identity)
@@ -156,17 +156,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         if name == "0"
             && let IncanType::Named(owner) = &ty
-            && let Some(declaration) = self.local_nominal_declarations.values().find(|declaration| {
-                declaration.canonical.kind == SemanticSourceTargetKind::Newtype
-                    && if self.retain_nominal_carriers || self.foreign_source_method_result(base) {
-                        parameter_types::retained_nominal_identity(owner, self.type_info)
-                            == Some(&declaration.canonical)
-                    } else {
-                        declaration.name == *owner
-                    }
-            })
+            && let Some(identity) = parameter_types::retained_nominal_identity(owner, self.type_info)
+                .filter(|identity| identity.kind == SemanticSourceTargetKind::Newtype)
         {
-            return bir::PlaceElem::field(name, Some(declaration.canonical.clone()));
+            return bir::PlaceElem::field(name, Some(identity.clone()));
         }
         if tuple_type_elements(&ty)
             .is_some_and(|elements| name.parse::<usize>().is_ok_and(|index| index < elements.len()))
@@ -192,30 +185,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 .or_else(|| self.retained_field_identity(&ty, name));
             bir::PlaceElem::field(name, identity)
         }
-    }
-
-    /// A foreign source method cannot grant a hidden newtype's slot through a local spelling fallback. Existing
-    /// checked owner bindings remain sufficient; source-local methods retain their own declaration path, including
-    /// package-owned modules whose physical module identifier differs from the source path.
-    fn foreign_source_method_result(&self, expression: &ast::Spanned<ast::Expr>) -> bool {
-        if !matches!(expression.node, ast::Expr::MethodCall(_, _, _, _)) {
-            return false;
-        }
-        let Some(method) = self.type_info.resolved_identity(expression.span) else {
-            return false;
-        };
-        method.kind == SemanticSourceTargetKind::Method
-            && matches!(
-                method.origin,
-                incan_semantics_core::SymbolOrigin::Module(_) | incan_semantics_core::SymbolOrigin::Package { .. }
-            )
-            && incan_semantics_core::canonical_module_identity(method).as_deref() != Some(self.module_identity)
-            && self
-                .type_info
-                .declarations
-                .member_declaration_identities
-                .get(&(method.declaration_span.start, method.declaration_span.end))
-                != Some(method)
     }
 
     /// A checked provider method can return a source newtype the consumer never imports. Its own return binding and
@@ -373,6 +342,26 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ) -> bir::Operand {
         self.retain_result_scalar_context(expr);
         let span = hir_span(expr.span);
+        if let Some(value) = self.lower_checked_rust_function_value(expr, scope, out) {
+            return value;
+        }
+        if let Some(path) = self
+            .type_info
+            .rust
+            .checked_constants
+            .get(&(expr.span.start, expr.span.end))
+        {
+            return self.push_assign_temp(
+                bir::Rvalue::Use(bir::Operand::Constant(bir::Constant::RustItem(
+                    path.clone(),
+                    self.resolve_ty(expr.span),
+                ))),
+                self.resolve_ty(expr.span),
+                scope,
+                span,
+                out,
+            );
+        }
         // Checking can convert this value into a newtype where it is used. A conversion that only wraps the value in a
         // retained plain newtype is that newtype's construction; one that validates or constrains it has no Body IR
         // form yet, so it refuses rather than handing a consumer the unconverted underlying value.
@@ -502,7 +491,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         out,
                     );
                 }
-                if let Some(target) = self.local_value_enum_variant_target(base, name, expr.span) {
+                if let Some(target) = self.local_value_enum_variant_target(base, expr.span) {
                     return self.push_assign_temp(
                         bir::Rvalue::ValueEnumVariant(target),
                         self.resolve_ty(expr.span),
@@ -528,7 +517,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
                     return bir::Operand::place(place, fact, last_use);
                 }
-                let mut place = self.lower_expr_to_place(base, scope, out);
+                let mut place = self.lower_checked_field_base(base, expr.span, scope, out);
                 place
                     .projection
                     .extend(self.lower_checked_field_projections(base, name, expr.span));
@@ -672,7 +661,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 if self
                     .local_fieldless_enum_variant_target(base, name, expr.span)
                     .is_some()
-                    || self.local_value_enum_variant_target(base, name, expr.span).is_some()
+                    || self.local_value_enum_variant_target(base, expr.span).is_some()
                     || self.checked_enum_variant_target(base, name, expr.span).is_some()
                 {
                     let ty = self.resolve_ty(expr.span);
@@ -682,7 +671,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 if let Some(place) = self.module_member_place(base, expr.span) {
                     return place;
                 }
-                let mut place = self.lower_expr_to_place(base, scope, out);
+                let mut place = self.lower_checked_field_base(base, expr.span, scope, out);
                 place
                     .projection
                     .extend(self.lower_checked_field_projections(base, name, expr.span));

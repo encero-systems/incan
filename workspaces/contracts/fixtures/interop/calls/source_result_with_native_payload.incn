@@ -1,0 +1,66 @@
+# behavior: a source result retains canonical native payloads, including last-use parameters and non-Clone newtype owners (#2256)
+# expect-stdout:
+#   2
+#   owned
+#   owned
+#   nested
+
+from rust::std::time import Duration
+from rust::std::fs import File
+from rust::std::io import Error as IoError
+
+
+type FileGuard = newtype File:
+    """Retain the unique owned descriptor without requiring Clone."""
+
+
+def describe(result: Result[File, IoError]) -> str:
+    """Move the final-use parameter's file out of its result and borrow its metadata."""
+    match result:
+        Ok(file) =>
+            match file.metadata():
+                Ok(_metadata) => return "owned"
+                Err(error) => return f"{error}"
+        Err(error) => return f"{error}"
+
+
+def open_guard() -> Result[FileGuard, str]:
+    """Wrap a fresh file without requesting a clone."""
+    match File.open("loaf.toml"):
+        Ok(file) => return Ok(FileGuard(file))
+        Err(error) => return Err(f"{error}")
+
+
+def optional_guard() -> Result[Option[FileGuard], str]:
+    """Retain the non-Clone owner through nested carriers."""
+    match open_guard():
+        Ok(guard) => return Ok(Some(guard))
+        Err(error) => return Err(error)
+
+
+def elapsed() -> Result[Duration, str]:
+    """Return a native duration through a source-declared result boundary."""
+    return Ok(Duration.new(2u64, 0u32))
+
+
+def main() -> None:
+    """Use the returned payload through its native method identity."""
+    match elapsed():
+        Ok(value) => println(int(value.as_secs()))
+        Err(_) => println(-1)
+    println(describe(File.open("loaf.toml")))
+    match open_guard():
+        Ok(guard) =>
+            match guard.0.metadata():
+                Ok(_metadata) => println("owned")
+                Err(error) => println(f"{error}")
+        Err(error) => println(error)
+    match optional_guard():
+        Ok(maybe_guard) =>
+            match maybe_guard:
+                Some(guard) =>
+                    match guard.0.metadata():
+                        Ok(_metadata) => println("nested")
+                        Err(error) => println(f"{error}")
+                None => println("missing")
+        Err(error) => println(error)

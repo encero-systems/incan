@@ -15,8 +15,10 @@ These derives belong to every declaration of the kind, without `@derive(...)`:
 
 - An automatic derive satisfies a generic bound on the same trait.
 - Writing an automatic derive in `@derive(...)` is accepted and adds nothing.
+- A class whose name starts with `_` and whose fields contain a directly imported Rust type omits automatic `Debug`. An explicit or implied `Debug` derive still applies and requires the fields to implement it. A private class with only source fields keeps automatic `Debug`.
 - A newtype carries `Clone` when its underlying type implements `Clone` or is `Copy`. The newtype's own type parameters count as implementing `Clone`, and the newtype is then `Clone` for the type arguments that are. A newtype over a `rust::` type or a `rusttype` carries `Clone` only through `@derive(Clone)` or `@rust.derive(Clone)`.
-- A `model` or `class` field, or an `enum` payload, whose type does not implement both `Clone` and `Debug` is refused at the declaration (`INCAN-T0113`). `JoinHandle[T]` and `RaceArm[R]` implement neither; `Receiver[T]`, `OneshotSender[T]` and `OneshotReceiver[T]` lack `Clone`; a newtype lacks what its underlying type lacks, and deriving it on the newtype is refused (`INCAN-T0001`); a `list`, `dict`, `set`, `Option`, `Result`, tuple or generic declaration lacks what a type argument lacks.
+- A `model` or `class` field, or an `enum` payload, whose type does not implement its declaration's automatic derives is refused at the declaration (`INCAN-T0113`). Those are `Clone` and `Debug`, except for the private class exception above, which requires `Clone` alone. `JoinHandle[T]` and `RaceArm[R]` implement neither; `Receiver[T]`, `OneshotSender[T]` and `OneshotReceiver[T]` lack `Clone`; a newtype lacks what its underlying type lacks, and deriving it on the newtype is refused (`INCAN-T0001`); a `list`, `dict`, `set`, `Option`, `Result`, tuple or generic declaration lacks what a type argument lacks.
+- For a directly imported Rust field type, an unmet derive bound can instead report a Rust trait-bound diagnostic, such as `E0277`.
 
 ```incan
 import std.async

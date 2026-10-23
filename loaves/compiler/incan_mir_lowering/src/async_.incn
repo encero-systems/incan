@@ -20,7 +20,7 @@ from pub::incan_mir_plan import (
     CalleeKind,
 )
 from pub::incan_mir_plan import place as plan_place, block as plan_block
-from classes import function_name, frame_type
+from classes import function_name, frame_type, is_program_entry
 from layout_types import native_source_type
 from unions import collect_unions
 from frame import (
@@ -33,7 +33,6 @@ from frame import (
     cleanup_exit,
 )
 from models import place_type
-from decls import library_item
 
 
 pub def is_future(ty: PlanType) -> bool:
@@ -46,7 +45,7 @@ pub def is_future(ty: PlanType) -> bool:
 pub def future_type(
     module: &BodyIrModule,
     ty: &RustType,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[Option[PlanType], str]:
     """Use the same retained output ABI for source and SDK futures; construction identity stays with the call."""
     match ty:
@@ -58,8 +57,8 @@ pub def future_type(
             return Ok(
                 Some(
                     native_source_type(
-                        module.nominal_declarations,
-                        module.enum_declarations,
+                        list(module.nominal_declarations),
+                        list(module.enum_declarations),
                         collect_unions(module),
                         ty,
                         intrinsics,
@@ -74,19 +73,22 @@ pub def evaluator_name(module: &BodyIrModule, body: &Body) -> str:
     name = function_name(module, body)
     if body.is_async:
         return f"__incan_async_body_{name}"
-    if name == "main" and body.return_type == RustType.Primitive(Primitive.Int):
-        return "__incan_integer_main"
+    if is_program_entry(module, body) and body.return_type == RustType.Primitive(Primitive.Int):
+        return f"__incan_integer_{name}"
     return name
 
 
-def capture_types(module: &BodyIrModule, body: &Body, intrinsics: list[EnumDeclaration]) -> Result[list[PlanType], str]:
-    """Retain owned captures only; source borrows require an explicit future lifetime and remain refused."""
+def capture_types(module: &BodyIrModule, body: &Body, mut intrinsics: list[EnumDeclaration]) -> Result[list[PlanType], str]:
+    """Retain owned captures and at most one nominal loan, whose lifetime the native boxing constructor preserves."""
     mut fields: list[PlanType] = []
+    mut loans = 0
+    mut nominals = module.nominal_declarations
+    mut enums = module.enum_declarations
     for parameter in body.params:
-        ty = frame_type(module, body.locals[int(parameter.local.index())], intrinsics)?
+        ty = frame_type(nominals, enums, body.locals[int(parameter.local.index())], intrinsics)?
         match ty:
-            PlanType.ModelRef(_owner, _name) => return Err("unsupported Body IR async borrowed receiver capture")
-            PlanType.ModelMutRef(_owner, _name) => return Err("unsupported Body IR async mutable receiver capture")
+            PlanType.ModelRef(_owner, _name) => loans += 1
+            PlanType.ModelMutRef(_owner, _name) => loans += 1
             PlanType.List(_leaf, _depth) => return Err("unsupported Body IR async borrowed list capture")
             PlanType.Set(_leaf) => return Err("unsupported Body IR async borrowed set capture")
             PlanType.Dict(_key, _value) => return Err("unsupported Body IR async borrowed dictionary capture")
@@ -94,18 +96,20 @@ def capture_types(module: &BodyIrModule, body: &Body, intrinsics: list[EnumDecla
         if parameter.mutable and ty == PlanType.String:
             return Err("unsupported Body IR async mutable string capture")
         fields.append(ty)
+    if loans > 1:
+        return Err("unsupported Body IR async future with multiple borrowed captures")
     return Ok(fields)
 
 
-pub def validate_futures(module: &BodyIrModule, intrinsics: list[EnumDeclaration]) -> Result[None, str]:
+pub def validate_futures(module: &BodyIrModule, mut intrinsics: list[EnumDeclaration]) -> Result[None, str]:
     """Validate source coroutine identities and captures before native storage is selected by rustc."""
     for body in module.bodies:
         if not body.is_async:
             continue
         match body.canonical:
             Some(identity) =>
-                if identity.kind != SemanticSourceTargetKind.Function:
-                    return Err("unsupported Body IR async method future")
+                if identity.kind != SemanticSourceTargetKind.Function and identity.kind != SemanticSourceTargetKind.Method:
+                    return Err("unsupported Body IR async callable identity")
             None => return Err("unsupported Body IR async body without canonical identity")
         if len(body.type_parameters) == 0:
             _ = capture_types(module, body, intrinsics)?
@@ -123,27 +127,36 @@ pub def construct_boxed_future(
 ) -> Result[None, str]:
     """Construct a source or SDK future now and pin it, preserving deferred body execution and native obligations."""
     name = f"__incan_future_ctor_{builder.name}_{len(builder.synthesized)}"
+    builder.synthesized.append(boxed_future_constructor(name, callee, types, output, span))
+    forget_moved_arguments(builder, arguments)
+    terminate_call(builder, CalleeKind.Planned(name), arguments, destination, span)
+    builder.owned.append(destination.local)
+    return Ok(None)
+
+
+pub def boxed_future_constructor(
+    name: str,
+    callee: CalleeKind,
+    types: list[PlanType],
+    output: PlanType,
+    span: SourceSpan,
+) -> Function:
+    """Retain one exact boxed-future ABI for both call-site shims and a library's exported async constructor."""
     result = PlanType.Future([output])
     mut parameters: list[Parameter] = []
     mut locals = [Local(ty=result, span=span)]
     for index in range(len(types)):
         parameters.append(Parameter(name=f"capture{index}", ty=types[index], span=span))
         locals.append(Local(ty=types[index], span=span))
-    builder.synthesized.append(
-        Function(
-            name=name,
-            parameters=parameters,
-            return_type=result,
-            locals=locals,
-            blocks=[plan_block([], TerminatorKind.Unreachable, span)],
-            span=span,
-            future_callee=Some(Callee(kind=callee, span=span)),
-        ),
+    return Function(
+        name=name,
+        parameters=parameters,
+        return_type=result,
+        locals=locals,
+        blocks=[plan_block([], TerminatorKind.Unreachable, span)],
+        span=span,
+        future_callee=Some(Callee(kind=callee, span=span)),
     )
-    forget_moved_arguments(builder, arguments)
-    terminate_call(builder, CalleeKind.Planned(name), arguments, destination, span)
-    builder.owned.append(destination.local)
-    return Ok(None)
 
 
 pub def construct_future(
@@ -159,8 +172,8 @@ pub def construct_future(
         return Err("unsupported Body IR calling async main")
     fields = capture_types(module, body, builder.intrinsics)?
     output = native_source_type(
-        module.nominal_declarations,
-        module.enum_declarations,
+        list(module.nominal_declarations),
+        list(module.enum_declarations),
         collect_unions(module),
         body.return_type,
         builder.intrinsics,
@@ -184,14 +197,7 @@ pub def await_future(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Retain a native suspension and an explicit cancellation edge; the adapter emits only the pinned poll plumbing."""
-    match place_type(builder.locals, future):
-        PlanType.Future(_output) => pass
-        PlanType.Model(owner, _name) =>
-            if owner < 0 or owner >= len(module.nominal_declarations):
-                return Err("unsupported Body IR Await without a retained native future")
-            if library_item(module.nominal_declarations[owner]) != "incan_std_async::task::JoinHandle":
-                return Err("unsupported Body IR Await without a retained native future")
-        _ => return Err("unsupported Body IR Await without a retained native future")
+    # The checked suspension already retains its output. Rustc validates the native Future obligation and exact poll output.
     incoming = builder.owned
     current = builder.current
     cancelled = builder.new_block(span)
@@ -218,11 +224,11 @@ pub def await_future(
     return Ok(None)
 
 
-pub def integer_entry(body: Function) -> Function:
+pub def integer_entry(body: Function, entry_name: str) -> Function:
     """Run the checked integer main for its effects; its value is program metadata, never the process exit code."""
     span = body.span
     return Function(
-        name="main",
+        name=entry_name,
         parameters=[],
         return_type=PlanType.Unit,
         locals=[Local(ty=PlanType.Unit, span=span), Local(ty=body.return_type, span=span)],
@@ -241,25 +247,52 @@ pub def integer_entry(body: Function) -> Function:
     )
 
 
-pub def async_entry(body: Function) -> tuple[Function, Function, ExternalFunction]:
-    """Run the planned main coroutine through the same SDK executor and runtime initialization boundary as legacy."""
+pub def async_test_name(native: str) -> str:
+    """Name the synchronous function that drives one async test's coroutine for the native test harness."""
+    return f"__incan_test_{native}"
+
+
+pub def async_entry(
+    module: &BodyIrModule,
+    body: Function,
+    mut intrinsics: list[EnumDeclaration],
+    entry_name: str,
+) -> Result[tuple[Function, Function, ExternalFunction], str]:
+    """
+    Return the coroutine's checked output through the native function `entry_name`, preserving Result termination
+    after executor setup: `main` for a program, the test wrapper for an async test.
+    """
     span = body.span
-    future = PlanType.Future([PlanType.Unit])
-    constructor = Function(
-        name="__incan_main_future",
-        parameters=[],
-        return_type=future,
-        locals=[Local(ty=future, span=span)],
-        blocks=[plan_block([], TerminatorKind.Unreachable, span)],
-        span=span,
-        future_callee=Some(Callee(kind=CalleeKind.Planned(body.name), span=span)),
+    future = PlanType.Future([body.return_type])
+    constructor = boxed_future_constructor(
+        f"__incan_{entry_name}_future",
+        CalleeKind.Planned(body.name),
+        [],
+        body.return_type,
+        span,
     )
-    path = "incan_native_runtime::run_future_entry"
+    mut path = "incan_native_runtime::run_future_entry"
+    mut arguments = [future]
+    if body.return_type != PlanType.Unit:
+        match body.return_type:
+            PlanType.Enum(owner, _name) =>
+                index = owner - len(module.enum_declarations)
+                if index < 0 or index >= len(intrinsics):
+                    return Err("unsupported Body IR async main outside a standard Result")
+                declaration = intrinsics[index]
+                if declaration.carrier != "Result" or len(declaration.variants) != 2:
+                    return Err("unsupported Body IR async main outside a standard Result")
+                errors = declaration.variants[1].fields
+                if len(errors) != 1:
+                    return Err("unsupported Body IR async main error arity")
+                arguments = [errors[0], future]
+                path = "incan_native_runtime::run_result_future_entry"
+            _ => return Err("unsupported Body IR async main output")
     entry = Function(
-        name="main",
+        name=entry_name,
         parameters=[],
-        return_type=PlanType.Unit,
-        locals=[Local(ty=PlanType.Unit, span=span), Local(ty=future, span=span)],
+        return_type=body.return_type,
+        locals=[Local(ty=body.return_type, span=span), Local(ty=future, span=span)],
         blocks=[plan_block(
             [],
             TerminatorKind.Call(
@@ -273,7 +306,7 @@ pub def async_entry(body: Function) -> tuple[Function, Function, ExternalFunctio
         ), plan_block(
             [],
             TerminatorKind.Call(
-                Callee(kind=CalleeKind.Instantiated(path, [future]), span=span),
+                Callee(kind=CalleeKind.Instantiated(path, arguments), span=span),
                 [read_place(plan_place(1, span), true, span)],
                 plan_place(0, span),
                 2,
@@ -285,9 +318,9 @@ pub def async_entry(body: Function) -> tuple[Function, Function, ExternalFunctio
     )
     external = ExternalFunction(
         path=path,
-        type_arguments=[future],
+        type_arguments=arguments,
         parameters=[future],
-        return_type=PlanType.Unit,
+        return_type=body.return_type,
         span=span,
     )
-    return (entry, constructor, external)
+    return Ok((entry, constructor, external))

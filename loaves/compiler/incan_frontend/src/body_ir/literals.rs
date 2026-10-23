@@ -1,6 +1,7 @@
 //! Lowering for literal and aggregate forms: lists, dicts, f-strings, slices, `?`, constructors, surface exprs.
 //! By-value scalar and text entries are captured at their evaluation point before subsequent entries can mutate global
-//! storage. Spread sources and live collection handles keep their existing ownership rules.
+//! storage. List spreads capture their source contents before subsequent entries can mutate them; ordinary collection
+//! handles retain their borrowing rules.
 
 use super::args::*;
 use super::primitives::*;
@@ -11,7 +12,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower a list literal, including spread entries, into a [`bir::AggregateKind::List`] aggregate.
     ///
     /// Elements are lowered in written source order, so a spread source's evaluation is interleaved with the fixed
-    /// elements around it exactly as written. A spread contributes one [`bir::ArgumentElement::Spread`] whose
+    /// elements around it exactly as written. Each source is captured into an owned temporary using its checked
+    /// ownership fact before later entries run. A spread contributes one [`bir::ArgumentElement::Spread`] whose
     /// length is a runtime fact; surrounding fixed elements keep their positions relative to it.
     pub(super) fn lower_list_literal(
         &mut self,
@@ -30,7 +32,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     elements.push(bir::ArgumentElement::One(value));
                 }
                 ast::ListEntry::Spread(source) => {
-                    elements.push(self.lower_spread_element(source, bir::SpreadKind::Sequence, scope, out));
+                    let operand = self.lower_expr_to_operand(source, scope, out);
+                    let ty = self.resolve_ty(source.span);
+                    let operand =
+                        self.push_assign_temp(bir::Rvalue::Use(operand), ty, scope, hir_span(source.span), out);
+                    elements.push(bir::ArgumentElement::Spread(bir::SpreadElement {
+                        source: operand,
+                        kind: bir::SpreadKind::Sequence,
+                    }));
                 }
             }
         }
@@ -64,7 +73,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Lower a tuple or set literal to a [`bir::Rvalue::Aggregate`], recording an
     /// [`AbiV0RuntimeRequirement::Allocator`] requirement for lists and sets specifically (list/set construction
-    /// always allocates; tuples do not).
+    /// always allocates; tuples do not). Deferred owner reads stay reserved across later nested entries, as they do
+    /// across nested call arguments, so a later entry cannot move storage an earlier entry still reads.
     pub(super) fn lower_aggregate(
         &mut self,
         kind: bir::AggregateKind,
@@ -74,13 +84,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
-        let operands: Vec<bir::Operand> = items
-            .iter()
-            .map(|item| {
-                let value = self.lower_expr_to_operand(item, scope, out);
-                self.retain_evaluated_value_read(item, value, scope, out)
-            })
-            .collect();
+        let pending_start = self.pending_argument_reads.len();
+        let mut operands = Vec::with_capacity(items.len());
+        for item in items {
+            let value = self.lower_expr_to_operand(item, scope, out);
+            let value = self.retain_evaluated_value_read(item, value, scope, out);
+            self.retain_pending_operand_read(&value);
+            operands.push(value);
+        }
+        self.pending_argument_reads.truncate(pending_start);
         let ty = self.resolve_ty(span);
         if matches!(kind, bir::AggregateKind::List | bir::AggregateKind::Set) {
             self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
@@ -227,16 +239,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Lower `start..end` / `start..=end` used as a **value** into a [`bir::AggregateKind::Range`] aggregate.
     ///
-    /// A range is a value, not only a loop header: `r = 0..10` typechecks, so Body IR has to be able to hold one
-    /// wherever an operand goes. The four operands are laid down in [`bir::AggregateKind::RANGE_FIELDS`] order --
-    /// the two bounds first, in written source order because both are arbitrary expressions whose evaluation is
-    /// observable, then the step and the inclusivity flag, neither of which the surface can spell as an
-    /// expression. See that variant's own docs for why a range is an aggregate rather than a constant form or a
-    /// helper-constructed value, and for why inclusivity rides as an operand instead of as a static property of
-    /// the kind.
+    /// Source ranges retain their four operands in [`bir::AggregateKind::RANGE_FIELDS`] order: bounds evaluated once in
+    /// written order, then unit step and inclusivity. A checker-selected native argument instead uses its retained
+    /// canonical constructor and ordered slots; this boundary performs no native lookup or inference.
     ///
-    /// No runtime requirement is recorded: four scalars side by side allocate nothing and call nothing, which is
-    /// [`bir::AggregateKind::Tuple`]'s treatment rather than [`Self::lower_list_literal`]'s.
+    /// The source aggregate records no runtime requirement because four scalars allocate nothing and call nothing, as
+    /// with [`bir::AggregateKind::Tuple`].
     pub(super) fn lower_range_value(
         &mut self,
         start: &ast::Spanned<ast::Expr>,
@@ -247,6 +255,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
+        if let Some(owner) = self.type_info.body_ir_native_constructor_identity(span) {
+            let name = owner.declaration_name.clone();
+            let arguments = [
+                ast::CallArg::Positional(start.clone()),
+                ast::CallArg::Positional(end.clone()),
+            ];
+            return self.lower_nominal_construction(&name, &arguments, span, span, scope, out);
+        }
         let start_operand = self.lower_expr_to_operand(start, scope, out);
         let start_operand = self.retain_evaluated_value_read(start, start_operand, scope, out);
         let end_operand = self.lower_expr_to_operand(end, scope, out);
@@ -400,8 +416,22 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
-        let hir_span_value = hir_span(outer_span);
         let operand_result_type = self.resolve_ty(inner.span);
+        let operand = self.lower_expr_to_operand(inner, scope, out);
+        self.emit_try(operand, operand_result_type, outer_span, scope, out)
+    }
+
+    /// Propagate one evaluated Result using the enclosing declaration's checked error contract. Awaited async
+    /// calls enter here after suspension, so their future storage never crosses the Result boundary.
+    pub(super) fn emit_try(
+        &mut self,
+        operand: bir::Operand,
+        operand_result_type: IncanType,
+        outer_span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let hir_span_value = hir_span(outer_span);
         let error_routing = match (
             result_error_type(&operand_result_type),
             result_error_type(&self.owner_return_type),
@@ -417,7 +447,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             },
             _ => bir::TryErrorRouting::Unresolved,
         };
-        let operand = self.lower_expr_to_operand(inner, scope, out);
         // The checked Result already fixes the success type, including when the outer expression has no separate type
         // entry.
         let ty = match &operand_result_type {

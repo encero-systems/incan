@@ -10,7 +10,6 @@ use incan_lang::lang::builtins::{self as core_builtins, BuiltinFnId};
 use incan_lang::lang::derives::DeriveId;
 use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::constructors::{self as surface_constructors, ConstructorId};
-use incan_lang::lang::surface::functions::SurfaceFnId;
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
@@ -224,9 +223,6 @@ impl TypeChecker {
         respect_shadowing: bool,
     ) -> Option<ResolvedType> {
         let has_call_root_binding = respect_shadowing && self.has_non_builtin_call_root_binding(name);
-        let surface_function_binding = respect_shadowing
-            .then(|| self.active_surface_function_import(name))
-            .flatten();
         let surface_type_binding = respect_shadowing
             .then(|| self.active_surface_type_import(name))
             .flatten();
@@ -574,10 +570,17 @@ impl TypeChecker {
                             ResolvedType::Bytes | ResolvedType::FrozenBytes => {
                                 inner_ty = ResolvedType::Int;
                             }
-                            _ => {}
+                            _ => {
+                                // Native iterables expose their item through the same checked protocol as a loop;
+                                // leaving it unknown hides the actual enumerable carrier from Body IR admission.
+                                inner_ty =
+                                    self.infer_iterator_element_type_from_expr(Self::call_arg_expr(arg), &iter_ty);
+                            }
                         }
                     }
-                    self.check_call_args(args);
+                    for argument in args.iter().skip(1) {
+                        self.check_expr(Self::call_arg_expr(argument));
+                    }
                     Some(list_ty(ResolvedType::Tuple(vec![ResolvedType::Int, inner_ty])))
                 }
                 BuiltinFnId::Zip => {
@@ -695,96 +698,6 @@ impl TypeChecker {
                         ));
                     }
                     Some(ResolvedType::Str)
-                }
-            };
-        }
-
-        // Surface/runtime functions (registry-driven)
-        if let Some(fid) = surface_function_binding {
-            return match fid {
-                SurfaceFnId::SleepMs => {
-                    if let Some(arg) = args.first() {
-                        let arg_expr = Self::call_arg_expr(arg);
-                        let arg_ty = self.check_expr(arg_expr);
-                        if !self.types_compatible(&arg_ty, &ResolvedType::Int) {
-                            self.errors
-                                .push(errors::type_mismatch("int", &arg_ty.to_string(), arg_expr.span));
-                        }
-                    }
-                    Some(ResolvedType::Unit)
-                }
-                SurfaceFnId::Timeout | SurfaceFnId::TimeoutMs | SurfaceFnId::RaceTimeout => {
-                    if let Some(arg) = args.first() {
-                        let arg_expr = Self::call_arg_expr(arg);
-                        let arg_ty = self.check_expr(arg_expr);
-                        let (expected_name, expected_ty) =
-                            if matches!(fid, SurfaceFnId::Timeout | SurfaceFnId::RaceTimeout) {
-                                ("float", ResolvedType::Float)
-                            } else {
-                                ("int", ResolvedType::Int)
-                            };
-                        if !self.types_compatible(&arg_ty, &expected_ty) {
-                            self.errors
-                                .push(errors::type_mismatch(expected_name, &arg_ty.to_string(), arg_expr.span));
-                        }
-                    }
-                    let arg_types = self.check_call_arg_types(args);
-                    // The second argument is the task the deadline applies to (`RuntimeFuture[T]`).
-                    if let (Some(task), Some(task_ty)) = (args.get(1), arg_types.get(1)) {
-                        self.refuse_non_task_argument(name, Self::call_arg_expr(task), task_ty);
-                    }
-                    Some(ResolvedType::Unknown)
-                }
-                SurfaceFnId::YieldNow => Some(ResolvedType::Unit),
-                SurfaceFnId::Spawn | SurfaceFnId::SpawnBlocking => {
-                    let arg_types = self.check_call_arg_types(args);
-                    // `spawn` takes the task itself (`RuntimeFuture[T]`); `spawn_blocking` takes a function to call.
-                    if fid == SurfaceFnId::Spawn
-                        && let (Some(task), Some(task_ty)) = (args.first(), arg_types.first())
-                    {
-                        self.refuse_non_task_argument(name, Self::call_arg_expr(task), task_ty);
-                    }
-                    Some(ResolvedType::Generic(
-                        surface_types::as_str(SurfaceTypeId::JoinHandle).to_string(),
-                        vec![ResolvedType::Unknown],
-                    ))
-                }
-                SurfaceFnId::Channel => {
-                    self.check_call_args(args);
-                    let inner = ResolvedType::Unknown;
-                    Some(ResolvedType::Tuple(vec![
-                        ResolvedType::Generic(
-                            surface_types::as_str(SurfaceTypeId::Sender).to_string(),
-                            vec![inner.clone()],
-                        ),
-                        ResolvedType::Generic(surface_types::as_str(SurfaceTypeId::Receiver).to_string(), vec![inner]),
-                    ]))
-                }
-                SurfaceFnId::UnboundedChannel => {
-                    self.check_call_args(args);
-                    Some(ResolvedType::Tuple(vec![
-                        ResolvedType::Generic(
-                            surface_types::as_str(SurfaceTypeId::Sender).to_string(),
-                            vec![ResolvedType::Unknown],
-                        ),
-                        ResolvedType::Generic(
-                            surface_types::as_str(SurfaceTypeId::Receiver).to_string(),
-                            vec![ResolvedType::Unknown],
-                        ),
-                    ]))
-                }
-                SurfaceFnId::Oneshot => {
-                    self.check_call_args(args);
-                    Some(ResolvedType::Tuple(vec![
-                        ResolvedType::Generic(
-                            surface_types::as_str(SurfaceTypeId::OneshotSender).to_string(),
-                            vec![ResolvedType::Unknown],
-                        ),
-                        ResolvedType::Generic(
-                            surface_types::as_str(SurfaceTypeId::OneshotReceiver).to_string(),
-                            vec![ResolvedType::Unknown],
-                        ),
-                    ]))
                 }
             };
         }
@@ -917,7 +830,14 @@ impl TypeChecker {
                     let elem_ty = if let Some(arg) = args.first() {
                         let arg_expr = Self::call_arg_expr(arg);
                         let arg_ty = self.check_expr(arg_expr);
-                        let Some(elem_ty) = self.list_constructor_item_type(&arg_ty) else {
+                        // A Rust value iterates through its retained `IntoIterator` hooks, as in a loop header.
+                        let item_ty = match &arg_ty {
+                            ResolvedType::RustPath(_) => {
+                                Some(self.infer_iterator_element_type_from_expr(arg_expr, &arg_ty))
+                            }
+                            _ => self.list_constructor_item_type(&arg_ty),
+                        };
+                        let Some(elem_ty) = item_ty else {
                             self.errors
                                 .push(errors::builtin_expects_iterable(name, &arg_ty.to_string(), call_span));
                             return Some(ResolvedType::Unknown);

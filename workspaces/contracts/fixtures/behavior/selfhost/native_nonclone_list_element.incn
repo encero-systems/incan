@@ -1,0 +1,15 @@
+# behavior: a Rust value without Clone proof remains refused when copied into a list
+# expect-diagnostic: INCAN-T0001
+
+from rust::std::thread import JoinHandle
+
+
+def retain[T](value: JoinHandle[T]) -> None:
+    """Refuse copying a native thread handle from its existing binding."""
+    mut values: list[JoinHandle[T]] = []
+    values.append(value)
+
+
+def main() -> None:
+    """Provide an entry point for the refused declaration."""
+    pass

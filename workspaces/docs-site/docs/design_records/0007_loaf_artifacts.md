@@ -6,7 +6,7 @@ type: design-decision
 date: 2026-10-19
 review_target: v0.6
 sources:
-  - Maintainer discussion, 2026-10-19 (dev.8 cull)
+  - Maintainer discussion, 2026-10-19
   - https://github.com/encero-systems/incan/issues/2256
   - DD-0004
   - DD-0005
@@ -19,7 +19,7 @@ sources:
 
 ## Context
 
-Until 0.6.0-dev.8 a compiled Incan library was a generated Rust crate: its artifact record named a `Cargo.toml` and a `src/lib.rs`, its private implementation choices were Cargo features, and the standard library reached consumers through a separate SDK inventory of published packages. A consumer found its dependencies through three structures that each described part of the same thing: the library-manifest index, the provider plan, and the SDK inventory with its components and profiles. The standard library additionally reached the checker as source modules. dev.8 removes the generator and Cargo, so none of those artifact coordinates exist any more.
+dev.8 removes generated Rust crates and Cargo artifact coordinates. The library-manifest index, provider plan, and SDK inventory previously split dependency authority, while standard packages also reached the checker as source modules; their replacement needs one artifact contract for every Loaf.
 
 ## Decision
 
@@ -35,16 +35,27 @@ Until 0.6.0-dev.8 a compiled Incan library was a generated Rust crate: its artif
 | `<name>.incnbody` | the governed bodies: the executable representation of every body a caller instantiates (functions with type parameters) |
 | `lib<name>.rlib` | the library unit: every other body, compiled once, with a crate-root export for each public name |
 | `<name>.native.json` | the unit's native closure: the rlibs and search paths it links |
+| `<name>.incngraph` | the Loaf's checked declarations, references, calls and imports, with span-free identities and Loaf-relative paths in a versioned indexed-postcard artifact |
 
 ### The index
 
-One `LoafIndex` per compilation holds an entry per Loaf the project reaches: its key, its artifact directory, its manifest, and the namespace it owns. An ordinary dependency owns `pub::<key>`. A standard package owns the `std.*` roots that the compiler-pinned `STANDARD_PACKAGE_NAMESPACE_POLICIES` assign to it. A module path resolves to exactly one entry. The checker reads imported types from the entry's manifest, Body IR takes governed bodies from its `.incnbody`, and the driver links its rlib and native closure.
+One index per compilation records each reachable Loaf's key, artifact directory, manifest, and namespace: `pub::<key>` for ordinary dependencies and compiler-pinned `std.*` roots for standard packages. Every module path selects exactly one entry; types come from its manifest, governed bodies from `.incnbody`, and linkage from its rlib and native closure.
+
+An unchanged native source unit may reuse its canonical dependency footprint under complete source, artifact, and compiler file-generation guards; invalid or unsupported observations require the full index, and checking still runs anew.
 
 ### Calling into a Loaf
 
-A consumer names a Loaf's declarations and never declares them again. A Loaf exports every type and every compiled function or method at its crate root under the encoding of its canonical identity, so the item a consumer names is `<crate>::<encoded identity>`, where the crate is the package name in lowercase with every character other than an ASCII letter or digit spelled `_`. The item follows from the declaration's identity alone, so no call needs a per-call record.
+A consumer names declarations without redeclaring them; every type and compiled function/method is exported at the crate root under its encoded canonical identity, with the crate name lowercased and non-ASCII-alphanumeric characters replaced by `_`, eliminating per-call identity records.
 
-The `.incnbody` carries a declaration record for every public callable beside the governed bodies: its parameters with the computation each default reduces to, and its type parameters. The consumer's Body IR and lowering complete an omitted argument and check a call from that record. The driver checks the call against the rlib's metadata.
+The checked, unambiguous nongeneric callable and nominal names at a package root also alias their canonical Loaf items for Rust consumers; these facade aliases add no layout or implementation. Explicit Rust item reexports retain their checked Rust targets, including target-owned type parameters.
+
+Every public callable's `.incnbody` declaration supplies parameters, default computations, and type parameters for consumer call checking and omitted arguments; the driver verifies calls against rlib metadata. Compiled callables publish declarations only: their implementation dependencies stay in the rlib, while functions with type parameters and open trait defaults retain governed bodies.
+
+Published unions retain checked semantic carriers, public native owners, canonical nominal payload identities, and physical variant order; consumers use that representation for construction, narrowing, and tests, refusing conflicting owners instead of inventing wrappers or import-dependent order.
+
+Each public model/class with type parameters has one native ADT preserving binders and authored field order; provider and consumer layouts alias its instantiations, with otherwise unused parameters retained by a private, validated zero-sized marker excluded from Debug output, which shows authored fields under the source name.
+
+A callable union member owns its captured environment. Its checked signature and producer-owned callable object type cross the artifact boundary with the union representation; consumers preserve that ownership during injection, narrowing, invocation, and cloning.
 
 Every package identity takes this one route. No Body IR record, lowering branch or driver path is specific to the standard packages.
 

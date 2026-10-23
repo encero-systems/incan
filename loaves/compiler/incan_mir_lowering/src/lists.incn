@@ -60,8 +60,7 @@ pub def statement_iterator_locals(kind: &RustStatementKind) -> list[int]:
             matched_value: &RustRvalue = value
             match matched_value:
                 RustRvalue.Match(scrutinee=_scrutinee, arms=arms) =>
-                    matched_arms: &list[RustMatchArm] = arms
-                    for arm in matched_arms:
+                    for arm in arms:
                         collect_arm_iterator_locals(arm, result)
                 _ => pass
         RustStatementKind.UnsafeRegion(acknowledgment=_acknowledgment, body=body) =>
@@ -163,6 +162,7 @@ pub def is_exclusive_borrow(ty: PlanType) -> bool:
         PlanType.ModelMutRef(_owner, _name) => return true
         PlanType.EnumMutRef(_owner, _name) => return true
         PlanType.TupleMutRef(_elements) => return true
+        PlanType.NativeArrayMutRef(_elements, _length) => return true
         _ => return false
 
 
@@ -195,8 +195,7 @@ def taking_statement_locals(kind: &RustStatementKind, iterators: list[int]) -> l
                                     result.append(index)
                             None => pass
                 RustRvalue.Match(scrutinee=_scrutinee, arms=arms) =>
-                    matched_arms: &list[RustMatchArm] = arms
-                    for arm in matched_arms:
+                    for arm in arms:
                         collect_arm_taking_locals(arm, iterators, result)
                 _ => pass
         RustStatementKind.UnsafeRegion(acknowledgment=_acknowledgment, body=body) =>

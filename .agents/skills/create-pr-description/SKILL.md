@@ -22,6 +22,10 @@ description: Generate a PR description following the repository's pull request t
    - Internal architectural changes
    - Risks or breaking changes
 7. **Fill in the template** - Use the analysis to populate each section of the PR template.
+   - For Incan, replace stale template commands with commands verified against the Makefile and `workspaces/oven/src/main.incn`. Oven owns builds and execution; never prescribe Cargo. Use `incan inspect codegraph PATH --query defs TERM` or `--query callers TERM` for declaration and call relationships before grep.
+   - Record the smallest contract selectors used during development and affected whole-family counts at commit points, per `workspaces/contracts/README.md`. Check boxes only for verification actually run.
+   - Test changes extend existing cases before adding any; add only when no same-area case can carry the behavior. Keep the whole suite under about 3,000 tests, name guarded bugs in `# behavior:`, and use one producer Loaf carrying all declarations per library case.
+   - Design records change only when a decision changes, in a sentence or two. Keep decisions, boundaries, consequences, and non-goals under about 1,000 words; mechanisms belong in commit messages and rustdoc, never a paragraph per commit.
 8. **Add issue reference** - If an issue number was found and the diff completes its verified scope, append `Closes #<issue number>` at the end of the PR description. Use `Refs #<issue number>` when the PR delivers only part of the issue.
 9. **Output the PR description** - Return the complete PR description in markdown format, ready to be used in a pull request.
 
@@ -55,9 +59,10 @@ If the template is not found, the skill uses the standard template structure.
 - **Risks**: what could break?
 
 ### Testing / verification
-- [ ] `make test` / `cargo test`
-- [ ] `make examples` (if relevant)
-- [ ] `incan fmt --check .` (if relevant)
+- [ ] Relevant contracts: `incan run workspaces/contracts/src/main.incn -- INCAN workspaces/contracts/fixtures SELECTOR` (substitute compiler and selector; whole families at commit points)
+- [ ] `make fmt-check` / `make rustdoc-gate` (changed Rust)
+- [ ] `make pre-commit-fast` (formatting, spelling, rustdoc, skill table)
+- [ ] `make us-english-check` before every commit
 - Manual verification notes
 
 ### Docs impact
@@ -120,19 +125,16 @@ This PR fixes RFC 042 trait supertrait assignability and generic upcast compatib
 
 ## Testing / verification
 
-- [x] `make test` / `cargo test`
-- [x] `make examples` (if relevant)
-- [x] `incan fmt --check .` (if relevant)
+- [ ] Relevant `check` and `behavior` contracts; record selectors and affected whole-family counts
+- [ ] `make fmt-check` / `make rustdoc-gate` (changed Rust)
+- [ ] `make pre-commit-fast`
+- [ ] `make us-english-check` before every commit
 - [ ] Manual verification described below
 
-**Tests added:**
-- `test_trait_supertrait_assignability_codegen` - validates RFC 042 upcast codegen
-- `test_supertrait_cycle_is_diagnosed` - validates cycle detection
-- `test_supertrait_transitive_closure` - validates transitive supertrait resolution
-- `test_types_compatible_trait_to_supertrait_named` - validates named trait upcasts
-- `test_types_compatible_trait_to_supertrait_generic` - validates generic trait upcasts
-- `test_types_compatible_trait_to_supertrait_transitive_generic` - validates transitive generic upcasts
-- `test_check_with_imports_concrete_and_supertrait_upcasts` - validates cross-module upcasts
+**Coverage to verify:**
+- Existing check cases extended for accepted upcasts and cycle refusals
+- Existing behavior cases extended for named, generic, and transitive upcasts
+- Existing library case extended for cross-module consumers, using one producer Loaf
 
 ## Docs impact
 
@@ -187,15 +189,15 @@ This PR implements RFC 035: First-class named function references in Incan. Name
 
 ## Testing / verification
 
-- [ ] `make test` / `cargo test`
-- [ ] `make examples` (if relevant)
-- [ ] `incan fmt --check .` (if relevant)
+- [ ] Relevant `check` and `behavior` contracts; record selectors and affected whole-family counts
+- [ ] `make fmt-check` / `make rustdoc-gate` (changed Rust)
+- [ ] `make pre-commit-fast`
+- [ ] `make us-english-check` before every commit
 - [ ] Manual verification described below
 
-**Tests added:**
-- Typechecker tests for function reference type checking
-- Codegen snapshot tests for function reference emission
-- Integration tests for function reference usage
+**Coverage to verify:**
+- Existing check cases extended for function reference type checking
+- Existing behavior cases extended for function references used as values
 
 ## Docs impact
 
@@ -251,15 +253,13 @@ This PR adds a new dataset API for IncQL that provides a unified interface for b
 
 ## Testing / verification
 
-- [ ] `make test` / `cargo test`
-- [ ] `make examples` (if relevant)
-- [ ] `incan fmt --check .` (if relevant)
+- [ ] Repository verification commands checked against IncQL's `AGENTS.md` and Makefile
+- [ ] Relevant dataset contract coverage and outcomes recorded
 - [ ] Manual verification described below
 
-**Tests added:**
-- Trait hierarchy tests
-- Type assignability tests
-- Operation API tests
+**Coverage to verify:**
+- Existing trait hierarchy and type assignability coverage extended
+- Existing operation API coverage extended
 
 ## Docs impact
 

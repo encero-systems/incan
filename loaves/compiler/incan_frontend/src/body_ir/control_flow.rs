@@ -78,10 +78,10 @@ fn inline_range_parts(
 }
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
-    /// Lower `if`/`elif`/`else` into a [`bir::StatementKind::If`] chain. `elif` branches are folded into nested
-    /// `else { if ... }` wrappers from the last branch inward (see the inline comment above the fold loop), and an
-    /// `if let` pattern condition — not yet modeled by v0 — lowers to an explicit unsupported placeholder instead of
-    /// the real branch.
+    /// Lower `if`/`elif`/`else` into a [`bir::StatementKind::If`] chain. Evaluate ownership facts in written order,
+    /// then fold the already lowered `elif` branches into nested `else { if ... }` wrappers from the last branch
+    /// inward. Reversing the ownership visit would move an owner in an earlier condition before a later condition
+    /// reads it. Pattern conditions use the dedicated `if let` boundary.
     pub(super) fn lower_if(
         &mut self,
         if_stmt: &ast::IfStmt,
@@ -102,20 +102,25 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let then_block = self.lower_branch_block(&if_stmt.then_body, scope, span);
         let mut range_layouts_after_branches = vec![self.materialized_range_locals.clone()];
 
-        self.materialized_range_locals = range_layouts_before.clone();
+        let mut lowered_branches = Vec::with_capacity(if_stmt.elif_branches.len());
+        for (elif_cond, elif_body) in &if_stmt.elif_branches {
+            self.materialized_range_locals = range_layouts_before.clone();
+            let mut wrapper = Vec::new();
+            let cond_operand = self.lower_expr_to_operand(elif_cond, scope, &mut wrapper);
+            let then_block = self.lower_branch_block(elif_body, scope, span);
+            lowered_branches.push((wrapper, cond_operand, then_block));
+            range_layouts_after_branches.push(self.materialized_range_locals.clone());
+        }
+
+        self.materialized_range_locals = range_layouts_before;
         let mut else_block = if_stmt
             .else_body
             .as_ref()
             .map(|else_body| self.lower_branch_block(else_body, scope, span));
         range_layouts_after_branches.push(self.materialized_range_locals.clone());
 
-        // Fold `elif` branches into nested `else { if ... }` wrappers, innermost (last elif) first, so the earlier
-        // conditions end up evaluated first at the top of the chain once wrapped by the outer `if` pushed below.
-        for (elif_cond, elif_body) in if_stmt.elif_branches.iter().rev() {
-            self.materialized_range_locals = range_layouts_before.clone();
-            let mut wrapper = Vec::new();
-            let cond_operand = self.lower_expr_to_operand(elif_cond, scope, &mut wrapper);
-            let then_block = self.lower_branch_block(elif_body, scope, span);
+        // Only assembly runs backward; every read's ownership fact is already fixed in written order.
+        for (mut wrapper, cond_operand, then_block) in lowered_branches.into_iter().rev() {
             wrapper.push(bir::Statement {
                 kind: bir::StatementKind::If {
                     cond: cond_operand,
@@ -125,7 +130,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 span,
             });
             else_block = Some(bir::Block { scope, stmts: wrapper });
-            range_layouts_after_branches.push(self.materialized_range_locals.clone());
         }
 
         self.materialized_range_locals = intersect_range_layouts(range_layouts_after_branches);
@@ -236,11 +240,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // same restoration for names declared in its body.
         let enclosing_bindings = self.bindings.clone();
         self.loop_break_targets.push(break_target);
+        self.loop_scopes.push(loop_scope);
         self.loop_continue_actions.push(Vec::new());
         let mut body_stmts = Vec::new();
         lower_body(self, loop_scope, &mut body_stmts);
         self.insert_scope_drops(&mut body_stmts, loop_scope);
         self.loop_break_targets.pop();
+        self.loop_scopes.pop();
         self.loop_continue_actions.pop();
         self.materialized_range_locals =
             intersect_range_layouts(vec![range_layouts_before, self.materialized_range_locals.clone()]);
@@ -633,29 +639,61 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> Result<Option<RangeLoopSource>, String> {
+        if let Some(source) = self.retained_range_loop_source(iter_expr, scope, out)? {
+            return Ok(Some(source));
+        }
+        if range_value_element_type(iter_ty).is_some() {
+            return Err("range value without a source-local Body IR range aggregate".to_string());
+        }
+        Ok(None)
+    }
+
+    /// Select only explicit range bounds, a checked builtin call, or a source-local range aggregate.
+    /// An unproven type spelling leaves general iteration on its existing checked protocol path.
+    fn retained_range_loop_source(
+        &mut self,
+        iter_expr: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Result<Option<RangeLoopSource>, String> {
         let span = hir_span(iter_expr.span);
-        if let Some((start, end, inclusive)) = inline_range_parts(iter_expr) {
-            let start_value = self.lower_expr_to_operand(start, scope, out);
-            let start = self.retain_evaluated_value_read(start, start_value, scope, out);
-            let end_ty = self.resolve_ty(end.span);
-            let end_operand = self.lower_expr_to_operand(end, scope, out);
-            let end = self.snapshot_local(end_operand, end_ty, scope, span, out);
-            return Ok(Some(RangeLoopSource::Header { start, end, inclusive }));
+        if let Some(range) = self.inline_range_loop_source(iter_expr, scope, out) {
+            return Ok(Some(range));
         }
         if let Some(range) = self.builtin_range_loop_source(iter_expr, scope, out)? {
             return Ok(Some(range));
         }
-        if range_value_element_type(iter_ty).is_none() {
-            return Ok(None);
-        }
         let Some(local) = self.materialized_range_local(iter_expr) else {
-            return Err("range value without a source-local Body IR range aggregate".to_string());
+            return Ok(None);
         };
         let place = bir::Place::from_local(local);
         let range_ty = self.locals[local.index()].ty.clone();
         let (fact, last_use) = self.ownership_fact_for_place(&place, &range_ty);
         let snapshot = self.snapshot_local(bir::Operand::place(place, fact, last_use), range_ty, scope, span, out);
         Ok(Some(RangeLoopSource::Value(bir::Place::from_local(snapshot))))
+    }
+
+    /// Evaluate one inline range's bounds once, in source order, retaining its inclusive or exclusive end.
+    /// A checked `range(a..b)` call shares this representation with a direct `for item in a..b` header.
+    /// Both bounds are snapshots: evaluating the upper bound may change the storage read for the lower bound.
+    fn inline_range_loop_source(
+        &mut self,
+        expr: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<RangeLoopSource> {
+        let (start, end, inclusive) = inline_range_parts(expr)?;
+        let start_ty = self.resolve_ty(start.span);
+        let start_value = self.lower_expr_to_operand(start, scope, out);
+        let start = self.snapshot_local(start_value, start_ty, scope, hir_span(start.span), out);
+        let end_ty = self.resolve_ty(end.span);
+        let end_operand = self.lower_expr_to_operand(end, scope, out);
+        let end = self.snapshot_local(end_operand, end_ty, scope, hir_span(expr.span), out);
+        Some(RangeLoopSource::Header {
+            start: index_read(start),
+            end,
+            inclusive,
+        })
     }
 
     /// Copy a once-evaluated range bound or range value into a fresh compiler-owned local the loop re-reads.
@@ -682,7 +720,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ///
     /// This is a representation of builtin iterator facts, not recognition of a same-spelled user function.
     /// Bounds and step are copied into fresh locals once; a constructor validation call preserves the zero-step
-    /// error before any iteration. Bound range values and other iterators keep their distinct existing paths.
+    /// error before any iteration. A single inline range expression retains its own bounds and inclusivity rather than
+    /// being cast to an integer. Bound range values and other iterators keep their distinct existing paths.
     fn builtin_range_loop_source(
         &mut self,
         expr: &ast::Spanned<ast::Expr>,
@@ -707,6 +746,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         if args.is_empty() || args.len() > 3 || args.iter().any(|arg| !matches!(arg, ast::CallArg::Positional(_))) {
             return Err("unsupported builtin range argument binding".into());
+        }
+        if let [ast::CallArg::Positional(argument)] = args.as_slice()
+            && let Some(range) = self.inline_range_loop_source(argument, scope, out)
+        {
+            return Ok(Some(range));
         }
         let span = hir_span(expr.span);
         let int_ty = IncanType::Primitive(IncanPrimitiveType::Int);
@@ -1009,6 +1053,45 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) {
+        let loop_scope = self.new_scope(Some(scope), span);
+        let reads = |name: &str| count_reads_in_stmts(name, &for_stmt.body);
+        let item = self.declare_for_item_local(
+            &for_stmt.pattern,
+            item_ty,
+            loop_scope,
+            hir_span(for_stmt.pattern.span),
+            &reads,
+        );
+        self.lower_counting_iteration(
+            source,
+            item,
+            scope,
+            loop_scope,
+            span,
+            out,
+            |builder, loop_scope, stmts| {
+                builder.bind_for_pattern(&for_stmt.pattern, item_ty, item, loop_scope, &reads, stmts);
+                builder.lower_block_into(&for_stmt.body, loop_scope, stmts);
+                builder.insert_scope_drops(stmts, loop_scope);
+            },
+        );
+    }
+
+    /// Drive a checked range with one counter for statement loops and comprehension clauses alike.
+    /// The caller owns pattern binding and per-iteration cleanup; this boundary retains exhaustion and continue
+    /// actions.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_counting_iteration(
+        &mut self,
+        source: &RangeLoopSource,
+        item: bir::LocalId,
+        scope: bir::ScopeId,
+        loop_scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+        body_fn: impl FnOnce(&mut Self, bir::ScopeId, &mut Vec<bir::Statement>),
+    ) {
+        // ---- Counter storage and loop entry ----
         let int_ty = IncanType::Primitive(IncanPrimitiveType::Int);
         let start_operand = match source {
             RangeLoopSource::Header { start, .. } => start.clone(),
@@ -1026,35 +1109,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             span,
         });
 
-        let loop_scope = self.new_scope(Some(scope), span);
         // `for` never produces a value from `break` (same reasoning as `while` -- see `Self::lower_while`).
         self.loop_break_targets.push(None);
+        self.loop_scopes.push(loop_scope);
         self.loop_continue_actions.push(Vec::new());
         let mut body_stmts = Vec::new();
 
-        let cond = match source {
-            RangeLoopSource::Header { end, inclusive, .. } => {
-                let cmp_op = if *inclusive { bir::BinOp::Gt } else { bir::BinOp::Ge };
-                self.push_assign_temp(
-                    bir::Rvalue::BinaryOp(cmp_op, index_read(idx_local), index_read(*end)),
-                    IncanType::Primitive(IncanPrimitiveType::Bool),
-                    loop_scope,
-                    span,
-                    &mut body_stmts,
-                )
-            }
-            RangeLoopSource::Value(range) => {
-                self.range_value_stop_condition(range, idx_local, loop_scope, span, &mut body_stmts)
-            }
-            RangeLoopSource::Builtin(bounds) => self.builtin_range_stop_condition(
-                &bounds.end,
-                &bounds.step,
-                idx_local,
-                loop_scope,
-                span,
-                &mut body_stmts,
-            ),
-        };
+        // ---- Exhaustion before each item ----
+        let cond = self.counting_loop_stop_condition(source, idx_local, loop_scope, span, &mut body_stmts);
         let break_scope = self.new_scope(Some(loop_scope), span);
         body_stmts.push(bir::Statement {
             kind: bir::StatementKind::If {
@@ -1071,44 +1133,25 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             span,
         });
 
-        // `for _ in start..end` binds nothing and the range's own index already drives the loop, so it needs no
-        // per-iteration item local at all -- unlike the general path, where `IterNext` must still write the polled
-        // item somewhere for the poll itself to happen.
-        if !matches!(for_stmt.pattern.node, ast::Pattern::Wildcard) {
-            let item_local = self.declare_for_item_local(
-                &for_stmt.pattern,
-                item_ty,
-                loop_scope,
-                hir_span(for_stmt.pattern.span),
-                &|name| count_reads_in_stmts(name, &for_stmt.body),
-            );
-            body_stmts.push(bir::Statement {
-                kind: bir::StatementKind::Assign {
-                    place: bir::Place::from_local(item_local),
-                    rvalue: bir::Rvalue::Use(index_read(idx_local)),
-                },
-                span,
-            });
-            self.bind_for_pattern(
-                &for_stmt.pattern,
-                item_ty,
-                item_local,
-                loop_scope,
-                &|name| count_reads_in_stmts(name, &for_stmt.body),
-                &mut body_stmts,
-            );
-        }
+        // ---- Item binding and continued iteration ----
+        body_stmts.push(bir::Statement {
+            kind: bir::StatementKind::Assign {
+                place: bir::Place::from_local(item),
+                rvalue: bir::Rvalue::Use(index_read(idx_local)),
+            },
+            span,
+        });
 
         let increment = self.range_increment_steps(source, idx_local, loop_scope, span);
         if let Some(actions) = self.loop_continue_actions.last_mut() {
             *actions = increment;
         }
-        self.lower_block_into(&for_stmt.body, loop_scope, &mut body_stmts);
-        self.insert_scope_drops(&mut body_stmts, loop_scope);
+        body_fn(self, loop_scope, &mut body_stmts);
         if let Some(actions) = self.loop_continue_actions.last() {
             body_stmts.extend(actions.iter().cloned());
         }
         self.loop_break_targets.pop();
+        self.loop_scopes.pop();
         self.loop_continue_actions.pop();
 
         out.push(bir::Statement {
@@ -1120,6 +1163,33 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             },
             span,
         });
+    }
+
+    /// Retain exhaustion from the selected range's scalar bounds, validated step, or materialized layout.
+    fn counting_loop_stop_condition(
+        &mut self,
+        source: &RangeLoopSource,
+        index: bir::LocalId,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        match source {
+            RangeLoopSource::Header { end, inclusive, .. } => {
+                let comparison = if *inclusive { bir::BinOp::Gt } else { bir::BinOp::Ge };
+                self.push_assign_temp(
+                    bir::Rvalue::BinaryOp(comparison, index_read(index), index_read(*end)),
+                    IncanType::Primitive(IncanPrimitiveType::Bool),
+                    scope,
+                    span,
+                    out,
+                )
+            }
+            RangeLoopSource::Value(range) => self.range_value_stop_condition(range, index, scope, span, out),
+            RangeLoopSource::Builtin(bounds) => {
+                self.builtin_range_stop_condition(&bounds.end, &bounds.step, index, scope, span, out)
+            }
+        }
     }
 
     /// Declare the local each produced item of a `for` loop is written into.
@@ -1239,6 +1309,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Option dispatch and, for a fallible poll, checked [`bir::StatementKind::TryPropagate`] routing. No backend
     /// resolves a user hook from its spelling.
     ///
+    /// Only the checker's structural protocol record selects hook calls. Builtin iterator values keep builtin polling,
+    /// including when standard trait declarations are loaded.
+    ///
     /// A fallible loop's header `?` marks polling, so its inner expression is materialized without a second Result
     /// unwrap. An ordinary Result-valued iterable still goes through normal expression propagation. Hook receivers
     /// use their checked modes; a builtin loop that changes an item in place borrows the actual initializer
@@ -1257,10 +1330,42 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
         body_fn: impl FnOnce(&mut Self, bir::ScopeId, &mut Vec<bir::Statement>),
     ) {
+        match self.retained_range_loop_source(iter_expr, outer_scope, out) {
+            Ok(Some(source)) => {
+                self.lower_counting_iteration(&source, pattern_local, outer_scope, loop_scope, span, out, body_fn);
+                return;
+            }
+            Err(reason) => {
+                self.push_unsupported_stmt(reason, span, out);
+                return;
+            }
+            Ok(None) => {}
+        }
+        self.lower_nonrange_iteration(iter_expr, pattern_local, outer_scope, loop_scope, span, out, body_fn);
+    }
+
+    /// Poll a nonrange source using its checked native, source, or builtin collection iteration protocol.
+    /// Special collection adapters retain the same pattern callback and exclusive receiver adjustments.
+    #[allow(clippy::too_many_arguments)]
+    fn lower_nonrange_iteration(
+        &mut self,
+        iter_expr: &ast::Spanned<ast::Expr>,
+        pattern_local: bir::LocalId,
+        outer_scope: bir::ScopeId,
+        loop_scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+        body_fn: impl FnOnce(&mut Self, bir::ScopeId, &mut Vec<bir::Statement>),
+    ) {
         let protocol = self.type_info.protocol_iteration(iter_expr.span).cloned();
         let fallible = protocol.as_ref().is_some_and(|p| p.fallible_error_type.is_some());
         // The private hook table also covers opaque SDK Iterator returns whose legacy view stays builtin.
-        let custom = protocol.is_some()
+        let custom = self
+            .type_info
+            .rust
+            .iteration_hooks
+            .contains_key(&(iter_expr.span.start, iter_expr.span.end))
+            || protocol.is_some()
             || self
                 .type_info
                 .protocols
@@ -1308,6 +1413,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
         // ---- Poll before each iteration body ----
         self.loop_break_targets.push(None);
+        self.loop_scopes.push(loop_scope);
         self.loop_continue_actions.push(Vec::new());
         let mut body_stmts = Vec::new();
 
@@ -1342,6 +1448,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         body_fn(self, loop_scope, &mut body_stmts);
         self.retain_in_place_iteration_bindings(&mut body_stmts, pattern_local);
         self.loop_break_targets.pop();
+        self.loop_scopes.pop();
         self.loop_continue_actions.pop();
         // A builtin loop whose body changes its item in place iterates the list exclusively, as legacy's `iter_mut`.
         if !custom && !taking && self.body_changes_item_in_place(&body_stmts, pattern_local) {
@@ -1369,7 +1476,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 .and_then(|local| self.locals.get(local.index()))
                 .is_some_and(|local| local.name.is_none())
     }
-    /// Select only a canonically checked direct enumeration of a list; a stored enumeration remains its own value.
+    /// Select a canonical direct enumeration of a source list or an iterable with checked native hooks; a stored
+    /// enumeration remains its own value.
     fn enumerated_loop_source<'expr>(
         &self,
         expr: &'expr ast::Spanned<ast::Expr>,
@@ -1398,7 +1506,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let [ast::CallArg::Positional(source)] = args.as_slice() else {
             return None;
         };
-        collection_member_types(&self.resolve_ty(source.span), CollectionTypeId::List)?;
+        if !self
+            .type_info
+            .rust
+            .iteration_hooks
+            .contains_key(&(source.span.start, source.span.end))
+        {
+            collection_member_types(&self.resolve_ty(source.span), CollectionTypeId::List)?;
+        }
         Some(source)
     }
 
@@ -1413,8 +1528,38 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             && !matches!(elements[1], IncanType::Unknown)
     }
 
-    /// Poll a direct enumeration's original list and retain its index as explicit scalar state. Pattern components
-    /// bind the produced element itself when changed, rather than a materialized tuple's snapshot of it.
+    /// Materialize a native enumeration source through its checked hooks; source lists retain their shared initializer.
+    #[allow(clippy::too_many_arguments)]
+    fn initialize_enumeration_source(
+        &mut self,
+        source: &ast::Spanned<ast::Expr>,
+        native: bool,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> Result<(bir::LocalId, usize), String> {
+        if native {
+            return self
+                .initialize_general_iterator(source, source.span, true, scope, span, out)
+                .map(|(iterator, initializer, _taking)| (iterator, initializer));
+        }
+        let source_ty = self.resolve_ty(source.span);
+        let source_place = self.lower_expr_to_place(source, scope, out);
+        let iterator = self.new_temp(source_ty, scope, span);
+        let initializer = out.len();
+        out.push(bir::Statement {
+            kind: bir::StatementKind::Assign {
+                place: bir::Place::from_local(iterator),
+                rvalue: bir::Rvalue::Use(bir::Operand::place(source_place, bir::OwnershipFact::Borrow, false)),
+            },
+            span,
+        });
+        Ok((iterator, initializer))
+    }
+
+    /// Poll a direct enumeration's original list or checked native iterable and retain its index as explicit scalar
+    /// state. Pattern components bind the produced element itself when changed, rather than a materialized tuple's
+    /// snapshot of it.
     #[allow(clippy::too_many_arguments)]
     fn lower_enumerated_iteration(
         &mut self,
@@ -1427,9 +1572,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         body_fn: impl FnOnce(&mut Self, bir::ScopeId, &mut Vec<bir::Statement>),
     ) {
         // ---- Source storage and enumeration state ----
-        let source_ty = self.resolve_ty(source.span);
-        let source_place = self.lower_expr_to_place(source, outer_scope, out);
-        let iterator = self.new_temp(source_ty, outer_scope, span);
+        let native = self
+            .type_info
+            .rust
+            .iteration_hooks
+            .contains_key(&(source.span.start, source.span.end));
+        let (iterator, initializer) = match self.initialize_enumeration_source(source, native, outer_scope, span, out) {
+            Ok(initialized) => initialized,
+            Err(reason) => {
+                self.push_unsupported_stmt(reason, span, out);
+                return;
+            }
+        };
         let index_ty = IncanType::Primitive(IncanPrimitiveType::Int);
         let index = self.new_temp(index_ty.clone(), outer_scope, span);
         out.push(bir::Statement {
@@ -1439,22 +1593,24 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             },
             span,
         });
-        let initializer = out.len();
-        out.push(bir::Statement {
-            kind: bir::StatementKind::Assign {
-                place: bir::Place::from_local(iterator),
-                rvalue: bir::Rvalue::Use(bir::Operand::place(source_place, bir::OwnershipFact::Borrow, false)),
-            },
-            span,
-        });
         let pattern_span = self.locals[pattern_local.index()].span;
         let element_ty = tuple_element_types(&self.locals[pattern_local.index()].ty, 2)[1].clone();
         let element = self.new_temp(element_ty, loop_scope, pattern_span);
         let current_index = self.new_temp(index_ty, loop_scope, pattern_span);
 
         // ---- One produced element and its pre-advance index ----
-        let mut stmts = vec![
-            bir::Statement {
+        self.loop_break_targets.push(None);
+        self.loop_scopes.push(loop_scope);
+        self.loop_continue_actions.push(Vec::new());
+        let mut stmts = Vec::new();
+        if native {
+            if let Err(reason) =
+                self.lower_checked_iteration_poll(source.span, iterator, element, false, loop_scope, span, &mut stmts)
+            {
+                self.push_unsupported_stmt(reason, span, &mut stmts);
+            }
+        } else {
+            stmts.push(bir::Statement {
                 kind: bir::StatementKind::IterNext {
                     destination: bir::Place::from_local(element),
                     iterator: bir::Operand::place(
@@ -1465,7 +1621,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     protocol: bir::IterProtocol::Builtin,
                 },
                 span,
-            },
+            });
+        }
+        stmts.extend([
             bir::Statement {
                 kind: bir::StatementKind::Assign {
                     place: bir::Place::from_local(current_index),
@@ -1484,18 +1642,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 },
                 span,
             },
-        ];
-        self.loop_break_targets.push(None);
-        self.loop_continue_actions.push(Vec::new());
+        ]);
 
         // ---- Checked pattern bindings and source ownership ----
         body_fn(self, loop_scope, &mut stmts);
         self.remap_enumerated_bindings(&mut stmts, pattern_local, current_index, element);
         self.retain_in_place_iteration_bindings(&mut stmts, element);
-        if self.body_changes_item_in_place(&stmts, element) {
+        if !native && self.body_changes_item_in_place(&stmts, element) {
             borrow_iterable_exclusively(&mut out[initializer]);
         }
         self.loop_break_targets.pop();
+        self.loop_scopes.pop();
         self.loop_continue_actions.pop();
         out.push(bir::Statement {
             kind: bir::StatementKind::Loop {
@@ -1762,6 +1919,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.poll_zip_source(&left, first, loop_scope, span, &mut stmts);
         self.poll_zip_source(&right, second, loop_scope, span, &mut stmts);
         self.loop_break_targets.push(None);
+        self.loop_scopes.push(loop_scope);
         let advances = self.zip_range_advances([&left, &right], loop_scope, span);
         self.loop_continue_actions.push(advances);
 
@@ -1780,6 +1938,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             stmts.extend(advances.iter().cloned());
         }
         self.loop_break_targets.pop();
+        self.loop_scopes.pop();
         self.loop_continue_actions.pop();
         out.push(bir::Statement {
             kind: bir::StatementKind::Loop {
@@ -1850,6 +2009,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             },
         ];
         self.loop_break_targets.push(None);
+        self.loop_scopes.push(loop_scope);
         self.loop_continue_actions.push(Vec::new());
 
         // ---- Checked value bindings and mutable value storage ----
@@ -1860,6 +2020,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             borrow_iterable_exclusively(&mut stmts[1]);
         }
         self.loop_break_targets.pop();
+        self.loop_scopes.pop();
         self.loop_continue_actions.pop();
         out.push(bir::Statement {
             kind: bir::StatementKind::Loop {

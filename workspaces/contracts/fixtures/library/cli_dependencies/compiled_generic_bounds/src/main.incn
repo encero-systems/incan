@@ -1,4 +1,4 @@
-# behavior: inferred and declared bounds of generic functions, inherent methods and trait defaults survive a package boundary, and the methods a dependency's models get from the traits they adopt are callable by a consumer that imports the models but not the traits, so the dependency and its concrete consumer build and run
+# behavior: compiled library traits and bounds survive a package boundary: inferred and declared bounds of generic functions, inherent methods and trait defaults, and the methods a dependency's models get from the traits they adopt, are callable by a consumer that imports the models but not the traits, and library trait defaults call their concrete compiled methods and preserve mutable receivers
 # expect-stdout:
 #   1
 #   first
@@ -8,17 +8,15 @@
 #   5
 #   4
 #   3
+#   <linked>
+#   second
+#   second
 
-from pub::bounds import Holder, Lookup, Selector, first, apply
+from generic_bounds import run_generic_bounds
+from trait_slot import run_trait_slot
 
 
 def main() -> None:
-    holder = Holder[int](value=1)
-    println(holder.get())
-    println(holder.first(["first", "second"]))
-    println(first([2, 3]))
-    println(Selector(id=1).pick(["picked"]))
-    println(Selector(id=5).plain())
-    println(Selector(id=5).required())
-    println(apply((value) => value + 1, 3))
-    println(len(Lookup(key="bad").describe((value) => value)))
+    """Run each compiled-library observation in the order of the cases it carries."""
+    run_generic_bounds()
+    run_trait_slot()

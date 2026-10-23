@@ -1,6 +1,9 @@
-# behavior: contextual negative literals survive direct returns and same module calls
+# behavior: contextual negative literals retain i128 minimum, f32 and f64 carriers through direct returns and same-module calls
 # expect-stdout:
 #   -170141183460469231731687303715884105728
+#   -170141183460469231731687303715884105728
+#   -1.0
+#   -2.0
 
 
 """Contextual negative literals survive direct returns and same module calls."""
@@ -32,3 +35,6 @@ def called_f64() -> f64:
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(direct_minimum())
+    println(called_minimum())
+    println(direct_f32())
+    println(called_f64())

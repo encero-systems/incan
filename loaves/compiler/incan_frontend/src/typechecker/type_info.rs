@@ -18,6 +18,7 @@ use incan_lang::interop::{CoercionPolicy, RustFunctionSig};
 use incan_lang::lang::builtins::BuiltinFnId;
 use incan_lang::lang::c_abi::{LinkCapabilityId, ScalarTypeId, link_capability_as_str, scalar_type_as_str};
 use incan_lang::lang::surface::string_methods::StringMethodId;
+use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeCategory};
 use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
 use incan_semantics_core::{
     CanonicalStableDeclarationContext, CanonicalSymbolId, CompilerNodeId, IncanCallableParam, IncanCallableParamKind,
@@ -755,6 +756,9 @@ impl TraitArtifacts {
 /// Derive expansion metadata imported from dependency modules and manifests.
 #[derive(Debug, Default, Clone)]
 pub struct DerivationArtifacts {
+    /// Exact exported derive macro paths inspected from declared native dependencies. These authorize forwarding
+    /// the macro to rustc, never an assumed layout change, generated method, or trait implementation.
+    pub native_macro_paths: HashSet<String>,
     /// RFC 024: Imported derivable modules keyed by source module path, such as `yaml` or `formats.yaml`.
     ///
     /// Values are the trait names listed in the module's `__derives__` metadata. Lowering consumes this so
@@ -844,6 +848,10 @@ pub struct ExpressionArtifacts {
     /// (`box.count = small` for an `i8` value and an `int` field). Lowering wraps such a value in the `Some` layers
     /// the destination adds and widens it to the numeric type the destination holds.
     pub value_destination_types: HashMap<(usize, usize), ResolvedType>,
+    /// Explicitly admitted numeric conversions keyed by the complete boundary expression span. Unlike ordinary
+    /// lossless destination adaptation, these facts authorize a source conversion that compatibility alone rejects.
+    /// Body IR materializes the selected destination through its ordinary numeric assignment machinery.
+    pub numeric_conversion_destinations: HashMap<(usize, usize), ResolvedType>,
     /// Spans of `dict.get(key)` calls whose result is only read, so no copy of the stored value is needed.
     ///
     /// `get` answers with `Option[V]` on every dict. A lookup whose result feeds a `match` or `if let` that only reads
@@ -940,6 +948,41 @@ pub(crate) struct BodyIrNewtypeConstantValue {
 /// Rust interop decisions that must be preserved exactly across lowering.
 #[derive(Debug, Default, Clone)]
 pub struct RustInteropArtifacts {
+    /// Structural native storage keyed by the original checked type. Diagnostic displays are opaque RustInteropPath
+    /// keys; consumers never parse or complete them.
+    pub storage_types: HashMap<IncanType, IncanType>,
+    /// Declaration-order native binders and defaults used while the accepting checker freezes native storage.
+    pub owner_parameters: HashMap<String, Vec<(String, Option<ResolvedType>)>>,
+    /// Native by-value receiver calls whose nongeneric owner has an unconditional metadata-selected Copy
+    /// implementation. The adapter verifies that capability against the exact linked native layout.
+    pub copy_receivers: HashMap<(usize, usize), String>,
+    /// Public native field layouts selected during checking. Hidden fields remain absent from metadata and the
+    /// adapter refuses incomplete layouts before any construction or projection is emitted.
+    pub checked_layouts: HashMap<String, RustCheckedLayout>,
+    /// Complete native enum payload templates selected by constructor patterns, keyed by the public owner path.
+    pub checked_enums: HashMap<String, RustCheckedEnum>,
+    /// Public Rust constants selected from metadata, keyed by their complete value-expression span.
+    pub checked_constants: HashMap<(usize, usize), String>,
+    /// Resolved Rust callees with closed native arguments and signatures, keyed by the complete call span.
+    /// Body IR consumes these records without resolving source spellings or inferring foreign types again.
+    pub checked_calls: HashMap<(usize, usize), RustCheckedCall>,
+    /// Checked native argument adaptations, including dereference calls and owned payload storage constructors,
+    /// keyed by argument expression span. Body IR emits these exact steps before the source call.
+    pub argument_adjustments: HashMap<(usize, usize), Vec<RustCheckedCall>>,
+    /// Metadata-selected shared dereference steps before a native public field read, keyed by the field expression.
+    /// Field identity and payload remain in their ordinary checked-field facts.
+    pub field_adjustments: HashMap<(usize, usize), Vec<RustCheckedCall>>,
+    /// Exact native values of public field expressions before source collection and scalar projection.
+    pub field_values: HashMap<(usize, usize), RustCheckedFieldValue>,
+    /// Safe closed native functions selected as values, keyed by the read span rather than an application span.
+    /// Their signatures share call publication while their value role never supplies a call's result provenance.
+    pub checked_function_values: HashMap<(usize, usize), RustCheckedCall>,
+    /// Closed native iteration calls selected from IntoIterator and Iterator facts at the iterable's span.
+    pub iteration_hooks: HashMap<(usize, usize), RustIterationHooks>,
+    /// Native result item selected for each local binding, even when its source type projects to str or a collection.
+    pub value_item_paths: HashMap<CanonicalSymbolId, String>,
+    /// Native carriers of Rust-derived local values before source reference and collection projection.
+    pub value_native_types: HashMap<CanonicalSymbolId, ResolvedType>,
     /// Validated synchronous diverging Rust import calls, keyed by full call span. Body IR alone consumes the
     /// selected foreign path; legacy reference identities and Rust emission facts remain unchanged (#1698).
     pub(crate) body_ir_diverging_import_calls: HashMap<(usize, usize), Vec<String>>,
@@ -1035,6 +1078,88 @@ pub struct RustInteropArtifacts {
     /// this artifact so direct async Rust calls still realize to their output type without reintroducing import-time
     /// extraction or relying on stale symbol metadata.
     pub async_call_realizations: HashSet<(usize, usize)>,
+    /// Metadata-selected IntoFuture conversions keyed by the await operand's span; Body IR emits each once before
+    /// suspension.
+    pub await_conversions: HashMap<(usize, usize), RustCheckedCall>,
+    /// Transparent rusttype aliases with their native owner template and source type parameters.
+    pub type_aliases: HashMap<String, (Vec<String>, ResolvedType)>,
+}
+
+/// A metadata-selected native struct layout, generic over its declaring type parameters.
+#[derive(Debug, Clone)]
+pub struct RustCheckedLayout {
+    /// An unconditional native Copy implementation retained with the owner, independent of which module uses it.
+    pub is_copy: bool,
+    /// Declared type binders; lifetime arguments carry no layout and are absent.
+    pub type_parameters: Vec<String>,
+    /// Ordered public field names and exact native type templates.
+    pub fields: Vec<CallableParam>,
+    /// Canonical field targets minted with the same owner as the retained layout.
+    pub field_identities: Vec<CanonicalSymbolId>,
+}
+
+/// A public field's native carrier and item identity before source type projection.
+#[derive(Debug, Clone)]
+pub struct RustCheckedFieldValue {
+    /// Instantiated native field type, including references and type arguments.
+    pub native_type: ResolvedType,
+    /// Public native item selected from metadata, when the field has a nominal carrier.
+    pub item_path: Option<String>,
+}
+
+/// A complete native enum layout selected from metadata; declaration binders remain open until storage is closed.
+#[derive(Debug, Clone)]
+pub struct RustCheckedEnum {
+    /// Type binders in native declaration order, excluding lifetimes.
+    pub type_parameters: Vec<String>,
+    /// Ordered variant names, exact native payload templates and named-field slots, before match ergonomics adds
+    /// references.
+    pub variants: Vec<(String, Vec<ResolvedType>, Vec<String>)>,
+}
+
+/// A metadata-selected Rust call, retaining the signature and receiver passing mode the checker admitted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RustCheckedCall {
+    /// Fully qualified structural signature, published by the accepting checker before Body IR construction.
+    pub storage: Option<RustCheckedSignature>,
+    /// Source declaration binders active when this native call was admitted, independently of nominal spellings.
+    pub source_type_parameters: Vec<String>,
+    /// Flat, checked Deref/DerefMut callees evaluated on the receiver before written ordinary arguments.
+    pub receiver_adjustments: Vec<RustCheckedCall>,
+    /// Public item path of the selected free function or associated function.
+    pub path: String,
+    /// Native type arguments in the Rust declaration's order, including impl arguments for a method.
+    pub type_arguments: Vec<ResolvedType>,
+    /// Instantiated parameters; a method's receiver is first, including its reference mode.
+    pub parameters: Vec<CallableParam>,
+    /// The checked instantiated result type.
+    pub return_type: ResolvedType,
+    /// Native result's nominal item before source scalar or collection projection, when metadata names one.
+    pub result_item_path: Option<String>,
+    /// Whether the source receiver is a value passed in the first parameter slot.
+    pub has_receiver: bool,
+}
+
+/// Native call storage and source nominal owners selected in the checker's declaration environment.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RustCheckedSignature {
+    /// Native argument types, including the receiver's exact reference mode.
+    pub parameters: Vec<IncanType>,
+    /// Native result before source boundary conversions.
+    pub return_type: IncanType,
+    /// Native type arguments in declaration order.
+    pub type_arguments: Vec<IncanType>,
+    /// Exact source owners backing identity-encoded storage leaves.
+    pub identities: BTreeMap<String, CanonicalSymbolId>,
+}
+
+/// Native iteration retains both calls independently of the written expression's call facts.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RustIterationHooks {
+    /// Consuming conversion that materializes iterator storage once.
+    pub iter: RustCheckedCall,
+    /// Exclusive poll whose Option payload defines the loop item's carrier.
+    pub next: RustCheckedCall,
 }
 
 /// Reference leaves selected for one generic argument of a mutable imported Rust type.
@@ -1073,18 +1198,26 @@ pub struct DeclarationArtifacts {
     /// Body IR-only native derive paths after checked RFC 024 module and trait expansion. Descriptor is omitted
     /// because its checked structural opt-in has no native macro; legacy keeps consuming `model_derives` unchanged.
     pub body_ir_model_derives: HashMap<String, Vec<String>>,
+    /// Declaration spans of `@rust.extern` functions whose Rust item is an exported attribute macro, with its
+    /// canonical path. Such a declaration names a macro that rustc applies to an item; it has no callable body to
+    /// delegate to.
+    pub native_attribute_externs: HashMap<(usize, usize), String>,
+    /// Declaration spans of functions that apply exported attribute macros through their decorators, with each
+    /// application in written order. The providing Loaf's facts select the macro; the written arguments are kept.
+    pub native_attribute_applications: HashMap<(usize, usize), Vec<incan_semantics_core::body_ir::NativeAttribute>>,
+    /// Canonical explicit native derives selected for newtypes; automatic derives remain construction facts.
+    pub body_ir_newtype_derives: HashMap<String, Vec<String>>,
     /// The same native derive selection for source classes, whose automatic derives match a model's.
     pub class_derives: HashMap<String, Vec<String>>,
     /// Serde derives a source class's trait adoptions imply, directly or through a supertrait, keyed by class name.
     ///
     /// A class retains the plain native derives besides these; legacy emission forwards the same selection.
     pub class_adoption_derives: HashMap<String, Vec<String>>,
-    /// Source models whose `@rust.derive(...)` decorators name only Rust builtin derives, all of which
-    /// [`model_derives`](Self::model_derives) includes. A model naming any other derive macro is absent: that macro's
-    /// expansion is not part of its retained derives.
-    pub rust_builtin_derive_models: HashSet<String>,
-    /// Active module-scope nominal identities from source and package bindings, retained before lexical checker
-    /// context is discarded.
+    /// Source types whose `@rust.derive(...)` decorators are completely covered by their retained native selections.
+    /// Builtins and inspected exported derive macros retain their canonical targets; expansion predictions are absent.
+    pub rust_native_derive_types: HashSet<String>,
+    /// Active source and package nominal bindings and their canonical carrier keys, retained by the checker before
+    /// lexical context is discarded. Body IR copies this proof without rebuilding a name table.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
     /// Active compiler-owned native nominal bindings for Body IR only. Legacy continues to consume the ordinary
     /// nominal table; a real source binding under the same spelling cannot authorize this foreign ABI.
@@ -1601,6 +1734,8 @@ pub struct NewtypeConstructionInfo {
     pub checked_constructor: Option<String>,
     /// Exact declaration identity of `checked_constructor`, when source provenance is available.
     pub checked_constructor_identity: Option<CanonicalSymbolId>,
+    /// Checked hook signature available to consumers even when its declaration span belongs to another module.
+    pub checked_constructor_binding: Option<FunctionBindingInfo>,
     /// Compiler-generated constrained-primitive predicates used when no checked constructor exists.
     pub constraints: Vec<NewtypePrimitiveConstraint>,
     /// Whether ordinary implicit construction from the underlying value is allowed.
@@ -2001,6 +2136,8 @@ pub enum ResolvedMethodDispatch {
 /// `__iter__` and `__next__` hooks at its iterable's span, leaves the facts of the call written there as they were.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct CallSiteFacts {
+    checked_rust_call: Option<RustCheckedCall>,
+    checked_rust_function_value: Option<RustCheckedCall>,
     body_ir_reexport_call: Option<BodyIrReexportCallInfo>,
     body_ir_string_slice_member: Option<CanonicalSymbolId>,
     inferred_constructor_type: Option<ResolvedType>,
@@ -2217,6 +2354,8 @@ pub enum ValidatedNewtypeCoercionMode {
 pub struct ValidatedNewtypeCoercionStep {
     /// Newtype being constructed by this step.
     pub newtype_name: String,
+    /// Checker-selected declaration owning the tuple storage, including a signature-only imported newtype.
+    pub owner_identity: Option<CanonicalSymbolId>,
     /// Canonical validation hook to call. `None` means direct newtype wrapping is sufficient.
     pub ctor: Option<String>,
     /// Exact source declaration selected for `ctor`, when the hook has compiler-owned identity metadata.
@@ -2391,27 +2530,51 @@ impl TypeCheckInfo {
     ) -> SemanticFactStore {
         let module_identity = semantic_module_identity(module_path);
         let mut facts = Vec::new();
+        let declarations = self.semantic_reference_declarations();
+        self.record_semantic_type_facts(&module_identity, &mut facts);
+        Self::record_semantic_declaration_facts(&module_identity, &declarations, &mut facts);
+        self.record_semantic_reference_facts(&module_identity, &declarations, &mut facts);
+        self.record_semantic_iteration_facts(&module_identity, &declarations, &mut facts);
+        self.record_semantic_registry_facts(&module_identity, package_identity, &mut facts);
+        facts.sort();
+        let mut store = SemanticFactStore::new();
+        for fact in facts {
+            store.insert(fact);
+        }
+        store
+    }
 
+    /// Retain the checker's expression and function types without resolving source syntax a second time.
+    fn record_semantic_type_facts(&self, module_identity: &str, facts: &mut Vec<SemanticFact>) {
         for (&span, ty) in &self.expressions.expr_types {
             facts.push(SemanticFact::new(
-                CompilerNodeId::expression_span(&module_identity, span.0, span.1),
+                CompilerNodeId::expression_span(module_identity, span.0, span.1),
                 SemanticFactKind::Type,
-                SemanticFactValue::semantic_type(semantic_type_from_resolved(ty)),
+                SemanticFactValue::semantic_type(self.semantic_type(ty)),
             ));
         }
 
         for (&span, target) in &self.expressions.source_targets {
             facts.push(SemanticFact::new(
-                CompilerNodeId::expression_span(&module_identity, span.0, span.1),
+                CompilerNodeId::expression_span(module_identity, span.0, span.1),
                 SemanticFactKind::SymbolTarget,
                 SemanticFactValue::source_target(semantic_source_target_from_typecheck(target)),
             ));
         }
+        for (name, binding) in &self.declarations.function_bindings {
+            facts.push(SemanticFact::new(
+                CompilerNodeId::declaration(module_identity, name),
+                SemanticFactKind::Type,
+                SemanticFactValue::semantic_type(
+                    self.qualify_semantic_type(semantic_type_from_function_binding(binding)),
+                ),
+            ));
+        }
+    }
 
-        // Relationship ownership is projected once beside the existing identity facts. Execution and inspection
-        // consume this shared product; neither reconstructs owners from its own syntax traversal.
-        let declarations = self
-            .declarations
+    /// Select physical checked declarations that can own references; generated members retain their nominal owner.
+    fn semantic_reference_declarations(&self) -> BTreeSet<&CanonicalSymbolId> {
+        self.declarations
             .declaration_identities
             .values()
             .chain(self.declarations.member_declaration_identities.values())
@@ -2429,11 +2592,19 @@ impl TypeCheckInfo {
                         | SemanticSourceTargetKind::Other(_)
                 )
             })
-            .collect::<std::collections::BTreeSet<_>>();
-        for identity in &declarations {
+            .collect()
+    }
+
+    /// Record declaration identities and the containing owner required by a field or enum variant.
+    fn record_semantic_declaration_facts(
+        module_identity: &str,
+        declarations: &BTreeSet<&CanonicalSymbolId>,
+        facts: &mut Vec<SemanticFact>,
+    ) {
+        for identity in declarations {
             facts.push(SemanticFact::new(
                 CompilerNodeId::declaration_span(
-                    &module_identity,
+                    module_identity,
                     identity.declaration_span.start,
                     identity.declaration_span.end,
                 ),
@@ -2449,7 +2620,7 @@ impl TypeCheckInfo {
             ) {
                 facts.push(SemanticFact::new(
                     CompilerNodeId::declaration_span(
-                        &module_identity,
+                        module_identity,
                         identity.declaration_span.start,
                         identity.declaration_span.end,
                     ),
@@ -2458,7 +2629,13 @@ impl TypeCheckInfo {
                 ));
             }
         }
+    }
 
+    /// Give nested bindings stable owner-relative ordinals without using process-local scope identifiers.
+    fn stable_declaration_contexts(
+        &self,
+        declarations: &BTreeSet<&CanonicalSymbolId>,
+    ) -> BTreeMap<CanonicalSymbolId, CanonicalStableDeclarationContext> {
         let mut stable_context_groups = BTreeMap::<
             (CanonicalSymbolId, SymbolNamespace, SemanticSourceTargetKind, String),
             BTreeSet<CanonicalSymbolId>,
@@ -2499,18 +2676,26 @@ impl TypeCheckInfo {
                 }
             }
         }
+        stable_contexts
+    }
+
+    /// Project written references and nominal type leaves once for both dependency execution and inspection.
+    fn record_semantic_reference_facts(
+        &self,
+        module_identity: &str,
+        declarations: &BTreeSet<&CanonicalSymbolId>,
+        facts: &mut Vec<SemanticFact>,
+    ) {
+        let stable_contexts = self.stable_declaration_contexts(declarations);
         for (&span, identity) in &self.references.resolved_identities {
-            let subject = CompilerNodeId::expression_span(&module_identity, span.0, span.1);
-            facts.push(SemanticFact::new(
-                subject.clone(),
-                SemanticFactKind::ReferenceSpan,
-                SemanticFactValue::SourceSpan(incan_semantics_core::HirSourceSpan::new(span.0, span.1)),
-            ));
-            facts.push(SemanticFact::new(
-                subject.clone(),
-                SemanticFactKind::SymbolIdentity,
-                SemanticFactValue::canonical_identity(identity.clone()),
-            ));
+            let subject = CompilerNodeId::expression_span(module_identity, span.0, span.1);
+            Self::record_semantic_reference(
+                facts,
+                &subject,
+                incan_semantics_core::HirSourceSpan::new(span.0, span.1),
+                identity,
+                declarations,
+            );
             if let Some(context) = stable_contexts.get(identity) {
                 facts.push(SemanticFact::new(
                     subject.clone(),
@@ -2525,64 +2710,82 @@ impl TypeCheckInfo {
                     SemanticFactValue::canonical_identity(owner.clone()),
                 ));
             }
-            if let Some(owner) = incan_semantics_core::dependencies::closest_declaring_owner(
-                declarations.iter().copied(),
-                incan_semantics_core::HirSourceSpan::new(span.0, span.1),
-            ) {
-                facts.push(SemanticFact::new(
-                    subject,
-                    SemanticFactKind::ReferenceOwner,
-                    SemanticFactValue::canonical_identity(owner.clone()),
-                ));
-            }
         }
 
         for (&span, identities) in &self.expressions.expression_type_identities {
             let source_span = incan_semantics_core::HirSourceSpan::new(span.0, span.1);
             for (indices, identity) in identities {
-                let subject = CompilerNodeId::expression_type_component(&module_identity, span.0, span.1, indices);
-                facts.push(SemanticFact::new(
-                    subject.clone(),
-                    SemanticFactKind::ReferenceSpan,
-                    SemanticFactValue::SourceSpan(source_span),
-                ));
-                facts.push(SemanticFact::new(
-                    subject.clone(),
-                    SemanticFactKind::SymbolIdentity,
-                    SemanticFactValue::canonical_identity(identity.clone()),
-                ));
-                if let Some(owner) = incan_semantics_core::dependencies::closest_declaring_owner(
-                    declarations.iter().copied(),
-                    source_span,
-                ) {
-                    facts.push(SemanticFact::new(
-                        subject,
-                        SemanticFactKind::ReferenceOwner,
-                        SemanticFactValue::canonical_identity(owner.clone()),
-                    ));
-                }
+                let subject = CompilerNodeId::expression_type_component(module_identity, span.0, span.1, indices);
+                Self::record_semantic_reference(facts, &subject, source_span, identity, declarations);
             }
         }
+    }
 
-        for (name, binding) in &self.declarations.function_bindings {
+    /// Keep each synthetic iteration call's canonical target separate from the written iterable's call facts.
+    /// Dependency loading must see the selected defaults before Body IR lowers the loop into calls.
+    fn record_semantic_iteration_facts(
+        &self,
+        module_identity: &str,
+        declarations: &BTreeSet<&CanonicalSymbolId>,
+        facts: &mut Vec<SemanticFact>,
+    ) {
+        for (&(start, end), hooks) in &self.protocols.body_ir_iterations {
+            let span = incan_semantics_core::HirSourceSpan::new(start, end);
+            for (role, hook) in [("iter", &hooks.iter), ("next", &hooks.next)] {
+                let Some(identity) = &hook.canonical else {
+                    continue;
+                };
+                let subject = CompilerNodeId::protocol_call_span(module_identity, start, end, role);
+                Self::record_semantic_reference(facts, &subject, span, identity, declarations);
+            }
+        }
+    }
+
+    /// Attach one exact canonical target and its unique nearest owner, shared by written and synthetic references.
+    fn record_semantic_reference(
+        facts: &mut Vec<SemanticFact>,
+        subject: &CompilerNodeId,
+        span: incan_semantics_core::HirSourceSpan,
+        identity: &CanonicalSymbolId,
+        declarations: &BTreeSet<&CanonicalSymbolId>,
+    ) {
+        facts.push(SemanticFact::new(
+            subject.clone(),
+            SemanticFactKind::ReferenceSpan,
+            SemanticFactValue::SourceSpan(span),
+        ));
+        facts.push(SemanticFact::new(
+            subject.clone(),
+            SemanticFactKind::SymbolIdentity,
+            SemanticFactValue::canonical_identity(identity.clone()),
+        ));
+        if let Some(owner) =
+            incan_semantics_core::dependencies::closest_declaring_owner(declarations.iter().copied(), span)
+        {
             facts.push(SemanticFact::new(
-                CompilerNodeId::declaration(&module_identity, name),
-                SemanticFactKind::Type,
-                SemanticFactValue::semantic_type(semantic_type_from_function_binding(binding)),
+                subject.clone(),
+                SemanticFactKind::ReferenceOwner,
+                SemanticFactValue::canonical_identity(owner.clone()),
             ));
         }
+    }
 
+    /// Retain registry subjects from their checked declarations and the session's explicit package identity.
+    fn record_semantic_registry_facts(
+        &self,
+        module_identity: &str,
+        package_identity: Option<&str>,
+        facts: &mut Vec<SemanticFact>,
+    ) {
         for description in &self.registry.descriptions {
             let registry = match &description.registry {
-                RegistryDescriptionRegistry::Local { binding } => {
-                    CompilerNodeId::declaration(&module_identity, binding)
-                }
+                RegistryDescriptionRegistry::Local { binding } => CompilerNodeId::declaration(module_identity, binding),
                 RegistryDescriptionRegistry::Imported {
                     module_path, binding, ..
                 } => CompilerNodeId::declaration(&module_path.join("::"), binding),
             };
             facts.push(SemanticFact::new(
-                CompilerNodeId::declaration(&module_identity, &description.declaration_name),
+                CompilerNodeId::declaration(module_identity, &description.declaration_name),
                 SemanticFactKind::Registry,
                 SemanticFactValue::registry_entry(SemanticRegistryEntry {
                     registry,
@@ -2597,7 +2800,7 @@ impl TypeCheckInfo {
         for entry in &self.registry.explicit_entries {
             let (subject, subject_identity) = match entry.subject_kind {
                 SemanticRegistrySubjectKind::CompilationUnit => {
-                    (CompilerNodeId::module(&module_identity), module_identity.clone())
+                    (CompilerNodeId::module(module_identity), module_identity.to_owned())
                 }
                 SemanticRegistrySubjectKind::Package => {
                     let package_identity = package_identity
@@ -2613,7 +2816,7 @@ impl TypeCheckInfo {
                 subject,
                 SemanticFactKind::Registry,
                 SemanticFactValue::registry_entry(SemanticRegistryEntry {
-                    registry: CompilerNodeId::declaration(&module_identity, &entry.registry_name),
+                    registry: CompilerNodeId::declaration(module_identity, &entry.registry_name),
                     key: entry.key.clone(),
                     descriptor: entry.descriptor.clone(),
                     subject_kind: entry.subject_kind,
@@ -2621,19 +2824,108 @@ impl TypeCheckInfo {
                 }),
             ));
         }
-
-        facts.sort();
-
-        let mut store = SemanticFactStore::new();
-        for fact in facts {
-            store.insert(fact);
-        }
-        store
     }
 
     /// Return the resolved type recorded for the expression at `span`, if any.
     pub fn expr_type(&self, span: Span) -> Option<&ResolvedType> {
         self.expressions.expr_types.get(&(span.start, span.end))
+    }
+
+    /// Admit registry-owned task, race and synchronization carriers without granting an equal-spelled source owner
+    /// any SDK authority. Both checking and Body IR use this same provenance boundary.
+    pub(crate) fn runtime_owner_admitted(&self, id: surface_types::SurfaceTypeId) -> bool {
+        if !matches!(
+            surface_types::category(id),
+            SurfaceTypeCategory::AsyncTask | SurfaceTypeCategory::AsyncRace | SurfaceTypeCategory::AsyncSync
+        ) {
+            return false;
+        }
+        let Some(path) = surface_types::stdlib_module_path(id) else {
+            return false;
+        };
+        let path = path.split('.').map(str::to_owned).collect::<Vec<_>>();
+        let name = surface_types::as_str(id);
+        let Some(identity) = self
+            .declarations
+            .named_type_identities
+            .get(name)
+            .or_else(|| self.declarations.body_ir_native_type_identities.get(name))
+        else {
+            return true;
+        };
+        match &identity.origin {
+            SymbolOrigin::Module(owner) => owner == &path,
+            SymbolOrigin::Package { library, module_path } => {
+                library == "incan_stdlib_async" && module_path == &path[1..]
+            }
+            SymbolOrigin::RustCrate(owner) => surface_types::from_runtime_rust_path(&owner.join("::")) == Some(id),
+            _ => false,
+        }
+    }
+
+    /// Project a checked type without erasing its nominal owners. Carrier identities come only from the checker's
+    /// accepted bindings; an unresolved name remains unresolved rather than borrowing another module's declaration.
+    pub fn semantic_type(&self, ty: &ResolvedType) -> IncanType {
+        self.qualify_semantic_type(semantic_type_from_resolved(ty))
+    }
+
+    /// Retain checker-owned nominal heads and leaves after an active declaration's binders have been classified.
+    /// Body IR consumes this result directly and must not rebuild identities from normalized source names.
+    pub fn qualify_semantic_type(&self, ty: IncanType) -> IncanType {
+        match ty {
+            IncanType::Named(name) => {
+                let identity = self
+                    .declarations
+                    .named_type_identities
+                    .get(&name)
+                    .or_else(|| self.declarations.body_ir_native_type_identities.get(&name));
+                let Some(identity) = identity else {
+                    return IncanType::Named(name);
+                };
+                let Some(key) = incan_semantics_core::body_ir::nominal_carrier_key(identity) else {
+                    return IncanType::Named(identity.declaration_name.clone());
+                };
+                if self
+                    .declarations
+                    .named_type_identities
+                    .get(&key)
+                    .is_some_and(|binding| binding != identity)
+                {
+                    return IncanType::Unsupported("conflicting checked nominal carrier binding".into());
+                }
+                IncanType::Named(key)
+            }
+            IncanType::Generic { base, args } => match self.qualify_semantic_type(IncanType::Named(base)) {
+                IncanType::Named(base) => IncanType::Generic {
+                    base,
+                    args: args.into_iter().map(|ty| self.qualify_semantic_type(ty)).collect(),
+                },
+                refused => refused,
+            },
+            IncanType::Tuple(items) => {
+                IncanType::Tuple(items.into_iter().map(|ty| self.qualify_semantic_type(ty)).collect())
+            }
+            IncanType::Ref(inner) => IncanType::Ref(Box::new(self.qualify_semantic_type(*inner))),
+            IncanType::NativeArray { element, length } => IncanType::NativeArray {
+                element: Box::new(self.qualify_semantic_type(*element)),
+                length,
+            },
+            IncanType::RefMut(inner) => IncanType::RefMut(Box::new(self.qualify_semantic_type(*inner))),
+            IncanType::TypeToken(inner) => IncanType::TypeToken(Box::new(self.qualify_semantic_type(*inner))),
+            IncanType::Function {
+                mut params,
+                return_type,
+            } => {
+                for parameter in &mut params {
+                    parameter.ty = self.qualify_semantic_type(parameter.ty.clone());
+                }
+                IncanType::Function {
+                    params,
+                    return_type: Box::new(self.qualify_semantic_type(*return_type)),
+                }
+            }
+            ty => ty,
+        }
     }
 
     /// Return the final compiler-selected type of a binding introduced by an assignment statement.
@@ -2720,6 +3012,30 @@ impl TypeCheckInfo {
     /// [`DeclarationArtifacts::resolved_import_identities`].
     pub fn resolved_import_identity(&self, local_name: &str) -> Option<&CanonicalSymbolId> {
         self.declarations.resolved_import_identities.get(local_name)
+    }
+
+    /// Select the executable identity of a checked call while preserving a module binding's navigation identity.
+    /// A matching imported function refines that module binding; otherwise an existing selected target wins over a
+    /// validated reexport fallback. An absent call-site identity stays absent; only checking may publish a proven
+    /// import selection at a successful call site. Source shadows never inherit an import's authority.
+    pub fn resolved_call_identity<'a>(
+        &'a self,
+        name: &str,
+        span: Span,
+        reexport: Option<&'a CanonicalSymbolId>,
+    ) -> Option<&'a CanonicalSymbolId> {
+        let selected = self.resolved_identity(span);
+        let imported = self.resolved_import_identity(name);
+        match (selected, imported) {
+            (Some(module), Some(function))
+                if module.kind == SemanticSourceTargetKind::Module
+                    && function.kind == SemanticSourceTargetKind::Function
+                    && module.origin == function.origin =>
+            {
+                Some(function)
+            }
+            _ => selected.or(reexport),
+        }
     }
 
     /// Return the name the declaring module binds an imported source symbol under, if resolution recorded it.
@@ -3333,6 +3649,8 @@ impl TypeCheckInfo {
     pub(crate) fn take_call_site_facts(&mut self, span: Span) -> CallSiteFacts {
         let key = (span.start, span.end);
         CallSiteFacts {
+            checked_rust_call: self.rust.checked_calls.remove(&key),
+            checked_rust_function_value: self.rust.checked_function_values.remove(&key),
             body_ir_reexport_call: self.calls.body_ir_reexport_calls.remove(&key),
             body_ir_string_slice_member: self.calls.body_ir_string_slice_members.remove(&key),
             inferred_constructor_type: self.calls.inferred_constructor_types.remove(&key),
@@ -3357,6 +3675,8 @@ impl TypeCheckInfo {
     /// Clear only direct-route hook facts between two synthetic resolutions, leaving legacy's probe state unchanged.
     pub(crate) fn clear_body_ir_call_site_facts(&mut self, span: Span) {
         let key = (span.start, span.end);
+        self.rust.checked_calls.remove(&key);
+        self.rust.checked_function_values.remove(&key);
         self.calls.body_ir_reexport_calls.remove(&key);
         self.calls.body_ir_string_slice_members.remove(&key);
         self.calls.body_ir_constructor_types.remove(&key);
@@ -3386,6 +3706,12 @@ impl TypeCheckInfo {
             }
         }
         let key = (span.start, span.end);
+        put(&mut self.rust.checked_calls, key, facts.checked_rust_call);
+        put(
+            &mut self.rust.checked_function_values,
+            key,
+            facts.checked_rust_function_value,
+        );
         put(&mut self.calls.body_ir_reexport_calls, key, facts.body_ir_reexport_call);
         put(
             &mut self.calls.body_ir_string_slice_members,
@@ -3612,9 +3938,9 @@ fn semantic_type_from_function_binding(binding: &FunctionBindingInfo) -> IncanTy
 
 /// Convert the current typechecker type universe into the backend-neutral Incan semantic type model.
 ///
-/// HIR and Body IR reuse this mapping for facts, locals and operands instead of duplicating conversion policy.
-/// Builtin tuple annotations and inferred tuple literals have one structural semantic shape, including inside
-/// carriers and callable signatures. Generic nominal types retain their checked generic identity.
+/// This converts structural shape and preserves source spellings, not nominal authority. Checked fact and Body IR
+/// consumers must use [`TypeCheckInfo::semantic_type`] so the accepting checker's nominal owners survive the
+/// boundary. Builtin tuple annotations and inferred tuple literals share one structural semantic shape.
 pub fn semantic_type_from_resolved(ty: &ResolvedType) -> IncanType {
     match ty {
         ResolvedType::Never => IncanType::Never,

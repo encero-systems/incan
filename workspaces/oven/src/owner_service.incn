@@ -1,0 +1,118 @@
+"""
+The resident owner process: `incan --internal-owner SOCKET GENERATION READY IDLE`.
+
+It listens on its private socket, tells the command that started it that it is ready, and then serves one request at a
+time, in order, until it is told to stop or has been idle for IDLE seconds. A request that cannot be read or understood
+is refused and the next one is served; the owner never runs a user's program, only prepares it.
+
+Idle retirement is a watchdog thread that is itself a client: every IDLE/4 seconds it asks the owner whether it has
+been idle for IDLE seconds, and the owner decides, so the thread shares no state with it.
+"""
+
+from rust::std::env import args
+from rust::std::process import id
+from rust::std::thread import sleep, spawn
+from rust::std::time import Duration
+from std.fs import Path
+from std.json import JsonValue
+from files import discard_file
+from observation import now_seconds, trace
+from owner_protocol import Connection, Reply, Request, dial, listen, reply_of, request_of
+from owner_state import Owner
+
+
+# The seconds a connected client has to send its request, and to take the reply.
+const READ_SECONDS: u64 = 5
+const WRITE_SECONDS: u64 = 10
+
+
+pub def serve_owner(arguments: list[str]) -> Result[i32, str]:
+    """
+    Run an owner until it retires. Returns its exit code.
+
+    1. Listen on the owner's socket.
+    2. Tell the command that started this owner that it is ready, and start the idle watchdog.
+    3. Serve one client at a time until a request retires the owner.
+    4. Remove the socket.
+    """
+    if len(arguments) != 4:
+        return Err("an owner takes SOCKET GENERATION READY IDLE")
+    socket = arguments[0]
+    generation = arguments[1]
+    idle = int(arguments[3])
+    # 1. The owner's socket is private to the user, and a client that connects is served in the order it arrives.
+    mut listener = listen(socket, true)?
+    # 2. The command that started this owner learns it is ready, and the watchdog starts asking whether it is idle.
+    announce(arguments[2], generation)?
+    # The watchdog lives until the owner exits, so its thread is never joined.
+    _ = spawn(() => watchdog())
+    # 3. One client is served at a time, and a request that retires the owner ends the loop.
+    mut owner = Owner(generation=generation, last_served=now_seconds())
+    mut retiring = false
+    while not retiring:
+        match listener.accept():
+            Err(reason) => trace(f"owner: {reason}")
+            Ok(connection) => retiring = serve_connection(owner, connection, idle)
+    # 4. The socket goes with the owner, so the next command finds none and starts a fresh owner.
+    discard_file(Path(socket))
+    return Ok(0)
+
+
+def announce(ready: str, generation: str) -> Result[None, str]:
+    """Tell the command that started this owner that it is listening, so it can connect."""
+    mut connection = dial(ready)?
+    connection.send(Reply(status="ready", generation=generation, pid=id()).to_json())?
+    return Ok(None)
+
+
+def serve_connection(mut owner: Owner, connection: Connection, idle: int) -> bool:
+    """Read one request and answer it. Whether the owner retires."""
+    mut served = connection
+    served.wait_at_most(READ_SECONDS)
+    served.write_at_most(WRITE_SECONDS)
+    reply = answer(owner, served.receive(), idle)
+    served.send_quietly(reply.to_json())
+    return reply.status == "retiring"
+
+
+def answer(mut owner: Owner, received: Result[JsonValue, str], idle: int) -> Reply:
+    """The reply to what was read: a refusal when it was not a request, else the owner's answer."""
+    match received:
+        Err(reason) => return Reply(status="refused", generation=owner.generation, reason=reason)
+        Ok(document) =>
+            match request_of(document):
+                Err(reason) => return Reply(status="refused", generation=owner.generation, reason=reason)
+                Ok(request) => return owner.handle(request, idle)
+
+
+def watchdog() -> None:
+    """Ask the owner, now and then, whether it has been idle long enough to retire. Ends when the socket is gone."""
+    mut arguments: list[str] = []
+    for argument in args():
+        arguments.append(argument)
+    socket = arguments[2]
+    generation = arguments[3]
+    mut every = int(arguments[5]) // 4
+    if every < 1:
+        every = 1
+    mut waited = 0
+    while true:
+        sleep(Duration.from_secs(1))
+        waited += 1
+        if waited >= every:
+            waited = 0
+            if not asked_whether_idle(socket, generation):
+                return
+
+
+def asked_whether_idle(socket: str, generation: str) -> bool:
+    """Put the idle question to the owner; false when nobody answers at that socket any more."""
+    match dial(socket):
+        Err(_) => return false
+        Ok(connection) =>
+            mut asking = connection
+            asking.wait_at_most(READ_SECONDS)
+            # The question only proves an owner is listening; the owner itself decides whether to retire.
+            asking.send_quietly(Request(command="idle", generation=generation).to_json())
+            asking.discard_reply()
+            return true

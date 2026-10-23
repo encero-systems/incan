@@ -6,7 +6,7 @@ type: design-decision
 date: 2026-10-19
 review_target: v0.6
 sources:
-  - Maintainer discussion, 2026-10-19 (dev.8 fix stage)
+  - Maintainer discussion, 2026-10-19
   - https://github.com/encero-systems/incan/issues/2256
   - https://github.com/encero-systems/incan/issues/1698
   - DD-0004
@@ -20,44 +20,47 @@ sources:
 
 ## Context
 
-0.6.0-dev.8 removes the Rust source generator, so the direct route (DD-0004) is the only route from checked Incan to an executable. The generator compiled RFC 005 interop by spelling Rust tokens and letting rustc infer the rest. The direct route instead hands rustc a plan of exact types and exact callees, and today that plan covers Rust interop only partially:
-
-- A Rust value has no plan layout unless it is one of a few allowlisted native items (`axum` response and extractor carriers, the validation error, `FieldInfo`). A local of type `core::str::Utf8Error` or a field of type `std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, F>>>` refuses.
-- A call into a Rust crate other than a stdlib facet has no Body IR callee: `String::from_utf8_lossy`, `Arc::new`, `value.lock()` and a trait method on a Rust value refuse. Stdlib facet calls and Incan-declared externs already work.
-- No path calls a Rust value's `Display`, `Debug`, `Clone` or `PartialEq` implementation.
-
-The checker represents a Rust type as a display string, with generic arguments rendered inside it, and records Rust call facts for generated-code emission rather than the resolved callee.
+0.6.0-dev.8 removes the Rust source generator, so the direct route (DD-0004) is the only route from checked Incan to an executable. The generator compiled RFC 005 interop by spelling Rust tokens and letting rustc infer the rest. The direct route instead hands rustc a plan of exact types and exact callees. Before this record, that plan held a Rust value only for a few allowlisted native items, had no callee for a call into a Rust crate, and had no path to a Rust value's own trait implementations. The checker represented a Rust type as a display string.
 
 ## Decision
 
-Rust interop compiles on the direct route from checked facts alone, in three parts.
+Rust interop compiles on the direct route from checked facts alone. The facts come from rustc's metadata (DD-0009); the accepting checker freezes native storage and declaration identities, and Body IR copies those structural facts. Nothing is re-resolved from source spellings or display strings, and nothing is listed by hand.
 
-1. **Values.** Body IR carries a Rust type structurally: its item path and its type arguments, each argument an ordinary Body IR type. Each closed instantiation a program uses becomes one opaque plan declaration (no fields, no derives). The driver resolves the item through rustc (struct, enum or type alias), fills omitted defaulted type parameters from the item's own defaults (`HashMap`'s `S = RandomState`, `Arc`'s `A = Global`), and treats `std`, `core` and `alloc` as always available. Field access on an opaque Rust value is refused.
-2. **Calls.** The checker records the resolved Rust callee of every Rust call site it admits: a free function, an inherent associated function or method, or a trait method with its trait, together with the receiver's borrow mode and the explicit type arguments the checker inferred. Body IR lowers that record to a Rust callee; the driver resolves it and keeps its exact signature check. A call the checker cannot fully resolve refuses at the call site; nothing is re-resolved from source spellings.
-3. **Traits.** `Display`, `Debug`, `Clone` and equality on a Rust value call that value's own Rust implementation through rustc trait resolution, the same way the runtime's generic display helper does for type parameters.
+1. **Values.** Body IR carries a Rust type structurally: its item path and its type arguments, each an ordinary Body IR type. Each closed instantiation a program uses becomes one plan declaration. An item whose public fields or variants the facts expose has that layout, so public fields are readable, variants can be matched and constructed, and named construction infers the owner's type arguments. Any other item is opaque. Lifetime arguments are erased: rustc infers them.
+2. **Calls.** The checker records the resolved callee of every Rust call it admits (a free function, an inherent associated function or method, or a trait method with its trait), with the instantiated signature, the receiver's mode and the type arguments it inferred, using the same unifier as Incan calls. Inherent methods come before trait methods, as in Rust. Body IR carries that record; the lowering calls it through the external-call contract that Loaf calls use, and the driver keeps rustc's signature and predicate check. A call the checker cannot resolve refuses at the call site.
+3. **Traits.** `Display`, `Debug`, `Clone` and equality on a Rust value call that value's own Rust implementation through rustc trait resolution. Native Copy receivers require a checked implementation and adapter verification.
+4. **Futures and iteration.** A Rust value that implements `Future`, or `IntoFuture`, can be awaited; `await` yields its `Output`. A Rust value that implements `IntoIterator` can be iterated in loops and comprehensions; the element type is its `Item`.
+5. **Borrowed text and slices.** `str` and `[T]` behind a reference stay distinct from owned strings and lists, and become owned only where an owned value is required.
+
+Source models and newtypes may derive builtin traits or a dependency's inspected exported derive macro through `@rust.derive` or its `rust.module` facade. Rustc expands the selected macro on the actual declaration against the exact dependency artifacts; macro names grant no predicted layout, methods, or trait implementations.
+
+Native trait objects retain their principal identity, arguments, and declaration-ordered associated equalities. Rustc verifies object safety; auto traits require their own retained facts.
 
 ## Consequences
 
-- Programs using `from rust::... import ...` compile on the only remaining route; interop is no longer limited to stdlib facets and Incan-declared externs.
-- The checker's display-string Rust types remain for diagnostics; the structured form is built once at the Body IR boundary from checked facts, so no consumer parses a display.
-- The allowlisted native items become ordinary instances of part 1.
+- Programs using `from rust::... import ...` compile on the only remaining route, beyond the stdlib facets and Incan-declared externs.
+- The checker's display strings remain for diagnostics only; no consumer parses them.
+- The allowlisted native items are ordinary instances of part 1, and the handwritten method tables go away.
+- Compiler-owned runtime ABI contracts stay separate from third-party Rust facts.
 
 ## Non-goals
 
-- Field access, pattern matching on variants, or construction by fields of opaque Rust values.
-- Lifetime-generic Rust items and const-generic arguments.
+- Layouts with hidden fields, and construction of items whose fields are not all public.
+- Const-generic arguments.
+- Borrowed Rust types in Incan signatures and fields, and Rust statics, until a lifetime or storage contract exists.
 - Changing RFC 005's source surface.
+- Rust statics without a storage contract, borrowed aliases in source signatures/fields without retained lifetime contracts, and unsafe or unsupported calls without complete checked facts.
 
 ## Revisit condition
 
-Revisit when a consumer needs field or variant access on Rust values, or when rustc's metadata can supply the callee record directly.
+Revisit when a consumer needs layouts with hidden fields, or when a lifetime contract for borrowed Rust types in Incan signatures is designed.
 
 ## Provenance
 
-Derives from DD-0004 (the pinned driver), RFC 005 (Rust interop surface) and RFC 130 (Incan as a second front end to rustc). Supersedes nothing.
+Derives from DD-0004 (the pinned driver), DD-0009 (Rust facts), RFC 005 (Rust interop surface) and RFC 130 (Incan as a second front end to rustc). Supersedes nothing.
 
 ## References
 
 - [Issue #2256](https://github.com/encero-systems/incan/issues/2256)
 - [Issue #1698](https://github.com/encero-systems/incan/issues/1698)
-- DD-0004, RFC 005, RFC 130
+- DD-0004, DD-0009, RFC 005, RFC 130

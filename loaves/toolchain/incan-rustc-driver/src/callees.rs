@@ -5,6 +5,33 @@ use crate::plan::{Callee, CalleeKind};
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
+use rustc_middle::ty::fast_reject::SimplifiedType;
+
+/// Resolve a retained public module constant, inherent associated constant or unit-variant constructor. Inherent
+/// constants use the same metadata lookup as checking; statics and trait constants still require their own
+/// contracts, and a variant must belong to the exact public enum and expose a public constant constructor.
+pub fn constant(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
+    if let Ok(constant) = library_item(tcx, path, DefKind::Const { is_type_const: false }) {
+        return Ok(constant);
+    }
+    if let Some(constant) = crate::rust_facts::resolve(tcx, path, false)
+        .filter(|def| matches!(tcx.def_kind(*def), DefKind::AssocConst { .. }))
+    {
+        return Ok(constant);
+    }
+    let (owner, name) = path
+        .rsplit_once("::")
+        .ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
+    let owner = library_item(tcx, owner, DefKind::Enum)?;
+    enum_constructor(tcx, owner, name)
+        .filter(|constructor| {
+            matches!(
+                tcx.def_kind(*constructor),
+                DefKind::Ctor(_, rustc_hir::def::CtorKind::Const)
+            )
+        })
+        .ok_or_else(|| PlanError::UnknownCallee(path.into()))
+}
 
 /// Resolve a planned source name, canonical external path, or explicit runtime operation to its exact function.
 /// Explicit plan arguments are checked separately.
@@ -110,43 +137,107 @@ pub fn planned(tcx: TyCtxt<'_>, name: &str) -> Result<DefId, PlanError> {
         .ok_or_else(|| PlanError::UnknownCallee(name.into()))
 }
 
-/// Resolve a stdlib layout's crate item through public module children; a model layout names a struct and an enum
-/// layout names an enum, so `kind` is the item kind the plan declared.
+/// Resolve a compiled layout through public module children. Its exported item may be an alias of the native ADT;
+/// only rustc's type metadata can identify the struct or enum behind that alias.
 ///
 /// Each segment selects the public child of that name and the kind it must be: a module on the way, the declared
 /// kind at the end. A class with field defaults compiles a constructor function under its own name beside its struct,
 /// one in the value namespace and one in the type namespace, so a name alone does not select the layout.
 pub fn library_item(tcx: TyCtxt<'_>, path: &str, kind: DefKind) -> Result<DefId, PlanError> {
+    let reason = match kind {
+        DefKind::Enum => "Loaf layout names no public enum",
+        DefKind::Const { .. } => "Rust value names no public constant",
+        _ => "Loaf layout names no public struct",
+    };
+    public_item(tcx, path, &[kind], reason)
+}
+
+/// Resolve an opaque carrier's public type item without granting field or variant projections. An alias keeps its
+/// own metadata parameters; field-bearing queries use [`library_item`] to select the underlying ADT. A trait principal
+/// requires the native object constructor rather than a nominal `type_of` query and grants no field projection.
+pub fn native_type_item(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
+    public_item(
+        tcx,
+        path,
+        &[DefKind::Struct, DefKind::Enum, DefKind::TyAlias, DefKind::Trait],
+        "Loaf layout names no public type",
+    )
+}
+
+/// Walk one public module path, selecting a final item only from the caller's admitted namespace kinds.
+fn public_item(tcx: TyCtxt<'_>, path: &str, kinds: &[DefKind], reason: &str) -> Result<DefId, PlanError> {
     let unknown = || PlanError::Invalid {
         function: path.into(),
-        reason: match kind {
-            DefKind::Enum => "Loaf layout names no public enum",
-            _ => "Loaf layout names no public struct",
-        }
-        .into(),
+        reason: reason.into(),
     };
     let mut segments = path.split("::").peekable();
     let root = segments.next().ok_or_else(unknown)?;
-    let krate = tcx
-        .crates(())
-        .iter()
-        .find(|krate| tcx.crate_name(**krate).as_str() == root)
-        .ok_or_else(unknown)?;
-    let mut current = krate.as_def_id();
+    let mut current = crate::native_crates::root(tcx, root).ok_or_else(unknown)?;
     while let Some(segment) = segments.next() {
-        let wanted = if segments.peek().is_some() { DefKind::Mod } else { kind };
-        current = tcx
-            .module_children(current)
-            .iter()
-            .filter(|child| child.ident.name.as_str() == segment && child.vis.is_public())
-            .filter_map(|child| child.res.opt_def_id())
-            .find(|child| tcx.def_kind(*child) == wanted)
-            .ok_or_else(unknown)?;
+        if tcx.def_kind(current) != DefKind::Mod {
+            return Err(unknown());
+        }
+        let wanted = if segments.peek().is_some() {
+            &[DefKind::Mod]
+        } else {
+            kinds
+        };
+        current = public_layout_child(tcx, current, segment, wanted).ok_or_else(unknown)?;
     }
-    if tcx.def_kind(current) != kind {
+    if !kinds.contains(&tcx.def_kind(current)) {
         return Err(unknown());
     }
     Ok(current)
+}
+
+/// Resolve a public module item in its owning query domain. Local injected ADTs are HIR items; the external-only
+/// `module_children` query must never receive the current crate's definitions.
+fn public_layout_child(tcx: TyCtxt<'_>, module: DefId, name: &str, kinds: &[DefKind]) -> Option<DefId> {
+    if module.is_local() {
+        return tcx
+            .hir_crate_items(())
+            .free_items()
+            .map(|item| item.owner_id.to_def_id())
+            .filter(|def| {
+                tcx.parent(*def) == module
+                    && tcx.opt_item_name(*def).is_some_and(|symbol| symbol.as_str() == name)
+                    && tcx.visibility(*def).is_public()
+            })
+            .find_map(|def| admitted_layout_definition(tcx, def, kinds));
+    }
+    tcx.module_children(module)
+        .iter()
+        .filter(|child| child.ident.name.as_str() == name && child.vis.is_public())
+        .filter_map(|child| child.res.opt_def_id())
+        .find_map(|def| admitted_layout_definition(tcx, def, kinds))
+}
+
+/// Preserve an admitted item's own parameters before considering an alias's underlying ADT for field access.
+fn admitted_layout_definition(tcx: TyCtxt<'_>, definition: DefId, kinds: &[DefKind]) -> Option<DefId> {
+    if kinds.contains(&tcx.def_kind(definition)) {
+        return Some(definition);
+    }
+    kinds.iter().find_map(|kind| layout_definition(tcx, definition, *kind))
+}
+
+/// Read a public layout item's exact ADT definition, following a type alias through metadata without interpreting
+/// the export's spelling. A module segment and a nonalias ADT must retain their declared kind.
+fn layout_definition(tcx: TyCtxt<'_>, definition: DefId, expected: DefKind) -> Option<DefId> {
+    if tcx.def_kind(definition) == expected {
+        return Some(definition);
+    }
+    if tcx.def_kind(definition) != DefKind::TyAlias || !matches!(expected, DefKind::Struct | DefKind::Enum) {
+        return None;
+    }
+    let rustc_middle::ty::Adt(adt, _) = tcx
+        .type_of(definition)
+        .instantiate_identity()
+        .skip_normalization()
+        .kind()
+    else {
+        return None;
+    };
+    (tcx.def_kind(adt.did()) == expected).then_some(adt.did())
 }
 
 /// Walk only public module children, rejecting nonfunction callees before constructing MIR.
@@ -156,14 +247,17 @@ pub fn library_item(tcx: TyCtxt<'_>, path: &str, kind: DefKind) -> Result<DefId,
 /// struct while a call of `Class` itself selects the function. A trait path selects its declared associated function;
 /// concrete Self arguments and bounds remain subject to native signature validation.
 pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
+    if let Some(method) = path.strip_prefix("[]::") {
+        return primitive_function(tcx, SimplifiedType::Slice, method)
+            .ok_or_else(|| PlanError::UnknownCallee(path.into()));
+    }
+    if let Some(method) = path.strip_prefix("str::") {
+        return primitive_function(tcx, SimplifiedType::Str, method)
+            .ok_or_else(|| PlanError::UnknownCallee(path.into()));
+    }
     let mut segments = path.split("::").peekable();
     let root = segments.next().ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
-    let krate = tcx
-        .crates(())
-        .iter()
-        .find(|krate| tcx.crate_name(**krate).as_str() == root)
-        .ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
-    let mut current = krate.as_def_id();
+    let mut current = crate::native_crates::root(tcx, root).ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
     while let Some(segment) = segments.next() {
         let last = segments.peek().is_none();
         current = match tcx.def_kind(current) {
@@ -174,9 +268,9 @@ pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
                 .filter_map(|child| child.res.opt_def_id())
                 .find(|child| callee_path_step(tcx.def_kind(*child), last))
                 .ok_or_else(|| PlanError::UnknownCallee(path.into()))?,
-            DefKind::Struct | DefKind::Enum => {
-                inherent_function(tcx, current, segment).ok_or_else(|| PlanError::UnknownCallee(path.into()))?
-            }
+            DefKind::Struct | DefKind::Enum => inherent_function(tcx, current, segment)
+                .or_else(|| enum_constructor(tcx, current, segment))
+                .ok_or_else(|| PlanError::UnknownCallee(path.into()))?,
             DefKind::Trait => trait_function(tcx, current, segment).ok_or_else(|| PlanError::Unsupported {
                 function: path.into(),
                 reason: "the SDK trait publishes no method with this name".into(),
@@ -184,10 +278,33 @@ pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
             _ => return Err(PlanError::UnknownCallee(path.into())),
         };
     }
-    if !matches!(tcx.def_kind(current), DefKind::Fn | DefKind::AssocFn) {
+    if !matches!(
+        tcx.def_kind(current),
+        DefKind::Fn | DefKind::AssocFn | DefKind::Ctor(_, rustc_hir::def::CtorKind::Fn)
+    ) {
         return Err(PlanError::UnknownCallee(path.into()));
     }
     Ok(current)
+}
+
+/// Select the exact public constructor definition of a tuple or unit enum variant. The caller distinguishes
+/// function and constant constructors; named-field and non-exhaustive private constructors remain ineligible.
+pub(crate) fn enum_constructor(tcx: TyCtxt<'_>, owner: DefId, name: &str) -> Option<DefId> {
+    if tcx.def_kind(owner) != DefKind::Enum {
+        return None;
+    }
+    let variant = tcx
+        .adt_def(owner)
+        .variants()
+        .iter()
+        .find(|variant| variant.name.as_str() == name)?;
+    if variant.is_field_list_non_exhaustive() {
+        return None;
+    }
+    variant
+        .ctor
+        .map(|(_, constructor)| constructor)
+        .filter(|constructor| tcx.visibility(*constructor).is_public())
 }
 
 /// Whether a module child of this kind can be one step of a callee path: a module or a method's owner type on the way,
@@ -215,7 +332,28 @@ fn trait_function(tcx: TyCtxt<'_>, owner: DefId, name: &str) -> Option<DefId> {
 /// Select one public inherent associated function from the exact nominal owner. The caller instantiates the owner's
 /// type parameters separately before validating the signature.
 fn inherent_function(tcx: TyCtxt<'_>, owner: DefId, name: &str) -> Option<DefId> {
-    let mut found = tcx.inherent_impls(owner).iter().flat_map(|implementation| {
+    inherent_function_in(tcx, &owner_inherent_impls(tcx, owner), name)
+}
+
+/// Every inherent impl rustc's method lookup reaches for a nominal owner: the impls in its defining crate and the
+/// incoherent ones another crate attaches to it. `std::io::Error` is defined below `std`, which supplies its
+/// OS-backed constructors (`new`, `other`, `last_os_error`) as incoherent impls.
+pub fn owner_inherent_impls(tcx: TyCtxt<'_>, owner: DefId) -> Vec<DefId> {
+    let mut implementations = tcx.inherent_impls(owner).to_vec();
+    implementations.extend_from_slice(tcx.incoherent_impls(SimplifiedType::Adt(owner)));
+    implementations
+}
+
+/// Resolve a retained native slice or `str` method through the same primitive impl bucket rustc uses for method
+/// lookup. Only one public inherent declaration may select the callee; native arguments and predicates are verified
+/// later.
+fn primitive_function(tcx: TyCtxt<'_>, bucket: SimplifiedType, name: &str) -> Option<DefId> {
+    inherent_function_in(tcx, tcx.incoherent_impls(bucket), name)
+}
+
+/// Select one public inherent function from exact impl owners, refusing ambiguous same-named declarations.
+fn inherent_function_in(tcx: TyCtxt<'_>, implementations: &[DefId], name: &str) -> Option<DefId> {
+    let mut found = implementations.iter().flat_map(|implementation| {
         tcx.associated_item_def_ids(*implementation)
             .iter()
             .copied()
@@ -277,6 +415,7 @@ pub fn inferred_arguments(
 ///
 /// Trailing parameters the plan omits take the item's own defaults (`HashMap`'s `S = RandomState`, `Arc`'s
 /// `A = Global`), instantiated over the arguments before them, as rustc does for a written path.
+/// Lifetime parameters receive erased regions and never consume a retained type argument; const parameters refuse.
 pub fn arguments<'tcx>(
     tcx: TyCtxt<'tcx>,
     def: DefId,
@@ -289,29 +428,51 @@ pub fn arguments<'tcx>(
             reason: "generic argument count differs from metadata".into(),
         });
     }
-    let mut arguments = types
-        .iter()
-        .map(|ty| crate::types::native_type(tcx, ty).map(Into::into))
-        .collect::<Result<Vec<_>, _>>()?;
-    for index in types.len()..generics.count() {
-        let default = generics
-            .param_at(index, tcx)
-            .default_value(tcx)
-            .ok_or_else(|| PlanError::Invalid {
-                function: tcx.def_path_str(def),
-                reason: "omitted generic argument has no default".into(),
-            })?;
-        let preceding = tcx.mk_args(&arguments);
-        arguments.push(default.instantiate(tcx, preceding).skip_normalization());
+    let mut types = types.iter();
+    let mut arguments = Vec::new();
+    for index in 0..generics.count() {
+        let parameter = generics.param_at(index, tcx);
+        let argument = match parameter.kind {
+            rustc_middle::ty::GenericParamDefKind::Lifetime => tcx.lifetimes.re_erased.into(),
+            rustc_middle::ty::GenericParamDefKind::Type { .. } => match types.next() {
+                Some(ty) => crate::types::native_type(tcx, ty)?.into(),
+                None => parameter
+                    .default_value(tcx)
+                    .ok_or_else(|| PlanError::Invalid {
+                        function: tcx.def_path_str(def),
+                        reason: "omitted generic argument has no default".into(),
+                    })?
+                    .instantiate(tcx, tcx.mk_args(&arguments))
+                    .skip_normalization(),
+            },
+            rustc_middle::ty::GenericParamDefKind::Const { .. } => {
+                return Err(PlanError::Unsupported {
+                    function: tcx.def_path_str(def),
+                    reason: "native const arguments require a retained value contract".into(),
+                });
+            }
+        };
+        arguments.push(argument);
     }
     Ok(tcx.mk_args(&arguments))
 }
 
-/// Whether `written` arguments instantiate `def`: every parameter is written, or each omitted one has a default.
+/// Whether `written` type arguments instantiate `def`: lifetimes consume no slot, omitted types need defaults, and
+/// const arguments require a separate value contract.
 pub fn arity_admits(tcx: TyCtxt<'_>, def: DefId, written: usize) -> bool {
     let generics = tcx.generics_of(def);
-    written <= generics.count()
-        && (written..generics.count()).all(|index| generics.param_at(index, tcx).default_value(tcx).is_some())
+    let mut supplied = 0;
+    for index in 0..generics.count() {
+        let parameter = generics.param_at(index, tcx);
+        match parameter.kind {
+            rustc_middle::ty::GenericParamDefKind::Lifetime => continue,
+            rustc_middle::ty::GenericParamDefKind::Const { .. } => return false,
+            rustc_middle::ty::GenericParamDefKind::Type { .. } if supplied < written => supplied += 1,
+            rustc_middle::ty::GenericParamDefKind::Type { .. } if parameter.default_value(tcx).is_some() => {}
+            _ => return false,
+        }
+    }
+    supplied == written
 }
 
 /// Refuse an instantiation whose type arguments do not satisfy the callee's where-clauses, before any MIR exists.

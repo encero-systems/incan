@@ -1,0 +1,10 @@
+# behavior: a path dependency is available through its declared alias on the first run, and it calls its own aliased path dependency without the consumer declaring that one
+# expect-stdout:
+#   42
+
+from pub::cost import price
+
+
+def main() -> None:
+    """Print the price computed across both libraries."""
+    println(price())

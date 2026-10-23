@@ -1,5 +1,9 @@
-# behavior: a str literal and a str variable fill a Rust struct's String field and are handed to a Rust function taking a String by value, a str method result is handed to it too, a wrapper's str field is lent to a Rust function taking a borrowed text, and the variable and the wrapper are unchanged afterwards
+# behavior: Incan text keeps its owner across the String parameters of a local Rust crate: a str variable handed to a Rust method generic over Into[String] is encoded twice while the caller keeps it and once more at its last use, and a str literal and a str variable fill a Rust struct's String field and are handed to a Rust function taking a String by value, a str method result is handed to it too, a wrapper's str field is lent to a Rust function taking a borrowed text, and the variable and the wrapper are unchanged afterwards
 # expect-stdout:
+#   hello world
+#   HELLO WORLD
+#   hello world
+#   HELLO WORLD
 #   sketch_family
 #   literal
 #   NAME
@@ -9,14 +13,25 @@
 #   <tag>
 #   tag
 
-from rust::tiny_option import FunctionOption, describe, option_name, shout
+from rust::string_fixtures::into_method_helper import Tokenizer
+from rust::string_fixtures::tiny_option import FunctionOption, describe, option_name, shout
 
 pub const OPTION_NAME: str = "sketch_family"
 
 type Label = newtype str
 
 
-def main() -> None:
+def show_into_bound_variables() -> None:
+    tokenizer = Tokenizer.new()
+    text = "hello world"
+    println(tokenizer.encode(text, false))
+    println(tokenizer.encode(text, true))
+    println(text)
+    last = "hello world"
+    println(tokenizer.encode(last, true))
+
+
+def show_string_parameters() -> None:
     option = FunctionOption(name=OPTION_NAME, enabled=true)
     println(option_name(option))
     println(option_name(FunctionOption(name="literal", enabled=false)))
@@ -28,3 +43,8 @@ def main() -> None:
     label = Label("tag")
     println(describe(label.0))
     println(label.0)
+
+
+def main() -> None:
+    show_into_bound_variables()
+    show_string_parameters()

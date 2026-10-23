@@ -1,4 +1,4 @@
-# behavior: a Regex built with the constructor and the ignore_case flag matches case-insensitively, and an invalid pattern is refused with an error
+# behavior: Regex constructor flags, named and absent capture groups, and invalid pattern errors preserve their values
 # expect-stdout:
 #   true false
 #   refused
@@ -7,8 +7,16 @@ from std.regex import Regex, RegexError
 
 
 def build() -> Result[None, RegexError]:
+    """Check constructor flags and keep named and nonparticipating capture groups distinct."""
     regex = Regex("x+", ignore_case=true)?
     println(f"{regex.is_match("aXXb")} {regex.is_match("ab")}")
+    named = Regex("(?P<word>ab)(c)?")?
+    match named.captures("ab"):
+        Some(captures) =>
+            assert captures.group("word") == Some("ab")
+            assert captures.group(2) == None
+            assert len(captures.groupdict()) == 1
+        None => assert false
     return Ok(None)
 
 

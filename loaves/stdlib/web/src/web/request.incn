@@ -24,7 +24,7 @@ Example:
 """
 rust.module("incan_std_web")
 
-from rust::axum::extract import Query
+pub from rust::axum::extract import Query
 """
 `Query[T]` — extract URL query parameters (`?key=value&...`) into a typed struct.
 
@@ -45,7 +45,7 @@ Example:
     ```
 """
 
-from rust::axum::extract import Path
+pub from rust::axum::extract import Path
 """
 `Path[T]` — extract path parameters (`/users/{id}`) into a typed value or struct.
 

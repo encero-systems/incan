@@ -1,0 +1,54 @@
+# behavior: functions with type parameters retain imported iterator adoption, iter defaults and comprehensions, borrowed tuple items and native key queries
+# expect-stdout:
+#   checked
+#   checked
+#   checked
+#   checked
+#   checked
+
+from std.derives.collection import Iterator, ListIterator, ZipIterator
+from std.derives.copying import Clone
+from std.rust import Static
+from rust::incan_std_core::frozen import FrozenDict
+from rust::std::collections import BTreeMap
+
+
+def preserve[T with Clone, U with Clone](
+    values: ZipIterator[T, ListIterator[T], U, ListIterator[U]],
+) -> Iterator[tuple[T, U]]:
+    """Retain the iterator's state through its adopted default method."""
+    return values.iter()
+
+
+def pairs[T with (Clone, Static), U with (Clone, Static)](
+    values: ZipIterator[T, ListIterator[T], U, ListIterator[U]],
+) -> Generator[tuple[T, U]]:
+    """Draw the checked tuple item from the compiled iterator default."""
+    return (pair for pair in values.iter())
+
+
+def preserve_adopter[T with Clone](values: ListIterator[T]) -> Iterator[T]:
+    """Accept the imported adopter through its declared trait adoption."""
+    return values
+
+
+def inspect_tuple[T with Static](values: FrozenDict[T, int]) -> None:
+    """Keep the reference on each component of a borrowed iterator item."""
+    for value, index in values.iter():
+        retained: &T = value
+        position: &int = index
+
+
+def inspect_keys[T](values: &BTreeMap[str, T]) -> None:
+    """Infer each query from the native iterator's retained item type."""
+    for key in values.keys():
+        found = values.get(key)
+
+
+def main() -> None:
+    """Run after all five iterator declarations have checked."""
+    println("checked")
+    println("checked")
+    println("checked")
+    println("checked")
+    println("checked")

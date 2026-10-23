@@ -1,0 +1,49 @@
+"""Carry the attribute macros a declaration applies from Body IR into the plan, as written."""
+
+from rust::incan_semantics_core::body_ir import (
+    NativeAttribute as RustNativeAttribute,
+    NativeAttributeArgument as RustAttributeArgument,
+    NativeAttributeValue as RustAttributeValue,
+)
+from pub::incan_mir_plan import AttributeArgument, AttributeValue, NativeAttribute
+
+
+pub def native_attributes(attributes: &list[RustNativeAttribute]) -> list[NativeAttribute]:
+    """Copy each application's macro path and written arguments; rustc, not the plan, interprets them."""
+    mut result: list[NativeAttribute] = []
+    for attribute in attributes:
+        result.append(native_attribute(attribute))
+    return result
+
+
+def native_attribute(attribute: &RustNativeAttribute) -> NativeAttribute:
+    """One application: the macro's canonical path and its arguments in written order."""
+    mut arguments: list[AttributeArgument] = []
+    for argument in attribute.arguments.iter():
+        arguments.append(AttributeArgument(name=argument_name(argument), value=attribute_value(argument.value)))
+    return NativeAttribute(path=str(attribute.path), arguments=arguments)
+
+
+def argument_name(argument: &RustAttributeArgument) -> str:
+    """The keyword an argument was written under, or the empty name of a positional one."""
+    match argument.name.clone():
+        Some(name) => return str(name)
+        None => return ""
+
+
+def attribute_value(value: &RustAttributeValue) -> AttributeValue:
+    """One literal, or a list of them, in the plan's spelling."""
+    match value.clone():
+        RustAttributeValue.Text(text) => return AttributeValue.Text(str(text))
+        RustAttributeValue.Int(number) => return AttributeValue.Int(int(number))
+        RustAttributeValue.Float(number) => return AttributeValue.Float(float(number))
+        RustAttributeValue.Bool(flag) => return AttributeValue.Bool(flag)
+        RustAttributeValue.List(items) => return AttributeValue.List(attribute_values(items))
+
+
+def attribute_values(items: &list[RustAttributeValue]) -> list[AttributeValue]:
+    """The elements of one written list, each in the plan's spelling."""
+    mut elements: list[AttributeValue] = []
+    for item in items:
+        elements.append(attribute_value(item))
+    return elements

@@ -4,6 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
+use std::sync::Arc;
 
 use crate::ast::{ParamKind, Receiver, Span, Type, TypeConstraintKey};
 use incan_lang::interop::RustItemMetadata;
@@ -1517,8 +1518,8 @@ pub struct RustItemInfo {
     /// collector already built, joined with `::`).
     pub path: String,
     pub binding: RustImportBindingKind,
-    /// Optional extracted Rust semantic metadata (RFC 041).
-    pub metadata: Option<RustItemMetadata>,
+    /// Optional extracted Rust semantic metadata (RFC 041), shared with the lookup store and imported aliases.
+    pub metadata: Option<Arc<RustItemMetadata>>,
 }
 
 /// Kind of symbol
@@ -2014,7 +2015,7 @@ fn canonicalize_collection_type_names(ty: &mut ResolvedType) {
 }
 
 /// Return whether a resolved field type contains canonical Rust-path metadata at any nesting depth.
-fn resolved_type_contains_rust_path(ty: &ResolvedType) -> bool {
+pub(crate) fn resolved_type_contains_rust_path(ty: &ResolvedType) -> bool {
     match ty {
         ResolvedType::RustPath(_) => true,
         ResolvedType::FrozenList(inner)
@@ -2710,6 +2711,11 @@ pub fn render_resolved_type_as_rust_arg(ty: &ResolvedType) -> String {
         ResolvedType::Generic(name, args) => {
             if collections::from_str(name.as_str()) == Some(CollectionTypeId::Tuple) {
                 return render_rust_tuple(args);
+            }
+            if name == "[]"
+                && let [element] = args.as_slice()
+            {
+                return format!("[{}]", render_resolved_type_as_rust_arg(element));
             }
             let base = match collections::from_str(name.as_str()) {
                 Some(CollectionTypeId::List) => "Vec",

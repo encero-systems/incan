@@ -1144,6 +1144,9 @@ pub struct LibraryRustAbi {
     /// Canonical Rust item metadata keyed by `RustItemMetadata::canonical_path`.
     #[serde(default)]
     pub items: Vec<RustItemMetadata>,
+    /// Digest of the indexed `<name>.rustabi` asset containing dependency-owned native facts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_digest: Option<String>,
 }
 
 /// Default Rust ABI schema version for manifest payloads that predate explicit serde fields.
@@ -1162,6 +1165,7 @@ impl LibraryRustAbi {
         Some(Self {
             schema_version: RUST_ABI_SCHEMA_VERSION,
             items,
+            cache_digest: None,
         })
     }
 
@@ -1351,6 +1355,16 @@ pub struct NativeUnionExport {
     pub owner: NativeUnionOwnerExport,
     pub rust_name: String,
     pub members: Vec<TypeRef>,
+    /// Exact callable member signatures that own captured environments, in physical variant order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub closure_members: Vec<incan_semantics_core::IncanType>,
+    /// Producer-owned callable object aliases, ordered as `closure_members`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub closure_items: Vec<String>,
+    /// Checked union carrier before native payload ordering, retained by the native Loaf publisher. Nominal leaves
+    /// already encode their canonical declaration identities; consumers never derive a carrier from a Rust name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_type: Option<incan_semantics_core::IncanType>,
     /// Producer-local nominal bindings captured from checked declarations, without a self artifact digest.
     ///
     /// Keys are the producer's actual lowered spellings. Admission validates every canonical declaration against
@@ -1945,9 +1959,17 @@ impl LibraryManifest {
     /// however far the shape has moved. See #1339.
     pub fn from_json_str(content: &str) -> Result<Self, LibraryManifestError> {
         Self::require_supported_manifest_format(content)?;
-        let raw: RawLibraryManifest =
-            serde_json::from_str(content).map_err(|err| LibraryManifestError::Parse(err.to_string()))?;
-        validate_raw_manifest(&raw)?;
+        let raw: RawLibraryManifest = {
+            let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_frontend::decode_manifest_json", bytes = content.len()).entered();
+            serde_json::from_str(content).map_err(|err| LibraryManifestError::Parse(err.to_string()))?
+        };
+        {
+            let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_frontend::validate_manifest", loaf = %raw.name).entered();
+            validate_raw_manifest(&raw)?;
+        }
+        let _invocation =
+            tracing::trace_span!(target: "incan::invocation", "incan_frontend::convert_manifest", loaf = %raw.name)
+                .entered();
         raw.into_semantic()
     }
 

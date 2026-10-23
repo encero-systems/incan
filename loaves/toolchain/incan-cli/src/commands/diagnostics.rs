@@ -24,9 +24,13 @@ struct ExplainReport {
     entry: diagnostics::DiagnosticCatalogEntry,
 }
 
-/// Check one described unit and render its report.
-pub fn check(unit: &UnitDescription, format: DiagnosticOutputFormat) -> CliResult<ExitCode> {
-    render_check_report(incan_driver::check::check_unit(unit)?, format)
+/// Check one described unit, with its Rust facts from `rust`, and render its report.
+pub fn check(
+    unit: &UnitDescription,
+    rust: &incan_driver::session::RustFactsSetup,
+    format: DiagnosticOutputFormat,
+) -> CliResult<ExitCode> {
+    render_check_report(incan_driver::check::check_unit(unit, rust)?, format)
 }
 
 /// Print a catalog-backed diagnostic explanation.

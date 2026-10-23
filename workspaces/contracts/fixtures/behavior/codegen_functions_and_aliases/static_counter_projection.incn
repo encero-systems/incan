@@ -1,8 +1,14 @@
-# behavior: a public static is one value across its initializer, writes and reads, and public aliases of a function and a static call and read their targets
+# behavior: statics preserve writes and aliases; projected methods and field replacements use actual storage after argument effects
 # expect-stdout:
 #   1
 #   2
 #   2
+#   20
+#   3
+#   20
+#   8
+#   changed
+#   20
 
 pub static counter: int = 0
 
@@ -21,6 +27,41 @@ pub static total: int = 2
 pub tally = alias total
 
 
+enum Level(str):
+    """Give a projected enum receiver an observable method."""
+    INFO = "info"
+
+    def rank(self) -> int:
+        """Return the configured level's rank."""
+        return 20
+
+
+model Gauge:
+    """Expose shared and exclusive projected method receivers."""
+    value: int
+
+    def bump(mut self, amount: int) -> int:
+        """Change the gauge stored in its enclosing static."""
+        self.value += amount
+        return self.value
+
+
+model Config:
+    """Keep model and enum fields under one persistent root."""
+    gauge: Gauge
+    level: Level
+    label: str
+
+
+static config: Config = Config(gauge=Gauge(value=2), level=Level.INFO, label="initial")
+
+
+def replacement() -> str:
+    """Change a sibling field before the label replacement takes its guard."""
+    config.gauge.value = 8
+    return "changed"
+
+
 pub def summarize() -> int:
     return mean(total, tally)
 
@@ -29,3 +70,12 @@ def main() -> None:
     println(increment())
     println(increment())
     println(summarize())
+    println(config.level.rank())
+    println(config.gauge.bump(1))
+    println(config.level.rank())
+    config.gauge = Gauge(value=5)
+    config.label = replacement()
+    config.level = Level.INFO
+    println(config.gauge.value)
+    println(config.label)
+    println(config.level.rank())

@@ -26,7 +26,7 @@ def unboxed(child: Box[Node]) -> Node:
 
 def describe(child: Box[Node]) -> str:
     match child.as_ref():
-        Node(node) => return f"leaf {node.value}"
+        Node(value=leaf) => return f"leaf {leaf}"
 
 
 def main() -> None:

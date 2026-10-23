@@ -1,0 +1,6 @@
+from pub::selected import combined
+
+
+pub def value() -> int:
+    """Use the shared library through the second independently requested feature."""
+    return combined()

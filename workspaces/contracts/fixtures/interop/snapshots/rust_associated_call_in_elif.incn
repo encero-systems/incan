@@ -1,10 +1,16 @@
-# behavior: an imported Rust associated function call inside an elif branch runs like one in the if branch
+# behavior: imported Rust items are usable wherever Incan code names them: an imported Rust associated function call inside an elif branch runs like one in the if branch, an f32 literal coerces into an imported Rust Duration constructor and reads back as seconds (RFC 041), a constant read from an imported Rust module alias has its value, and a Rust extension trait imported without inspected metadata and never called leaves the program buildable and its functions runnable (#1450)
 # expect-stdout:
 #   true
 #   false
 #   false
+#   1.5
+#   3.141592653589793
+#   kept
 
-from rust::std::path import Path
+import rust::std::f64::consts as consts
+from rust::std::borrow import Borrow
+from rust::std::path import Path, PathBuf
+from rust::std::time import Duration
 
 
 def f(kind: str, output_uri: str) -> bool:
@@ -16,7 +22,32 @@ def f(kind: str, output_uri: str) -> bool:
         return false
 
 
-def main() -> None:
+pub def keep(value: PathBuf) -> PathBuf:
+    return value
+
+
+def show_elif_branch() -> None:
     println(f("a", "/"))
     println(f("b", "/definitely/not/a/directory"))
     println(f("c", "/"))
+
+
+def show_duration_coercion() -> None:
+    _d = Duration.from_secs_f32(1.5)
+    println(_d.as_secs_f32())
+
+
+def show_module_constant() -> None:
+    println(consts.PI)
+
+
+def show_unused_trait_import() -> None:
+    _ = keep(PathBuf.new())
+    println("kept")
+
+
+def main() -> None:
+    show_elif_branch()
+    show_duration_coercion()
+    show_module_constant()
+    show_unused_trait_import()

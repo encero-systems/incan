@@ -210,7 +210,8 @@ def main() -> None:
 - Each source module path, and each directory prefix of one, is a namespace: `src/hyperquant/index.incn` gives `pub::pkg.hyperquant` and `pub::pkg.hyperquant.index`.
 - A namespace exposes the `pub` declarations of its own module and of its immediate child modules. Deeper modules stay in their own namespaces.
 - Only `pub` declarations are exposed. Private declarations and imports are not.
-- A name that two modules of one namespace declare is ambiguous there, and importing or accessing it through that namespace is refused; the exact module path selects one.
+- A name that two child modules of one namespace declare is ambiguous there, and importing or accessing it through that namespace is refused; the exact module path selects one.
+- A name that the namespace's own module declares takes precedence over the same name in a child module: `std.compression.snappy.compress` is the framed codec although `std.compression.snappy.raw` declares `compress` too.
 - A declared member takes precedence over a child namespace with the same name.
 - At the package root, a re-export in `src/lib.incn` and a child namespace with the same name are ambiguous; the exact path selects one.
 

@@ -1,4 +1,4 @@
-# behavior: value enums backed by str and int expose their wire value and parse back from it, refusing unknown values (RFC 032)
+# behavior: value enums backed by str and int expose their wire value and parse back from it, refusing unknown values; variant aliases share canonical construction and matching (RFC 032, #2256)
 # expect-stdout:
 #   development
 #   production
@@ -14,11 +14,13 @@
 enum Env(str):
     Dev = "development"
     Prod = "production"
+    Default = alias Dev
 
 
 pub enum HttpStatus(int):
     Ok = 200
     NotFound = 404
+    Success = alias Ok
 
 
 def env_wire(env: Env) -> str:
@@ -37,7 +39,17 @@ def parse_status(value: int) -> Option[HttpStatus]:
     return HttpStatus.from_value(value)
 
 
+def is_default(env: Env) -> bool:
+    """Match a variant alias through its canonical physical variant."""
+    match env:
+        Env.Default => return true
+        _ => return false
+
+
 def main() -> None:
+    assert env_wire(Env.Default) == "development"
+    assert status_wire(HttpStatus.Success) == 200
+    assert is_default(Env.Dev)
     println(env_wire(Env.Dev))
     println(env_wire(Env.Prod))
     match parse_env("production"):

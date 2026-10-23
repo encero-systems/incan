@@ -1,0 +1,8 @@
+"""A consumer calling a function a sibling module re-exports under a further name."""
+
+from facade import b_calculate
+
+
+pub def run_renamed_export() -> None:
+    """Call the twice-renamed function by its final name."""
+    println(b_calculate(41))

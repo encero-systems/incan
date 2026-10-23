@@ -2,6 +2,14 @@
 
 The contract families say what `incan` must do, each case as a program that carries its own expectations. A table runner, written in Incan, runs every case against an `incan` and reports each one. Nothing in a case names a route, a backend or a build step: a case states what a user observes.
 
+## Budget
+
+The whole test suite stays under about 3,000 tests (#2255).
+- **New cases:** add one only when no existing case in the same area can carry the behavior. Otherwise, extend that case's program and expectations.
+- **Bugs:** a guarded bug is named in the case's `# behavior:` line. It never gets a case of its own when an area case can hold it.
+- **Library cases:** one producer Loaf per case, carrying every declaration the case needs.
+- **Folding:** passing cases in one area can be folded together without losing an expectation; failing and pending cases stay separate until they pass.
+
 ## Families
 
 | Family | Runs | Compares |
@@ -12,6 +20,8 @@ The contract families say what `incan` must do, each case as a program that carr
 | `interop` | as `behavior`, for programs that import through `rust::` | as `behavior` |
 | `testing` | `incan test tests/<name>.incn` | the per-test outcome lines, stderr, exit code |
 | `project` | `incan describe-unit src/main.incn` | the unit description's dependencies, standard packages and active features, or the refusal's stderr and exit code |
+| `format` | `incan fmt [--check] src/main.incn` | exact formatted text, check exit codes, check immutability and repeated-format stability |
+| `graph` | `incan inspect codegraph` for each `graph-commands:` entry | query output, repeated-query equality, JSON/JSONL agreement, edit-stable declaration identities and invalidation after source changes |
 
 ## Layout
 
@@ -26,7 +36,15 @@ workspaces/contracts/
 
 Every entry in an area is one of those shapes, and an empty area is refused. A family directory may hold a `README.md`; nothing else but areas. Hidden entries are skipped. Names are lowercase letters, digits and `_`, starting with a letter or `_`. A testing case is one file named `test_<subject>.incn`; it runs from the project's `tests/` directory. A library case is a project.
 
-The runner materializes each case as its own project in a scratch directory: a single-file or module case gets a minimal `loaf.toml` (`[project.scripts] main = "src/main.incn"`), a project case is copied as it is. The project is removed after the case, whatever its result.
+Each case gets its own working directory in scratch: a single-file or module case gets a minimal `loaf.toml` (`[project.scripts] main = "src/main.incn"`), and a project case is copied as it is. Compatible programs in `behavior` and `interop` share compilation in a generated project, with each program in its own module. The unit explicitly selects those modules' checked main identities. Canonical entry lowering handles synchronous, async, integer and Result entries, and rustc's standard `Termination` implementation reports the selected result. Each selected case still runs in a fresh process in its own working directory. The dispatcher emits nothing, and its selector does not appear in the program's arguments. A refused compilation, or one that emits output needing individual attribution, is split recursively; singleton cases use their original compilation path.
+
+Computed statics, decorators, entry setup effects, executable/source-path observations, diagnostic and acceptance checks, and project, library, testing, format and graph cases retain their original commands. `--isolated` disables shared compilation. A scratch file named `batch-<family>-refusals.tsv` lists each case kept isolated and its reason; `BATCH-SPLIT` lines identify refused combinations without assigning a failure to any individual case. Projects and shared binaries stay under scratch for Oven reuse; only changed inputs are rewritten, and every case executes afresh. Child invocations use one worker budget, defaulting to twelve; `--jobs N` sets it explicitly. Each child has a separate process group. `--timeout SECONDS` sets a deadline; zero, the default, disables it. A timeout kills the group, retains partial output and preserves a signal as distinct from an exit code. The runner retains Oven's per-unit compiled/reused reasons and counts shared builds once.
+
+`batch-<family>-groups.tsv` retains compilation boundaries after splitting. It contains case names, never test outcomes or compiler acceptance. A fresh partition coalesces successful groups where their combined compilation succeeds before executing any case. A repeat tries the retained groups with their current sources; Oven validates their current compilation inputs once, and every selected case executes again through Oven's ordinary process-status policy. Changed or newly selected cases are admitted again, and a group that stops compiling is split again. This avoids rediscovering unchanged incompatible combinations on every run.
+
+Compilation attempts use the same worker pool as case commands. Refused groups split in bounded waves, and selected cases from all successful groups share one execution queue. Run the families in one runner invocation to keep `--jobs` a global budget; independent runner processes each have their own budget.
+
+Full-family runs retain case-name partition hints under an explicit absolute `INCAN_HOME/cache/contract-groups-v1`, scoped to the canonical fixture root. A new scratch directory can use those partitions immediately. Oven validates each group's current compilation inputs, and every selected case executes. Partial-family selections retain only their local scratch plan. Missing or unusable hints trigger partition discovery; optional hint-storage errors preserve ordinary planning. `--no-group-hints` disables shared hints; combine it with fresh scratch to measure discovery. First discovery and fresh compilation with an existing hint are separate timing conditions.
 
 ## Header
 
@@ -45,7 +63,9 @@ The header is the unbroken run of `#` comment lines at the top of the program.
 | `# expect-dependencies:` | Exactly these dependencies, one `<key> <package>` per line; an empty block means none. |
 | `# expect-std-packages:` | Standard packages the unit must reach. |
 | `# expect-active-features:` | Exactly these active features; an empty block means none. |
+| `# expect-formatted:` | Exact formatted source, indented as a block. Required for a `format` file or project case. The header and its separating blank line are removed from the entry source before formatting; the expected text has one final newline. |
 | `# pending: <reason>` | The case does not hold yet, and why. A pending case that holds fails: its line is stale. |
+| `# graph-commands:` | Inspection arguments, one invocation per indented line, without `incan inspect codegraph`. Only the `graph` family admits this directive. Paths are relative to the fixture project. |
 
 A directive is `#`, one space, the key, a colon. Block lines follow their directive, each `#` and at least two spaces; the first line sets the indentation. A bare `#` inside a block is an empty line. A blank line or any other non-comment line ends the header, and a directive after it is refused. Every case declares at least one expectation its family compares; a family refuses the expectations it does not compare.
 
@@ -53,8 +73,10 @@ Output is compared as lines: `\n` ends a line, a trailing `\r` is dropped, a fin
 
 ## Running
 
+For `format`, the initial `--check` must exit 1 when the input differs from the expected text, otherwise 0; `expect-exit:` can state that initial code explicitly. Check mode must leave the file unchanged. Formatting must exit 0 and produce the exact expected text. Checking that output must exit 0, and formatting it again must succeed without changing it.
+
 ```bash
-incan run workspaces/contracts/src/main.incn -- INCAN workspaces/contracts/fixtures [--scratch DIR] [SELECTOR...]
+incan run workspaces/contracts/src/main.incn -- INCAN workspaces/contracts/fixtures [--scratch DIR] [--isolated] [--jobs N] [--timeout SECONDS] [SELECTOR...]
 ```
 
 A selector is `<family>`, `<family>/<area>` or `<family>/<area>/<name>`. The runner prints `PASS`, `FAIL` with each broken expectation, or `PEND` with its reason for every case, a summary per area and a total, and exits 1 when a case fails or a family cannot be read.

@@ -5,23 +5,24 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::api_metadata::ApiDeclaration;
+use crate::api_metadata::{ApiDeclaration, ApiFunction};
 use crate::ast::*;
 use crate::decorator_resolution;
 use crate::diagnostics::{CompileError, errors};
 use crate::symbols::{ResolvedType, SymbolKind, SymbolTable, TypeInfo};
-use crate::typechecker::TypeChecker;
 use crate::typechecker::derive_requirements::LocalDeriveFacts;
 use crate::typechecker::type_info::{
     CBindingBuffer, CBindingDescriptor, CBindingEnum, CBindingEnumVariant, CBindingOutcome, CBindingParameter,
     CBindingResource, CBindingStruct, CBindingStructField, CBindingSymbol, CBindingType, COutputMode, CResourceAccess,
 };
+use crate::typechecker::{ConstValue, TypeChecker};
 use incan_lang::lang::c_abi::{
     self, BindingArgumentId, BindingMemberId, LinkCapabilityId, ResourceArgumentId, ResourceTypeConstructorId,
     SymbolArgumentId, SymbolOutcomeArgumentId,
 };
 use incan_lang::lang::decorators::{self, DecoratorId};
 use incan_lang::lang::derives;
+use incan_semantics_core::body_ir::{NativeAttribute, NativeAttributeArgument, NativeAttributeValue};
 use incan_semantics_core::{
     CanonicalSymbolId, DecoratorFeature, HirSourceSpan, SemanticSourceTargetKind, SurfaceFeatureKey, SymbolNamespace,
     SymbolOrigin,
@@ -99,35 +100,132 @@ pub(in crate::typechecker) fn positional_derive_names(
 }
 
 impl TypeChecker {
+    /// Select an exported derive macro only from a declared crate's inspected facts. Forwarding to rustc does not
+    /// predict its expansion or grant any generated methods, layout, or implementation to the checker.
+    pub(in crate::typechecker) fn checked_native_derive_macro(&self, path: &str) -> Option<String> {
+        if !self.rust_derive_path_has_declared_crate(path) {
+            return None;
+        }
+        let metadata = self.rust_item_metadata_for_path(path)?;
+        let derivable = match &metadata.kind {
+            incan_lang::interop::RustItemKind::Macro(info) => info.is_derive(),
+            incan_lang::interop::RustItemKind::Trait(info) => info.derive_macro.is_some(),
+            _ => false,
+        };
+        derivable.then(|| metadata.canonical_path.clone())
+    }
+
     /// Return whether the Loaf owning this resolved path declares it as an extern-backed decorator function.
+    ///
+    /// The path names a public namespace, so a function declared in one of the namespace's source modules counts the
+    /// same way an import of that name would find it.
     pub(in crate::typechecker) fn provider_declares_decorator_function(&self, resolved: &[String]) -> bool {
-        let Some((function_name, module_path)) = resolved.split_last() else {
-            return false;
-        };
-        let Some((library, provider_module_path)) = self.loaf_module(module_path) else {
-            return false;
-        };
-        let Some(api) = self
-            .loaves
-            .manifest(&library)
-            .and_then(|manifest| manifest.contract_metadata.api.as_ref())
-        else {
-            return false;
-        };
-        api.modules
-            .iter()
-            .filter(|module| module.module_path == provider_module_path)
+        self.provider_decorator_function(resolved).is_some()
+    }
+
+    /// The extern-backed decorator function the Loaf owning this resolved path declares, from its published API.
+    fn provider_decorator_function(&self, resolved: &[String]) -> Option<&ApiFunction> {
+        let (function_name, module_path) = resolved.split_last()?;
+        let (library, provider_module_path) = self.loaf_module(module_path)?;
+        let manifest = self.loaves.manifest(&library)?;
+        Self::api_modules_for_public_namespace(manifest, &provider_module_path)
+            .into_iter()
             .flat_map(|module| module.declarations.iter())
-            .any(|declaration| {
-                let ApiDeclaration::Function(function) = declaration else {
-                    return false;
-                };
-                function.name == *function_name
-                    && function
-                        .decorators
-                        .iter()
-                        .any(|decorator| decorator.path.as_slice() == ["rust", "extern"])
+            .find_map(|declaration| match declaration {
+                ApiDeclaration::Function(function)
+                    if function.name == *function_name
+                        && function
+                            .decorators
+                            .iter()
+                            .any(|decorator| decorator.path.as_slice() == ["rust", "extern"]) =>
+                {
+                    Some(function)
+                }
+                _ => None,
             })
+    }
+
+    /// Record the native attribute macros a function's decorators apply (#2256).
+    ///
+    /// A decorator that resolves to a provider function whose published facts name an exported attribute macro is not
+    /// a call: rustc applies the macro to the declaration. The selection rests on that published fact alone, never on
+    /// the decorator's spelling. Arguments are retained as written literals; any other expression is refused, because
+    /// an attribute macro receives tokens and the checker will not guess an evaluation for them.
+    pub(in crate::typechecker) fn record_native_attribute_applications(
+        &mut self,
+        decorators: &[Spanned<Decorator>],
+        declaration: Span,
+    ) {
+        let mut applications = Vec::new();
+        for decorator in decorators {
+            let resolved = resolve_decorator_path(&decorator.node, &self.symbols);
+            let Some(path) = self
+                .provider_decorator_function(&resolved)
+                .and_then(|function| function.native_attribute.clone())
+            else {
+                continue;
+            };
+            let mut arguments = Vec::new();
+            for argument in &decorator.node.args {
+                match self.native_attribute_argument(argument) {
+                    Some(argument) => arguments.push(argument),
+                    None => {
+                        self.errors
+                            .push(errors::native_attribute_argument_unsupported(&path, decorator.span));
+                        return;
+                    }
+                }
+            }
+            applications.push(NativeAttribute { path, arguments });
+        }
+        if !applications.is_empty() {
+            self.type_info
+                .declarations
+                .native_attribute_applications
+                .insert((declaration.start, declaration.end), applications);
+        }
+    }
+
+    /// One written decorator argument as the literal value an attribute macro receives, or `None` for an expression.
+    fn native_attribute_argument(&self, argument: &DecoratorArg) -> Option<NativeAttributeArgument> {
+        let (name, value) = match argument {
+            DecoratorArg::Positional(value) => (None, value),
+            DecoratorArg::Named(name, DecoratorArgValue::Expr(value)) => (Some(name.clone()), value),
+            DecoratorArg::Named(_, DecoratorArgValue::Type(_)) => return None,
+        };
+        Some(NativeAttributeArgument {
+            name,
+            value: self.native_attribute_value(&value.node)?,
+        })
+    }
+
+    /// A literal, a constant with a literal value, or a list of them.
+    ///
+    /// An identifier that is not a constant with a known value stands for its own name, the spelling a hand-written
+    /// attribute uses for a method set such as `methods=[GET]`.
+    fn native_attribute_value(&self, expression: &Expr) -> Option<NativeAttributeValue> {
+        match expression {
+            Expr::Literal(Literal::String(text)) => Some(NativeAttributeValue::Text(text.clone())),
+            Expr::Literal(Literal::Int(value)) => Some(NativeAttributeValue::Int(value.value)),
+            Expr::Literal(Literal::Float(value)) => Some(NativeAttributeValue::Float(value.value)),
+            Expr::Literal(Literal::Bool(value)) => Some(NativeAttributeValue::Bool(*value)),
+            Expr::Ident(name) => Some(match self.type_info.const_value(name) {
+                Some(ConstValue::FrozenStr(text)) => NativeAttributeValue::Text(text.clone()),
+                Some(ConstValue::Int(value)) => NativeAttributeValue::Int(*value),
+                Some(ConstValue::Float(value)) => NativeAttributeValue::Float(*value),
+                Some(ConstValue::Bool(value)) => NativeAttributeValue::Bool(*value),
+                _ => NativeAttributeValue::Text(name.clone()),
+            }),
+            Expr::List(entries) => entries
+                .iter()
+                .map(|entry| match entry {
+                    ListEntry::Element(value) => self.native_attribute_value(&value.node),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()
+                .map(NativeAttributeValue::List),
+            _ => None,
+        }
     }
 
     /// Validate decorator paths for declarations that allow user-defined decorator candidates.
@@ -351,7 +449,7 @@ impl TypeChecker {
     }
 
     /// Return the Rust path imported for a local derive binding name.
-    fn rust_import_path_for_local_name(&self, name: &str) -> Option<String> {
+    pub(in crate::typechecker) fn rust_import_path_for_local_name(&self, name: &str) -> Option<String> {
         self.lookup_symbol(name).and_then(|symbol| match &symbol.kind {
             SymbolKind::RustItem(info) => Some(info.path.clone()),
             _ => None,
@@ -1807,14 +1905,6 @@ impl TypeChecker {
                 let DecoratorArg::Positional(expression) = argument else {
                     continue;
                 };
-                match self.classify_rust_derive_arg(&expression.node) {
-                    Some(derive) => {
-                        if !facts.rust_builtin_derives.contains(&derive) {
-                            facts.rust_builtin_derives.push(derive);
-                        }
-                    }
-                    None => facts.has_unclassified_rust_derive = true,
-                }
                 let path = match &expression.node {
                     Expr::Ident(name) => self.rust_import_path_for_local_name(name),
                     Expr::Literal(Literal::String(path)) if self.rust_derive_path_has_declared_crate(path) => {
@@ -1822,6 +1912,18 @@ impl TypeChecker {
                     }
                     _ => None,
                 };
+                match self.classify_rust_derive_arg(&expression.node) {
+                    Some(derive) => {
+                        if !facts.rust_builtin_derives.contains(&derive) {
+                            facts.rust_builtin_derives.push(derive);
+                        }
+                    }
+                    None if path.as_deref().is_some_and(|path| {
+                        matches!(path, "serde::Serialize" | "serde::Deserialize")
+                            || self.checked_native_derive_macro(path).is_some()
+                    }) => {}
+                    None => facts.has_unclassified_rust_derive = true,
+                }
                 if let Some(path) = path
                     && !paths.contains(&path)
                 {
@@ -1855,14 +1957,19 @@ impl TypeChecker {
             ),
             _ => return None,
         };
-        if !Self::is_builtin_rust_derive(&leaf) {
+        Self::builtin_rust_derive_path(path.as_deref().unwrap_or(&leaf))
+    }
+
+    /// Classify a bare builtin or an exact standard Rust derive path without confusing a dependency's same-named macro.
+    pub(in crate::typechecker) fn builtin_rust_derive_path(path: &str) -> Option<derives::DeriveId> {
+        let path = path.strip_prefix("rust::").unwrap_or(path);
+        if path.contains("::") && !path.starts_with("std::") && !path.starts_with("core::") {
             return None;
         }
-        let from_rust_std = path.as_deref().is_none_or(|path| {
-            let path = path.strip_prefix("rust::").unwrap_or(path);
-            path.starts_with("std::") || path.starts_with("core::")
-        });
-        from_rust_std.then(|| derives::from_str(&leaf)).flatten()
+        let leaf = path.rsplit("::").next()?;
+        Self::is_builtin_rust_derive(leaf)
+            .then(|| derives::from_str(leaf))
+            .flatten()
     }
 
     /// Extract `@requires` constraints from decorators as `(name, type)` pairs.

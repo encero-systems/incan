@@ -1,9 +1,13 @@
-# behavior: refuses corrupted enumerate iter next destinations in top level and deferred frames
+# behavior: enumerate retains tuple items in ordinary loops, generator functions, generator expressions, closures and default arguments
 # expect-stdout:
 #   1
+#   5
+#   0
+#   6
+#   7
 
 
-"""Refuses corrupted enumerate iter next destinations in top level and deferred frames."""
+"""Observe enumeration items in ordinary and deferred computations."""
 def top_level_enumerate_item() -> int:
   """Sum indices and values from a stored enumeration."""
   pairs = enumerate([1])
@@ -13,6 +17,47 @@ def top_level_enumerate_item() -> int:
   return total
 
 
+def generated_enumerate_item() -> Generator[int]:
+    """Yield the sum of each enumeration tuple."""
+    for generated_index, generated_value in enumerate([5]):
+        yield generated_index + generated_value
+
+
+def generated_enumerate_entry() -> int:
+    """Collect a generator function's enumeration result."""
+    generated_values = generated_enumerate_item().collect()
+    generated_first = generated_values[0]
+    return generated_first
+
+
+def expression_generator_enumerate_entry() -> int:
+    """Collect an enumeration index from a generator expression."""
+    expression_values = (expression_pair.0 for expression_pair in enumerate([8])).collect()
+    expression_first = expression_values[0]
+    return expression_first
+
+
+def closure_enumerate_entry() -> int:
+    """Collect enumeration values through a closure expression."""
+    closure_values: () -> list[int] = () => (closure_value.1 for closure_value in enumerate([6])).collect()
+    closure_result = closure_values()
+    return closure_result[0]
+
+
+def default_enumerate_item(values: list[int] = (default_value.1 for default_value in enumerate([7])).collect()) -> int:
+    """Read a collection created by the declaration's default."""
+    return values[0]
+
+
+def default_enumerate_entry() -> int:
+    """Omit the enumeration default argument."""
+    return default_enumerate_item()
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(top_level_enumerate_item())
+    println(generated_enumerate_entry())
+    println(expression_generator_enumerate_entry())
+    println(closure_enumerate_entry())
+    println(default_enumerate_entry())

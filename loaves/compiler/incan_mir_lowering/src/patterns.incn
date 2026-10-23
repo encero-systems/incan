@@ -15,6 +15,7 @@ from pub::incan_mir_plan import (
     Constant,
     TerminatorKind,
     FieldProjection,
+    Projection,
 )
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, temporary, place_type, read_place, literal, external_call, drop_owned, appended_field
@@ -25,6 +26,24 @@ from enums import pattern_variant
 from unions import union_pattern_slot
 from options import intrinsic_pattern, variant_condition
 from numerics import numeric_constant
+
+
+pub def enum_pattern_place(mut builder: Builder, source: Place, span: SourceSpan) -> Place:
+    """Inspect a stored shared enum reference without moving its owner or losing a preceding payload projection."""
+    mut ty = PlanType.Unit
+    match place_type(builder.locals, source):
+        PlanType.EnumRef(owner, name) =>
+            ty = PlanType.Enum(owner, name)
+        PlanType.EnumMutRef(owner, name) =>
+            if source.projection == Projection.Whole:
+                return Place(local=source.local, projection=Projection.Deref(PlanType.Enum(owner, name)), span=span)
+            return source
+        _ => return source
+    mut reference = source
+    if source.projection != Projection.Whole:
+        reference = temporary(builder, place_type(builder.locals, source), span)
+        builder.emit(plan_assign(reference, RvalueKind.Use(read_place(source, false, span)), span))
+    return Place(local=reference.local, projection=Projection.Deref(ty), span=span)
 
 
 pub def pattern_tests(
@@ -86,7 +105,7 @@ pub def pattern_tests(
     return Ok(None)
 
 
-pub def carrier_pattern_slot(builder: Builder, owner: int, pattern: &RustPattern) -> Result[int, str]:
+pub def carrier_pattern_slot(mut builder: Builder, owner: int, pattern: &RustPattern) -> Result[int, str]:
     """Select the variant a source enum, union, `Option` or `Result` pattern names; a wildcard names none (-1)."""
     if owner < len(builder.enums):
         return pattern_variant(builder.enums[owner], pattern)
@@ -96,7 +115,7 @@ pub def carrier_pattern_slot(builder: Builder, owner: int, pattern: &RustPattern
     return intrinsic_pattern(declaration, pattern)
 
 
-pub def carrier_payload_types(builder: Builder, owner: int, slot: int) -> Result[list[PlanType], str]:
+pub def carrier_payload_types(mut builder: Builder, owner: int, slot: int) -> Result[list[PlanType], str]:
     """The declared payload types of one variant of a retained source enum or standard carrier."""
     if owner < len(builder.enums):
         mut types: list[PlanType] = []
@@ -136,26 +155,27 @@ def carrier_tests(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Test a carrier pattern's variant, then each payload pattern against its projected payload, in order."""
+    carrier = enum_pattern_place(builder, source, span)
     mut owner = -1
-    match place_type(builder.locals, source):
+    match place_type(builder.locals, carrier):
         PlanType.Enum(index, _name) =>
             owner = index
-        _ => return Err("invalid Body IR carrier pattern scrutinee")
+        _ => return Err(f"invalid Body IR carrier pattern scrutinee {place_type(builder.locals, carrier):?}")
     slot = carrier_pattern_slot(builder, owner, pattern)?
     if slot < 0:
         builder.finish(TerminatorKind.Goto(selected), span)
         return Ok(None)
     matched = builder.new_block(span)
-    condition = variant_condition(builder, source, slot, span)
+    condition = variant_condition(builder, carrier, slot, span)
     builder.finish(TerminatorKind.SwitchBool(condition, rejected, matched), span)
     builder.current = matched
     match pattern:
         RustPattern.Enum(canonical=_identity, name=_name, variant=_variant, fields=fields) =>
-            return payload_tests(builder, source, owner, slot, fields, selected, rejected, span)
+            return payload_tests(builder, carrier, owner, slot, fields, selected, rejected, span)
         RustPattern.Result(variant=_variant, fields=fields) =>
-            return payload_tests(builder, source, owner, slot, fields, selected, rejected, span)
+            return payload_tests(builder, carrier, owner, slot, fields, selected, rejected, span)
         RustPattern.UnionMember(ty=_ty, fields=fields) =>
-            return payload_tests(builder, source, owner, slot, fields, selected, rejected, span)
+            return payload_tests(builder, carrier, owner, slot, fields, selected, rejected, span)
         _ => builder.finish(TerminatorKind.Goto(selected), span)
     return Ok(None)
 
@@ -223,7 +243,7 @@ def all_bound_in_place(patterns: &list[RustPattern]) -> list[bool]:
 
 
 pub def nominal_field(
-    builder: Builder,
+    mut builder: Builder,
     source: Place,
     target: &NominalPatternTarget,
     name: str,

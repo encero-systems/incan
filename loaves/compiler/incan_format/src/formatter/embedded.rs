@@ -189,7 +189,7 @@ impl Formatter {
     /// rather than reproduced from source text.
     fn format_embedded_hole(&mut self, expr: &Spanned<incan_syntax::ast::Expr>) {
         self.writer.write("{");
-        self.format_expr(&expr.node);
+        self.format_spanned_expr(expr);
         self.writer.write("}");
     }
 

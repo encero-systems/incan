@@ -1,0 +1,219 @@
+# behavior: native enum patterns retain exact payloads, nested variants, Rust discriminants, source field value arguments, shared payload clones, fresh non-Clone owners in if let and while let, and the borrowed payload's owner; native unit variants keep their constant identities and compare through their own implementation; native public fields preserve named construction order and writable storage; and a native UTF-8 error displays through captured Result mappers and narrowed callable formatters forwarded across source calls
+# expect-stdout:
+#   borrowed
+#   missing
+#   opaque
+#   7
+#   -3
+#   less
+#   equal
+#   greater
+#   true
+#   true
+#   2
+#   4
+#   invalid utf-8 sequence of 1 bytes from index 0
+
+from rust::std::cell import RefCell
+from rust::std::cmp import Ordering
+from rust::std::env import VarError, current_exe
+from rust::std::ffi import OsString
+from rust::std::fs import File
+from rust::std::io import ErrorKind, SeekFrom
+from rust::std::num import Wrapping
+from rust::std::ops import ControlFlow, Range
+from rust::std::path import PathBuf
+from rust::std::str import from_utf8
+
+
+model Envelope:
+    """Keep a non-Copy native enum behind an ordinary source receiver."""
+    value: ControlFlow[int, str]
+
+    def score(self) -> int:
+        """Pass the field's value to an ordinary source function while retaining the owner."""
+        return flow_score(self.value)
+
+    def cloned_score(self) -> int:
+        """Clone a native enum through a borrowed Option payload while retaining its guard."""
+        saved = RefCell.new(Some(self.value))
+        match saved.borrow().as_ref():
+            Some(value) => return flow_score(value.clone())
+            None => return -1
+
+
+def borrowed_kind(value: &VarError) -> str:
+    """Call a borrowed native payload while retaining the native enum owner's shared reference."""
+    match value:
+        VarError.NotPresent => return "missing"
+        VarError.NotUnicode(raw) => return raw.to_string_lossy().into_owned()
+        _ => return "unknown"
+
+
+def environment_kind(value: Result[str, VarError]) -> str:
+    """Read nested Rust variants inside an ordinary source Result."""
+    match value:
+        Ok(text) => return text
+        Err(VarError.NotPresent) => return "missing"
+        Err(VarError.NotUnicode(raw)) => return raw.to_string_lossy().into_owned()
+
+
+def seek_offset(value: SeekFrom) -> int:
+    """Read the native unsigned or signed payload selected by each seek variant."""
+    match value:
+        SeekFrom.Start(offset) => return int(offset)
+        SeekFrom.End(offset) => return offset
+        SeekFrom.Current(offset) => return offset
+        _ => return 0
+
+
+def comparison_name(value: Ordering) -> str:
+    """Distinguish native variants whose discriminants are negative, zero, and positive."""
+    match value:
+        Ordering.Less => return "less"
+        Ordering.Equal => return "equal"
+        Ordering.Greater => return "greater"
+        _ => return "unknown"
+
+
+def flow_score(value: ControlFlow[int, str]) -> int:
+    """Close native enum payload binders in their declaration order."""
+    match value:
+        ControlFlow.Break(score) => return score
+        ControlFlow.Continue(text) => return len(text)
+        _ => return -1
+
+
+def text_length(value: str) -> int:
+    """Observe the native error's ordinary implicit text conversion."""
+    return len(value)
+
+
+def wrapped_flow(value: ControlFlow[Wrapping[int], bool]) -> bool:
+    """Retain the closed layout of an unselected native generic payload."""
+    match value:
+        ControlFlow.Continue(result) => return result
+        _ => return false
+
+
+def render_message(message: str, formatter: str | Callable[str, str]) -> str:
+    """Apply a source message formatter while retaining its text alternative."""
+    if isinstance(formatter, str):
+        return formatter
+    else:
+        return formatter(message)
+
+
+def forward_message(message: str, formatter: str | Callable[str, str]) -> str:
+    """Forward a narrowed callback and keep the original environment usable afterward."""
+    if isinstance(formatter, str):
+        return formatter
+    else:
+        rendered = render_message(message, formatter)
+        assert formatter(message) == rendered
+        return rendered
+
+
+def mapped_error(prefix: str) -> str:
+    """Map a native Result error through a closure retaining source-owned text."""
+    match from_utf8(b"\xff").map_err((error) => prefix + str(error)):
+        Ok(_text) => return "valid"
+        Err(message) => return message
+
+
+def show_borrowed_payload() -> None:
+    """Keep the native enum live across a source function's shared argument."""
+    invalid = VarError.NotUnicode(OsString.from("borrowed"))
+    println(borrowed_kind(invalid))
+
+
+def file_from_if_let(path: PathBuf) -> bool:
+    """Transfer a fresh native result's non-Clone file into the matching statement arm."""
+    if let Ok(file) = File.open(path):
+        match file.metadata():
+            Ok(metadata) => return metadata.is_file()
+            Err(_error) => return false
+    return false
+
+
+def file_from_while_let(path: PathBuf) -> bool:
+    """Transfer a fresh native file for each successful condition evaluation."""
+    while let Ok(file) = File.open(path):
+        match file.metadata():
+            Ok(metadata) => return metadata.is_file()
+            Err(_error) => return false
+    return false
+
+
+def fresh_file_payloads() -> bool:
+    """Read only the current test executable while checking both statement pattern forms."""
+    match current_exe():
+        Ok(path) => return file_from_if_let(path.clone()) and file_from_while_let(path)
+        Err(_error) => return false
+
+
+def show_payload_patterns() -> None:
+    """Observe native unit and payload variants through direct and nested patterns."""
+    println(environment_kind(Err(VarError.NotPresent)))
+    println(environment_kind(Err(VarError.NotUnicode(OsString.from("opaque")))))
+    println(seek_offset(SeekFrom.Start(7u64)))
+    println(seek_offset(SeekFrom.Current(-3)))
+    println(comparison_name(Ordering.Less))
+    println(comparison_name(Ordering.Equal))
+    println(comparison_name(Ordering.Greater))
+    stopped: ControlFlow[int, str] = ControlFlow.Break(9)
+    continued: ControlFlow[int, str] = ControlFlow.Continue("abc")
+    assert flow_score(stopped) == 9
+    assert flow_score(continued) == 3
+    envelope = Envelope(value=continued)
+    assert envelope.score() == 3
+    assert envelope.score() == 3
+    assert envelope.cloned_score() == 3
+    assert envelope.cloned_score() == 3
+    wrapped: ControlFlow[Wrapping[int], bool] = ControlFlow.Continue(true)
+    assert wrapped_flow(wrapped)
+    missing = VarError.NotPresent
+    assert text_length(missing) > 0
+    assert text_length(missing) > 0
+    assert fresh_file_payloads()
+
+
+def show_unit_variants() -> None:
+    """Materialize native unit values and compare their actual enum identities."""
+    first = ErrorKind.WouldBlock
+    same = ErrorKind.WouldBlock
+    different = ErrorKind.Other
+    println(first == same)
+    println(first != different)
+
+
+def show_public_fields() -> None:
+    """Read and update a native struct built with reversed named arguments."""
+    mut span = Range(end=4, start=1)
+    span.start = 2
+    println(span.start)
+    println(span.end)
+
+
+def show_error_display() -> None:
+    """Display the retained native error rather than requiring a source derive."""
+    marker = "!"
+    match from_utf8(b"\xff"):
+        Ok(_) => println("valid")
+        Err(err) =>
+            println(f"{err}")
+            assert forward_message(str(err), (text) => text + marker) == "invalid utf-8 sequence of 1 bytes from index 0!"
+    assert mapped_error("prefix: ") == "prefix: invalid utf-8 sequence of 1 bytes from index 0"
+    suffix = "!"
+    match from_utf8(b"ok").map_err((error) => suffix + str(error)):
+        Ok(text) => assert text == "ok"
+        Err(_) => assert false
+
+
+def main() -> None:
+    """Run each native enum observation in the order of the cases it carries."""
+    show_borrowed_payload()
+    show_payload_patterns()
+    show_unit_variants()
+    show_public_fields()
+    show_error_display()

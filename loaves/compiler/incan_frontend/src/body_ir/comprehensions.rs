@@ -232,6 +232,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
 
         self.loop_break_targets.push(None);
+        self.loop_scopes.push(first_loop_scope);
         self.loop_continue_actions.push(Vec::new());
         let mut first_loop_stmts = vec![bir::Statement {
             kind: bir::StatementKind::IterNext {
@@ -276,6 +277,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         );
         self.insert_scope_drops(&mut first_loop_stmts, first_loop_scope);
         self.loop_break_targets.pop();
+        self.loop_scopes.pop();
         self.loop_continue_actions.pop();
         generator_stmts.push(bir::Statement {
             kind: bir::StatementKind::Loop {
@@ -453,7 +455,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             ComprehensionTerminal::DictInsert { dict_local, key, value } => {
                 let key_operand = self.lower_expr_to_operand(key, scope, out);
                 let key_operand = self.retain_evaluated_value_read(key, key_operand, scope, out);
+                let pending_start = self.pending_argument_reads.len();
+                self.retain_pending_operand_read(&key_operand);
                 let value_operand = self.lower_expr_to_operand(value, scope, out);
+                self.pending_argument_reads.truncate(pending_start);
                 let span = hir_span(value.span);
                 out.push(bir::Statement {
                     kind: bir::StatementKind::Call {

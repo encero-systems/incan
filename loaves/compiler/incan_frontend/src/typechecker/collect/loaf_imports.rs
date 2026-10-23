@@ -2,6 +2,7 @@
 //! packages, both read from the Loaf's checked manifest and bound under the Loaf's binding root.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::api_metadata::{
     ApiDeclaration, CheckedApiMetadataPackage, DecoratorArgMetadata, DecoratorValue, SafeMetadataValue,
@@ -35,7 +36,7 @@ use incan_lang::lang::decorators::{self as core_decorators, DecoratorId};
 use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::functions as surface_functions;
 use incan_lang::lang::surface::types as surface_types;
-use incan_semantics_core::{CanonicalSymbolId, DecoratorFeature, SurfaceFeatureKey};
+use incan_semantics_core::{CanonicalSymbolId, DecoratorFeature, SurfaceFeatureKey, SymbolOrigin};
 
 /// One import that reaches a compiled Loaf: the Loaf's index key and the public module path inside its manifest.
 pub(in crate::typechecker) struct LoafImport {
@@ -158,25 +159,105 @@ impl TypeChecker {
             return;
         }
         let module = vec![stdlib::STDLIB_ROOT.to_string(), stdlib::STDLIB_REGISTRY.to_string()];
-        let Some((library, rest)) = self.loaf_module(&module) else {
-            return;
+        let standard = if self.owns_standard_module(&module) {
+            self.own_standard_registry_types(&module)
+        } else {
+            self.loaf_standard_registry_types(&module)
         };
+        if let Some(standard) = standard {
+            self.type_info.registry.standard = Some(standard);
+        }
+    }
+
+    /// Whether the active binding denotes this exact Loaf declaration or its registry-owned builtin placeholder.
+    /// A placeholder is compatible with its declaring module, but still needs that module's checked contract.
+    fn rebinds_same_declaration(&self, local_name: &str, module: &[String], item: &str) -> bool {
+        let Some(symbol) = self.symbols.lookup_local(local_name) else {
+            return false;
+        };
+        match self.symbols.identity_of(symbol) {
+            Some(existing) if !matches!(existing.origin, SymbolOrigin::Builtin) => {
+                self.loaf_member_identity(module, item).as_ref() == Some(existing)
+            }
+            // A compiler-owned placeholder may be imported through a facade only when both exports name the
+            // registered declaring module's exact trait. A matching short name grants no declaration authority.
+            Some(existing) if existing.origin == SymbolOrigin::Builtin => {
+                if local_name != item
+                    || !matches!(
+                        self.symbols.get(symbol).map(|found| &found.kind),
+                        Some(SymbolKind::Trait(_))
+                    )
+                {
+                    return false;
+                }
+                let Some(declaring) =
+                    incan_lang::lang::traits::from_str(item).and_then(incan_lang::lang::traits::source_module)
+                else {
+                    return false;
+                };
+                let declaring = declaring.split('.').map(str::to_owned).collect::<Vec<_>>();
+                let Some(imported) = self.loaf_member_identity(module, item) else {
+                    return false;
+                };
+                self.loaf_member_identity(&declaring, item).as_ref() == Some(&imported)
+            }
+            _ => false,
+        }
+    }
+
+    /// Keep real imports idempotent while replacing a compatible builtin placeholder with checked Loaf metadata.
+    /// A bare spelling is never sufficient: only the builtin registry's declaring module can supply its contract.
+    fn loaf_import_needs_binding(&mut self, local_name: &str, module: &[String], item: &str, span: Span) -> bool {
+        let Some(existing_kind) = self.existing_local_symbol_kind(local_name) else {
+            return true;
+        };
+        if self.rebinds_same_declaration(local_name, module, item) {
+            return self
+                .symbols
+                .lookup_local(local_name)
+                .and_then(|symbol| self.symbols.identity_of(symbol))
+                .is_some_and(|identity| matches!(identity.origin, SymbolOrigin::Builtin));
+        }
+        self.errors.push(errors::pub_library_import_name_collision(
+            local_name,
+            existing_kind,
+            span,
+        ));
+        false
+    }
+
+    /// The standard `Registry` declarations of the package that declares `std.registry`: its own checked modules.
+    fn own_standard_registry_types(&self, module: &[String]) -> Option<crate::typechecker::StandardRegistryTypes> {
+        let path = ImportPath {
+            parent_levels: 0,
+            is_absolute: false,
+            segments: module.to_vec(),
+        };
+        let Some(SymbolKind::Type(TypeInfo::Class(registry_class))) =
+            self.dependency_member_symbol_for_path(&path, "Registry")
+        else {
+            return None;
+        };
+        Some(crate::typechecker::StandardRegistryTypes {
+            registry: self.dependency_member_identity(&path, "Registry")?,
+            registry_class,
+            entry: self.dependency_member_identity(&path, "RegistryEntry")?,
+        })
+    }
+
+    /// The standard `Registry` declarations, read from the standard Loaf that owns `std.registry`.
+    fn loaf_standard_registry_types(&mut self, module: &[String]) -> Option<crate::typechecker::StandardRegistryTypes> {
+        let (library, rest) = self.loaf_module(module)?;
         let Some((SymbolKind::Type(TypeInfo::Class(registry_class)), _)) =
             self.lookup_pub_library_module_symbol_member(&library, &rest, "Registry")
         else {
-            return;
+            return None;
         };
-        let (Some(registry), Some(entry)) = (
-            self.loaf_member_identity(&module, "Registry"),
-            self.loaf_member_identity(&module, "RegistryEntry"),
-        ) else {
-            return;
-        };
-        self.type_info.registry.standard = Some(crate::typechecker::StandardRegistryTypes {
-            registry,
+        Some(crate::typechecker::StandardRegistryTypes {
+            registry: self.loaf_member_identity(module, "Registry")?,
             registry_class,
-            entry,
-        });
+            entry: self.loaf_member_identity(module, "RegistryEntry")?,
+        })
     }
 
     /// The standard declaration of the builtin trait `name` (`Eq`, `Ord`, …), read once from the standard package
@@ -185,7 +266,13 @@ impl TypeChecker {
         if let Some(info) = self.standard_traits.get(name) {
             return Some(info.clone());
         }
-        let segments = stdlib::trait_method_module_segments(name)?;
+        // The derive-method table names a derivable trait's module; every other builtin trait (`TryFrom`, `Error`)
+        // names its declaring module itself.
+        let segments = stdlib::trait_method_module_segments(name).or_else(|| {
+            incan_lang::lang::traits::from_str(name)
+                .and_then(incan_lang::lang::traits::source_module)
+                .map(|module| module.split('.').map(str::to_string).collect())
+        })?;
         let info = self.loaf_trait(&segments, name)?;
         self.standard_traits.insert(name.to_string(), info.clone());
         Some(info)
@@ -199,6 +286,21 @@ impl TypeChecker {
             .unwrap_or_else(|| vec!["pub".to_string(), library.to_string()])
     }
 
+    /// Identify an admitted module by its provider package while its lexical binding keeps the dependency alias.
+    /// Standard namespaces retain their `std` module origins; a consumer's package alias never becomes a declaring
+    /// package in executable requirements.
+    fn loaf_module_identity(&self, library: &str, module: &[String]) -> Option<CanonicalSymbolId> {
+        let entry = self.loaves.entry(library)?;
+        let mut root = entry.binding_root();
+        if let [namespace, owner] = root.as_mut_slice()
+            && namespace == "pub"
+        {
+            owner.clone_from(&entry.artifact.name);
+        }
+        root.extend_from_slice(module);
+        SymbolTable::module_path_identity(&root)
+    }
+
     /// The Loaf import a `std.*` module path reaches: the standard package owning its namespace root, and the module
     /// path inside that package's manifest.
     pub(in crate::typechecker) fn standard_loaf_import(&self, segments: &[String]) -> Option<LoafImport> {
@@ -209,11 +311,13 @@ impl TypeChecker {
         })
     }
 
-    /// Bind `import <module>` where `import` names a module of a compiled Loaf.
+    /// Bind a compiled module while preserving its written source root for reserved-name validation. A `pub::` import
+    /// supplies no standard root exemption, even when its dependency happens to provide standard modules.
     pub(in crate::typechecker) fn collect_loaf_module_import(
         &mut self,
         import: &LoafImport,
         alias: Option<&Ident>,
+        source_root: Option<&str>,
         span: Span,
     ) {
         let library = import.key.as_str();
@@ -221,7 +325,7 @@ impl TypeChecker {
             .cloned()
             .or_else(|| import.module.last().cloned())
             .unwrap_or_else(|| library.to_string());
-        self.validate_root_namespace(&name, span);
+        self.validate_module_import_binding(&name, source_root, span);
         let Some(manifest) = self.loaf_manifest_or_refuse(library, span) else {
             return;
         };
@@ -232,7 +336,7 @@ impl TypeChecker {
         self.cache_transitive_pub_export_semantics(library, &manifest);
         let mut canonical_path = self.loaf_binding_root(library);
         canonical_path.extend(import.module.iter().cloned());
-        let target_identity = SymbolTable::module_path_identity(&canonical_path);
+        let target_identity = self.loaf_module_identity(library, &import.module);
         self.define_import_symbol(name, canonical_path, false, target_identity, span);
     }
 
@@ -282,7 +386,9 @@ impl TypeChecker {
         names
     }
 
-    /// Bind `from <module> import item, …` where the module belongs to a compiled Loaf.
+    /// Bind `from <module> import item, …` from a compiled Loaf. Builtin trait placeholders are replaced through
+    /// ordinary import binding so the manifest supplies their parameters, declaration identities, and accepted import
+    /// paths together.
     pub(in crate::typechecker) fn collect_loaf_from_imports(
         &mut self,
         import: &LoafImport,
@@ -301,140 +407,157 @@ impl TypeChecker {
         self.cache_transitive_pub_export_semantics(library, &manifest);
         let available_exports = Self::loaf_module_member_names(&manifest, path);
         let root = self.loaf_binding_root(library);
+        let mut source_module = root.clone();
+        source_module.extend(path.iter().cloned());
         for item in items {
             let local_name = Self::import_item_local_name(item);
             if self.validate_protected_builtin_binding(&local_name, span) {
                 continue;
             }
             self.validate_root_namespace(&local_name, span);
-            if let Some(existing_kind) = self.existing_local_symbol_kind(&local_name) {
-                self.errors.push(errors::pub_library_import_name_collision(
-                    &local_name,
-                    existing_kind,
-                    span,
-                ));
+            if !self.loaf_import_needs_binding(&local_name, &source_module, &item.name, span) {
                 continue;
             }
             let imported_type_aliases = self.public_library_type_import_remapping(library, &manifest);
+            if path.is_empty() {
+                self.collect_loaf_root_from_import(import, &manifest, item, local_name, &imported_type_aliases, span);
+                continue;
+            }
             let mut child_module_path = path.to_vec();
             child_module_path.push(item.name.clone());
             let imports_namespace = Self::manifest_public_module_exists(&manifest, &child_module_path);
             let mut namespace_path = root.clone();
             namespace_path.extend(child_module_path.iter().cloned());
 
-            if !path.is_empty() {
-                let resolved = match self.public_module_member(library, &manifest, path, &item.name) {
-                    Ok(resolved) => resolved,
-                    Err(source_modules) => {
-                        self.errors.push(errors::pub_library_module_member_ambiguous(
-                            library,
-                            path,
-                            &item.name,
-                            &source_modules,
-                            span,
-                        ));
-                        continue;
-                    }
-                };
-                if let Some(member) = resolved {
-                    self.define_pub_module_import_symbol(library, local_name.clone(), namespace_path, member, span);
-                    self.record_standard_surface_import(&root, path, item, &local_name, span);
+            let resolved = match self.public_module_member(library, &manifest, path, &item.name) {
+                Ok(resolved) => resolved,
+                Err(source_modules) => {
+                    self.errors.push(errors::pub_library_module_member_ambiguous(
+                        library,
+                        path,
+                        &item.name,
+                        &source_modules,
+                        span,
+                    ));
                     continue;
                 }
-                if imports_namespace {
-                    let target_identity = SymbolTable::module_path_identity(&namespace_path);
-                    self.define_import_symbol(local_name, namespace_path, false, target_identity, span);
-                    continue;
-                }
-                self.errors.push(errors::pub_library_symbol_not_exported(
-                    &item.name,
-                    &format!("{}.{}", root.join("."), path.join(".")),
-                    &available_exports,
-                    span,
-                ));
-                continue;
-            }
-
-            let flat_function = self.pub_library_function_symbol(&manifest, &item.name);
-            let flat_export = Self::find_manifest_export(&manifest, &item.name);
-            if imports_namespace && (flat_function.is_some() || flat_export.is_some()) {
-                self.errors.push(errors::pub_library_module_member_ambiguous(
-                    library,
-                    &[],
-                    &item.name,
-                    &[
-                        format!("package-root export `{}`", item.name),
-                        format!("module `{}`", child_module_path.join(".")),
-                    ],
-                    span,
-                ));
+            };
+            if let Some(member) = resolved {
+                self.define_pub_module_import_symbol(library, local_name.clone(), namespace_path, member, span);
+                self.record_standard_surface_import(&root, path, item, &local_name, span);
                 continue;
             }
             if imports_namespace {
-                let target_identity = SymbolTable::module_path_identity(&namespace_path);
+                let target_identity = self.loaf_module_identity(library, &child_module_path);
                 self.define_import_symbol(local_name, namespace_path, false, target_identity, span);
                 continue;
             }
-
-            if let Some(mut kind) = flat_function {
-                self.remap_symbol_kind_with_import_aliases(&mut kind, &imported_type_aliases);
-                let canonical = manifest
-                    .contract_metadata
-                    .identity_graph
-                    .canonical_for_public_name(&item.name);
-                let mut binding_path = root.clone();
-                binding_path.push(item.name.clone());
-                let symbol_id = self.symbols.define_import_binding_at_path(
-                    Symbol {
-                        name: local_name.clone(),
-                        kind: kind.clone(),
-                        span,
-                        scope: 0,
-                    },
-                    canonical.clone(),
-                    binding_path,
-                );
-                if self.symbols.is_active_lookup_binding(symbol_id) {
-                    if let Some(identity) = canonical {
-                        self.type_info
-                            .declarations
-                            .resolved_import_identities
-                            .insert(local_name.clone(), identity);
-                    }
-                    self.record_imported_function_binding(&local_name, &kind);
-                }
-                continue;
-            }
-
-            let Some(export) = flat_export else {
-                if let Some(feature_sets) = Self::inactive_pub_export_features(&manifest, &item.name) {
-                    self.errors.push(errors::pub_library_symbol_requires_features(
-                        &item.name,
-                        library,
-                        &feature_sets,
-                        span,
-                    ));
-                } else {
-                    self.errors.push(errors::pub_library_symbol_not_exported(
-                        &item.name,
-                        library,
-                        &available_exports,
-                        span,
-                    ));
-                }
-                continue;
-            };
-
-            self.define_pub_import_symbol(
-                library,
-                &manifest,
+            self.errors.push(errors::pub_library_symbol_not_exported(
                 &item.name,
-                local_name,
-                export,
-                &imported_type_aliases,
+                &format!("{}.{}", root.join("."), path.join(".")),
+                &available_exports,
                 span,
-            );
+            ));
         }
+    }
+
+    /// Bind a package-root member after collision checks. The caller has proved that the import's module path is empty;
+    /// namespace/function ambiguity and feature-visibility rules remain shared with ordinary imports.
+    fn collect_loaf_root_from_import(
+        &mut self,
+        import: &LoafImport,
+        manifest: &LibraryManifest,
+        item: &ImportItem,
+        local_name: String,
+        imported_type_aliases: &HashMap<String, String>,
+        span: Span,
+    ) {
+        let library = import.key.as_str();
+        let root = self.loaf_binding_root(library);
+        let child_module_path = vec![item.name.clone()];
+        let imports_namespace = Self::manifest_public_module_exists(manifest, &child_module_path);
+        let mut namespace_path = root.clone();
+        namespace_path.extend(child_module_path.iter().cloned());
+        let flat_function = self.pub_library_function_symbol(manifest, &item.name);
+        let flat_export = Self::find_manifest_export(manifest, &item.name);
+        if imports_namespace && (flat_function.is_some() || flat_export.is_some()) {
+            self.errors.push(errors::pub_library_module_member_ambiguous(
+                library,
+                &[],
+                &item.name,
+                &[
+                    format!("package-root export `{}`", item.name),
+                    format!("module `{}`", child_module_path.join(".")),
+                ],
+                span,
+            ));
+            return;
+        }
+        if imports_namespace {
+            let target_identity = self.loaf_module_identity(library, &child_module_path);
+            self.define_import_symbol(local_name, namespace_path, false, target_identity, span);
+            return;
+        }
+
+        if let Some(mut kind) = flat_function {
+            let canonical = manifest
+                .contract_metadata
+                .identity_graph
+                .canonical_for_public_name(&item.name);
+            self.remap_symbol_kind_through_declaring_module(library, manifest, canonical.as_ref(), &mut kind);
+            self.remap_symbol_kind_with_import_aliases(&mut kind, imported_type_aliases);
+            let mut binding_path = root;
+            binding_path.push(item.name.clone());
+            let symbol_id = self.symbols.define_import_binding_at_path(
+                Symbol {
+                    name: local_name.clone(),
+                    kind: kind.clone(),
+                    span,
+                    scope: 0,
+                },
+                canonical.clone(),
+                binding_path,
+            );
+            if self.symbols.is_active_lookup_binding(symbol_id) {
+                if let Some(identity) = canonical {
+                    self.type_info
+                        .declarations
+                        .resolved_import_identities
+                        .insert(local_name.clone(), identity);
+                }
+                self.record_imported_function_binding(&local_name, &kind);
+            }
+            return;
+        }
+
+        let Some(export) = flat_export else {
+            if let Some(feature_sets) = Self::inactive_pub_export_features(manifest, &item.name) {
+                self.errors.push(errors::pub_library_symbol_requires_features(
+                    &item.name,
+                    library,
+                    &feature_sets,
+                    span,
+                ));
+            } else {
+                self.errors.push(errors::pub_library_symbol_not_exported(
+                    &item.name,
+                    library,
+                    &Self::loaf_module_member_names(manifest, &[]),
+                    span,
+                ));
+            }
+            return;
+        };
+
+        self.define_pub_import_symbol(
+            library,
+            manifest,
+            &item.name,
+            local_name,
+            export,
+            imported_type_aliases,
+            span,
+        );
     }
 
     /// Record the compiler-known surface a `std.*` import binds: surface types (`Html`), surface functions and the
@@ -637,7 +760,8 @@ impl TypeChecker {
             .collect::<Vec<_>>();
         let (source_module_path, declarations) = match matches.as_slice() {
             [only] => only,
-            _ => Self::one_declaration_behind_namespace_matches(manifest, member, &matches)
+            _ => Self::namespace_own_module_match(module_path, &matches)
+                .or_else(|| Self::one_declaration_behind_namespace_matches(manifest, member, &matches))
                 .ok_or_else(|| source_modules.clone())?,
         };
         let mut kinds = declarations
@@ -738,6 +862,21 @@ impl TypeChecker {
     /// Choose one of several source modules that each publish `member` into the same derived namespace, when the
     /// identity graph says they all publish the same declarations.
     ///
+    /// Select the declaration the namespace's own module makes when an immediate child module declares the same name.
+    ///
+    /// A module such as `snappy` that owns the default surface of its namespace and keeps an alternative (`snappy.raw`)
+    /// in a child module is not ambiguous: the own module's declaration takes precedence, as a declared member does
+    /// over a child namespace, and the child stays reachable through its exact module path. Two child modules that
+    /// declare the name remain ambiguous.
+    pub(super) fn namespace_own_module_match<'m, 'a>(
+        namespace_path: &[String],
+        matches: &'m [(Vec<String>, Vec<&'a ApiDeclaration>)],
+    ) -> Option<&'m (Vec<String>, Vec<&'a ApiDeclaration>)> {
+        matches
+            .iter()
+            .find(|(module_path, _)| module_path.as_slice() == namespace_path)
+    }
+
     /// A directory namespace exposes its entrypoint's declarations and its source-file children's, so a facade that
     /// re-exports a child's declaration (`pkg/mod.incn` holding `pub from crate.pkg.inner import Greeting`) puts the
     /// name there twice. Each source module publishes the member at its own namespace path, and the identity graph
@@ -786,92 +925,13 @@ impl TypeChecker {
         owner_module_path: &[String],
     ) -> HashMap<String, String> {
         let mut remapping = self.public_library_canonical_type_remapping(library, manifest);
-        let Some(api) = manifest.contract_metadata.api.as_ref() else {
-            return remapping;
-        };
-
-        let api_declarations = api
-            .modules
-            .iter()
-            .flat_map(|module| {
-                module
-                    .declarations
-                    .iter()
-                    .cloned()
-                    .map(|declaration| (module.module_path.clone(), declaration))
-            })
-            .collect::<Vec<_>>();
-        let mut candidates: BTreeMap<String, Vec<(Vec<String>, String)>> = BTreeMap::new();
-        for (module_path, declaration) in &api_declarations {
-            let type_name = match declaration {
-                ApiDeclaration::Model(item) => Some(&item.name),
-                ApiDeclaration::Class(item) => Some(&item.name),
-                ApiDeclaration::Enum(item) => Some(&item.name),
-                ApiDeclaration::Newtype(item) => Some(&item.name),
-                ApiDeclaration::TypeAlias(item) => Some(&item.name),
-                _ => None,
-            };
-            let Some(type_name) = type_name else {
-                continue;
-            };
-            let mut source_path = module_path.clone();
-            source_path.push(type_name.clone());
-            let canonical = canonical_public_library_type_name(library, &source_path.join("::"));
-            let public_path = std::iter::once(manifest.name.clone())
-                .chain(source_path.iter().cloned())
-                .collect::<Vec<_>>();
-            let declaration_identity = manifest
-                .contract_metadata
-                .identity_graph
-                .canonical_for_public_path(&public_path);
-            self.public_library_type_identities.insert(
-                canonical.clone(),
-                self.admitted_public_type_identity(library, &source_path, declaration_identity),
-            );
-            candidates
-                .entry(type_name.clone())
-                .or_default()
-                .push((module_path.clone(), canonical));
-        }
-
-        for (name, candidates) in candidates {
-            if let Some((_, canonical)) = candidates
-                .iter()
-                .find(|(module_path, _)| module_path == owner_module_path)
-                .or_else(|| (candidates.len() == 1).then(|| &candidates[0]))
-            {
-                remapping.insert(name, canonical.clone());
-            }
-        }
-
-        for (module_path, declaration) in api_declarations {
-            let name = Self::api_declaration_name(&declaration);
-            let mut source_path = module_path;
-            source_path.push(name.to_string());
-            let canonical = canonical_public_library_type_name(library, &source_path.join("::"));
-            if self.transitive_pub_types.contains_key(&canonical) || self.transitive_pub_traits.contains_key(&canonical)
-            {
-                continue;
-            }
-            let Some(mut kind) = self.symbol_kind_from_api_declaration(Some(api), &declaration) else {
-                continue;
-            };
-            self.remap_symbol_kind_with_import_aliases(&mut kind, &remapping);
-            Self::mark_compiled_class_field_provider(&mut kind, library);
-            match kind {
-                SymbolKind::Type(info) if !matches!(info, TypeInfo::TypeAlias | TypeInfo::Builtin) => {
-                    self.transitive_pub_types.entry(canonical).or_default().push(info);
-                }
-                SymbolKind::Trait(info) => {
-                    self.transitive_pub_traits.entry(canonical).or_default().push(info);
-                }
-                _ => {}
-            }
-        }
+        self.register_pub_library_declarations(library, manifest, &remapping);
+        remapping.extend(self.pub_library_declaration_scope(library, manifest, owner_module_path));
         remapping
     }
 
-    /// Define one declaration imported through a derived public module namespace.
+    /// Define one declaration imported through a derived public module namespace, retaining provider identity for
+    /// both nominal types and trait types so an imported alias matches its declaring-module signature spelling.
     pub(super) fn define_pub_module_import_symbol(
         &mut self,
         library: &str,
@@ -885,6 +945,7 @@ impl TypeChecker {
             .map(|(type_params, target)| crate::typechecker::TypeAliasTarget {
                 type_params: type_params.iter().map(|param| param.name.clone()).collect(),
                 target,
+                nominal_identities: Default::default(),
             });
         let mut partial_projection = member.partial_projection;
         let canonical = member.canonical;
@@ -944,6 +1005,7 @@ impl TypeChecker {
         if matches!(
             kind,
             SymbolKind::Type(TypeInfo::Model(_) | TypeInfo::Class(_) | TypeInfo::Enum(_) | TypeInfo::Newtype(_))
+                | SymbolKind::Trait(_)
         ) {
             let mut source_path = source_module_path;
             source_path.push(source_name);
@@ -1850,6 +1912,13 @@ impl TypeChecker {
         manifest: &LibraryManifest,
         target_path: &[String],
     ) -> Option<SymbolKind> {
+        let kind = Self::rust_reexport_symbol_kind(manifest, target_path)?;
+        matches!(&kind, SymbolKind::RustItem(info) if info.metadata.is_some()).then_some(kind)
+    }
+
+    /// The Rust item a provider's public `rust::` reexport names, bound as the provider's own import is. Metadata the
+    /// provider shipped travels with it; otherwise the consumer's checker inspects the item by its path on demand.
+    pub(super) fn rust_reexport_symbol_kind(manifest: &LibraryManifest, target_path: &[String]) -> Option<SymbolKind> {
         let [namespace, crate_name, rest @ ..] = target_path else {
             return None;
         };
@@ -1857,10 +1926,14 @@ impl TypeChecker {
             return None;
         }
         let path = target_path[1..].join("::");
-        let metadata = manifest.rust_abi.as_ref()?.get(&path)?.clone();
+        let metadata = manifest
+            .rust_abi
+            .as_ref()
+            .and_then(|abi| abi.get(&path))
+            .map(|metadata| Arc::new(metadata.clone()));
         Some(SymbolKind::RustItem(RustItemInfo {
             crate_name: crate_name.clone(),
-            metadata: Some(metadata),
+            metadata,
             path,
             binding: RustImportBindingKind::FromImport,
         }))
@@ -1999,6 +2072,10 @@ impl TypeChecker {
     ) -> Option<SymbolKind> {
         if !visited.insert(target_path.to_vec()) {
             return None;
+        }
+        // A re-exported Rust item binds as the Rust item its provider imported.
+        if let Some(kind) = Self::rust_reexport_symbol_kind(manifest, target_path) {
+            return Some(kind);
         }
         let declaration = Self::api_declaration_for_target_path(manifest, target_path)?;
         match declaration {
@@ -2141,6 +2218,7 @@ impl TypeChecker {
                 type_alias_target = Some(crate::typechecker::TypeAliasTarget {
                     type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
                     target,
+                    nominal_identities: Default::default(),
                 });
                 SymbolKind::Type(TypeInfo::TypeAlias)
             }
@@ -2165,6 +2243,7 @@ impl TypeChecker {
                     type_alias_target = Some(crate::typechecker::TypeAliasTarget {
                         type_params: Vec::new(),
                         target,
+                        nominal_identities: Default::default(),
                     });
                 }
                 let Some(kind) = self.symbol_kind_from_manifest_alias(manifest, export, &mut HashSet::new()) else {
@@ -2419,11 +2498,15 @@ impl TypeChecker {
         }
     }
 
-    /// Rewrite resolved generic arguments carried by one imported trait-bound entry.
+    /// Retain an imported bound's trait binding and generic arguments in the same canonical namespace as its signature.
     pub(super) fn remap_type_bound_with_import_aliases(
         bound: &mut TypeBoundInfo,
         imported_type_aliases: &HashMap<String, String>,
     ) {
+        if let Some(name) = imported_type_aliases.get(&bound.name) {
+            bound.source_name.get_or_insert_with(|| bound.name.clone());
+            bound.name = name.clone();
+        }
         for type_arg in &mut bound.type_args {
             Self::remap_resolved_type_with_import_aliases(type_arg, imported_type_aliases);
         }
