@@ -208,6 +208,8 @@ from decorator_caches import (
     reified_pointer,
 )
 from traits import (
+    is_default_body,
+    receiver_method_identity,
     method_index,
     owner_method_index,
     receiver_fills_slot,
@@ -3356,6 +3358,8 @@ def lower_method_call(
         return Ok(None)
     if lower_value_enum_ordinal(module, builder, target, arguments, destination, span)?:
         return Ok(None)
+    if lower_compiled_implementation(module, builder, target, arguments, destination, span)?:
+        return Ok(None)
     if retained_iterator_default(module, builder, target, arguments, span):
         return lower_retained_method_call(module, builder, target, arguments, destination, span)
     if lower_selected_library_method(module, builder, target, arguments, destination, span)?:
@@ -3410,6 +3414,32 @@ def lower_method_call(
                     return lower_library_method(module, builder, callable, target, arguments, destination, span)
             None => pass
     return lower_retained_method_call(module, builder, target, arguments, destination, span)
+
+
+def lower_compiled_implementation(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Call a checked adopter's compiled member through its declaration record, using the same slot selection as local bodies."""
+    selected = receiver_method_identity(
+        module, target, builder.locals[builder.local_offset:], arguments[0], span, builder.unions, builder.intrinsics,
+    )?
+    if selected == target.canonical:
+        return Ok(false)
+    for callable in module.loaf_callables:
+        if selected != Some(callable.canonical):
+            continue
+        mut implementation = target.clone()
+        implementation.canonical = selected
+        implementation.native_trait_delegation = None
+        implementation.loaf_trait = None
+        lower_library_method(module, builder, callable, implementation, arguments, destination, span)?
+        return Ok(true)
+    return Ok(false)
 
 
 def concrete_iterator_collect(
@@ -3736,6 +3766,10 @@ def instantiated_method_body(
     else:
         if len(target.type_args) != 0:
             return Err("unsupported Body IR type arguments on a method without type parameters")
+        if is_default_body(module, body):
+            builder.instances.append(
+                Instance(body=body.clone(), arguments=[], owned_callable_slots=[], original_callable=false),
+            )
     return Ok(body)
 
 
@@ -6859,17 +6893,28 @@ def lowered_plan(
     mut models = lower_model_declarations(context, files[entry], intrinsics, nominal_instances, kind == "library")?
     mut enums = lower_enum_declarations(context, files[entry], intrinsics)?
     attach_enum_comparisons(context, enums, intrinsics)?
+    # Native comparison bridges call their checked slots without an ordinary source call to schedule them.
+    mut bridge_bodies: list[str] = []
+    for declaration in models:
+        bridge_bodies.extend(declaration.comparison_methods)
+    for declaration in enums:
+        bridge_bodies.extend(declaration.comparison_methods)
     mut functions = checked_functions
     functions.extend(conversion_functions)
     mut emitted_frames: list[RustBody] = []
     mut externals = checked_runtime
     merge_externals(externals, conversion_runtime)
     mut instances = checked_instances
+    for body in context.bodies:
+        if is_default_body(context, body) and function_name(context, body) in bridge_bodies:
+            instances.append(Instance(body=body.clone(), arguments=[], owned_callable_slots=[], original_callable=false))
     for index in range(len(checked)):
         for body in context.bodies:
             if body_module_identity(body)? != str(checked[index].module_id.path()):
                 continue
             if len(body.type_parameters) != 0:
+                continue
+            if is_default_body(context, body):
                 continue
             if retains_emitted_frame(emitted_frames, body):
                 continue

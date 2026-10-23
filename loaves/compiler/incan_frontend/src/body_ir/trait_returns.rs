@@ -42,10 +42,19 @@ pub(super) fn retain_returns(
         .iter()
         .map(|body| body.locals.iter().map(|local| local.ty.clone()).collect::<Vec<_>>())
         .collect::<Vec<_>>();
+    // The checked slot can belong to another module or Loaf. Local-only implementation validation would discard
+    // that selection before its published default can supply the return carrier; native admission validates the
+    // complete project separately. No record or signature is reconstructed here.
     let implementations = module
         .trait_implementations
         .iter()
-        .filter(|implementation| module.is_well_formed_trait_implementation(implementation))
+        .chain(context.iter().flat_map(|module| &module.trait_implementations))
+        .collect::<Vec<_>>();
+    let nominals = module
+        .nominal_declarations
+        .iter()
+        .chain(context.iter().flat_map(|module| &module.nominal_declarations))
+        .cloned()
         .collect::<Vec<_>>();
     for _ in 0..=module.bodies.len() {
         let mut changed = false;
@@ -53,8 +62,8 @@ pub(super) fn retain_returns(
             refine_block(
                 &mut body.block.stmts,
                 &mut body.locals,
-                &body.named_type_identities,
-                &module.nominal_declarations,
+                &mut body.named_type_identities,
+                &nominals,
                 &implementations,
                 &signatures,
                 facts,
@@ -181,7 +190,7 @@ fn signature(body: &bir::Body) -> ReturnSignature {
 fn refine_block(
     statements: &mut [bir::Statement],
     locals: &mut [bir::LocalDecl],
-    identities: &BTreeMap<String, CanonicalSymbolId>,
+    identities: &mut BTreeMap<String, CanonicalSymbolId>,
     nominals: &[bir::NominalDeclaration],
     implementations: &[&bir::TraitImplementation],
     signatures: &HashMap<CanonicalSymbolId, ReturnSignature>,
@@ -268,10 +277,9 @@ fn refine_block(
                     locals[local.index()].ty = carrier;
                 }
                 if let bir::Callee::Method(target) = callee
-                    && let Some((declared, carrier)) =
+                    && let Some(carrier) =
                         method_return_witness(target, args, locals, identities, nominals, implementations, signatures)
                     && locals[local.index()].origin == bir::LocalOrigin::Temporary
-                    && locals[local.index()].ty == declared
                 {
                     locals[local.index()].ty = carrier;
                 }
@@ -331,17 +339,18 @@ fn refine_block(
     }
 }
 
-/// Instantiate a generic source method's proven return using its exact owner/adoption and checked method arguments.
-/// Unknown receivers, unretained slots, conflicting implementations and unresolved binders grant no representation.
+/// Instantiate a selected source method's executable return using its exact owner/adoption and checked arguments.
+/// A published body already carries its refined return ABI, so the consumer must not require its former opaque
+/// annotation to survive publication. Unknown receivers, conflicting slots and unresolved binders grant no witness.
 fn method_return_witness(
     target: &bir::MethodTarget,
     args: &[bir::ArgumentElement],
     locals: &[bir::LocalDecl],
-    identities: &BTreeMap<String, CanonicalSymbolId>,
+    identities: &mut BTreeMap<String, CanonicalSymbolId>,
     nominals: &[bir::NominalDeclaration],
     implementations: &[&bir::TraitImplementation],
     signatures: &HashMap<CanonicalSymbolId, ReturnSignature>,
-) -> Option<(IncanType, IncanType)> {
+) -> Option<IncanType> {
     let selected = target.canonical.as_ref()?;
     if selected.kind != SemanticSourceTargetKind::Method {
         return None;
@@ -381,7 +390,12 @@ fn method_return_witness(
                 ))
             })
             .collect::<Option<HashMap<_, _>>>()?;
-        bindings = trait_bindings;
+        let own_method = record.implementation.origin == owner.canonical.origin
+            && owner.canonical.declaration_span.start <= record.implementation.declaration_span.start
+            && record.implementation.declaration_span.end <= owner.canonical.declaration_span.end;
+        if !own_method {
+            bindings = trait_bindings;
+        }
         signature
     } else {
         if selected.origin != owner.canonical.origin
@@ -392,9 +406,6 @@ fn method_return_witness(
         }
         signatures.get(selected)?
     };
-    if !signature.opaque || signature.parameters.is_empty() || signature.carrier == signature.original {
-        return None;
-    }
     let method_parameters = signature
         .parameters
         .iter()
@@ -406,10 +417,40 @@ fn method_return_witness(
     for (parameter, argument) in method_parameters.into_iter().zip(&target.type_args) {
         bindings.insert(parameter.clone(), argument.clone());
     }
-    Some((
-        instantiate_witness(&signature.original, &bindings, &receiver)?,
-        instantiate_witness(&signature.carrier, &bindings, &receiver)?,
-    ))
+    let carrier = instantiate_witness(&signature.carrier, &bindings, &receiver)?;
+    retain_witness_identities(&carrier, &signature.identities, identities).then_some(carrier)
+}
+
+/// Carry only a selected executable return's named owners into the receiving frame, including generic heads.
+/// Conflicting caller bindings grant no carrier; unrelated names from the producer's namespace are never imported.
+fn retain_witness_identities(
+    ty: &IncanType,
+    source: &BTreeMap<String, CanonicalSymbolId>,
+    destination: &mut BTreeMap<String, CanonicalSymbolId>,
+) -> bool {
+    let name = match ty {
+        IncanType::Named(name) | IncanType::Generic { base: name, .. } => Some(name),
+        _ => None,
+    };
+    if let Some((name, identity)) = name.and_then(|name| source.get(name).map(|identity| (name, identity))) {
+        if destination.get(name).is_some_and(|previous| previous != identity) {
+            return false;
+        }
+        destination.insert(name.clone(), identity.clone());
+    }
+    match ty {
+        IncanType::Generic { args, .. } | IncanType::Tuple(args) => args
+            .iter()
+            .all(|argument| retain_witness_identities(argument, source, destination)),
+        IncanType::Ref(inner) | IncanType::RefMut(inner) => retain_witness_identities(inner, source, destination),
+        IncanType::Function { params, return_type } => {
+            params
+                .iter()
+                .all(|parameter| retain_witness_identities(&parameter.ty, source, destination))
+                && retain_witness_identities(return_type, source, destination)
+        }
+        _ => true,
+    }
 }
 
 /// Resolve the exact checked nominal before canonical carrier bindings have been added to the body table.

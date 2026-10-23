@@ -2431,11 +2431,15 @@ impl TypeChecker {
         }
     }
 
-    /// Rewrite resolved generic arguments carried by one imported trait-bound entry.
+    /// Retain an imported bound's trait binding and generic arguments in the same canonical namespace as its signature.
     pub(super) fn remap_type_bound_with_import_aliases(
         bound: &mut TypeBoundInfo,
         imported_type_aliases: &HashMap<String, String>,
     ) {
+        if let Some(name) = imported_type_aliases.get(&bound.name) {
+            bound.source_name.get_or_insert_with(|| bound.name.clone());
+            bound.name = name.clone();
+        }
         for type_arg in &mut bound.type_args {
             Self::remap_resolved_type_with_import_aliases(type_arg, imported_type_aliases);
         }

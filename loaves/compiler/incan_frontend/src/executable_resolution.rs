@@ -254,6 +254,16 @@ fn resolve_from_catalog(
         }));
         let (offset, length) = (*offset, *length);
         let declaration = surface.read(package, &identity, offset, length)?;
+        if let ExecutableDeclaration::NominalWithTraits(_, implementations) = &declaration {
+            // Lazy defaults are declaration requirements, even when the consumer never spells their trait. An
+            // uncovered unused default contributes no body, just as an uncovered source-adoption root does.
+            pending.extend(
+                implementations
+                    .iter()
+                    .filter(|implementation| implementation.implementation == implementation.method)
+                    .map(|implementation| (implementation.method.clone(), false, true)),
+            );
+        }
         let owner = canonical_module_identity(&identity)
             .ok_or_else(|| package.unusable(malformed("declaration has no module owner")))?;
         let module = modules

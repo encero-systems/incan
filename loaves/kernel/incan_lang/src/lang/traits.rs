@@ -213,6 +213,30 @@ pub fn from_qualified_str(name: &str) -> Option<TraitId> {
     name.ends_with(&generated_suffix).then_some(canonical)
 }
 
+/// Resolve a checked bound's standard trait identity, including its public Loaf namespace.
+/// Bound identity does not establish an executable iterator carrier; value representation lookup stays separate.
+pub fn from_bound_str(name: &str) -> Option<TraitId> {
+    if let Some(id) = from_qualified_str(name) {
+        return Some(id);
+    }
+    let canonical = name.rsplit("::").next().and_then(from_str)?;
+    let source_module = source_module(canonical)?;
+    let generated_module = generated_module(canonical)?;
+    let root = source_module.strip_prefix("std.")?.split('.').next()?;
+    super::standard_packages::STANDARD_PACKAGE_NAMESPACE_POLICIES
+        .iter()
+        .any(|policy| {
+            policy.namespace_roots.contains(&root)
+                && name
+                    == format!(
+                        "pub::{}::{generated_module}::{}",
+                        policy.package_name,
+                        as_str(canonical)
+                    )
+        })
+        .then_some(canonical)
+}
+
 /// Return the canonical source module for a source-owned builtin trait.
 #[must_use]
 pub const fn source_module(id: TraitId) -> Option<&'static str> {

@@ -294,9 +294,15 @@ impl BodyIrModule {
 
     /// Whether a body is governed by its own type parameters or by the checked parameters of its enclosing owner.
     /// A receiver method need not repeat its owner's binders on the method declaration; it still requires caller
-    /// instantiation and must not become a compiled nongeneric Loaf callable.
+    /// instantiation and must not become a compiled nongeneric Loaf callable. An open Self receiver or return slot
+    /// also requires specialization even when its trait and method declare no type parameters.
     pub fn body_requires_instantiation(&self, body: &Body) -> bool {
-        if !body.type_parameters.is_empty() {
+        if !body.type_parameters.is_empty()
+            || body
+                .locals
+                .first()
+                .is_some_and(|local| local.ty == crate::IncanType::SelfType)
+        {
             return true;
         }
         let Some(identity) = &body.canonical else {
