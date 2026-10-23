@@ -6,6 +6,7 @@ The contract families: what each one runs and which expectations it admits.
 - `library`: a project consumes the libraries it carries as path dependencies; Oven bakes them before the run.
 - `interop`: a program reaches Rust through `rust::` imports and runs.
 - `testing`: `incan test` runs one test file and reports each test by outcome.
+- `format`: `incan fmt` preserves the expected text and is stable; `--check` reports changes without writing.
 - `project`: what `incan describe-unit` reports for a project: its dependencies, its standard packages and its
   active features, or the refusal of a project Oven cannot describe.
 """
@@ -14,13 +15,14 @@ from fixture import Fixture
 from header import Header
 
 
-pub const FAMILIES: FrozenList[str] = ["behavior", "check", "library", "interop", "testing", "project"]
+pub const FAMILIES: FrozenList[str] = ["behavior", "check", "library", "interop", "testing", "project", "format"]
 
 # The expectations a run compares.
 const RUN: FrozenList[str] = ["expect-stdout", "expect-stdout-contains", "expect-stderr-contains", "expect-exit"]
 
 # Every expectation a header can declare; `behavior:`, `retires:` and `pending:` belong to every family.
 const EXPECTATIONS: FrozenList[str] = [
+    "expect-formatted",
     "expect-stdout",
     "expect-stdout-contains",
     "expect-stderr-contains",
@@ -35,6 +37,8 @@ const EXPECTATIONS: FrozenList[str] = [
 
 def admitted(family: str) -> list[str]:
     """The expectations `family` admits."""
+    if family == "format":
+        return ["expect-formatted", "expect-exit"]
     if family == "check":
         return ["expect-diagnostic", "expect-accepted"]
     if family == "testing":
@@ -60,6 +64,8 @@ pub def admit(fixture: Fixture, header: Header) -> Result[None, str]:
         return Err(f"the header declares nothing to compare; the {fixture.family} family compares {', '.join(allowed)}")
     if fixture.family == "library" and fixture.shape != "project":
         return Err("a library fixture is a project that carries its libraries as path dependencies")
+    if fixture.family == "format" and (fixture.shape == "module" or not header.declares("expect-formatted")):
+        return Err("a format fixture is one file or a project with `expect-formatted:`")
     if fixture.family == "testing" and (fixture.shape != "file" or not fixture.name.startswith("test_")):
         return Err("a testing fixture is one test file named `test_<subject>.incn`")
     return Ok(None)

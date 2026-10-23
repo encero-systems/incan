@@ -1,0 +1,128 @@
+# behavior: Inline comments stay on their statement, conditionals and loops receive canonical spacing, long for, if let and match headers wrap into parseable grouped layouts, and a long and/or header puts one operand per line inside parentheses, with a nested group on one line when it fits and in its own block when it does not.
+# expect-formatted:
+#   def value() -> int:
+#       """Return an integer with an inline explanation."""
+#       return 1  # Keep this explanation.
+#
+#
+#   def choose_sign(value: int) -> int:
+#       """Choose a result from the sign of the input."""
+#       if value > 0:
+#           return 1
+#       else:
+#           return 0
+#
+#
+#   def print_items() -> None:
+#       """Print each loop item."""
+#       for item in range(3):
+#           println(item)
+#
+#
+#   def visit(value: str) -> None:
+#       """Visit characters after a long transformation chain."""
+#       for character in (
+#           value
+#               .strip()
+#               .replace("before_first", "after_first")
+#               .replace("before_second", "after_second")
+#               .replace("before_third", "after_third")
+#       ):
+#           println(character)
+#
+#
+#   def present(value: Option[str]) -> bool:
+#       """Check for text after a long optional transformation chain."""
+#       if let Some(text) = (
+#           value
+#               .map((text) => text.strip())
+#               .map((text) => text.lower())
+#               .map((text) => text.upper())
+#               .map((text) => text.strip())
+#       ):
+#           return true
+#       return false
+#
+#
+#   def library(name: str) -> bool:
+#       """Recognize a library name through a long logical condition."""
+#       if (
+#           name.startswith("lib")
+#           and (name.endswith(".rlib") or name.endswith(".dylib") or name.endswith(".so_shared_library"))
+#       ):
+#           return true
+#       return false
+#
+#
+#   def archive(name: str) -> bool:
+#       """Recognize an archive name through a logical condition whose nested group needs its own block."""
+#       if (
+#           name.startswith("lib")
+#           and (
+#               name.endswith(".rlib")
+#               or name.endswith(".dylib")
+#               or name.endswith(".so_shared_library")
+#               or name.endswith(".static_archive")
+#           )
+#       ):
+#           return true
+#       return false
+#
+#
+#   def choose_text(value: str) -> int:
+#       """Match text after a long transformation chain."""
+#       match (
+#           value
+#               .strip()
+#               .replace("before_first", "after_first")
+#               .replace("before_second", "after_second")
+#               .replace("before_third", "after_third")
+#       ):
+#           _ => return 1
+
+def value()->int:
+    """Return an integer with an inline explanation."""
+    return 1 # Keep this explanation.
+def choose_sign(value:int)->int:
+    """Choose a result from the sign of the input."""
+    if value>0:
+        return 1
+    else:
+        return 0
+def print_items()->None:
+    """Print each loop item."""
+    for item in range(3):
+        println( item )
+
+
+def visit(value: str) -> None:
+    """Visit characters after a long transformation chain."""
+    for character in value.strip().replace("before_first", "after_first").replace("before_second", "after_second").replace("before_third", "after_third"):
+        println(character)
+
+
+def present(value: Option[str]) -> bool:
+    """Check for text after a long optional transformation chain."""
+    if let Some(text) = value.map((text) => text.strip()).map((text) => text.lower()).map((text) => text.upper()).map((text) => text.strip()):
+        return true
+    return false
+
+
+def library(name: str) -> bool:
+    """Recognize a library name through a long logical condition."""
+    if name.startswith("lib") and (name.endswith(".rlib") or name.endswith(".dylib") or name.endswith(".so_shared_library")):
+        return true
+    return false
+
+
+def archive(name: str) -> bool:
+    """Recognize an archive name through a logical condition whose nested group needs its own block."""
+    if name.startswith("lib") and (name.endswith(".rlib") or name.endswith(".dylib") or name.endswith(".so_shared_library") or name.endswith(".static_archive")):
+        return true
+    return false
+
+
+def choose_text(value: str) -> int:
+    """Match text after a long transformation chain."""
+    match value.strip().replace("before_first", "after_first").replace("before_second", "after_second").replace("before_third", "after_third"):
+        _ => return 1

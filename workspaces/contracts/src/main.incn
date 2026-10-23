@@ -20,6 +20,7 @@ from families import FAMILIES, admit, command
 from fixture import Fixture, discover_family, materialize
 from header import parse_header
 from run import invoke
+from formatting import compare_format
 
 
 pub model Tally:
@@ -136,12 +137,17 @@ def run_case(incan: str, scratch: Path, fixture: Fixture) -> Verdict:
                         Err(reason) => return Verdict.Fail([reason])
                         Ok(project) =>
                             mut failures: list[str] = []
-                            match invoke(incan, command(fixture, header), project):
-                                Err(reason) => failures.append(reason)
-                                Ok(outcome) =>
-                                    failures = compare(fixture.family, header, outcome)
-                                    if len(failures) > 0 and outcome.stderr.strip() != "":
-                                        failures.append(f"stderr:\n{tail(outcome.stderr)}")
+                            if fixture.family == "format":
+                                match compare_format(incan, project, header, source):
+                                    Err(reason) => failures.append(reason)
+                                    Ok(found) => failures = found
+                            else:
+                                match invoke(incan, command(fixture, header), project):
+                                    Err(reason) => failures.append(reason)
+                                    Ok(outcome) =>
+                                        failures = compare(fixture.family, header, outcome)
+                                        if len(failures) > 0 and outcome.stderr.strip() != "":
+                                            failures.append(f"stderr:\n{tail(outcome.stderr)}")
                             match project.remove_tree():
                                 Err(error) => failures.append(f"cannot remove {project.0}: {error.message()}")
                                 Ok(_) => pass

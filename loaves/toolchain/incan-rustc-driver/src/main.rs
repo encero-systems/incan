@@ -56,11 +56,11 @@ use incan_cli::commands::DiagnosticOutputFormat;
 use incan_driver::unit::UnitDescription;
 
 const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [OPTIONS] | --check UNIT SYSROOT [--format \
-                     text|json] [OPTIONS] | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR]\n\
+                     text|json] [OPTIONS] | --fmt UNIT PATH [--check] | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR]\n\
                      OPTIONS: --rustc-arg ARG, --library (native artifacts and ABI caches come from UNIT)";
 
 /// Compile an Incan unit (`--unit`) or check one (`--check`), each from the unit description Oven wrote, or write the
-/// ABI cache of Rust crates (`--rust-abi`).
+/// ABI cache of Rust crates (`--rust-abi`), or format source with the unit's vocabulary (`--fmt`).
 ///
 /// The shared opt-in invocation sink is initialized before dispatch; disabled tracing uses the ordinary logging filter.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -69,9 +69,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match args.first().map(String::as_str) {
         Some("--unit") => frontend::compile(&args[1..]),
         Some("--check") => check(&args[1..]),
+        Some("--fmt") => format(&args[1..]),
         Some("--rust-abi") => rust_abi(&args[1..]),
         _ => Err(USAGE.into()),
     }
+}
+
+/// Format a source through the compiler's command function using the unit vocabulary supplied by Oven.
+fn format(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let [unit_path, source, options @ ..] = arguments else {
+        return Err("usage: incan-rustc-driver --fmt UNIT PATH [--check]".into());
+    };
+    let check = match options {
+        [] => false,
+        [flag] if flag == "--check" => true,
+        _ => return Err("usage: incan-rustc-driver --fmt UNIT PATH [--check]".into()),
+    };
+    let unit = UnitDescription::read(Path::new(unit_path)).map_err(|error| error.message)?;
+    if let Err(error) = incan_cli::commands::format_files(source, &unit, check, false) {
+        if !error.message.is_empty() {
+            eprintln!("{}", error.message);
+        }
+        std::process::exit(error.exit_code.0);
+    }
+    Ok(())
 }
 
 /// Write the ABI cache of the named Rust crates: every public item, described from rustc's crate metadata.

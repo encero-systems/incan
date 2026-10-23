@@ -22,12 +22,13 @@ incan fmt src/
 # Check if files need formatting (CI mode)
 incan fmt --check .
 
-# Show what would change without modifying
-incan fmt --diff myfile.incn
+# Format several paths in one invocation
+incan fmt src/ tests/ myfile.incn
 ```
 
-!!! note "`--diff` output can look empty for EOF-only changes"
-    If the only change is at end-of-file (like adding/removing a trailing newline), some diff viewers may not display an obvious change even though `incan fmt` would update the file.
+`--check` lists files that would change and leaves their contents untouched. Directories are searched recursively, skipping hidden directories, `target`, and `node_modules`. Formatting uses each file's unit vocabulary. Use `--` before a path that starts with `-`.
+
+Formatting does not build native dependencies or require checked model bundles. Available compiled Loaf manifests supply dependency vocabulary; a file using custom syntax still needs its vocabulary manifest to parse. Missing manifests do not become source-based substitutes, and malformed manifests are reported as errors.
 
 ## Relationship To The Style Guide
 
@@ -46,6 +47,7 @@ The style guide is the canonical source for what Incan code should look like:
 - top-level double-blank-line spacing only where the style guide permits it
 - preservation of one authored readability gap inside ordinary code blocks
 - comment placement that remains same-scope and structure-aware
+- preservation of triple-quoted string values, including their delimiters, escapes, and content indentation
 - one trailing newline at end-of-file
 
 RFC 053 remains the historical design record for the vertical-spacing portion of that contract.
@@ -54,9 +56,9 @@ RFC 053 remains the historical design record for the vertical-spacing portion of
 
 | Option             | Description                                                 |
 | ------------------ | ----------------------------------------------------------- |
-| `incan fmt <path>` | Format file(s) in place                                     |
+| `incan fmt <path>...` | Format files or directories in place                    |
 | `--check`          | Exit non-zero if files would be reformatted (useful for CI) |
-| `--diff`           | Show what would change without modifying files              |
+| `--`               | Treat subsequent arguments as paths                         |
 
 ## Exit Codes
 
@@ -125,6 +127,8 @@ enriched = orders
     This is deliberately a little different from Python. In Python, a newline before `.with_column(...)` normally has to live inside parentheses or use another continuation mechanism. Incan treats an indented leading `.` as fluent-chain continuation, which keeps DataFrame-style APIs readable without adding punctuation that is only there for line continuation.
 
 Short method-call chains remain inline when they fit.
+
+In suite headers such as `if let`, `for`, and `match`, wrapped fluent chains are grouped in parentheses so their continuation indentation stays separate from the following suite. Reformatting keeps this grouping stable.
 
 ## Expression Vocab Blocks
 

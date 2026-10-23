@@ -20,7 +20,7 @@ use incan_frontend::contract_metadata::{
     CanonicalModelBundle, materialize_contract_models, read_project_model_bundles,
 };
 use incan_frontend::hir::build_semantic_module_snapshot_v0;
-use incan_frontend::loaf_index::LoafIndex;
+use incan_frontend::loaf_index::{LIBRARY_MANIFEST_EXTENSION, LoafIndex};
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::testing_markers::{TestingMarkerSemantics, testing_marker_semantics_from_manifest};
 use incan_frontend::typechecker::{TypeCheckInfo, TypeChecker};
@@ -134,22 +134,46 @@ impl CompilationSession {
     ///
     /// Every Loaf is compiled before its consumer is checked (DD-0005), so a Loaf without an artifact refuses here.
     pub fn new(unit: &UnitDescription) -> CliResult<Self> {
+        Self::open(unit, false)
+    }
+
+    /// Open a parsing-only session for formatting without preparing native dependencies or checked model bundles.
+    ///
+    /// Available Loaf manifests still supply the vocabulary through the ordinary index. Missing manifests supply no
+    /// vocabulary; syntax that needs them must refuse at parsing rather than inventing a source-based replacement.
+    /// Checking and compilation must use [`Self::new`], which requires every reached artifact.
+    pub fn for_formatting(unit: &UnitDescription) -> CliResult<Self> {
+        Self::open(unit, true)
+    }
+
+    /// Initialize the shared parser context from Loaf artifacts; only formatting may omit absent manifests.
+    fn open(unit: &UnitDescription, formatting: bool) -> CliResult<Self> {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::open_session", input = %unit.source.display()).entered();
-        let entries = unit
-            .loaves
-            .iter()
-            .map(|loaf| {
-                if loaf.standard {
-                    LoafIndex::standard(&loaf.name, &loaf.dir)
-                } else {
-                    LoafIndex::dependency(&loaf.key, &loaf.name, &loaf.dir)
-                }
-            })
-            .collect::<Result<Vec<_>, _>>()
+        let mut entries = Vec::new();
+        for loaf in &unit.loaves {
+            let manifest = loaf.dir.join(format!("{}.{LIBRARY_MANIFEST_EXTENSION}", loaf.name));
+            if formatting
+                && !manifest
+                    .try_exists()
+                    .map_err(|error| CliError::failure(format!("{}: {error}", manifest.display())))?
+            {
+                continue;
+            }
+            let entry = if loaf.standard {
+                LoafIndex::standard(&loaf.name, &loaf.dir)
+            } else {
+                LoafIndex::dependency(&loaf.key, &loaf.name, &loaf.dir)
+            }
             .map_err(|error| CliError::failure(error.to_string()))?;
+            entries.push(entry);
+        }
         let loaves = Arc::new(LoafIndex::new(entries).map_err(|error| CliError::failure(error.to_string()))?);
-        let contract_model_bundles = read_project_model_bundles(&unit.project_root, &unit.contract_models)
-            .map_err(|error| CliError::failure(error.to_string()))?;
+        let contract_model_bundles = if formatting {
+            Vec::new()
+        } else {
+            read_project_model_bundles(&unit.project_root, &unit.contract_models)
+                .map_err(|error| CliError::failure(error.to_string()))?
+        };
         Ok(Self {
             rust_facts_source: None,
             vocab_runtime: Arc::default(),

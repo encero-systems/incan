@@ -13,7 +13,7 @@ use incan_frontend::diagnostics;
 
 /// Format the Incan source files at `path`, which belong to `unit`; each parses with the unit's vocabulary.
 pub fn format_files(path: &str, unit: &UnitDescription, check_mode: bool, diff_mode: bool) -> CliResult<ExitCode> {
-    let session = CompilationSession::new(unit)?;
+    let session = CompilationSession::for_formatting(unit)?;
     let path = Path::new(path);
     let files = collect_incn_files(path);
 
