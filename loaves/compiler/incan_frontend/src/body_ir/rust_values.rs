@@ -34,8 +34,8 @@ pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::NominalDeclaration
         .collect()
 }
 
-/// Project a native display into its structural slice/reference carrier or the opaque nominal of its item. Trait
-/// objects and unsupported function types retain their refusal; the internal slice constructor is already structural.
+/// Preserve checked Incan nominal bases before projecting native slices, references and opaque Rust items. Unsupported
+/// trait objects and function types retain their refusal; a provider-qualified Incan name never becomes a Rust crate.
 pub(super) fn project(display: &str, facts: &TypeCheckInfo) -> Option<IncanType> {
     if (display.trim().starts_with('[') && display.trim() != "[]") || display.trim().starts_with('&') {
         let resolved = crate::typechecker::TypeChecker::new().native_rust_signature_type(display, "");
@@ -49,6 +49,33 @@ pub(super) fn project(display: &str, facts: &TypeCheckInfo) -> Option<IncanType>
     if let Some(checked) = checked_name(display.trim(), facts) {
         return Some(checked);
     }
+    let display = display.trim().trim_start_matches("::");
+    let (path, arguments) = match display.split_once('<') {
+        Some((path, rest)) => (
+            path.trim(),
+            incan_lang::interop::split_top_level_rust_args(rest.strip_suffix('>')?),
+        ),
+        None => (display, Vec::new()),
+    };
+    let arguments = arguments
+        .into_iter()
+        .filter(|argument| !crate::typechecker::TypeChecker::rust_generic_arg_is_lifetime(argument))
+        .collect::<Vec<_>>();
+    if let Some(checked) = checked_name(path, facts) {
+        let IncanType::Named(base) = checked else {
+            return None;
+        };
+        if arguments.is_empty() {
+            return Some(IncanType::Named(base));
+        }
+        return Some(IncanType::Generic {
+            base,
+            args: arguments
+                .into_iter()
+                .map(|argument| argument_type(argument, facts))
+                .collect(),
+        });
+    }
     if display.contains('<') {
         let resolved = crate::typechecker::TypeChecker::new().resolved_type_from_rust_display(display);
         if !matches!(resolved, crate::symbols::ResolvedType::RustPath(_)) {
@@ -58,16 +85,7 @@ pub(super) fn project(display: &str, facts: &TypeCheckInfo) -> Option<IncanType>
             ));
         }
     }
-    if let Some((base, inner)) = display.trim().split_once('<')
-        && let Some(IncanType::Named(base)) = checked_name(base, facts)
-    {
-        let args = incan_lang::interop::split_top_level_rust_args(inner.strip_suffix('>')?)
-            .into_iter()
-            .map(|argument| argument_type(argument, facts))
-            .collect();
-        return Some(IncanType::Generic { base, args });
-    }
-    let (identity, arguments) = rust_item(display, facts)?;
+    let identity = rust_item(path, arguments.len(), facts)?;
     let name = bir::native_opaque_name(&identity)?;
     if arguments.is_empty() {
         return Some(IncanType::Named(name));
@@ -79,34 +97,21 @@ pub(super) fn project(display: &str, facts: &TypeCheckInfo) -> Option<IncanType>
     Some(IncanType::Generic { base: name, args })
 }
 
-/// The Rust item a display names with its top-level argument displays, or `None` for a display that is not a path.
+/// The Rust item a parsed base path and argument count name, or `None` for a base that is not a Rust path.
 ///
 /// The item is keyed on its public path whichever spelling the display uses (an import or a definition path), so one
 /// Rust item has one identity and the driver resolves it through public modules.
-fn rust_item<'a>(display: &'a str, facts: &TypeCheckInfo) -> Option<(CanonicalSymbolId, Vec<&'a str>)> {
-    let display = display.trim().trim_start_matches("::");
-    let (path, arguments) = match display.split_once('<') {
-        Some((path, rest)) => (
-            path.trim(),
-            incan_lang::interop::split_top_level_rust_args(rest.strip_suffix('>')?),
-        ),
-        None => (display, Vec::new()),
-    };
+fn rust_item(path: &str, arity: usize, facts: &TypeCheckInfo) -> Option<CanonicalSymbolId> {
     let path = facts.rust.item_public_paths.get(path).map_or(path, String::as_str);
-    // A builtin's carrier and an SDK runtime surface already have their own storage; a checked raw reexport keeps
-    // its native identity before that decision, independently of an authored source wrapper with the runtime name.
+    // A builtin's carrier and an SDK runtime surface already have their own storage; they are never a second layout.
     if incan_semantics_core::RuntimeBuiltinType::from_carrier_path(path).is_some()
         || incan_lang::lang::surface::types::from_runtime_rust_path(path).is_some()
     {
         return None;
     }
     let identity = bir::rust_item_identity(path)?;
-    bir::native_opaque_nominal(&identity, arguments.len())?;
-    let arguments = arguments
-        .into_iter()
-        .filter(|argument| !crate::typechecker::TypeChecker::rust_generic_arg_is_lifetime(argument))
-        .collect();
-    Some((identity, arguments))
+    bir::native_opaque_nominal(&identity, arity)?;
+    Some(identity)
 }
 
 /// The Body IR type of one written argument display: the checker's own Rust display conversion, projected again so

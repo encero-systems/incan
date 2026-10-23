@@ -499,11 +499,12 @@ impl BodyIrModule {
                 return false;
             }
         }
-        let compiled_item = match &declaration.canonical.origin {
-            crate::SymbolOrigin::Package { .. } => crate::body_ir::loaf_item_path(&declaration.canonical),
-            _ => crate::body_ir::native_nominal_item(&declaration.canonical),
-        };
-        if !declaration.native_item.is_empty() && compiled_item.as_deref() != Some(declaration.native_item.as_str()) {
+        if !declaration.native_item.is_empty()
+            && crate::body_ir::native_nominal_item(&declaration.canonical)
+                .or_else(|| crate::body_ir::loaf_item_path(&declaration.canonical))
+                .as_deref()
+                != Some(declaration.native_item.as_str())
+        {
             return false;
         }
         if matches!(

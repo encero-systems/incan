@@ -880,11 +880,12 @@ fn nominal_derives(name: &str, class: bool, type_info: &TypeCheckInfo) -> Option
     Some(derives)
 }
 
-/// Replace only an inherited class's physical fields with the checked parent-first layout and ancestor identities.
+/// Retain class reflection and the checked parent-first field layout with ancestor identities.
 fn retain_inherited_layout(
     mut retained: bir::NominalDeclaration,
     type_info: &TypeCheckInfo,
 ) -> Option<bir::NominalDeclaration> {
+    retain_class_reflection(&mut retained, type_info);
     let Some(facts) = type_info.declarations.body_ir_class_inheritance.get(&retained.name) else {
         return Some(retained);
     };
@@ -912,6 +913,36 @@ fn retain_inherited_layout(
     retained.class_inheritance = Some(facts.inheritance.clone());
     retained.has_field_defaults = false;
     Some(retained)
+}
+
+/// Retain a class's public field policy and presentation metadata from its checked parent-first layout.
+/// These slots also govern typed overlays, so inherited and local fields share the same visibility decision.
+fn retain_class_reflection(retained: &mut bir::NominalDeclaration, facts: &TypeCheckInfo) {
+    let Some(layout) = facts.declarations.class_layouts.get(&retained.name) else {
+        return;
+    };
+    retained.reflection_fields = Some(
+        layout
+            .fields
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, field)| (field.visibility == ast::Visibility::Public).then_some(slot))
+            .collect(),
+    );
+    retained.reflection_metadata = Some(
+        layout
+            .fields
+            .iter()
+            .filter(|field| field.visibility == ast::Visibility::Public)
+            .map(|field| bir::FieldMetadata {
+                name: field.name.clone(),
+                alias: field.alias.clone(),
+                description: field.description.clone(),
+                type_name: field.surface_type_name.clone().unwrap_or_else(|| field.ty.to_string()),
+                has_default: field.default.is_some(),
+            })
+            .collect(),
+    );
 }
 
 /// Project checked adoptions after inference, retaining lexical binders before resolving runtime carrier names.

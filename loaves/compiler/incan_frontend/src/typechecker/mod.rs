@@ -7292,6 +7292,14 @@ impl TypeChecker {
                 identities.insert(name.clone(), identity.clone());
             }
         }
+        // Generated reflection calls retain their published runtime carrier without introducing a source binding.
+        for (name, identity) in &self.type_info.declarations.body_ir_native_type_identities {
+            if matches!(identity.origin, SymbolOrigin::Package { .. })
+                && incan_semantics_core::body_ir::native_nominal_item(identity).is_some()
+            {
+                identities.insert(name.clone(), identity.clone());
+            }
+        }
         identities
     }
 

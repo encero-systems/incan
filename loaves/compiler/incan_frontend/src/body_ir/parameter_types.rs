@@ -206,6 +206,15 @@ fn retain_checked_nominal_names(ty: IncanType, facts: &TypeCheckInfo) -> IncanTy
                 .body_ir_native_type_identities
                 .get(&base)
                 .map_or(base.clone(), |owner| owner.declaration_name.clone());
+            // A provider-qualified Incan base is a checked nominal, not a Rust item whose crate is named `pub`.
+            let base = if crate::typechecker::split_canonical_public_library_type_name(&base).is_some() {
+                match facts.qualify_semantic_type(IncanType::Named(base)) {
+                    IncanType::Named(name) => name,
+                    refused => return refused,
+                }
+            } else {
+                base
+            };
             let mut args: Vec<_> = args
                 .into_iter()
                 .map(|ty| retain_checked_nominal_names(ty, facts))

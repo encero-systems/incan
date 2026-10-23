@@ -2,26 +2,6 @@
 
 from rust::incan_std_core::strings import str_starts_with
 from rust::incan_std_testing import fail_t, panic_text
-from rust::std::cmp import PartialEq
-
-
-pub def assert_equal[T with PartialEq](left: T, right: T, message: str) -> None:
-    """Preserve canonical assert_eq's AssertionError category, including an explicitly empty message."""
-    if left != right:
-        comparison_failure(message, "left != right")
-
-
-pub def assert_unequal[T with PartialEq](left: T, right: T, message: str) -> None:
-    """Preserve canonical assert_ne's AssertionError category without requiring Debug formatting."""
-    if left == right:
-        comparison_failure(message, "left == right")
-
-
-def comparison_failure(message: str, condition: str) -> None:
-    """Use the language helper's exact default/custom panic payload while keeping the frozen testing crate unchanged."""
-    if message == "":
-        return fail_t(f"AssertionError: {condition}")
-    return fail_t(f"AssertionError: {message}; {condition}")
 
 
 pub def assert_raises_deferred(block: () -> None, expected: str, message: str) -> None:

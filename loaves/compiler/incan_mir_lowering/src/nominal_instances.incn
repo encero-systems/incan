@@ -33,7 +33,12 @@ pub def nominal_symbol(base: str, arguments: list[RustType]) -> str:
 
 
 pub def instance_arguments(module: &BodyIrModule, declaration: &NominalDeclaration) -> Result[list[RustType], str]:
-    """Recover a closed layout's arguments from the checked types that scheduled its specialization."""
+    """Use a closed SDK layout's retained arguments before consulting checked source frames that scheduled specialization."""
+    if len(declaration.native_type_arguments) != 0:
+        mut arguments: list[RustType] = []
+        for argument in declaration.native_type_arguments:
+            arguments.append(argument.clone())
+        return Ok(arguments)
     if declaration.type_parameter_count == 0:
         return Ok([])
     base = template_base(declaration)

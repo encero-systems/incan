@@ -336,26 +336,22 @@ pub def assert_eq[T](left: T, right: T, msg: str = "assertion failed: left != ri
     assert_eq(result, expected, "calculation was wrong")
     ```
     """
-    if left != right:
-        fail(msg)
+    assert left == right, msg
 
 
 pub def assert_ne[T](left: T, right: T, msg: str = "assertion failed: left == right") -> None:
     """Assert two values are not equal."""
-    if left == right:
-        fail(msg)
+    assert left != right, msg
 
 
 pub def assert_true(condition: bool, msg: str = "assertion failed: expected true") -> None:
     """Assert condition is true."""
-    if not condition:
-        fail(msg)
+    assert condition, msg
 
 
 pub def assert_false(condition: bool, msg: str = "assertion failed: expected false") -> None:
     """Assert condition is false."""
-    if condition:
-        fail(msg)
+    assert not condition, msg
 
 
 pub def assert_is_some[T](option: Option[T], msg: str = "assertion failed: expected Some, got None") -> T:

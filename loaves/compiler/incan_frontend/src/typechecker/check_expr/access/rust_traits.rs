@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use super::{RustPathMethodCall, TypeChecker};
 use crate::ast::{Expr, Spanned};
 use crate::resolved_type_subst::{map_resolved_type_leaves, substitute_resolved_type};
-use crate::symbols::{CallableParam, ResolvedType};
+use crate::symbols::ResolvedType;
 use crate::typechecker::helpers::render_resolved_type_as_rust_arg;
 use crate::typechecker::{IdentKind, RustArgCoercionKind};
 use incan_lang::interop::{RustFunctionSig, RustImplementedTrait, RustItemKind, RustTraitAssoc, RustTypeInfo};
