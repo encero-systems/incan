@@ -18,6 +18,7 @@ use incan_lang::interop::{CoercionPolicy, RustFunctionSig};
 use incan_lang::lang::builtins::BuiltinFnId;
 use incan_lang::lang::c_abi::{LinkCapabilityId, ScalarTypeId, link_capability_as_str, scalar_type_as_str};
 use incan_lang::lang::surface::string_methods::StringMethodId;
+use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeCategory};
 use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
 use incan_semantics_core::{
     CanonicalStableDeclarationContext, CanonicalSymbolId, CompilerNodeId, IncanCallableParam, IncanCallableParamKind,
@@ -944,8 +945,10 @@ pub(crate) struct BodyIrNewtypeConstantValue {
 /// Rust interop decisions that must be preserved exactly across lowering.
 #[derive(Debug, Default, Clone)]
 pub struct RustInteropArtifacts {
-    /// Declaration-order native type binders and checked defaults. Body IR completes opaque owner arguments from
-    /// these facts so an omitted default and its explicit spelling never create different storage arities.
+    /// Structural native storage keyed by the original checked type. Diagnostic displays are opaque RustInteropPath
+    /// keys; consumers never parse or complete them.
+    pub storage_types: HashMap<IncanType, IncanType>,
+    /// Declaration-order native binders and defaults used while the accepting checker freezes native storage.
     pub owner_parameters: HashMap<String, Vec<(String, Option<ResolvedType>)>>,
     /// Native by-value receiver calls whose nongeneric owner has an unconditional metadata-selected Copy
     /// implementation. The adapter verifies that capability against the exact linked native layout.
@@ -1111,6 +1114,10 @@ pub struct RustCheckedEnum {
 /// A metadata-selected Rust call, retaining the signature and receiver passing mode the checker admitted.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RustCheckedCall {
+    /// Fully qualified structural signature, published by the accepting checker before Body IR construction.
+    pub storage: Option<RustCheckedSignature>,
+    /// Source declaration binders active when this native call was admitted, independently of nominal spellings.
+    pub source_type_parameters: Vec<String>,
     /// Flat, checked Deref/DerefMut callees evaluated on the receiver before written ordinary arguments.
     pub receiver_adjustments: Vec<RustCheckedCall>,
     /// Public item path of the selected free function or associated function.
@@ -1125,6 +1132,19 @@ pub struct RustCheckedCall {
     pub result_item_path: Option<String>,
     /// Whether the source receiver is a value passed in the first parameter slot.
     pub has_receiver: bool,
+}
+
+/// Native call storage and source nominal owners selected in the checker's declaration environment.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RustCheckedSignature {
+    /// Native argument types, including the receiver's exact reference mode.
+    pub parameters: Vec<IncanType>,
+    /// Native result before source boundary conversions.
+    pub return_type: IncanType,
+    /// Native type arguments in declaration order.
+    pub type_arguments: Vec<IncanType>,
+    /// Exact source owners backing identity-encoded storage leaves.
+    pub identities: BTreeMap<String, CanonicalSymbolId>,
 }
 
 /// Native iteration retains both calls independently of the written expression's call facts.
@@ -2793,6 +2813,38 @@ impl TypeCheckInfo {
     /// Return the resolved type recorded for the expression at `span`, if any.
     pub fn expr_type(&self, span: Span) -> Option<&ResolvedType> {
         self.expressions.expr_types.get(&(span.start, span.end))
+    }
+
+    /// Admit registry-owned task, race and synchronization carriers without granting an equal-spelled source owner
+    /// any SDK authority. Both checking and Body IR use this same provenance boundary.
+    pub(crate) fn runtime_owner_admitted(&self, id: surface_types::SurfaceTypeId) -> bool {
+        if !matches!(
+            surface_types::category(id),
+            SurfaceTypeCategory::AsyncTask | SurfaceTypeCategory::AsyncRace | SurfaceTypeCategory::AsyncSync
+        ) {
+            return false;
+        }
+        let Some(path) = surface_types::stdlib_module_path(id) else {
+            return false;
+        };
+        let path = path.split('.').map(str::to_owned).collect::<Vec<_>>();
+        let name = surface_types::as_str(id);
+        let Some(identity) = self
+            .declarations
+            .named_type_identities
+            .get(name)
+            .or_else(|| self.declarations.body_ir_native_type_identities.get(name))
+        else {
+            return true;
+        };
+        match &identity.origin {
+            SymbolOrigin::Module(owner) => owner == &path,
+            SymbolOrigin::Package { library, module_path } => {
+                library == "incan_stdlib_async" && module_path == &path[1..]
+            }
+            SymbolOrigin::RustCrate(owner) => surface_types::from_runtime_rust_path(&owner.join("::")) == Some(id),
+            _ => false,
+        }
     }
 
     /// Project a checked type without erasing its nominal owners. Carrier identities come only from the checker's

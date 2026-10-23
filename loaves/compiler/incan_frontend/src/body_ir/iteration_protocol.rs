@@ -191,7 +191,13 @@ impl BodyBuilder<'_, '_> {
             .cloned();
         let (returned, polled) = if let Some(hooks) = native {
             self.native_enum_payload_bindings.insert(item);
-            let returned = self.checked_type(&hooks.next.return_type);
+            let returned = hooks
+                .next
+                .storage
+                .as_ref()
+                .ok_or("native iteration poll without checked storage")?
+                .return_type
+                .clone();
             let polled = self.native_iteration_call(&hooks.next, bir::Place::from_local(iterator), scope, span, out)?;
             (returned, polled)
         } else {

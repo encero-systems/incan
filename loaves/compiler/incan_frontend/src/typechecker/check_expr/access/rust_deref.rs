@@ -305,6 +305,8 @@ impl TypeChecker {
             }
         };
         Some(RustCheckedCall {
+            storage: None,
+            source_type_parameters: self.native_call_type_parameters(),
             receiver_adjustments: Vec::new(),
             path: format!("{}::{method}", implementation.path),
             type_arguments: vec![owner.clone()],
