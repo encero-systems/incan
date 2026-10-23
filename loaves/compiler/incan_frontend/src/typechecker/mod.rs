@@ -7291,6 +7291,42 @@ impl TypeChecker {
         self.type_info.declarations.body_ir_native_type_identities = self.checked_native_nominal_type_identities();
         self.type_info.body_ir_runtime_types = self.checked_body_ir_runtime_types();
         self.type_info.rust.item_public_paths = self.checked_rust_item_public_paths();
+        self.type_info.rust.owner_parameters = self.checked_rust_owner_parameters();
+    }
+
+    /// Retain checked native default templates at the checker boundary. Only successfully demanded type metadata
+    /// contributes facts; Body IR never starts a second metadata query to choose an owner's argument count.
+    fn checked_rust_owner_parameters(&self) -> HashMap<String, Vec<(String, Option<ResolvedType>)>> {
+        let mut owners = HashMap::new();
+        for path in self.observed_rust_metadata_queries() {
+            let Some(metadata) = self.lookup_rust_item_metadata_for_path(&path) else {
+                continue;
+            };
+            let RustItemKind::Type(info) = metadata.kind else {
+                continue;
+            };
+            let parameters = info
+                .type_params
+                .iter()
+                .enumerate()
+                .map(|(index, name)| {
+                    let default = info.type_param_defaults.get(index).and_then(Option::as_deref);
+                    (
+                        name.clone(),
+                        default.map(|default| self.native_rust_signature_type(default, &path)),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let public = self
+                .type_info
+                .rust
+                .item_public_paths
+                .get(&path)
+                .cloned()
+                .unwrap_or(path);
+            owners.insert(public, parameters);
+        }
+        owners
     }
 
     /// Map each imported Rust item's import and definition spellings to its public import path, once, from the

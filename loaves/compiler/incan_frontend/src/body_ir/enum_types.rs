@@ -55,6 +55,8 @@ impl BodyBuilder<'_, '_> {
             IncanType::Generic { base, args }
                 if self.type_info.declarations.named_type_identities.get(base) == Some(&owner.canonical)
                     || (*base == owner.name
+                        && super::bir::rust_item_identity(base).as_ref() == Some(&owner.canonical))
+                    || (*base == owner.name
                         && matches!(&owner.canonical.origin,
                         incan_semantics_core::SymbolOrigin::Package { library, module_path }
                         if library == "incan_std_async" && module_path == &["time"])) =>
@@ -126,7 +128,7 @@ fn closed_signature_type(ty: &IncanType) -> bool {
 }
 
 /// Replace only the declaration's retained placeholders; nominal leaves and unrelated binders remain untouched.
-fn close_payload_type(ty: &IncanType, parameters: &[String], arguments: &[IncanType]) -> IncanType {
+pub(super) fn close_payload_type(ty: &IncanType, parameters: &[String], arguments: &[IncanType]) -> IncanType {
     match ty {
         IncanType::TypeVar(name) => parameters
             .iter()

@@ -1,0 +1,72 @@
+# behavior: native enum patterns retain exact payloads, nested variants, and Rust discriminants
+# expect-stdout:
+#   missing
+#   opaque
+#   7
+#   -3
+#   less
+#   equal
+#   greater
+
+from rust::std::cmp import Ordering
+from rust::std::env import VarError
+from rust::std::ffi import OsString
+from rust::std::io import SeekFrom
+from rust::std::ops import ControlFlow
+
+
+def environment_kind(value: Result[str, VarError]) -> str:
+    """Read nested Rust variants inside an ordinary source Result."""
+    match value:
+        Ok(text) => return text
+        Err(VarError.NotPresent) => return "missing"
+        Err(VarError.NotUnicode(raw)) => return raw.to_string_lossy().into_owned()
+
+
+def seek_offset(value: SeekFrom) -> int:
+    """Read the native unsigned or signed payload selected by each seek variant."""
+    match value:
+        SeekFrom.Start(offset) => return int(offset)
+        SeekFrom.End(offset) => return offset
+        SeekFrom.Current(offset) => return offset
+        _ => return 0
+
+
+def comparison_name(value: Ordering) -> str:
+    """Distinguish native variants whose discriminants are negative, zero, and positive."""
+    match value:
+        Ordering.Less => return "less"
+        Ordering.Equal => return "equal"
+        Ordering.Greater => return "greater"
+        _ => return "unknown"
+
+
+def flow_score(value: ControlFlow[int, str]) -> int:
+    """Close native enum payload binders in their declaration order."""
+    match value:
+        ControlFlow.Break(score) => return score
+        ControlFlow.Continue(text) => return len(text)
+        _ => return -1
+
+
+def text_length(value: str) -> int:
+    """Observe the native error's ordinary implicit text conversion."""
+    return len(value)
+
+
+def main() -> None:
+    """Observe native unit and payload variants through direct and nested patterns."""
+    println(environment_kind(Err(VarError.NotPresent)))
+    println(environment_kind(Err(VarError.NotUnicode(OsString.from("opaque")))))
+    println(seek_offset(SeekFrom.Start(7u64)))
+    println(seek_offset(SeekFrom.Current(-3)))
+    println(comparison_name(Ordering.Less))
+    println(comparison_name(Ordering.Equal))
+    println(comparison_name(Ordering.Greater))
+    stopped: ControlFlow[int, str] = ControlFlow.Break(9)
+    continued: ControlFlow[int, str] = ControlFlow.Continue("abc")
+    assert flow_score(stopped) == 9
+    assert flow_score(continued) == 3
+    missing = VarError.NotPresent
+    assert text_length(missing) > 0
+    assert text_length(missing) > 0

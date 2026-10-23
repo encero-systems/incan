@@ -89,6 +89,8 @@ struct MethodCandidate {
     dispatch: Option<crate::typechecker::ResolvedMethodDispatch>,
 }
 
+/// Source method lookup context; shared borrowed receivers exclude mutable declarations before arguments are checked.
+#[derive(Clone, Copy)]
 struct SourceMethodPrepass<'a> {
     method: &'a str,
     receiver_surface: MemberBindingSurface,
@@ -97,6 +99,7 @@ struct SourceMethodPrepass<'a> {
     span: Span,
     receiver_ty: &'a ResolvedType,
     expected_return_ty: Option<&'a ResolvedType>,
+    shared_receiver: bool,
 }
 
 struct ValueEnumGeneratedCall<'a> {
@@ -3062,7 +3065,7 @@ impl TypeChecker {
             }
             ResolvedType::RustPath(display) => {
                 let normalized = display.strip_prefix("rust::").unwrap_or(display);
-                let (base, args) = Self::rust_generic_base_and_args(normalized)?;
+                let (base, args) = Self::rust_generic_base_and_args(normalized).unwrap_or((normalized, Vec::new()));
                 if incan_lang::interop::ancestral_rust_path(base) != incan_lang::interop::ancestral_rust_path(rust_path)
                 {
                     return None;
@@ -3293,7 +3296,7 @@ impl TypeChecker {
                 ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref(),
                 other => other,
             };
-            let template = self.resolved_type_from_rust_display(template);
+            let template = self.native_rust_signature_type(template, path);
             self.infer_type_param_bindings(
                 &self.rust_inference_type(&template, &native_parameters),
                 &self.rust_inference_type(&self.rust_closed_owner(receiver, owner, path), &[]),
@@ -3349,6 +3352,11 @@ impl TypeChecker {
             if let Some(projected) = self.rust_projected_type(&display, 0) {
                 native_result = projected;
             }
+        }
+        // The checked source bytes carrier and Vec<u8> have the same native ABI. Keep that proven source storage
+        // after generic substitution so byte indexing does not inherit a list projection contract.
+        if *result == ResolvedType::Bytes && self.rust_trait_carriers_match(&native_result, result) {
+            native_result = ResolvedType::Bytes;
         }
         if method.signature.is_async {
             native_result = ResolvedType::Generic("Awaitable".into(), vec![native_result]);
@@ -3725,6 +3733,10 @@ impl TypeChecker {
                     self.type_info
                         .expr_type(receiver_span)
                         .and_then(|receiver| self.rust_owner_type_args(receiver, rust_path))
+                        .and_then(|mut arguments| {
+                            self.complete_rust_owner_arguments(type_info, &mut arguments)
+                                .then_some(arguments)
+                        })
                         .map(|arguments| {
                             self.specialize_rust_owner_signature(
                                 &effective_sig,
@@ -4788,6 +4800,18 @@ impl TypeChecker {
         &mut self,
         call: &SourceMethodPrepass<'_>,
     ) -> Option<ResolvedType> {
+        let borrowed = match call.receiver_ty {
+            ResolvedType::Ref(inner) => Some((inner.as_ref(), true)),
+            ResolvedType::RefMut(inner) => Some((inner.as_ref(), false)),
+            _ => None,
+        };
+        if let Some((receiver_ty, shared)) = borrowed {
+            return self.resolve_unambiguous_source_method_without_arg_prepass(&SourceMethodPrepass {
+                receiver_ty,
+                shared_receiver: call.shared_receiver || shared,
+                ..*call
+            });
+        }
         let type_name = match call.receiver_ty {
             ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name,
             _ => return None,
@@ -4853,6 +4877,7 @@ impl TypeChecker {
                     span: call.span,
                     receiver_ty: call.receiver_ty,
                     expected_return_ty: call.expected_return_ty,
+                    shared_receiver: call.shared_receiver,
                 };
                 let trait_adoptions = self.newtype_trait_adoptions_for_type_methods(type_name, &nt);
                 let ret = self.resolve_source_owner_method_without_arg_prepass(
@@ -4893,6 +4918,7 @@ impl TypeChecker {
             span: call_span,
             receiver_ty,
             expected_return_ty,
+            shared_receiver: false,
         };
         let ret = self.resolve_unambiguous_source_method_without_arg_prepass(&call)?;
         self.type_info
@@ -4926,6 +4952,9 @@ impl TypeChecker {
         let Some(method_info) = method_info else {
             return self.resolve_unambiguous_adopted_trait_method_without_arg_prepass(trait_adoptions, call);
         };
+        if call.shared_receiver && method_info.receiver == Some(Receiver::Mutable) {
+            return None;
+        }
 
         Some(self.check_resolved_generic_method_call(
             call.method,
@@ -4954,6 +4983,9 @@ impl TypeChecker {
             return None;
         }
         let candidate = candidates.remove(0);
+        if call.shared_receiver && candidate.info.receiver == Some(Receiver::Mutable) {
+            return None;
+        }
         let dispatch = self.resolved_trait_dispatch(
             &candidate.origin_trait,
             candidate.origin_type_args.clone(),
@@ -6840,6 +6872,7 @@ impl TypeChecker {
             span,
             receiver_ty: &base_ty,
             expected_return_ty,
+            shared_receiver: false,
         };
         if let Some(ret) = self.resolve_unambiguous_source_method_without_arg_prepass(&source_method_prepass) {
             self.type_info.inherit_same_trait_method_module(base.span, span);

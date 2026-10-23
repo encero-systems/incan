@@ -216,6 +216,30 @@ impl BodyIrModule {
         {
             return false;
         }
+        if matches!(declaration.canonical.origin, crate::SymbolOrigin::RustCrate(_)) {
+            let Some(expected) = crate::body_ir::native_enum_declaration(
+                &declaration.native_item,
+                declaration.type_parameters.clone(),
+                declaration
+                    .variants
+                    .iter()
+                    .map(|variant| (variant.name.clone(), variant.fields.clone()))
+                    .collect(),
+            ) else {
+                return false;
+            };
+            return declaration == &expected
+                && crate::body_ir::native_nominal_module(&declaration.canonical).as_deref()
+                    == Some(self.module_id.path())
+                && !declaration.variants.is_empty()
+                && declaration
+                    .variants
+                    .iter()
+                    .map(|variant| &variant.name)
+                    .collect::<BTreeSet<_>>()
+                    .len()
+                    == declaration.variants.len();
+        }
         self.declaration_id_for_canonical(
             &declaration.canonical,
             SymbolNamespace::OrdinaryLexical,

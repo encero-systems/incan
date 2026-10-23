@@ -242,11 +242,10 @@ pub(super) fn project_type(ty: IncanType, facts: &TypeCheckInfo) -> IncanType {
                 _ => base,
             };
             let args: Vec<_> = args.into_iter().map(|arg| project_type(arg, facts)).collect();
-            if args.is_empty() {
-                IncanType::Named(base)
-            } else {
-                IncanType::Generic { base, args }
-            }
+            super::rust_values::complete_owner(base, args, facts)
+        }
+        IncanType::Named(name) if bir::rust_item_identity(&name).is_some() => {
+            super::rust_values::complete_owner(name, Vec::new(), facts)
         }
         IncanType::Tuple(items) => IncanType::Tuple(items.into_iter().map(|item| project_type(item, facts)).collect()),
         IncanType::Ref(inner) => IncanType::Ref(Box::new(project_type(*inner, facts))),

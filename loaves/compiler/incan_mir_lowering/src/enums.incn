@@ -18,6 +18,7 @@ from models import model_type as plain_model_type
 from layout_types import native_source_type as retained_source_type
 from decls import library_enum_item, serde_propagation, with_serde_derives
 from nominal_instances import nominal_symbol
+from symbols import model_symbol
 
 
 pub def enum_type(declarations: list[RustEnumDeclaration], ty: &RustType) -> Option[PlanType]:
@@ -26,12 +27,12 @@ pub def enum_type(declarations: list[RustEnumDeclaration], ty: &RustType) -> Opt
         RustType.Named(name) =>
             for index in range(len(declarations)):
                 if declarations[index].name == str(name):
-                    return Some(PlanType.Enum(index, str(name)))
+                    return Some(PlanType.Enum(index, model_symbol(str(name))))
         RustType.Generic(base=base, args=arguments) =>
             name = nominal_symbol(str(base), arguments.clone())
             for index in range(len(declarations)):
                 if declarations[index].name == name:
-                    return Some(PlanType.Enum(index, name))
+                    return Some(PlanType.Enum(index, model_symbol(name)))
         _ => pass
     return None
 
@@ -220,7 +221,7 @@ pub def lower_enum_declarations(
             return Err(f"unsupported Body IR serde derive propagation to value enum {declaration.name}")
         declarations.append(
             EnumDeclaration(
-                name=str(declaration.name),
+                name=model_symbol(str(declaration.name)),
                 public=declaration.public or item != "",
                 variants=variants,
                 derives=derives,

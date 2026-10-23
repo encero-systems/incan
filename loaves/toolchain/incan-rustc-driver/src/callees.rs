@@ -239,6 +239,9 @@ fn layout_definition(tcx: TyCtxt<'_>, definition: DefId, expected: DefKind) -> O
 /// struct while a call of `Class` itself selects the function. A trait path selects its declared associated function;
 /// concrete Self arguments and bounds remain subject to native signature validation.
 pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
+    if let Some(method) = path.strip_prefix("[]::") {
+        return slice_function(tcx, method).ok_or_else(|| PlanError::UnknownCallee(path.into()));
+    }
     let mut segments = path.split("::").peekable();
     let root = segments.next().ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
     let mut current = crate::native_crates::root(tcx, root).ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
@@ -316,7 +319,22 @@ fn trait_function(tcx: TyCtxt<'_>, owner: DefId, name: &str) -> Option<DefId> {
 /// Select one public inherent associated function from the exact nominal owner. The caller instantiates the owner's
 /// type parameters separately before validating the signature.
 fn inherent_function(tcx: TyCtxt<'_>, owner: DefId, name: &str) -> Option<DefId> {
-    let mut found = tcx.inherent_impls(owner).iter().flat_map(|implementation| {
+    inherent_function_in(tcx, tcx.inherent_impls(owner), name)
+}
+
+/// Resolve a retained native slice method through the same primitive impl bucket rustc uses for method lookup.
+/// Only one public inherent declaration may select the callee; native arguments and predicates are verified later.
+fn slice_function(tcx: TyCtxt<'_>, name: &str) -> Option<DefId> {
+    inherent_function_in(
+        tcx,
+        tcx.incoherent_impls(rustc_middle::ty::fast_reject::SimplifiedType::Slice),
+        name,
+    )
+}
+
+/// Select one public inherent function from exact impl owners, refusing ambiguous same-named declarations.
+fn inherent_function_in(tcx: TyCtxt<'_>, implementations: &[DefId], name: &str) -> Option<DefId> {
+    let mut found = implementations.iter().flat_map(|implementation| {
         tcx.associated_item_def_ids(*implementation)
             .iter()
             .copied()

@@ -64,14 +64,9 @@ from nominal_frames import closed_arguments
 
 
 pub def variant_condition(mut builder: Builder, source: Place, slot: int, span: SourceSpan) -> Operand:
-    """Read a standard or source enum discriminant through the shared plan vocabulary."""
-    raw = temporary(builder, PlanType.EnumTag, span)
-    tag = temporary(builder, PlanType.Int, span)
+    """Test a checked variant through the adapter's native discriminant comparison."""
     condition = temporary(builder, PlanType.Bool, span)
-    builder.emit(plan_assign(raw, RvalueKind.Discriminant(source), span))
-    builder.emit(plan_assign(tag, RvalueKind.TagToInt(read_place(raw, false, span)), span))
-    literal = Operand(kind=OperandKind.Literal(Constant.Int(slot)), span=span)
-    builder.emit(plan_assign(condition, RvalueKind.Binary(BinaryOp.Equal, read_place(tag, false, span), literal), span))
+    builder.emit(plan_assign(condition, RvalueKind.IsVariant(source, slot), span))
     return read_place(condition, false, span)
 
 

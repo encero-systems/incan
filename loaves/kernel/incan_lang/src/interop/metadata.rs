@@ -1365,6 +1365,10 @@ pub struct RustVariantInfo {
     pub name: String,
     /// Positional payload field shapes in declaration order.
     pub fields: Vec<RustTypeShape>,
+    /// Exact native payload templates, before source shape normalization. Direct-route patterns retain integer
+    /// widths, references and native owner binders from these displays; an absent record grants no payload layout.
+    #[serde(default)]
+    pub field_type_displays: Vec<String>,
     /// Storage carrier per payload field, parallel to `fields`. Entries an older cache did not record mean
     /// [`RustPayloadCarrier::Direct`].
     #[serde(default)]

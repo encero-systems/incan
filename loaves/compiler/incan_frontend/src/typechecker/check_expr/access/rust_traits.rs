@@ -296,6 +296,9 @@ impl TypeChecker {
         if let Some(mut arguments) = self.rust_owner_type_args(&owner, path)
             && self.complete_rust_owner_arguments(info, &mut arguments)
         {
+            if arguments.is_empty() {
+                return owner;
+            }
             let arguments = arguments
                 .iter()
                 .map(render_resolved_type_as_rust_arg)
@@ -306,8 +309,9 @@ impl TypeChecker {
         owner
     }
 
-    /// Keep metadata-defaulted owners in the same shortest form rustc displays at constructors, so opaque layouts
-    /// have one argument arity across explicit trait adjustments and ordinary inherent calls.
+    /// Keep checker inference owners in the shortest form rustc displays at constructors. Body IR completes native
+    /// storage defaults separately from retained declaration facts, including defaults exposed by public field
+    /// templates.
     pub(super) fn rust_storage_owner(&self, owner: &ResolvedType, info: &RustTypeInfo, path: &str) -> ResolvedType {
         match owner {
             ResolvedType::Ref(inner) => return ResolvedType::Ref(Box::new(self.rust_storage_owner(inner, info, path))),
@@ -321,6 +325,9 @@ impl TypeChecker {
         };
         let arguments = self.rust_storage_owner_arguments(arguments, info, path);
         if arguments.is_empty() {
+            if info.type_params.is_empty() {
+                return owner.clone();
+            }
             return self.resolved_type_from_rust_display(path);
         }
         let arguments = arguments

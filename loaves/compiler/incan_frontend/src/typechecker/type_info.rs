@@ -940,9 +940,14 @@ pub(crate) struct BodyIrNewtypeConstantValue {
 /// Rust interop decisions that must be preserved exactly across lowering.
 #[derive(Debug, Default, Clone)]
 pub struct RustInteropArtifacts {
+    /// Declaration-order native type binders and checked defaults. Body IR completes opaque owner arguments from
+    /// these facts so an omitted default and its explicit spelling never create different storage arities.
+    pub owner_parameters: HashMap<String, Vec<(String, Option<ResolvedType>)>>,
     /// Public native field layouts selected during checking. Hidden fields remain absent from metadata and the
     /// adapter refuses incomplete layouts before any construction or projection is emitted.
     pub checked_layouts: HashMap<String, RustCheckedLayout>,
+    /// Complete native enum payload templates selected by constructor patterns, keyed by the public owner path.
+    pub checked_enums: HashMap<String, RustCheckedEnum>,
     /// Public Rust constants selected from metadata, keyed by their complete value-expression span.
     pub checked_constants: HashMap<(usize, usize), String>,
     /// Resolved Rust callees with closed native arguments and signatures, keyed by the complete call span.
@@ -1082,6 +1087,15 @@ pub struct RustCheckedFieldValue {
     pub native_type: ResolvedType,
     /// Public native item selected from metadata, when the field has a nominal carrier.
     pub item_path: Option<String>,
+}
+
+/// A complete native enum layout selected from metadata; declaration binders remain open until storage is closed.
+#[derive(Debug, Clone)]
+pub struct RustCheckedEnum {
+    /// Type binders in native declaration order, excluding lifetimes.
+    pub type_parameters: Vec<String>,
+    /// Ordered variant names and exact checked payload templates, before match ergonomics adds references.
+    pub variants: Vec<(String, Vec<ResolvedType>)>,
 }
 
 /// A metadata-selected Rust call, retaining the signature and receiver passing mode the checker admitted.
