@@ -117,9 +117,17 @@ pub def materialize(fixture: Fixture, scratch: Path) -> Result[Path, str]:
 
 
 pub def materialize_files(project: Path, desired: Dict[str, bytes]) -> Result[Path, str]:
-    """Write only changed fixture bytes and prune stale inputs, retaining the project's target directory."""
+    """
+    Write only changed fixture bytes and prune stale inputs, retaining the project's target directory.
+
+    1. Write each desired file whose bytes differ from what is there, so unchanged inputs keep their metadata and Oven
+       can reuse what it built from them.
+    2. Remove what the fixture no longer provides.
+    """
+    # 1. A file is written only when its bytes differ, so unchanged inputs keep the metadata Oven reuses builds by.
     for relative in sorted([name for name in desired.keys()]):
         write_if_different(project.joinpath(relative), desired[relative])?
+    # 2. Whatever the fixture no longer provides is removed, except the project's target directory.
     prune(project, "", desired)?
     return Ok(project)
 
@@ -146,9 +154,9 @@ pub def fixture_files(fixture: Fixture) -> Result[Dict[str, bytes], str]:
 def collect(source: Path, relative: str, mut files: Dict[str, bytes]) -> Result[None, str]:
     """Add a file or directory tree under its project-relative path."""
     if source.is_file():
-        files[relative] = source.read_bytes().map_err((error) => f"{source.0}: {error.message()}")?
+        files[relative] = contents(source)?
         return Ok(None)
-    for entry in source.iterdir().map_err((error) => f"{source.0}: {error.message()}")?:
+    for entry in listed(source)?:
         name = entry.name()
         if relative == "":
             collect(entry, name, files)?
@@ -159,7 +167,7 @@ def collect(source: Path, relative: str, mut files: Dict[str, bytes]) -> Result[
 
 def write_if_different(path: Path, content: bytes) -> Result[None, str]:
     """Write content only when the existing file's bytes differ."""
-    if path.is_file() and path.read_bytes().map_err((error) => f"{path.0}: {error.message()}")? == content:
+    if path.is_file() and contents(path)? == content:
         return Ok(None)
     io(path.parent().mkdir(true, true), path.parent())?
     io(path.write_bytes(content), path)?
@@ -167,19 +175,33 @@ def write_if_different(path: Path, content: bytes) -> Result[None, str]:
 
 
 def prune(directory: Path, relative: str, desired: Dict[str, bytes]) -> Result[None, str]:
-    """Remove stale fixture inputs while leaving Oven's target directory in place."""
-    for entry in directory.iterdir().map_err((error) => f"{directory.0}: {error.message()}")?:
+    """
+    Remove stale fixture inputs while leaving Oven's target directory in place.
+
+    A directory is pruned in turn and removed when nothing is left in it; a file the fixture does not provide goes.
+    """
+    for entry in listed(directory)?:
         name = entry.name()
         if relative == "" and name == "target":
             continue
         path = f"{relative}{name}"
         if entry.is_dir():
             prune(entry, f"{path}/", desired)?
-            if len(entry.iterdir().map_err((error) => f"{entry.0}: {error.message()}")?) == 0:
+            if len(listed(entry)?) == 0:
                 io(entry.rmdir(), entry)?
         elif path not in desired:
             io(entry.unlink(), entry)?
     return Ok(None)
+
+
+def listed(directory: Path) -> Result[list[Path], str]:
+    """The entries of a directory, a failure named after it."""
+    return directory.iterdir().map_err((error) => f"{directory.0}: {error.message()}")
+
+
+def contents(path: Path) -> Result[bytes, str]:
+    """The bytes of a file, a failure named after it."""
+    return path.read_bytes().map_err((error) => f"{path.0}: {error.message()}")
 
 
 def io(result: Result[None, IoError], path: Path) -> Result[None, str]:

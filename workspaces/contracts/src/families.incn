@@ -11,26 +11,21 @@ The contract families: what each one runs and which expectations it admits.
   active features, or the refusal of a project Oven cannot describe.
 """
 
+from files import read
 from fixture import Fixture
 from header import Header, parse_header
 
 
-pub model AdmittedProgram:
-    """A fixture's source and validated expectations, read through one intake boundary."""
-
-    pub source: str
-    pub header: Header
-
-
-pub def read_program(fixture: Fixture) -> Result[AdmittedProgram, str]:
-    """Read and admit one fixture, retaining its source path on every refusal."""
-    source = fixture.program.read_text("utf-8", "strict").map_err((error) => f"{fixture.program.0}: {error.message()}")?
-    header = parse_header(source).map_err((reason) => f"{fixture.program.0}: {reason}")?
-    admit(fixture, header).map_err((reason) => f"{fixture.program.0}: {reason}")?
-    return Ok(AdmittedProgram(source=source, header=header))
-
-
-pub const FAMILIES: FrozenList[str] = ["behavior", "check", "library", "interop", "testing", "project", "format", "graph"]
+pub const FAMILIES: FrozenList[str] = [
+    "behavior",
+    "check",
+    "library",
+    "interop",
+    "testing",
+    "project",
+    "format",
+    "graph",
+]
 
 # The expectations a run compares.
 const RUN: FrozenList[str] = ["expect-stdout", "expect-stdout-contains", "expect-stderr-contains", "expect-exit"]
@@ -50,6 +45,31 @@ const EXPECTATIONS: FrozenList[str] = [
 ]
 
 
+pub model AdmittedProgram:
+    """A fixture's source and validated expectations, read through one intake boundary."""
+
+    pub source: str
+    pub header: Header
+
+
+pub def read_program(fixture: Fixture) -> Result[AdmittedProgram, str]:
+    """
+    Read and admit one fixture, retaining its source path on every refusal.
+
+    1. Read the fixture's program.
+    2. Parse the header it begins with.
+    3. Admit the header and the fixture's shape for its family.
+    """
+    program = fixture.program
+    # 1. The program is read whole, and a refusal names the path it came from.
+    source = read(program).map_err((reason) => f"{program.0}: {reason}")?
+    # 2. The header the program begins with is parsed from that source.
+    header = parse_header(source).map_err((reason) => f"{program.0}: {reason}")?
+    # 3. The header and the fixture's shape are admitted for the fixture's family before anything is run.
+    admit(fixture, header).map_err((reason) => f"{program.0}: {reason}")?
+    return Ok(AdmittedProgram(source=source, header=header))
+
+
 def admitted(family: str) -> list[str]:
     """The expectations `family` admits."""
     if family == "format":
@@ -61,20 +81,41 @@ def admitted(family: str) -> list[str]:
     if family == "testing":
         return ["expect-stdout-contains", "expect-stderr-contains", "expect-exit"]
     if family == "project":
-        return ["expect-dependencies", "expect-std-packages", "expect-active-features", "expect-stderr-contains", "expect-exit"]
+        return [
+            "expect-dependencies",
+            "expect-std-packages",
+            "expect-active-features",
+            "expect-stderr-contains",
+            "expect-exit",
+        ]
     mut run = list(RUN)
     run.append("expect-diagnostic")
     return run
 
 
 pub def admit(fixture: Fixture, header: Header) -> Result[None, str]:
-    """Refuse a header that declares an expectation its family does not compare, or no expectation at all, and a
-    fixture whose shape its family cannot run."""
-    allowed = admitted(fixture.family)
+    """
+    Refuse a header that declares an expectation its family does not compare, or no expectation at all, and a fixture
+    whose shape its family cannot run.
+
+    1. `graph-commands:` belong to graph fixtures, and each graph fixture declares them.
+    2. A header declares at least one expectation, and only those its family compares.
+    3. The fixture has the shape its family runs.
+    """
+    # 1. Only graph fixtures declare `graph-commands:`, and every graph fixture declares them.
     if fixture.family == "graph" and len(header.items("graph-commands")) == 0:
         return Err("a graph fixture declares its inspection invocations in `graph-commands:`")
     if fixture.family != "graph" and header.declares("graph-commands"):
         return Err("only graph fixtures declare `graph-commands:`")
+    # 2. The header declares at least one expectation, and only ones its family compares.
+    check_expectations(fixture, header)?
+    # 3. The fixture has the shape its family runs.
+    return check_shape(fixture, header)
+
+
+def check_expectations(fixture: Fixture, header: Header) -> Result[None, str]:
+    """Refuse a header that declares nothing to compare, or an expectation the fixture's family does not compare."""
+    allowed = admitted(fixture.family)
     mut declared = 0
     for key in EXPECTATIONS:
         if header.declares(key):
@@ -83,6 +124,11 @@ pub def admit(fixture: Fixture, header: Header) -> Result[None, str]:
             declared += 1
     if declared == 0:
         return Err(f"the header declares nothing to compare; the {fixture.family} family compares {', '.join(allowed)}")
+    return Ok(None)
+
+
+def check_shape(fixture: Fixture, header: Header) -> Result[None, str]:
+    """Refuse a fixture shaped in a way its family cannot run."""
     if fixture.family == "library" and fixture.shape != "project":
         return Err("a library fixture is a project that carries its libraries as path dependencies")
     if fixture.family == "format" and (fixture.shape == "module" or not header.declares("expect-formatted")):

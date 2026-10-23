@@ -1,0 +1,64 @@
+"""Reading, writing and removing the files of a case, reporting every failure as the system's message."""
+
+from std.fs import Path
+from std.json import JsonValue, parse
+
+
+pub def read(path: Path) -> Result[str, str]:
+    """A case file as strict UTF-8."""
+    return path.read_text("utf-8", "strict").map_err((error) => error.message())
+
+
+pub def write(path: Path, text: str) -> Result[None, str]:
+    """Write a case file as strict UTF-8."""
+    return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+pub def read_bytes(path: Path) -> Result[bytes, str]:
+    """A case file's bytes."""
+    return path.read_bytes().map_err((error) => error.message())
+
+
+pub def write_bytes(path: Path, content: bytes) -> Result[None, str]:
+    """Write a case file's bytes."""
+    return path.write_bytes(content).map_err((error) => error.message())
+
+
+pub def remove(path: Path) -> Result[None, str]:
+    """Remove a case file."""
+    return path.unlink().map_err((error) => error.message())
+
+
+pub def make_directory(path: Path) -> Result[None, str]:
+    """Create a directory and its missing parents."""
+    return path.mkdir(true, true).map_err((error) => error.message())
+
+
+pub def parse_json(text: str) -> Result[JsonValue, str]:
+    """A JSON document from text."""
+    return parse(text).map_err((error) => error.message())
+
+
+pub def json_text(document: JsonValue) -> Result[str, str]:
+    """A JSON document as compact text."""
+    return document.to_json().map_err((error) => error.message())
+
+
+pub def required(value: JsonValue, key: str) -> Result[JsonValue, str]:
+    """The member `key` of a JSON object."""
+    return value.require(key).map_err((error) => error.message())
+
+
+pub def required_text(value: JsonValue, key: str) -> Result[str, str]:
+    """The string at `key` of a JSON object."""
+    return required(value, key)?.expect_str().map_err((error) => error.message())
+
+
+pub def items(value: JsonValue) -> Result[list[JsonValue], str]:
+    """The elements of a JSON array."""
+    return value.expect_array().map_err((error) => error.message())
+
+
+pub def string_of(value: JsonValue) -> Result[str, str]:
+    """A JSON string."""
+    return value.expect_str().map_err((error) => error.message())

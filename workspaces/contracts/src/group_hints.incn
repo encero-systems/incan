@@ -3,10 +3,17 @@
 from rust::std::env import var
 from rust::std::process import id
 from std.fs import Path
+from files import make_directory, remove, write
 
 
 pub def hint_path(root: Path, family: str) -> Option[Path]:
-    """Scope case-name partitions to the canonical corpus and an explicit absolute toolchain home."""
+    """
+    Scope case-name partitions to the canonical corpus and an explicit absolute toolchain home.
+
+    1. Hints live under the toolchain home named by `INCAN_HOME`, which must be absolute.
+    2. They are scoped to the corpus by its canonical path, so another corpus never reads them.
+    """
+    # 1. Hints live under the toolchain home that `INCAN_HOME` names, and without an absolute one there are none.
     mut toolchain_home = ""
     environment_key: str = "INCAN_HOME"
     match var(environment_key):
@@ -14,11 +21,13 @@ pub def hint_path(root: Path, family: str) -> Option[Path]:
         Ok(value) => toolchain_home = value
     if not toolchain_home.startswith("/"):
         return None
+    # 2. The corpus's canonical path scopes the file name, so another corpus never reads these hints.
     match root.resolve():
         Err(_) => return None
         Ok(canonical) =>
             scope = canonical.0.replace("_", "_u").replace("/", "_s")
-            return Some(Path(toolchain_home).joinpath("cache").joinpath("contract-groups-v1").joinpath(f"{scope}-{family}.tsv"))
+            directory = Path(toolchain_home).joinpath("cache").joinpath("contract-groups-v1")
+            return Some(directory.joinpath(f"{scope}-{family}.tsv"))
 
 
 pub def retain_hint(hint: Option[Path], partition: list[str]) -> None:
@@ -26,18 +35,18 @@ pub def retain_hint(hint: Option[Path], partition: list[str]) -> None:
     match hint:
         None => pass
         Some(path) =>
-            match write_hint(path, "\n".join(partition) + "\n"):
-                Err(_) => pass
-                Ok(_) => pass
+            # A hint that cannot be stored costs only the next run's discovery, so a failed write is ignored.
+            _ = write_hint(path, "\n".join(partition) + "\n")
 
 
 def write_hint(path: Path, text: str) -> Result[None, str]:
     """Keep concurrent readers on a complete old or new partition, without storing compilation or case results."""
-    path.parent().mkdir(true, true).map_err((error) => error.message())?
+    make_directory(path.parent())?
     temporary = path.parent().joinpath(f".{path.name()}.{id()}.pending")
-    temporary.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
+    write(temporary, text)?
     match temporary.replace(path):
         Err(error) =>
-            temporary.unlink()
+            # The replace failure is what is reported, so a pending file that stays is not.
+            _ = remove(temporary)
             return Err(error.message())
         Ok(_) => return Ok(None)

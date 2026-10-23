@@ -8,6 +8,7 @@ from rust::std::process import Child, Command, Stdio
 from rust::std::thread import sleep
 from rust::std::time import Duration, Instant
 from std.fs import Path
+from files import read, remove
 
 
 # A deadline is explicit; zero preserves the original runner's unrestricted invocation duration.
@@ -43,7 +44,7 @@ pub def clear_trace(project: Path) -> Result[None, str]:
     """Start one case or shared compilation's trace without erasing notes between its commands."""
     trace = trace_file(project)
     if trace.is_file():
-        trace.unlink().map_err((error) => error.message())?
+        remove(trace)?
     return Ok(None)
 
 
@@ -51,7 +52,7 @@ pub def unit_notes(trace: Path) -> list[str]:
     """The units Oven prepared for this invocation, preserving their reported order and reasons."""
     if not trace.is_file():
         return []
-    match trace.read_text("utf-8", "strict"):
+    match read(trace):
         Err(_) => return []
         Ok(text) => return [line for line in text.split("\n") if line.startswith("oven: unit ")]
 
@@ -63,22 +64,30 @@ pub def invoke(incan: str, arguments: list[str], project: Path) -> Result[Outcom
 
 
 pub def launch(incan: str, arguments: list[str], project: Path, selector: Option[str]) -> Result[Child, str]:
-    """Start one child with separate captured streams; the caller owns waiting and collection."""
+    """
+    Start one child with separate captured streams; the caller owns waiting and collection.
+
+    1. The child runs with no resident owner, tracing into the project, in a process group of its own, with no input.
+    2. Its streams are captured in files beside the project.
+    3. A selected case runs the shared executable under the name of its own, and names its case.
+    4. It runs `arguments` in the project.
+    """
     mut command = Command.new(incan)
-    # A case's project is disposable and runs one command at a time: it gets no resident owner.
+    # 1. A case's project is disposable and runs one command at a time: it gets no resident owner.
     command.env("OVEN_OWNER", "off")
-    trace = trace_file(project)
-    command.env("OVEN_TRACE", trace.0)
+    command.env("OVEN_TRACE", trace_file(project).0)
     command.process_group(0)
     command.stdin(Stdio.null())
-    command.stdout(File.create(stream_path(project, "stdout").0).map_err((error) => str(error))?)
-    command.stderr(File.create(stream_path(project, "stderr").0).map_err((error) => str(error))?)
+    # 2. Each stream is captured in a file beside the project, so partial output survives a kill.
+    command.stdout(capture(project, "stdout")?)
+    command.stderr(capture(project, "stderr")?)
+    # 3. A selected case runs the shared executable under the name of its own project's, and names its case.
     match selector:
         Some(value) =>
             command.env("INCAN_CONTRACT_CASE", value)
-            name = project.name().split("-")[-1]
-            command.arg0(project.joinpath("target").joinpath("incan").joinpath("debug").joinpath("bin").joinpath(name).0)
+            command.arg0(case_executable(project).0)
         None => pass
+    # 4. The arguments are those `incan` is asked to run, in the project's own directory.
     for argument in arguments:
         command.arg(argument)
     command.current_dir(project.0)
@@ -87,27 +96,45 @@ pub def launch(incan: str, arguments: list[str], project: Path, selector: Option
         Ok(child) => return Ok(child)
 
 
+def capture(project: Path, stream: str) -> Result[File, str]:
+    """The file a child's stream is captured in."""
+    return File.create(stream_path(project, stream).0).map_err((error) => str(error))
+
+
+def case_executable(project: Path) -> Path:
+    """The path a selected case's executable is named by: the program of its own project."""
+    name = project.name().split("-")[-1]
+    return project.joinpath("target").joinpath("incan").joinpath("debug").joinpath("bin").joinpath(name)
+
+
 pub def collect(started: Result[Child, str], project: Path, clock: Instant) -> Result[Outcome, str]:
-    """Reap the child, enforcing the configured group deadline while preserving partial streams and signals."""
+    """
+    Reap the child, enforcing the configured group deadline while preserving partial streams and signals.
+
+    1. Wait for the child to end. Past the deadline, kill its process group instead.
+    2. Reap it and read the streams it wrote.
+    3. A timeout is said so in the error stream.
+    """
     mut child = started?
     deadline = timeout_seconds
     mut timed_out = false
+    # 1. The child is polled until it ends, and past the deadline its whole process group is killed instead.
     while true:
         match child.try_wait().map_err((error) => str(error))?:
             Some(_) => break
             None => pass
         if deadline > 0 and int(clock.elapsed().as_secs()) >= deadline:
-            mut kill = Command.new("/bin/kill")
-            kill.arg("-KILL").arg("--").arg(f"-{child.id()}")
-            kill.status().map_err((error) => str(error))?
+            kill_group(child.id())?
             timed_out = true
             break
         sleep(Duration.from_millis(5))
+    # 2. The child is reaped, and then the streams it wrote are read whole, even when it was killed.
     status = child.wait().map_err((error) => str(error))?
     stdout_result = read_stream(project, "stdout")
     stderr_result = read_stream(project, "stderr")
     stdout = stdout_result?
     mut stderr = stderr_result?
+    # 3. A timeout is said so at the end of the error stream.
     if timed_out:
         stderr += f"\ncontract invocation timed out after {deadline} seconds\n"
     mut code: Option[int] = None
@@ -115,6 +142,14 @@ pub def collect(started: Result[Child, str], project: Path, clock: Instant) -> R
         Some(value) => code = Some(int(value))
         None => pass
     return Ok(Outcome(stdout=stdout, stderr=stderr, code=code))
+
+
+def kill_group(leader: u32) -> Result[None, str]:
+    """Kill the process group a timed-out child leads, and everything it started."""
+    mut kill = Command.new("/bin/kill")
+    kill.arg("-KILL").arg("--").arg(f"-{leader}")
+    kill.status().map_err((error) => str(error))?
+    return Ok(None)
 
 
 def stream_path(project: Path, stream: str) -> Path:
@@ -125,6 +160,6 @@ def stream_path(project: Path, stream: str) -> Path:
 def read_stream(project: Path, stream: str) -> Result[str, str]:
     """Read strict UTF-8 and remove the runner-owned capture file after collection."""
     path = stream_path(project, stream)
-    value = path.read_text("utf-8", "strict").map_err((error) => error.message())
-    path.unlink().map_err((error) => error.message())?
+    value = read(path)
+    remove(path)?
     return value
