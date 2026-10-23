@@ -1,0 +1,21 @@
+pub model NumberExpr:
+    """A numeric expression's name."""
+    pub name: str
+
+
+pub model BoolExpr:
+    """A Boolean expression's name."""
+    pub name: str
+
+
+pub type Expr = Union[NumberExpr, BoolExpr]
+
+
+pub def number(name: str) -> NumberExpr:
+    """Return a single member of the public union."""
+    return NumberExpr(name=name)
+
+
+pub def assign(name: str, expr: Expr) -> str:
+    """Accept either public expression member."""
+    return name

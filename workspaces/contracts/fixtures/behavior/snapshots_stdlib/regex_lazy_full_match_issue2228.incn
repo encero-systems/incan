@@ -1,0 +1,19 @@
+# behavior: full_match extends a lazy quantifier to cover the entire input and keeps its captures (#2228)
+# pending: #2228 the regex standard package is not available to this toolchain
+# expect-stdout:
+#   abc +
+
+from std.regex import Regex
+
+
+def main() -> None:
+    """Observe the captures of an unanchored lazy pattern."""
+    match Regex("(?P<value>(.*?))(?P<children>(\\+))?"):
+        Err(error) => println(error.message())
+        Ok(regex) =>
+            match regex.full_match("abc+"):
+                None => println("no full match")
+                Some(captures) =>
+                    value = captures.group("value").unwrap_or("missing")
+                    children = captures.group("children").unwrap_or("missing")
+                    println(f"{value} {children}")

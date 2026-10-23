@@ -1,0 +1,21 @@
+# behavior: an error propagated from an awaited function in main reaches stderr and exits unsuccessfully (#2231)
+# pending: #2231 the async standard package is not available to this toolchain
+# expect-exit: 1
+# expect-stderr-contains:
+#   this message must reach stderr
+
+import std.async
+from std.async.time import sleep
+
+
+async def fail_after_a_tick() -> Result[None, str]:
+    """Return an application error after yielding to the runtime."""
+    await sleep(0.01)
+    return Err("this message must reach stderr")
+
+
+async def main() -> Result[None, str]:
+    """Propagate the inner application error to the process boundary."""
+    await fail_after_a_tick()?
+    println("unreachable")
+    return Ok(None)

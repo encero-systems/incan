@@ -1,0 +1,11 @@
+# behavior: a library with a registry Rust dependency and its own script remains callable by a consumer (#2241) (#2216)
+# pending: #2241 #2216 the library dependency's compiled registry closure is not prepared
+# expect-stdout:
+#   42
+
+from pub::numbers import encoded
+
+
+def main() -> None:
+    """Read a value produced through the library's registry dependency."""
+    println(encoded())

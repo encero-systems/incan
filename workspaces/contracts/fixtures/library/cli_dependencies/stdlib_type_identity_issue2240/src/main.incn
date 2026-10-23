@@ -1,0 +1,17 @@
+# behavior: JsonValue returned by a library is accepted as the consumer's own JsonValue (#2240)
+# pending: #2240 the library dependency's compiled artifact and data standard package are not prepared
+# expect-stdout:
+#   0
+
+from std.json import JsonValue
+from pub::documents import document
+
+
+def size(value: JsonValue) -> int:
+    """Use the consumer's spelling of the standard-library type."""
+    return value.len()
+
+
+def main() -> None:
+    """Pass the library's value straight across the typed boundary."""
+    println(size(document()))

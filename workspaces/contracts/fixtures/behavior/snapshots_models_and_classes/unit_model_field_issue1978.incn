@@ -1,0 +1,19 @@
+# behavior: None initializes a model field whose instantiated type is None (#1978)
+# pending: #1978 the checker refuses Option[?] for a Unit model field
+# expect-stdout:
+#   constructed
+
+model Box[T]:
+    """A holder whose field can have unit type."""
+    value: T
+
+
+def make() -> Box[None]:
+    """Construct the unit specialization without a helper value."""
+    return Box[None](value=None)
+
+
+def main() -> None:
+    """Require successful construction of the unit field."""
+    box = make()
+    println("constructed")

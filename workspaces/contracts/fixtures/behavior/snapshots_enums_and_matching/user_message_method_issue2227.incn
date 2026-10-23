@@ -1,0 +1,22 @@
+# behavior: an enum's user-defined message method returns its own text (#2227)
+# pending: #2227 payload access in message fails nominal receiver reference validation
+# expect-stdout:
+#   io: boom
+#   usage: help
+
+enum ExpandError:
+    """Errors with application-defined messages."""
+    Io(str)
+    Usage(str)
+
+    def message(self) -> str:
+        """Describe the payload rather than just the variant name."""
+        match self:
+            ExpandError.Io(detail) => return f"io: {detail}"
+            ExpandError.Usage(detail) => return f"usage: {detail}"
+
+
+def main() -> None:
+    """Call both branches of the message method."""
+    println(ExpandError.Io("boom").message())
+    println(ExpandError.Usage("help").message())

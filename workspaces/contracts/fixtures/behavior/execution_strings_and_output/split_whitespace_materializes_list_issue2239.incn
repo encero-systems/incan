@@ -1,0 +1,11 @@
+# behavior: split_whitespace returns an indexable list, including Unicode whitespace and empty input (#2239)
+# pending: #2239 split_whitespace reaches an unsupported Body IR list method
+# expect-stdout:
+#   3 alpha beta gamma
+#   0
+
+def main() -> None:
+    """Read the length and elements of whitespace-separated fields."""
+    fields = "  alpha\tbeta\u2003gamma\n".split_whitespace()
+    println(f"{len(fields)} {fields[0]} {fields[1]} {fields[2]}")
+    println(len(" \t\n".split_whitespace()))
