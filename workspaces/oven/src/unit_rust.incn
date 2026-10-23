@@ -8,7 +8,7 @@ from json_fields import array, field, strings
 from loaf_local_graph import LocalDemand, local_facets, unique
 from rust_activation import DependencyDomain
 from rust_units import RustBuild, read_registry_units, target_configuration, build_dependencies, registry_features, rust_facet
-from toolchain import NativeCrate, Toolchain, load_toolchain, rust_compiler
+from toolchain import NativeCrate, Toolchain, load_toolchain, located, rust_compiler
 from unit import UnitDescription, describe
 
 
@@ -96,14 +96,17 @@ def add_extern(unit: UnitDescription, native: NativeCrate) -> Result[UnitDescrip
 
 
 def loaf_search(closure: Path) -> Result[list[str], str]:
-    """Read a reached Loaf's transitive search directories without exposing its private extern aliases."""
+    """Read a reached Loaf's transitive search directories without exposing its private extern aliases.
+
+    A directory is absolute, or relative to the Loaf's own directory (a packed toolchain's standard Loaves).
+    """
     if not closure.is_file():
         return Ok([])
     text = closure.read_text("utf-8", "strict").map_err((error) => f"{closure.0}: {error.message()}")?
     document = parse(text).map_err((error) => f"{closure.0}: {error.message()}")?
     match strings(field(document, "search", []).map_err((_) => f"{closure.0}: missing search")?, ["search"]):
         Err(_) => return Err(f"{closure.0}: search is not a list of directories")
-        Ok(directories) => return Ok(directories)
+        Ok(directories) => return Ok([located(closure.parent(), directory) for directory in directories])
 
 
 def expose_macro_crates(unit: UnitDescription, closure: Path, toolchain: Toolchain) -> Result[UnitDescription, str]:
@@ -130,5 +133,5 @@ def expose_macro_crates(unit: UnitDescription, closure: Path, toolchain: Toolcha
                     return Err(f"{closure.0}: a macro extern is not a name and a path")
                 if pair[0] in toolchain_names:
                     continue
-                result = add_extern(result, NativeCrate(name=pair[0], path=pair[1]))?
+                result = add_extern(result, NativeCrate(name=pair[0], path=located(closure.parent(), pair[1])))?
             return Ok(result)

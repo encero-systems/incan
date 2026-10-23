@@ -4,12 +4,17 @@ The toolchain Oven runs: its compiler, and the native closure every compiled uni
 Its description is `<home>/toolchains/<toolchain>/toolchain.json` (`incan.toolchain/1`):
 
 - `driver`: the compiler, `incan-rustc-driver`.
-- `sysroot`: the pinned Rust toolchain the compiler was built against. The compiler verifies the match itself.
+- `sysroot`: the pinned Rust toolchain the compiler was built against. The compiler verifies the match by content
+  (its `rustc -vV` output and `rustc_driver` library bytes), so any location of the same compiler is accepted. An
+  installed toolchain names its `sysroot` link, which points at the machine's Rust installation.
 - `rust_abi`: the ABI caches of the toolchain's Rust crates (`std`, `core`, `alloc`): the Rust facts checking reads.
 - `externs`: the crates every unit may name, each `{"name", "path"}`: the runtime and its support crates. An explicit
   manifest dependency takes precedence over a support crate's ambient alias.
 - `search`: the directories the dependencies of those crates live in.
-- `registry_units`: the prepared registry closure available to this toolchain during bootstrap.
+- `registry_units`: the prepared registry closure (`incan.oven.closure/1`) available to this toolchain.
+
+Every path is relative to the toolchain directory, which is what makes a toolchain relocatable; an absolute path is
+used as written (a bootstrap home that has not been packed).
 """
 
 from std.fs import Path
@@ -44,20 +49,48 @@ pub def rust_compiler(toolchain: Toolchain) -> str:
     return Path(toolchain.sysroot).joinpath("bin").joinpath("rustc").0
 
 
+pub def toolchain_directory() -> Result[Path, str]:
+    """The directory this Oven's toolchain is installed in: `<home>/toolchains/<toolchain>`."""
+    return Ok(home()?.joinpath("toolchains").joinpath(TOOLCHAIN))
+
+
 pub def load_toolchain() -> Result[Toolchain, str]:
     """The description of this Oven's toolchain, from its home directory."""
-    path = home()?.joinpath("toolchains").joinpath(TOOLCHAIN).joinpath("toolchain.json")
+    return read_toolchain(toolchain_directory()?)
+
+
+pub def read_toolchain(directory: Path) -> Result[Toolchain, str]:
+    """Read the same toolchain contract for installed use or staged installation verification."""
+    path = directory.joinpath("toolchain.json")
     if not path.is_file():
         return Err(f"no toolchain {TOOLCHAIN} is installed: {path.0} does not exist")
     text = path.read_text("utf-8", "strict").map_err((error) => f"{path.0}: {error.message()}")?
     document = parse(text).map_err((error) => f"{path.0}: {error.message()}")?
-    match toolchain_of(document):
+    match toolchain_of(document, directory):
         Ok(toolchain) => return Ok(toolchain)
         Err(failed) => return Err(f"{path.0}: `{'.'.join(failed)}` is missing or malformed")
 
 
-def toolchain_of(document: JsonValue) -> Result[Toolchain, list[str]]:
-    """A toolchain description's fields; a refusal is the field path that failed."""
+pub def located(directory: Path, path: str) -> str:
+    """A manifest path as a usable one: relative to the toolchain `directory`, or as written when absolute.
+
+    A relative path is joined lexically with `.` and `..` collapsed, so one artifact named from different documents has
+    one spelling and equal artifacts compare equal.
+    """
+    if path.startswith("/"):
+        return path
+    mut parts = directory.0.split("/")
+    for part in path.split("/"):
+        if part == "..":
+            if len(parts) > 1:
+                parts = parts[:len(parts) - 1]
+        elif part != "." and part != "":
+            parts.append(part)
+    return "/".join(parts)
+
+
+def toolchain_of(document: JsonValue, directory: Path) -> Result[Toolchain, list[str]]:
+    """A toolchain description's fields, located in `directory`; a refusal is the field path that failed."""
     schema = text_field(document, "schema", [])?
     if schema != TOOLCHAIN_SCHEMA:
         return Err(["schema"])
@@ -65,14 +98,16 @@ def toolchain_of(document: JsonValue) -> Result[Toolchain, list[str]]:
     entries = array(field(document, "externs", [])?, ["externs"])?
     for index in range(len(entries)):
         place = ["externs", str(index)]
-        externs.append(NativeCrate(name=text_field(entries[index], "name", place)?, path=text_field(entries[index], "path", place)?))
+        externs.append(NativeCrate(name=text_field(entries[index], "name", place)?, path=located(directory, text_field(entries[index], "path", place)?)))
+    abi = strings(field(document, "rust_abi", [])?, ["rust_abi"])?
+    search = strings(field(document, "search", [])?, ["search"])?
     return Ok(
         Toolchain(
-            driver=text_field(document, "driver", [])?,
-            sysroot=text_field(document, "sysroot", [])?,
-            rust_abi=strings(field(document, "rust_abi", [])?, ["rust_abi"])?,
+            driver=located(directory, text_field(document, "driver", [])?),
+            sysroot=located(directory, text_field(document, "sysroot", [])?),
+            rust_abi=[located(directory, item) for item in abi],
             externs=externs,
-            search=strings(field(document, "search", [])?, ["search"])?,
-            registry_units=text_field(document, "registry_units", [])?,
+            search=[located(directory, item) for item in search],
+            registry_units=located(directory, text_field(document, "registry_units", [])?),
         ),
     )

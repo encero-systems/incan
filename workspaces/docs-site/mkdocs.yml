@@ -360,6 +360,7 @@ nav:
           - "DD-0003: Replacement program output contract": design_records/0003_replacement_program_output_contract.md
           - "DD-0004: Pinned native compiler driver": design_records/0004_native_route_through_the_pinned_rustc.md
           - "DD-0005: Cargo-free development contract": design_records/0005_cargo_free_development_contract.md
+          - "DD-0010: The dev.8 release toolchain and CI": design_records/0010_dev8_toolchain_and_ci.md
       - Whitepapers:
           - Overview: whitepapers/index.md
           - Incan ecosystem north star: whitepapers/incan_ecosystem_north_star.md

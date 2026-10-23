@@ -12,6 +12,8 @@ mkdir "$scratch"
 home=$scratch/toolchain
 mkdir -p "$home/bin" "$scratch/logs"
 cp "$driver" "$home/bin/incan-rustc-driver"
+# An installed driver finds its sysroot through the `sysroot` link beside its `bin` directory.
+ln -s "$sysroot" "$home/sysroot"
 printf '{}\n' > "$home/toolchain.json"
 driver=$home/bin/incan-rustc-driver
 proof=$home/driver-library.proof
@@ -101,8 +103,14 @@ cached after_concurrent true
 
 refused bootstrap 'Bootstrap' env RUSTC_BOOTSTRAP= \
     "$driver" --unit "$unit" identity_probe "$scratch/bootstrap" "$sysroot"
-refused other_sysroot 'sysroot path differs from the build-bound sysroot' env -u RUSTC_BOOTSTRAP \
-    "$driver" --unit "$unit" identity_probe "$scratch/other_sysroot" "$scratch"
+# A sysroot is identified by its compiler's output, never by its path: the toolchain's own link is accepted, and a
+# sysroot whose compiler differs is refused before any output exists.
+env -u RUSTC_BOOTSTRAP "$driver" --identity "$home/sysroot" > /dev/null
+mkdir -p "$scratch/other-compiler/bin"
+printf '#!/bin/sh\necho "rustc 0.0.0 (other)"\n' > "$scratch/other-compiler/bin/rustc"
+chmod +x "$scratch/other-compiler/bin/rustc"
+refused other_sysroot 'rustc must match the complete pinned 1.98.0 build identity' env -u RUSTC_BOOTSTRAP \
+    "$driver" --unit "$unit" identity_probe "$scratch/other_sysroot" "$scratch/other-compiler"
 
 # Identical bytes loaded from another path must still be refused, even with an otherwise valid warm proof.
 library=$(jq -r .path "$scratch/expected.proof" | xxd -r -p)

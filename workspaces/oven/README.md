@@ -10,6 +10,7 @@ Oven is the build system and the `incan` command line, written in Incan (DD-0008
 | `graph_inspection.incn`, `graph_dependencies.incn`, `graph_incan.incn`, `graph_rust.incn`, `graph_loaves.incn`, `graph_cache.incn`, `graph_queries.incn` | Selecting inspection units, reading published Loaf graphs, caching legacy exports by input digest, and querying compiler-owned records. Incan facts come from the shared compiler exporter; Rust facts come from analysis in the installed rustc driver. |
 | `unit.incn` | The unit description (`incan.unit/1`) of a program, library or test unit: what the compiler reads instead of a manifest (`incan describe-unit PATH`). |
 | `toolchain.incn` | The installed toolchain (`<home>/toolchains/<toolchain>/toolchain.json`, `incan.toolchain/1`): the compiler, the pinned sysroot it was built against, the ABI cache of its standard Rust crates (DD-0009), and the native closure every compiled unit links. |
+| `toolchain_archive.incn` | Packing the installed toolchain's named artifacts and rewriting toolchain, registry and standard Loaf paths for relocation. |
 | `incan_units.incn` | Preparing path libraries in dependency order, checking and compiling a described unit with the toolchain's compiler, and running the program it compiled (`incan check`, `incan run`, `incan build`). |
 | `unit_freshness.incn` | Content fingerprints for prepared path libraries: selected unit inputs, source files, compiler inputs and reached Loaf artifacts. |
 | `testing.incn` | Running a compiled test unit and reporting the collected tests' observed outcomes (`incan test PATH [UNIT OPTIONS]`). |
@@ -31,6 +32,10 @@ Oven is the build system and the `incan` command line, written in Incan (DD-0008
 Fixtures, test parameters, async tests, timeouts and resource markers currently produce named refusals. Their execution contracts are not implemented by this initial native harness.
 
 ## Building
+
+`incan toolchain pack OUT` writes the installed toolchain to a `.tar`, `.tar.gz` or `.tar.zst` archive. It includes the named driver and Rust ABI caches, compiled standard Loaves, runtime native dependencies and prepared registry units. Paths in the toolchain manifest, registry closure and Loaf native closures are relative to their containing directories. Rust's sysroot and the driver's local identity proof are not archived. Packing requires `tar` with support for the selected compression format.
+
+`incan toolchain install ARCHIVE` extracts the archive into staging beside `$INCAN_HOME/toolchains/0.6.0-dev.8`, refuses a mismatched toolchain name, creates its `sysroot` link and invokes the staged driver with `--identity SYSROOT`. The local sysroot comes from `INCAN_SYSROOT`, otherwise `rustup run 1.98.0 rustc --print sysroot`, otherwise `rustc --print sysroot`. Install the matching Rust 1.98.0 toolchain with `rustc-dev` first. Only successful identity verification replaces an existing installation; a refusal preserves it.
 
 Until a dev.8 toolchain builds itself, the frozen dev.7 compiler builds Oven: `incan build src/main.incn` in this directory produces the `incan` program. Its standard packages come from `INCAN_STDLIB`.
 

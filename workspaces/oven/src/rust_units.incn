@@ -21,7 +21,7 @@ from rust_activation import CfgSnapshot, DependencyDomain, TargetConfiguration, 
 from semver_req import compare_version_order, parse_version
 from json_fields import field, strings
 from graph_cache import publish
-from toolchain import load_toolchain
+from toolchain import load_toolchain, located
 
 
 @derive(Eq)
@@ -113,7 +113,8 @@ pub def read_registry_units(path: Path) -> Result[RegistryUnits, str]:
     for name in externs_table.keys():
         extern = externs_table.require(name).map_err((error) => error.message())?
         artifact = extern.require("path").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
-        entries = Path(artifact).parent().parent().parent().0
+        # An extern's path is absolute, or relative to the closure document (a packed toolchain's registry).
+        entries = Path(located(path.parent(), artifact)).parent().parent().parent().0
         break
     if entries == "":
         return Err(f"{path.0} names no compiled unit")
@@ -464,9 +465,11 @@ def compile_binary(
     environment = binary_environment(request.rustc, facet.project, declared, name.replace("-", "_"))?
     if declared.sysroot:
         # The toolchain's `rustc_driver` stays in its sysroot: the binary carries a runpath to it and the identity
-        # it was built against, which it verifies before it compiles anything.
+        # it was built against, which it verifies before it compiles anything. The first runpath is relative to the
+        # binary, so an installed toolchain runs wherever its `sysroot` link points; the second, the building
+        # machine's sysroot, keeps a binary without that link (a bootstrap build) runnable.
         libraries = toolchain_libraries(request.rustc)?
-        arguments = arguments + ["-C", f"link-arg=-Wl,-rpath,{libraries.directory}"]
+        arguments = arguments + ["-C", f"link-arg=-Wl,-rpath,{libraries.runpath}", "-C", f"link-arg=-Wl,-rpath,{libraries.directory}"]
     invoke_rustc(request.rustc, arguments, environment, declared.unstable, name)?
     return Ok(binary.0)
 
@@ -485,9 +488,12 @@ pub def binary_environment(rustc: str, project: str, declared: RustFacet, name: 
 model ToolchainLibraries:
     """Where the pinned toolchain's `rustc_driver` is, and the identity a binary that links it is built against."""
 
-    # The directory of the toolchain's `rustc_driver`: the binary's runpath.
+    # The binary's runpath to the directory of the toolchain's `rustc_driver`, through the `sysroot` link beside the
+    # binary's `bin` directory: `<loader token for the binary's directory>/../sysroot/lib/rustlib/<host>/lib`.
+    runpath: str
+    # The same directory in the building machine's sysroot: the fallback runpath.
     directory: str
-    # `INCAN_DRIVER_SYSROOT`, `_RUSTC_IDENTITY`, `_LIBRARY` (relative to the sysroot) and `_LIBRARY_DIGEST`.
+    # `INCAN_DRIVER_RUSTC_IDENTITY`, `_LIBRARY` (relative to the sysroot) and `_LIBRARY_DIGEST`: content, not location.
     environment: Dict[str, str]
 
 
@@ -511,12 +517,14 @@ def toolchain_libraries(rustc: str) -> Result[ToolchainLibraries, str]:
     library = found[0]
     content = library.read_bytes().map_err((error) => f"{library.0}: {error.message()}")?
     environment: Dict[str, str] = {
-        "INCAN_DRIVER_SYSROOT": sysroot,
         "INCAN_DRIVER_RUSTC_IDENTITY": compiler,
         "INCAN_DRIVER_LIBRARY": f"{relative}/{library.name()}",
         "INCAN_DRIVER_LIBRARY_DIGEST": hexlify(sha256.digest(content)),
     }
-    return Ok(ToolchainLibraries(directory=directory.0, environment=environment))
+    mut origin = "$ORIGIN"
+    if host.endswith("apple-darwin"):
+        origin = "@loader_path"
+    return Ok(ToolchainLibraries(runpath=f"{origin}/../sysroot/{relative}", directory=directory.0, environment=environment))
 
 
 def invoke_rustc(rustc: str, arguments: list[str], environment: Dict[str, str], unstable: bool, unit: str) -> Result[None, str]:

@@ -34,7 +34,7 @@ The lowering belongs in the compiler ring; the driver executable belongs in the 
 
 ### Driver identity
 
-Every compilation rejects inherited `RUSTC_BOOTSTRAP` and verifies the canonical sysroot, complete compiler identity, and canonical loaded-library path within that sysroot against their build-bound values before passing the proven identity to the adapter.
+Every compilation rejects inherited `RUSTC_BOOTSTRAP` and verifies the complete compiler identity (`rustc -vV`) and the loaded `rustc_driver` library, which must be the one inside the selected sysroot, against their build-bound values before passing the proven identity to the adapter. Identity is content, never location: the driver accepts any sysroot path whose compiler output and library bytes match the build evidence, so a toolchain built on one machine runs against the same rustc installed anywhere else.
 
 Library bytes must match the build-bound SHA-256 digest; installed drivers may retain a complete private proof atomically after verification and reuse it only while canonical path, device, inode, size, nanosecond modification/change times, and expected digest match, with stable descriptor/path state during verification. Changed, missing, malformed, or unreadable proofs require hashing; unwritable proof storage permits compilation after successful hashing, and uninstalled drivers retain no proof.
 

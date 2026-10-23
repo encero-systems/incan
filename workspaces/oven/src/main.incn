@@ -8,6 +8,8 @@
     incan build PATH [--substitute NAME=DIR] [UNIT OPTIONS]
     incan fmt [--check] PATH...
     incan inspect codegraph PATH [--format json|jsonl] [--query KIND TERM] [--limit N] [--strict]
+    incan toolchain pack OUT
+    incan toolchain install ARCHIVE
     incan --version
 
 UNIT OPTIONS are `--profile NAME`, `--features A,B`, `--no-default-features` and `--all-features`.
@@ -27,6 +29,7 @@ from toolchain import load_toolchain, rust_compiler
 from formatting import format_paths
 from testing import run_tests
 from graph_inspection import inspect_codegraph
+from toolchain_archive import toolchain_command
 
 
 pub model Options:
@@ -69,6 +72,9 @@ def main() -> None:
         return
     if command == "inspect":
         finish("inspect", inspect_codegraph(rest))
+        return
+    if command == "toolchain":
+        finish("toolchain", toolchain_command(rest))
         return
     fail(f"incan: unknown command `{command}`\n{usage()}", 2)
 

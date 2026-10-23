@@ -25,7 +25,8 @@ pub enum IdentityError {
 
 /// Exact sysroot and compiler identity, admitted only after shared-library byte equivalence is proved.
 pub struct DriverIdentity {
-    /// Canonical sysroot whose compiler and loaded driver library match the build evidence.
+    /// Canonical sysroot, at whatever path it is installed, whose compiler and loaded driver library match the
+    /// build evidence.
     pub sysroot: PathBuf,
     /// Complete compiler identity checked against the embedded build evidence.
     pub toolchain: String,
@@ -88,25 +89,21 @@ fn loaded_library() -> Result<PathBuf, IdentityError> {
 /// Verify build-time evidence against the runtime selected by the caller, before creating output files.
 ///
 /// These values must be recorded in the Oven unit identity and supplied as declared compile-time environment;
-/// an arbitrary ambient path or a matching version label alone cannot authorize the driver.
+/// an arbitrary ambient path or a matching version label alone cannot authorize the driver. Identity is content,
+/// never location: any sysroot whose `rustc -vV` output and whose loaded `rustc_driver` library bytes equal the
+/// build evidence is the same compiler wherever it is installed, so a toolchain built on one machine runs on another.
 pub fn verify(sysroot: &Path) -> Result<DriverIdentity, IdentityError> {
     let _invocation =
         tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::verify_identity").entered();
     if std::env::var_os("RUSTC_BOOTSTRAP").is_some() {
         return Err(IdentityError::Bootstrap);
     }
-    let built_root = option_env!("INCAN_DRIVER_SYSROOT").ok_or(IdentityError::Missing("INCAN_DRIVER_SYSROOT"))?;
     let built_compiler =
         option_env!("INCAN_DRIVER_RUSTC_IDENTITY").ok_or(IdentityError::Missing("INCAN_DRIVER_RUSTC_IDENTITY"))?;
     let built_library = option_env!("INCAN_DRIVER_LIBRARY").ok_or(IdentityError::Missing("INCAN_DRIVER_LIBRARY"))?;
     let built_digest =
         option_env!("INCAN_DRIVER_LIBRARY_DIGEST").ok_or(IdentityError::Missing("INCAN_DRIVER_LIBRARY_DIGEST"))?;
     let root = fs::canonicalize(sysroot)?;
-    if root != fs::canonicalize(built_root)? {
-        return Err(IdentityError::Mismatch(
-            "sysroot path differs from the build-bound sysroot".into(),
-        ));
-    }
     let output = Command::new(root.join("bin/rustc"))
         .arg("-vV")
         .env_remove("RUSTC_BOOTSTRAP")

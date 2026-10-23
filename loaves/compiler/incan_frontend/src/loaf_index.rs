@@ -6,7 +6,7 @@
 //! [`STANDARD_PACKAGE_NAMESPACE_POLICIES`] assign to it. A module path resolves to exactly one entry.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
@@ -108,18 +108,41 @@ impl LoafArtifact {
         self.dir.join(format!("{}.native.json", self.name))
     }
 
-    /// Read the library unit's native closure.
+    /// Read the library unit's native closure. A relative path in it (a packed toolchain's Loaf) names its target from
+    /// this Loaf's directory, so the closure returned holds only locatable paths.
     pub fn native_closure(&self) -> Result<LoafNativeClosure, LoafIndexError> {
         let path = self.native_closure_path();
         let bytes = std::fs::read(&path).map_err(|error| LoafIndexError::Unreadable {
             path: path.clone(),
             reason: error.to_string(),
         })?;
-        serde_json::from_slice(&bytes).map_err(|error| LoafIndexError::Unreadable {
-            path,
-            reason: error.to_string(),
-        })
+        let mut closure: LoafNativeClosure =
+            serde_json::from_slice(&bytes).map_err(|error| LoafIndexError::Unreadable {
+                path,
+                reason: error.to_string(),
+            })?;
+        closure.locate_in(&self.dir);
+        Ok(closure)
     }
+}
+
+/// `path` as a usable one: as written when absolute, otherwise joined onto `directory` with `.` and `..` components
+/// collapsed lexically, so equal artifacts reached from different Loaves compare equal.
+fn located(directory: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    let mut result = directory.to_path_buf();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                result.pop();
+            }
+            other => result.push(other.as_os_str()),
+        }
+    }
+    result
 }
 
 /// A library unit's native closure (`<name>.native.json`): the crates it links by name and the directories their own
@@ -134,6 +157,18 @@ pub struct LoafNativeClosure {
     /// in the applying crate, where its output names the unit's own Rust crates. Empty unless the unit exports one.
     #[serde(default)]
     pub macro_externs: Vec<(String, PathBuf)>,
+}
+
+impl LoafNativeClosure {
+    /// Resolve every relative path against the Loaf's `directory`; absolute paths stay as written.
+    fn locate_in(&mut self, directory: &Path) {
+        for (_, path) in self.externs.iter_mut().chain(self.macro_externs.iter_mut()) {
+            *path = located(directory, path);
+        }
+        for path in &mut self.search {
+            *path = located(directory, path);
+        }
+    }
 }
 
 /// The namespace one Loaf owns in a compilation.
