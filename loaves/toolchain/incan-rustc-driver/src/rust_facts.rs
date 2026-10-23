@@ -223,6 +223,38 @@ fn describe_crates(tcx: TyCtxt<'_>, crates: &BTreeSet<String>) -> BTreeMap<Strin
             facts.insert(path, metadata);
         }
     }
+    if crates
+        .iter()
+        .any(|name| matches!(name.as_str(), "std" | "core" | "alloc"))
+    {
+        facts.insert(
+            "str".into(),
+            RustItemMetadata {
+                canonical_path: "str".into(),
+                definition_path: None,
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    implemented_traits: trait_impls(tcx, tcx.types.str_, &mut named),
+                    ..RustTypeInfo::default()
+                }),
+            },
+        );
+        let element = Ty::new_param(tcx, 0, rustc_span::Symbol::intern("T"));
+        facts.insert(
+            "[]".into(),
+            RustItemMetadata {
+                canonical_path: "[]".into(),
+                definition_path: None,
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    type_params: vec!["T".into()],
+                    type_param_defaults: vec![None],
+                    implemented_traits: trait_impls(tcx, Ty::new_slice(tcx, element), &mut named),
+                    ..RustTypeInfo::default()
+                }),
+            },
+        );
+    }
     // Trait references use definition identities, including traits reached through a public re-export.
     for def in named.into_iter().filter(|def| tcx.def_kind(*def) == DefKind::Trait) {
         let path = visible_path(tcx, def);
@@ -416,7 +448,7 @@ fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTyp
         type_params: parameters.iter().map(|parameter| parameter.name.to_string()).collect(),
         type_param_defaults,
         methods,
-        implemented_traits: trait_impls(tcx, def, named),
+        implemented_traits: trait_impls(tcx, tcx.type_of(def).instantiate_identity().skip_normalization(), named),
         fields,
         variants,
         ..RustTypeInfo::default()
@@ -534,16 +566,21 @@ fn trait_bounds(tcx: TyCtxt<'_>, def: DefId) -> Vec<RustTraitBound> {
 
 /// Retain candidate impl templates once per nominal owner. Predicates remain explicit: a blanket impl is never
 /// unconditional trait evidence, and rustc verifies the selected closed trait reference before native emission.
-fn trait_impls(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> Vec<RustImplementedTrait> {
-    let owner = tcx.type_of(def).instantiate_identity().skip_normalization();
+fn trait_impls<'tcx>(tcx: TyCtxt<'tcx>, owner: Ty<'tcx>, named: &mut HashSet<DefId>) -> Vec<RustImplementedTrait> {
     let mut implementations = HashSet::new();
     for trait_id in tcx
         .all_traits_including_private()
         .filter(|id| tcx.visibility(*id).is_public())
     {
-        tcx.for_each_relevant_impl(trait_id, owner, |implementation| {
-            implementations.insert(implementation);
-        });
+        for receiver in [
+            owner,
+            Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, owner),
+            Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, owner),
+        ] {
+            tcx.for_each_relevant_impl(trait_id, receiver, |implementation| {
+                implementations.insert(implementation);
+            });
+        }
     }
     let mut implementations = implementations.into_iter().collect::<Vec<_>>();
     implementations.sort_by_cached_key(|implementation| tcx.def_path_str(*implementation));
@@ -551,6 +588,11 @@ fn trait_impls(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> Vec<R
         .into_iter()
         .filter_map(|implementation| {
             if tcx.impl_polarity(implementation) != ty::ImplPolarity::Positive {
+                return None;
+            }
+            if (owner == tcx.types.str_ || matches!(owner.kind(), ty::Slice(_)))
+                && !concrete_impl_may_apply(tcx, implementation, owner)
+            {
                 return None;
             }
             let reference = tcx
@@ -619,6 +661,41 @@ fn async_output<'tcx>(tcx: TyCtxt<'tcx>, output: Ty<'tcx>) -> Option<Ty<'tcx>> {
         })
 }
 
+/// Eliminate impossible blanket candidates for unsized primitives. A slice element remains unconstrained during
+/// extraction, so applicable conditional templates survive for the checker to instantiate and rustc to verify.
+fn concrete_impl_may_apply<'tcx>(tcx: TyCtxt<'tcx>, implementation: DefId, owner: Ty<'tcx>) -> bool {
+    use rustc_infer::infer::TyCtxtInferExt;
+    use rustc_trait_selection::traits::{ObligationCtxt, query::evaluate_obligation::InferCtxtExt};
+    let (infcx, param_env) = tcx
+        .infer_ctxt()
+        .build_with_typing_env(ty::TypingEnv::fully_monomorphized());
+    // A slice template's element is not constrained yet. Retain impls that can apply to some element while still
+    // rejecting impossible Sized blanket implementations on the unsized slice itself.
+    let owner = if matches!(owner.kind(), ty::Slice(_)) {
+        Ty::new_slice(tcx, infcx.next_ty_var(rustc_span::DUMMY_SP))
+    } else {
+        owner
+    };
+    let ocx = ObligationCtxt::new(&infcx);
+    let arguments = infcx.fresh_args_for_item(rustc_span::DUMMY_SP, implementation);
+    let reference = tcx
+        .impl_trait_ref(implementation)
+        .instantiate(tcx, arguments)
+        .skip_normalization();
+    let cause = rustc_middle::traits::ObligationCause::dummy();
+    if ocx.eq(&cause, param_env, reference.self_ty(), owner).is_err() {
+        return false;
+    }
+    tcx.predicates_of(implementation)
+        .instantiate(tcx, arguments)
+        .into_iter()
+        .all(|(clause, _)| {
+            let obligation =
+                rustc_infer::traits::Obligation::new(tcx, cause.clone(), param_env, clause.skip_normalization());
+            infcx.predicate_may_hold(&obligation)
+        })
+}
+
 /// A method receiver as written: `&self`, `&mut self`, or `self` (and a typed receiver as its type).
 fn receiver_display(input: Ty<'_>) -> String {
     match input.kind() {
@@ -643,6 +720,11 @@ fn note_named(ty: Ty<'_>, named: &mut HashSet<DefId>) {
 /// A trait's associated functions and their signatures.
 fn trait_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTraitInfo {
     RustTraitInfo {
+        is_in_prelude: resolve(tcx, "std::prelude::rust_2024").is_some_and(|prelude| {
+            tcx.module_children(prelude)
+                .iter()
+                .any(|child| child.res.opt_def_id() == Some(def))
+        }),
         type_params: tcx
             .generics_of(def)
             .own_params

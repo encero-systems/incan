@@ -1,5 +1,4 @@
 # behavior: assigning an imported Rust associated call directly to a model field keeps its target (#2223)
-# pending: #2223 Duration construction leaves an unknown Body IR frame type
 # expect-stdout:
 #   3
 #   4

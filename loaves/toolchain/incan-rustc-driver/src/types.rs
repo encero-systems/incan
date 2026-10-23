@@ -143,6 +143,21 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         ),
         PlanType::CheckedInt => Ty::new_tup(tcx, &[tcx.types.i64, tcx.types.bool]),
         PlanType::String => string_type(tcx)?,
+        PlanType::NativeStr => tcx.types.str_,
+        PlanType::NativeSlice(elements) | PlanType::SliceRef(elements) | PlanType::SliceMutRef(elements) => {
+            let [element] = elements.as_slice() else {
+                return Err(PlanError::Unsupported {
+                    function: "native slice".into(),
+                    reason: "slice requires one element".into(),
+                });
+            };
+            let slice = Ty::new_slice(tcx, native_type(tcx, element)?);
+            match ty {
+                PlanType::SliceRef(_) => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, slice),
+                PlanType::SliceMutRef(_) => Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, slice),
+                _ => slice,
+            }
+        }
         PlanType::Decimal => decimal_type(tcx)?,
         PlanType::ValidationError => validation_error_type(tcx)?,
         PlanType::ValidationErrorRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, validation_error_type(tcx)?),

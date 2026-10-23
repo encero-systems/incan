@@ -1,0 +1,18 @@
+# behavior: a native reader borrowing a local cursor cannot escape through a source signature without a retained lifetime contract
+# expect-stderr-contains:
+#   native borrowed carrier in a source signature requires a retained lifetime contract
+# expect-exit: 1
+
+from rust::std::io import Cursor, Read, Take
+
+
+def escaped() -> Take[&mut Cursor[bytes]]:
+    """Refuse exposing a borrowed native adapter without an executable lifetime contract."""
+    mut cursor = Cursor.new(b"ab")
+    return Read.by_ref(cursor).take(1u64)
+
+
+def main() -> None:
+    """Require admission to reject the source signature before it could execute."""
+    reader = escaped()
+    println("escaped")

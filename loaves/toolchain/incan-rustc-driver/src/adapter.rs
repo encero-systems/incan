@@ -68,8 +68,9 @@ fn refuse(tcx: TyCtxt<'_>, error: PlanError) -> ! {
     tcx.dcx().fatal(message)
 }
 
-/// Supply native aliases' exact metadata types, independently of their placeholder AST declarations. Erased native
-/// lifetimes carry no layout or source binder; ordinary source aliases keep rustc's provider.
+/// Supply native aliases' exact metadata types, independently of their placeholder AST declarations. Concrete
+/// Option/Result aliases also use retained payload types, including erased native references that cannot be spelled
+/// as a source-owned alias lifetime. Ordinary source aliases keep rustc's provider.
 fn native_alias_type<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> rustc_middle::ty::EarlyBinder<'tcx, Ty<'tcx>> {
     if tcx.def_kind(def) != rustc_hir::def::DefKind::TyAlias || !tcx.parent(def.to_def_id()).is_crate_root() {
         return (rustc_interface::DEFAULT_QUERY_PROVIDERS.queries.type_of)(tcx, def);
@@ -79,6 +80,34 @@ fn native_alias_type<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> rustc_middle::
         Err(error) => tcx.dcx().fatal(error.to_string()),
     };
     let name = tcx.item_name(def.to_def_id());
+    if let Some(carrier) = plan
+        .enums
+        .iter()
+        .find(|value| !value.carrier.is_empty() && name.as_str() == value.name)
+    {
+        let path = if carrier.carrier == "Option" {
+            "std::option::Option"
+        } else {
+            "std::result::Result"
+        };
+        let native = match callees::library_item(tcx, path, rustc_hir::def::DefKind::Enum) {
+            Ok(native) => native,
+            Err(error) => refuse(tcx, error),
+        };
+        let fields = carrier
+            .variants
+            .iter()
+            .flat_map(|variant| variant.fields.iter().cloned())
+            .collect::<Vec<_>>();
+        let arguments = match callees::arguments(tcx, native, &fields) {
+            Ok(arguments) => arguments,
+            Err(error) => refuse(tcx, error),
+        };
+        return rustc_middle::ty::EarlyBinder::bind(
+            tcx,
+            tcx.type_of(native).instantiate(tcx, arguments).skip_normalization(),
+        );
+    }
     let record = plan
         .models
         .iter()
@@ -108,7 +137,12 @@ fn native_alias_type<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> rustc_middle::
     let Some((_, path, types, kind)) = record else {
         return (rustc_interface::DEFAULT_QUERY_PROVIDERS.queries.type_of)(tcx, def);
     };
-    let native = match callees::library_item(tcx, path, kind) {
+    let selected = if kind == rustc_hir::def::DefKind::Struct {
+        callees::native_type_item(tcx, path)
+    } else {
+        callees::library_item(tcx, path, kind)
+    };
+    let native = match selected {
         Ok(def) => def,
         Err(error) => refuse(tcx, error),
     };
@@ -487,7 +521,7 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
         function: model.library_item.clone(),
         reason: reason.into(),
     };
-    let def = callees::library_item(tcx, &model.library_item, rustc_hir::def::DefKind::Struct)?;
+    let def = callees::native_type_item(tcx, &model.library_item)?;
     if !callees::arity_admits(tcx, def, model.library_type_arguments.len()) {
         return Err(invalid(
             "unsupported stdlib layout type argument count differs from metadata",
@@ -497,6 +531,9 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
     callees::verify_bounds(tcx, def, arguments)?;
     if model.fields.is_empty() {
         return Ok(());
+    }
+    if tcx.def_kind(def) != rustc_hir::def::DefKind::Struct {
+        return Err(invalid("native field layout requires a struct"));
     }
     let adt = tcx.adt_def(def);
     let declared = &adt.non_enum_variant().fields;
@@ -592,7 +629,7 @@ fn instantiate_generic_externals(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Option<
             continue;
         }
         let def = callees::external(tcx, &external.path)?;
-        if tcx.generics_of(def).count() == 0 {
+        if callees::arity_admits(tcx, def, 0) {
             continue;
         }
         external.type_arguments = callees::inferred_arguments(tcx, def, external)?;
@@ -699,7 +736,7 @@ pub fn compile(
 /// Bounds follow argument dependency order, so an invalid child cannot surface as a Rust alias diagnostic first.
 fn verify_library_argument_profiles(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), PlanError> {
     for model in plan.models.iter().filter(|model| !model.library_item.is_empty()) {
-        let def = callees::library_item(tcx, &model.library_item, rustc_hir::def::DefKind::Struct)?;
+        let def = callees::native_type_item(tcx, &model.library_item)?;
         let generics = tcx.generics_of(def);
         let reason = if !callees::arity_admits(tcx, def, model.library_type_arguments.len()) {
             Some("stdlib layout type argument count differs from metadata")
@@ -725,7 +762,7 @@ fn verify_library_argument_profiles(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), 
         if model.library_item.is_empty() {
             continue;
         }
-        let def = callees::library_item(tcx, &model.library_item, rustc_hir::def::DefKind::Struct)?;
+        let def = callees::native_type_item(tcx, &model.library_item)?;
         let arguments = callees::arguments(tcx, def, &model.library_type_arguments)?;
         callees::verify_bounds(tcx, def, arguments)?;
     }

@@ -10,7 +10,7 @@ location, including operands and places, so native diagnostics retain provenance
 @derive(Clone, PartialEq)
 pub enum TupleElement:
     """
-    One tuple element's layout: a scalar, owned or frozen text, an owned list, a model or enum carrier, a Copy function pointer, a scalar reference, or a nested tuple.
+    One tuple element's layout: a scalar, owned or frozen text, an owned list, a model or enum carrier, a Copy function pointer, an exact scalar, nominal or slice reference, or a nested tuple.
 
     A list keeps its leaf and depth, an enum carrier (an `Option`, a `Result` or a source enum) keeps its retained
     declaration index and name, and a nested tuple keeps its own element layout, exactly as the matching `PlanType`
@@ -28,6 +28,10 @@ pub enum TupleElement:
     Tuple(list[TupleElement])
     FunctionPointer(list[PlanType])
     Reference(bool, list[PlanType])
+    ModelRef(int, str)
+    ModelMutRef(int, str)
+    SliceRef(list[PlanType])
+    SliceMutRef(list[PlanType])
     FrozenStr
 
 
@@ -206,6 +210,12 @@ pub enum PlanType:
     CallableArguments(list[PlanType])
     # Exactly one output carrier; the owned pinned future executes only when polled.
     Future(list[PlanType])
+    # Rust's unsized str is permitted as a native type argument; source text remains owned String.
+    NativeStr
+    # An unsized native slice has one exact element carrier; references retain their own shared/exclusive intent.
+    NativeSlice(list[PlanType])
+    SliceRef(list[PlanType])
+    SliceMutRef(list[PlanType])
 
 
 pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
@@ -250,6 +260,10 @@ pub def tuple_element_type(element: TupleElement) -> PlanType:
             if mutable:
                 return PlanType.ScalarMutRef(elements)
             return PlanType.ScalarRef(elements)
+        TupleElement.ModelRef(index, name) => return PlanType.ModelRef(index, name)
+        TupleElement.ModelMutRef(index, name) => return PlanType.ModelMutRef(index, name)
+        TupleElement.SliceRef(elements) => return PlanType.SliceRef(elements)
+        TupleElement.SliceMutRef(elements) => return PlanType.SliceMutRef(elements)
         TupleElement.FrozenStr => return PlanType.FrozenStr
 
 

@@ -66,6 +66,7 @@ mod receiver_change;
 mod reserved_names;
 mod trait_bound_relations;
 mod type_info;
+pub(crate) use type_info::RustCheckedCall;
 mod union_member_identity;
 mod validate_rust_module;
 mod web_routes;
@@ -1186,6 +1187,9 @@ impl TypeChecker {
     /// path while rejecting obviously non-item spellings before hitting the metadata cache/extractor.
     fn rust_metadata_lookup_path(canonical_path: &str) -> Option<&str> {
         let trimmed = canonical_path.trim();
+        if trimmed == "[]" {
+            return Some(trimmed);
+        }
         if trimmed.is_empty() || trimmed == "{unknown}" {
             return None;
         }

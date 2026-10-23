@@ -1,0 +1,13 @@
+# behavior: owned byte storage lends a native byte slice to a Rust function without becoming a borrowed vector
+# expect-stdout:
+#   ab
+
+from rust::std::str import from_utf8
+
+
+def main() -> None:
+    """Decode borrowed bytes through the exact native slice signature."""
+    data = b"ab"
+    match from_utf8(data):
+        Ok(text) => println(text)
+        Err(_) => println("invalid")

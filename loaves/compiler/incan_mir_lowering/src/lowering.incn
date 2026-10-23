@@ -43,6 +43,7 @@ from pub::incan_mir_plan import (
     SizedNumeric,
     TupleElement,
     tuple_element_type,
+    list_leaf_type,
     Projection,
     FieldProjection,
     Rvalue,
@@ -275,7 +276,7 @@ from tuples import (
     carrier_element,
     owned_carrier,
 )
-from text_plan import format_parts, clone_text, owned_literal
+from text_plan import format_parts, clone_text, owned_literal, owned_slice_text
 from options import (
     intrinsic_declarations,
     retain_body_carriers,
@@ -619,6 +620,13 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
             if is_element_place(builder, value)?:
                 return Err("unsupported Body IR mutable list element borrow")
         _ => pass
+    if fact == OwnershipFact.Move and len(value.projection) == 0:
+        match value.local_id():
+            Some(local) =>
+                index = int(local.index()) + 1 + builder.local_offset
+                if is_exclusive_borrow(builder.locals[index].ty):
+                    return Ok(read_place(plan_place(index, span), true, span))
+            None => pass
     match element_read(builder, value, span)?:
         Some(operand) => return Ok(operand)
         None => pass
@@ -4090,11 +4098,7 @@ def lower_library_method(
     mut operands = [read_place(reference, true, span)]
     operands.extend(ordinary)
     type_arguments = sdk_callable_type_arguments(builder, delegation, names, closed, owned)?
-    mut output = temporary(builder, result, span)
-    match destination:
-        Some(place) =>
-            output = scalar_place(builder, place, span)?
-        None => pass
+    output = call_destination(builder, destination, result, span)?
     match fallible_factory(module, target, result, builder.intrinsics)?:
         Some(factory) =>
             match place_type(builder.locals, reference):
@@ -4815,11 +4819,7 @@ def lower_delegated_call(
             native_source_type(builder.nominals, builder.enums, builder.unions, argument, builder.intrinsics)?,
         )
     operands = library_call_operands(module, builder, delegation, target.binding, arguments, parameters, span, 0, true)?
-    mut output = temporary(builder, result, span)
-    match destination:
-        Some(place) =>
-            output = scalar_place(builder, place, span)?
-        None => pass
+    output = call_destination(builder, destination, result, span)?
     match delegation.rust_path():
         None => return Err("unsupported Body IR stdlib delegation native identity")
         Some(published_path) =>
@@ -5069,6 +5069,8 @@ pub def call_argument_operand(
         PlanType.ClosureRef(signature) => return callable_argument(builder, value, signature, span)
         PlanType.StringRef => return borrow_text_operand(builder, value, span)
         PlanType.StrRef => return borrow_str_operand(builder, value, span)
+        PlanType.SliceRef(elements) => return borrow_slice_operand(builder, value, elements, false, span)
+        PlanType.SliceMutRef(elements) => return borrow_slice_operand(builder, value, elements, true, span)
         PlanType.ScalarRef(elements) => return borrow_scalar_operand(builder, value, elements, false, span)
         PlanType.ScalarMutRef(elements) => return borrow_scalar_operand(builder, value, elements, true, span)
         _ => pass
@@ -6317,6 +6319,8 @@ pub def display_plan_value(
         return debug_plan_operand(builder, operand, span)
     if ty == PlanType.String:
         return display_string_operand(builder, operand, span)
+    if ty == PlanType.StrRef:
+        return Ok(owned_slice_text(builder, operand, span))
     if has_sized_numeric(ty):
         result = temporary(builder, PlanType.String, span)
         external_call(
@@ -6370,7 +6374,7 @@ def type_parameter_display(mut builder: Builder, operand: Operand, span: SourceS
     return runtime_text(builder, "incan_native_runtime::display_value", operand, span)
 
 
-def runtime_text(mut builder: Builder, path: str, operand: Operand, span: SourceSpan) -> Result[Place, str]:
+pub def runtime_text(mut builder: Builder, path: str, operand: Operand, span: SourceSpan) -> Result[Place, str]:
     """Render one owned carrier through a runtime formatter instantiated at the carrier's exact type."""
     ty = operand_type(builder, operand)?
     result = temporary(builder, PlanType.String, span)
@@ -6462,6 +6466,57 @@ def lower_discarded_operand(mut builder: Builder, value: &RustOperand, span: Sou
     return Ok(None)
 
 
+def borrow_slice_operand(
+    mut builder: Builder,
+    value: &RustOperand,
+    elements: list[PlanType],
+    mutable: bool,
+    span: SourceSpan,
+) -> Result[Operand, str]:
+    """Lend exact vector storage through its native slice conversion, preserving checked exclusive-access authority."""
+    if len(elements) != 1:
+        return Err("invalid Body IR native slice element arity")
+    mut reference_type = PlanType.SliceRef(elements)
+    mut method = "core::convert::AsRef::as_ref"
+    if mutable:
+        reference_type = PlanType.SliceMutRef(elements)
+        method = "core::convert::AsMut::as_mut"
+    match value:
+        RustOperand.Place(read) =>
+            place = scalar_place(builder, read.place, span)?
+            actual = place_type(builder.locals, place)
+            if actual == PlanType.SliceRef(elements) and not mutable:
+                return Ok(read_place(place, false, span))
+            if actual == PlanType.SliceMutRef(elements):
+                if mutable and read.fact != OwnershipFact.MutBorrow:
+                    return Err("unsupported Body IR mutable slice without exclusive authority")
+                referent = Place(local=place.local, projection=Projection.Deref(PlanType.NativeSlice(elements)), span=span)
+                output = temporary(builder, reference_type, span)
+                mut operation = RvalueKind.Borrow(referent)
+                if mutable:
+                    operation = RvalueKind.MutBorrow(referent)
+                builder.emit(plan_assign(output, operation, span))
+                return Ok(read_place(output, mutable, span))
+        _ => pass
+    mut reference = literal(Constant.Unit, span)
+    match value:
+        RustOperand.Constant(constant) =>
+            if mutable:
+                return Err("unsupported Body IR mutable slice literal")
+            owner = bytes_literal(builder, constant, span)?
+            reference = list_borrow(builder, owner, false, span)?
+        RustOperand.Place(_read) => reference = checked_list_argument(builder, value, mutable, span)?
+    parameter = operand_type(builder, reference)?
+    element, depth = require_list_shape(parameter, "unsupported Body IR native slice owner")?
+    if depth != 1 or list_leaf_type(element) != elements[0]:
+        return Err("unsupported Body IR native slice element mismatch")
+    output = temporary(builder, reference_type, span)
+    arguments = [PlanType.List(element, depth), PlanType.NativeSlice(elements)]
+    builder.externals.append(ExternalFunction(path=method, type_arguments=arguments, parameters=[parameter], return_type=reference_type, span=span))
+    terminate_call(builder, CalleeKind.Instantiated(method, arguments), [reference], output, span)
+    return Ok(read_place(output, mutable, span))
+
+
 def borrow_scalar_operand(
     mut builder: Builder,
     value: &RustOperand,
@@ -6514,6 +6569,10 @@ def borrow_str_operand(mut builder: Builder, value: &RustOperand, span: SourceSp
     """Pass literal slice text directly or borrow owned text through String's own as_str method."""
     match value:
         RustOperand.Constant(RustConstant.Str(text)) => return Ok(text_literal(str(text), span))
+        RustOperand.Place(read) =>
+            place = scalar_place(builder, read.place, span)?
+            if place_type(builder.locals, place) == PlanType.StrRef:
+                return Ok(read_place(place, false, span))
         _ => pass
     reference = borrow_text_operand(builder, value, span)?
     output = temporary(builder, PlanType.StrRef, span)
@@ -6538,6 +6597,12 @@ def borrow_text_operand(mut builder: Builder, value: &RustOperand, span: SourceS
             if is_element_place(builder, read.place)?:
                 return borrow_element_text(builder, value, read.fact, span)
             place = scalar_place(builder, read.place, span)?
+            if place_type(builder.locals, place) == PlanType.StrRef:
+                owner = owned_slice_text(builder, read_place(place, false, span), span)
+                builder.owned.append(owner.local)
+                reference = temporary(builder, PlanType.StringRef, span)
+                builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
+                return Ok(read_place(reference, false, span))
             if place_type(builder.locals, place) == PlanType.FrozenStr:
                 if read.fact == OwnershipFact.MutBorrow or read.fact == OwnershipFact.Unknown:
                     return Err("unsupported Body IR unproven FrozenStr text borrow")
@@ -8325,7 +8390,11 @@ def call_destination(
 ) -> Result[Place, str]:
     """Select the checked destination or a typed temporary for a discarded call."""
     match destination:
-        Some(place) => return list_root_place(builder, place, span)
+        Some(place) =>
+            root = list_root_place(builder, place, span)?
+            if place_type(builder.locals, root) == ty:
+                return Ok(root)
+            return scalar_place(builder, place, span)
         None => return Ok(temporary(builder, ty, span))
 
 
@@ -10622,6 +10691,9 @@ def enum_payload_read(
     span: SourceSpan,
 ) -> Result[Operand, str]:
     """Preserve projected copy/borrow facts while materializing the source binding's owned value."""
+    if place_type(builder.locals, place) == PlanType.StrRef:
+        owned = owned_slice_text(builder, read_place(place, false, span), span)
+        return Ok(read_place(owned, true, span))
     match fact:
         OwnershipFact.Copy => return Ok(read_place(place, false, span))
         OwnershipFact.Clone => pass
@@ -10631,6 +10703,10 @@ def enum_payload_read(
     if place_type(builder.locals, place) == PlanType.FrozenStr:
         return Ok(read_place(place, false, span))
     payload_type = place_type(builder.locals, place)
+    match payload_type:
+        PlanType.ModelRef(_owner, _name) => return Ok(read_place(place, false, span))
+        PlanType.SliceRef(_elements) => return Ok(read_place(place, false, span))
+        _ => pass
     if numeric_carrier(payload_type) or payload_type == PlanType.Bool or payload_type == PlanType.Unit:
         return Ok(read_place(place, false, span))
     if is_tuple_type(payload_type):
@@ -11214,6 +11290,9 @@ def boundary_plan_operand(
 ) -> Result[Operand, str]:
     """Validate tuple field carriers and inject a previously evaluated member without repeating source effects."""
     source = operand_type(builder, value)?
+    if source == PlanType.StrRef and target == PlanType.String:
+        owned = owned_slice_text(builder, value, span)
+        return Ok(read_place(owned, true, span))
     match (source, target):
         (PlanType.Tuple(_source_fields), PlanType.Tuple(_target_fields)) =>
             if source != target:
@@ -11452,12 +11531,14 @@ def bind_enum_fields(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Bind checked enum payload slots through the same downcast and ownership path for source enums and unions."""
+    owner = enum_owner(place_type(builder.locals, source))?
+    payload_types = carrier_payload_types(builder, owner, variant)?
     for slot in range(len(fields)):
         match fields[slot]:
             RustPattern.Var(binding) =>
                 local = int(binding.local.index()) + 1 + builder.local_offset
                 ty = builder.locals[local].ty
-                projected = appended_field(source, FieldProjection(slot=slot, ty=ty, variant=variant), span)?
+                projected = appended_field(source, FieldProjection(slot=slot, ty=payload_types[slot], variant=variant), span)?
                 if binding.fact == OwnershipFact.MutBorrow:
                     bind_payload_in_place(builder, local, projected, span)?
                 else:

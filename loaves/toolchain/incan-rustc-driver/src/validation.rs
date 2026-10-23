@@ -49,6 +49,10 @@ fn numeric(kind: &SizedNumeric) -> Numeric {
 /// A local comparison vocabulary; the public types remain the Incan Loaf's own types.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Scalar {
+    NativeStr,
+    NativeSlice(Vec<Scalar>),
+    SliceRef(Vec<Scalar>),
+    SliceMutRef(Vec<Scalar>),
     UnitFunction,
     Int,
     Float,
@@ -186,6 +190,10 @@ fn tuple_leaf(element: &crate::plan::TupleElement) -> Leaf {
 /// Compare source-authored types without requiring a Rust derive on Incan types.
 fn scalar(ty: &PlanType) -> Scalar {
     match ty {
+        PlanType::NativeStr => Scalar::NativeStr,
+        PlanType::NativeSlice(elements) => Scalar::NativeSlice(elements.iter().map(scalar).collect()),
+        PlanType::SliceRef(elements) => Scalar::SliceRef(elements.iter().map(scalar).collect()),
+        PlanType::SliceMutRef(elements) => Scalar::SliceMutRef(elements.iter().map(scalar).collect()),
         PlanType::ScalarRef(elements) => Scalar::ScalarRef(elements.iter().map(scalar).collect()),
         PlanType::ScalarMutRef(elements) => Scalar::ScalarMutRef(elements.iter().map(scalar).collect()),
         PlanType::Future(outputs) => Scalar::Future(outputs.iter().map(scalar).collect()),
@@ -419,6 +427,15 @@ fn span(source: &SourceSpan) -> Result<(), PlanError> {
 /// Check the parameter-local convention and all nodes in one function.
 fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> {
     span(&function.span)?;
+    if std::iter::once(&function.return_type)
+        .chain(function.parameters.iter().map(|parameter| &parameter.ty))
+        .any(|ty| borrowed_alias_in_source_type(plan, ty, &mut BTreeSet::new()))
+    {
+        return Err(invalid(
+            function,
+            "native borrowed carrier in a source signature requires a retained lifetime contract",
+        ));
+    }
     validate_future_constructor(plan, function)?;
     if function.blocks.is_empty() || function.blocks[0].cleanup {
         return Err(invalid(
@@ -451,6 +468,9 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
         }
     }
     for local in &function.locals {
+        if matches!(local.ty, PlanType::NativeStr | PlanType::NativeSlice(_)) {
+            return Err(invalid(function, "unsized native referent cannot occupy a value frame"));
+        }
         span(&local.span)?;
         validate_model_type(plan, &local.ty)?;
         validate_array_length(plan, function, scalar(&local.ty))?;
@@ -671,6 +691,7 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
         }
         Projection::Deref(field_type) => {
             let pointee = match ty {
+                Scalar::SliceRef(elements) | Scalar::SliceMutRef(elements) => Scalar::NativeSlice(elements),
                 Scalar::ScalarRef(elements) | Scalar::ScalarMutRef(elements) => {
                     let [inner] = elements.as_slice() else {
                         return Err(invalid(function, "unsupported scalar reference arity"));
@@ -783,6 +804,7 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
                         | Scalar::StringArray(_)
                         | Scalar::Model(_)
                         | Scalar::StringMutRef
+                        | Scalar::SliceMutRef(_)
                         | Scalar::EnumMutRef(_)
                         | Scalar::TupleMutRef(_)
                         | Scalar::List(_, _)
@@ -813,7 +835,7 @@ fn operand(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, 
 /// Reject implicit copies of any recursively owned value, including tuple string fields.
 fn owns_values(ty: &Scalar) -> bool {
     match ty {
-        Scalar::ScalarMutRef(_) => true,
+        Scalar::ScalarMutRef(_) | Scalar::SliceMutRef(_) | Scalar::ModelMutRef(_) => true,
         Scalar::String
         | Scalar::StringArray(_)
         | Scalar::Model(_)
@@ -1144,6 +1166,12 @@ fn borrow_result(plan: &Plan, function: &Function, value: &Place, mutable: bool)
                 }
                 Ok(Scalar::ScalarMutRef(vec![ty]))
             }
+            Scalar::NativeSlice(elements) => {
+                if shared_reference(&local(function, value.local)?) {
+                    return Err(invalid(function, "cannot mutably reborrow a shared slice"));
+                }
+                Ok(Scalar::SliceMutRef(elements))
+            }
             _ => Err(invalid(
                 function,
                 "mutable borrow requires a collection or nominal value",
@@ -1159,6 +1187,7 @@ fn borrow_result(plan: &Plan, function: &Function, value: &Place, mutable: bool)
         Scalar::Set(leaf) => Ok(Scalar::SetRef(leaf)),
         Scalar::Dict(key, value) => Ok(Scalar::DictRef(key, value)),
         Scalar::String => Ok(Scalar::StringRef),
+        Scalar::NativeSlice(elements) => Ok(Scalar::SliceRef(elements)),
         Scalar::ValidationError => Ok(Scalar::ValidationErrorRef),
         Scalar::FrozenCollection(name, elements) => Ok(Scalar::FrozenCollectionRef(name, elements)),
         Scalar::StringArray(count) => Ok(Scalar::StringArrayRef(count)),
@@ -1173,6 +1202,7 @@ fn shared_reference(ty: &Scalar) -> bool {
     matches!(
         ty,
         Scalar::StringRef
+            | Scalar::SliceRef(_)
             | Scalar::ScalarRef(_)
             | Scalar::FrozenCollectionRef(_, _)
             | Scalar::ValidationErrorRef
@@ -1233,7 +1263,15 @@ fn source_signature_type(ty: &Scalar) -> bool {
                     | Scalar::List(_, _)
                     | Scalar::Model(_)
                     | Scalar::Enum(_)
-            ) || (matches!(element, Scalar::ScalarRef(_) | Scalar::ScalarMutRef(_)) && external_signature_type(element))
+            ) || (matches!(
+                element,
+                Scalar::ScalarRef(_)
+                    | Scalar::ScalarMutRef(_)
+                    | Scalar::ModelRef(_)
+                    | Scalar::ModelMutRef(_)
+                    | Scalar::SliceRef(_)
+                    | Scalar::SliceMutRef(_)
+            ) && external_signature_type(element))
                 || (matches!(element, Scalar::Tuple(_)) && source_signature_type(element))
                 || (matches!(element, Scalar::FunctionPointer(_)) && source_signature_type(element))
         });
@@ -1277,6 +1315,9 @@ fn source_signature_type(ty: &Scalar) -> bool {
 /// metadata checking erases, and the exclusive model and enum references a checked element reborrow returns.
 /// Concrete owned list iterators and their polling references cross only these native trait-call boundaries.
 fn external_signature_type(ty: &Scalar) -> bool {
+    if let Scalar::SliceRef(elements) | Scalar::SliceMutRef(elements) = ty {
+        return matches!(elements.as_slice(), [element] if source_signature_type(element));
+    }
     if let Scalar::ScalarRef(elements) | Scalar::ScalarMutRef(elements) = ty {
         return matches!(elements.as_slice(), [inner] if scalar_referent(inner));
     }
@@ -2058,6 +2099,21 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
     }
 
     match ty {
+        PlanType::NativeSlice(elements) | PlanType::SliceRef(elements) | PlanType::SliceMutRef(elements) => {
+            let [element] = elements.as_slice() else {
+                return Err(PlanError::Invalid {
+                    function: "native slice".into(),
+                    reason: "slice requires one element".into(),
+                });
+            };
+            if !source_signature_type(&scalar(element)) {
+                return Err(PlanError::Unsupported {
+                    function: "native slice".into(),
+                    reason: "unsupported slice element".into(),
+                });
+            }
+            validate_model_type(plan, element)?;
+        }
         PlanType::Future(outputs) => {
             let [output] = outputs.as_slice() else {
                 return Err(PlanError::Invalid {
@@ -2349,7 +2405,9 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
             });
         }
         for argument in &declaration.library_type_arguments {
-            if !source_signature_type(&scalar(argument)) {
+            if !matches!(argument, PlanType::NativeStr | PlanType::NativeSlice(_))
+                && !external_signature_type(&scalar(argument))
+            {
                 return Err(PlanError::Invalid {
                     function: declaration.name.clone(),
                     reason: "unsupported SDK alias type argument".into(),
@@ -2364,16 +2422,15 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
                 reason: "native type arguments on a source-owned model".into(),
             });
         }
-        for argument in &declaration.library_type_arguments {
-            if !source_signature_type(&scalar(argument)) {
+        for field in &declaration.fields {
+            if declaration.library_item.is_empty()
+                && borrowed_alias_in_source_type(plan, &field.ty, &mut BTreeSet::new())
+            {
                 return Err(PlanError::Unsupported {
                     function: declaration.name.clone(),
-                    reason: "stdlib layout argument has no admitted native type".into(),
+                    reason: "native borrowed carrier in a source field requires a retained lifetime contract".into(),
                 });
             }
-            validate_model_type(plan, argument)?;
-        }
-        for field in &declaration.fields {
             span(&field.span)?;
             if matches!(field.ty, PlanType::Closure(_) | PlanType::ClosureRef(_)) {
                 return Err(PlanError::Invalid {
@@ -2405,8 +2462,8 @@ fn validate_models(plan: &Plan) -> Result<(), PlanError> {
     Ok(())
 }
 
-/// Order SDK aliases after their owned argument dependencies, rejecting unretained borrows and transparent cycles.
-/// Alias lifetime scope differs from function parameters; field-size recursion remains with `validate_value_layouts`.
+/// Order native aliases after their argument dependencies, including referents, before metadata type queries run.
+/// Local loans still require native MIR checking; aliases introduce no source lifetime binders.
 pub(crate) fn library_model_order(plan: &Plan) -> Result<Vec<usize>, PlanError> {
     let mut visiting = BTreeSet::new();
     let mut complete = BTreeSet::new();
@@ -2487,6 +2544,8 @@ fn enum_declaration(plan: &Plan, index: i64) -> Option<&crate::plan::EnumDeclara
 }
 
 /// Reject malformed enum layouts and unsupported derives; validate exact forward references before size-cycle checks.
+/// Native Option/Result carriers and library enums retain their checked borrowed payloads; source-owned enum fields
+/// remain limited to source signature types.
 fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
     let mut names: BTreeSet<_> = plan
         .functions
@@ -2557,7 +2616,8 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
             }
             for field in &variant.fields {
                 validate_model_type(plan, field)?;
-                if !source_signature_type(&scalar(field)) {
+                let native = !declaration.carrier.is_empty() || !declaration.library_item.is_empty();
+                if !(source_signature_type(&scalar(field)) || (native && external_signature_type(&scalar(field)))) {
                     return Err(error());
                 }
             }
@@ -2677,20 +2737,14 @@ fn library_argument_models(
     enums: &mut BTreeSet<i64>,
     models: &mut BTreeSet<usize>,
 ) -> Result<(), PlanError> {
-    if library_argument_is_borrowed(ty) {
-        return Err(PlanError::Unsupported {
-            function: "stdlib layout argument".into(),
-            reason: "borrowed stdlib layout argument has no retained lifetime contract".into(),
-        });
-    }
     match ty {
-        PlanType::Model(index, _) => {
+        PlanType::Model(index, _) | PlanType::ModelRef(index, _) | PlanType::ModelMutRef(index, _) => {
             models.insert(usize::try_from(*index).map_err(|_| PlanError::Unsupported {
                 function: "stdlib layout argument".into(),
                 reason: "argument model index is negative".into(),
             })?);
         }
-        PlanType::Enum(index, _) => {
+        PlanType::Enum(index, _) | PlanType::EnumRef(index, _) | PlanType::EnumMutRef(index, _) => {
             if enums.insert(*index) {
                 if let Some(declaration) = enum_declaration(plan, *index) {
                     for field in declaration.variants.iter().flat_map(|variant| &variant.fields) {
@@ -2700,12 +2754,16 @@ fn library_argument_models(
             }
         }
         PlanType::List(leaf, _)
+        | PlanType::ListRef(leaf, _)
+        | PlanType::ListMutRef(leaf, _)
         | PlanType::Set(leaf)
+        | PlanType::SetRef(leaf)
+        | PlanType::SetMutRef(leaf)
         | PlanType::Generator(leaf, _)
         | PlanType::GeneratorYield(leaf, _) => {
             library_argument_models(plan, &checked_list_leaf_type(leaf)?, enums, models)?;
         }
-        PlanType::Dict(left, right) => {
+        PlanType::Dict(left, right) | PlanType::DictRef(left, right) | PlanType::DictMutRef(left, right) => {
             library_argument_models(plan, &checked_list_leaf_type(left)?, enums, models)?;
             library_argument_models(plan, &checked_list_leaf_type(right)?, enums, models)?;
         }
@@ -2719,6 +2777,11 @@ fn library_argument_models(
             }
         }
         PlanType::CallableArguments(signature)
+        | PlanType::ScalarRef(signature)
+        | PlanType::ScalarMutRef(signature)
+        | PlanType::NativeSlice(signature)
+        | PlanType::SliceRef(signature)
+        | PlanType::SliceMutRef(signature)
         | PlanType::Closure(signature)
         | PlanType::ClosureOnce(signature)
         | PlanType::SharedCallable(signature)
@@ -2736,13 +2799,91 @@ fn library_argument_models(
     Ok(())
 }
 
-/// Borrowed native type arguments require a retained ownership profile in addition to erased layout lifetimes.
-/// Function parameter eligibility alone does not authorize storing a loan inside a generic carrier.
+/// Find erased loans inside native aliases before a source signature or field could expose them without lifetime
+/// binders. Local adapters remain subject to native signature and MIR borrow checking; this gate proves no loan scope.
+fn borrowed_alias_in_source_type(plan: &Plan, ty: &PlanType, seen: &mut BTreeSet<(bool, i64)>) -> bool {
+    match ty {
+        PlanType::Model(index, _) | PlanType::ModelRef(index, _) | PlanType::ModelMutRef(index, _) => {
+            if !seen.insert((false, *index)) {
+                return false;
+            }
+            let Some(model) = usize::try_from(*index).ok().and_then(|index| plan.models.get(index)) else {
+                return true;
+            };
+            model.library_type_arguments.iter().any(|argument| {
+                library_argument_is_borrowed(argument) || borrowed_alias_in_source_type(plan, argument, seen)
+            }) || model
+                .fields
+                .iter()
+                .any(|field| borrowed_alias_in_source_type(plan, &field.ty, seen))
+        }
+        PlanType::Enum(index, _) | PlanType::EnumRef(index, _) | PlanType::EnumMutRef(index, _) => {
+            if !seen.insert((true, *index)) {
+                return false;
+            }
+            let Some(declaration) = enum_declaration(plan, *index) else {
+                return true;
+            };
+            declaration.library_type_arguments.iter().any(|argument| {
+                library_argument_is_borrowed(argument) || borrowed_alias_in_source_type(plan, argument, seen)
+            }) || declaration
+                .variants
+                .iter()
+                .flat_map(|variant| &variant.fields)
+                .any(|field| {
+                    ((!declaration.carrier.is_empty() || !declaration.library_item.is_empty())
+                        && library_argument_is_borrowed(field))
+                        || borrowed_alias_in_source_type(plan, field, seen)
+                })
+        }
+        PlanType::List(leaf, _)
+        | PlanType::ListRef(leaf, _)
+        | PlanType::ListMutRef(leaf, _)
+        | PlanType::Set(leaf)
+        | PlanType::SetRef(leaf)
+        | PlanType::SetMutRef(leaf)
+        | PlanType::Generator(leaf, _)
+        | PlanType::GeneratorYield(leaf, _) => {
+            checked_list_leaf_type(leaf).map_or(true, |element| borrowed_alias_in_source_type(plan, &element, seen))
+        }
+        PlanType::Dict(left, right) | PlanType::DictRef(left, right) | PlanType::DictMutRef(left, right) => {
+            [left, right].into_iter().any(|leaf| {
+                checked_list_leaf_type(leaf).map_or(true, |element| borrowed_alias_in_source_type(plan, &element, seen))
+            })
+        }
+        PlanType::Tuple(elements) | PlanType::TupleMutRef(elements) => elements
+            .iter()
+            .any(|element| borrowed_alias_in_source_type(plan, &tuple_element_type(element.clone()), seen)),
+        PlanType::NativeSlice(elements)
+        | PlanType::SliceRef(elements)
+        | PlanType::SliceMutRef(elements)
+        | PlanType::ScalarRef(elements)
+        | PlanType::ScalarMutRef(elements)
+        | PlanType::CallableArguments(elements)
+        | PlanType::Future(elements)
+        | PlanType::FunctionPointer(elements)
+        | PlanType::FunctionItem(_, elements)
+        | PlanType::Closure(elements)
+        | PlanType::ClosureOnce(elements)
+        | PlanType::ClosureRef(elements)
+        | PlanType::SharedCallable(elements)
+        | PlanType::FrozenCollection(_, elements)
+        | PlanType::FrozenCollectionRef(_, elements)
+        | PlanType::TypeToken(elements) => elements
+            .iter()
+            .any(|element| borrowed_alias_in_source_type(plan, element, seen)),
+        _ => false,
+    }
+}
+
+/// Identify a native reference held as a generic argument, whose source-facing alias would need lifetime binders.
 fn library_argument_is_borrowed(ty: &PlanType) -> bool {
     matches!(
         ty,
         PlanType::ScalarRef(..)
             | PlanType::ScalarMutRef(..)
+            | PlanType::SliceRef(..)
+            | PlanType::SliceMutRef(..)
             | PlanType::FrozenCollectionRef(..)
             | PlanType::ModelRef(..)
             | PlanType::ModelMutRef(..)
