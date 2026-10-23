@@ -69,7 +69,7 @@ impl TypeChecker {
             return None;
         }
         let metadata = self.rust_item_metadata_for_path(&predicate.path)?;
-        let RustItemKind::Trait(info) = metadata.kind else {
+        let RustItemKind::Trait(info) = &metadata.kind else {
             return None;
         };
         let mut selected: Option<HashMap<String, ResolvedType>> = None;

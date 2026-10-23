@@ -5,9 +5,9 @@
 //! ordinary dependency owns `pub::<key>`; a standard package owns the `std.*` roots the compiler-pinned
 //! [`STANDARD_PACKAGE_NAMESPACE_POLICIES`] assign to it. A module path resolves to exactly one entry.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
@@ -215,6 +215,9 @@ pub struct LoafIndex {
     rust_abi_caches: Vec<Arc<RustAbiCache>>,
     /// Rust facts the compiler read from rustc's crate metadata for paths no cache holds, keyed by path.
     rust_facts: BTreeMap<String, RustItemMetadata>,
+    /// Items already resolved through the lookup order, decoded once and shared: the checker asks for the same
+    /// items many times, and a trait's metadata carries every implementation it has.
+    resolved_rust_items: Arc<Mutex<HashMap<String, Arc<RustItemMetadata>>>>,
 }
 
 impl LoafIndex {
@@ -231,17 +234,26 @@ impl LoafIndex {
             entries: indexed,
             rust_abi_caches: Vec::new(),
             rust_facts: BTreeMap::new(),
+            resolved_rust_items: Arc::default(),
         })
     }
 
     /// Add the ABI cache of linked Rust crates; it answers after the Loaves' own shipped ABI.
     pub fn add_rust_abi_cache(&mut self, cache: Arc<RustAbiCache>) {
         self.rust_abi_caches.push(cache);
+        self.forget_resolved_rust_items();
     }
 
     /// Add Rust facts read from rustc's crate metadata for paths no cache holds; they answer last.
     pub fn add_rust_facts(&mut self, facts: BTreeMap<String, RustItemMetadata>) {
         self.rust_facts.extend(facts);
+        self.forget_resolved_rust_items();
+    }
+
+    /// Drop resolved items after a source is added, so the lookup order decides again; this index gets its own
+    /// store instead of clearing one that a clone shares.
+    fn forget_resolved_rust_items(&mut self) {
+        self.resolved_rust_items = Arc::default();
     }
 
     /// The entry for one dependency, read from its artifact directory.
@@ -338,8 +350,21 @@ impl LoafIndex {
         self.entries.get(key).map(|entry| entry.artifact.manifest.as_ref())
     }
 
-    /// Rust item metadata a Loaf's Rust facet ships in its manifest, from the first Loaf (in key order) that has it.
-    pub fn rust_abi_item(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+    /// Rust item metadata for `canonical_path`: a Loaf's shipped manifest ABI first (in key order), then the linked
+    /// crates' ABI caches, then facts read at check time. Each item is decoded once and then shared.
+    pub fn rust_abi_item(&self, canonical_path: &str) -> Option<Arc<RustItemMetadata>> {
+        if let Some(resolved) = self.resolved_rust_items.lock().ok()?.get(canonical_path) {
+            return Some(Arc::clone(resolved));
+        }
+        let resolved = Arc::new(self.resolve_rust_abi_item(canonical_path)?);
+        if let Ok(mut items) = self.resolved_rust_items.lock() {
+            items.insert(canonical_path.to_owned(), Arc::clone(&resolved));
+        }
+        Some(resolved)
+    }
+
+    /// Resolve one item through the lookup order, without the shared store.
+    fn resolve_rust_abi_item(&self, canonical_path: &str) -> Option<RustItemMetadata> {
         self.entries
             .values()
             .filter_map(|entry| entry.artifact.manifest.rust_abi.as_ref())

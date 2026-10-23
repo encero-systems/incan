@@ -99,7 +99,7 @@ impl TypeChecker {
         let supplied = std::mem::replace(&mut segment.arguments, syn::PathArguments::None);
         let path = path.to_token_stream().to_string().replace(' ', "");
         let metadata = self.rust_item_metadata_for_path(&path)?;
-        let RustItemKind::Trait(info) = metadata.kind else {
+        let RustItemKind::Trait(info) = &metadata.kind else {
             return None;
         };
         let mut arguments = Vec::new();
@@ -476,11 +476,11 @@ impl TypeChecker {
         if !base.contains("::") {
             return ResolvedType::Generic(base.to_owned(), arguments);
         }
-        let arguments = match self.rust_item_metadata_for_path(base) {
+        let arguments = match self.rust_item_metadata_for_path(base).as_deref() {
             Some(incan_lang::interop::RustItemMetadata {
                 kind: RustItemKind::Type(info),
                 ..
-            }) => self.rust_storage_owner_arguments(arguments, &info, base),
+            }) => self.rust_storage_owner_arguments(arguments, info, base),
             _ => arguments,
         };
         if arguments.is_empty() {
@@ -510,7 +510,7 @@ impl TypeChecker {
         }
         let mut arguments = self.rust_owner_type_args(actual, base)?;
         let metadata = self.rust_item_metadata_for_path(base)?;
-        let RustItemKind::Type(info) = metadata.kind else {
+        let RustItemKind::Type(info) = &metadata.kind else {
             return None;
         };
         if !self.complete_rust_owner_arguments(&info, &mut arguments) {
@@ -609,6 +609,18 @@ impl TypeChecker {
     /// `&T` instantiated with source text borrows its owned String carrier instead of being reclassified as an
     /// unsized string.
     pub(crate) fn native_rust_signature_type(&self, display: &str, owner: &str) -> ResolvedType {
+        let key = (display.to_owned(), owner.to_owned());
+        if let Some(resolved) = self.native_signature_types.borrow().get(&key) {
+            return resolved.clone();
+        }
+        let resolved = self.resolve_native_rust_signature_type(display, owner);
+        self.native_signature_types.borrow_mut().insert(key, resolved.clone());
+        resolved
+    }
+
+    /// Resolve one native signature display for `native_rust_signature_type`, which caches the result; nested
+    /// displays recurse through the cached entry point.
+    fn resolve_native_rust_signature_type(&self, display: &str, owner: &str) -> ResolvedType {
         let display = self.rust_display_for_owner_path(display, owner);
         let display = Self::rust_display_without_lifetimes(&display);
         // Parsed qualified owners render namespace punctuation with surrounding whitespace. Normalize that
@@ -692,7 +704,7 @@ impl TypeChecker {
             _ => return None,
         };
         if let Some(metadata) = self.known_rust_metadata_for_path(&path)
-            && let RustItemKind::Type(info) = metadata.kind
+            && let RustItemKind::Type(info) = &metadata.kind
         {
             return Some(self.rust_storage_owner(ty, &info, &path));
         }

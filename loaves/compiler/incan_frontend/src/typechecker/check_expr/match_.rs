@@ -1224,7 +1224,7 @@ impl TypeChecker {
             }
         }
         let metadata = self.rust_item_metadata_for_complete_type(&path)?;
-        let RustItemKind::Type(info) = metadata.kind else {
+        let RustItemKind::Type(info) = &metadata.kind else {
             return None;
         };
         let layout = self.checked_rust_enum_layout(&path, &info)?;

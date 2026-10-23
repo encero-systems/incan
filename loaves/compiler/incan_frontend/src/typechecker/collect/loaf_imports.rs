@@ -2,6 +2,7 @@
 //! packages, both read from the Loaf's checked manifest and bound under the Loaf's binding root.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::api_metadata::{
     ApiDeclaration, CheckedApiMetadataPackage, DecoratorArgMetadata, DecoratorValue, SafeMetadataValue,
@@ -1876,7 +1877,7 @@ impl TypeChecker {
         let metadata = manifest.rust_abi.as_ref()?.get(&path)?.clone();
         Some(SymbolKind::RustItem(RustItemInfo {
             crate_name: crate_name.clone(),
-            metadata: Some(metadata),
+            metadata: Some(Arc::new(metadata)),
             path,
             binding: RustImportBindingKind::FromImport,
         }))

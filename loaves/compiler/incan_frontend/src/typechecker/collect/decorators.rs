@@ -106,12 +106,12 @@ impl TypeChecker {
             return None;
         }
         let metadata = self.rust_item_metadata_for_path(path)?;
-        let derivable = match metadata.kind {
+        let derivable = match &metadata.kind {
             incan_lang::interop::RustItemKind::Macro(_) => true,
             incan_lang::interop::RustItemKind::Trait(info) => info.derive_macro.is_some(),
             _ => false,
         };
-        derivable.then_some(metadata.canonical_path)
+        derivable.then(|| metadata.canonical_path.clone())
     }
 
     /// Return whether the Loaf owning this resolved path declares it as an extern-backed decorator function.

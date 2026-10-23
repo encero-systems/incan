@@ -75,7 +75,7 @@ impl TypeChecker {
             _ => self.rust_canonical_path_for_receiver_type(ty)?,
         };
         let metadata = self.rust_item_metadata_for_path(&path)?;
-        let info = match metadata.kind {
+        let info = match &metadata.kind {
             RustItemKind::Type(info) => info,
             RustItemKind::Trait(info) => {
                 let identity = self.rust_definition_for_path(&path).unwrap_or_else(|| path.clone());
@@ -146,7 +146,7 @@ impl TypeChecker {
                 && matches!(&value, ResolvedType::Generic(name, _) if crate::typechecker::helpers::collection_type_id(name).is_some())
                 && let Some(path) = self.rust_result_item_path(&display, "")
                 && let Some(metadata) = self.rust_item_metadata_for_path(&path)
-                && let RustItemKind::Type(info) = metadata.kind
+                && let RustItemKind::Type(info) = &metadata.kind
             {
                 let native = ResolvedType::RustPath(Self::compact_rust_display(&display));
                 let storage = self.rust_storage_owner(&native, &info, &path);
@@ -197,7 +197,7 @@ impl TypeChecker {
                 let Some(metadata) = self.rust_item_metadata_for_path(&path) else {
                     continue;
                 };
-                let RustItemKind::Trait(info) = metadata.kind else {
+                let RustItemKind::Trait(info) = &metadata.kind else {
                     continue;
                 };
                 let substitutions = info

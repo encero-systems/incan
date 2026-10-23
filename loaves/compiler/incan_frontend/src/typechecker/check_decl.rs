@@ -1,5 +1,7 @@
 //! Second-pass declaration checking: validate models, classes, traits, enums, functions, methods.
 
+use std::sync::Arc;
+
 use crate::ast::*;
 use crate::ast_walk::any_expr_in_body;
 use crate::diagnostics::errors::{DerivedMember, StoredTypeParamOwner};
@@ -4556,7 +4558,7 @@ impl TypeChecker {
     }
 
     /// Return Rust trait metadata for a direct `rust::...` import used in a `with` clause.
-    fn imported_rust_trait_candidate(&self, trait_name: &str) -> Option<(String, Option<RustItemMetadata>)> {
+    fn imported_rust_trait_candidate(&self, trait_name: &str) -> Option<(String, Option<Arc<RustItemMetadata>>)> {
         let sym = self.lookup_symbol(trait_name)?;
         let SymbolKind::RustItem(info) = &sym.kind else {
             return None;
@@ -4850,7 +4852,7 @@ impl TypeChecker {
                     &trait_ref.node,
                     trait_ref.span,
                     trait_path.as_str(),
-                    trait_metadata.as_ref(),
+                    trait_metadata.as_deref(),
                     rusttype_path.as_deref(),
                 );
             } else if self.lookup_trait_info(trait_name).is_some() {

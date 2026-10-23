@@ -4,6 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
+use std::sync::Arc;
 
 use crate::ast::{ParamKind, Receiver, Span, Type, TypeConstraintKey};
 use incan_lang::interop::RustItemMetadata;
@@ -1517,8 +1518,8 @@ pub struct RustItemInfo {
     /// collector already built, joined with `::`).
     pub path: String,
     pub binding: RustImportBindingKind,
-    /// Optional extracted Rust semantic metadata (RFC 041).
-    pub metadata: Option<RustItemMetadata>,
+    /// Optional extracted Rust semantic metadata (RFC 041), shared with the lookup store and imported aliases.
+    pub metadata: Option<Arc<RustItemMetadata>>,
 }
 
 /// Kind of symbol

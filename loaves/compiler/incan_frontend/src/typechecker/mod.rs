@@ -861,6 +861,15 @@ pub struct TypeChecker {
     nested_type_compatibility_depth: Cell<usize>,
     /// Successful canonical Rust ABI lookups made by this checker, including inferred receiver and return types.
     rust_metadata_queries: RefCell<BTreeSet<String>>,
+    /// Native signature types already resolved by this checker, keyed by metadata display and owner path.
+    ///
+    /// Resolution depends only on the Rust facts and path normalization, which are fixed for a checker's lifetime.
+    /// Without this cache, an owner's type arguments are re-derived from their displays at every level of generic
+    /// nesting, which doubles the work per level.
+    native_signature_types: RefCell<HashMap<(String, String), ResolvedType>>,
+    /// Native iteration protocol calls already selected by this checker, keyed by owner, trait, method and the
+    /// source type parameters in scope. Selection scans every implementation of the protocol trait.
+    native_iteration_calls: RefCell<HashMap<(String, String, String, String), Option<type_info::RustCheckedCall>>>,
     /// Actual complete-type lookup requests observed by this isolated checker in demand regression tests.
     #[cfg(test)]
     rust_complete_type_lookup_requests: Cell<usize>,
@@ -1002,6 +1011,8 @@ impl TypeChecker {
             type_compatibility_depth: Cell::new(0),
             nested_type_compatibility_depth: Cell::new(0),
             rust_metadata_queries: RefCell::new(BTreeSet::new()),
+            native_signature_types: RefCell::new(HashMap::new()),
+            native_iteration_calls: RefCell::new(HashMap::new()),
             #[cfg(test)]
             rust_complete_type_lookup_requests: Cell::new(0),
         }
@@ -1166,26 +1177,30 @@ impl TypeChecker {
     }
 
     /// Resolve Rust metadata through the selected shipped ABI or inspection authority and retain successful demand.
-    pub fn rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+    pub fn rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<Arc<RustItemMetadata>> {
         let metadata = self.lookup_rust_item_metadata_for_path(canonical_path)?;
         self.record_rust_metadata_query(canonical_path);
         Some(metadata)
     }
 
     /// Return Rust item metadata from the shipped ABI of the Loaves the checker reaches.
-    fn lookup_rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+    fn lookup_rust_item_metadata_for_path(&self, canonical_path: &str) -> Option<Arc<RustItemMetadata>> {
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
         let lookup_path = Self::rust_metadata_lookup_path(canonical_path)?;
         self.loaves.rust_abi_item(lookup_path)
     }
 
     /// Return Rust item metadata from the shipped ABI of the Loaves the checker reaches.
-    pub fn rust_item_metadata_for_method_call(&self, canonical_path: &str, _method: &str) -> Option<RustItemMetadata> {
+    pub fn rust_item_metadata_for_method_call(
+        &self,
+        canonical_path: &str,
+        _method: &str,
+    ) -> Option<Arc<RustItemMetadata>> {
         self.rust_item_metadata_for_path(canonical_path)
     }
 
     /// Return complete type metadata from the shipped ABI of the Loaves the checker reaches.
-    pub fn rust_item_metadata_for_complete_type(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+    pub fn rust_item_metadata_for_complete_type(&self, canonical_path: &str) -> Option<Arc<RustItemMetadata>> {
         #[cfg(test)]
         self.rust_complete_type_lookup_requests
             .set(self.rust_complete_type_lookup_requests.get() + 1);
@@ -1358,7 +1373,7 @@ impl TypeChecker {
     }
 
     /// Return already-attached or cache-only metadata for one canonical Rust identity path.
-    fn known_rust_metadata_for_path(&self, canonical_path: &str) -> Option<RustItemMetadata> {
+    fn known_rust_metadata_for_path(&self, canonical_path: &str) -> Option<Arc<RustItemMetadata>> {
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
         if let Some(metadata) = self.symbols.all_symbols().iter().find_map(|sym| {
             let SymbolKind::RustItem(info) = &sym.kind else {
@@ -1377,7 +1392,7 @@ impl TypeChecker {
     /// Return the Rust definition metadata for a canonical path.
     fn rust_definition_for_path(&self, canonical_path: &str) -> Option<String> {
         self.known_rust_metadata_for_path(canonical_path)
-            .and_then(|metadata| metadata.definition_path)
+            .and_then(|metadata| metadata.definition_path.clone())
     }
 
     /// Resolve inspected default type arguments without inventing defaults for metadata that omitted them.
@@ -1426,7 +1441,7 @@ impl TypeChecker {
                 let (base, args) = self.rust_path_base_and_args(path);
                 let metadata = self.known_rust_metadata_for_path(base.as_str());
                 let definition = metadata.as_ref().and_then(|metadata| metadata.definition_path.clone());
-                let defaults = self.rust_type_param_defaults(metadata.as_ref());
+                let defaults = self.rust_type_param_defaults(metadata.as_deref());
                 Some((base, definition, args, defaults))
             }
             ResolvedType::Named(name) => {
@@ -1438,7 +1453,7 @@ impl TypeChecker {
                     .clone()
                     .or_else(|| self.rust_item_metadata_for_path(info.path.as_str()));
                 let definition = metadata.as_ref().and_then(|metadata| metadata.definition_path.clone());
-                let defaults = self.rust_type_param_defaults(metadata.as_ref());
+                let defaults = self.rust_type_param_defaults(metadata.as_deref());
                 Some((
                     Self::normalize_rust_namespace_path(info.path.as_str()).to_string(),
                     definition,
@@ -1463,7 +1478,7 @@ impl TypeChecker {
                     .clone()
                     .or_else(|| self.rust_item_metadata_for_path(info.path.as_str()));
                 let definition = metadata.as_ref().and_then(|metadata| metadata.definition_path.clone());
-                let defaults = self.rust_type_param_defaults(metadata.as_ref());
+                let defaults = self.rust_type_param_defaults(metadata.as_deref());
                 Some((
                     Self::normalize_rust_namespace_path(info.path.as_str()).to_string(),
                     definition,
@@ -2026,10 +2041,10 @@ impl TypeChecker {
         let lookup_path = Self::rust_metadata_lookup_path(base)?;
         let metadata = self.loaves.rust_abi_item(lookup_path)?;
         self.record_rust_metadata_query(base);
-        let RustItemKind::Type(info) = metadata.kind else {
+        let RustItemKind::Type(info) = &metadata.kind else {
             return None;
         };
-        let target = info.alias_target?;
+        let target = info.alias_target.as_deref()?;
         if info.type_params.len() != args.len() {
             return None;
         }
@@ -5762,7 +5777,7 @@ impl TypeChecker {
         let Some(metadata) = self.rust_item_metadata_for_complete_type(&info.path) else {
             return;
         };
-        let RustItemKind::Type(type_info) = metadata.kind else {
+        let RustItemKind::Type(type_info) = &metadata.kind else {
             return;
         };
         let resolved_args = source_args
@@ -5907,7 +5922,7 @@ impl TypeChecker {
         // from a terminal name; retain the imported path only when the defining item is unavailable.
         Some(
             self.rust_item_metadata_for_complete_type(imported_path.as_str())
-                .and_then(|metadata| metadata.definition_path)
+                .and_then(|metadata| metadata.definition_path.clone())
                 .unwrap_or(imported_path),
         )
     }
@@ -5929,10 +5944,10 @@ impl TypeChecker {
             let Some(metadata) = self.rust_item_metadata_for_complete_type(path.as_str()) else {
                 return false;
             };
-            let RustItemKind::Type(info) = metadata.kind else {
+            let RustItemKind::Type(info) = &metadata.kind else {
                 return false;
             };
-            info.expanded_derive_traits
+            info.expanded_derive_traits.clone()
         } else {
             let local_name = match ty {
                 ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name,
@@ -5990,13 +6005,14 @@ impl TypeChecker {
     }
 
     /// Return probe-observed derive expansion output carried by inspected trait or macro metadata.
-    fn rust_metadata_derive_outputs(metadata: RustItemMetadata) -> Vec<RustExpandedDeriveTrait> {
-        match metadata.kind {
+    fn rust_metadata_derive_outputs(metadata: Arc<RustItemMetadata>) -> Vec<RustExpandedDeriveTrait> {
+        match &metadata.kind {
             RustItemKind::Trait(trait_info) => trait_info
                 .derive_macro
-                .map(|macro_info| macro_info.expanded_traits)
+                .as_ref()
+                .map(|macro_info| macro_info.expanded_traits.clone())
                 .unwrap_or_default(),
-            RustItemKind::Macro(macro_info) => macro_info.expanded_traits,
+            RustItemKind::Macro(macro_info) => macro_info.expanded_traits.clone(),
             _ => Vec::new(),
         }
     }
@@ -7303,7 +7319,7 @@ impl TypeChecker {
             let Some(metadata) = self.lookup_rust_item_metadata_for_path(&path) else {
                 continue;
             };
-            let RustItemKind::Type(info) = metadata.kind else {
+            let RustItemKind::Type(info) = &metadata.kind else {
                 continue;
             };
             let parameters = info
@@ -7343,7 +7359,7 @@ impl TypeChecker {
                 .metadata
                 .clone()
                 .or_else(|| self.rust_item_metadata_for_path(info.path.as_str()));
-            if let Some(definition) = metadata.and_then(|metadata| metadata.definition_path) {
+            if let Some(definition) = metadata.and_then(|metadata| metadata.definition_path.clone()) {
                 paths.entry(definition).or_insert_with(|| public.clone());
             }
             if self.lookup_symbol(&symbol.name).is_some_and(

@@ -4,6 +4,7 @@
 //! diagnostics for missing fields/methods and incompatible uses.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::ast::*;
 use crate::diagnostics::errors::SelfMutation;
@@ -141,7 +142,7 @@ struct RustTraitQualifiedCall<'a> {
 struct RustPathMethodCall<'a> {
     rust_path: &'a str,
     method: &'a str,
-    receiver_metadata: Option<&'a RustItemMetadata>,
+    receiver_metadata: Option<&'a Arc<RustItemMetadata>>,
     /// The import binding the receiver expression names, when the receiver is a bare imported Rust item such as
     /// the `Mac` in `Mac.update(handle, data)`; `None` for value receivers.
     receiver_binding: Option<&'a str>,
@@ -2721,7 +2722,7 @@ impl TypeChecker {
     ///
     /// Multiple compiled providers may describe the same canonical Rust path. The selected public import remains the
     /// semantic authority for its reexport rather than allowing a later path-only lookup to select another provider.
-    fn rust_metadata_for_receiver_expr(&self, receiver: &Spanned<Expr>) -> Option<RustItemMetadata> {
+    fn rust_metadata_for_receiver_expr(&self, receiver: &Spanned<Expr>) -> Option<Arc<RustItemMetadata>> {
         match &receiver.node {
             Expr::Ident(name) => {
                 let SymbolKind::RustItem(info) = &self.lookup_symbol(name)?.kind else {
@@ -2739,8 +2740,8 @@ impl TypeChecker {
         &self,
         rust_path: &str,
         method: &str,
-        receiver_metadata: Option<&RustItemMetadata>,
-    ) -> Option<RustItemMetadata> {
+        receiver_metadata: Option<&Arc<RustItemMetadata>>,
+    ) -> Option<Arc<RustItemMetadata>> {
         if let Some(metadata) = receiver_metadata {
             let is_authoritative = match &metadata.kind {
                 RustItemKind::Type(type_info) => {
@@ -5469,7 +5470,7 @@ impl TypeChecker {
                             let Some(metadata) = self.rust_item_metadata_for_path(&selected) else {
                                 return ResolvedType::Unknown;
                             };
-                            let RustItemKind::Constant { type_display } = metadata.kind else {
+                            let RustItemKind::Constant { type_display } = &metadata.kind else {
                                 return ResolvedType::Unknown;
                             };
                             self.type_info
@@ -5493,12 +5494,12 @@ impl TypeChecker {
                     if params.is_empty() {
                         let selected = format!("{path}::{field}");
                         if let Some(metadata) = self.rust_item_metadata_for_path(&selected)
-                            && let RustItemKind::Constant { type_display } = metadata.kind
+                            && let RustItemKind::Constant { type_display } = &metadata.kind
                         {
                             self.type_info
                                 .rust
                                 .checked_constants
-                                .insert((span.start, span.end), metadata.canonical_path);
+                                .insert((span.start, span.end), metadata.canonical_path.clone());
                             return self.resolved_type_from_rust_display(&type_display);
                         }
                         self.retain_rust_variant_construction(path, field, &[], &params, span);
@@ -6585,7 +6586,7 @@ impl TypeChecker {
                     .is_some_and(|carriers| carriers.contains(&incan_lang::interop::RustPayloadCarrier::Boxed));
                 if !boxed_payload
                     && let Some(metadata) = self.rust_item_metadata_for_path(&constructor)
-                    && let RustItemKind::Function(signature) = metadata.kind
+                    && let RustItemKind::Function(signature) = &metadata.kind
                 {
                     return self.validate_rust_function_call_with_expected(
                         &metadata.canonical_path,

@@ -239,6 +239,31 @@ impl TypeChecker {
         trait_path: &str,
         method: &str,
     ) -> Option<crate::typechecker::type_info::RustCheckedCall> {
+        // Selection scans every implementation of the protocol trait, so each owner is selected once per checker.
+        // The source type parameters in scope are part of the key: an owner naming one of them can select
+        // differently in another declaration.
+        let key = (
+            format!("{owner:?}"),
+            trait_path.to_owned(),
+            method.to_owned(),
+            format!("{:?}", self.native_call_type_parameters()),
+        );
+        if let Some(selected) = self.native_iteration_calls.borrow().get(&key) {
+            return selected.clone();
+        }
+        let selected = self.select_rust_iteration_call(expression, owner, trait_path, method);
+        self.native_iteration_calls.borrow_mut().insert(key, selected.clone());
+        selected
+    }
+
+    /// Select one native protocol call for `rust_iteration_call`, which caches the selection per owner.
+    fn select_rust_iteration_call(
+        &self,
+        expression: &Spanned<Expr>,
+        owner: &ResolvedType,
+        trait_path: &str,
+        method: &str,
+    ) -> Option<crate::typechecker::type_info::RustCheckedCall> {
         let path = self.rust_canonical_path_for_receiver_type(owner)?;
         let metadata = self.rust_item_metadata_for_path(&path)?;
         let RustItemKind::Type(info) = &metadata.kind else {
@@ -410,7 +435,7 @@ impl TypeChecker {
             self.unique_imported_rust_item_path_for_display_tail(base)?
         };
         let metadata = self.rust_item_metadata_for_path(&path)?;
-        matches!(metadata.kind, RustItemKind::Type(_)).then_some(metadata.canonical_path)
+        matches!(metadata.kind, RustItemKind::Type(_)).then(|| metadata.canonical_path.clone())
     }
 
     /// Read a native value's retained item from its public field, call or canonical local binding, never from a method
@@ -581,7 +606,7 @@ impl TypeChecker {
         self.infer_type_param_bindings(&template, &actual, &mut bindings);
         if let Some((base, arguments)) = Self::rust_generic_base_and_args(&implementation.self_type)
             && let Some(metadata) = self.rust_item_metadata_for_path(base)
-            && let RustItemKind::Type(info) = metadata.kind
+            && let RustItemKind::Type(info) = &metadata.kind
         {
             for (index, argument) in arguments
                 .iter()
@@ -753,7 +778,7 @@ impl TypeChecker {
         info: &RustTypeInfo,
     ) -> Option<TraitCandidate> {
         let metadata = self.rust_item_metadata_for_path(&implementation.path)?;
-        let RustItemKind::Trait(trait_info) = metadata.kind else {
+        let RustItemKind::Trait(trait_info) = &metadata.kind else {
             return None;
         };
         if !trait_info.is_in_prelude
@@ -1061,10 +1086,10 @@ impl TypeChecker {
             let Some(metadata) = self.rust_item_metadata_for_path(&import.trait_path) else {
                 continue;
             };
-            let RustItemKind::Trait(trait_info) = metadata.kind else {
+            let RustItemKind::Trait(trait_info) = &metadata.kind else {
                 continue;
             };
-            templates.extend(trait_info.implementations);
+            templates.extend(trait_info.implementations.iter().cloned());
         }
         templates
     }
@@ -1083,7 +1108,7 @@ impl TypeChecker {
                 return false;
             };
             let required_path = metadata.canonical_path.clone();
-            let RustItemKind::Trait(required) = metadata.kind else {
+            let RustItemKind::Trait(required) = &metadata.kind else {
                 return false;
             };
             if !required
@@ -1118,7 +1143,7 @@ impl TypeChecker {
                 }
                 continue;
             }
-            let RustItemKind::Type(info) = metadata.kind else {
+            let RustItemKind::Type(info) = &metadata.kind else {
                 return false;
             };
             let actual = self.rust_closed_owner(&actual, &info, &path);

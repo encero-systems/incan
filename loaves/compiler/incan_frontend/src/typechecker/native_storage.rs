@@ -379,9 +379,9 @@ impl TypeChecker {
             && let Some(incan_lang::interop::RustItemMetadata {
                 kind: incan_lang::interop::RustItemKind::Type(info),
                 ..
-            }) = self.lookup_rust_item_metadata_for_path(&base)
+            }) = self.lookup_rust_item_metadata_for_path(&base).as_deref()
         {
-            self.complete_rust_owner_arguments(&info, &mut arguments);
+            self.complete_rust_owner_arguments(info, &mut arguments);
             if base.starts_with("std::") || base.starts_with("alloc::") {
                 let projected = self.rust_inference_constructor(&base, &arguments, parameters);
                 if matches!(&projected, ResolvedType::Generic(name, _)

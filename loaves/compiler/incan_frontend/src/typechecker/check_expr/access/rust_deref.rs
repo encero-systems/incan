@@ -286,7 +286,7 @@ impl TypeChecker {
     ) -> Option<RustCheckedCall> {
         let path = self.rust_canonical_path_for_receiver_type(owner)?;
         let metadata = self.rust_item_metadata_for_path(&path)?;
-        let RustItemKind::Type(info) = metadata.kind else {
+        let RustItemKind::Type(info) = &metadata.kind else {
             return None;
         };
         let owner = self.rust_closed_owner(owner, &info, &path);

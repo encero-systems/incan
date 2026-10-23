@@ -151,7 +151,7 @@ impl TypeChecker {
     fn resolve_native_module_function(&mut self, call: RustPathMethodCall<'_>) -> Option<ResolvedType> {
         let path = format!("{}::{}", call.rust_path, call.method);
         let selected = self.rust_item_metadata_for_path(&path)?;
-        let RustItemKind::Function(signature) = selected.kind else {
+        let RustItemKind::Function(signature) = &selected.kind else {
             return None;
         };
         if !call.type_args.is_empty() {

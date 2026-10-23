@@ -76,7 +76,7 @@ impl TypeChecker {
         let Some(metadata) = self.rust_item_metadata_for_complete_type(path) else {
             return;
         };
-        let incan_lang::interop::RustItemKind::Type(info) = metadata.kind else {
+        let incan_lang::interop::RustItemKind::Type(info) = &metadata.kind else {
             return;
         };
         let Some(layout) = self.checked_rust_enum_layout(path, &info) else {
@@ -159,7 +159,7 @@ impl TypeChecker {
         let Some(metadata) = self.rust_item_metadata_for_path(path) else {
             return false;
         };
-        let RustItemKind::Type(info) = metadata.kind else {
+        let RustItemKind::Type(info) = &metadata.kind else {
             return false;
         };
         let arguments = [
