@@ -21,7 +21,11 @@ DEV8_LANE=/path/to/lane scripts/relink-driver.sh
 DEV8_LANE=/path/to/lane scripts/relink-driver.sh --lowering --release
 ```
 
-The default profile is debug. Add `--lowering` after editing the lowering's Incan source; it requires the lane's existing `bootstrap/scripts/refresh-lowering.sh`. Add `--release` to compile the local Rust units with Oven's release profile. Installation retains the selected runtime dependencies and native search paths, installs the driver under its content digest, and selects its standard Rust ABI cache. Set `INCAN_DRIVER_INSTALL=0` to build without installing, for before/after measurements.
+The default profile is debug. Add `--lowering` after editing the lowering's Incan source; it uses `scripts/refresh-lowering.sh` and the lane's frozen stage-zero emitter. An unchanged emission is reused after checking the input and generated-output content digests. A changed emission preserves generated files with unchanged bytes and removes obsolete generated modules. Add `--release` to compile the local Rust units with Oven's release profile. Installation retains the selected runtime dependencies and native search paths, installs the driver under its content digest, and selects its standard Rust ABI cache. Set `INCAN_DRIVER_INSTALL=0` to build without installing, for before/after measurements.
+
+The first relink snapshots the installed build toolchain description under `bootstrap/driver-build-home`; its artifact paths still refer to the original immutable files, without copying the toolchain. Later relinks use that pinned compiler to build Rust libraries, while installing their output driver into `dev8-home` for programs and contracts. Use `--refresh-build-toolchain` to select the currently installed compiler as the build compiler again; this deliberately invalidates Rust library reuse. Rust binaries retain their complete executable while their rustc, source, arguments, package environment and linked libraries remain unchanged.
+
+Set `OVEN_TRACE=- INCAN_RELINK_TRACE=1` to record timestamped unit decisions and relink phase durations. `INCAN_RELINK_LOG` selects the build log path; otherwise the current profile's log is replaced under `bootstrap/`.
 
 ## Generated Rust audit helper
 
