@@ -1351,6 +1351,12 @@ pub struct NativeUnionExport {
     pub owner: NativeUnionOwnerExport,
     pub rust_name: String,
     pub members: Vec<TypeRef>,
+    /// Exact callable member signatures that own captured environments, in physical variant order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub closure_members: Vec<incan_semantics_core::IncanType>,
+    /// Producer-owned callable object aliases, ordered as `closure_members`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub closure_items: Vec<String>,
     /// Checked union carrier before native payload ordering, retained by the native Loaf publisher. Nominal leaves
     /// already encode their canonical declaration identities; consumers never derive a carrier from a Rust name.
     #[serde(default, skip_serializing_if = "Option::is_none")]

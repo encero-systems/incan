@@ -1,12 +1,45 @@
-# behavior: a Rust UTF-8 error displays through its own native Display implementation
+# behavior: a native UTF-8 error displays through captured Result mappers and narrowed callable formatters forwarded across source calls
 # expect-stdout:
 #   invalid utf-8 sequence of 1 bytes from index 0
 
 from rust::std::str import from_utf8
 
 
+def render_message(message: str, formatter: str | Callable[str, str]) -> str:
+    """Apply a source message formatter while retaining its text alternative."""
+    if isinstance(formatter, str):
+        return formatter
+    else:
+        return formatter(message)
+
+
+def forward_message(message: str, formatter: str | Callable[str, str]) -> str:
+    """Forward a narrowed callback and keep the original environment usable afterward."""
+    if isinstance(formatter, str):
+        return formatter
+    else:
+        rendered = render_message(message, formatter)
+        assert formatter(message) == rendered
+        return rendered
+
+
+def mapped_error(prefix: str) -> str:
+    """Map a native Result error through a closure retaining source-owned text."""
+    match from_utf8(b"\xff").map_err((error) => prefix + str(error)):
+        Ok(_text) => return "valid"
+        Err(message) => return message
+
+
 def main() -> None:
     """Display the retained native error rather than requiring a source derive."""
+    marker = "!"
     match from_utf8(b"\xff"):
         Ok(_) => println("valid")
-        Err(err) => println(f"{err}")
+        Err(err) =>
+            println(f"{err}")
+            assert forward_message(str(err), (text) => text + marker) == "invalid utf-8 sequence of 1 bytes from index 0!"
+    assert mapped_error("prefix: ") == "prefix: invalid utf-8 sequence of 1 bytes from index 0"
+    suffix = "!"
+    match from_utf8(b"ok").map_err((error) => suffix + str(error)):
+        Ok(text) => assert text == "ok"
+        Err(_) => assert false

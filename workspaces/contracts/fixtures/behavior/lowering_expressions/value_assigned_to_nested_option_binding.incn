@@ -1,4 +1,4 @@
-# behavior: a value assigned to a nested Option binding is wrapped in each Option layer, in a declaration and a reassignment
+# behavior: nested Option assignments wrap each layer in declarations and reassignments, including an existing None payload as Some(None)
 # expect-stdout:
 #   5
 #   0
@@ -23,3 +23,11 @@ def main() -> None:
     match outer:
         Some(value) => println(value.unwrap_or(7))
         None => println("none")
+    missing: Option[int] = None
+    wrapped_missing: Option[Option[int]] = missing
+    match wrapped_missing:
+        Some(value) =>
+            match value:
+                None => pass
+                Some(_value) => assert false
+        None => assert false

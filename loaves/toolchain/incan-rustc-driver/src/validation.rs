@@ -49,7 +49,6 @@ fn numeric(kind: &SizedNumeric) -> Numeric {
 /// A local comparison vocabulary; the public types remain the Incan Loaf's own types.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Scalar {
-    Never,
     NativeStr,
     NativeSlice(Vec<Scalar>),
     SliceRef(Vec<Scalar>),
@@ -73,6 +72,7 @@ enum Scalar {
     CheckedNumeric(Numeric),
     Bool,
     Unit,
+    Never,
     EnumTag,
     Enum(i64),
     EnumRef(i64),
@@ -196,7 +196,6 @@ fn tuple_leaf(element: &crate::plan::TupleElement) -> Leaf {
 /// Compare source-authored types without requiring a Rust derive on Incan types.
 fn scalar(ty: &PlanType) -> Scalar {
     match ty {
-        PlanType::Never => Scalar::Never,
         PlanType::NativeStr => Scalar::NativeStr,
         PlanType::NativeSlice(elements) => Scalar::NativeSlice(elements.iter().map(scalar).collect()),
         PlanType::SliceRef(elements) => Scalar::SliceRef(elements.iter().map(scalar).collect()),
@@ -262,6 +261,7 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::USize => Scalar::USize,
         PlanType::Bool => Scalar::Bool,
         PlanType::Unit => Scalar::Unit,
+        PlanType::Never => Scalar::Never,
         PlanType::CheckedInt => Scalar::CheckedInt,
         PlanType::String => Scalar::String,
         PlanType::Decimal => Scalar::Decimal,
@@ -1016,12 +1016,10 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             Ok(Scalar::FunctionItem(name.clone(), parameters))
         }
         RvalueKind::ClosureObject(value) => match place(plan, function, value)? {
-            Scalar::Closure(signature) if matches!(value.projection, Projection::Whole) => {
-                Ok(Scalar::ClosureRef(signature))
-            }
+            Scalar::Closure(signature) => Ok(Scalar::ClosureRef(signature)),
             _ => Err(invalid(
                 function,
-                "callable-object borrow requires a whole owned closure",
+                "callable-object borrow requires an owned closure payload",
             )),
         },
         RvalueKind::ReifyFunction(value) => {
@@ -1262,8 +1260,9 @@ fn shared_reference(ty: &Scalar) -> bool {
 /// Source signatures expose scalars, owned text, explicit shared text and validation-error references, and the
 /// exclusive text reference a `mut str` parameter receives, models, callables, and tuples of admitted types; formatting
 /// views stay internal. Exact native slice references can cross a closed source type parameter without becoming owned
-/// lists. A function pointer's inputs also admit shared and exclusive model references retained by method decorators,
-/// as receiver frames do.
+/// lists. Metadata-validated native references retain their exact carrier. A function pointer's inputs also admit
+/// shared and exclusive model references retained by method decorators, as receiver frames do. Uninhabited results
+/// preserve divergence.
 fn source_signature_type(ty: &Scalar) -> bool {
     if let Scalar::TypeToken(elements) = ty {
         return matches!(
@@ -1313,6 +1312,11 @@ fn source_signature_type(ty: &Scalar) -> bool {
                 element,
                 Scalar::ScalarRef(_)
                     | Scalar::ScalarMutRef(_)
+                    | Scalar::StrRef
+                    | Scalar::StringRef
+                    | Scalar::StringMutRef
+                    | Scalar::EnumRef(_)
+                    | Scalar::EnumMutRef(_)
                     | Scalar::ModelRef(_)
                     | Scalar::ModelMutRef(_)
                     | Scalar::SliceRef(_)
@@ -1327,6 +1331,7 @@ fn source_signature_type(ty: &Scalar) -> bool {
             ty,
             Scalar::Int
                 | Scalar::UnitFunction
+                | Scalar::Never
                 | Scalar::ZipIterator(_, _)
                 | Scalar::ZipIteratorMutRef(_, _)
                 | Scalar::Generator(_, _)

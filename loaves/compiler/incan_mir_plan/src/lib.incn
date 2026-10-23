@@ -161,7 +161,7 @@ pub enum PlanType:
     FrozenCollectionRef(str, list[PlanType])
     # The existing SDK's zero-sized marker with exactly one checked represented primitive type.
     TypeToken(list[PlanType])
-    # Exact static string storage, including generic arguments; StrRef remains a body-local formatting view.
+    # Exact static string storage, including generic arguments, distinct from a borrowed native StrRef view.
     StaticText
     StaticBytes
     # Dependency-owned builtin validation storage; the reference borrows its message and optional code.
@@ -264,8 +264,21 @@ pub def tuple_element_type(element: TupleElement) -> PlanType:
         TupleElement.Tuple(elements) => return PlanType.Tuple(elements)
         TupleElement.FunctionPointer(signature) => return PlanType.FunctionPointer(signature)
         TupleElement.Reference(mutable, elements) =>
+            if len(elements) == 1:
+                match elements[0]:
+                    PlanType.String =>
+                        if mutable:
+                            return PlanType.StringMutRef
+                        return PlanType.StringRef
+                    PlanType.Enum(owner, name) =>
+                        if mutable:
+                            return PlanType.EnumMutRef(owner, name)
+                        return PlanType.EnumRef(owner, name)
+                    _ => pass
             if mutable:
                 return PlanType.ScalarMutRef(elements)
+            if elements == [PlanType.NativeStr]:
+                return PlanType.StrRef
             return PlanType.ScalarRef(elements)
         TupleElement.ModelRef(index, name) => return PlanType.ModelRef(index, name)
         TupleElement.ModelMutRef(index, name) => return PlanType.ModelMutRef(index, name)
@@ -819,6 +832,8 @@ pub model EnumDeclaration:
     pub raw_values: list[str] = []
     # Checked source equality and ordering bodies; the adapter validates their exact enum input ABI before bridging.
     pub comparison_methods: list[str] = []
+    # Exact callable object aliases for environment-holding union variants, in their physical order.
+    pub closure_items: list[str] = []
 
 
 @derive(Clone, PartialEq)

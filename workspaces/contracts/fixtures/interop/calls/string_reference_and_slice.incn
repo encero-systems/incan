@@ -1,4 +1,4 @@
-# behavior: Rust generic references borrow an owned String while literal str parameters receive its text slice
+# behavior: Rust generic references borrow owned text, literal str parameters receive its slice, and checked dereference chains retain shared String receivers
 # expect-stdout:
 #   true
 #   leaf
@@ -7,6 +7,7 @@
 """Distinguish a generic reference to owned text from a native str slice."""
 
 from rust::std::mem import size_of_val
+from rust::std::sync import Arc
 from rust::incan_std_core::strings import str_slice_byte_range
 
 
@@ -16,3 +17,6 @@ def main() -> None:
     println(size_of_val(text) == size_of_val("leaf"))
     println(text)
     println(str_slice_byte_range(text, 1, 3))
+    shared: Arc[str] = Arc.new(text)
+    assert shared.as_str() == "leaf"
+    assert shared.as_str() == "leaf"

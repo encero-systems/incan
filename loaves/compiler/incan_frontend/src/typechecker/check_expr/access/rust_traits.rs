@@ -1,5 +1,6 @@
 //! Select retained trait callees after inherent lookup, using the extractor's impl templates and signatures.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 
 use super::{RustPathMethodCall, RustTraitQualifiedCall, TypeChecker};
@@ -8,7 +9,9 @@ use crate::resolved_type_subst::{map_resolved_type_leaves, substitute_resolved_t
 use crate::symbols::ResolvedType;
 use crate::typechecker::helpers::render_resolved_type_as_rust_arg;
 use crate::typechecker::{IdentKind, RustArgCoercionKind};
-use incan_lang::interop::{RustFunctionSig, RustImplementedTrait, RustItemKind, RustTraitAssoc, RustTypeInfo};
+use incan_lang::interop::{
+    RustFunctionSig, RustImplementedTrait, RustItemKind, RustTraitAssoc, RustTraitInfo, RustTypeInfo,
+};
 
 /// A closed trait reference and the signature it contributes to one method call.
 struct TraitCandidate {
@@ -20,6 +23,193 @@ struct TraitCandidate {
 }
 
 impl TypeChecker {
+    /// Infer a receiver-free trait function's Self from its destination and its declared method binders from inputs.
+    /// Close associated projections before validation, retaining source declaration types structurally rather than
+    /// replacing an inferred model with a parsed Rust display. Rustc verifies the selected native trait obligations.
+    pub(super) fn resolve_rust_trait_associated_call(
+        &mut self,
+        call: &RustTraitQualifiedCall<'_>,
+        original: &RustFunctionSig,
+    ) -> Option<ResolvedType> {
+        if original.is_async || original.is_unsafe || !call.type_args.is_empty() {
+            return None;
+        }
+        let mut variables = vec!["Self".to_owned()];
+        variables.extend(call.trait_info.type_params.iter().cloned());
+        variables.extend(original.type_params.iter().cloned());
+        let bindings = self.infer_rust_signature_bindings(
+            original,
+            "",
+            &variables,
+            call.args,
+            call.arg_types,
+            call.expected_return_ty,
+        );
+        let arguments = variables
+            .iter()
+            .map(|name| bindings.get(name).cloned())
+            .collect::<Option<Vec<_>>>()?;
+        if arguments
+            .iter()
+            .any(|argument| matches!(argument, ResolvedType::Unknown | ResolvedType::CallSiteInfer))
+        {
+            return None;
+        }
+        let owner = bindings.get("Self")?;
+        let displays = bindings
+            .iter()
+            .map(|(name, value)| (name.as_str(), render_resolved_type_as_rust_arg(value)))
+            .collect();
+        let signature = self.rust_signature_projections(Self::specialize_rust_signature(
+            original,
+            &displays,
+            &render_resolved_type_as_rust_arg(owner),
+        ));
+        let errors_before = self.errors.len();
+        let path = format!("{}::{}", call.rust_path, call.method);
+        self.validate_rust_method_call(&path, &signature, call.args, call.arg_types, false, call.span);
+        let mut result = self.instantiate_rust_signature_type(
+            &self.native_rust_signature_type(&original.return_type, ""),
+            &variables,
+            &bindings,
+        );
+        if original.return_type.contains(" as ") {
+            let failed = Cell::new(false);
+            result = map_resolved_type_leaves(&result, &|leaf| {
+                let ResolvedType::RustPath(display) = leaf else {
+                    return None;
+                };
+                if !display.contains(" as ") {
+                    return None;
+                }
+                let display =
+                    Self::substitute_rust_owner_display(display, &displays, &render_resolved_type_as_rust_arg(owner));
+                let value = self.rust_projected_type(&display, 0);
+                if value.is_none() {
+                    failed.set(true);
+                }
+                value
+            });
+            if failed.get() {
+                return None;
+            }
+        }
+        if self.errors.len() != errors_before {
+            return Some(result);
+        }
+        let mut parameters = self
+            .type_info
+            .call_site_callable_params(call.span)
+            .unwrap_or(&[])
+            .to_vec();
+        for (parameter, declared) in parameters.iter_mut().zip(&original.params) {
+            parameter.ty = self.instantiate_rust_signature_type(
+                &self.native_rust_signature_type(&declared.type_display, ""),
+                &variables,
+                &bindings,
+            );
+        }
+        self.type_info.rust.checked_calls.insert(
+            (call.span.start, call.span.end),
+            crate::typechecker::type_info::RustCheckedCall {
+                storage: None,
+                source_type_parameters: self.native_call_type_parameters(),
+                receiver_adjustments: Vec::new(),
+                path,
+                type_arguments: arguments,
+                parameters,
+                return_type: result.clone(),
+                result_item_path: self.rust_result_item_path(&signature.return_type, call.rust_path),
+                has_receiver: false,
+            },
+        );
+        Some(result)
+    }
+
+    /// Select a method declared on a plain native trait object. Its principal trait supplies the callable directly;
+    /// no concrete impl template is required for a dynamic receiver. The adapter verifies object safety and the
+    /// exact instantiated trait signature before constructing MIR.
+    pub(super) fn resolve_rust_object_method(
+        &mut self,
+        call: RustPathMethodCall<'_>,
+        info: &RustTraitInfo,
+    ) -> Option<ResolvedType> {
+        let original = info.items.iter().find_map(|item| match item {
+            RustTraitAssoc::Function { name, signature } if name == call.method => Some(signature),
+            _ => None,
+        })?;
+        if !Self::rust_signature_has_receiver(original) || original.is_async || original.is_unsafe {
+            return None;
+        }
+        let source = self
+            .rust_native_value_type(call.receiver_expr)
+            .or_else(|| self.type_info.expr_type(call.receiver_span).cloned())?;
+        let owner = match source {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => *inner,
+            other => other,
+        };
+        let owner = self.native_rust_signature_type(&render_resolved_type_as_rust_arg(&owner), "");
+        let arguments = self.rust_owner_type_args(&owner, call.rust_path).unwrap_or_default();
+        let associated_count = info
+            .items
+            .iter()
+            .filter(|item| matches!(item, RustTraitAssoc::TypeAlias { .. }))
+            .count();
+        if arguments.len() != info.type_params.len() + associated_count || !call.type_args.is_empty() {
+            return None;
+        }
+        let signature = self.specialize_rust_owner_signature(original, call.rust_path, &info.type_params, &arguments);
+        let bindings = self.infer_rust_signature_bindings(
+            &signature,
+            call.rust_path,
+            &original.type_params,
+            call.args,
+            call.arg_types,
+            call.expected_return_ty,
+        );
+        let displays = bindings
+            .iter()
+            .map(|(name, value)| (name.as_str(), render_resolved_type_as_rust_arg(value)))
+            .collect();
+        let signature = self.rust_signature_projections(Self::specialize_rust_signature(
+            &signature,
+            &displays,
+            &render_resolved_type_as_rust_arg(&owner),
+        ));
+        self.rust_trait_input_borrow_cost(&signature, &call)?;
+        let mut native_arguments = vec![owner.clone()];
+        native_arguments.extend(arguments.into_iter().take(info.type_params.len()));
+        for parameter in &original.type_params {
+            native_arguments.push(bindings.get(parameter)?.clone());
+        }
+        if signature.params.first().is_some_and(|parameter| {
+            Self::rust_display_borrow_kind(&parameter.type_display).is_some_and(|(mutable, _)| mutable)
+        }) {
+            self.refuse_write_through_read_only_binding(call.receiver_expr, call.span);
+            self.validate_rust_borrow_mutability(RustArgCoercionKind::Borrow { mutable: true }, call.receiver_expr);
+        }
+        let selected = TraitCandidate {
+            path: format!("{}::{}", call.rust_path, call.method),
+            signature,
+            arguments: native_arguments,
+            self_type: owner,
+            borrow_cost: 0,
+        };
+        let errors_before = self.errors.len();
+        let result = self.validate_rust_method_call(
+            &selected.path,
+            &selected.signature,
+            call.args,
+            call.arg_types,
+            false,
+            call.span,
+        );
+        if self.errors.len() == errors_before {
+            self.retain_selected_rust_trait_call(&call, selected)?;
+        }
+        Some(result)
+    }
+
     /// Select the native iteration protocol once, keeping the iterable call's facts intact. Its poll borrows the
     /// newly owned iterator storage, so the written source binding does not need to be mutable.
     pub(in crate::typechecker) fn retain_rust_iteration_hooks(
@@ -67,11 +257,18 @@ impl TypeChecker {
             expected_return_ty: None,
             span: expression.span,
         };
-        let mut candidates = self.retained_rust_trait_candidates(&call, info, owner, Some(trait_path));
+        let mut candidates = self.retained_rust_trait_candidates(&call, info, owner, Some(trait_path), true);
         if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
             eprintln!(
-                "native iteration: {owner:?}, {trait_path}::{method}, candidates {}",
-                candidates.len()
+                "native iteration: {owner:?}, {trait_path}::{method}, candidates {:?}",
+                candidates
+                    .iter()
+                    .map(|candidate| (
+                        &candidate.arguments,
+                        candidate.borrow_cost,
+                        &candidate.signature.return_type
+                    ))
+                    .collect::<Vec<_>>()
             );
         }
         candidates.sort_by_key(|candidate| candidate.borrow_cost);
@@ -370,7 +567,7 @@ impl TypeChecker {
     }
 
     /// Bind one impl's declared Self template to a concrete native owner before inspecting its members or projections.
-    pub(super) fn rust_impl_self_bindings(
+    pub(in crate::typechecker::check_expr) fn rust_impl_self_bindings(
         &self,
         implementation: &RustImplementedTrait,
         owner: &ResolvedType,
@@ -512,6 +709,39 @@ impl TypeChecker {
             && self.rust_trait_carriers_match(&elements[0], &arguments[0])
     }
 
+    /// Keep impl and method binders in distinct scopes when both declarations use the same source name.
+    /// Renaming only the method signature preserves native argument order and leaves imported metadata unchanged.
+    fn disjoint_rust_method_binders(
+        signature: &RustFunctionSig,
+        implementation: &RustImplementedTrait,
+        trait_parameters: &[String],
+    ) -> Option<RustFunctionSig> {
+        let mut substitutions = HashMap::new();
+        for (index, parameter) in signature.type_params.iter().enumerate() {
+            if !implementation.type_params.contains(parameter) {
+                continue;
+            }
+            let mut name = format!("__incan_method_{index}");
+            while implementation.type_params.contains(&name)
+                || signature.type_params.contains(&name)
+                || trait_parameters.contains(&name)
+            {
+                name.push('_');
+            }
+            substitutions.insert(parameter.as_str(), name);
+        }
+        if substitutions.is_empty() {
+            return None;
+        }
+        let mut scoped = Self::specialize_rust_signature(signature, &substitutions, "Self");
+        scoped.type_params = signature
+            .type_params
+            .iter()
+            .map(|name| substitutions.get(name.as_str()).unwrap_or(name).clone())
+            .collect();
+        Some(scoped)
+    }
+
     /// Resolve one trait method only when its self template, inputs, and expected output close every native binder.
     /// Impl predicates remain native obligations: this selects an exact trait reference, and the adapter verifies
     /// that rustc can satisfy it before emitting MIR. Competing equally ranked trait references remain ambiguous.
@@ -541,6 +771,8 @@ impl TypeChecker {
         if original.is_async || original.is_unsafe {
             return None;
         }
+        let scoped = Self::disjoint_rust_method_binders(original, implementation, &trait_info.type_params);
+        let original = scoped.as_ref().unwrap_or(original);
         let mut variables = implementation.type_params.clone();
         variables.extend(original.type_params.iter().cloned());
         let mut bindings = self.rust_impl_self_bindings(implementation, owner)?;
@@ -626,7 +858,8 @@ impl TypeChecker {
     }
 
     /// Match a closed native input signature using exact carriers and the already admitted borrowed views. The cost
-    /// ranks receiver-compatible candidates; it grants no new conversion or trait implementation.
+    /// ranks receiver-compatible candidates; it grants no new conversion or trait implementation. An already borrowed
+    /// argument matches its complete target before considering an automatic borrow of an owned value.
     fn rust_trait_input_borrow_cost(
         &self,
         signature: &RustFunctionSig,
@@ -641,8 +874,13 @@ impl TypeChecker {
             return None;
         }
         let mut cost = 0;
-        for (parameter, argument) in ordinary.iter().zip(call.arg_types) {
+        for ((parameter, argument), expression) in ordinary.iter().zip(call.arg_types).zip(call.args) {
+            let native = self.rust_argument_native_type(Self::call_arg_expr(expression));
+            let argument = native.as_ref().unwrap_or(argument);
             let target = self.native_rust_signature_type(&parameter.type_display, call.rust_path);
+            if self.rust_trait_carriers_match(&target, argument) {
+                continue;
+            }
             let target = match &target {
                 ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => {
                     cost += 1;
@@ -672,7 +910,10 @@ impl TypeChecker {
         let owner = if value_receiver {
             self.type_info.expr_type(call.receiver_span)?.clone()
         } else {
-            self.resolved_type_from_rust_display(call.rust_path)
+            self.type_info
+                .expr_type(call.receiver_span)
+                .and_then(|receiver| self.rusttype_native_target(receiver))
+                .unwrap_or_else(|| self.resolved_type_from_rust_display(call.rust_path))
         };
         self.resolve_retained_rust_trait_call_on_owner(call, info, &owner, value_receiver, None)
     }
@@ -698,7 +939,7 @@ impl TypeChecker {
                 .call_site_monomorph_type_args
                 .insert((call.span.start, call.span.end), explicit);
         }
-        let mut candidates = self.retained_rust_trait_candidates(&call, info, owner, trait_path);
+        let mut candidates = self.retained_rust_trait_candidates(&call, info, owner, trait_path, false);
         if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
             eprintln!(
                 "rust trait call: {}.{} owner {owner:?}, {} impls, candidates {:?}",
@@ -750,12 +991,15 @@ impl TypeChecker {
 
     /// Match native value and reference impl templates before adding an automatic receiver borrow. A consuming
     /// method on an exclusive reference takes that reference; a borrowing method may directly reborrow its referent.
+    /// Iteration filters callable bounds before selecting its item; ordinary native calls leave full obligations to
+    /// rustc, including source collection views whose native implementations are not nominal checker owners.
     fn retained_rust_trait_candidates(
         &self,
         call: &RustPathMethodCall<'_>,
         info: &RustTypeInfo,
         source: &ResolvedType,
         trait_path: Option<&str>,
+        filter_callable_bounds: bool,
     ) -> Vec<TraitCandidate> {
         let mut candidates = Vec::new();
         let imported = self.rust_imported_trait_templates(info, trait_path);
@@ -774,7 +1018,7 @@ impl TypeChecker {
                 }) {
                     continue;
                 }
-                if external && !self.rust_imported_impl_may_apply(implementation, &owner) {
+                if (external || filter_callable_bounds) && !self.rust_impl_may_apply(implementation, &owner) {
                     continue;
                 }
                 let Some(mut candidate) = self.retained_trait_candidate(implementation, call, &owner, info) else {
@@ -825,11 +1069,12 @@ impl TypeChecker {
         templates
     }
 
-    /// Eliminate an extension blanket candidate when a callable trait condition has no matching native Self
-    /// template. This is eligibility filtering, not proof: marker predicates, nested conditions and all complete
-    /// native obligations remain with rustc before MIR. In particular, a guard must reach its checked Deref target
-    /// instead of winning an inapplicable reader or writer extension merely because its impl binds an arbitrary T.
-    fn rust_imported_impl_may_apply(&self, implementation: &RustImplementedTrait, owner: &ResolvedType) -> bool {
+    /// Eliminate an extension or explicitly selected protocol candidate when a callable trait condition has no matching
+    /// native Self template. This is eligibility filtering, not proof: marker predicates, nested conditions and all
+    /// complete native obligations remain with rustc before MIR. In particular, a guard must reach its checked
+    /// Deref target instead of winning an inapplicable reader or writer extension merely because its impl binds an
+    /// arbitrary T.
+    pub(super) fn rust_impl_may_apply(&self, implementation: &RustImplementedTrait, owner: &ResolvedType) -> bool {
         let Some(bindings) = self.rust_impl_self_bindings(implementation, owner) else {
             return false;
         };
@@ -837,6 +1082,7 @@ impl TypeChecker {
             let Some(metadata) = self.rust_item_metadata_for_path(&bound.path) else {
                 return false;
             };
+            let required_path = metadata.canonical_path.clone();
             let RustItemKind::Trait(required) = metadata.kind else {
                 return false;
             };
@@ -852,12 +1098,26 @@ impl TypeChecker {
                 &implementation.type_params,
                 &bindings,
             );
+            if self.active_type_param_name(&actual).is_some() {
+                if !self.type_satisfies_explicit_bound(&actual, &bound.path) {
+                    return false;
+                }
+                continue;
+            }
             let Some(path) = self.rust_canonical_path_for_receiver_type(&actual) else {
                 return false;
             };
             let Some(metadata) = self.rust_item_metadata_for_path(&path) else {
                 return false;
             };
+            if matches!(metadata.kind, RustItemKind::Trait(_)) {
+                if incan_lang::interop::ancestral_rust_path(&metadata.canonical_path)
+                    != incan_lang::interop::ancestral_rust_path(&required_path)
+                {
+                    return false;
+                }
+                continue;
+            }
             let RustItemKind::Type(info) = metadata.kind else {
                 return false;
             };
@@ -879,7 +1139,7 @@ impl TypeChecker {
     }
 
     /// Fill metadata defaults inside a native reference without erasing that reference's identity as trait Self.
-    fn rust_trait_owner(&self, owner: &ResolvedType, info: &RustTypeInfo, path: &str) -> ResolvedType {
+    pub(super) fn rust_trait_owner(&self, owner: &ResolvedType, info: &RustTypeInfo, path: &str) -> ResolvedType {
         match owner {
             ResolvedType::Ref(inner) => ResolvedType::Ref(Box::new(self.rust_trait_owner(inner, info, path))),
             ResolvedType::RefMut(inner) => ResolvedType::RefMut(Box::new(self.rust_trait_owner(inner, info, path))),

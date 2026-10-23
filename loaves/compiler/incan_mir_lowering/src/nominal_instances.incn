@@ -5,7 +5,7 @@ from rust::incan_semantics_core::body_ir import BodyIrModule, Body, NominalDecla
 from symbols import type_component
 from type_parameters import substitute
 from class_inheritance import specialize_classes
-from nominal_frames import nominal_frames, closed_arguments
+from nominal_frames import nominal_frames, closed_arguments, declaration_storage
 from decls import library_item
 
 
@@ -49,6 +49,10 @@ pub def instance_arguments(module: &BodyIrModule, declaration: &NominalDeclarati
             match find_instance_arguments(local.ty, base, name):
                 Some(arguments) => return Ok(arguments)
                 None => pass
+    for ty in declaration_storage(module):
+        match find_instance_arguments(ty, base, name):
+            Some(arguments) => return Ok(arguments)
+            None => pass
     for owner in module.nominal_declarations:
         for field in owner.field_types:
             match find_instance_arguments(field, base, name):
@@ -93,9 +97,25 @@ pub def specialize_nominals(module: &BodyIrModule) -> Result[BodyIrModule, str]:
 pub def specialize_nominals_with_instances(
     module: &BodyIrModule,
 ) -> Result[tuple[BodyIrModule, list[NominalInstance]], str]:
-    """Retain inherited receiver frames and exact discovered arguments beside concrete layouts for validated ingress scheduling."""
+    """Retain checked frame and external-signature instances beside concrete layouts for native planning."""
     inherited = specialize_classes(module)?
     mut instances: list[NominalInstance] = []
+    for callable in module.loaf_callables:
+        if len(callable.type_parameters) != 0:
+            continue
+        for parameter in callable.parameters:
+            collect_nominal_type(module, parameter, instances, [])?
+        collect_nominal_type(module, callable.return_type, instances, [])?
+        for argument in callable.native_type_arguments:
+            collect_nominal_type(module, argument, instances, [])?
+    for ty in declaration_storage(module):
+        collect_nominal_type(module, ty, instances, [])?
+    for declaration in module.enum_declarations:
+        for variant in declaration.variants:
+            for field in variant.fields:
+                collect_nominal_type(module, field, instances, [])?
+    for declaration in module.static_declarations:
+        collect_nominal_type(module, declaration.ty, instances, [])?
     for body in nominal_frames(module)?:
         for local in body.locals:
             _ = collect_nominal_type(module, local.ty, instances, [])?
@@ -151,6 +171,12 @@ def collect_nominal_type(
         RustType.Tuple(elements) =>
             for element in elements:
                 _ = collect_nominal_type(module, element, instances, ancestors)?
+        RustType.Function(params=parameters, return_type=result) =>
+            for parameter in parameters:
+                collect_nominal_type(module, parameter.ty, instances, ancestors)?
+            collect_nominal_type(module, result, instances, ancestors)?
+        RustType.Ref(inner) => collect_nominal_type(module, inner, instances, ancestors)?
+        RustType.RefMut(inner) => collect_nominal_type(module, inner, instances, ancestors)?
         _ => pass
     return Ok(None)
 
@@ -215,8 +241,20 @@ def retain_nominal_instance(
 
 
 def close_layout(instance: NominalInstance) -> Result[NominalDeclaration, str]:
-    """Substitute a plan carrier's field types while preserving the original canonical owner and field identities."""
+    """Close checked fields and native argument templates once, preserving canonical owner and field identities."""
     mut result = instance.declaration.clone()
+    if result.native_item != "":
+        mut retained: list[RustType] = []
+        for index in range(len(instance.declaration.native_type_arguments)):
+            retained.append(instance.declaration.native_type_arguments[index].clone())
+        result.native_type_arguments.clear()
+        if len(retained) == 0:
+            for argument in instance.arguments:
+                result.native_type_arguments.push(argument.clone())
+        else:
+            for argument in retained:
+                closed: RustType = substitute(argument, instance.declaration.type_parameters, instance.arguments)?
+                result.native_type_arguments.push(closed.clone())
     result.name = nominal_symbol(str(instance.declaration.name), instance.arguments)
     if library_item(instance.declaration) != "":
         result.native_type_arguments.clear()

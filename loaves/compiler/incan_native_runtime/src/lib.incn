@@ -17,7 +17,7 @@ pub from generic_decorators import cached_text_binding, callable_text_name
 pub from decimals import less_decimal, less_equal_decimal, greater_decimal, greater_equal_decimal
 pub from rust::incan_std_core::num import Decimal128 as DecimalCarrier
 pub from frozen_text import format_frozen
-pub from frozen_text import length_frozen_bytes
+pub from frozen_text import length_frozen_bytes, copy_frozen_bytes
 pub from text_codecs import encode_text, encode_frozen_text, decode_bytes, decode_frozen_bytes
 pub from text_codecs import text_codec_encoding_valid, text_codec_errors_valid
 pub from diverging_errors import raise_value_error
@@ -120,7 +120,7 @@ pub from model_values import (
     greater_model,
     greater_equal_model,
 )
-pub from tuple_iterators import ZipLists, zip_lists, clone_zip, poll_zip, enumerate_list, enumerate_text, text_items
+pub from tuple_iterators import ZipLists, zip_lists, clone_zip, poll_zip, enumerate_list, enumerate_bytes, enumerate_text, text_items
 pub from tuple_iterators import zip_lists_generator
 pub from collections import empty_set, insert_set, length_set, contains_set, clone_set
 pub from collections import equal_set, unequal_set, equal_dict, unequal_dict

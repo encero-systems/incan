@@ -36,7 +36,8 @@ use crate::body_ir::{
 /// Version 22 appends metadata-selected native Rust constants with their checked carrier types.
 /// Version 23 appends builtin codec label guards; their conditional evaluation is retained in ordinary Body IR blocks.
 /// Version 24 distinguishes compiled callable contracts from caller-instantiated executable bodies.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 24;
+/// Version 25 retains callable union payload signatures and producer-owned captured environment aliases.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 25;
 
 /// Largest index this format admits, in bytes.
 ///

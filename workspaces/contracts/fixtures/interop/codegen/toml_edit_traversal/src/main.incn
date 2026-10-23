@@ -1,9 +1,10 @@
-# behavior: a toml_edit document is traversed by borrowed items down a key path and the leaf is read back
+# behavior: a toml_edit document is traversed by borrowed items down a key path, its native text keys display repeatedly, and the leaf is read back
 # expect-stdout:
 #   3
 #   none
 
 from rust::toml_edit import DocumentMut, Item
+from rust::std::str import FromStr
 
 
 def traverse(item: Item, keys: list[str]) -> Item:
@@ -20,8 +21,12 @@ pub def observe(item: Item) -> Item:
 
 
 def main() -> None:
-    match DocumentMut.parse("[project]\ncount = 3\n"):
+    """Traverse the parsed document while retaining borrowed iterator key text."""
+    match DocumentMut.from_str("[project]\ncount = 3\n"):
         Ok(document) =>
+            for key, _item in document.as_table().iter():
+                assert str(key) == "project"
+                assert f"{key}" == "project"
             leaf = observe(document.as_item().clone())
             match leaf.as_integer():
                 Some(count) => println(count)

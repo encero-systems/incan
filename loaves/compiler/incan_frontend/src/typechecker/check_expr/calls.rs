@@ -39,6 +39,7 @@ mod generic_bounds;
 mod rust_boundary;
 mod rust_callable_bounds;
 mod rust_layouts;
+mod rust_predicate_inference;
 mod task_arguments;
 
 pub(in crate::typechecker::check_expr) use generic_bounds::first_open_type_param;

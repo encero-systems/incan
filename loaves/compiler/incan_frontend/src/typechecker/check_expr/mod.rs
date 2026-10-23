@@ -921,6 +921,9 @@ impl TypeChecker {
             (Expr::Closure(params, body), Some(ResolvedType::Function(expected_params, expected_ret))) => {
                 self.check_closure_with_expected(params, body, expected_params, expected_ret, expr.span)
             }
+            (Expr::Closure(params, body), Some(ResolvedType::Generic(base, members))) if base == "Union" => {
+                self.check_closure_with_union_expected(params, body, members, expr.span)
+            }
             (Expr::List(elems), expected_ty) => self.check_list_with_expected(elems, expected_ty),
             (Expr::Dict(entries), expected_ty) => self.check_dict_with_expected(entries, expected_ty),
             (Expr::Set(elems), expected_ty) => self.check_set_with_expected(elems, expected_ty),

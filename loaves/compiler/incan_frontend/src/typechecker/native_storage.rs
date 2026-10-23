@@ -9,8 +9,8 @@ use incan_semantics_core::{CanonicalSymbolId, IncanType, body_ir};
 use super::TypeChecker;
 use super::type_info::{FunctionBindingInfo, RustCheckedCall, RustCheckedSignature, semantic_type_from_resolved};
 use crate::ast::{Declaration, Program};
-use crate::resolved_type_subst::map_resolved_type_leaves;
-use crate::symbols::ResolvedType;
+use crate::resolved_type_subst::{map_resolved_type_leaves, substitute_resolved_type, type_param_subst_map};
+use crate::symbols::{ResolvedType, TypeInfo};
 
 impl TypeChecker {
     /// Project an admitted SDK signature using this accepting checker's lexical types and shared owner guard.
@@ -146,6 +146,19 @@ impl TypeChecker {
                 .iter()
                 .map(|parameter| parameter.name.clone())
                 .collect::<Vec<_>>();
+            if let Declaration::Newtype(owner) = &declaration.node
+                && owner.is_rusttype
+            {
+                let alias = if parameters.is_empty() {
+                    ResolvedType::Named(owner.name.clone())
+                } else {
+                    ResolvedType::Generic(
+                        owner.name.clone(),
+                        parameters.iter().cloned().map(ResolvedType::TypeVar).collect(),
+                    )
+                };
+                self.rust_call_storage_type(&alias, &parameters, storage, &mut BTreeMap::new());
+            }
             for ((start, end), ty) in facts.model_field_types.iter().chain(&facts.enum_payload_types) {
                 if *start >= declaration.span.start && *end <= declaration.span.end {
                     self.rust_call_storage_type(ty, &parameters, storage, &mut BTreeMap::new());
@@ -260,11 +273,24 @@ impl TypeChecker {
         projected
     }
 
-    /// Reuse storage projection recursively without allowing diagnostic displays into a structural signature.
+    /// Reuse storage projection recursively, normalizing admitted associated types before freezing structural storage.
+    /// A transparent alias already selects its native owner; freeze that owner before diagnostic runtime projection
+    /// can translate it back into the same source alias.
     fn rust_storage_resolved(&self, ty: &ResolvedType, parameters: &[String]) -> ResolvedType {
         map_resolved_type_leaves(ty, &|leaf| {
             if let Some(binder) = source_binder(leaf, parameters) {
                 return Some(binder);
+            }
+            if let Some(target) = self.rusttype_native_target(leaf) {
+                return Some(match target {
+                    ResolvedType::RustPath(path) if body_ir::rust_item_identity(&path).is_some() => {
+                        self.rust_storage_constructor(&path, Vec::new(), parameters)
+                    }
+                    ResolvedType::Generic(base, arguments) if body_ir::rust_item_identity(&base).is_some() => {
+                        self.rust_storage_constructor(&base, arguments, parameters)
+                    }
+                    target => self.rust_storage_resolved(&target, parameters),
+                });
             }
             if let ResolvedType::Generic(base, arguments) = leaf {
                 return Some(self.rust_storage_constructor(base, arguments.clone(), parameters));
@@ -282,6 +308,12 @@ impl TypeChecker {
             let public = self.rust_public_type_path(display);
             if public != *display {
                 return Some(self.rust_storage_constructor(&public, Vec::new(), parameters));
+            }
+            if display.trim_start().starts_with('<')
+                && let Some(projected) = self.rust_projected_type(display, 0)
+                && projected != *leaf
+            {
+                return Some(self.rust_storage_resolved(&projected, parameters));
             }
             let parsed = self
                 .native_runtime_type(display)
@@ -308,9 +340,34 @@ impl TypeChecker {
         })
     }
 
+    /// Expand a checked transparent rusttype for native inference and storage from its declared underlying type.
+    /// Source members, conversions, and trait implementations retain their own checked admission requirements.
+    pub(in crate::typechecker) fn rusttype_native_target(&self, ty: &ResolvedType) -> Option<ResolvedType> {
+        let (name, arguments) = match ty {
+            ResolvedType::Named(name) => (name, &[][..]),
+            ResolvedType::Generic(name, arguments) => (name, arguments.as_slice()),
+            _ => return None,
+        };
+        let TypeInfo::Newtype(info) = self.lookup_semantic_type_info(name)? else {
+            return None;
+        };
+        if !info.is_rusttype || info.type_params.len() != arguments.len() {
+            return None;
+        }
+        let target = substitute_resolved_type(&info.underlying, &type_param_subst_map(&info.type_params, arguments));
+        let Some((base, _, arguments, _)) = self.rust_identity_for_type(&target) else {
+            return Some(target);
+        };
+        Some(if arguments.is_empty() {
+            ResolvedType::RustPath(base)
+        } else {
+            ResolvedType::Generic(base, arguments)
+        })
+    }
+
     /// Complete native owner defaults from the admitted item before retaining each structural argument. Standard
-    /// collections use the compiler's existing collection carrier only after metadata proves every hidden argument
-    /// equals its declared default; other crates and nondefault allocators or hashers retain exact native storage.
+    /// collections use the existing carrier only after metadata proves every hidden argument equals its default;
+    /// other crates and nondefault allocators or hashers retain exact native storage.
     fn rust_storage_constructor(
         &self,
         base: &str,
@@ -432,7 +489,8 @@ impl TypeChecker {
         storage: &mut HashMap<IncanType, IncanType>,
     ) {
         let key = semantic_type_from_resolved(original);
-        if has_native_storage(&key) || has_native_storage(projected) {
+        if has_native_storage(&key) || has_native_storage(projected) || self.rusttype_native_target(original).is_some()
+        {
             for key in [key.clone(), self.type_info.qualify_semantic_type(key)] {
                 let retained = storage.entry(key).or_insert_with(|| projected.clone());
                 if retained != projected {

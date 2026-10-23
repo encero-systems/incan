@@ -273,7 +273,7 @@ pub def terminate_call(
     destination: Place,
     span: SourceSpan,
 ) -> None:
-    """Emit a call with the current owners' unwind cleanup; a Never destination closes its unreachable continuation."""
+    """Emit a call with the current owners' unwind cleanup; a Never destination closes its unreachable continuation without reading its storage."""
     # A moved argument is the callee's to drop now, so it leaves the owners before the cleanup chain is built.
     forget_moved_arguments(builder, arguments)
     continuation = builder.new_block(span)

@@ -24,6 +24,22 @@ model ScheduledFrame:
     ancestors: list[str]
 
 
+pub def declaration_storage(module: &BodyIrModule) -> list[RustType]:
+    """Project frozen return, parameter and local types from imported default frames, without copying or scheduling their implementation bodies."""
+    mut types: list[RustType] = []
+    for callable in module.loaf_callables:
+        match callable.declaration_frame.as_ref():
+            None => pass
+            Some(boxed) =>
+                body: &Body = boxed.as_ref()
+                types.append(body.return_type.clone())
+                for parameter in body.params:
+                    types.append(parameter.ty.clone())
+                for local in body.locals:
+                    types.append(local.ty.clone())
+    return types
+
+
 pub def nominal_frames(module: &BodyIrModule) -> Result[list[Body], str]:
     """Inventory function, computed-static and closed source-call frames without granting execution or altering module bodies."""
     mut frames: list[Body] = []
@@ -195,19 +211,37 @@ def schedule_call(
 pub def closed_arguments(arguments: list[RustType]) -> bool:
     """Reject unresolved placeholders in nominal argument trees; native carrier admission still validates other kinds."""
     for argument in arguments:
-        match argument:
-            RustType.TypeVar(_name) => return false
-            RustType.Generic(base=_base, args=elements) =>
-                if not closed_arguments(elements):
-                    return false
-            RustType.Tuple(elements) =>
-                if not closed_arguments(elements):
-                    return false
-            RustType.SelfType => return false
-            RustType.Infer => return false
-            RustType.Unknown => return false
-            _ => pass
+        if not closed_type(argument):
+            return false
     return true
+
+
+pub def closed_type(ty: &RustType) -> bool:
+    """Require every structural component to be closed, including borrowed referents and callable inputs and output."""
+    match ty:
+        RustType.TypeVar(_name) => return false
+        RustType.Generic(base=_base, args=elements) =>
+            for element in elements:
+                if not closed_type(element):
+                    return false
+            return true
+        RustType.Tuple(elements) =>
+            for element in elements:
+                if not closed_type(element):
+                    return false
+            return true
+        RustType.Ref(inner) => return closed_type(inner)
+        RustType.RefMut(inner) => return closed_type(inner)
+        RustType.TypeToken(inner) => return closed_type(inner)
+        RustType.Function(params=parameters, return_type=result) =>
+            for parameter in parameters:
+                if not closed_type(parameter.ty):
+                    return false
+            return closed_type(result)
+        RustType.SelfType => return false
+        RustType.Infer => return false
+        RustType.Unknown => return false
+        _ => return true
 
 
 def checked_function_body(module: &BodyIrModule, target: &NamedCallableTarget) -> Result[Option[Body], str]:

@@ -1,14 +1,13 @@
 //! Native cloning for erased captured environments, preserving the checked `Fn` input and output ABI.
 //!
-//! Each exact signature has a private object-safe clone operation. The blanket implementation clones the concrete
-//! environment, and `Box` implements `Clone` by dispatching through its pointee, so SDK `Clone + Callable1` bounds
-//! retain their ordinary native meaning. AST construction is structural; no Rust source is generated or parsed.
+//! Each exact signature has a compiler-owned object-safe clone operation. The blanket implementation clones the
+//! concrete environment, and `Box` implements `Clone` by dispatching through its pointee, so SDK `Clone + Callable1`
+//! bounds retain their ordinary native meaning. AST construction is structural; no Rust source is generated or parsed.
 
 use crate::error::PlanError;
 use crate::plan::{Plan, PlanType};
 use crate::{callees, closures, declarations, types};
 use rustc_ast as ast;
-use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 use rustc_span::{Ident, Span, Symbol, kw, respan};
@@ -139,9 +138,78 @@ pub fn items(plan: &Plan, span: Span) -> Result<Vec<Box<ast::Item>>, PlanError> 
                 reason: "private callable ABI declaration collides with a source declaration".into(),
             });
         }
-        items.extend(signature_items(&signature, span));
+        if let Some(owner) = imported_owner(plan, &signature)? {
+            items.push(object_alias(&alias, &owner, span));
+        } else {
+            items.extend(signature_items(&signature, span));
+        }
+    }
+    for declaration in &plan.enums {
+        if !declaration.library_item.is_empty() {
+            continue;
+        }
+        let mut aliases = declaration.closure_items.iter();
+        for variant in &declaration.variants {
+            for field in &variant.fields {
+                if let PlanType::Closure(signature) = field {
+                    let name = aliases.next().ok_or_else(|| PlanError::Unsupported {
+                        function: declaration.name.clone(),
+                        reason: "union callable payload has no published object alias".into(),
+                    })?;
+                    items.push(object_alias(name, &alias_name(signature), span));
+                }
+            }
+        }
     }
     Ok(items)
+}
+
+/// Select a producer's exact callable object alias from retained union payload metadata, refusing distinct owners.
+fn imported_owner(plan: &Plan, signature: &[PlanType]) -> Result<Option<String>, PlanError> {
+    let mut selected = None;
+    for declaration in &plan.enums {
+        if declaration.library_item.is_empty() {
+            continue;
+        }
+        let mut aliases = declaration.closure_items.iter();
+        for variant in &declaration.variants {
+            for field in &variant.fields {
+                let PlanType::Closure(held) = field else { continue };
+                let alias = aliases.next().ok_or_else(|| PlanError::Unsupported {
+                    function: declaration.name.clone(),
+                    reason: "imported union callable payload has no published object alias".into(),
+                })?;
+                if held != signature {
+                    continue;
+                }
+                if selected.as_ref().is_some_and(|owner: &String| {
+                    owner != alias && owner.split("::").next() != alias.split("::").next()
+                }) {
+                    return Err(PlanError::Unsupported {
+                        function: declaration.name.clone(),
+                        reason: "callable signature has conflicting published object owners".into(),
+                    });
+                }
+                selected = Some(alias.clone());
+            }
+        }
+    }
+    Ok(selected)
+}
+
+/// Reuse a retained object type through a public alias; the producer's trait supplies invocation and cloning.
+fn object_alias(name: &str, owner: &str, span: Span) -> Box<ast::Item> {
+    item(
+        ast::ItemKind::TyAlias(Box::new(ast::TyAlias {
+            defaultness: ast::Defaultness::Implicit,
+            ident: ident(name, span),
+            generics: ast::Generics::default(),
+            after_where_clause: ast::WhereClause::default(),
+            bounds: Vec::new(),
+            ty: Some(path_ty(path(&owner.split("::").collect::<Vec<_>>(), span), span)),
+        })),
+        span,
+    )
 }
 
 /// Declare the object-safe clone trait, its dyn alias, concrete blanket implementation, and boxed Clone implementation.
@@ -259,13 +327,15 @@ fn bound(path: ast::Path, span: Span) -> ast::GenericBound {
 
 /// Resolve only the injected trait's object-safe clone slot, independently of source methods with the same spelling.
 pub fn clone_method(tcx: TyCtxt<'_>, signature: &[PlanType]) -> Result<DefId, PlanError> {
-    let name = trait_name(signature);
-    let owner = tcx
-        .hir_crate_items(())
-        .free_items()
-        .map(|item| item.owner_id.to_def_id())
-        .find(|def| tcx.def_kind(*def) == DefKind::Trait && tcx.item_name(*def).as_str() == name)
-        .ok_or_else(|| PlanError::UnknownCallee(name))?;
+    let object = types::callable_object_type(tcx, signature)?;
+    let rustc_middle::ty::Dynamic(predicates, _) = object.kind() else {
+        return Err(PlanError::UnknownCallee("callable object principal".into()));
+    };
+    let owner = predicates
+        .principal()
+        .ok_or_else(|| PlanError::UnknownCallee("callable object principal".into()))?
+        .skip_binder()
+        .def_id;
     tcx.associated_item_def_ids(owner)
         .iter()
         .copied()
@@ -364,13 +434,22 @@ fn implementation(
     )
 }
 
-/// Wrap an AST declaration using inherited visibility and ordinary node allocation.
+/// Publish callable ABI types while leaving implementation items under ordinary inherited visibility.
 fn item(kind: ast::ItemKind, span: Span) -> Box<ast::Item> {
+    let visibility = if matches!(kind, ast::ItemKind::Trait(_) | ast::ItemKind::TyAlias(_)) {
+        ast::Visibility {
+            kind: ast::VisibilityKind::Public,
+            span,
+            tokens: None,
+        }
+    } else {
+        inherited(span)
+    };
     Box::new(ast::Item {
         attrs: ThinVec::new(),
         id: ast::DUMMY_NODE_ID,
         span,
-        vis: inherited(span),
+        vis: visibility,
         kind,
         tokens: None,
     })

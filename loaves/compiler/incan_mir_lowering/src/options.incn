@@ -60,7 +60,7 @@ from text_plan import clone_text
 from numerics import numeric_carrier
 from unions import lower_union_declaration
 from type_parameters import substitute
-from nominal_frames import closed_arguments
+from nominal_frames import closed_arguments, closed_type, declaration_storage
 
 
 pub def variant_condition(mut builder: Builder, source: Place, slot: int, span: SourceSpan) -> Operand:
@@ -157,12 +157,19 @@ pub def intrinsic_pattern(declaration: EnumDeclaration, pattern: &RustPattern) -
 pub def intrinsic_declarations(module: &BodyIrModule, file: str) -> Result[list[EnumDeclaration], str]:
     """Collect concrete declaration, frame and computed-static carriers; function instances add closed layouts when scheduled."""
     mut declarations: list[EnumDeclaration] = []
+    for ty in declaration_storage(module):
+        if closed_type(ty):
+            retain_carrier(module, declarations, ty, file)?
     for delegation in module.loaf_callables:
         if len(delegation.type_parameters) != 0 or not closed_arguments(delegation.native_type_arguments):
             continue
         for parameter in delegation.parameters:
-            retain_carrier(module, declarations, parameter, file)?
-        retain_carrier(module, declarations, delegation.return_type, file)?
+            if closed_type(parameter):
+                retain_carrier(module, declarations, parameter, file)?
+        # A checked native instantiation may still contain its enclosing source function's binders. Its closed
+        # function frame schedules those carriers; the declaration template does not authorize an open layout.
+        if closed_type(delegation.return_type):
+            retain_carrier(module, declarations, delegation.return_type, file)?
     for declaration in module.nominal_declarations:
         for ty in declaration.field_types:
             retain_carrier(module, declarations, ty, file)?
@@ -196,7 +203,9 @@ pub def retain_body_carriers(
         match retain_carrier(module, declarations, body.locals[index].ty, file):
             Ok(_value) => pass
             Err(reason) => return Err(f"{reason} in {body.name} local {index} carrier")
-    retain_iteration_poll_carriers(module, declarations, body, body.block, taking_iterator_locals(body.block), file)?
+    match retain_iteration_poll_carriers(module, declarations, body, body.block, taking_iterator_locals(body.block), file):
+        Ok(_value) => pass
+        Err(reason) => return Err(f"{reason} in {body.name} iteration carriers")
     return Ok(None)
 
 
@@ -414,10 +423,10 @@ pub def retain_carrier(
             if (base == "Option" and len(arguments) != 1) or (base == "Result" and len(arguments) != 2):
                 return Err(f"unsupported Body IR type {ty}")
             mut fields: list[PlanType] = []
-            for argument in arguments:
-                fields.append(
-                    native_source_type(module.nominal_declarations, module.enum_declarations, [], argument, declarations)?,
-                )
+            for index in range(len(arguments)):
+                match native_source_type(module.nominal_declarations, module.enum_declarations, [], arguments[index], declarations):
+                    Ok(field) => fields.append(field)
+                    Err(reason) => return Err(f"{reason} in {base} payload {index} of {ty}")
             mut variants = [EnumVariant(name="None", fields=[]), EnumVariant(name="Some", fields=[fields[0]])]
             if base == "Result":
                 variants = [EnumVariant(name="Ok", fields=[fields[0]]), EnumVariant(name="Err", fields=[fields[1]])]

@@ -1472,7 +1472,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 .and_then(|local| self.locals.get(local.index()))
                 .is_some_and(|local| local.name.is_none())
     }
-    /// Select only a canonically checked direct enumeration of a list; a stored enumeration remains its own value.
+    /// Select a canonical direct enumeration of a source list or an iterable with checked native hooks; a stored
+    /// enumeration remains its own value.
     fn enumerated_loop_source<'expr>(
         &self,
         expr: &'expr ast::Spanned<ast::Expr>,
@@ -1501,7 +1502,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let [ast::CallArg::Positional(source)] = args.as_slice() else {
             return None;
         };
-        collection_member_types(&self.resolve_ty(source.span), CollectionTypeId::List)?;
+        if !self
+            .type_info
+            .rust
+            .iteration_hooks
+            .contains_key(&(source.span.start, source.span.end))
+        {
+            collection_member_types(&self.resolve_ty(source.span), CollectionTypeId::List)?;
+        }
         Some(source)
     }
 
@@ -1516,8 +1524,38 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             && !matches!(elements[1], IncanType::Unknown)
     }
 
-    /// Poll a direct enumeration's original list and retain its index as explicit scalar state. Pattern components
-    /// bind the produced element itself when changed, rather than a materialized tuple's snapshot of it.
+    /// Materialize a native enumeration source through its checked hooks; source lists retain their shared initializer.
+    #[allow(clippy::too_many_arguments)]
+    fn initialize_enumeration_source(
+        &mut self,
+        source: &ast::Spanned<ast::Expr>,
+        native: bool,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> Result<(bir::LocalId, usize), String> {
+        if native {
+            return self
+                .initialize_general_iterator(source, source.span, true, scope, span, out)
+                .map(|(iterator, initializer, _taking)| (iterator, initializer));
+        }
+        let source_ty = self.resolve_ty(source.span);
+        let source_place = self.lower_expr_to_place(source, scope, out);
+        let iterator = self.new_temp(source_ty, scope, span);
+        let initializer = out.len();
+        out.push(bir::Statement {
+            kind: bir::StatementKind::Assign {
+                place: bir::Place::from_local(iterator),
+                rvalue: bir::Rvalue::Use(bir::Operand::place(source_place, bir::OwnershipFact::Borrow, false)),
+            },
+            span,
+        });
+        Ok((iterator, initializer))
+    }
+
+    /// Poll a direct enumeration's original list or checked native iterable and retain its index as explicit scalar
+    /// state. Pattern components bind the produced element itself when changed, rather than a materialized tuple's
+    /// snapshot of it.
     #[allow(clippy::too_many_arguments)]
     fn lower_enumerated_iteration(
         &mut self,
@@ -1530,9 +1568,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         body_fn: impl FnOnce(&mut Self, bir::ScopeId, &mut Vec<bir::Statement>),
     ) {
         // ---- Source storage and enumeration state ----
-        let source_ty = self.resolve_ty(source.span);
-        let source_place = self.lower_expr_to_place(source, outer_scope, out);
-        let iterator = self.new_temp(source_ty, outer_scope, span);
+        let native = self
+            .type_info
+            .rust
+            .iteration_hooks
+            .contains_key(&(source.span.start, source.span.end));
+        let (iterator, initializer) = match self.initialize_enumeration_source(source, native, outer_scope, span, out) {
+            Ok(initialized) => initialized,
+            Err(reason) => {
+                self.push_unsupported_stmt(reason, span, out);
+                return;
+            }
+        };
         let index_ty = IncanType::Primitive(IncanPrimitiveType::Int);
         let index = self.new_temp(index_ty.clone(), outer_scope, span);
         out.push(bir::Statement {
@@ -1542,22 +1589,24 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             },
             span,
         });
-        let initializer = out.len();
-        out.push(bir::Statement {
-            kind: bir::StatementKind::Assign {
-                place: bir::Place::from_local(iterator),
-                rvalue: bir::Rvalue::Use(bir::Operand::place(source_place, bir::OwnershipFact::Borrow, false)),
-            },
-            span,
-        });
         let pattern_span = self.locals[pattern_local.index()].span;
         let element_ty = tuple_element_types(&self.locals[pattern_local.index()].ty, 2)[1].clone();
         let element = self.new_temp(element_ty, loop_scope, pattern_span);
         let current_index = self.new_temp(index_ty, loop_scope, pattern_span);
 
         // ---- One produced element and its pre-advance index ----
-        let mut stmts = vec![
-            bir::Statement {
+        self.loop_break_targets.push(None);
+        self.loop_scopes.push(loop_scope);
+        self.loop_continue_actions.push(Vec::new());
+        let mut stmts = Vec::new();
+        if native {
+            if let Err(reason) =
+                self.lower_checked_iteration_poll(source.span, iterator, element, false, loop_scope, span, &mut stmts)
+            {
+                self.push_unsupported_stmt(reason, span, &mut stmts);
+            }
+        } else {
+            stmts.push(bir::Statement {
                 kind: bir::StatementKind::IterNext {
                     destination: bir::Place::from_local(element),
                     iterator: bir::Operand::place(
@@ -1568,7 +1617,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     protocol: bir::IterProtocol::Builtin,
                 },
                 span,
-            },
+            });
+        }
+        stmts.extend([
             bir::Statement {
                 kind: bir::StatementKind::Assign {
                     place: bir::Place::from_local(current_index),
@@ -1587,16 +1638,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 },
                 span,
             },
-        ];
-        self.loop_break_targets.push(None);
-        self.loop_scopes.push(loop_scope);
-        self.loop_continue_actions.push(Vec::new());
+        ]);
 
         // ---- Checked pattern bindings and source ownership ----
         body_fn(self, loop_scope, &mut stmts);
         self.remap_enumerated_bindings(&mut stmts, pattern_local, current_index, element);
         self.retain_in_place_iteration_bindings(&mut stmts, element);
-        if self.body_changes_item_in_place(&stmts, element) {
+        if !native && self.body_changes_item_in_place(&stmts, element) {
             borrow_iterable_exclusively(&mut out[initializer]);
         }
         self.loop_break_targets.pop();

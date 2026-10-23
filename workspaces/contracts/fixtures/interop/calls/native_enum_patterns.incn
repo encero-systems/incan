@@ -1,4 +1,4 @@
-# behavior: native enum patterns retain exact payloads, nested variants, and Rust discriminants
+# behavior: native enum patterns retain exact payloads, nested variants, Rust discriminants, source field value arguments, and shared payload clones
 # expect-stdout:
 #   missing
 #   opaque
@@ -8,11 +8,29 @@
 #   equal
 #   greater
 
+from rust::std::cell import RefCell
 from rust::std::cmp import Ordering
 from rust::std::env import VarError
 from rust::std::ffi import OsString
 from rust::std::io import SeekFrom
+from rust::std::num import Wrapping
 from rust::std::ops import ControlFlow
+
+
+model Envelope:
+    """Keep a non-Copy native enum behind an ordinary source receiver."""
+    value: ControlFlow[int, str]
+
+    def score(self) -> int:
+        """Pass the field's value to an ordinary source function while retaining the owner."""
+        return flow_score(self.value)
+
+    def cloned_score(self) -> int:
+        """Clone a native enum through a borrowed Option payload while retaining its guard."""
+        saved = RefCell.new(Some(self.value))
+        match saved.borrow().as_ref():
+            Some(value) => return flow_score(value.clone())
+            None => return -1
 
 
 def environment_kind(value: Result[str, VarError]) -> str:
@@ -54,6 +72,13 @@ def text_length(value: str) -> int:
     return len(value)
 
 
+def wrapped_flow(value: ControlFlow[Wrapping[int], bool]) -> bool:
+    """Retain the closed layout of an unselected native generic payload."""
+    match value:
+        ControlFlow.Continue(result) => return result
+        _ => return false
+
+
 def main() -> None:
     """Observe native unit and payload variants through direct and nested patterns."""
     println(environment_kind(Err(VarError.NotPresent)))
@@ -67,6 +92,13 @@ def main() -> None:
     continued: ControlFlow[int, str] = ControlFlow.Continue("abc")
     assert flow_score(stopped) == 9
     assert flow_score(continued) == 3
+    envelope = Envelope(value=continued)
+    assert envelope.score() == 3
+    assert envelope.score() == 3
+    assert envelope.cloned_score() == 3
+    assert envelope.cloned_score() == 3
+    wrapped: ControlFlow[Wrapping[int], bool] = ControlFlow.Continue(true)
+    assert wrapped_flow(wrapped)
     missing = VarError.NotPresent
     assert text_length(missing) > 0
     assert text_length(missing) > 0

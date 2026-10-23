@@ -2,11 +2,11 @@
 
 use std::collections::HashMap;
 
-use incan_lang::interop::RustTypeInfo;
+use incan_lang::interop::{RustItemKind, RustTypeInfo};
 use incan_semantics_core::{SemanticSourceTargetKind, body_ir};
 
 use super::TypeChecker;
-use crate::ast::{CallArg, ParamKind, Span};
+use crate::ast::{CallArg, Expr, ParamKind, Span, Spanned};
 use crate::symbols::{CallableParam, ResolvedType, SymbolKind};
 use crate::typechecker::helpers::render_resolved_type_as_rust_arg;
 use crate::typechecker::type_info::{ConstructorFieldBinding, RustCheckedCall, RustCheckedEnum, RustCheckedLayout};
@@ -128,6 +128,47 @@ impl TypeChecker {
                 }],
             );
         }
+    }
+
+    /// Retain a half-open integer range literal as the metadata-validated public native constructor selected by its
+    /// argument slot. Source-only ranges keep their four-field layout; Body IR consumes these ordinary constructor
+    /// facts without native lookup.
+    pub(in crate::typechecker) fn retain_rust_range_argument(
+        &mut self,
+        expression: &Spanned<Expr>,
+        target: &ResolvedType,
+    ) -> bool {
+        if let Expr::Paren(inner) = &expression.node {
+            return self.retain_rust_range_argument(inner, target);
+        }
+        let Expr::Range {
+            start,
+            end,
+            inclusive: false,
+        } = &expression.node
+        else {
+            return false;
+        };
+        let Some(native) = self.rust_argument_native_type(expression) else {
+            return false;
+        };
+        if !self.rust_trait_carriers_match(&native, target) {
+            return false;
+        }
+        let path = "std::ops::Range";
+        let Some(metadata) = self.rust_item_metadata_for_path(path) else {
+            return false;
+        };
+        let RustItemKind::Type(info) = metadata.kind else {
+            return false;
+        };
+        let arguments = [
+            CallArg::Positional(start.as_ref().clone()),
+            CallArg::Positional(end.as_ref().clone()),
+        ];
+        let fields = ["start".to_owned(), "end".to_owned()];
+        self.retain_rust_construction(path, &info, &arguments, &fields, expression.span)
+            .is_some()
     }
 
     /// Retain ordered public field templates once, keyed by their public native owner. No hidden-field access is

@@ -1,0 +1,50 @@
+# behavior: generic Rust receivers preserve independent binders, infer trait-bound results, adapt source ranges with once-only endpoints, and retain approved borrowed owner arguments
+# expect-stdout:
+#   7
+#   8
+
+"""Keep generic inherent and trait receiver calls in one area case."""
+
+from rust::std::cell import Cell
+from rust::std::ops import Range
+from rust::rand import Rng, thread_rng
+
+
+def choose(low: int, high: int) -> int:
+    """Infer independent method arguments for a blanket trait implementation."""
+    mut rng = thread_rng()
+    return rng.gen_range(Range(start=low, end=high))
+
+
+def choose_source(low: int, high: int) -> int:
+    """Pass a source half-open range through the same checked native argument contract."""
+    mut rng = thread_rng()
+    return rng.gen_range(low..high)
+
+
+def bound(mut observed: list[int], value: int) -> int:
+    """Record each range endpoint evaluation before returning its value."""
+    observed.append(value)
+    return value
+
+
+def main() -> None:
+    """Retain the cell's element type and a deterministic singleton random range."""
+    value = Cell.new(7)
+    println(value.get())
+    value.set(8)
+    println(value.get())
+    text = "borrowed"
+    shared: Cell[&str] = Cell.new(text)
+    assert len(shared.get()) == 8
+    assert len(shared.get()) == 8
+    assert text == "borrowed"
+    assert choose(7, 8) == 7
+    assert choose_source(9, 10) == 9
+    mut observed: list[int] = []
+    mut rng = thread_rng()
+    selected: int = rng.gen_range(bound(observed, 11)..bound(observed, 12))
+    assert selected == 11
+    assert observed == [11, 12]
+    inferred: u8 = rng.gen_range(13..14).wrapping_resize()
+    assert inferred == 13u8

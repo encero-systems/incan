@@ -51,6 +51,8 @@ Published unions retain checked semantic carriers, public native owners, canonic
 
 Each public model/class with type parameters has one native ADT preserving binders and authored field order; provider and consumer layouts alias its instantiations, with otherwise unused parameters retained by a private, validated zero-sized marker excluded from Debug output, which shows authored fields under the source name.
 
+A callable union member owns its captured environment. Its checked signature and producer-owned callable object type cross the artifact boundary with the union representation; consumers preserve that ownership during injection, narrowing, invocation, and cloning.
+
 Every package identity takes this one route. No Body IR record, lowering branch or driver path is specific to the standard packages.
 
 ### The standard library

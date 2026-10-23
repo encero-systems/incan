@@ -1694,7 +1694,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
 
         if let Some(&local) = self.bindings.get(&name) {
-            let local_ty = self.locals[local.index()].ty.clone();
+            let checked = self.resolve_ty(callee.span);
+            let storage = &self.locals[local.index()].ty;
+            let local_ty = if matches!(storage, IncanType::Generic { base, .. } if base == "Union") {
+                checked.clone()
+            } else {
+                storage.clone()
+            };
             let IncanType::Function { params, return_type: _ } = local_ty else {
                 return self.unsupported_operand(
                     format!("call to non-callable local `{name}`"),
@@ -1708,7 +1714,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             // Source evaluation observes the callable value before its arguments. The target read also performs the
             // one ownership/last-use decision for that lexical environment, which `CallableTarget::Local` preserves
             // for a later executor instead of re-deriving it from the local's source spelling.
-            let place = bir::Place::from_local(local);
+            let mut place = bir::Place::from_local(local);
+            super::carrier_projection::retain_checked_narrowing(&mut place, &self.locals[local.index()].ty, &checked);
             let (fact, last_use) = self.ownership_fact_for_place(&place, &self.locals[local.index()].ty.clone());
             let (mut operands, binding) =
                 match self.bind_declared_args(&format!("local callable `{name}`"), Some(slots), args, scope, out) {

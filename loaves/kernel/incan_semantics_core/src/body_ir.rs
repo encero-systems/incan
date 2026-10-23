@@ -85,10 +85,10 @@ pub struct BodyIrModule {
     /// Each record names the exact compiled item and signature the native adapter must verify.
     #[serde(default)]
     pub loaf_callables: Vec<LoafCallable>,
-    /// Exact anonymous union layouts admitted from a selected SDK artifact's emitted-definition table.
+    /// Checked source union payload contracts and exact layouts admitted from selected Loaf artifacts.
     ///
-    /// These records preserve the producer's native owner, name, and ordered payloads. An ordinary semantic Union
-    /// without this representation remains source-owned; a consumer must never infer SDK ownership from its hash.
+    /// A local symbol retains source ownership; a qualified item preserves the selected producer's native owner and
+    /// ordered payloads. A consumer must never infer Loaf ownership from a wrapper's hash.
     #[serde(default)]
     pub native_union_declarations: Vec<NativeUnionDeclaration>,
     /// Source-local persistent storage, including RFC 036 replacement callables, with literal or computed
@@ -267,15 +267,21 @@ pub enum StaticInitializer {
     Computed(Box<Body>),
 }
 
-/// One producer-owned anonymous union whose physical representation was admitted by the frontend provider plan.
+/// One anonymous union whose payload order and callable ownership were retained before native lowering.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NativeUnionDeclaration {
-    /// Consumer semantic type whose nominal leaves have already been matched to the admitted artifact.
+    /// Checked semantic union whose nominal leaves retain canonical declaration identities.
     pub ty: IncanType,
-    /// Exact qualified Rust item selected from the admitted producer's final emitted table.
+    /// A source-local native symbol, or the exact qualified item admitted from a selected producer.
     pub rust_item: String,
-    /// Payload types in producer variant order; lowering must preserve this order even if local names differ.
+    /// Payload types in retained variant order; lowering preserves this order even if local names differ.
     pub members: Vec<IncanType>,
+    /// Callable members own reusable captured environments instead of function-pointer storage.
+    #[serde(default)]
+    pub closure_members: Vec<IncanType>,
+    /// Published callable object aliases, in the same order as `closure_members`.
+    #[serde(default)]
+    pub closure_items: Vec<String>,
 }
 
 /// An external callable: a linked Loaf declaration (DD-0007) or a checker-selected Rust instantiation (DD-0006).
@@ -882,11 +888,12 @@ pub fn held_rust_items(modules: &[BodyIrModule]) -> Vec<NominalDeclaration> {
             callable.parameters.iter().for_each(&mut record);
             callable.native_type_arguments.iter().for_each(&mut record);
             record(&callable.return_type);
+            if let Some(frame) = &callable.declaration_frame {
+                record_held_rust_frame(frame, &mut record);
+            }
         }
         for body in &module.bodies {
-            record(&body.return_type);
-            body.locals.iter().for_each(|local| record(&local.ty));
-            body.params.iter().for_each(|param| record(&param.ty));
+            record_held_rust_frame(body, &mut record);
         }
         for declaration in &module.nominal_declarations {
             declaration.field_types.iter().for_each(&mut record);
@@ -899,8 +906,7 @@ pub fn held_rust_items(modules: &[BodyIrModule]) -> Vec<NominalDeclaration> {
         for storage in &module.static_declarations {
             record(&storage.ty);
             if let StaticInitializer::Computed(body) = &storage.initial {
-                record(&body.return_type);
-                body.locals.iter().for_each(|local| record(&local.ty));
+                record_held_rust_frame(body, &mut record);
             }
         }
     }
@@ -908,6 +914,14 @@ pub fn held_rust_items(modules: &[BodyIrModule]) -> Vec<NominalDeclaration> {
         .into_iter()
         .filter_map(|(path, arity)| native_opaque_nominal(&rust_item_identity(&path)?, arity?))
         .collect()
+}
+
+/// Retain every declared storage type in an executable or imported default frame without granting its statements
+/// execution.
+fn record_held_rust_frame(body: &Body, record: &mut impl FnMut(&IncanType)) {
+    record(&body.return_type);
+    body.locals.iter().for_each(|local| record(&local.ty));
+    body.params.iter().for_each(|param| record(&param.ty));
 }
 
 /// Record the Rust items `ty` names anywhere inside it: a type a Rust value carries is named by its item's path.

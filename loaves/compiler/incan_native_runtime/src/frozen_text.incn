@@ -1,6 +1,7 @@
 """Text observation of the legacy frozen string carrier."""
 
 from rust::incan_std_core::frozen import FrozenStr as RuntimeFrozen, FrozenBytes as RuntimeFrozenBytes
+from rust::std::convert import Into as RustInto
 
 
 pub def format_frozen(value: RuntimeFrozen) -> str:
@@ -11,3 +12,8 @@ pub def format_frozen(value: RuntimeFrozen) -> str:
 pub def length_frozen_bytes(value: RuntimeFrozenBytes) -> int:
     """Measure static bytes without copying them into a mutable vector."""
     return int(value.len())
+
+
+pub def copy_frozen_bytes(value: RuntimeFrozenBytes) -> bytes:
+    """Copy immutable byte storage into the owned buffer used by sequence reads, preserving its original wrapper."""
+    return RustInto.into(value.as_slice())

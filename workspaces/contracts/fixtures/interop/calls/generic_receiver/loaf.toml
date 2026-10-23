@@ -1,0 +1,9 @@
+[project]
+name = "generic_receiver"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+rand = { loaf = "crates-io/rand", version = "0.8", features = [], default-features = true }

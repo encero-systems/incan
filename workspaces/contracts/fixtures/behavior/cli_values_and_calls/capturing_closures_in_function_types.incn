@@ -1,4 +1,4 @@
-# behavior: a closure that captures local values runs as an annotated local called and passed twice, as an argument for a function and a method that only call their parameter, and as the closure a function and a method return; a named function, a closure that captures nothing and a returned closure that captures nothing still run from a list and a field
+# behavior: captured closures retain their environments in callable annotations, arguments, returns and union members; named functions remain callable from union members, lists and fields (#2256)
 # expect-stdout:
 #   6
 #   6
@@ -13,6 +13,7 @@
 #   8
 #   0
 #   2
+#   text 9 14 12
 
 model Op:
     step: (int) -> int
@@ -53,6 +54,28 @@ def size_of() -> (list[int]) -> int:
     return (xs) => len(xs)
 
 
+def replacement(value: str | Callable[int, int]) -> str:
+    """Invoke the callable member after the text alternative has been excluded."""
+    if isinstance(value, str):
+        return value
+    else:
+        return str(value(7))
+
+
+def stored_replacement(offset: int) -> str | Callable[int, int]:
+    """Return a union whose callable owns a captured value beyond its creating frame."""
+    callback: Callable[int, int] = (value) => value + offset
+    return callback
+
+
+def extracted_replacement(value: str | Callable[int, int]) -> Callable[int, int]:
+    """Clone a narrowed callback out of its union, retaining one owned callable return shape."""
+    if isinstance(value, str):
+        return double
+    else:
+        return value
+
+
 def main() -> None:
     n = 5
     g: (int) -> int = (x) => x + n
@@ -77,3 +100,10 @@ def main() -> None:
     sizes: list[(list[int]) -> int] = [size_of()]
     size = sizes[0]
     println(size([1, 2]))
+    callback: Callable[int, int] = (value) => value + 2
+    stored: str | Callable[int, int] = stored_replacement(5)
+    assert replacement(stored) == "12"
+    assert replacement((value) => value + 2) == "9"
+    assert extracted_replacement(stored)(7) == 12
+    assert extracted_replacement("text")(7) == 14
+    println(replacement("text"), replacement(callback), replacement(double), replacement(stored))

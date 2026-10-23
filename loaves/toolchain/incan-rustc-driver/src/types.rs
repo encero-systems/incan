@@ -2,9 +2,80 @@
 
 use crate::error::PlanError;
 use crate::plan::{ListLeaf, PlanType, SizedNumeric, list_leaf_type, range_field_types, tuple_element_type};
-use rustc_middle::ty::{Ty, TyCtxt};
+use rustc_middle::ty::{ExistentialPredicateStableCmpExt as _, Ty, TyCtxt};
 
-/// Translate admitted scalar, model, collection, and callable types to their canonical native representations.
+/// Construct an unsized trait object from its principal arguments followed by declaration-ordered associated
+/// equalities. Auto traits and const arguments require a richer checked carrier and refuse here.
+pub(crate) fn native_trait_object<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    principal: rustc_hir::def_id::DefId,
+    arguments: &[PlanType],
+) -> Result<Ty<'tcx>, PlanError> {
+    let invalid = || PlanError::Unsupported {
+        function: tcx.def_path_str(principal),
+        reason: "native trait object requires a non-auto dyn-compatible principal and complete plain type arguments"
+            .into(),
+    };
+    let parameters = &tcx.generics_of(principal).own_params;
+    let associated = tcx
+        .associated_item_def_ids(principal)
+        .iter()
+        .copied()
+        .filter(|item| tcx.def_kind(*item) == rustc_hir::def::DefKind::AssocTy)
+        .collect::<Vec<_>>();
+    let parameter_count = parameters
+        .iter()
+        .filter(|parameter| matches!(parameter.kind, rustc_middle::ty::GenericParamDefKind::Type { .. }))
+        .count()
+        .saturating_sub(1);
+    if tcx.trait_is_auto(principal)
+        || !tcx.is_dyn_compatible(principal)
+        || parameters
+            .iter()
+            .any(|parameter| matches!(parameter.kind, rustc_middle::ty::GenericParamDefKind::Const { .. }))
+        || parameter_count + associated.len() != arguments.len()
+    {
+        return Err(invalid());
+    }
+    let arguments = arguments
+        .iter()
+        .map(|argument| native_type(tcx, argument))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut values = arguments[..parameter_count].iter();
+    let mut principal_arguments: Vec<rustc_middle::ty::GenericArg<'tcx>> = Vec::new();
+    for parameter in parameters.iter().filter(|parameter| parameter.index != 0) {
+        match parameter.kind {
+            rustc_middle::ty::GenericParamDefKind::Lifetime => principal_arguments.push(tcx.lifetimes.re_erased.into()),
+            rustc_middle::ty::GenericParamDefKind::Type { .. } => {
+                principal_arguments.push((*values.next().ok_or_else(invalid)?).into());
+            }
+            rustc_middle::ty::GenericParamDefKind::Const { .. } => return Err(invalid()),
+        }
+    }
+    let mut predicates = vec![rustc_middle::ty::Binder::dummy(
+        rustc_middle::ty::ExistentialPredicate::Trait(rustc_middle::ty::ExistentialTraitRef::new(
+            tcx,
+            principal,
+            principal_arguments.iter().copied(),
+        )),
+    )];
+    for (definition, value) in associated.iter().zip(&arguments[parameter_count..]) {
+        predicates.push(rustc_middle::ty::Binder::dummy(
+            rustc_middle::ty::ExistentialPredicate::Projection(rustc_middle::ty::ExistentialProjection::new(
+                tcx,
+                *definition,
+                principal_arguments.iter().copied(),
+                (*value).into(),
+            )),
+        ));
+    }
+    predicates.sort_by(|left, right| left.skip_binder().stable_cmp(tcx, &right.skip_binder()));
+    let predicates = tcx.mk_poly_existential_predicates(&predicates);
+    Ok(Ty::new_dynamic(tcx, predicates, tcx.lifetimes.re_erased))
+}
+
+/// Translate admitted scalar, model, collection, callable, and uninhabited types to their canonical native
+/// representations.
 ///
 /// List references preserve source parameter borrowing; checked pairs and other shared references are body-internal.
 pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, PlanError> {

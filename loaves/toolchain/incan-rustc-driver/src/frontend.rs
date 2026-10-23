@@ -15,7 +15,7 @@ use incan_frontend::loaf_index::{LoafIndex, LoafNativeClosure};
 use incan_frontend::parsed_module::ParsedModule;
 use incan_mir_lowering::{program_refusals, unit_plan};
 use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable, NominalDeclaration};
-use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 
 /// Environment variable naming the file where the census receives every refusal of one compilation, one per line.
 ///
@@ -356,7 +356,9 @@ fn complete_dependency_context(
         .modules
         .get_mut(program.entry)
         .ok_or("selected Body IR entry is missing")?;
-    entry_module.native_union_declarations = native_union_layouts(loaves);
+    entry_module
+        .native_union_declarations
+        .extend(native_union_layouts(loaves));
     Ok(program)
 }
 
@@ -467,6 +469,20 @@ fn native_union_layouts(
                 .native_unions
                 .iter()
                 .filter_map(|native| {
+                    let mut callables = native.closure_members.iter();
+                    let members = native
+                        .members
+                        .iter()
+                        .map(|member| {
+                            if matches!(member, incan_frontend::library_manifest::TypeRef::Function { .. }) {
+                                callables.next().cloned()
+                            } else {
+                                Some(semantic_type_from_resolved(&resolved_type_from_manifest_type_ref(
+                                    member,
+                                )))
+                            }
+                        })
+                        .collect::<Option<Vec<_>>>()?;
                     Some(incan_semantics_core::body_ir::NativeUnionDeclaration {
                         ty: native.semantic_type.clone()?,
                         rust_item: format!(
@@ -474,10 +490,17 @@ fn native_union_layouts(
                             incan_semantics_core::body_ir::loaf_crate_name(&entry.artifact.manifest.name),
                             native.rust_name
                         ),
-                        members: native
-                            .members
+                        members,
+                        closure_members: native.closure_members.clone(),
+                        closure_items: native
+                            .closure_items
                             .iter()
-                            .map(|member| semantic_type_from_resolved(&resolved_type_from_manifest_type_ref(member)))
+                            .map(|item| {
+                                format!(
+                                    "{}::{item}",
+                                    incan_semantics_core::body_ir::loaf_crate_name(&entry.artifact.manifest.name),
+                                )
+                            })
                             .collect(),
                     })
                 })
@@ -547,6 +570,7 @@ fn take_rust_enums(
 /// Refuse source storage whose checked layout was deliberately omitted from Body IR.
 ///
 /// In particular, a checked newtype constructor must not reach body validation as if it were an ordinary raw wrapper.
+/// Transparent rusttypes already passed declaration admission and introduce no physical wrapper to inventory here.
 /// The frontend declaration collector owns that decision; this boundary only checks whether its layout was retained.
 /// Decorated callable replacements share the storage table but are validated under their original function identity,
 /// so they do not count as source `static` declarations.
@@ -652,15 +676,7 @@ fn validate_declarations(
                 continue;
             }
             Declaration::Newtype(newtype)
-                if newtype.is_rusttype
-                    && newtype.methods.is_empty()
-                    && newtype.traits.is_empty()
-                    && newtype.decorators.is_empty()
-                    && newtype.method_aliases.is_empty()
-                    && newtype.rebindings.is_empty()
-                    && newtype.method_partials.is_empty()
-                    && newtype.interop_edges.is_empty()
-                    && type_info.rust.type_aliases.contains_key(&newtype.name) =>
+                if incan_frontend::body_ir::is_direct_native_rusttype_alias(newtype, type_info) =>
             {
                 continue;
             }
@@ -707,7 +723,7 @@ fn model_refusal_feature(model: &incan_frontend::ast::ModelDecl) -> String {
     }
 
     // ---- Method facts ----
-    if has_refused_method_decorator(&model.methods) {
+    if has_refused_method_decorator(&model.methods, false) {
         return "decorated methods".to_owned();
     }
 
@@ -738,7 +754,7 @@ fn class_refusal_feature(class: &incan_frontend::ast::ClassDecl) -> String {
     }
 
     // ---- Method facts ----
-    if has_refused_method_decorator(&class.methods) {
+    if has_refused_method_decorator(&class.methods, false) {
         return "decorated methods".to_owned();
     }
 
@@ -746,14 +762,25 @@ fn class_refusal_feature(class: &incan_frontend::ast::ClassDecl) -> String {
     refused_decorator_feature(&class.decorators).unwrap_or_else(|| "unsupported declaration shape".to_owned())
 }
 
-/// Report whether any method carries a decorator other than the builtin markers the direct route admits.
-fn has_refused_method_decorator(methods: &[incan_frontend::ast::Spanned<incan_frontend::ast::MethodDecl>]) -> bool {
+/// Report executable method decorators outside the admitted builtin markers. A trait may also retain a plain
+/// `@rust.extern` abstract slot: it has no body or initialization effect, and using it still requires a checked
+/// implementation or native intrinsic. Models and classes receive no such exemption.
+fn has_refused_method_decorator(
+    methods: &[incan_frontend::ast::Spanned<incan_frontend::ast::MethodDecl>],
+    allow_abstract_extern: bool,
+) -> bool {
     methods.iter().any(|method| {
-        method
-            .node
-            .decorators
-            .iter()
-            .any(|decorator| !incan_frontend::body_ir::is_direct_replacement_method_decorator(&decorator.node))
+        method.node.decorators.iter().any(|decorator| {
+            if incan_frontend::body_ir::is_direct_replacement_method_decorator(&decorator.node) {
+                return false;
+            }
+            !(allow_abstract_extern
+                && method.node.body.is_none()
+                && decorator.node.args.is_empty()
+                && decorator.node.type_args.is_empty()
+                && incan_lang::lang::decorators::from_segments(&decorator.node.path.segments)
+                    == Some(incan_lang::lang::decorators::DecoratorId::RustExtern))
+        })
     })
 }
 
@@ -816,8 +843,8 @@ fn trait_refusal_feature(item: &incan_frontend::ast::TraitDecl) -> Option<&'stat
     if item.properties.iter().any(|property| property.node.body.is_some()) {
         return Some("property defaults");
     }
-    // Method markers follow the rule models and classes use: `@staticmethod`, `@classmethod`, lint suppressions.
-    if has_refused_method_decorator(&item.methods) {
+    // Ordinary markers follow nominal rules; a trait's abstract extern slot carries no executable decorator effect.
+    if has_refused_method_decorator(&item.methods, true) {
         return Some("decorated methods");
     }
     None

@@ -1,4 +1,4 @@
-# behavior: Rust From, blanket ToString, Into with an expected type, and PartialEq calls preserve reusable values
+# behavior: Rust From accepts borrowed text; blanket traits preserve reusable values and native iteration retains enumeration positions
 # expect-stdout:
 #   hello
 #   hello
@@ -7,13 +7,21 @@
 
 from rust::std::string import String as RustString
 from rust::std::time import Duration
+from rust::std::collections import VecDeque
 
 
 def main() -> None:
     """Use native trait methods and keep their owners readable after each call."""
     text = RustString.from("hello")
-    println(text.to_string())
+    borrowed_copy = RustString.from(text.as_str())
+    println(borrowed_copy.to_string())
     converted: str = text.into()
     println(converted.to_string())
     println(text)
     println(Duration.from_secs(3).eq(Duration.from_secs(3)))
+    mut queue: VecDeque[i64] = VecDeque.new()
+    queue.push_back(3i64)
+    mut seen = 0
+    for index, _value in enumerate(queue.iter()):
+        seen += index + 1
+    assert seen == 1

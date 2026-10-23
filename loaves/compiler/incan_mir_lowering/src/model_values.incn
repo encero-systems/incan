@@ -25,7 +25,7 @@ from element_places import is_element_place
 
 
 pub def nominal_place(builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:
-    """Locate whole or structurally projected model storage without cloning it before a shared trait call."""
+    """Borrow whole or structurally projected model storage without cloning it; collection indices and slices keep their own lowering."""
     match value:
         RustOperand.Place(read) =>
             if is_element_place(builder, read.place)?:

@@ -75,13 +75,44 @@ impl TypeChecker {
             _ => self.rust_canonical_path_for_receiver_type(ty)?,
         };
         let metadata = self.rust_item_metadata_for_path(&path)?;
-        let RustItemKind::Type(info) = metadata.kind else {
-            return None;
+        let info = match metadata.kind {
+            RustItemKind::Type(info) => info,
+            RustItemKind::Trait(info) => {
+                let identity = self.rust_definition_for_path(&path).unwrap_or_else(|| path.clone());
+                let requested = self
+                    .rust_definition_for_path(trait_path)
+                    .unwrap_or_else(|| trait_path.to_owned());
+                if ancestral_rust_path(&identity) != ancestral_rust_path(&requested) {
+                    return None;
+                }
+                let arguments = self.rust_owner_type_args(ty, &path)?;
+                let index = info
+                    .items
+                    .iter()
+                    .filter_map(|item| match item {
+                        incan_lang::interop::RustTraitAssoc::TypeAlias { name } => Some(name),
+                        _ => None,
+                    })
+                    .position(|name| name == member)?;
+                return arguments.get(info.type_params.len() + index).cloned();
+            }
+            _ => return None,
         };
-        let owner = self.rust_closed_owner(ty, &info, &path);
+        let owner = self.rust_trait_owner(ty, &info, &path);
         let mut selected = None;
+        let trait_identity = self
+            .rust_definition_for_path(trait_path)
+            .unwrap_or_else(|| trait_path.to_owned());
         for implementation in &info.implemented_traits {
-            if ancestral_rust_path(&implementation.path) != ancestral_rust_path(trait_path) {
+            let implementation_identity = self
+                .rust_definition_for_path(&implementation.path)
+                .unwrap_or_else(|| implementation.path.clone());
+            if ancestral_rust_path(&implementation_identity) != ancestral_rust_path(&trait_identity) {
+                continue;
+            }
+            if matches!(owner, ResolvedType::Ref(_) | ResolvedType::RefMut(_))
+                && !self.rust_impl_may_apply(implementation, &owner)
+            {
                 continue;
             }
             let Some(binding) = implementation
@@ -196,8 +227,9 @@ impl TypeChecker {
         None
     }
 
-    /// Normalize qualified projections structurally, including projections nested in ordinary result containers.
-    pub(super) fn rust_projected_type(&self, display: &str, depth: usize) -> Option<ResolvedType> {
+    /// Normalize qualified projections structurally, including nested receiver projections and ordinary result
+    /// containers.
+    pub(in crate::typechecker) fn rust_projected_type(&self, display: &str, depth: usize) -> Option<ResolvedType> {
         if depth >= 12 {
             return None;
         }

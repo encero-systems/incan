@@ -574,10 +574,17 @@ impl TypeChecker {
                             ResolvedType::Bytes | ResolvedType::FrozenBytes => {
                                 inner_ty = ResolvedType::Int;
                             }
-                            _ => {}
+                            _ => {
+                                // Native iterables expose their item through the same checked protocol as a loop;
+                                // leaving it unknown hides the actual enumerable carrier from Body IR admission.
+                                inner_ty =
+                                    self.infer_iterator_element_type_from_expr(Self::call_arg_expr(arg), &iter_ty);
+                            }
                         }
                     }
-                    self.check_call_args(args);
+                    for argument in args.iter().skip(1) {
+                        self.check_expr(Self::call_arg_expr(argument));
+                    }
                     Some(list_ty(ResolvedType::Tuple(vec![ResolvedType::Int, inner_ty])))
                 }
                 BuiltinFnId::Zip => {

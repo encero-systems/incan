@@ -341,6 +341,7 @@ pub fn build_body_ir_module(
     trait_returns::retain_returns(&mut module, program, type_info, context);
     opaque_returns::retain(&mut module, &opaque_carriers);
     nominal_carriers::retain(&mut module, type_info, context);
+    union_layouts::retain(&mut module);
     module
 }
 
@@ -739,6 +740,41 @@ pub fn is_direct_replacement_model_derive(decorator: &ast::Decorator) -> bool {
         && decorator.args.iter().all(|argument| {
             matches!(argument, ast::DecoratorArg::Positional(value) if matches!(&value.node,
                 ast::Expr::Ident(name) if matches!(name.as_str(), "Debug" | "Clone" | "Eq" | "PartialEq" | "Hash" | "Ord" | "PartialOrd" | "Default" | "Display")))
+        })
+}
+
+/// Admit a transparent rusttype only when checking retained its underlying storage and it authors no executable
+/// members, conversions, or trait implementations. It introduces no wrapper layout or constructor.
+pub fn is_direct_native_rusttype_alias(newtype: &ast::NewtypeDecl, type_info: &TypeCheckInfo) -> bool {
+    let alias = if newtype.type_params.is_empty() {
+        IncanType::Named(newtype.name.clone())
+    } else {
+        IncanType::Generic {
+            base: newtype.name.clone(),
+            args: newtype
+                .type_params
+                .iter()
+                .map(|parameter| IncanType::TypeVar(parameter.name.clone()))
+                .collect(),
+        }
+    };
+    newtype.is_rusttype
+        && newtype
+            .decorators
+            .iter()
+            .all(|decorator| is_lint_suppression_decorator(&decorator.node))
+        && newtype.traits.is_empty()
+        && newtype.methods.is_empty()
+        && newtype.rebindings.is_empty()
+        && newtype.method_aliases.is_empty()
+        && newtype.method_partials.is_empty()
+        && newtype.associated_types.is_empty()
+        && newtype.interop_edges.is_empty()
+        && type_info.rust.storage_types.get(&alias).is_some_and(|storage| {
+            !matches!(
+                storage,
+                IncanType::Unknown | IncanType::Unsupported(_) | IncanType::RustInteropPath(_)
+            )
         })
 }
 
@@ -2091,6 +2127,7 @@ mod registry_effects;
 mod representation_facts;
 mod result_channels;
 mod static_aliases;
+mod union_layouts;
 
 mod bodies;
 mod enum_types;
