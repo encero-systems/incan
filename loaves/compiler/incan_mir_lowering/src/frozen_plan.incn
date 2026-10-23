@@ -28,7 +28,7 @@ pub def frozen_collection_literal(mut builder: Builder, value: &RustConstant, sp
         _ => return Err("unsupported Body IR nonstatic frozen collection")
 
 
-def frozen_elements(builder: Builder, elements: &list[RustConstant]) -> Result[list[FrozenValue], str]:
+def frozen_elements(mut builder: Builder, elements: &list[RustConstant]) -> Result[list[FrozenValue], str]:
     """Translate retained literal trees without evaluating expressions or reading syntax."""
     mut values: list[FrozenValue] = []
     for element in elements:

@@ -35,7 +35,7 @@ from tuples import is_tuple_type
 from lowering import list_borrow, scalar_operand, value_operand, materialized_receiver
 
 
-pub def element_method_owner(builder: Builder, argument: &RustArgumentElement) -> Result[Option[PlanType], str]:
+pub def element_method_owner(mut builder: Builder, argument: &RustArgumentElement) -> Result[Option[PlanType], str]:
     """The model or source enum owner of a list or dictionary element receiver; `None` when a native place names it."""
     match argument.as_one():
         Some(RustOperand.Place(read)) =>
@@ -172,7 +172,7 @@ pub def borrow_element_mut(
     return Ok(output)
 
 
-def element_start(builder: Builder, source: &RustPlace) -> Result[int, str]:
+def element_start(mut builder: Builder, source: &RustPlace) -> Result[int, str]:
     """Count the structural steps before the first element index; a list or dictionary root has none."""
     match source.local_id():
         None => return Err("unsupported Body IR mutable borrow of a static element")
@@ -188,7 +188,7 @@ def element_start(builder: Builder, source: &RustPlace) -> Result[int, str]:
     return Err("unsupported Body IR mutable borrow of a non-element place")
 
 
-def local_root(builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+def local_root(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
     """Map the place's frame local; static storage is a snapshot, so a borrow of it could never change the static."""
     match source.local_id():
         Some(local) => return Ok(plan_place(int(local.index()) + 1 + builder.local_offset, span))
@@ -254,7 +254,7 @@ def mutable_reference_type(element: PlanType) -> Result[PlanType, str]:
         _ => return Err("unsupported Body IR mutable borrow of a scalar collection element")
 
 
-def dereferenced(builder: Builder, place: Place) -> Place:
+def dereferenced(mut builder: Builder, place: Place) -> Place:
     """Project through a whole nominal reference so its fields append to the referent rather than the reference."""
     if place.projection != Projection.Whole:
         return place

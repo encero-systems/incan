@@ -263,7 +263,7 @@ pub def lower_comparison_dunder(
 
 
 def has_native_comparison(
-    builder: Builder,
+    mut builder: Builder,
     value: &RustOperand,
     operator: BinOp,
     span: SourceSpan,
@@ -328,7 +328,7 @@ def single_operand(argument: &RustArgumentElement) -> Result[RustOperand, str]:
 
 def declares_own_comparison(
     module: &BodyIrModule,
-    builder: Builder,
+    mut builder: Builder,
     receiver: &RustOperand,
     span: SourceSpan,
 ) -> Result[bool, str]:
@@ -346,7 +346,7 @@ pub def slot_name(target: &MethodTarget) -> str:
 
 pub def receiver_declares_method(
     module: &BodyIrModule,
-    builder: Builder,
+    mut builder: Builder,
     receiver: &RustArgumentElement,
     name: str,
     span: SourceSpan,
@@ -363,7 +363,7 @@ pub def receiver_declares_method(
 
 def declares_own_method(
     module: &BodyIrModule,
-    builder: Builder,
+    mut builder: Builder,
     receiver: &RustOperand,
     names: list[str],
     span: SourceSpan,

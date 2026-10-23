@@ -70,7 +70,7 @@ pub def initialize_owned_list_iterator(
         _ => return Err("unsupported Body IR consuming list iterator destination")
 
 
-def iterator_poll_type(builder: Builder, element: PlanType) -> Result[PlanType, str]:
+def iterator_poll_type(mut builder: Builder, element: PlanType) -> Result[PlanType, str]:
     """Use the retained standard Option layout for Iterator::next's checked item type."""
     for index in range(len(builder.intrinsics)):
         carrier = builder.intrinsics[index]

@@ -138,7 +138,7 @@ pub def source_generator(mut builder: Builder, value: Operand, span: SourceSpan)
         None => return Err("unsupported Body IR generator expression source")
 
 
-pub def source_item(builder: Builder, source: Operand) -> Result[PlanType, str]:
+pub def source_item(mut builder: Builder, source: Operand) -> Result[PlanType, str]:
     """Read the item type the source generator yields to each step."""
     match generator_shape(value_type(builder, source)?):
         Some((leaf, depth)) => return Ok(generator_element(leaf, depth))

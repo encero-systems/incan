@@ -19,16 +19,19 @@ from lists import exclusive_reference, list_parameter_type
 
 
 pub def native_source_type(
-    nominals: list[NominalDeclaration],
-    enums: list[RustEnumDeclaration],
-    unions: list[RustType],
+    mut nominals: list[NominalDeclaration],
+    mut enums: list[RustEnumDeclaration],
+    mut unions: list[RustType],
     ty: &RustType,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Use retained carrier identity before recursively resolving collection elements; never reopen source syntax."""
-    for index in range(len(intrinsics)):
-        if intrinsics[index].source_type == str(ty):
-            return Ok(PlanType.Enum(len(enums) + index, intrinsics[index].name))
+    source_type = str(ty)
+    mut index = 0
+    for declaration in intrinsics:
+        if declaration.source_type == source_type:
+            return Ok(PlanType.Enum(len(enums) + index, declaration.name))
+        index += 1
     match enum_type(enums, ty):
         Some(result) => return Ok(result)
         None => pass
@@ -137,11 +140,11 @@ pub def mutable_receiver_type(ty: PlanType) -> Result[PlanType, str]:
 
 
 pub def callable_parameter_type(
-    nominals: list[NominalDeclaration],
-    enums: list[RustEnumDeclaration],
-    unions: list[RustType],
+    mut nominals: list[NominalDeclaration],
+    mut enums: list[RustEnumDeclaration],
+    mut unions: list[RustType],
     parameter: &IncanCallableParam,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Translate checked callable parameter kinds into the same native collection storage their Body IR frames retain."""
     element = native_source_type(nominals, enums, unions, parameter.ty, intrinsics)?
@@ -154,7 +157,7 @@ pub def callable_parameter_type(
         IncanCallableParamKind.RestKeyword => return Ok(PlanType.Dict(ListLeaf.Str, collection_leaf(element)?))
 
 
-def numeric_newtype_iterator(nominals: list[NominalDeclaration], element: &RustType) -> Option[PlanType]:
+def numeric_newtype_iterator(mut nominals: list[NominalDeclaration], element: &RustType) -> Option[PlanType]:
     """Retain an integer newtype's exact owned generator leaf through the same canonical layout as its list items."""
     match element:
         RustType.Named(name) =>
@@ -174,10 +177,10 @@ def numeric_newtype_iterator(nominals: list[NominalDeclaration], element: &RustT
 
 
 def hashed_leaf(
-    nominals: list[NominalDeclaration],
-    enums: list[RustEnumDeclaration],
+    mut nominals: list[NominalDeclaration],
+    mut enums: list[RustEnumDeclaration],
     ty: &RustType,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[ListLeaf, str]:
     """
     Admit an enum set element or dictionary key only when its retained layout hashes.
@@ -203,21 +206,23 @@ def hashed_leaf(
             if base == "Option" or base == "Result":
                 for argument in arguments:
                     hashed_leaf(nominals, enums, argument, intrinsics)?
-                for index in range(len(intrinsics)):
-                    carrier = intrinsics[index]
-                    if carrier.carrier == str(base) and carrier.source_type == str(ty):
+                source_type = str(ty)
+                mut index = 0
+                for carrier in intrinsics:
+                    if carrier.carrier == str(base) and carrier.source_type == source_type:
                         return Ok(ListLeaf.Enum(len(enums) + index, carrier.name))
+                    index += 1
                 return Err(f"unsupported Body IR unretained carrier hashed key {ty}")
         _ => pass
     return hashed_element(nominals, ty)
 
 
 def layout_tuple_type(
-    nominals: list[NominalDeclaration],
-    enums: list[RustEnumDeclaration],
-    unions: list[RustType],
+    mut nominals: list[NominalDeclaration],
+    mut enums: list[RustEnumDeclaration],
+    mut unions: list[RustType],
     elements: &list[RustType],
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Resolve each tuple element in the retained layout context, so a list or carrier element keeps its identity."""
     # Legacy emits a singleton literal as a parenthesized scalar; do not admit a different native layout.
@@ -231,11 +236,11 @@ def layout_tuple_type(
 
 
 def zip_pair_type(
-    nominals: list[NominalDeclaration],
-    enums: list[RustEnumDeclaration],
-    unions: list[RustType],
+    mut nominals: list[NominalDeclaration],
+    mut enums: list[RustEnumDeclaration],
+    mut unions: list[RustType],
     element: &RustType,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Option[PlanType]:
     """Admit a checked pair iterator, such as `zip`'s, through its element tuple's retained layout."""
     match element:
@@ -248,11 +253,11 @@ def zip_pair_type(
 
 
 def pair_layout(
-    nominals: list[NominalDeclaration],
-    enums: list[RustEnumDeclaration],
-    unions: list[RustType],
+    mut nominals: list[NominalDeclaration],
+    mut enums: list[RustEnumDeclaration],
+    mut unions: list[RustType],
     elements: &list[RustType],
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Option[PlanType]:
     """Lay out both pair components in the retained context; any other arity or element keeps its refusal."""
     if len(elements) != 2:

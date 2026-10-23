@@ -28,7 +28,7 @@ pub def fallible_factory(
     module: &BodyIrModule,
     target: &MethodTarget,
     result: PlanType,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[Option[NativeFactory], str]:
     """Select only a published standard factory with its retained concrete return and actual SDK storage; argument refusals retain the checked type and slot position."""
     match target.canonical:
@@ -49,8 +49,8 @@ pub def fallible_factory(
                     mut arguments: list[PlanType] = []
                     for argument in instance_arguments(module, declaration)?:
                         match native_source_type(
-                            module.nominal_declarations,
-                            module.enum_declarations,
+                            list(module.nominal_declarations),
+                            list(module.enum_declarations),
                             collect_unions(module),
                             argument,
                             intrinsics,

@@ -8,15 +8,15 @@ from numerics import is_float_constant
 
 
 pub def float_operand(
-    declarations: list[NominalDeclaration],
-    locals: list[Local],
+    mut declarations: list[NominalDeclaration],
+    mut locals: list[Local],
     value: &RustOperand,
     span: SourceSpan,
-    enums: list[RustEnumDeclaration],
-    unions: list[RustType],
-    intrinsics: list[EnumDeclaration],
+    mut enums: list[RustEnumDeclaration],
+    mut unions: list[RustType],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[bool, str]:
-    """Require a retained float representation; integer true-division coercions remain outside this slice."""
+    """Borrow layout tables to require a retained float representation; integer true-division coercions remain outside this slice."""
     match value:
         RustOperand.Place(read) =>
             place = model_place(declarations, locals, read.place, span, enums, unions, intrinsics)?

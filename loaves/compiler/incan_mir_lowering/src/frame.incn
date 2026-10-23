@@ -25,6 +25,7 @@ from pub::incan_mir_plan import (
 from pub::incan_mir_plan import assign as plan_assign, block as plan_block, place as plan_place
 from pub::incan_mir_plan import tuple_element_type
 from type_parameters import Instance
+from body_index import BodyIndex
 from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId as RustCanonicalSymbolId
 from rust::incan_semantics_core::body_ir import (
     NominalDeclaration as RustNominalDeclaration,
@@ -63,6 +64,7 @@ pub model Builder:
     `iteration_locals` lists the frame slots Body IR polls with a builtin `IterNext`, so an iterator's materialization is recognized by its slot rather than by its read.
     `step_bindings` lists the Body IR locals a generator-expression step binds from its arguments, and `step_clauses` each later `for` clause of that step: its iterator local, its source local, and the locals bound before it.
     `partial_callables` pairs each local holding a closure whose parameters carry defaults with one flag per declared parameter, marking those whose input is preceded by a supplied flag.
+    Helpers borrow this frame with `mut builder: Builder`, including read-only helpers: the bootstrap does not coerce an owned model to an explicitly shared reference. Passing a frame by value would copy its declaration tables and all accumulated blocks on every operand read.
     """
 
     pub locals: list[Local]
@@ -88,6 +90,8 @@ pub model Builder:
     # One unproven assignment closes a slot at every control-flow join, even if another assignment was scalar-only.
     pub unproven_closures: list[int]
     pub nominals: list[RustNominalDeclaration]
+    # Source frames share one program index; external-only synthetic frames never select a source body.
+    pub body_indices: BodyIndex
     pub enums: list[RustEnumDeclaration]
     pub unions: list[RustType]
     # Deferred defaults reserve a declaration-local frame within the caller.
@@ -172,7 +176,7 @@ pub def forget_owned(mut builder: Builder, index: int) -> None:
     builder.moved_tuple_fields = [(local, slot) for local, slot in builder.moved_tuple_fields if local != index]
 
 
-def remaining_owned_places(builder: Builder, index: int, span: SourceSpan) -> list[Place]:
+def remaining_owned_places(mut builder: Builder, index: int, span: SourceSpan) -> list[Place]:
     """Drop a whole owner unless checked tuple transfers have left only individual initialized fields."""
     mut has_transfers = false
     for position in range(len(builder.moved_tuple_fields)):
@@ -298,7 +302,7 @@ pub def read_place(place: Place, moved: bool, span: SourceSpan) -> Operand:
     return Operand(kind=OperandKind.Copy(place), span=span)
 
 
-pub def value_type(builder: Builder, operand: Operand) -> Result[PlanType, str]:
+pub def value_type(mut builder: Builder, operand: Operand) -> Result[PlanType, str]:
     """Read a materialized value's plan type without consulting source syntax or frontend policy."""
     match operand.kind:
         OperandKind.Copy(place) => return Ok(place_type(builder.locals, place))

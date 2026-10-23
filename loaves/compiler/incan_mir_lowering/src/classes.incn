@@ -26,7 +26,7 @@ from symbols import symbol_component, type_component
 pub def frame_type(
     module: &BodyIrModule,
     local: &RustLocal,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """
     Turn only checker-retained receiver origins into borrowed native frame slots.
@@ -37,8 +37,8 @@ pub def frame_type(
     if range_value_local(local.ty, local.origin):
         return Ok(PlanType.RangeValue)
     ty = native_source_type(
-        module.nominal_declarations,
-        module.enum_declarations,
+        list(module.nominal_declarations),
+        list(module.enum_declarations),
         collect_unions(module),
         local.ty,
         intrinsics,
@@ -200,7 +200,7 @@ pub def method_receiver(
     argument: &RustArgumentElement,
     span: SourceSpan,
     unions: list[RustType],
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[tuple[PlanType, RvalueKind], str]:
     """Require a single receiver argument before lowering its checked borrow in the active local frame."""
     match argument.as_one():
@@ -216,7 +216,7 @@ def receiver_borrow(
     value: &RustOperand,
     span: SourceSpan,
     unions: list[RustType],
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[tuple[PlanType, RvalueKind], str]:
     """Lower the checked receiver to a shared borrow or mutable reborrow without moving its owner."""
     body = module.bodies[index]
@@ -227,13 +227,17 @@ def receiver_borrow(
                 OwnershipFact.Borrow => pass
                 OwnershipFact.MutBorrow => pass
                 _ => return Err("unsupported Body IR Method receiver ownership")
+            mut declarations = module.nominal_declarations
+            mut enums = module.enum_declarations
+            mut frame_locals = locals
+            mut union_layouts = unions
             mut receiver = model_place(
-                module.nominal_declarations,
-                locals,
+                declarations,
+                frame_locals,
                 read.place,
                 span,
-                module.enum_declarations,
-                unions,
+                enums,
+                union_layouts,
                 intrinsics,
             )?
             receiver.local += local_offset

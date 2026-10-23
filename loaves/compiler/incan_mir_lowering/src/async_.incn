@@ -45,7 +45,7 @@ pub def is_future(ty: PlanType) -> bool:
 pub def future_type(
     module: &BodyIrModule,
     ty: &RustType,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[Option[PlanType], str]:
     """Use the same retained output ABI for source and SDK futures; construction identity stays with the call."""
     match ty:
@@ -57,8 +57,8 @@ pub def future_type(
             return Ok(
                 Some(
                     native_source_type(
-                        module.nominal_declarations,
-                        module.enum_declarations,
+                        list(module.nominal_declarations),
+                        list(module.enum_declarations),
                         collect_unions(module),
                         ty,
                         intrinsics,
@@ -78,7 +78,7 @@ pub def evaluator_name(module: &BodyIrModule, body: &Body) -> str:
     return name
 
 
-def capture_types(module: &BodyIrModule, body: &Body, intrinsics: list[EnumDeclaration]) -> Result[list[PlanType], str]:
+def capture_types(module: &BodyIrModule, body: &Body, mut intrinsics: list[EnumDeclaration]) -> Result[list[PlanType], str]:
     """Retain owned captures and at most one nominal loan, whose lifetime the native boxing constructor preserves."""
     mut fields: list[PlanType] = []
     mut loans = 0
@@ -99,7 +99,7 @@ def capture_types(module: &BodyIrModule, body: &Body, intrinsics: list[EnumDecla
     return Ok(fields)
 
 
-pub def validate_futures(module: &BodyIrModule, intrinsics: list[EnumDeclaration]) -> Result[None, str]:
+pub def validate_futures(module: &BodyIrModule, mut intrinsics: list[EnumDeclaration]) -> Result[None, str]:
     """Validate source coroutine identities and captures before native storage is selected by rustc."""
     for body in module.bodies:
         if not body.is_async:
@@ -170,8 +170,8 @@ pub def construct_future(
         return Err("unsupported Body IR calling async main")
     fields = capture_types(module, body, builder.intrinsics)?
     output = native_source_type(
-        module.nominal_declarations,
-        module.enum_declarations,
+        list(module.nominal_declarations),
+        list(module.enum_declarations),
         collect_unions(module),
         body.return_type,
         builder.intrinsics,
@@ -253,7 +253,7 @@ pub def async_test_name(native: str) -> str:
 pub def async_entry(
     module: &BodyIrModule,
     body: Function,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
     entry_name: str,
 ) -> Result[tuple[Function, Function, ExternalFunction], str]:
     """

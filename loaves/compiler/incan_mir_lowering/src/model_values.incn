@@ -239,7 +239,7 @@ pub def is_json_serialize_method(target: &MethodTarget) -> bool:
 
 pub def refuse_overridden_json_default(
     module: &BodyIrModule,
-    builder: Builder,
+    mut builder: Builder,
     receiver: PlanType,
     method: str,
 ) -> Result[None, str]:
@@ -328,7 +328,7 @@ pub def lower_model_from_json(
         None => return Err("unsupported Body IR discarded from_json")
 
 
-def static_receiver_type(builder: Builder, target: &NamedCallableTarget) -> Result[PlanType, str]:
+def static_receiver_type(mut builder: Builder, target: &NamedCallableTarget) -> Result[PlanType, str]:
     """The checked static owner, closed in the active instance when it names a type parameter."""
     match target.receiver_type:
         Some(ty) =>
@@ -337,7 +337,7 @@ def static_receiver_type(builder: Builder, target: &NamedCallableTarget) -> Resu
         None => return Err("unsupported Body IR from_json without a receiver type")
 
 
-def require_parsed_result(builder: Builder, result: PlanType, payload: PlanType) -> Result[None, str]:
+def require_parsed_result(mut builder: Builder, result: PlanType, payload: PlanType) -> Result[None, str]:
     """Require the destination to be the `Result[Model, str]` carrier legacy's `from_json` returns."""
     _owner, declaration = carrier_layout(builder, result)?
     if declaration.carrier != "Result":

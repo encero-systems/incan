@@ -55,15 +55,15 @@ pub def lower_checked_deserialize(
         output: RustType = generic("Result", [success, RustType.Primitive(Primitive.Str)])
         retain_carrier(module, intrinsics, output, file)?
         hook_result = native_source_type(
-            module.nominal_declarations,
-            module.enum_declarations,
+            list(module.nominal_declarations),
+            list(module.enum_declarations),
             collect_unions(module),
             selected.return_type,
             intrinsics,
         )?
         result = native_source_type(
-            module.nominal_declarations,
-            module.enum_declarations,
+            list(module.nominal_declarations),
+            list(module.enum_declarations),
             collect_unions(module),
             output,
             intrinsics,
@@ -106,7 +106,7 @@ def checked_json_function(
     owner: PlanType,
     hook_result: PlanType,
     result: PlanType,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
     span: SourceSpan,
 ) -> Result[tuple[Function, list[ExternalFunction], list[Instance]], str]:
     """Invoke the previously validated source hook once, then return its actual displayed error through owned Result."""
@@ -156,7 +156,7 @@ def checked_json_function(
     return Ok((function, builder.externals, pending))
 
 
-def checked_result_layout(builder: Builder, ty: PlanType) -> Result[EnumDeclaration, str]:
+def checked_result_layout(mut builder: Builder, ty: PlanType) -> Result[EnumDeclaration, str]:
     """Check bounds and the full standard Result shape before reading checked ingress payloads."""
     match ty:
         PlanType.Enum(owner, name) =>

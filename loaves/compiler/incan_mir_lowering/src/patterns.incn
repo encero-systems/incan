@@ -105,7 +105,7 @@ pub def pattern_tests(
     return Ok(None)
 
 
-pub def carrier_pattern_slot(builder: Builder, owner: int, pattern: &RustPattern) -> Result[int, str]:
+pub def carrier_pattern_slot(mut builder: Builder, owner: int, pattern: &RustPattern) -> Result[int, str]:
     """Select the variant a source enum, union, `Option` or `Result` pattern names; a wildcard names none (-1)."""
     if owner < len(builder.enums):
         return pattern_variant(builder.enums[owner], pattern)
@@ -115,7 +115,7 @@ pub def carrier_pattern_slot(builder: Builder, owner: int, pattern: &RustPattern
     return intrinsic_pattern(declaration, pattern)
 
 
-pub def carrier_payload_types(builder: Builder, owner: int, slot: int) -> Result[list[PlanType], str]:
+pub def carrier_payload_types(mut builder: Builder, owner: int, slot: int) -> Result[list[PlanType], str]:
     """The declared payload types of one variant of a retained source enum or standard carrier."""
     if owner < len(builder.enums):
         mut types: list[PlanType] = []
@@ -243,7 +243,7 @@ def all_bound_in_place(patterns: &list[RustPattern]) -> list[bool]:
 
 
 pub def nominal_field(
-    builder: Builder,
+    mut builder: Builder,
     source: Place,
     target: &NominalPatternTarget,
     name: str,

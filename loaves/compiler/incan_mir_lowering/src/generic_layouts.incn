@@ -83,7 +83,7 @@ def generic_field_type(module: &BodyIrModule, ty: &RustType, parameters: list[st
                 signature.append(generic_callable_input(module, parameter, parameters)?)
             signature.append(generic_field_type(module, output, parameters)?)
             return Ok(GenericLayoutType.FunctionPointer(signature))
-        _ => return Ok(GenericLayoutType.Concrete(native_source_type(module.nominal_declarations, module.enum_declarations, [], ty, [])?))
+        _ => return Ok(GenericLayoutType.Concrete(native_source_type(list(module.nominal_declarations), list(module.enum_declarations), [], ty, [])?))
 
 
 def generic_callable_input(module: &BodyIrModule, parameter: &IncanCallableParam, parameters: list[str]) -> Result[GenericLayoutType, str]:

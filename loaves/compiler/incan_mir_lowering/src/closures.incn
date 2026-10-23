@@ -1,6 +1,7 @@
 """Callable signature admission from checked frontend representation facts."""
 
 from rust::incan_semantics_core import IncanType as RustType, IncanCallableParam, IncanCallableParamKind
+from body_index import BodyIndex
 from rust::incan_semantics_core::body_ir import (
     Body as RustBody,
     BodyIrModule as RustModule,
@@ -486,7 +487,7 @@ def checked_function_item(
         _ => return Err("invalid Body IR function-item body")
 
 
-def item_component(builder: Builder, ty: &RustType) -> Result[PlanType, str]:
+def item_component(mut builder: Builder, ty: &RustType) -> Result[PlanType, str]:
     """
     Admit a function item's signature component: a callable component, a source model or enum, or a standard carrier.
 
@@ -505,7 +506,7 @@ def item_component(builder: Builder, ty: &RustType) -> Result[PlanType, str]:
                 _ => return Err(reason)
 
 
-def item_result(builder: Builder, ty: &RustType) -> Result[PlanType, str]:
+def item_result(mut builder: Builder, ty: &RustType) -> Result[PlanType, str]:
     """A function item's result: a lazy generator, as `callable_result` admits one, or any item component."""
     match generator_type(ty):
         Some(Ok(result)) =>
@@ -533,7 +534,7 @@ def function_item_identity(
                     for declaration in module.loaf_callables:
                         if declaration.canonical == identity:
                             return loaf_item_signature(builder, parameters, declaration, span)
-                    index = imported_item_body(module, target)?
+                    index = imported_item_body(module, builder.body_indices, target)?
                     return item_signature(module, builder, parameters, module.bodies[index])
                 Some(body) =>
                     if target.direct_call_id != Some(body.direct_call_id) or str(target.name) != str(body.name):
@@ -575,7 +576,7 @@ def loaf_item_signature(
     return Ok((name, PlanType.FunctionItem(name, signature)))
 
 
-pub def function_item_callee(builder: Builder, name: str, span: SourceSpan) -> Callee:
+pub def function_item_callee(mut builder: Builder, name: str, span: SourceSpan) -> Callee:
     """Use the registered external declaration for a Loaf item and the local declaration for a source item."""
     for declaration in builder.externals:
         if declaration.path == name and len(declaration.type_arguments) == 0:
@@ -583,21 +584,22 @@ pub def function_item_callee(builder: Builder, name: str, span: SourceSpan) -> C
     return Callee(kind=CalleeKind.Planned(name), span=span)
 
 
-def imported_item_body(module: &RustModule, target: &RustNamedTarget) -> Result[int, str]:
+def imported_item_body(module: &RustModule, bodies: BodyIndex, target: &RustNamedTarget) -> Result[int, str]:
     """
     Find the one retained body, in another module of the project graph, that an imported function item names.
 
     Its exact canonical identity selects the body, as for a direct call to it. A published package fragment carries no
     source-local call id; a call id that is present must agree with the body.
     """
-    mut found = -1
-    for index in range(len(module.bodies)):
-        if module.bodies[index].canonical == target.canonical:
-            if found >= 0:
-                return Err("unsupported Body IR ambiguous imported function item")
-            found = index
-    if found < 0:
+    mut candidates: list[int] = []
+    match target.canonical:
+        Some(identity) => candidates = bodies.candidates(identity)
+        None => pass
+    if len(candidates) == 0:
         return Err("unsupported Body IR imported function item without a retained body")
+    if len(candidates) != 1:
+        return Err("unsupported Body IR ambiguous imported function item")
+    found = candidates[0]
     match target.direct_call_id:
         Some(call_id) =>
             if call_id != module.bodies[found].direct_call_id:
@@ -608,7 +610,7 @@ def imported_item_body(module: &RustModule, target: &RustNamedTarget) -> Result[
 
 def item_signature(
     module: &RustModule,
-    builder: Builder,
+    mut builder: Builder,
     parameters: &list[RustParameter],
     body: &RustBody,
 ) -> Result[tuple[str, PlanType], str]:
@@ -701,7 +703,7 @@ def original_function_item(
 
 def initialized_original_function_item(
     module: &RustModule,
-    builder: Builder,
+    mut builder: Builder,
     parameters: &list[RustParameter],
     binding: &DecoratedBinding,
 ) -> Result[tuple[str, PlanType], str]:

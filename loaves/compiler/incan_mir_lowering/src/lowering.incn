@@ -193,6 +193,7 @@ from generator_adapters import is_generator_adapter, generator_adapter, iterator
 from pair_generators import pair_generator_locals, pair_generator_type
 from generator_consumers import is_generator_consumer, consumer_result, generator_consumer
 from project import project_context
+from body_index import BodyIndex, body_index
 from nominal_instances import NominalInstance, specialize_nominals_with_instances, instance_arguments, template_base
 from checked_json import lower_checked_deserialize
 from string_conversion import lower_string_conversions, string_conversion_callee
@@ -531,22 +532,11 @@ def location(span: &RustSpan, source: str, file: str) -> SourceSpan:
     return SourceSpan(file=file, line=number, column=1)
 
 
-pub def scalar_place(builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+pub def scalar_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Place, str]:
     """Map a local or proven model field into the native frame, which reserves local zero for return."""
     validate_callback_place(builder, value)?
-    match union_projection(
-        builder.nominals,
-        builder.enums,
-        builder.unions,
-        builder.locals[builder.local_offset:],
-        value,
-        span,
-        builder.intrinsics,
-    )?:
-        Some(projected) =>
-            mut target = projected
-            target.local += builder.local_offset
-            return Ok(target)
+    match union_projection(builder, value, span)?:
+        Some(projected) => return Ok(projected)
         None => pass
     mut target = model_place(
         builder.nominals,
@@ -656,11 +646,12 @@ def place_read(mut builder: Builder, value: &RustPlace, fact: &OwnershipFact, sp
     match element_read(builder, value, span)?:
         Some(operand) => return Ok(operand)
         None => pass
-    return target_read(builder, scalar_place(builder, value, span)?, fact, span)
+    source = scalar_place(builder, value, span)?
+    return target_read(builder, source, fact, span)
 
 
 def reference_value_read(
-    builder: Builder,
+    mut builder: Builder,
     value: &RustPlace,
     fact: &OwnershipFact,
     span: SourceSpan,
@@ -920,7 +911,7 @@ def scalar_operator_operand(mut builder: Builder, value: &RustOperand, span: Sou
     return Ok(operand)
 
 
-def external_enum_equality_kind(builder: Builder, owner: int) -> Result[Option[bool], str]:
+def external_enum_equality_kind(mut builder: Builder, owner: int) -> Result[Option[bool], str]:
     """Select external equality for exact Option/Result carriers or published enums; true preserves Rust's own ne."""
     if owner < 0:
         return Err("invalid Body IR enum comparison owner")
@@ -1347,7 +1338,7 @@ def newtype_equality(
     return Ok(Some(read_place(output, false, span)))
 
 
-def text_comparison_operand(builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[bool, str]:
+def text_comparison_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[bool, str]:
     """Recognize a concrete text carrier without cloning a value to inspect its type."""
     match value:
         RustOperand.Constant(RustConstant.Str(_text)) => return Ok(true)
@@ -1471,7 +1462,7 @@ def drop_loop_local_owners(mut builder: Builder, span: SourceSpan) -> None:
             drop_owned(builder, owner, span)
 
 
-def loop_local_owner(builder: Builder, local: int) -> bool:
+def loop_local_owner(mut builder: Builder, local: int) -> bool:
     """Use Body IR's lexical scope tree to distinguish loop-local storage from values declared outside the loop."""
     for slot in range(len(builder.scoped_locals)):
         index = builder.scoped_locals[slot][0]
@@ -1578,7 +1569,7 @@ def lower_unsafe_region(
     return lower_block(module, builder, body)
 
 
-def source_future_place(builder: Builder, awaited: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+def source_future_place(mut builder: Builder, awaited: &RustOperand, span: SourceSpan) -> Result[Place, str]:
     """Consume a frontend-owned source future; copying or borrowing one cannot realize its one-shot await."""
     match awaited:
         RustOperand.Place(read) =>
@@ -1665,7 +1656,7 @@ def race_callback(
     return Ok(step_pointer(builder, name, [input, result], span))
 
 
-def scope_within(builder: Builder, scope: int, root: int) -> bool:
+def scope_within(mut builder: Builder, scope: int, root: int) -> bool:
     """Use retained lexical ancestry to distinguish callback locals from unretained enclosing captures."""
     mut current = scope
     for _ in range(len(builder.scope_parents) + 1):
@@ -1681,7 +1672,7 @@ def scope_within(builder: Builder, scope: int, root: int) -> bool:
     return false
 
 
-def validate_callback_place(builder: Builder, value: &RustPlace) -> Result[None, str]:
+def validate_callback_place(mut builder: Builder, value: &RustPlace) -> Result[None, str]:
     """Reject a lexical capture before any source read or write can enter an uninitialized callback frame."""
     match value.local_id():
         Some(local) =>
@@ -1692,7 +1683,7 @@ def validate_callback_place(builder: Builder, value: &RustPlace) -> Result[None,
     return Ok(None)
 
 
-def race_destination(builder: Builder, destination: &Option[RustPlace], span: SourceSpan) -> Result[Place, str]:
+def race_destination(mut builder: Builder, destination: &Option[RustPlace], span: SourceSpan) -> Result[Place, str]:
     """Require the frontend's shared race result slot before building any winner branch."""
     match destination:
         Some(place) => return scalar_place(builder, place, span)
@@ -1853,7 +1844,7 @@ pub def lower_assignment(
     return Ok(None)
 
 
-def assignment_place(builder: Builder, destination: &RustPlace, span: SourceSpan) -> Result[Place, str]:
+def assignment_place(mut builder: Builder, destination: &RustPlace, span: SourceSpan) -> Result[Place, str]:
     """Replace a checked reference value's own slot; source receiver and projected writes still address their referents."""
     if len(destination.projection) == 0:
         match destination.local_id():
@@ -1936,12 +1927,12 @@ def lower_local_assignment(
                 return Err("unsupported Body IR projected function-item construction")
             if is_owned_callable(place_type(builder.locals, target)):
                 held = temporary(builder, ty, span)
-                builder.emit(plan_assign(held, RvalueKind.FunctionItem(function_item_callee(builder, name, span)), span))
+                callee = function_item_callee(builder, name, span)
+                builder.emit(plan_assign(held, RvalueKind.FunctionItem(callee), span))
                 return assign_callable(builder, target, read_place(held, false, span), false, span)
             builder.locals[target.local].ty = ty
-            builder.emit(
-                plan_assign(target, RvalueKind.FunctionItem(function_item_callee(builder, name, span)), span),
-            )
+            callee = function_item_callee(builder, name, span)
+            builder.emit(plan_assign(target, RvalueKind.FunctionItem(callee), span))
             return Ok(None)
         None => pass
     match value:
@@ -2440,7 +2431,7 @@ def lift_closure(
     )
 
 
-def lifted_frame(builder: Builder, name: str, arguments: list[PlanType], result: PlanType, span: SourceSpan) -> Builder:
+def lifted_frame(mut builder: Builder, name: str, arguments: list[PlanType], result: PlanType, span: SourceSpan) -> Builder:
     """
     Start a lifted function's frame: its result slot, its arguments, then the enclosing frame's locals.
 
@@ -2465,6 +2456,7 @@ def lifted_frame(builder: Builder, name: str, arguments: list[PlanType], result:
         if local > builder.local_offset:
             scoped_locals.append((local - builder.local_offset + count, scope))
     mut lifted = Builder(
+        body_indices=builder.body_indices,
         locals=locals,
         parameter_count=count,
         blocks=[],
@@ -2514,8 +2506,8 @@ def lifted_frame(builder: Builder, name: str, arguments: list[PlanType], result:
     return lifted
 
 
-def adopt_lifted(mut builder: Builder, lifted: Builder) -> None:
-    """Carry a lifted function's runtime signatures and checked instantiations into the enclosing plan."""
+def adopt_lifted(mut builder: Builder, mut lifted: Builder) -> None:
+    """Borrow a lifted frame while carrying only its runtime signatures and checked instantiations into the enclosing plan."""
     for external in lifted.externals:
         builder.externals.append(external)
     builder.instances.extend(lifted.instances)
@@ -2673,7 +2665,7 @@ def lift_generator_step(
         None => return Err("unsupported Body IR generator expression type")
 
 
-def later_clause_index(builder: Builder, iterator: int) -> int:
+def later_clause_index(mut builder: Builder, iterator: int) -> int:
     """Find the step's later clause that polls this iterator local, or -1 outside a step or for any other local."""
     if iterator < 0:
         return -1
@@ -2941,7 +2933,7 @@ def lower_if(
     return Ok(None)
 
 
-def constant_boolean(builder: Builder, operand: Operand) -> Option[bool]:
+def constant_boolean(mut builder: Builder, operand: Operand) -> Option[bool]:
     """Read a literal or the latest whole-slot boolean literal in this block, never propagating across control-flow edges."""
     match operand.kind:
         OperandKind.Literal(Constant.Bool(value)) => return Some(value)
@@ -3065,7 +3057,7 @@ def lower_value_enum_method(
     return select_value_enum_raw(builder, owner, source, output, span)
 
 
-def ordinal_value_owner(builder: Builder, ty: PlanType) -> Option[int]:
+def ordinal_value_owner(mut builder: Builder, ty: PlanType) -> Option[int]:
     """Locate a value enum by its retained native layout identity, including a borrowed receiver."""
     mut index = -1
     match ty:
@@ -3190,7 +3182,7 @@ def lower_value_enum_ordinal_encoding(
                     return Ok(true)
 
 
-def value_enum_ordinal_schema(builder: Builder, owner: int) -> Result[str, str]:
+def value_enum_ordinal_schema(mut builder: Builder, owner: int) -> Result[str, str]:
     """Encode the canonical declaring module and each raw value in source order, with UTF-8 byte lengths for text."""
     declaration = builder.value_enums[owner]
     mut segments: list[str] = []
@@ -3215,7 +3207,7 @@ def value_enum_ordinal_schema(builder: Builder, owner: int) -> Result[str, str]:
     return Ok(schema + ":v1")
 
 
-def value_enum_raw_type(builder: Builder, owner: int) -> PlanType:
+def value_enum_raw_type(mut builder: Builder, owner: int) -> PlanType:
     """The raw value a value enum's variants carry: text or an integer."""
     match builder.value_enums[owner].backing:
         ValueEnumBacking.Str => return PlanType.String
@@ -3336,7 +3328,7 @@ def lower_value_enum_from_value(
     return Ok(None)
 
 
-def value_enum_layout(builder: Builder, owner: int) -> Result[int, str]:
+def value_enum_layout(mut builder: Builder, owner: int) -> Result[int, str]:
     """Find the retained source enum layout of value enum `owner`."""
     for index in range(len(builder.enums)):
         if builder.enums[index].canonical == builder.value_enums[owner].canonical:
@@ -3484,7 +3476,7 @@ def lower_method_call(
     # A list or dictionary element receiver is reborrowed in its container; no native place names it.
     match element_method_owner(builder, arguments[0])?:
         Some(owner) =>
-            index = owner_method_index(module, target, owner, builder.intrinsics)?
+            index = owner_method_index(module, builder.body_indices, target, owner, builder.intrinsics)?
             reference = element_method_receiver(module, builder, index, arguments[0], span)?
             return call_method_body(module, builder, target, index, reference, arguments, destination, span)
         None => pass
@@ -3606,6 +3598,7 @@ def concrete_iterator_collect(
         return Err("unsupported Body IR opaque Iterator.collect without one retained standard default")
     index = method_index(
         module,
+        builder.body_indices,
         selected,
         builder.locals[builder.local_offset:],
         arguments[0],
@@ -3620,7 +3613,7 @@ def concrete_iterator_collect(
 
 def retained_iterator_default(
     module: &BodyIrModule,
-    builder: Builder,
+    mut builder: Builder,
     target: &MethodTarget,
     arguments: &list[RustArgumentElement],
     span: SourceSpan,
@@ -3662,6 +3655,7 @@ def lower_retained_method_call(
     mut index = -1
     match method_index(
         module,
+        builder.body_indices,
         target,
         builder.locals[builder.local_offset:],
         arguments[0],
@@ -4124,7 +4118,7 @@ def lower_static_sdk_method(
 
 
 def static_sdk_receiver(
-    builder: Builder,
+    mut builder: Builder,
     declared: &RustType,
     names: list[str],
     arguments: list[RustType],
@@ -4206,7 +4200,7 @@ def lower_static_method_body(
     match owner:
         PlanType.Model(_owner, _name) => pass
         _ => return Err("unsupported Body IR nonmodel global method receiver")
-    index = owner_method_index(module, target, owner, builder.intrinsics)?
+    index = owner_method_index(module, builder.body_indices, target, owner, builder.intrinsics)?
     body = instantiated_method_body(module, builder, target, index, arguments, span)?
     receiver = frame_type(module, body.locals[0], builder.intrinsics)?
     match receiver:
@@ -4356,7 +4350,7 @@ def lower_library_method(
 
 def library_method_arguments(
     module: &BodyIrModule,
-    builder: Builder,
+    mut builder: Builder,
     delegation: &RustLoafCallable,
     target: &MethodTarget,
     reference: Place,
@@ -4393,7 +4387,7 @@ def library_method_arguments(
 
 
 def library_method_result(
-    builder: Builder,
+    mut builder: Builder,
     delegation: &RustLoafCallable,
     target: &MethodTarget,
     destination: &Option[RustPlace],
@@ -4413,7 +4407,7 @@ def library_method_result(
 
 def library_receiver_arguments(
     module: &BodyIrModule,
-    builder: Builder,
+    mut builder: Builder,
     receiver: Place,
     names: list[str],
 ) -> Result[list[RustType], str]:
@@ -4463,12 +4457,14 @@ def library_receiver(
                                         return Ok(reference)
                                     _ => return Err("unsupported Body IR SDK element receiver outside a nominal layout")
                             _ => return Err("unsupported Body IR by-value SDK element receiver")
+                    mut declarations = module.nominal_declarations
+                    mut enums = module.enum_declarations
                     mut receiver = model_place(
-                        module.nominal_declarations,
+                        declarations,
                         builder.locals[builder.local_offset:],
                         read.place,
                         span,
-                        module.enum_declarations,
+                        enums,
                         builder.unions,
                         builder.intrinsics,
                     )?
@@ -4602,8 +4598,8 @@ def lower_named_target(
         None => pass
     match target.canonical:
         None => return Err("unsupported Body IR builtin or unproven NamedCallableTarget")
-        Some(_identity) =>
-            match program_body_index(module, target):
+        Some(identity) =>
+            match builder.body_indices.unique(identity):
                 None => return lower_loaf_call(module, builder, target, arguments, destination, span)
                 Some(index) =>
                     body = module.bodies[index]
@@ -4636,7 +4632,7 @@ def lower_type_parameter_call(
     return lower_local_call(module, builder, target, concrete_body, arguments, destination, span)
 
 
-def checked_type_arguments(builder: Builder, arguments: list[RustType]) -> Result[list[RustType], str]:
+def checked_type_arguments(mut builder: Builder, arguments: list[RustType]) -> Result[list[RustType], str]:
     """Close checker-recorded call arguments in the active declaration binding and require admitted carriers."""
     mut closed: list[RustType] = []
     for argument in arguments:
@@ -4644,18 +4640,6 @@ def checked_type_arguments(builder: Builder, arguments: list[RustType]) -> Resul
         _ = native_source_type(builder.nominals, builder.enums, builder.unions, concrete, builder.intrinsics)?
         closed.append(concrete.clone())
     return Ok(closed)
-
-
-def program_body_index(module: &BodyIrModule, target: &RustNamedCallableTarget) -> Option[int]:
-    """Find exactly one body by complete checker identity across the validated project graph."""
-    mut found: Option[int] = None
-    for index in range(len(module.bodies)):
-        if module.bodies[index].canonical == target.canonical:
-            match found:
-                Some(_previous) => return None
-                None =>
-                    found = Some(index)
-    return found
 
 
 def lower_local_call(
@@ -4719,11 +4703,8 @@ def emit_selected_body_call(
         Some(place) =>
             output = scalar_place(builder, place, span)?
         None =>
-            output = temporary(
-                builder,
-                native_source_type(builder.nominals, builder.enums, builder.unions, body.return_type, builder.intrinsics)?,
-                span,
-            )
+            result = native_source_type(builder.nominals, builder.enums, builder.unions, body.return_type, builder.intrinsics)?
+            output = temporary(builder, result, span)
     declared = native_source_type(builder.nominals, builder.enums, builder.unions, body.return_type, builder.intrinsics)?
     result_type = return_representation(body, declared)?
     return lower_callable_result(builder, callee, operands, output, result_type, span)
@@ -5099,7 +5080,7 @@ def lower_delegated_call(
 
 
 def library_function_arguments(
-    builder: Builder,
+    mut builder: Builder,
     target: &RustNamedCallableTarget,
     names: list[str],
 ) -> Result[list[RustType], str]:
@@ -5211,7 +5192,7 @@ def ordered_arguments(
     return ordered_slot_operands(builder, binding, elements, types, span, 0)
 
 
-pub def call_parameter_type(builder: Builder, body: &RustBody, parameter: &RustCallableParam) -> Result[PlanType, str]:
+pub def call_parameter_type(mut builder: Builder, body: &RustBody, parameter: &RustCallableParam) -> Result[PlanType, str]:
     """
     The representation a call passes for one declared parameter, shared by functions and methods.
 
@@ -5333,7 +5314,9 @@ pub def call_argument_operand(
         PlanType.StrRef => return borrow_str_operand(builder, value, span)
         PlanType.ValidationErrorRef =>
             match value:
-                RustOperand.Place(read) => return validation_error_reference(builder, scalar_place(builder, read.place, span)?, span)
+                RustOperand.Place(read) =>
+                    source = scalar_place(builder, read.place, span)?
+                    return validation_error_reference(builder, source, span)
                 _ => return Err("unsupported Body IR validation error reference without a place")
         PlanType.SliceRef(elements) => return borrow_slice_operand(builder, value, elements, false, span)
         PlanType.SliceMutRef(elements) => return borrow_slice_operand(builder, value, elements, true, span)
@@ -6279,11 +6262,12 @@ def checked_aggregate(
             for slot in range(len(elements)):
                 match elements[slot].as_one():
                     Some(value) =>
+                        field_type = builder.enums[owner].variants[variant].fields[slot]
                         ty = native_source_type(
                             builder.nominals,
                             builder.enums,
                             builder.unions,
-                            builder.enums[owner].variants[variant].fields[slot],
+                            field_type,
                             builder.intrinsics,
                         )?
                         if ty == PlanType.String:
@@ -6589,7 +6573,7 @@ def display_value_operand(
     return display_plan_value(builder, operand, span, type_parameter)
 
 
-def value_enum_owner(builder: Builder, index: int) -> Result[int, str]:
+def value_enum_owner(mut builder: Builder, index: int) -> Result[int, str]:
     """Find the value enum whose retained layout is source enum `index`, or -1 for any other enum."""
     if index >= len(builder.enums):
         return Ok(-1)
@@ -6995,7 +6979,7 @@ def borrow_text_operand(mut builder: Builder, value: &RustOperand, span: SourceS
                 None => return Err("unsupported Body IR non-string text constant")
 
 
-def unsupported_text_operand(builder: Builder, ty: PlanType, span: SourceSpan) -> str:
+def unsupported_text_operand(mut builder: Builder, ty: PlanType, span: SourceSpan) -> str:
     """Identify the checked text boundary's actual carrier and source site when it cannot be borrowed as text."""
     site = f"{builder.file}:{span.line}:{span.column} in {builder.name}"
     return f"unsupported Body IR non-string text operand at {site}; type {ty:?}"
@@ -7020,7 +7004,9 @@ def borrow_element_text(
             reference = temporary(builder, PlanType.StringRef, span)
             builder.emit(plan_assign(reference, RvalueKind.Borrow(owner), span))
             return Ok(read_place(reference, false, span))
-        _ => return Err(unsupported_text_operand(builder, operand_type(builder, operand)?, span))
+        _ =>
+            ty = operand_type(builder, operand)?
+            return Err(unsupported_text_operand(builder, ty, span))
 
 
 def lower_text_helper(
@@ -7177,6 +7163,7 @@ def lowered_plan(
     if trace:
         println("lowering: specialize enums")
     context = specialize_enums(nominal_context)?
+    bodies = body_index(context)
     mut has_main = false
     mut declares_main = false
     for body in checked[entry].bodies:
@@ -7233,6 +7220,7 @@ def lowered_plan(
                 println(f"lowering: body {body_module_identity(body)?} {body.name} {body.span.start}")
             function, runtime, pending, synthesized = lower_function(
                 context,
+                bodies,
                 body,
                 unions,
                 sources[index],
@@ -7267,6 +7255,7 @@ def lowered_plan(
         owners.append(str(module.module_id.path()))
     statics = lower_computed_statics(
         context,
+        bodies,
         unions,
         sources,
         files,
@@ -7278,7 +7267,7 @@ def lowered_plan(
     )?
     if trace:
         println("lowering: generic instances")
-    _ = lower_instances(context, instances, unions, sources, files, owners, functions, externals, intrinsics)?
+    _ = lower_instances(context, bodies, instances, unions, sources, files, owners, functions, externals, intrinsics)?
     for declaration in intrinsics:
         enums.append(declaration)
     if kind == "library":
@@ -7331,7 +7320,7 @@ def append_async_entry(
     function: Function,
     in_entry: bool,
     tests: list[str],
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
     mut functions: list[Function],
     mut externals: list[ExternalFunction],
 ) -> Result[None, str]:
@@ -7372,7 +7361,7 @@ def collected_test_entries(context: &BodyIrModule, entry: &BodyIrModule, tests: 
 
 def loaf_exports(
     context: &BodyIrModule,
-    emitted: list[RustBody],
+    mut emitted: list[RustBody],
     declarations: &BodyIrModule,
     templates: list[GenericModelDeclaration],
 ) -> list[PlanExport]:
@@ -7435,7 +7424,7 @@ def is_package_identity(identity: &RustCanonicalSymbolId) -> bool:
         _ => return false
 
 
-def retains_emitted_frame(frames: list[RustBody], candidate: &RustBody) -> bool:
+def retains_emitted_frame(mut frames: list[RustBody], candidate: &RustBody) -> bool:
     """Reuse an identical canonical frame revisited through shared module context; differing facts still face overload validation."""
     if candidate.canonical == None:
         return false
@@ -7447,11 +7436,12 @@ def retains_emitted_frame(frames: list[RustBody], candidate: &RustBody) -> bool:
 
 def lower_computed_statics(
     module: &BodyIrModule,
+    bodies: BodyIndex,
     unions: list[RustType],
     sources: list[str],
     files: list[str],
     owners: list[str],
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
     mut functions: list[Function],
     mut externals: list[ExternalFunction],
     mut instances: list[Instance],
@@ -7476,6 +7466,7 @@ def lower_computed_statics(
                     return Err("unsupported Body IR original callable without source provenance")
                 original, original_runtime, original_pending, original_synthesized = lower_function(
                     module,
+                    bodies,
                     binding.original_body,
                     unions,
                     sources[owner_index],
@@ -7504,6 +7495,7 @@ def lower_computed_statics(
                     return Err("unsupported Body IR computed static without source provenance")
                 function, runtime, pending, synthesized = lower_function(
                     module,
+                    bodies,
                     body,
                     unions,
                     sources[source_index],
@@ -7515,9 +7507,9 @@ def lower_computed_statics(
                 mut initializer = function
                 initializer.name = static_initializer_name(slot)
                 ty = native_source_type(
-                    module.nominal_declarations,
-                    module.enum_declarations,
-                    unions,
+                    list(module.nominal_declarations),
+                    list(module.enum_declarations),
+                    list(unions),
                     declaration.ty,
                     intrinsics,
                 )?
@@ -7540,7 +7532,7 @@ def lower_computed_statics(
                         file = files[index]
                 if file == "":
                     return Err("unsupported Body IR literal dictionary without source provenance")
-                initializer, runtime = lower_literal_dictionary(module, slot, unions, intrinsics, file)?
+                initializer, runtime = lower_literal_dictionary(module, bodies, slot, unions, intrinsics, file)?
                 cells.append(StaticCell(slot=slot, ty=initializer.return_type, initializer=initializer.name, span=initializer.span))
                 functions.append(initializer)
                 _ = merge_externals(externals, runtime)?
@@ -7550,17 +7542,19 @@ def lower_computed_statics(
 
 def lower_literal_dictionary(
     module: &BodyIrModule,
+    bodies: BodyIndex,
     slot: int,
     unions: list[RustType],
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
     file: str,
 ) -> Result[tuple[Function, list[ExternalFunction]], str]:
     """Initialize effect-free dictionary storage directly, without depending on runtime's own persistent cells."""
     declaration = module.static_declarations[slot]
-    ty = native_source_type(module.nominal_declarations, module.enum_declarations, unions, declaration.ty, intrinsics)?
+    ty = native_source_type(list(module.nominal_declarations), list(module.enum_declarations), list(unions), declaration.ty, intrinsics)?
     span = SourceSpan(file=file, line=1, column=1)
     name = static_initializer_name(slot)
     mut builder = Builder(
+        body_indices=bodies,
         locals=[Local(ty=ty, span=span)],
         parameter_count=0,
         blocks=[],
@@ -7582,7 +7576,7 @@ def lower_literal_dictionary(
         scalar_closures=[],
         unproven_closures=[],
         enums=module.enum_declarations,
-        intrinsics=intrinsics,
+        intrinsics=list(intrinsics),
         statics=module.static_declarations,
         value_enums=module.value_enum_declarations,
         local_offset=0,
@@ -7640,6 +7634,7 @@ def body_refusals(
     closed_context = close_async_types(source_context)?
     nominal_context, nominal_instances = specialize_nominals_with_instances(closed_context)?
     context = specialize_enums(nominal_context)?
+    bodies = body_index(context)
     unions = collect_unions(context)
     mut intrinsics = intrinsic_declarations(context, files[entry])?
     checked_functions, checked_runtime, checked_instances = lower_checked_deserialize(
@@ -7670,6 +7665,7 @@ def body_refusals(
                 continue
             match lower_function(
                 context,
+                bodies,
                 body,
                 unions,
                 sources[index],
@@ -7689,10 +7685,10 @@ def body_refusals(
     mut owners: list[str] = []
     for module in checked:
         owners.append(str(module.module_id.path()))
-    match lower_computed_statics(context, unions, sources, files, owners, intrinsics, functions, externals, instances):
+    match lower_computed_statics(context, bodies, unions, sources, files, owners, intrinsics, functions, externals, instances):
         Ok(_cells) => pass
         Err(error) => refusals.append(f"computed static: {error}")
-    match lower_instances(context, instances, unions, sources, files, owners, functions, externals, intrinsics):
+    match lower_instances(context, bodies, instances, unions, sources, files, owners, functions, externals, intrinsics):
         Ok(_lowered) => pass
         Err(error) => refusals.append(f"type-parameter instance: {error}")
     return Ok(refusals)
@@ -7704,14 +7700,14 @@ def append_generator_constructor(
     body: &RustBody,
     source: str,
     file: str,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[None, str]:
     """Retain the canonical lazy constructor beside its separately named producer in either entrypoint."""
     if not body.is_generator():
         return Ok(None)
     ty = native_source_type(
-        module.nominal_declarations,
-        module.enum_declarations,
+        list(module.nominal_declarations),
+        list(module.enum_declarations),
         collect_unions(module),
         body.return_type,
         intrinsics,
@@ -7736,11 +7732,12 @@ def append_generator_constructor(
 
 def retain_generic_decorator_frames(
     module: &BodyIrModule,
+    bodies: BodyIndex,
     instance: Instance,
     unions: list[RustType],
     source: str,
     file: str,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
     mut functions: list[Function],
     mut externals: list[ExternalFunction],
     mut instances: list[Instance],
@@ -7761,6 +7758,7 @@ def retain_generic_decorator_frames(
                 original = instantiate(binding.original_body, instance.arguments, [])?
                 function, runtime, pending, synthesized = lower_function(
                     module,
+                    bodies,
                     original,
                     unions,
                     source,
@@ -7776,6 +7774,7 @@ def retain_generic_decorator_frames(
                 initializer = instantiate(template, instance.arguments, [])?
                 init_function, init_runtime, init_pending, init_synthesized = lower_function(
                     module,
+                    bodies,
                     initializer,
                     unions,
                     source,
@@ -7793,6 +7792,7 @@ def retain_generic_decorator_frames(
 
 def lower_instances(
     module: &BodyIrModule,
+    bodies: BodyIndex,
     mut instances: list[Instance],
     unions: list[RustType],
     sources: list[str],
@@ -7806,7 +7806,7 @@ def lower_instances(
     mut completed: list[Instance] = []
     mut cursor = 0
     while cursor < len(instances):
-        instance = instances[cursor]
+        mut instance = instances[cursor]
         cursor += 1
         if instance_is_retained(instance, completed):
             continue
@@ -7824,6 +7824,7 @@ def lower_instances(
         retain_body_carriers(module, intrinsics, body, files[source_index])?
         retain_generic_decorator_frames(
             module,
+            bodies,
             instance,
             unions,
             sources[source_index],
@@ -7835,6 +7836,7 @@ def lower_instances(
         )?
         function, runtime, pending, synthesized = lower_function(
             module,
+            bodies,
             body,
             unions,
             sources[source_index],
@@ -7851,8 +7853,8 @@ def lower_instances(
     return Ok(None)
 
 
-def instance_is_retained(instance: Instance, completed: list[Instance]) -> bool:
-    """Deduplicate by checked declaration, arguments and execution role; emitted spelling is never authority."""
+def instance_is_retained(mut instance: Instance, mut completed: list[Instance]) -> bool:
+    """Borrow completed requests while comparing checked declarations, arguments and execution roles; duplicate checks never copy their retained bodies, and emitted spelling is never authority."""
     for retained in completed:
         if retained.body.canonical == instance.body.canonical and retained.arguments == instance.arguments and retained.body.locals == instance.body.locals and retained.owned_callable_slots == instance.owned_callable_slots and retained.original_callable == instance.original_callable:
             return true
@@ -7896,7 +7898,7 @@ def merge_externals(mut externals: list[ExternalFunction], additions: list[Exter
     return Ok(None)
 
 
-def entry_result(module: &BodyIrModule, ty: PlanType, intrinsics: list[EnumDeclaration]) -> bool:
+def entry_result(module: &BodyIrModule, ty: PlanType, mut intrinsics: list[EnumDeclaration]) -> bool:
     """
     Report whether a native main's result is a `Result` with a unit success, which Rust's entry point reports itself.
 
@@ -7932,11 +7934,12 @@ def entry_error(module: &BodyIrModule, ty: PlanType) -> bool:
 
 def lower_function(
     module: &BodyIrModule,
+    bodies: BodyIndex,
     body: &RustBody,
     unions: list[RustType],
     source: str,
     file: str,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
     type_arguments: list[RustType],
     role: DecoratorFrame,
 ) -> Result[tuple[Function, list[ExternalFunction], list[Instance], list[Function]], str]:
@@ -7965,7 +7968,7 @@ def lower_function(
             mut native_arguments: list[PlanType] = []
             for argument in type_arguments:
                 native_arguments.append(
-                    native_source_type(module.nominal_declarations, module.enum_declarations, unions, argument, intrinsics)?,
+                    native_source_type(list(module.nominal_declarations), list(module.enum_declarations), list(unions), argument, intrinsics)?,
                 )
             function, externals = delegated_function(
                 selected_name,
@@ -7973,9 +7976,9 @@ def lower_function(
                 native_arguments,
                 frame_parameters(module, body, source, file, intrinsics)?,
                 native_source_type(
-                    module.nominal_declarations,
-                    module.enum_declarations,
-                    unions,
+                    list(module.nominal_declarations),
+                    list(module.enum_declarations),
+                    list(unions),
                     body.return_type,
                     intrinsics,
                 )?,
@@ -7985,7 +7988,7 @@ def lower_function(
         None => pass
     validate_callable_representation(body)?
     mut declared_carrier = PlanType.Unit
-    match native_source_type(module.nominal_declarations, module.enum_declarations, unions, body.return_type, intrinsics):
+    match native_source_type(list(module.nominal_declarations), list(module.enum_declarations), list(unions), body.return_type, intrinsics):
         Ok(carrier) =>
             declared_carrier = carrier
         Err(reason) =>
@@ -8008,6 +8011,7 @@ def lower_function(
     retain_body_unions(selected_unions, body)
     scoped_locals, scope_parents = frame_scopes(body)
     mut builder = Builder(
+        body_indices=bodies,
         locals=frame_locals(module, body, unions, return_type, span, source, file, intrinsics)?,
         parameter_count=len(parameters),
         blocks=[],
@@ -8029,7 +8033,7 @@ def lower_function(
         scalar_closures=[],
         unproven_closures=[],
         enums=module.enum_declarations,
-        intrinsics=intrinsics,
+        intrinsics=list(intrinsics),
         statics=module.static_declarations,
         value_enums=module.value_enum_declarations,
         local_offset=0,
@@ -8138,7 +8142,7 @@ def producer_return_type(
     module: &BodyIrModule,
     body: &RustBody,
     declared: PlanType,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """A generator producer returns unit and holds only owned parameters; ordinary functions retain their declared result."""
     if not body.is_generator():
@@ -8195,7 +8199,7 @@ def frame_locals(
     span: SourceSpan,
     source: str,
     file: str,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[Local], str]:
     """The frame's locals: the return slot first, then Body IR's locals in `LocalId` order."""
     iterators = list_iterator_locals(body.block)
@@ -8249,7 +8253,7 @@ def body_frame_type(
     module: &BodyIrModule,
     body: &RustBody,
     local: &RustLocalDecl,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Admit a checked frame local with its declaration and slot retained in every refusal."""
     match frame_type(module, local, intrinsics):
@@ -8262,7 +8266,7 @@ def frame_parameters(
     body: &RustBody,
     source: str,
     file: str,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[Parameter], str]:
     """The frame's parameters, in declaration order; mutable model and frozen text parameters are refused."""
     mut parameters: list[Parameter] = []
@@ -8913,7 +8917,7 @@ def splice_list_spread(
         _ => return Err("unsupported Body IR named list element")
 
 
-def tuple_spread_place(builder: Builder, source: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:
+def tuple_spread_place(mut builder: Builder, source: &RustOperand, span: SourceSpan) -> Result[Option[Place], str]:
     """Select a spread source that is a whole tuple local; every other source splices as a list."""
     match source:
         RustOperand.Place(read) =>
@@ -9657,7 +9661,7 @@ def lower_list_builtin(
     return list_length(builder, reference, destination, span)
 
 
-def indexes_nested_list(builder: Builder, arguments: &list[RustArgumentElement]) -> bool:
+def indexes_nested_list(mut builder: Builder, arguments: &list[RustArgumentElement]) -> bool:
     """Recognize one index into a local list of lists, such as `rows[1]`."""
     match arguments[0].as_one():
         Some(RustOperand.Place(read)) =>
@@ -11686,7 +11690,7 @@ pub def computed_static_root(mut builder: Builder, value: &RustPlace, span: Sour
         None => return Ok(None)
 
 
-def computed_static_type(builder: Builder, value: &RustPlace, global: &RustGlobalPlace) -> Result[PlanType, str]:
+def computed_static_type(mut builder: Builder, value: &RustPlace, global: &RustGlobalPlace) -> Result[PlanType, str]:
     """The checked carrier a computed static place selects, without reading the static."""
     mut ty = native_source_type(builder.nominals, builder.enums, builder.unions, global.ty, builder.intrinsics)?
     for projection in value.projection:
@@ -11710,7 +11714,7 @@ def computed_static_type(builder: Builder, value: &RustPlace, global: &RustGloba
     return Ok(ty)
 
 
-def snapshot_projection(builder: Builder, value: &RustPlace, snapshot: Place, span: SourceSpan) -> Result[Place, str]:
+def snapshot_projection(mut builder: Builder, value: &RustPlace, snapshot: Place, span: SourceSpan) -> Result[Place, str]:
     """Select a static place's checked field and payload path inside its loaded copy."""
     fields = field_path(
         builder.nominals,
@@ -12025,12 +12029,13 @@ pub def boundary_plan_operand(
             _ => pass
     operand = carrier_callable_operand(builder, operand, target, span)?
     operand = option_payload_operand(builder, operand, target.clone(), span)?
+    actual_source = operand_type(builder, operand)?
     operation = carrier_injection(
         builder.nominals,
         builder.enums,
         builder.unions,
         operand,
-        operand_type(builder, operand)?,
+        actual_source,
         target,
         builder.intrinsics,
     )?
@@ -12200,7 +12205,7 @@ def lower_union_isinstance(
 
 
 def isinstance_source_type(
-    builder: Builder,
+    mut builder: Builder,
     value: &RustOperand,
     checked: &RustType,
     span: SourceSpan,
@@ -12215,7 +12220,7 @@ def isinstance_source_type(
     return native_source_type(builder.nominals, builder.enums, builder.unions, checked, builder.intrinsics)
 
 
-def isinstance_place(builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+def isinstance_place(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
     """The storage whose tag `isinstance` reads in place."""
     match value:
         RustOperand.Place(read) => return scalar_place(builder, read.place, span)
@@ -12398,7 +12403,7 @@ def lower_sequence_builtin(
     return Ok(None)
 
 
-def require_sort_order(builder: Builder, element: PlanType) -> Result[None, str]:
+def require_sort_order(mut builder: Builder, element: PlanType) -> Result[None, str]:
     """
     Require retained native ordering for new model and compound sorting shapes.
 
@@ -12893,7 +12898,7 @@ def element_copy(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> 
 
 
 def retained_reference_value(
-    builder: Builder,
+    mut builder: Builder,
     value: &RustOperand,
     expected: PlanType,
     span: SourceSpan,

@@ -252,7 +252,7 @@ def flat_map_adapter(
     return Ok(None)
 
 
-def expansion_result(builder: Builder, expand: Operand) -> Result[PlanType, str]:
+def expansion_result(mut builder: Builder, expand: Operand) -> Result[PlanType, str]:
     """Read the retained callback result without assuming every flat_map expansion is a list."""
     match value_type(builder, expand)?:
         PlanType.FunctionPointer(signature) =>
@@ -292,7 +292,7 @@ def text_callable_adapter(
     return Ok(None)
 
 
-def expands_to_generators(builder: Builder, expand: Operand, result: PlanType) -> Result[bool, str]:
+def expands_to_generators(mut builder: Builder, expand: Operand, result: PlanType) -> Result[bool, str]:
     """Report whether a `flat_map` function value returns the result's own generator type rather than a list."""
     match value_type(builder, expand)?:
         PlanType.FunctionPointer(signature) => return Ok(len(signature) == 2 and signature[1] == result)
@@ -341,7 +341,7 @@ pub def zip_generators(
     return Ok(None)
 
 
-def pair_output(builder: Builder, output: Place, left: TupleElement, right: TupleElement) -> Result[PlanType, str]:
+def pair_output(mut builder: Builder, output: Place, left: TupleElement, right: TupleElement) -> Result[PlanType, str]:
     """Require the generator of pairs the frame laid out for a pair adapter's checked destination."""
     result = PlanType.Generator(ListLeaf.Tuple([left, right]), 0)
     if builder.locals[output.local].ty != result:
@@ -359,7 +359,7 @@ def pair_component(element: PlanType) -> Result[TupleElement, str]:
         _ => return Err("unsupported Body IR generator pair component outside scalars and text")
 
 
-def owned_generator(builder: Builder, value: Operand) -> Result[PlanType, str]:
+def owned_generator(mut builder: Builder, value: Operand) -> Result[PlanType, str]:
     """Require a moved, owned generator argument; a borrowed one would be read twice."""
     ty = value_type(builder, value)?
     match value.kind:

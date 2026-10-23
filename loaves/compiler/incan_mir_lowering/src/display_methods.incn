@@ -10,7 +10,7 @@ from layout_types import native_source_type
 
 pub def display_functions(
     module: &BodyIrModule,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[DisplayFunction], str]:
     """Resolve only the retained selected identity with its exact shared receiver and string-returning signature."""
     mut functions: list[DisplayFunction] = []
@@ -43,8 +43,8 @@ pub def display_functions(
                     if len(delegation.parameters) != 1 or not string_result(delegation.return_type):
                         continue
                     receiver = native_source_type(
-                        module.nominal_declarations,
-                        module.enum_declarations,
+                        list(module.nominal_declarations),
+                        list(module.enum_declarations),
                         [],
                         delegation.parameters[0],
                         intrinsics,

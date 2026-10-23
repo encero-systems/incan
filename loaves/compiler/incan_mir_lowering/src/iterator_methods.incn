@@ -20,7 +20,7 @@ from decls import library_item
 pub def iterator_methods(
     module: &BodyIrModule,
     owner: int,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[Option[IteratorMethods], str]:
     """Authorize only a concrete source adopter actually retained as an SDK storage argument; native bounds remain checked."""
     declaration = module.nominal_declarations[owner]
@@ -82,8 +82,8 @@ pub def iterator_methods(
                 selected = Some(
                     IteratorMethods(
                         item=native_source_type(
-                            module.nominal_declarations,
-                            module.enum_declarations,
+                            list(module.nominal_declarations),
+                            list(module.enum_declarations),
                             collect_unions(module),
                             arguments[0],
                             intrinsics,
@@ -110,7 +110,7 @@ def poll_abi(
     body: &Body,
     owner: int,
     item: &RustType,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[bool, str]:
     """Require the unique concrete mutable receiver, exact Option[item] result, and a fully retained poll body."""
     if len(body.type_parameters) != 0 or len(body.params) != 1:

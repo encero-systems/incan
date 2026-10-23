@@ -14,7 +14,7 @@ from collections import is_collection, collection_arguments
 from model_lists import structural_prefix
 
 
-pub def is_element_place(builder: Builder, source: &RustPlace) -> Result[bool, str]:
+pub def is_element_place(mut builder: Builder, source: &RustPlace) -> Result[bool, str]:
     """
     Whether a local place selects a collection element or text slice rather than storage a native place can name.
 
@@ -38,12 +38,12 @@ pub def is_element_place(builder: Builder, source: &RustPlace) -> Result[bool, s
         None => return Ok(false)
 
 
-pub def element_place_type(builder: Builder, source: &RustPlace) -> Result[PlanType, str]:
+pub def element_place_type(mut builder: Builder, source: &RustPlace) -> Result[PlanType, str]:
     """Follow an element place's projections to the type of the value its read materializes, emitting nothing."""
     return element_prefix_type(builder, source, len(source.projection))
 
 
-pub def element_prefix_type(builder: Builder, source: &RustPlace, count: int) -> Result[PlanType, str]:
+pub def element_prefix_type(mut builder: Builder, source: &RustPlace, count: int) -> Result[PlanType, str]:
     """Resolve a checked element prefix once, without reading or borrowing its storage."""
     if count < 0 or count > len(source.projection):
         return Err("invalid Body IR element type prefix length")
@@ -69,7 +69,7 @@ pub def element_prefix_type(builder: Builder, source: &RustPlace, count: int) ->
             return Ok(ty)
 
 
-def projected_type(builder: Builder, ty: PlanType, projection: &PlaceElem) -> Result[PlanType, str]:
+def projected_type(mut builder: Builder, ty: PlanType, projection: &PlaceElem) -> Result[PlanType, str]:
     """Select one step's carrier: an indexed Unicode scalar string, collection element, slice, field or tuple element."""
     match projection:
         PlaceElem.Index(_index) =>

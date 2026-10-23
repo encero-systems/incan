@@ -14,7 +14,7 @@ from layout_types import native_source_type
 
 
 pub def owned_callable_slots(
-    builder: Builder,
+    mut builder: Builder,
     original: &RustBody,
     closed: &RustBody,
     arguments: &list[RustArgument],
@@ -35,7 +35,7 @@ pub def owned_callable_slots(
 
 
 def owned_slots_for_bindings(
-    builder: Builder,
+    mut builder: Builder,
     original: &RustBody,
     closed: &RustBody,
     arguments: &list[RustArgument],
@@ -74,7 +74,7 @@ def owned_slots_for_bindings(
     return Ok(owned)
 
 
-def argument_storage(builder: Builder, argument: &RustArgument) -> Result[Option[PlanType], str]:
+def argument_storage(mut builder: Builder, argument: &RustArgument) -> Result[Option[PlanType], str]:
     """Inspect a proven frame local without reading it, executing an index, or manufacturing a projected field ABI."""
     match argument.as_one():
         Some(RustOperand.Place(read)) =>

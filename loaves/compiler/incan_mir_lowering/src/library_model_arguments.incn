@@ -18,7 +18,7 @@ pub def library_model_arguments(
     module: &BodyIrModule,
     declaration: &NominalDeclaration,
     instances: list[NominalInstance],
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[PlanType], str]:
     """Transport a retained instance's actual arguments, without decoding names or inferring them from fields."""
     if len(declaration.type_parameters) == 0:
@@ -40,13 +40,13 @@ pub def library_model_arguments(
     match selected:
         None => return Err("unsupported Body IR SDK model without checked instance arguments")
         Some(instance) =>
-            unions = collect_unions(module)
+            mut unions = collect_unions(module)
             mut arguments: list[PlanType] = []
             for argument in instance.arguments:
                 arguments.append(
                     native_source_type(
-                        module.nominal_declarations,
-                        module.enum_declarations,
+                        list(module.nominal_declarations),
+                        list(module.enum_declarations),
                         unions,
                         argument,
                         intrinsics,

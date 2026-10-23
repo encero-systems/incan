@@ -1,0 +1,49 @@
+"""Program-local positions of bodies selected by complete checker identity."""
+
+from rust::std::collections import BTreeMap
+from rust::std::sync import Arc
+from rust::incan_semantics_core import CanonicalSymbolId
+from rust::incan_semantics_core::body_ir import BodyIrModule
+
+
+pub model BodyIndex:
+    """Share immutable candidate positions across ordinary, instantiated, and lifted frames; duplicates retain source order."""
+
+    pub entries: Arc[BTreeMap[CanonicalSymbolId, list[int]]]
+
+    def candidates(self, identity: &CanonicalSymbolId) -> list[int]:
+        """Return only the selected identity's positions, leaving ambiguity and receiver admission to each caller."""
+        mut positions: list[int] = []
+        match self.entries.get(identity):
+            Some(indices) =>
+                for index in indices:
+                    positions.append(int(index.clone()))
+            None => pass
+        return positions
+
+    def unique(self, identity: &CanonicalSymbolId) -> Option[int]:
+        """Select a position only when exactly one body carries the complete checker identity."""
+        match self.entries.get(identity):
+            Some(indices) =>
+                if len(indices) == 1:
+                    return Some(int(indices[0]))
+            None => pass
+        return None
+
+
+pub def body_index(module: &BodyIrModule) -> BodyIndex:
+    """Read bodies by reference once after specialization, retaining canonical keys without copying executable statements."""
+    mut entries: BTreeMap[CanonicalSymbolId, list[int]] = BTreeMap.new()
+    mut index = 0
+    for body in module.bodies:
+        match body.canonical:
+            Some(identity) => entries.entry(identity.clone()).or_insert([]).push(index)
+            None => pass
+        index += 1
+    return BodyIndex(entries=Arc.new(entries))
+
+
+pub def empty_body_index() -> BodyIndex:
+    """Provide an empty lookup for synthetic external-only frames that cannot select source bodies."""
+    entries: BTreeMap[CanonicalSymbolId, list[int]] = BTreeMap.new()
+    return BodyIndex(entries=Arc.new(entries))

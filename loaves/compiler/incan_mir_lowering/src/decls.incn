@@ -98,7 +98,7 @@ pub def publish_local_layouts(mut models: list[ModelDeclaration], mut enums: lis
 pub def lower_model_declarations(
     module: &BodyIrModule,
     file: str,
-    intrinsics: list[EnumDeclaration] = [],
+    mut intrinsics: list[EnumDeclaration] = [],
     nominal_instances: list[NominalInstance] = [],
     publish_generics: bool = false,
 ) -> Result[list[ModelDeclaration], str]:
@@ -108,7 +108,7 @@ pub def lower_model_declarations(
     A derived Default is built at each `default()` call from the declared field defaults, so the native struct never
     derives Default: a Rust derive would give every field its zero value instead.
     """
-    unions = collect_unions(module)
+    mut unions = collect_unions(module)
     reached = serde_propagation(module)?
     mut models: list[ModelDeclaration] = []
     comparisons = comparison_functions(module, intrinsics)?
@@ -146,8 +146,8 @@ pub def lower_model_declarations(
                 for argument in arguments:
                     library_arguments.append(
                         native_source_type(
-                            module.nominal_declarations,
-                            module.enum_declarations,
+                            list(module.nominal_declarations),
+                            list(module.enum_declarations),
                             unions,
                             argument,
                             intrinsics,
@@ -168,8 +168,8 @@ pub def lower_model_declarations(
             for slot in range(len(declaration.fields)):
                 mut ty = PlanType.Unit
                 match native_source_type(
-                    module.nominal_declarations,
-                    module.enum_declarations,
+                    list(module.nominal_declarations),
+                    list(module.enum_declarations),
                     unions,
                     declaration.field_types[slot],
                     intrinsics,
@@ -325,7 +325,7 @@ def library_fields(
     module: &BodyIrModule,
     declaration: &NominalDeclaration,
     file: str,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> list[Parameter]:
     """
     A stdlib layout's fields when the plan can carry every one of them, otherwise none.
@@ -334,12 +334,12 @@ def library_fields(
     the plan cannot carry refuses while lowering; the driver's plan validation rejects any projection into an opaque
     layout.
     """
-    unions = collect_unions(module)
+    mut unions = collect_unions(module)
     mut fields: list[Parameter] = []
     for slot in range(len(declaration.fields)):
         match native_source_type(
-            module.nominal_declarations,
-            module.enum_declarations,
+            list(module.nominal_declarations),
+            list(module.enum_declarations),
             unions,
             declaration.field_types[slot],
             intrinsics,

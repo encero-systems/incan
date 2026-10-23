@@ -16,7 +16,7 @@ from models import model_place, place_type
 
 
 pub def value_variant(
-    layouts: list[EnumDeclaration],
+    mut layouts: list[EnumDeclaration],
     declarations: list[ValueEnumDeclaration],
     target: &ValueEnumVariantTarget,
 ) -> Result[tuple[int, int], str]:
@@ -144,14 +144,19 @@ def receiver_layout(
     """Read the enum carrier from the receiver place; other carriers keep their ordinary method path."""
     match argument.as_one():
         Some(RustOperand.Place(read)) =>
+            mut declarations = module.nominal_declarations
+            mut enums = module.enum_declarations
+            mut frame_locals = locals
+            mut union_layouts = unions
+            mut intrinsic_layouts = intrinsics
             source = model_place(
-                module.nominal_declarations,
-                locals,
+                declarations,
+                frame_locals,
                 read.place,
                 span,
-                module.enum_declarations,
-                unions,
-                intrinsics,
+                enums,
+                union_layouts,
+                intrinsic_layouts,
             )?
             match place_type(locals, source):
                 PlanType.Enum(index, _name) => return Ok(index)

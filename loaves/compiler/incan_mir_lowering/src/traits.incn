@@ -22,6 +22,7 @@ from rust::incan_semantics_core::body_ir import (
     NominalDeclaration,
 )
 from pub::incan_mir_plan import Local, SourceSpan, PlanType, EnumDeclaration
+from body_index import BodyIndex
 from classes import receiver_mode, frame_type
 from models import model_type, model_place, place_type
 from enums import enum_type
@@ -94,7 +95,7 @@ def append_owners(mut owners: list[NominalDeclaration], module: &BodyIrModule) -
 def specialize_for(
     module: &BodyIrModule,
     implementations: list[TraitImplementation],
-    owners: list[NominalDeclaration],
+    mut owners: list[NominalDeclaration],
 ) -> Result[BodyIrModule, str]:
     """Replace each open default of the module by one instance per adopter whose implementation it is."""
     mut result = module.clone()
@@ -225,7 +226,7 @@ def tuple_type_of(elements: list[RustType]) -> RustType:
     return RustType.Tuple(elements)
 
 
-def concrete_self_type(owner: &CanonicalSymbolId, owners: list[NominalDeclaration]) -> Result[RustType, str]:
+def concrete_self_type(owner: &CanonicalSymbolId, mut owners: list[NominalDeclaration]) -> Result[RustType, str]:
     """
     Retain the implementing owner's own parameters in Self until checked nominal instance scheduling closes them.
 
@@ -253,7 +254,7 @@ pub def receiver_fills_slot(
     argument: &ArgumentElement,
     span: SourceSpan,
     unions: list[RustType],
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> bool:
     """
     Whether a retained implementation record fills the selected slot for the receiver's concrete nominal.
@@ -280,7 +281,7 @@ pub def receiver_fills_source_slot(
     argument: &ArgumentElement,
     span: SourceSpan,
     unions: list[RustType],
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> bool:
     """Keep a checked source adopter on its own slot even when its required published default is unavailable."""
     match receiver_owner(module, locals, argument, span, unions, intrinsics):
@@ -306,7 +307,7 @@ pub def receiver_fills_retained_slot(
     argument: &ArgumentElement,
     span: SourceSpan,
     unions: list[RustType],
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> bool:
     """Prefer an adopter's checked implementation only when its executable body is retained in this program."""
     match receiver_owner(module, locals, argument, span, unions, intrinsics):
@@ -326,16 +327,17 @@ pub def receiver_fills_retained_slot(
 
 pub def method_index(
     module: &BodyIrModule,
+    bodies: BodyIndex,
     target: &MethodTarget,
     locals: list[Local],
     argument: &ArgumentElement,
     span: SourceSpan,
     unions: list[RustType],
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[int, str]:
     """Select the checked implementation using the concrete receiver's retained layout identity."""
     owner = receiver_owner(module, locals, argument, span, unions, intrinsics)?
-    return owner_method_index(module, target, owner, intrinsics)
+    return owner_method_index(module, bodies, target, owner, intrinsics)
 
 
 def owner_method_identity(
@@ -379,15 +381,18 @@ def owner_method_identity(
 
 pub def owner_method_index(
     module: &BodyIrModule,
+    bodies: BodyIndex,
     target: &MethodTarget,
     owner: PlanType,
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[int, str]:
     """Find the selected body's exact receiver frame; a compiled Loaf implementation uses its callable record instead."""
     identity = owner_identity(module, owner)?
-    canonical = Some(owner_method_identity(module, target, owner)?)
+    selected_identity = owner_method_identity(module, target, owner)?
+    canonical = Some(selected_identity)
+    candidate_indices = bodies.candidates(selected_identity)
     mut selected_index = -1
-    for index in range(len(module.bodies)):
+    for index in candidate_indices:
         body = module.bodies[index]
         if body.canonical != canonical or len(body.params) == 0:
             continue
@@ -408,7 +413,8 @@ pub def owner_method_index(
     # Diagnose only the existing refusal path; no candidate or receiver check above changes.
     mut candidate_count = 0
     mut candidates = ""
-    for body in module.bodies:
+    for index in candidate_indices:
+        body = module.bodies[index]
         if body.canonical != canonical:
             continue
         candidate_count += 1
@@ -434,7 +440,7 @@ pub def receiver_method_target(
     argument: &ArgumentElement,
     span: SourceSpan,
     unions: list[RustType],
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[MethodTarget, str]:
     """Read an implementation target from a retained concrete receiver; nonnominal calls keep their original target."""
     match receiver_owner(module, locals, argument, span, unions, intrinsics):
@@ -487,20 +493,24 @@ def receiver_owner(
     argument: &ArgumentElement,
     span: SourceSpan,
     unions: list[RustType],
-    intrinsics: list[EnumDeclaration],
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Read the concrete model or source enum receiver from its native place, reporting the refused frame carrier."""
     match argument.as_one():
         Some(value) =>
             match value:
                 RustOperand.Place(read) =>
+                    mut declarations = module.nominal_declarations
+                    mut enums = module.enum_declarations
+                    mut frame_locals = locals
+                    mut union_layouts = unions
                     place = model_place(
-                        module.nominal_declarations,
-                        locals,
+                        declarations,
+                        frame_locals,
                         read.place,
                         span,
-                        module.enum_declarations,
-                        unions,
+                        enums,
+                        union_layouts,
                         intrinsics,
                     )?
                     actual = place_type(locals, place)
@@ -519,10 +529,10 @@ pub def validate_static_receiver(module: &BodyIrModule, target: &NamedCallableTa
     """Require a concrete retained model or source enum for associated calls, never execute a bare trait's default."""
     match target.receiver_type:
         Some(ty) =>
-            match enum_type(module.enum_declarations, ty):
+            match enum_type(list(module.enum_declarations), ty):
                 Some(_owner) => return Ok(None)
                 None => pass
-            match model_type(module.nominal_declarations, ty)?:
+            match model_type(list(module.nominal_declarations), ty)?:
                 PlanType.Model(_owner, _name) => return Ok(None)
                 _ => return Err("unsupported Body IR nonnominal static receiver")
         None => return Ok(None)
