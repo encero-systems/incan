@@ -3,7 +3,7 @@
 use super::TypeChecker;
 use crate::ast::{CallArg, Expr, Literal, ParamKind, Span, Spanned, Type};
 use crate::diagnostics::errors::{self, TypeArgumentOrigin};
-use crate::resolved_type_subst::type_param_subst_map_call_site;
+use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map_call_site};
 use crate::symbols::{CallableParam, FieldInfo, ResolvedType, SymbolKind, TypeInfo, ValueEnumInfo};
 use crate::typechecker::helpers::option_ty;
 use crate::typechecker::type_info::ConstructorFieldBinding;
@@ -276,7 +276,32 @@ impl TypeChecker {
                 .inferred_constructor_types
                 .insert((call_span.start, call_span.end), result.clone());
         }
+        if self.errors.len() == errors_before_fields {
+            let owner = self.named_type_reference_identity(type_name);
+            if let Some(templates) = self.constructor_field_templates(type_name, call_span) {
+                for ((expr, expected), template) in field_arguments.iter().zip(&templates) {
+                    let expected = substitute_resolved_type(expected, &type_bindings);
+                    self.retain_contextual_literal_type(expr, &expected, owner.as_ref(), Some(template));
+                }
+            }
+        }
         result
+    }
+
+    /// Read original field templates through the constructor's checked argument slots, before explicit type
+    /// arguments can erase which leaves belong to the declaration and which belong to its caller.
+    fn constructor_field_templates(&self, owner: &str, span: Span) -> Option<Vec<ResolvedType>> {
+        let (fields, order) = match self.lookup_type_info(owner)? {
+            TypeInfo::Model(info) => (&info.fields, &info.field_order),
+            TypeInfo::Class(info) => (&info.fields, &info.field_order),
+            _ => return None,
+        };
+        self.type_info
+            .constructor_field_binding(span)?
+            .argument_slots
+            .iter()
+            .map(|slot| Some(fields.get(order.get(*slot)?)?.ty.clone()))
+            .collect()
     }
 
     /// Retain the checked constructor owner for a field argument without exporting its private storage identity.

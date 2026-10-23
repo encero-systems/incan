@@ -1583,6 +1583,7 @@ mod validate_rust_function_call_tests {
         Ok(())
     }
 
+    /// A method's mutable-reference parameter rejects an immutable binding without recording a coercion.
     #[test]
     fn rust_method_mutable_reference_rejects_an_immutable_binding() {
         let span = Span::new(10, 16);
@@ -1647,6 +1648,7 @@ mod validate_rust_function_call_tests {
         );
     }
 
+    /// A parameterless Rust function refuses an extra argument with an arity diagnostic.
     #[test]
     fn zero_parameter_rust_sig_rejects_extra_arguments() {
         let mut checker = TypeChecker::new();
@@ -1676,6 +1678,7 @@ mod validate_rust_function_call_tests {
         );
     }
 
+    /// A callback taking owned values cannot satisfy a Rust FnMut bound requiring borrowed parameters.
     #[test]
     fn rust_callable_bound_rejects_by_value_function_for_borrowed_fnmut() {
         let mut checker = TypeChecker::new();
@@ -1722,6 +1725,7 @@ mod validate_rust_function_call_tests {
         );
     }
 
+    /// A callback with exactly the inspected borrowed parameters satisfies its Rust FnMut bound.
     #[test]
     fn rust_callable_bound_accepts_exact_borrowed_fnmut_function() {
         let mut checker = TypeChecker::new();
@@ -1768,6 +1772,7 @@ mod validate_rust_function_call_tests {
         );
     }
 
+    /// A generic callback placeholder remains admissible while Rust supplies its concrete callable implementation.
     #[test]
     fn rust_callable_bound_accepts_generic_placeholder_callback_arg() {
         let mut checker = TypeChecker::new();
@@ -1813,6 +1818,7 @@ mod validate_rust_function_call_tests {
         );
     }
 
+    /// A parameterless Rust function accepts an empty argument list.
     #[test]
     fn zero_parameter_rust_sig_allows_no_arguments() {
         let mut checker = TypeChecker::new();
@@ -1836,6 +1842,7 @@ mod validate_rust_function_call_tests {
         );
     }
 
+    /// Missing Rust arguments produce an arity error before parameter-wise validation can truncate the list.
     #[test]
     fn too_few_arguments_reports_arity_before_param_zip() {
         let mut checker = TypeChecker::new();
@@ -1873,6 +1880,7 @@ mod validate_rust_function_call_tests {
         );
     }
 
+    /// Keyword arguments bind by inspected Rust parameter names even when written in another order.
     #[test]
     fn rust_function_call_binds_keyword_args_by_inspected_param_name() {
         let mut checker = TypeChecker::new();
@@ -1974,6 +1982,7 @@ mod validate_rust_function_call_tests {
         assert!(!checker.rust_arg_matches_boundary(&arg_ty, "Vec<i64>"));
     }
 
+    /// A Rust receiver does not satisfy a missing required value parameter.
     #[test]
     fn rust_method_call_rejects_missing_required_arguments_after_receiver() {
         let mut checker = TypeChecker::new();
@@ -2008,6 +2017,7 @@ mod validate_rust_function_call_tests {
         );
     }
 
+    /// Rust method validation checks value parameter types after excluding the receiver.
     #[test]
     fn rust_method_call_rejects_type_mismatch_after_receiver() {
         let mut checker = TypeChecker::new();
@@ -2046,6 +2056,7 @@ mod validate_rust_function_call_tests {
         );
     }
 
+    /// A lookup-preserving method accepts a string probe for an inspected String reference without coercing it.
     #[test]
     fn rust_lookup_preserving_method_accepts_string_probe_for_ref_string_param() {
         let mut checker = TypeChecker::new();
@@ -2093,6 +2104,7 @@ mod validate_rust_function_call_tests {
         );
     }
 
+    /// A lookup-preserving generic reference parameter keeps a string probe's original argument shape.
     #[test]
     fn rust_lookup_preserving_method_accepts_string_probe_for_generic_ref_param() {
         let mut checker = TypeChecker::new();
@@ -2171,6 +2183,7 @@ mod validate_rust_function_call_tests {
         );
     }
 
+    /// A string value is accepted at a Rust function's borrowed String boundary.
     #[test]
     fn rust_function_call_accepts_string_for_borrowed_string_param() {
         let mut checker = TypeChecker::new();
@@ -2218,6 +2231,7 @@ mod validate_rust_function_call_tests {
         );
     }
 
+    /// A string value is accepted at a Rust function's borrowed str boundary.
     #[test]
     fn rust_function_call_accepts_string_for_borrowed_str_param() {
         let mut checker = TypeChecker::new();
@@ -2257,6 +2271,7 @@ mod validate_rust_function_call_tests {
         );
     }
 
+    /// Bytes satisfy an inspected borrowed byte-vector parameter.
     #[test]
     fn rust_function_call_accepts_bytes_for_borrowed_vec_param() {
         let mut checker = TypeChecker::new();
@@ -2296,6 +2311,7 @@ mod validate_rust_function_call_tests {
         );
     }
 
+    /// A concrete borrowed Rust path keeps its nominal type instead of becoming an unknown-reference diagnostic.
     #[test]
     fn rust_function_call_accepts_concrete_borrowed_rust_path_param_without_ref_unknown_diagnostic() {
         let mut checker = TypeChecker::new();
@@ -2335,6 +2351,7 @@ mod validate_rust_function_call_tests {
         );
     }
 
+    /// An accepted rusttype function argument records the interop conversion required by lowering.
     #[test]
     fn validate_rust_function_call_records_interop_coercion_for_rusttype_target() {
         let mut checker = TypeChecker::new();
@@ -2403,6 +2420,7 @@ mod validate_rust_function_call_tests {
         assert!(checker.rust_arg_matches_boundary(&ResolvedType::Named("Payload".to_string()), "&TValue",));
     }
 
+    /// A by-value generic Rust method parameter retains its generic callable shape for lowering.
     #[test]
     fn validate_rust_method_call_records_by_value_generic_param_shape() {
         let mut checker = TypeChecker::new();
@@ -2449,6 +2467,7 @@ mod validate_rust_function_call_tests {
         );
     }
 
+    /// An inspected owned String method parameter remains by value in the recorded callable signature.
     #[test]
     fn validate_rust_method_call_records_owned_string_param_shape() {
         let mut checker = TypeChecker::new();
@@ -2487,6 +2506,7 @@ mod validate_rust_function_call_tests {
         );
     }
 
+    /// A by-value impl Trait method parameter retains its placeholder shape without adding a borrow coercion.
     #[test]
     fn validate_rust_method_call_records_by_value_impl_trait_param_shape() {
         let mut checker = TypeChecker::new();
@@ -2538,6 +2558,7 @@ mod validate_rust_function_call_tests {
         );
     }
 
+    /// A borrowed-slice callback preserves the exact inspected Rust parameter displays for lowering.
     #[test]
     fn validate_rust_method_call_records_borrowed_slice_callback_displays_issue835() {
         let mut checker = TypeChecker::new();
@@ -2590,6 +2611,7 @@ mod validate_rust_function_call_tests {
         );
     }
 
+    /// An accepted rusttype method argument records the same interop conversion as a function argument.
     #[test]
     fn validate_rust_method_call_records_interop_coercion_for_rusttype_target() {
         let mut checker = TypeChecker::new();

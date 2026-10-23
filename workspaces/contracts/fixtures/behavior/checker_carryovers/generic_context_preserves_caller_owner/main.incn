@@ -1,0 +1,16 @@
+# behavior: an empty generic field retains the caller's type argument even when the declaring module defines the same type name
+# expect-stdout:
+#   0
+
+from records import Parcel
+
+
+model EvidenceId:
+    """The caller's identifier, selected as a generic argument."""
+    text: str
+
+
+def main() -> None:
+    """Keep the generic argument independent of the field declaration's namespace."""
+    parcel = Parcel[EvidenceId](items=[])
+    println(len(parcel.items))

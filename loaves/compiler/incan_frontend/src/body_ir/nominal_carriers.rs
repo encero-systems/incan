@@ -711,10 +711,8 @@ fn retain_selected_returns(
 
 /// Qualify only concrete leaves that agree with the selected declaration's result; type parameters grant no carrier.
 ///
-/// A leaf agrees when it still carries the declared spelling, or when a construction-time pass already qualified that
-/// same spelling through the caller's own name table. Checked types name nominals by spelling alone, so a caller that
-/// declares its own `EvidenceId` would otherwise keep its local owner on an empty list or `None` passed to a foreign
-/// `list[EvidenceId]` field. The selected declaration is the checked authority for the whole temporary it fills.
+/// Nominal leaves must carry the exact selected canonical identity. A missing owner grants no authority, and a
+/// declaration with the same name never authorizes replacing another owner.
 fn retain_declared_return_type(
     ty: &mut IncanType,
     declared: &IncanType,
@@ -727,10 +725,7 @@ fn retain_declared_return_type(
             let Some(key) = nominal_carrier_key(identity) else {
                 return;
             };
-            let same_spelling = destination.get(name).is_some_and(|current| {
-                current.declaration_name == identity.declaration_name && current.kind == identity.kind
-            });
-            if *name == *declared || *name == identity.declaration_name || same_spelling {
+            if destination.get(name) == Some(identity) {
                 *name = key.clone();
                 destination.insert(key, identity.clone());
             }

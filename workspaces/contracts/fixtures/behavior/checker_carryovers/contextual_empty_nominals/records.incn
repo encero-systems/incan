@@ -1,0 +1,20 @@
+pub model EvidenceId:
+    """An identifier owned by this module."""
+    pub text: str
+
+
+pub model Decision:
+    """Collection and optional fields whose leaf owner belongs to this module."""
+    pub evidence_ids: list[EvidenceId]
+    pub first: Option[EvidenceId]
+    pub by_name: Dict[str, EvidenceId]
+
+
+pub def count(values: list[EvidenceId], first: Option[EvidenceId], by_name: Dict[str, EvidenceId]) -> int:
+    """Count the collection values without requiring a populated identifier."""
+    return len(values) + len(by_name)
+
+
+pub def make() -> EvidenceId:
+    """Return a populated identifier owned by this module."""
+    return EvidenceId(text="foreign")

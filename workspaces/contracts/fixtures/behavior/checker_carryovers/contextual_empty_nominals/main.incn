@@ -1,0 +1,28 @@
+# behavior: empty fields and arguments retain the declaring module's nominal owners despite same-named caller types
+# expect-stdout:
+#   0
+#   true
+#   0
+#   0
+#   local
+#   1
+
+from records import Decision, count, make
+
+
+model EvidenceId:
+    """An identifier owned by the caller."""
+    text: str
+
+
+def main() -> None:
+    """Use empty values in fields and parameters without importing their nominal leaves."""
+    decision = Decision(evidence_ids=[], first=None, by_name={})
+    println(len(decision.evidence_ids))
+    println(decision.first is None)
+    println(len(decision.by_name))
+    println(count([], None, {}))
+    own = EvidenceId(text="local")
+    println(own.text)
+    populated = Decision(evidence_ids=[make()], first=None, by_name={})
+    println(len(populated.evidence_ids))

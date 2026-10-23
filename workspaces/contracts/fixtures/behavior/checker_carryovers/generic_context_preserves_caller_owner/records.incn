@@ -1,0 +1,8 @@
+pub model EvidenceId:
+    """A separate identifier that must not replace a caller's generic argument."""
+    pub text: str
+
+
+pub model Parcel[T]:
+    """Store items of the caller-selected type."""
+    pub items: list[T]

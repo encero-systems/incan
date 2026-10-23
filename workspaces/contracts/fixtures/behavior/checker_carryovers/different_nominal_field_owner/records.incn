@@ -1,0 +1,8 @@
+pub model EvidenceId:
+    """The element declaration accepted by this module's field."""
+    pub text: str
+
+
+pub model Decision:
+    """A collection of identifiers owned by this module."""
+    pub evidence_ids: list[EvidenceId]
