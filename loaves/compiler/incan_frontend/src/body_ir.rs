@@ -964,7 +964,7 @@ const fn hir_span(span: ast::Span) -> HirSourceSpan {
 /// Per-function lowering state: fresh local/scope allocation, current name bindings, and accumulated body-level
 /// facts (runtime requirements, panic facts, which locals have been moved out of their declaring scope).
 struct BodyBuilder<'type_info, 'source> {
-    /// Locals whose selected SDK enum payload layout replaces legacy's opaque Rust pattern placeholder.
+    /// Owned native payload and iterator-item locals whose exact carrier replaces an opaque pattern placeholder.
     native_enum_payload_bindings: HashSet<bir::LocalId>,
     /// Provider-owned method records; the Incan consumer receives their selected identity rather than names to
     /// resolve.

@@ -104,7 +104,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
             self.in_place_pattern = enclosing_in_place;
             if arm.node.guard.is_none() {
-                self.retain_temporary_native_payload_move(&scrutinee_place, &mut pattern);
+                self.retain_owned_native_payload_move(&scrutinee_place, &mut pattern);
             }
 
             // ---- Guard and body see this arm's own pattern bindings, shadowing any outer binding of the same name
@@ -168,17 +168,22 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         )
     }
 
-    /// Transfer a single owned native payload from an unguarded match on a fresh Option/Result temporary. No source
-    /// binding can reuse that carrier, and a successful arm has no other payload to preserve. Named carriers,
-    /// borrowed payloads, nested patterns and guarded arms keep their existing ownership facts.
-    fn retain_temporary_native_payload_move(&mut self, source: &bir::Place, pattern: &mut bir::Pattern) {
+    /// Transfer a single owned native payload from an unguarded match on a fresh Option/Result temporary or the last
+    /// read of an owned native iterator item. No later read can reuse that carrier, and a successful arm has no other
+    /// payload to preserve. Reusable named carriers, borrowed payloads, nested patterns and guards retain their facts.
+    fn retain_owned_native_payload_move(&mut self, source: &bir::Place, pattern: &mut bir::Pattern) {
         if !source.projection.is_empty() {
             return;
         }
-        let Some(local) = source.local_id().and_then(|local| self.locals.get(local.index())) else {
+        let Some(id) = source.local_id() else {
             return;
         };
-        if local.origin != bir::LocalOrigin::Temporary
+        let Some(local) = self.locals.get(id.index()) else {
+            return;
+        };
+        let owned_last_read = self.native_enum_payload_bindings.contains(&id)
+            && self.remaining_reads.get(&id).is_some_and(|remaining| *remaining == 1);
+        if (local.origin != bir::LocalOrigin::Temporary && !owned_last_read)
             || !matches!(&local.ty, IncanType::Generic { base, .. } if matches!(collections::from_str(base), Some(CollectionTypeId::Option | CollectionTypeId::Result)))
         {
             return;

@@ -20,6 +20,86 @@ struct TraitCandidate {
 }
 
 impl TypeChecker {
+    /// Select the native iteration protocol once, keeping the iterable call's facts intact. Its poll borrows the
+    /// newly owned iterator storage, so the written source binding does not need to be mutable.
+    pub(in crate::typechecker) fn retain_rust_iteration_hooks(
+        &mut self,
+        expression: &Spanned<Expr>,
+        source: &ResolvedType,
+    ) -> Option<ResolvedType> {
+        let owner = self
+            .rust_native_value_type(expression)
+            .unwrap_or_else(|| source.clone());
+        let iter = self.rust_iteration_call(expression, &owner, "core::iter::IntoIterator", "into_iter")?;
+        let next = self.rust_iteration_call(expression, &iter.return_type, "core::iter::Iterator", "next")?;
+        let item = next.return_type.option_inner_type()?.clone();
+        self.type_info.rust.iteration_hooks.insert(
+            (expression.span.start, expression.span.end),
+            crate::typechecker::type_info::RustIterationHooks { iter, next },
+        );
+        Some(item)
+    }
+
+    /// Use the ordinary impl-template selector for one zero-argument native protocol call. No method spelling alone
+    /// authorizes iteration: both a unique closed trait reference and its metadata signature are required.
+    fn rust_iteration_call(
+        &self,
+        expression: &Spanned<Expr>,
+        owner: &ResolvedType,
+        trait_path: &str,
+        method: &str,
+    ) -> Option<crate::typechecker::type_info::RustCheckedCall> {
+        let path = self.rust_canonical_path_for_receiver_type(owner)?;
+        let metadata = self.rust_item_metadata_for_path(&path)?;
+        let RustItemKind::Type(info) = &metadata.kind else {
+            return None;
+        };
+        let call = RustPathMethodCall {
+            rust_path: &path,
+            method,
+            receiver_metadata: Some(&metadata),
+            receiver_binding: None,
+            receiver_expr: expression,
+            type_args: &[],
+            args: &[],
+            arg_types: &[],
+            receiver_span: expression.span,
+            expected_return_ty: None,
+            span: expression.span,
+        };
+        let mut candidates = self.retained_rust_trait_candidates(&call, info, owner, Some(trait_path));
+        if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
+            eprintln!(
+                "native iteration: {owner:?}, {trait_path}::{method}, candidates {}",
+                candidates.len()
+            );
+        }
+        candidates.sort_by_key(|candidate| candidate.borrow_cost);
+        let selected = candidates.first()?;
+        if candidates.iter().skip(1).any(|other| {
+            other.borrow_cost == selected.borrow_cost
+                && (other.path != selected.path || other.arguments != selected.arguments)
+        }) {
+            return None;
+        }
+        let selected = candidates.remove(0);
+        if selected.signature.params.len() != 1 || !Self::rust_signature_has_receiver(&selected.signature) {
+            return None;
+        }
+        Some(crate::typechecker::type_info::RustCheckedCall {
+            receiver_adjustments: Vec::new(),
+            path: selected.path,
+            type_arguments: selected.arguments,
+            parameters: vec![Self::checked_rust_receiver_parameter(
+                &selected.signature,
+                &selected.self_type,
+            )?],
+            return_type: self.native_rust_signature_type(&selected.signature.return_type, &path),
+            result_item_path: self.rust_result_item_path(&selected.signature.return_type, &path),
+            has_receiver: true,
+        })
+    }
+
     /// Keep a metadata-selected result item's identity before source scalar and collection projection.
     pub(in crate::typechecker::check_expr) fn rust_result_item_path(
         &self,
@@ -372,9 +452,18 @@ impl TypeChecker {
         let displays = bindings
             .iter()
             .map(|(name, value)| (name.as_str(), render_resolved_type_as_rust_arg(value)))
-            .collect();
+            .collect::<HashMap<_, _>>();
+        let mut closed = displays.clone();
+        for (name, template) in &substitutions {
+            closed.insert(
+                *name,
+                Self::substitute_rust_owner_display(template, &displays, &owner_display),
+            );
+        }
+        // Apply the final bindings to the original signature once: Self's inserted owner may contain caller binders
+        // with the same spelling as an impl parameter, and must not be substituted again as an open template.
         let signature =
-            self.rust_signature_projections(Self::specialize_rust_signature(&signature, &displays, &owner_display));
+            self.rust_signature_projections(Self::specialize_rust_signature(original, &closed, &owner_display));
         let borrow_cost = self.rust_trait_input_borrow_cost(&signature, call)?;
         let mut arguments = vec![storage.clone()];
         for display in &implementation.type_arguments {

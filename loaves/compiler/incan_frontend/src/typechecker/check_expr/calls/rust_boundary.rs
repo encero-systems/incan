@@ -463,6 +463,11 @@ impl TypeChecker {
         let display = self.rust_display_for_owner_path(display, owner);
         let display = Self::rust_display_without_lifetimes(&display);
         let display = display.trim();
+        // Qualified projections must keep the `as` token separated until the associated-type query normalizes them.
+        // Compact path rendering would merge its owner and trait names into an unresolvable nominal identity.
+        if display.starts_with('<') {
+            return ResolvedType::RustPath(display.to_owned());
+        }
         if display == "str" {
             return ResolvedType::RustPath("str".into());
         }
