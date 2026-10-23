@@ -2489,7 +2489,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Read consuming carriers before their defaults and borrow checked immutable constant values from typed
     /// temporaries. Ordinary receivers retain borrowed places. Real global storage stays delayed because legacy
     /// evaluates a static wrapper's arguments before locking and cloning storage. A checked static decorator factory
-    /// keeps the checker's selected mut-self fact.
+    /// and an ordinary computed model static keep the checker's selected mut-self fact.
     fn lower_method_receiver(
         &mut self,
         receiver: &ast::Spanned<ast::Expr>,
@@ -2530,11 +2530,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .type_info
             .resolved_identity(call_span)
             .is_some_and(collection_method_changes_receiver)
-            || (self
-                .type_info
-                .declarations
-                .body_ir_decorator_static_receivers
-                .contains_key(&key)
+            || ((place.global().is_some()
+                || self
+                    .type_info
+                    .declarations
+                    .body_ir_decorator_static_receivers
+                    .contains_key(&key))
                 && self.type_info.calls.mutable_receiver_method_calls.contains(&key));
         let fact = if mutable {
             bir::OwnershipFact::MutBorrow

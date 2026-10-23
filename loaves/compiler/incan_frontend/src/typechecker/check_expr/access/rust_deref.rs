@@ -191,6 +191,9 @@ impl TypeChecker {
         receiver: &Spanned<Expr>,
         source: &ResolvedType,
     ) -> Option<ResolvedType> {
+        if let Some(result) = self.retain_bound_rust_trait_call(call, receiver, source) {
+            return Some(result);
+        }
         let mut owner = source.clone();
         let mut steps = Vec::new();
         for _ in 0..12 {

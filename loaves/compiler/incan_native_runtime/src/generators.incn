@@ -20,6 +20,14 @@ pub def list_generator[T with (Clone, Static)](values: list[T]) -> Generator[T]:
     return (value for value in values)
 
 
+pub def set_generator[T with (Clone, Static)](values: set[T]) -> Generator[T]:
+    """Own one set snapshot and draw its distinct elements lazily through the ordinary list generator."""
+    mut snapshot: list[T] = []
+    for value in values:
+        snapshot.append(value)
+    return list_generator(snapshot)
+
+
 pub def range_generator(start: int, end: int, step: int) -> Generator[int]:
     """Construct the builtin range now, rejecting a zero step, and yield its integers lazily."""
     return (value for value in range(start, end, step))

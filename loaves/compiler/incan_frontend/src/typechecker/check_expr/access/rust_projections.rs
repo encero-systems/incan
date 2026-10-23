@@ -44,6 +44,8 @@ impl TypeChecker {
 
     /// Bound recursive projection normalization and refuse competing associated values rather than choosing one.
     /// Scalar carriers select their native primitive cache entry; the associated value still requires an impl fact.
+    /// A named Deref target retains its native owner before source collection projection so method lookup can select
+    /// that owner's metadata and preserve each executable adjustment.
     fn rust_associated_type_at_depth(
         &self,
         ty: &ResolvedType,
@@ -108,7 +110,21 @@ impl TypeChecker {
                 &substitutions,
                 &render_resolved_type_as_rust_arg(&owner),
             );
-            let value = self.rust_projected_type(&display, depth + 1)?;
+            let mut value = self.rust_projected_type(&display, depth + 1)?;
+            if member == "Target"
+                && matches!(&value, ResolvedType::Generic(name, _) if crate::typechecker::helpers::collection_type_id(name).is_some())
+                && let Some(path) = self.rust_result_item_path(&display, "")
+                && let Some(metadata) = self.rust_item_metadata_for_path(&path)
+                && let RustItemKind::Type(info) = metadata.kind
+            {
+                let native = ResolvedType::RustPath(Self::compact_rust_display(&display));
+                let storage = self.rust_storage_owner(&native, &info, &path);
+                if let Some(arguments) = self.rust_owner_type_args(&storage, &path) {
+                    value = ResolvedType::RustPath(render_resolved_type_as_rust_arg(&ResolvedType::Generic(
+                        path, arguments,
+                    )));
+                }
+            }
             if selected.as_ref().is_some_and(|previous| previous != &value) {
                 return None;
             }

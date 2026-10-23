@@ -68,6 +68,7 @@ pub from generators import (
     skip_while_int_generator,
     flat_map_int_generator,
     flat_map_int_set_generator,
+    set_generator,
     map_text_callable_generator,
     flat_map_text_callable_generator,
     any_text_callable_generator,

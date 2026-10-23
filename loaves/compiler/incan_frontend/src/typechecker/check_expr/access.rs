@@ -2031,6 +2031,37 @@ impl TypeChecker {
         crate::symbols::canonical_builtin_member_identity(owner, member)
     }
 
+    /// Copy a shared native function-pointer reference through the builtin Clone contract. Capturing callable values
+    /// and exclusive references do not acquire pointer-copy semantics from an arrow-shaped source type.
+    fn clone_function_reference(
+        &mut self,
+        receiver: &ResolvedType,
+        method: &str,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+    ) -> Option<ResolvedType> {
+        let ResolvedType::Ref(inner) = receiver else {
+            return None;
+        };
+        if !matches!(inner.as_ref(), ResolvedType::Function(_, _)) || method != trait_bounds::rust::CLONE_METHOD {
+            return None;
+        }
+        if !self.validate_rust_method_type_arg_arity(method, &[], type_args, span) {
+            return Some(ResolvedType::Unknown);
+        }
+        if !args.is_empty() {
+            self.errors
+                .push(errors::builtin_arity("function reference clone", 0, args.len(), span));
+            return Some(ResolvedType::Unknown);
+        }
+        self.type_info.record_resolved_identity(
+            span,
+            Self::compiler_builtin_member_identity(core_traits::as_str(TraitId::Clone), method),
+        );
+        Some(inner.as_ref().clone())
+    }
+
     /// Retain the accepted inferred Clone requirement only for a rigid parameter's zero-argument fallback. Source
     /// and explicit bound methods have already resolved before this boundary; no legacy fact is changed here.
     fn record_body_ir_inferred_clone(
@@ -2953,7 +2984,7 @@ impl TypeChecker {
         None
     }
 
-    /// Whether a contextual type is one specialization of `rust_path`.
+    /// Whether a contextual type specializes the native owner, including its registered source collection projection.
     fn contextual_type_matches_rust_owner(expected: &ResolvedType, rust_path: &str) -> bool {
         // Metadata records the ancestral spelling of an owner (`alloc::boxed::Box`); the source imported the `std`
         // one. Every re-export of one item is an alias of it, so the owner match must happen in the ancestral
@@ -2966,6 +2997,8 @@ impl TypeChecker {
                 .is_some_and(|base| incan_lang::interop::ancestral_rust_path(base) == owner),
             ResolvedType::Generic(name, _) | ResolvedType::Named(name) => {
                 incan_lang::interop::ancestral_rust_path(name) == owner
+                    || RustCollectionFamily::for_canonical_path(rust_path)
+                        .is_some_and(|family| RustCollectionFamily::for_type_name(name) == Some(family))
             }
             _ => false,
         }
@@ -2991,9 +3024,8 @@ impl TypeChecker {
             {
                 Some(expected.clone())
             }
-            ResolvedType::Generic(name, _) | ResolvedType::Named(name)
-                if incan_lang::interop::ancestral_rust_path(name)
-                    == incan_lang::interop::ancestral_rust_path(rust_path)
+            ResolvedType::Generic(_name, _) | ResolvedType::Named(_name)
+                if Self::contextual_type_matches_rust_owner(actual, rust_path)
                     && Self::contextual_type_matches_rust_owner(expected, rust_path) =>
             {
                 Some(expected.clone())
@@ -3057,10 +3089,7 @@ impl TypeChecker {
             }
             // The receiver may name the owner through any re-export (`alloc::boxed::Box`, a prelude `Box`) while
             // the import spelled `std::boxed::Box`; every spelling of one item must yield its type arguments.
-            ResolvedType::Generic(name, args)
-                if incan_lang::interop::ancestral_rust_path(name)
-                    == incan_lang::interop::ancestral_rust_path(rust_path) =>
-            {
+            ResolvedType::Generic(_name, args) if Self::contextual_type_matches_rust_owner(receiver, rust_path) => {
                 Some(args.clone())
             }
             ResolvedType::RustPath(display) => {
@@ -3251,6 +3280,7 @@ impl TypeChecker {
 
     /// Retain an inherent Rust callee using the impl's declared native binders, rather than the owner's arity.
     /// Receiver references are explicit checked parameter types; no downstream consumer guesses a borrow from a name.
+    /// Metadata-defaulted receiver arguments use the same storage arity as constructors and retained dereferences.
     #[allow(clippy::too_many_arguments)]
     fn retain_checked_rust_method(
         &mut self,
@@ -3330,7 +3360,8 @@ impl TypeChecker {
                 ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref(),
                 other => other,
             };
-            let Some(parameter) = Self::checked_rust_receiver_parameter(&method.signature, receiver) else {
+            let storage = self.rust_storage_owner(receiver, owner, path);
+            let Some(parameter) = Self::checked_rust_receiver_parameter(&method.signature, &storage) else {
                 return;
             };
             parameters.insert(0, parameter);
@@ -7615,6 +7646,9 @@ impl TypeChecker {
             }
         }
 
+        if let Some(ret) = self.clone_function_reference(&base_ty, method, type_args, args, span) {
+            return ret;
+        }
         if let Some(ret) =
             self.resolve_union_clone_trait_method_call(&base_ty, method, type_args, args, &arg_types, span)
         {

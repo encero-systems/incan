@@ -87,6 +87,17 @@ def clone_place(
 ) -> Result[None, str]:
     """Select copying, owned text cloning, or the nominal's own Clone implementation from its native carrier."""
     ty = place_type(builder.locals, source)
+    match ty:
+        PlanType.ScalarRef(elements) =>
+            if len(elements) == 1:
+                match elements[0]:
+                    PlanType.FunctionPointer(_signature) =>
+                        reference = temporary(builder, ty, span)
+                        builder.emit(plan_assign(reference, RvalueKind.Use(read_place(source, false, span)), span))
+                        pointer = Place(local=reference.local, projection=Projection.Deref(elements[0]), span=span)
+                        return copy_clone_into(builder, pointer, elements[0], destination, span)
+                    _ => pass
+        _ => pass
     if numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit or ty == PlanType.FrozenStr:
         return copy_clone_into(builder, source, ty, destination, span)
     if ty == PlanType.String:

@@ -32,6 +32,8 @@ pub def substitute(ty: &RustType, names: list[str], arguments: list[RustType]) -
         RustType.Named(name) =>
             # A named declaration is not a placeholder, even when its spelling matches a type parameter.
             return Ok(ty.clone())
+        RustType.Ref(inner) => return Ok(RustType.Ref(substitute(inner, names, arguments)?))
+        RustType.RefMut(inner) => return Ok(RustType.RefMut(substitute(inner, names, arguments)?))
         RustType.Generic(base=base, args=elements) =>
             mut concrete: list[RustType] = []
             for element in elements:

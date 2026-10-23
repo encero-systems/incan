@@ -1246,14 +1246,18 @@ fn shared_reference(ty: &Scalar) -> bool {
 
 /// Source signatures expose scalars, owned text, explicit shared text and validation-error references, and the
 /// exclusive text reference a `mut str` parameter receives, models, callables, and tuples of admitted types; formatting
-/// views stay internal. A function pointer's inputs also admit shared and exclusive model references retained by method
-/// decorators, as receiver frames do.
+/// views stay internal. Exact native slice references can cross a closed source type parameter without becoming owned
+/// lists. A function pointer's inputs also admit shared and exclusive model references retained by method decorators,
+/// as receiver frames do.
 fn source_signature_type(ty: &Scalar) -> bool {
     if let Scalar::TypeToken(elements) = ty {
         return matches!(
             elements.as_slice(),
             [Scalar::Int | Scalar::Float | Scalar::Bool | Scalar::String]
         );
+    }
+    if let Scalar::SliceRef(elements) | Scalar::SliceMutRef(elements) = ty {
+        return matches!(elements.as_slice(), [element] if source_signature_type(element));
     }
 
     if let Scalar::Future(outputs) = ty {
@@ -1372,8 +1376,11 @@ fn external_signature_type(ty: &Scalar) -> bool {
         )
 }
 
-/// The scalar reference carrier only borrows exact numeric, Boolean, decimal or frozen primitive storage.
+/// The scalar reference carrier borrows exact primitive storage or an admitted native function pointer.
 fn scalar_referent(ty: &Scalar) -> bool {
+    if matches!(ty, Scalar::FunctionPointer(_)) {
+        return source_signature_type(ty);
+    }
     sized_numeric(ty).is_some()
         || matches!(
             ty,

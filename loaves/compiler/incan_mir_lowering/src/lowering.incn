@@ -2612,10 +2612,13 @@ def lower_later_clause(
 
 
 def clause_source(mut builder: Builder, slot: int, span: SourceSpan) -> Result[Operand, str]:
-    """Snapshot an owned list or zip source per item, or move a generator the step built."""
+    """Snapshot a list, set or zip source per item, or move a generator the step built."""
     place = plan_place(slot, span)
     ty = builder.locals[slot].ty
     match ty:
+        PlanType.Set(_leaf) =>
+            snapshot = cloned_collection(builder, place, span)?
+            return source_generator(builder, snapshot, span)
         PlanType.ZipIterator(_left, _right) =>
             snapshot = clone_zip(builder, place, span)?
             return source_generator(builder, snapshot, span)
@@ -4877,9 +4880,16 @@ def lower_delegated_call(
             Some(_receiver) => pass
     if len(closed) != len(names) or (not checked_rust and len(names) == 0 and len(target.type_args) != 0):
         return Err("unsupported Body IR nonlocal function with type parameters")
+    # A checked native signature in a source body can name that body's binders. A compiled Loaf instead owns its
+    # declaration binders; neither signature infers a type from a runtime operand.
+    mut signature_names = names
+    mut signature_arguments = closed
+    if checked_rust:
+        signature_names = builder.type_parameters
+        signature_arguments = builder.type_arguments
     mut parameters: list[PlanType] = []
     for parameter in delegation.parameters:
-        instantiated: RustType = substitute(parameter, names, closed)?
+        instantiated: RustType = substitute(parameter, signature_names, signature_arguments)?
         _ = require_native_union_signature(instantiated, builder.intrinsics)?
         parameters.append(
             native_source_type(builder.nominals, builder.enums, builder.unions, instantiated, builder.intrinsics)?,
@@ -4891,7 +4901,7 @@ def lower_delegated_call(
             for index in range(len(frame.params)):
                 parameters.append(call_parameter_type(builder, frame, frame.params[index])?)
         None => pass
-    returned: RustType = substitute(delegation.return_type, names, closed)?
+    returned: RustType = substitute(delegation.return_type, signature_names, signature_arguments)?
     _ = require_native_union_signature(returned, builder.intrinsics)?
     mut result = native_source_type(builder.nominals, builder.enums, builder.unions, returned, builder.intrinsics)?
     match delegation.declaration_frame.as_ref():
@@ -6005,9 +6015,11 @@ pub def clone_nominal_operand(mut builder: Builder, value: Place, span: SourceSp
     """
     Materialize the checker's clone fact through a source nominal's real derived Clone implementation.
 
-    A shared model reference, such as a receiver, already is the borrow that Clone takes.
+    A shared model reference, such as a receiver, already is the borrow that Clone takes. An immutable scalar
+    reference copies the reference itself through the ordinary carrier-payload read.
     """
     match place_type(builder.locals, value):
+        PlanType.ScalarRef(_elements) => return carrier_payload_value(builder, value, span)
         PlanType.ValidationError => return carrier_payload_value(builder, value, span)
         PlanType.ValidationErrorRef =>
             owned = Place(local=value.local, projection=Projection.Deref(PlanType.ValidationError), span=span)
