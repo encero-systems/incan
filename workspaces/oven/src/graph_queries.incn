@@ -1,0 +1,204 @@
+"""Queries over the compiler's exported facts. No source parsing or inferred call edges live here."""
+
+from std.json import JsonValue
+
+
+pub def query_group(kind: str) -> str:
+    """Read declaration/module identities and only the indexed edge group needed by this query."""
+    if kind == "refs":
+        return "nodes,reference"
+    if kind in ["callers", "callees"]:
+        return "nodes,call"
+    if kind == "imports":
+        return "nodes,import"
+    return "nodes"
+
+
+pub def text(value: JsonValue, key: str) -> str:
+    """Read an optional presentation field; absence never becomes a proved relationship."""
+    match value.get(key):
+        Some(item) =>
+            match item.as_str():
+                Some(result) => return result
+                None => pass
+        None => pass
+    return ""
+
+
+pub def nested(value: JsonValue, key: str) -> JsonValue:
+    """Read an optional structured fact without making absent identities compare equal to a proved one."""
+    match value.get(key):
+        Some(item) => return item
+        None => return JsonValue.null()
+
+
+pub def identity(value: JsonValue) -> str:
+    """Use the compiler's edit-stable identity, preserving its full structured origin and signature."""
+    if text(value, "stable_key") != "":
+        return text(value, "stable_key")
+    stable = nested(value, "stable_identity")
+    match stable.as_object():
+        None => return ""
+        Some(_) => return stable.to_json().unwrap_or("")
+
+
+pub def canonical(value: JsonValue) -> str:
+    """Preserve exact checked identity equality within a source snapshot, including imported targets without signatures."""
+    if text(value, "canonical_key") != "":
+        return text(value, "canonical_key")
+    target = nested(value, "canonical_identity")
+    if target.is_null():
+        return ""
+    return target.to_json().unwrap_or("")
+
+
+pub def display(value: JsonValue) -> str:
+    """Show the qualified semantic origin, with the declared name when the origin names only a module."""
+    if text(value, "label") != "":
+        return text(value, "label")
+    stable = nested(value, "stable_identity")
+    origin = nested(stable, "origin")
+    mut segments: list[str] = []
+    if text(origin, "kind") == "package":
+        segments.append(text(origin, "library"))
+        match nested(origin, "module_path").as_array():
+            Some(items) =>
+                for item in items:
+                    match item.as_str():
+                        Some(part) => segments.append(part)
+                        None => pass
+            None => pass
+    match nested(origin, "path").as_array():
+        Some(items) =>
+            for item in items:
+                match item.as_str():
+                    Some(part) => segments.append(part)
+                    None => pass
+        None => pass
+    name = text(stable, "declaration_name")
+    if name == "":
+        if text(value, "callee") != "":
+            return text(value, "callee")
+        if text(value, "name") != "":
+            return text(value, "name")
+        return text(value, "id")
+    if "::" in name:
+        return name
+    if len(segments) == 0 or segments[len(segments) - 1] != name:
+        segments.append(name)
+    return "::".join(segments)
+
+
+def location(value: JsonValue, root: str) -> str:
+    """A source anchor remains separate from the durable declaration identity."""
+    source = nested(value, "span")
+    mut file = text(source, "file")
+    if file.startswith(f"{root}/"):
+        file = file[len(root) + 1:]
+    line = nested(source, "start_line").to_json().unwrap_or("0")
+    if file == "":
+        return "<unknown>:0"
+    return f"{file}:{line}"
+
+
+def matches(record: JsonValue, term: str) -> bool:
+    """Accept a complete compiler identity, a qualified name, or an exact final name component."""
+    label = display(record)
+    parts = label.split("::")
+    return term == label or term == parts[len(parts) - 1] or term == text(record, "id") or term == text(record, "raw_id") or term == identity(record)
+
+
+def import_labels(record: JsonValue) -> list[str]:
+    """Display checked bindings or the recorded path; grouped-import stems with neither produce no hit."""
+    mut labels: list[str] = []
+    match nested(record, "bindings").as_array():
+        Some(bindings) =>
+            for binding in bindings:
+                if identity(binding) != "":
+                    label = display(binding)
+                    if label not in labels:
+                        labels.append(label)
+        None => pass
+    path = text(record, "path")
+    if len(labels) == 0 and path != "":
+        labels.append(path)
+    return labels
+
+
+pub def query(records: list[JsonValue], kind: str, term: str, root: str) -> list[str]:
+    """Select definitions and traverse only compiler-proven references, callers, callees or module imports."""
+    mut selected: list[str] = []
+    mut identities: list[str] = []
+    mut canonical_targets: list[str] = []
+    mut modules: list[str] = []
+    mut by_id: Dict[str, JsonValue] = {}
+    for record in records:
+        record_kind = text(record, "record")
+        identifier = text(record, "id")
+        if identifier != "" and record_kind in ["module", "declaration"]:
+            by_id[identifier] = record
+        if record_kind == "module":
+            if term in text(record, "name") or term in identifier:
+                modules.append(identifier)
+        if record_kind == "declaration":
+            if matches(record, term):
+                selected.append(identifier)
+                proved = identity(record)
+                if proved != "":
+                    identities.append(proved)
+                checked = canonical(record)
+                if checked != "":
+                    canonical_targets.append(checked)
+    mut hits: list[str] = []
+    if kind != "defs" and len(selected) > 1:
+        for identifier in selected:
+            record = by_id[identifier]
+            hits.append(f"declaration {display(record)} {location(record, root)}")
+    for record in records:
+        record_kind = text(record, "record")
+        if kind == "defs" and record_kind != "declaration":
+            continue
+        if kind == "imports" and record_kind != "import":
+            continue
+        if kind == "refs" and record_kind != "reference":
+            continue
+        if kind in ["callers", "callees"] and record_kind != "call":
+            continue
+        identifier = text(record, "id")
+        target = text(record, "target_id")
+        owner = text(record, "owner_id")
+        proved = identity(record)
+        checked = canonical(record)
+        targets = target in selected or (checked != "" and checked in canonical_targets) or (proved != "" and (proved in identities or matches(record, term)))
+        mut hit = false
+        mut label = display(record)
+        if kind == "defs":
+            hit = record_kind == "declaration" and identifier in selected
+        elif kind == "imports":
+            hit = record_kind == "import" and text(record, "module_id") in modules
+            label = text(record, "path")
+            if hit:
+                for name in import_labels(record):
+                    line = f"import {name} {location(record, root)}"
+                    if line not in hits:
+                        hits.append(line)
+                continue
+        elif kind == "refs":
+            hit = record_kind == "reference" and targets
+        elif kind == "callers":
+            hit = record_kind == "call" and targets
+            if owner in by_id:
+                label = display(by_id[owner])
+            else:
+                label = owner
+        elif kind == "callees":
+            hit = record_kind == "call" and owner in selected
+            if target in by_id:
+                label = display(by_id[target])
+            elif label == "":
+                label = text(record, "callee")
+        if hit:
+            line = f"{record_kind} {label} {location(record, root)}"
+            if line not in hits:
+                hits.append(line)
+    return sorted(hits)

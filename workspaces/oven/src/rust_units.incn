@@ -7,7 +7,8 @@ under the root project's target directory, named by the unit's identity: its pro
 Registry units come compiled: their rlibs by root name and the directories their dependencies live in.
 """
 
-from rust::std::process import Command
+from rust::std::process import Command, id
+from rust::std::fs import rename
 from rust::std::string import String as RustString
 from std import toml
 from std.toml import TomlValue
@@ -19,6 +20,8 @@ from loaf_local_graph import LocalDemand, LocalFacet, local_facets
 from rust_activation import CfgSnapshot, DependencyDomain, TargetConfiguration, version_matches
 from semver_req import compare_version_order, parse_version
 from json_fields import field, strings
+from graph_cache import publish
+from toolchain import load_toolchain
 
 
 @derive(Eq)
@@ -181,7 +184,7 @@ def run_text(program: str, arguments: list[str]) -> Result[str, str]:
             return Ok(stdout)
 
 
-def decoded(bytes: bytes) -> str:
+pub def decoded(bytes: bytes) -> str:
     """Process output as text; output that is not UTF-8 is named, not repaired."""
     match RustString.from_utf8(bytes):
         Ok(text) => return str(text)
@@ -234,13 +237,13 @@ pub def rust_facet(project: str, required: bool = true) -> Result[RustFacet, str
     return Ok(RustFacet(crate_name=crate_name, kind=kind, edition=edition, library=library_path, binaries=binaries, package=package, version=version, unstable=unstable, sysroot=sysroot))
 
 
-def identity(facet: LocalFacet, profile: str) -> str:
+pub def identity(facet: LocalFacet, profile: str) -> str:
     """A unit's identity: its project, domain, features and profile."""
     text = f"{facet.project}\n{facet.domain.value()}\n{','.join(sorted(facet.features))}\n{profile}"
     return hexlify(sha256.digest(text.encode("utf-8")))[0:16]
 
 
-def ordered(facets: list[LocalFacet]) -> Result[list[LocalFacet], str]:
+pub def ordered(facets: list[LocalFacet]) -> Result[list[LocalFacet], str]:
     """The facets in an order where every unit follows the local units it links."""
     mut done: list[str] = []
     mut result: list[LocalFacet] = []
@@ -317,16 +320,25 @@ pub def build_rust(request: RustBuild) -> Result[list[str], str]:
     if len(reports) > 0:
         body = "\n\n".join(reports)
         return Err(f"{len(reports)} of {len(facets)} Rust units did not compile:\n\n{body}")
+    receipts: list[JsonValue] = [JsonValue.object({
+        "crate": JsonValue.string(built[key].crate_name),
+        "artifact": JsonValue.string(built[key].artifact),
+        "directory": JsonValue.string(built[key].directory),
+    }) for key in sorted([key for key in built.keys()])]
+    receipt = JsonValue.object({"schema": JsonValue.string("incan.rust-units/1"), "units": JsonValue.array(receipts)})
+    publish(output.joinpath("units.json"), receipt.to_json().map_err((error) => error.message())?)?
     return Ok(binaries)
 
 
-pub def build_dependencies(request: RustBuild, facets: list[LocalFacet]) -> Result[Dict[str, BuiltUnit], str]:
-    """Build the Rust facets a consumer reaches, including its own facet when present, through `incan build`'s unit compiler."""
+pub def build_dependencies(request: RustBuild, facets: list[LocalFacet], include_root: bool = true) -> Result[Dict[str, BuiltUnit], str]:
+    """Build the Rust facets a consumer reaches through the shared unit compiler; analysis may omit its own library when no binary links it."""
     output = Path(request.project).joinpath("target").joinpath("incan").joinpath("rust").joinpath(request.profile)
     mut built: Dict[str, BuiltUnit] = {}
     mut search = request.registry.search
     for facet in ordered(facets)?:
         own = facet.project == request.project and facet.domain == DependencyDomain.Target
+        if own and not include_root:
+            continue
         declared = rust_facet(facet.project, not own)?
         if declared.kind == "":
             if facet.project == request.project and facet.domain == DependencyDomain.Target:
@@ -363,7 +375,7 @@ def unit_outputs(
     return Ok((library, programs))
 
 
-def linking(facet: LocalFacet, request: RustBuild, built: Dict[str, BuiltUnit], search: list[str]) -> Result[list[str], str]:
+pub def linking(facet: LocalFacet, request: RustBuild, built: Dict[str, BuiltUnit], search: list[str]) -> Result[list[str], str]:
     """The arguments that link a unit: its features, the search directories and one `--extern` per edge."""
     mut arguments: list[str] = []
     for feature in facet.features:
@@ -395,7 +407,7 @@ def linking(facet: LocalFacet, request: RustBuild, built: Dict[str, BuiltUnit], 
     return Ok(arguments)
 
 
-def compile_library(
+pub def compile_library(
     facet: LocalFacet,
     declared: RustFacet,
     output: Path,
@@ -407,17 +419,27 @@ def compile_library(
     unit = identity(facet, request.profile)
     directory = output.joinpath(f"{declared.crate_name}-{unit}")
     directory.mkdir(true, true).map_err((error) => error.message())?
-    mut arguments = [declared.library, "--crate-name", declared.crate_name, "--crate-type", declared.kind, "--edition", declared.edition]
+    mut arguments = library_arguments(declared)
     arguments = arguments + ["--out-dir", directory.0, "-C", f"metadata={unit}", "-C", f"extra-filename=-{unit}"]
-    if declared.kind == "proc-macro":
-        arguments = arguments + ["--extern", "proc_macro"]
     arguments = arguments + linking(facet, request, built, search)?
-    invoke_rustc(request.rustc, arguments, package_environment(facet.project, declared, declared.crate_name), false, declared.crate_name)?
+    toolchain = load_toolchain()?
+    pending = directory.joinpath(f"{declared.package}.incngraph.{id()}.pending")
+    graph_arguments = ["--rust-compile-codegraph", pending.0, facet.project, "--sysroot", toolchain.sysroot] + arguments
+    invoke_rustc(toolchain.driver, graph_arguments, package_environment(facet.project, declared, declared.crate_name), false, declared.crate_name)?
+    rename(pending.0, directory.joinpath(f"{declared.package}.incngraph").0).map_err((error) => str(error))?
     for candidate in directory.iterdir().map_err((error) => error.message())?:
         name = candidate.name()
         if name.startswith(f"lib{declared.crate_name}-{unit}.") and (name.endswith(".rlib") or name.endswith(".dylib") or name.endswith(".so")):
             return Ok(BuiltUnit(crate_name=declared.crate_name, artifact=candidate.0, directory=directory.0))
     return Err(f"rustc wrote no library for {declared.crate_name} into {directory.0}")
+
+
+pub def library_arguments(declared: RustFacet) -> list[str]:
+    """The crate selection shared by compilation and inspection; linking remains facet-owned."""
+    mut arguments = [declared.library, "--crate-name", declared.crate_name, "--crate-type", declared.kind, "--edition", declared.edition]
+    if declared.kind == "proc-macro":
+        arguments = arguments + ["--extern", "proc_macro"]
+    return arguments
 
 
 def compile_binary(
@@ -439,17 +461,25 @@ def compile_binary(
     if key in built:
         arguments = arguments + ["--extern", f"{declared.crate_name}={built[key].artifact}"]
     arguments = arguments + linking(facet, request, built, search)?
-    mut environment = package_environment(facet.project, declared, name.replace("-", "_"))
+    environment = binary_environment(request.rustc, facet.project, declared, name.replace("-", "_"))?
     if declared.sysroot:
         # The toolchain's `rustc_driver` stays in its sysroot: the binary carries a runpath to it and the identity
         # it was built against, which it verifies before it compiles anything.
         libraries = toolchain_libraries(request.rustc)?
         arguments = arguments + ["-C", f"link-arg=-Wl,-rpath,{libraries.directory}"]
+    invoke_rustc(request.rustc, arguments, environment, declared.unstable, name)?
+    return Ok(binary.0)
+
+
+pub def binary_environment(rustc: str, project: str, declared: RustFacet, name: str) -> Result[Dict[str, str], str]:
+    """The package and pinned-driver identity environment shared by binary compilation and analysis."""
+    mut environment = package_environment(project, declared, name)
+    if declared.sysroot:
+        libraries = toolchain_libraries(rustc)?
         for variable in sorted([key for key in libraries.environment.keys()]):
             value = libraries.environment[variable]
             environment[variable] = value
-    invoke_rustc(request.rustc, arguments, environment, declared.unstable, name)?
-    return Ok(binary.0)
+    return Ok(environment)
 
 
 model ToolchainLibraries:
@@ -525,7 +555,7 @@ def declared_binaries(document: TomlValue) -> Result[list[TomlValue], str]:
     return facet["bin"].as_array().map_err((error) => error.message())
 
 
-def package_environment(project: str, declared: RustFacet, crate_name: str) -> Dict[str, str]:
+pub def package_environment(project: str, declared: RustFacet, crate_name: str) -> Dict[str, str]:
     """The package environment Rust code reads at compile time (`env!`), under the names the Rust ecosystem uses."""
     mut environment: Dict[str, str] = {
         "CARGO_PKG_NAME": declared.package,

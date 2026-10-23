@@ -1,0 +1,196 @@
+"""Public graph command contracts, including warm-query equality and wire-format agreement."""
+
+from std.fs import Path
+from std.json import JsonValue, parse
+from compare import compare
+from header import Header
+from run import Outcome, invoke
+
+
+pub def compare_graph(incan: str, project: Path, header: Header) -> Result[list[str], str]:
+    """Run the declared inspections twice, compare warm answers, and compare their observable output."""
+    mut stdout = ""
+    mut stderr = ""
+    mut code: Option[int] = Some(0)
+    mut failures: list[str] = []
+    for invocation in header.items("graph-commands"):
+        arguments = ["inspect", "codegraph"] + invocation.split(" ")
+        outcome = invoke(incan, arguments, project)?
+        repeated = invoke(incan, arguments, project)?
+        for line in outcome.stdout.split("\n"):
+            if line.startswith("import  "):
+                failures.append(f"an import hit has no identity or source path: {invocation}")
+        if repeated.stdout != outcome.stdout or repeated.code != outcome.code:
+            failures.append(f"warm inspection differs: {invocation}")
+        stdout += outcome.stdout.replace(f"{project.0}/", "")
+        stderr += outcome.stderr
+        if outcome.code != Some(0):
+            code = outcome.code
+    for failure in compare("graph", header, Outcome(stdout=stdout, stderr=stderr, code=code)):
+        failures.append(failure)
+    if len(failures) > 0 and stderr.strip() != "":
+        failures.append(stderr)
+    if code == Some(0):
+        for failure in check_documents(incan, project)?:
+            failures.append(failure)
+    return Ok(failures)
+
+
+def document(incan: str, project: Path, format: str) -> Result[str, str]:
+    """Read one public export, surfacing compiler refusal rather than comparing an empty document."""
+    result = invoke(incan, ["inspect", "codegraph", ".", "--format", format], project)?
+    if result.code != Some(0):
+        return Err(f"{format} export failed: {result.stderr}")
+    return Ok(result.stdout)
+
+
+def declaration_identities(document: str) -> Result[list[str], str]:
+    """Compare only declaration identities across a position-only source edit; spans must change independently."""
+    value = parse(document).map_err((error) => error.message())?
+    mut identities: list[str] = []
+    for record in value.expect_array().map_err((error) => error.message())?:
+        tag = record.require("record").map_err((error) => error.message())?.expect_str().map_err((error) => error.message())?
+        if tag != "declaration":
+            continue
+        stable = record.require("stable_identity").map_err((error) => error.message())?
+        if stable.is_null():
+            return Err("a checked fixture declaration has no stable identity")
+        identities.append(stable.to_json().map_err((error) => error.message())?)
+    return Ok(sorted(identities))
+
+
+def check_documents(incan: str, project: Path) -> Result[list[str], str]:
+    """JSON and JSONL agree; changed bytes invalidate the cache while declaration identities survive line movement."""
+    original = document(incan, project, "json")?
+    check_identity_queries(incan, project, original)?
+    for artifact in project.rglob("*.incnbody").map_err((error) => error.message())?:
+        return Err(f"graph inspection compiled an Incan library: {artifact.0}")
+    check_rust_links(original)?
+    jsonl = document(incan, project, "jsonl")?
+    mut lines: list[JsonValue] = []
+    for line in jsonl.split("\n"):
+        if line != "":
+            lines.append(parse(line).map_err((error) => error.message())?)
+    mut failures: list[str] = []
+    canonical = parse(original).map_err((error) => error.message())?.to_json().map_err((error) => error.message())?
+    line_array = JsonValue.array(lines).to_json().map_err((error) => error.message())?
+    if canonical != line_array:
+        failures.append("JSON and JSONL exports disagree")
+    mut source = project.joinpath("src").joinpath("lib.rs")
+    if not source.is_file():
+        source = project.joinpath("src").joinpath("main.incn")
+    before = source.read_text("utf-8", "strict").map_err((error) => error.message())?
+    source.write_text(f"\n{before}", "utf-8", "strict", None).map_err((error) => error.message())?
+    moved = document(incan, project, "json")?
+    if original == moved:
+        failures.append("source edit reused stale source spans")
+    if declaration_identities(original)? != declaration_identities(moved)?:
+        failures.append("line movement changed a declaration identity")
+    source.write_text("this is invalid in both languages {", "utf-8", "strict", None).map_err((error) => error.message())?
+    invalid = invoke(incan, ["inspect", "codegraph", "."], project)?
+    if invalid.code == Some(0):
+        failures.append("broken source reused a checked cached graph")
+    source.write_text(before, "utf-8", "strict", None).map_err((error) => error.message())?
+    check_published_graph(incan, project)?
+    return Ok(failures)
+
+
+def check_identity_queries(incan: str, project: Path, document: str) -> Result[None, str]:
+    """Unique short names and their full exported IDs must select the same checked callers, across package boundaries."""
+    records = parse(document).map_err((error) => error.message())?.expect_array().map_err((error) => error.message())?
+    declarations = [record for record in records if string_field(record, "record") == "declaration"]
+    for declaration in declarations:
+        match declaration.get("span"):
+            Some(span) =>
+                if not string_field(span, "file").startswith(f"{project.0}/"):
+                    continue
+            None =>
+                continue
+        name = string_field(declaration, "name")
+        if name == "" or len([item for item in declarations if string_field(item, "name") == name]) != 1:
+            continue
+        identifier = string_field(declaration, "id")
+        short = invoke(incan, ["inspect", "codegraph", ".", "--query", "callers", name], project)?
+        if short.stdout == "":
+            continue
+        full = invoke(incan, ["inspect", "codegraph", ".", "--query", "callers", identifier], project)?
+        if short.code != Some(0) or full.code != Some(0) or short.stdout != full.stdout:
+            return Err(f"full declaration ID and short name select different callers: {name}")
+    return Ok(None)
+
+
+def check_published_graph(incan: str, project: Path) -> Result[None, str]:
+    """An explicitly built provider ships a portable binary graph; consumers read it despite unbuilt source edits."""
+    provider = project.joinpath("deps").joinpath("checked")
+    source = provider.joinpath("src").joinpath("lib.incn")
+    if not source.is_file():
+        return Ok(None)
+    built = invoke(incan, ["build", source.0], project)?
+    if built.code != Some(0):
+        return Err(f"provider build failed: {built.stderr}")
+    graph = provider.joinpath("target").joinpath("incan").joinpath("loaves").joinpath("graph_checked").joinpath("debug").joinpath("graph_checked.incngraph")
+    data = graph.read_bytes().map_err((error) => error.message())?
+    if data[:4] != b"\x01\x00\x00\x00":
+        return Err("compiled Loaf has no version-one binary graph")
+    needle = project.0.encode("utf-8")
+    for offset in range(len(data) - len(needle) + 1):
+        if data[offset:offset + len(needle)] == needle:
+            return Err("compiled Loaf graph contains a physical project root")
+    arguments = ["inspect", "codegraph", ".", "--query", "defs", "checked_helper"]
+    original = invoke(incan, arguments, project)?
+    before = source.read_text("utf-8", "strict").map_err((error) => error.message())?
+    source.write_text("invalid dependency source {", "utf-8", "strict", None).map_err((error) => error.message())?
+    published = invoke(incan, arguments, project)?
+    if original.code != Some(0) or published.code != Some(0) or original.stdout != published.stdout:
+        return Err(f"published dependency graph was rechecked from source: {published.stderr}")
+    source.write_text(before, "utf-8", "strict", None).map_err((error) => error.message())?
+    graph.write_bytes(b"\x7f\x00\x00\x00").map_err((error) => error.message())?
+    corrupt = invoke(incan, arguments, project)?
+    if corrupt.code == Some(0):
+        return Err("a corrupt published graph was silently replaced or reused")
+    graph.unlink().map_err((error) => error.message())?
+    legacy = invoke(incan, arguments, project)?
+    repeated = invoke(incan, arguments, project)?
+    if legacy.code != Some(0) or legacy.stdout != original.stdout or legacy.stdout != repeated.stdout or legacy.code != repeated.code:
+        return Err(f"older artifact did not receive a stable cached graph export: {legacy.stderr}")
+    return Ok(None)
+
+
+def string_field(value: JsonValue, key: str) -> str:
+    """Read an optional wire string for referential-integrity checks."""
+    match value.get(key):
+        Some(item) =>
+            match item.as_str():
+                Some(text) => return text
+                None => pass
+        None => pass
+    return ""
+
+
+def check_rust_links(document: str) -> Result[None, str]:
+    """Resolved Rust targets and navigable caller owners link to declarations, including dependency methods and closure expressions."""
+    records = parse(document).map_err((error) => error.message())?.expect_array().map_err((error) => error.message())?
+    mut declarations: Dict[str, bool] = {}
+    mut crates: list[str] = []
+    for record in records:
+        if string_field(record, "record") != "declaration" or string_field(record, "language") != "rust":
+            continue
+        declarations[string_field(record, "id")] = true
+        stable = record.require("stable_identity").map_err((error) => error.message())?
+        origin = stable.require("origin").map_err((error) => error.message())?
+        path = origin.require("path").map_err((error) => error.message())?.expect_array().map_err((error) => error.message())?
+        if len(path) > 0:
+            root = path[0].expect_str().map_err((error) => error.message())?
+            if root not in crates:
+                crates.append(root)
+    for record in records:
+        if string_field(record, "record") != "call" or string_field(record, "language") != "rust":
+            continue
+        owner = string_field(record, "owner_id")
+        if owner != "" and owner not in declarations:
+            return Err(f"Rust call has no navigable declaration owner: {owner}")
+        callee = string_field(record, "callee")
+        for root in crates:
+            if callee.startswith(f"{root}::") and string_field(record, "target_id") not in declarations:
+                return Err(f"resolved Rust call has no declaration in its represented crate: {callee}")
+    return Ok(None)

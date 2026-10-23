@@ -6,7 +6,8 @@ Oven is the build system and the `incan` command line, written in Incan (DD-0008
 
 | Module | Owns |
 | --- | --- |
-| `main.incn` | The `incan` command line: `run`, `check`, `test`, `describe-unit`, `build`. |
+| `main.incn` | The `incan` command line: `run`, `check`, `test`, `describe-unit`, `build`, `fmt`, `inspect codegraph`. |
+| `graph_inspection.incn`, `graph_dependencies.incn`, `graph_incan.incn`, `graph_rust.incn`, `graph_loaves.incn`, `graph_cache.incn`, `graph_queries.incn` | Selecting inspection units, reading published Loaf graphs, caching legacy exports by input digest, and querying compiler-owned records. Incan facts come from the shared compiler exporter; Rust facts come from analysis in the installed rustc driver. |
 | `unit.incn` | The unit description (`incan.unit/1`) of a program, library or test unit: what the compiler reads instead of a manifest (`incan describe-unit PATH`). |
 | `toolchain.incn` | The installed toolchain (`<home>/toolchains/<toolchain>/toolchain.json`, `incan.toolchain/1`): the compiler, the pinned sysroot it was built against, the ABI cache of its standard Rust crates (DD-0009), and the native closure every compiled unit links. |
 | `incan_units.incn` | Preparing path libraries in dependency order, checking and compiling a described unit with the toolchain's compiler, and running the program it compiled (`incan check`, `incan run`, `incan build`). |
@@ -35,6 +36,27 @@ Until a dev.8 toolchain builds itself, the frozen dev.7 compiler builds Oven: `i
 
 `incan run` and `incan check` need an installed toolchain: its `toolchain.json` names `incan-rustc-driver` and the closure of the runtime and the standard packages' Rust crates, and the standard packages' Loaves sit in the toolchain's `loaves/` directory.
 
-`incan run`, `incan check` and `incan build` compile active path dependencies before their consumer, stopping on the first dependency refusal. Each library receives the features unified across the root project's selected graph, with declared aliases and inactive optional edges preserved, and writes its four DD-0007 artifacts under the root's `target/incan/loaves/<package>/<profile>` directory. A successful input fingerprint beside the complete artifact set allows unchanged libraries to be reused. Source additions, removals, content changes, feature changes and changed dependency artifacts invalidate that fingerprint. `describe-unit` describes units without compiling Incan libraries.
+`incan run`, `incan check` and `incan build` compile active path dependencies before their consumer, stopping on the first dependency refusal. Each library receives the features unified across the root project's selected graph, with declared aliases and inactive optional edges preserved, and writes its five DD-0007 artifacts under the root's `target/incan/loaves/<package>/<profile>` directory. A successful input fingerprint beside the complete artifact set allows unchanged libraries to be reused. Source additions, removals, content changes, feature changes and changed dependency artifacts invalidate that fingerprint. `describe-unit` describes units without compiling Incan libraries.
 
-`incan build PATH` compiles an Incan source file without running it. A directory selects `src/lib.incn` when present, otherwise `src/main.incn`. Supplying `--registry-units FILE` selects the Rust-facet build command.
+`incan build PATH` compiles an Incan source file without running it. A directory selects `src/lib.incn` when present, otherwise `src/main.incn`. A Rust project uses the prepared registry units named by the installed toolchain.
+
+## Inspecting source relationships
+
+Run `incan inspect codegraph PATH --format jsonl` for a source file or project. `--format json` returns an array of the same records. A Rust source path selects its owning Loaf; a Rust project exports its own units and reads dependency graphs from their Loaf artifacts. A legacy source-backed dependency without a graph receives one cached checking-only export. Registry artifacts that do not yet ship a graph remain external references; source-free artifacts cannot be reconstructed by inspection.
+
+Use `--query defs|refs|callers|callees|imports TERM` instead of `--format` to print one `kind identity file:line` line per hit. A term is an exact short name, qualified declaration name or full exported graph ID; ambiguous short names include their matching declarations. Imports select module names. For example, `incan inspect codegraph loaves/toolchain/incan-rustc-driver --query callers resolve_rust_facts` finds callers across its local closure. Query locations are relative to the repository, or the owning project outside a repository. Queries default to 20 hits; `--limit N` accepts a nonnegative integer and appends `… N more` when hits are omitted. Definitions carry span-free `stable_identity` values. Spans remain source anchors, independent of those identities.
+
+Compiled libraries carry `<name>.incngraph`, with span-free declaration IDs and Loaf-relative source paths, beside their native artifacts. Compilation projects the graph from the same checked unit and frozen Body IR. Rust compilation collects its graph during the ordinary rustc analysis pass. The kernel owns the versioned indexed-postcard format; JSON is generated only for query/export output. Inspection rejects unsupported versions and malformed records rather than replacing a published graph with source facts.
+
+Own-unit and legacy graphs are cached under the requesting project's `target/incan/codegraph/`. Source and dependency digests invalidate changed exports; published dependency graphs remain authoritative until rebuilt. Completed query answers are keyed by graph contents and arguments. A failed checked export publishes no reusable graph. Rust receiver types and signatures use canonical crate-qualified paths so a consumer's method target links to the defining crate's declaration. Rust call records with `kind: indirect` have no proved target; `virtual_method` names a trait requirement rather than a set of possible implementors. These records describe a lower bound on reachability, never proof that an unlisted implementation cannot be called.
+
+Incan libraries without published graphs are checked in dependency order. Each checking pass supplies both its source graph and a checking-only interface under the inspection cache; inspection produces no Incan rlib, executable body or native publication. Rust checking may need a native library for an Incan dependency: inspection uses an exact library recorded by the project's successful `incan build` in `target/incan/rust/<profile>/units.json`, or an explicitly installed toolchain extern, and refuses if neither is available. A bootstrap-emitted Rust graph cannot replace the authored Incan graph: publication must include the Incan manifest and complete artifact set. Source projections do not assert source/artifact equivalence.
+
+Projects can include source context that their binary does not statically link:
+
+```toml
+[tool.incan.codegraph]
+sources = ["relative/path/to/runtime"]
+```
+
+These projects contribute their Incan graphs without changing compilation dependencies. Paths resolve relative to the declaring project; a cycle is refused. The compiler uses this to include its native runtime's authored source. `--substitute NAME=DIR` remains an explicit build-graph selection, as for `incan build`; inspection uses the installed toolchain's rustc without requiring `RUSTC`. Checking-only export still observes checker admission limits: the current compiler source closure refuses an unadmitted `NativeUnionDeclaration::clone`, and the runtime source refuses slice `to_vec` and `str::split_whitespace`. A published authored Loaf graph avoids rechecking its dependency source.

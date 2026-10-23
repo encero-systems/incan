@@ -1,0 +1,12 @@
+# behavior: Unknown graph queries and invalid limits are refused before exporting or changing source.
+# graph-commands:
+#   src/main.incn --query unknown helper
+#   src/main.incn --query defs helper --limit -1
+#   src/main.incn --query defs helper --limit 1.5
+# expect-exit: 1
+# expect-stderr-contains:
+#   unknown graph query `unknown`
+#   --limit needs a nonnegative integer
+def main() -> None:
+    """A valid source that the invalid command must not analyze."""
+    pass

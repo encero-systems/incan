@@ -206,13 +206,15 @@ fn retain_feature_requirements(manifest: &mut LibraryManifest, modules: &[Parsed
 }
 
 /// Write a Loaf's files beside its rlib in `dir`: `<name>.incnbody`, the executable representation of `bodies` (the
-/// unit's own Body IR modules) projected onto the manifest's public identities; `<name>.native.json`, the closure
-/// the unit linked; and `<name>.incnlib`, the manifest, last, so its presence means the Loaf is complete.
+/// unit's own Body IR modules) projected onto the manifest's public identities; `<name>.incngraph`, the already-encoded
+/// graph from that same checking pass; `<name>.native.json`, the unit's native closure; and `<name>.incnlib` last,
+/// so its presence means the artifact set is complete.
 pub fn write_loaf(
     dir: &Path,
     mut manifest: LibraryManifest,
     bodies: &[BodyIrModule],
     closure: &LoafNativeClosure,
+    graph: &[u8],
 ) -> CliResult<()> {
     let name = manifest.name.clone();
     let write = |file: String, bytes: &[u8]| {
@@ -240,6 +242,7 @@ pub fn write_loaf(
         content_digest: hex::encode(Sha256::digest(&surface)),
     });
     write(format!("{name}.incnbody"), &surface)?;
+    write(format!("{name}.incngraph"), graph)?;
 
     // ---- Native closure and manifest ----
     let closure = serde_json::to_vec_pretty(closure)

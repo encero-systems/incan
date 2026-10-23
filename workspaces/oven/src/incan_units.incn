@@ -94,9 +94,12 @@ pub def run_program(binary: Path, arguments: list[str]) -> Result[i32, str]:
     return status_of(command, binary.0)
 
 
-def write_unit(unit: UnitDescription, compiled: str) -> Result[Path, str]:
+pub def write_unit(unit: UnitDescription, compiled: str, owner: Option[Path] = None) -> Result[Path, str]:
     """Write the unit description where the compiler reads it."""
-    directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("units")
+    mut root = Path(unit.project_root)
+    if let Some(selected) = owner:
+        root = selected
+    directory = root.joinpath("target").joinpath("incan").joinpath("units")
     directory.mkdir(true, true).map_err((error) => f"{directory.0}: {error.message()}")?
     path = directory.joinpath(f"{compiled}.unit.json")
     text = unit.to_json().to_pretty_json().map_err((error) => error.message())?
@@ -104,7 +107,7 @@ def write_unit(unit: UnitDescription, compiled: str) -> Result[Path, str]:
     return Ok(path)
 
 
-def run_compiler(toolchain: Toolchain, arguments: list[str]) -> Result[i32, str]:
+pub def run_compiler(toolchain: Toolchain, arguments: list[str]) -> Result[i32, str]:
     """Run the toolchain's compiler; it refuses an inherited `RUSTC_BOOTSTRAP`, so none reaches it."""
     mut command = Command.new(toolchain.driver)
     for argument in arguments:

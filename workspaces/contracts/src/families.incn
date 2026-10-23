@@ -15,7 +15,7 @@ from fixture import Fixture
 from header import Header
 
 
-pub const FAMILIES: FrozenList[str] = ["behavior", "check", "library", "interop", "testing", "project", "format"]
+pub const FAMILIES: FrozenList[str] = ["behavior", "check", "library", "interop", "testing", "project", "format", "graph"]
 
 # The expectations a run compares.
 const RUN: FrozenList[str] = ["expect-stdout", "expect-stdout-contains", "expect-stderr-contains", "expect-exit"]
@@ -39,6 +39,8 @@ def admitted(family: str) -> list[str]:
     """The expectations `family` admits."""
     if family == "format":
         return ["expect-formatted", "expect-exit"]
+    if family == "graph":
+        return list(RUN)
     if family == "check":
         return ["expect-diagnostic", "expect-accepted"]
     if family == "testing":
@@ -54,6 +56,10 @@ pub def admit(fixture: Fixture, header: Header) -> Result[None, str]:
     """Refuse a header that declares an expectation its family does not compare, or no expectation at all, and a
     fixture whose shape its family cannot run."""
     allowed = admitted(fixture.family)
+    if fixture.family == "graph" and len(header.items("graph-commands")) == 0:
+        return Err("a graph fixture declares its inspection invocations in `graph-commands:`")
+    if fixture.family != "graph" and header.declares("graph-commands"):
+        return Err("only graph fixtures declare `graph-commands:`")
     mut declared = 0
     for key in EXPECTATIONS:
         if header.declares(key):

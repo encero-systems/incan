@@ -21,6 +21,7 @@ from fixture import Fixture, discover_family, materialize
 from header import parse_header
 from run import invoke
 from formatting import compare_format
+from graph import compare_graph
 
 
 pub model Tally:
@@ -139,6 +140,10 @@ def run_case(incan: str, scratch: Path, fixture: Fixture) -> Verdict:
                             mut failures: list[str] = []
                             if fixture.family == "format":
                                 match compare_format(incan, project, header, source):
+                                    Err(reason) => failures.append(reason)
+                                    Ok(found) => failures = found
+                            elif fixture.family == "graph":
+                                match compare_graph(incan, project, header):
                                     Err(reason) => failures.append(reason)
                                     Ok(found) => failures = found
                             else:

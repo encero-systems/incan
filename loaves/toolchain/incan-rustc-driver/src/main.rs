@@ -25,6 +25,7 @@ mod captured_generators;
 mod checked_json;
 mod cloneable_closures;
 mod closures;
+mod codegraph;
 mod comparison_bridges;
 mod coroutines;
 mod declarations;
@@ -40,7 +41,10 @@ mod library_exports;
 mod marker_traits;
 mod native_crates;
 mod plan;
+mod rust_codegraph;
 mod rust_facts;
+mod rust_graph_bodies;
+mod rust_graph_records;
 mod shared_callables;
 mod spans;
 mod statics;
@@ -58,11 +62,12 @@ use incan_cli::commands::DiagnosticOutputFormat;
 use incan_driver::unit::UnitDescription;
 
 const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [OPTIONS] | --check UNIT SYSROOT [--format \
-                     text|json] [OPTIONS] | --fmt UNIT PATH [--check] | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR]\n\
+                     text|json] [OPTIONS] | --fmt UNIT PATH [--check] | --codegraph UNIT SYSROOT OUTPUT | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR]\n\
                      OPTIONS: --rustc-arg ARG, --library (native artifacts and ABI caches come from UNIT)";
 
 /// Compile an Incan unit (`--unit`) or check one (`--check`), each from the unit description Oven wrote, or write the
-/// ABI cache of Rust crates (`--rust-abi`), or format source with the unit's vocabulary (`--fmt`).
+/// ABI cache of Rust crates (`--rust-abi`), format source with the unit's vocabulary (`--fmt`), or export checked
+/// graphs (`--codegraph` and `--rust-codegraph`).
 ///
 /// The shared opt-in invocation sink is initialized before dispatch; disabled tracing uses the ordinary logging filter.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -72,6 +77,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("--unit") => frontend::compile(&args[1..]),
         Some("--check") => check(&args[1..]),
         Some("--fmt") => format(&args[1..]),
+        Some("--codegraph") => codegraph::incan(&args[1..]),
+        Some("--read-codegraph") => codegraph::read(&args[1..]),
+        Some("--rust-codegraph") => rust_codegraph::export(&args[1..]),
+        Some("--rust-compile-codegraph") => rust_codegraph::compile(&args[1..]),
         Some("--rust-abi") => rust_abi(&args[1..]),
         _ => Err(USAGE.into()),
     }

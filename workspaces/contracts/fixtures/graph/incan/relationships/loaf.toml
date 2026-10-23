@@ -1,0 +1,15 @@
+[project]
+name = "relationships"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+checked = { path = "deps/checked" }
+
+[rust-dependencies]
+serde_json = "1.0"
+
+[tool.incan.codegraph]
+sources = ["context"]

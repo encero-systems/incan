@@ -11,10 +11,10 @@ from unit import UnitDescription
 pub def artifact_files(directory: Path, package: str) -> list[Path]:
     """The complete DD-0007 artifact set required to reuse a library."""
     linked = package.replace("-", "_")
-    return [directory.joinpath(name) for name in [f"lib{linked}.rlib", f"{package}.incnlib", f"{package}.incnbody", f"{package}.native.json"]]
+    return [directory.joinpath(name) for name in [f"lib{linked}.rlib", f"{package}.incnlib", f"{package}.incnbody", f"{package}.native.json", f"{package}.incngraph"]]
 
 
-def file_digest(path: Path) -> Result[str, str]:
+pub def file_digest(path: Path) -> Result[str, str]:
     """Hash exact bytes, preserving read failures rather than treating them as unchanged inputs."""
     content = path.read_bytes().map_err((error) => f"{path.0}: {error.message()}")?
     return Ok(hexlify(sha256.digest(content)))
@@ -54,6 +54,9 @@ pub def source_fingerprint(unit: UnitDescription, compiler: str) -> Result[str, 
     for loaf in unit.loaves:
         for path in artifact_files(Path(loaf.dir), loaf.name):
             inputs.append(path.0)
+            if path.name().endswith(".incngraph") and not path.is_file():
+                inputs.append("legacy-without-graph")
+                continue
             inputs.append(file_digest(path)?)
     for native in unit.externs:
         inputs.append(native.name)

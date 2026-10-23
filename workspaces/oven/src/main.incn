@@ -7,6 +7,7 @@
     incan describe-unit PATH [UNIT OPTIONS]
     incan build PATH [--substitute NAME=DIR] [UNIT OPTIONS]
     incan fmt [--check] PATH...
+    incan inspect codegraph PATH [--format json|jsonl] [--query KIND TERM] [--limit N]
     incan --version
 
 UNIT OPTIONS are `--profile NAME`, `--features A,B`, `--no-default-features` and `--all-features`.
@@ -25,6 +26,7 @@ from rust_units import RustBuild, build_rust, read_registry_units
 from toolchain import load_toolchain, rust_compiler
 from formatting import format_paths
 from testing import run_tests
+from graph_inspection import inspect_codegraph
 
 
 pub model Options:
@@ -64,6 +66,9 @@ def main() -> None:
         return
     if command == "fmt":
         finish("fmt", format_paths(rest))
+        return
+    if command == "inspect":
+        finish("inspect", inspect_codegraph(rest))
         return
     fail(f"incan: unknown command `{command}`\n{usage()}", 2)
 
