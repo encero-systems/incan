@@ -1,19 +1,21 @@
 //! Shared CLI-session source-to-Body-IR glue. All Body-IR-to-plan decisions belong to the Incan lowering Loaf.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
 use incan_driver::loaf_publication::{PublicationFacts, write_loaf};
 use incan_driver::modules::{collect_library_modules_detailed_with_session, collect_modules_detailed_with_session};
-use incan_driver::session::{CompilationSession, RustFactsSetup};
+use incan_driver::session::{CompilationAnalysis, CompilationSession, RustFactsSetup};
 use incan_driver::unit::{UnitDescription, UnitKind};
 use incan_frontend::ast::{DecoratorArg, Expr, Literal};
 use incan_frontend::library_manifest::LibraryManifest;
-use incan_frontend::loaf_index::LoafNativeClosure;
+use incan_frontend::loaf_index::{LoafIndex, LoafNativeClosure};
+use incan_frontend::parsed_module::ParsedModule;
 use incan_mir_lowering::caller::incan::{program_refusals, unit_plan};
-use incan_semantics_core::SymbolOrigin;
-use incan_semantics_core::body_ir::{BodyIrModule, NominalDeclaration};
+use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable, NominalDeclaration};
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 
 /// Environment variable naming the file where the census receives every refusal of one compilation, one per line.
 ///
@@ -133,43 +135,8 @@ fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup) -> Result<Chec
     .ok_or("unsupported Body IR string conversion contract identity")?;
 
     // ---- Declarations the program reaches in its Loaves ----
-    let facts = modules
-        .iter()
-        .map(|module| {
-            analysis
-                .type_info_for_path(&module.file_path)
-                .map(|info| info.semantic_fact_store(&module.path_segments))
-                .ok_or("module analysis is missing")
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let roots = modules
-        .iter()
-        .filter_map(|module| analysis.type_info_for_path(&module.file_path))
-        .flat_map(|info| info.declarations.declaration_identities.values().cloned());
-    let requested = incan_semantics_core::dependencies::CheckedDependencyGraph::from_fact_stores(&facts)
-        .reachable_from(roots)
-        .into_iter()
-        .chain(
-            modules
-                .iter()
-                .filter_map(|module| analysis.type_info_for_path(&module.file_path))
-                .flat_map(|info| info.calls.body_ir_reexport_calls.values())
-                .map(|call| call.canonical.clone()),
-        )
-        .chain(
-            modules
-                .iter()
-                .filter_map(|module| analysis.type_info_for_path(&module.file_path))
-                .flat_map(|info| info.calls.body_ir_async_call_targets.values().cloned()),
-        )
-        // A library unit's own declarations carry its package identity; they compile here, never from a Loaf.
-        .filter(
-            |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity),
-        )
-        .collect();
-    let mut bodies = incan_frontend::executable_resolution::resolve_loaf_declarations(session.loaves(), &requested)
-        .map_err(|error| format!("unsupported Body IR Loaf declaration: {error}"))?
-        .modules;
+    let requested = required_loaf_identities(&modules, &analysis, package_identity)?;
+    let mut bodies = load_loaf_modules(session.loaves(), &requested)?;
     // Loaf declarations retain canonical spans but carry no source text. Do not attribute those spans to the entry.
     let mut files = bodies
         .iter()
@@ -202,15 +169,150 @@ fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup) -> Result<Chec
         sources.push(module.source);
         files.push(module.file_path.to_string_lossy().into_owned());
     }
-    // ---- Loaf declarations: named, not compiled here (DD-0007) ----
-    // A Loaf's layouts name its compiled items, and a non-generic Loaf body is its declaration record: the program
-    // calls the Loaf's compiled item. An open body, including a method on an owner with type parameters, stays for
-    // consumer instantiation.
-    let mut loaf_callables = bodies
+    let entry_module = bodies.get_mut(entry).ok_or("selected Body IR entry is missing")?;
+    entry_module.string_conversion_contract = string_conversion_contract;
+    complete_dependency_context(
+        CheckedProgram {
+            modules: bodies,
+            sources,
+            files,
+            entry,
+            own: loaf_modules,
+            manifest,
+            tests,
+        },
+        session.loaves(),
+        requested,
+        package_identity,
+    )
+}
+
+/// Project exact public package requirements reachable from accepted module facts, including private re-export calls.
+/// The current package's declarations compile from this unit and never resolve through a dependency artifact.
+fn required_loaf_identities(
+    modules: &[ParsedModule],
+    analysis: &CompilationAnalysis,
+    package_identity: &str,
+) -> Result<BTreeSet<CanonicalSymbolId>, String> {
+    let facts = modules
+        .iter()
+        .map(|module| {
+            analysis
+                .type_info_for_path(&module.file_path)
+                .map(|info| info.semantic_fact_store(&module.path_segments))
+                .ok_or("module analysis is missing")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let roots = modules
+        .iter()
+        .filter_map(|module| analysis.type_info_for_path(&module.file_path))
+        .flat_map(|info| info.declarations.declaration_identities.values().cloned());
+    let requested = incan_semantics_core::dependencies::CheckedDependencyGraph::from_fact_stores(&facts)
+        .reachable_from(roots)
+        .into_iter()
+        .chain(
+            modules
+                .iter()
+                .filter_map(|module| analysis.type_info_for_path(&module.file_path))
+                .flat_map(|info| info.calls.body_ir_reexport_calls.values())
+                .map(|call| call.canonical.clone()),
+        )
+        .chain(
+            modules
+                .iter()
+                .filter_map(|module| analysis.type_info_for_path(&module.file_path))
+                .flat_map(|info| info.calls.body_ir_async_call_targets.values().cloned()),
+        )
+        .filter(
+            |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity),
+        )
+        .collect();
+    Ok(requested)
+}
+
+/// Read only the selected Loaves' authenticated declaration closure; absence never authorizes a synthesized body.
+fn load_loaf_modules(loaves: &LoafIndex, requested: &BTreeSet<CanonicalSymbolId>) -> Result<Vec<BodyIrModule>, String> {
+    incan_frontend::executable_resolution::resolve_loaf_declarations(loaves, requested)
+        .map(|resolved| resolved.modules)
+        .map_err(|error| format!("unsupported Body IR Loaf declaration: {error}"))
+}
+
+/// Complete the dependency context with the checked comparison slots needed by native bridges, then retain linked
+/// contracts and held Rust layouts. The added defaults introduce no new source checking or invented implementations.
+fn complete_dependency_context(
+    mut program: CheckedProgram,
+    loaves: &LoafIndex,
+    mut requested: BTreeSet<CanonicalSymbolId>,
+    package_identity: &str,
+) -> Result<CheckedProgram, String> {
+    let defaults = incan_frontend::body_ir::required_comparison_defaults(&program.modules[program.own..])
+        .into_iter()
+        .filter(
+            |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity),
+        )
+        .collect::<BTreeSet<_>>();
+    if !defaults.is_subset(&requested) {
+        requested.extend(defaults);
+        let mut expanded = load_loaf_modules(loaves, &requested)?;
+        let own = program.modules.split_off(program.own);
+        let mut files = program.files.split_off(program.own);
+        let mut sources = program.sources.split_off(program.own);
+        program.entry = program.entry - program.own + expanded.len();
+        program.own = expanded.len();
+        program.files = expanded
+            .iter()
+            .map(|module| module.module_id.path().to_owned())
+            .collect();
+        program.files.append(&mut files);
+        program.sources = vec![String::new(); expanded.len()];
+        program.sources.append(&mut sources);
+        expanded.extend(own);
+        program.modules = expanded;
+    }
+    let loaf_callables = retain_linked_loaf_declarations(&mut program.modules, program.own);
+    let opaque = incan_semantics_core::body_ir::held_rust_items(&program.modules);
+    let layouts = take_rust_layouts(&mut program.modules)?;
+    let owners: std::collections::HashSet<_> = layouts
+        .iter()
+        .map(|declaration| declaration.canonical.clone())
+        .collect();
+    let held = rust_value_modules(
+        layouts
+            .into_iter()
+            .chain(
+                opaque
+                    .into_iter()
+                    .filter(|declaration| !owners.contains(&declaration.canonical)),
+            )
+            .collect(),
+    );
+    let held_modules = held.len();
+    program.files.splice(
+        program.own..program.own,
+        held.iter().map(|module| module.module_id.path().to_owned()),
+    );
+    program
+        .sources
+        .splice(program.own..program.own, held.iter().map(|_| String::new()));
+    program.modules.splice(program.own..program.own, held);
+    program.entry += held_modules;
+    program.own += held_modules;
+    program
+        .modules
+        .get_mut(program.entry)
+        .ok_or("selected Body IR entry is missing")?
+        .loaf_callables = loaf_callables;
+    Ok(program)
+}
+
+/// Replace standalone package bodies with linked contracts. Body IR keeps governed templates, including defaults
+/// with an open Self receiver, available for checked adopter specialization.
+fn retain_linked_loaf_declarations(modules: &mut [BodyIrModule], linked: usize) -> Vec<LoafCallable> {
+    let mut loaf_callables = modules
         .iter()
         .flat_map(|module| module.loaf_callables.iter().cloned())
         .collect::<Vec<_>>();
-    for module in bodies.iter_mut().take(loaf_modules) {
+    for module in modules.iter_mut().take(linked) {
         for declaration in &mut module.nominal_declarations {
             if declaration.native_item.is_empty()
                 && let Some(item) = incan_semantics_core::body_ir::loaf_item_path(&declaration.canonical)
@@ -243,46 +345,11 @@ fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup) -> Result<Chec
                     false
                 }
                 None => true,
+                None => true,
             }
         });
     }
-    // ---- Rust values the program holds: declaration-only modules under each item's native module (DD-0006) ----
-    let opaque = incan_semantics_core::body_ir::held_rust_items(&bodies);
-    let layouts = take_rust_layouts(&mut bodies)?;
-    let owners: std::collections::HashSet<_> = layouts
-        .iter()
-        .map(|declaration| declaration.canonical.clone())
-        .collect();
-    let held = rust_value_modules(
-        layouts
-            .into_iter()
-            .chain(
-                opaque
-                    .into_iter()
-                    .filter(|declaration| !owners.contains(&declaration.canonical)),
-            )
-            .collect(),
-    );
-    let held_modules = held.len();
-    files.splice(
-        loaf_modules..loaf_modules,
-        held.iter().map(|module| module.module_id.path().to_owned()),
-    );
-    sources.splice(loaf_modules..loaf_modules, held.iter().map(|_| String::new()));
-    bodies.splice(loaf_modules..loaf_modules, held);
-    let entry = entry + held_modules;
-    let entry_module = bodies.get_mut(entry).ok_or("selected Body IR entry is missing")?;
-    entry_module.string_conversion_contract = string_conversion_contract;
-    entry_module.loaf_callables = loaf_callables;
-    Ok(CheckedProgram {
-        modules: bodies,
-        sources,
-        files,
-        entry,
-        own: loaf_modules + held_modules,
-        manifest,
-        tests,
-    })
+    loaf_callables
 }
 
 /// Move metadata-selected native layouts to their physical declaration scopes, deduplicating identical selections

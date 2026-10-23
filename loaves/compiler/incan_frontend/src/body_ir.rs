@@ -58,6 +58,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+pub use source_comparison::required_published_defaults as required_comparison_defaults;
+
 use incan_lang::lang::keywords::KeywordId;
 use incan_semantics_core::SurfaceFeatureKey;
 use incan_semantics_core::body_ir as bir;
