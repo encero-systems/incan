@@ -49,11 +49,11 @@ pub enum ListLeaf:
     """
     Scalar, flat tuple, Copy function pointer, and exact retained nominal/carrier leaves; hash keys still require admitted Eq and Hash authority.
 
-    `List` and `Dict` are owned collection values held by another collection, such as a dictionary's list values or a
+    `List`, `Set` and `Dict` are owned collection values held by another collection, such as a dictionary's list values or a
     list's dictionaries. A list of lists keeps one leaf with a greater depth, so `List` never leads a `PlanType.List`.
     `FrozenStr` and `FrozenBytes` keep dependency-owned Copy wrappers; ordinary strings and bytes own their read data.
     A variant cannot hold its own type directly, so `List` holds its element leaf as the only item of a list, and
-    `Dict` holds its key and value leaves, in that order, as the two items of one.
+    `Set` holds one element leaf, and `Dict` holds its key and value leaves, in that order, as the two items of one.
     """
 
     Int
@@ -71,6 +71,7 @@ pub enum ListLeaf:
     FunctionPointer(list[PlanType])
     List(list[ListLeaf], int)
     Dict(list[ListLeaf])
+    Set(list[ListLeaf])
     # Preserve the native pointer-width unsigned carrier in collection storage.
     USize
 
@@ -137,6 +138,8 @@ pub enum PlanType:
     Bool
     Unit
     CheckedNumeric(SizedNumeric)
+    # A checked diverging result has no value and gives its native call no normal continuation.
+    Never
     # A source-free executor callback; ordinary source callable values stay outside this carrier.
     UnitFunction
     EnumTag
@@ -239,6 +242,7 @@ pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
         ListLeaf.FunctionPointer(signature) => return PlanType.FunctionPointer(signature)
         ListLeaf.List(element, depth) => return PlanType.List(element[0], depth)
         ListLeaf.Dict(entry) => return PlanType.Dict(entry[0], entry[1])
+        ListLeaf.Set(element) => return PlanType.Set(element[0])
 
 
 pub def range_field_types() -> list[PlanType]:

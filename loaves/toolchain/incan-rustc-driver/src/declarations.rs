@@ -195,6 +195,7 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
             },
         ),
         PlanType::Unit => ast::TyKind::Tup(ThinVec::new()),
+        PlanType::Never => ast::TyKind::Never,
         PlanType::UnitFunction => ast::TyKind::FnPtr(Box::new(ast::FnPtrTy {
             safety: ast::Safety::Default,
             ext: ast::Extern::None,

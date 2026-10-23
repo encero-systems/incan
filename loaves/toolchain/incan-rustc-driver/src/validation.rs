@@ -49,6 +49,7 @@ fn numeric(kind: &SizedNumeric) -> Numeric {
 /// A local comparison vocabulary; the public types remain the Incan Loaf's own types.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Scalar {
+    Never,
     NativeStr,
     NativeSlice(Vec<Scalar>),
     SliceRef(Vec<Scalar>),
@@ -153,6 +154,8 @@ enum Leaf {
     List(Vec<Leaf>, i64),
     /// An owned nested dictionary preserves key/value arity instead of indexing an unchecked vector.
     Dict(Vec<Leaf>),
+    /// An owned nested set preserves its element arity for validation.
+    Set(Vec<Leaf>),
 }
 
 impl Leaf {
@@ -180,6 +183,7 @@ impl Leaf {
             ListLeaf::FunctionPointer(signature) => Leaf::FunctionPointer(signature.iter().map(scalar).collect()),
             ListLeaf::List(elements, depth) => Leaf::List(elements.iter().map(Leaf::of).collect(), *depth),
             ListLeaf::Dict(elements) => Leaf::Dict(elements.iter().map(Leaf::of).collect()),
+            ListLeaf::Set(elements) => Leaf::Set(elements.iter().map(Leaf::of).collect()),
         }
     }
 }
@@ -192,6 +196,7 @@ fn tuple_leaf(element: &crate::plan::TupleElement) -> Leaf {
 /// Compare source-authored types without requiring a Rust derive on Incan types.
 fn scalar(ty: &PlanType) -> Scalar {
     match ty {
+        PlanType::Never => Scalar::Never,
         PlanType::NativeStr => Scalar::NativeStr,
         PlanType::NativeSlice(elements) => Scalar::NativeSlice(elements.iter().map(scalar).collect()),
         PlanType::SliceRef(elements) => Scalar::SliceRef(elements.iter().map(scalar).collect()),
@@ -349,7 +354,8 @@ pub fn validate(plan: &Plan, library: bool) -> Result<(), PlanError> {
             .parameters
             .iter()
             .any(|ty| !external_signature_type(&scalar(ty)))
-            || !external_signature_type(&scalar(&external.return_type))
+            || (!matches!(external.return_type, PlanType::Never)
+                && !external_signature_type(&scalar(&external.return_type)))
         {
             return Err(PlanError::Invalid {
                 function: external.path.clone(),
@@ -2074,13 +2080,14 @@ fn hashable_payload(plan: &Plan, ty: &Scalar, carrier: i64) -> bool {
 fn checked_list_leaf_type(leaf: &ListLeaf) -> Result<PlanType, PlanError> {
     let valid = match leaf {
         ListLeaf::List(elements, _) => elements.len() == 1,
+        ListLeaf::Set(elements) => elements.len() == 1,
         ListLeaf::Dict(elements) => elements.len() == 2,
         _ => true,
     };
     if !valid {
         return Err(PlanError::Invalid {
             function: "collection leaf".into(),
-            reason: "nested collection leaf requires exactly one list child or two dictionary children".into(),
+            reason: "nested collection leaf requires one list or set child, or two dictionary children".into(),
         });
     }
     Ok(list_leaf_type(leaf.clone()))

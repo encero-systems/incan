@@ -1,0 +1,23 @@
+# behavior: explicit wrapping integer arithmetic preserves each width and both operands
+# expect-stdout:
+#   -9223372036854775808
+#   9223372036854775807
+#   -2
+#   0
+#   1
+#   2
+#   9223372036854775807
+
+def main() -> None:
+    """Observe signed and unsigned modular arithmetic at their overflow boundaries."""
+    maximum: int = 9223372036854775807
+    minimum: int = -9223372036854775808
+    println(maximum.wrapping_add(1))
+    println(minimum.wrapping_sub(1))
+    println(maximum.wrapping_mul(2))
+    byte: u8 = 255
+    println(byte.wrapping_add(1))
+    println(byte.wrapping_mul(255))
+    wide: u64 = 18446744073709551615
+    println(wide.wrapping_sub(18446744073709551613))
+    println(maximum)

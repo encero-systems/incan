@@ -545,7 +545,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
                     return bir::Operand::place(place, fact, last_use);
                 }
-                let mut place = self.lower_expr_to_place(base, scope, out);
+                let mut place = self.lower_checked_field_base(base, expr.span, scope, out);
                 place
                     .projection
                     .extend(self.lower_checked_field_projections(base, name, expr.span));
@@ -699,7 +699,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 if let Some(place) = self.module_member_place(base, expr.span) {
                     return place;
                 }
-                let mut place = self.lower_expr_to_place(base, scope, out);
+                let mut place = self.lower_checked_field_base(base, expr.span, scope, out);
                 place
                     .projection
                     .extend(self.lower_checked_field_projections(base, name, expr.span));

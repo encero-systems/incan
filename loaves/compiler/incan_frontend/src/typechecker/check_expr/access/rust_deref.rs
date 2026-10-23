@@ -3,14 +3,55 @@
 use super::{RustPathMethodCall, RustTraitQualifiedCall, TypeChecker};
 use crate::ast::{Expr, Span, Spanned};
 use crate::symbols::{CallableParam, ResolvedType};
+use crate::typechecker::helpers::render_resolved_type_as_rust_arg;
 use crate::typechecker::type_info::RustCheckedCall;
 use crate::typechecker::{IdentKind, RustArgCoercionKind};
 use incan_lang::interop::{RustItemKind, RustTypeInfo, ancestral_rust_path};
+use incan_lang::lang::types::collections::{CollectionTypeId, from_str as collection_type};
 
 const DEREF_TRAIT: &str = "std::ops::Deref";
 const DEREF_MUT_TRAIT: &str = "std::ops::DerefMut";
 
 impl TypeChecker {
+    /// Resolve a public field through metadata-selected shared Deref targets. Retain the same field identity and
+    /// native payload as a direct read, plus every executable adjustment; no target is inferred from a field name.
+    pub(super) fn resolve_rust_deref_field(
+        &mut self,
+        base: &Spanned<Expr>,
+        source: &ResolvedType,
+        field: &str,
+        span: Span,
+    ) -> Option<ResolvedType> {
+        let mut owner = self.rust_native_value_type(base).unwrap_or_else(|| source.clone());
+        let mut steps = Vec::new();
+        for _ in 0..12 {
+            let path = self.rust_canonical_path_for_receiver_type(&owner)?;
+            let metadata = self.rust_item_metadata_for_path(&path)?;
+            let RustItemKind::Type(info) = &metadata.kind else {
+                return None;
+            };
+            if Self::rust_field_for_source_name(&info.fields, field).is_some() {
+                if steps.is_empty() {
+                    return None;
+                }
+                let result = self.rust_path_field_type(&render_resolved_type_as_rust_arg(&owner), field, span)?;
+                self.type_info
+                    .rust
+                    .field_adjustments
+                    .insert((span.start, span.end), steps);
+                return Some(result);
+            }
+            owner = self.rust_closed_owner(&owner, info, &path);
+            let target = self.rust_associated_type(&owner, DEREF_TRAIT, "Target")?;
+            if target == owner {
+                return None;
+            }
+            steps.push(self.rust_deref_adjustment(&owner, &target, false)?);
+            owner = target;
+        }
+        None
+    }
+
     /// Retain native dereferences only when their metadata-selected target satisfies a source shared parameter.
     /// This is a call-boundary adjustment, never assignment compatibility or an owned-value conversion.
     pub(in crate::typechecker) fn retain_borrowed_argument_dereferences(
@@ -153,7 +194,7 @@ impl TypeChecker {
         let mut owner = source.clone();
         let mut steps = Vec::new();
         for _ in 0..12 {
-            let path = self.rust_canonical_path_for_receiver_type(&owner)?;
+            let path = self.rust_trait_receiver_path(&owner)?;
             let metadata = self.rust_item_metadata_for_path(&path)?;
             let RustItemKind::Type(info) = &metadata.kind else {
                 return None;
@@ -199,6 +240,22 @@ impl TypeChecker {
             owner = target;
         }
         None
+    }
+
+    /// Select source list storage only at an explicit Rust trait boundary. This grants no native method priority to
+    /// ordinary source lists and leaves their checked source types unchanged throughout generic inference.
+    fn rust_trait_receiver_path(&self, owner: &ResolvedType) -> Option<String> {
+        if let Some(path) = self.rust_canonical_path_for_receiver_type(owner) {
+            return Some(path);
+        }
+        match owner {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.rust_trait_receiver_path(inner),
+            ResolvedType::Generic(base, _) if collection_type(base) == Some(CollectionTypeId::List) => {
+                Some("std::vec::Vec".into())
+            }
+            ResolvedType::Bytes => Some("std::vec::Vec".into()),
+            _ => None,
+        }
     }
 
     /// Attach each selected dereference with the final callee's borrow mode; never repeat method lookup in Body IR.

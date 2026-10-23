@@ -1,0 +1,21 @@
+# behavior: a trait-qualified clone of a borrowed list produces independent owned storage
+# expect-stdout:
+#   [3.0, 1.0]
+#   [9.0, 1.0]
+
+from rust::std::clone import Clone as RuntimeClone
+
+
+def copy_values(values: &list[float]) -> list[float]:
+    """Keep the annotated owned result of a native Clone call on shared list storage."""
+    owned: list[float] = RuntimeClone.clone(values)
+    return owned
+
+
+def main() -> None:
+    """Mutate the result while retaining the borrowed original."""
+    values = [3.0, 1.0]
+    mut copied = copy_values(values)
+    copied[0] = 9.0
+    println(values)
+    println(copied)

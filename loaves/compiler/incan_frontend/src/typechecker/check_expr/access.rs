@@ -5697,6 +5697,9 @@ impl TypeChecker {
         if matches!(base_ty, ResolvedType::Unknown) {
             return ResolvedType::Unknown;
         }
+        if let Some(result) = self.resolve_rust_deref_field(base, base_ty, field, span) {
+            return result;
+        }
         if let ResolvedType::RustPath(path) = base_ty {
             return self.check_rust_path_field(path, field, span);
         }

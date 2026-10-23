@@ -8310,7 +8310,7 @@ def read_element_field(
     projection: &PlaceElem,
     span: SourceSpan,
 ) -> Result[Place, str]:
-    """Read one field of a model element already copied out of a list, copying scalars and cloning owned values."""
+    """Read a field from a list element, copying scalars and function pointers while cloning owned values."""
     selected = field_projection(
         builder.nominals,
         place_type(builder.locals, place),
@@ -8342,7 +8342,7 @@ def read_element_field(
             span,
         )
         return Ok(output)
-    if not numeric_carrier(ty) and ty != PlanType.Bool:
+    if not numeric_carrier(ty) and ty != PlanType.Bool and not callable_copy_type(ty):
         return Err("unsupported Body IR list element field type")
     output = temporary(builder, ty, span)
     builder.emit(plan_assign(output, RvalueKind.Use(read_place(field, false, span)), span))
@@ -8719,10 +8719,12 @@ def lower_integer_helper(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[bool, str]:
-    """Admit checked u8 registry operations at their native operand widths; other carriers stay refused."""
+    """Lower wrapping arithmetic directly; retain checked and saturating u8 helpers at their native widths."""
+    if lower_wrapping_integer(builder, member, receiver, arguments, destination, span)?:
+        return Ok(true)
     if receiver != PlanType.U8:
         return Ok(false)
-    for operation in ["checked_add", "checked_sub", "checked_mul", "checked_pow", "wrapping_add", "wrapping_sub", "wrapping_mul", "wrapping_pow", "saturating_add", "saturating_sub", "saturating_mul", "saturating_pow"]:
+    for operation in ["checked_add", "checked_sub", "checked_mul", "checked_pow", "wrapping_pow", "saturating_add", "saturating_sub", "saturating_mul", "saturating_pow"]:
         if member != f"u8.{operation}":
             continue
         if len(arguments) != 2:
@@ -8754,6 +8756,40 @@ def lower_integer_helper(
             output,
             span,
         )
+        return Ok(true)
+    return Ok(false)
+
+
+def lower_wrapping_integer(
+    mut builder: Builder,
+    member: str,
+    receiver: PlanType,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[bool, str]:
+    """Emit the checked integer member as native modular arithmetic without invoking a runtime wrapper recursively."""
+    if not integer_carrier(receiver):
+        return Ok(false)
+    mut owner = numeric_name(receiver)
+    if receiver == PlanType.Int:
+        owner = "i64"
+    for name, operation in [("wrapping_add", BinaryOp.Add), ("wrapping_sub", BinaryOp.Subtract), ("wrapping_mul", BinaryOp.Multiply)]:
+        if member != f"{owner}.{name}":
+            continue
+        if len(arguments) != 2:
+            return Err("unsupported Body IR wrapping integer arity")
+        output = call_destination(builder, destination, receiver, span)?
+        left = numeric_receiver(builder, arguments, span)?
+        value = argument_value(builder, arguments, 1, span)?
+        right = coerce_numeric_operand(builder, value, receiver, span)?
+        if receiver == PlanType.Int:
+            pair = temporary(builder, PlanType.CheckedInt, span)
+            builder.emit(plan_assign(pair, RvalueKind.Binary(operation, left, right), span))
+            wrapped = Place(local=pair.local, projection=Projection.Value, span=span)
+            builder.emit(plan_assign(output, RvalueKind.Use(read_place(wrapped, false, span)), span))
+            return Ok(true)
+        builder.emit(plan_assign(output, RvalueKind.Binary(operation, left, right), span))
         return Ok(true)
     return Ok(false)
 
@@ -9039,6 +9075,7 @@ def lower_list_method(
             ListLeaf.Tuple(_fields) => return Err("unsupported Body IR List.contains tuple equality")
             ListLeaf.List(_elements, _depth) => return Err("unsupported Body IR List.contains nested equality")
             ListLeaf.Dict(_elements) => return Err("unsupported Body IR List.contains dictionary equality")
+            ListLeaf.Set(_elements) => return Err("unsupported Body IR List.contains set equality")
             _ => pass
         return lower_list_helper(builder, false, arguments, destination, span)
     if is_collection(receiver_ty):
