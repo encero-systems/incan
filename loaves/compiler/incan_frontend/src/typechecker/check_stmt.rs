@@ -2298,16 +2298,14 @@ impl TypeChecker {
     /// Infer a loop item type from an iterable expression, falling back to structural `__iter__` / `__next__` hooks.
     ///
     /// Every `for` statement and comprehension clause iterates through here, so this is also where iterating a
-    /// generator that a caller-visible `mut` parameter holds is recorded as a change to the parameter.
+    /// generator that a caller-visible `mut` parameter holds is recorded as a change to the parameter. Builtin
+    /// iterator values retain builtin polling; structural hooks are selected only by the custom protocol resolver.
     pub fn infer_iterator_element_type_from_expr(
         &mut self,
         iter_expr: &Spanned<Expr>,
         iter_ty: &ResolvedType,
     ) -> ResolvedType {
         self.note_mut_param_iteration(iter_expr, iter_ty);
-        if iter_ty.iterator_item_type().is_some() {
-            self.retain_body_ir_iterator_hooks(iter_ty, iter_expr.span);
-        }
         if iter_ty.iterator_item_type().is_some()
             && let Expr::Ident(name) = &iter_expr.node
         {

@@ -46,7 +46,7 @@ use incan_lang::lang::types::numerics::{self as numerics, IntegerHelperFamily, I
 use incan_lang::lang::{conventions, stdlib};
 use incan_lang::lang::{enum_helpers, surface::option_methods};
 use incan_semantics_core::body_ir::HelperOp;
-use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace};
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
 use quote::ToTokens;
 use syn::{GenericArgument, PathArguments, ReturnType, Type as SynType, TypeParamBound};
 
@@ -4685,12 +4685,48 @@ impl TypeChecker {
         Some(ResolvedType::Unknown)
     }
 
+    /// Authenticate a builtin receiver or the exact standard trait declaration its registered interface names. A
+    /// same-spelled declaration from another module or package supplies no builtin authority.
+    fn is_builtin_receiver_owner(&self, name: &str) -> bool {
+        let Some(identity) = self
+            .symbols
+            .lookup(name)
+            .and_then(|symbol| self.symbols.identity_of(symbol))
+        else {
+            return false;
+        };
+        let SymbolOrigin::Package { library, module_path } = &identity.origin else {
+            return identity.origin == SymbolOrigin::Builtin;
+        };
+        let Some(trait_id) = core_traits::from_qualified_str(name) else {
+            return false;
+        };
+        if identity.kind != SemanticSourceTargetKind::Trait
+            || identity.declaration_name != core_traits::as_str(trait_id)
+        {
+            return false;
+        }
+        let Some(owner) = core_traits::source_module(trait_id) else {
+            return false;
+        };
+        let source: Vec<String> = owner.split('.').map(str::to_owned).collect();
+        let Some(declaring_module) = source.get(1..) else {
+            return false;
+        };
+        module_path.as_slice() == declaring_module
+            && self
+                .loaves
+                .owner_of(&source)
+                .is_some_and(|entry| entry.artifact.manifest.name.as_str() == library.as_str())
+    }
+
     /// Resolve a source-defined method when its owner has exactly one direct implementation for the requested name.
     ///
     /// Ordinary method checking computes argument types before overload selection. That is useful for overloaded
     /// methods, but it is actively harmful for unambiguous source methods because collection literals can be checked
     /// before their parameter context is known. This path lets the declared method signature drive argument checking
-    /// directly, the same way function calls do.
+    /// directly, the same way function calls do. A compiler-owned receiver keeps its registered builtin method
+    /// contract; loading a standard trait's source declaration must not replace that contract with a source dispatch.
     fn resolve_unambiguous_source_method_without_arg_prepass(
         &mut self,
         call: &SourceMethodPrepass<'_>,
@@ -4699,6 +4735,11 @@ impl TypeChecker {
             ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name,
             _ => return None,
         };
+        if Self::compiler_builtin_method_identity(call.receiver_ty, call.method).is_some()
+            && self.is_builtin_receiver_owner(type_name)
+        {
+            return None;
+        }
         let type_info = self.lookup_semantic_type_info(type_name).cloned();
         let Some(type_info) = type_info else {
             self.lookup_semantic_trait_info(type_name)?;

@@ -1220,57 +1220,6 @@ impl TypeChecker {
         result
     }
 
-    /// Retain checked `Iterator.iter` and `Iterator.__next__` calls only for Body IR's opaque iterator route.
-    ///
-    /// Legacy already recognizes the canonical Iterator item and deliberately keeps its builtin iteration view.
-    /// Probe the existing member resolver in isolation, preserving all diagnostics, call-site and consumption facts;
-    /// only a complete, type-compatible pair of canonical hooks crosses into the private Body-IR table.
-    pub(in crate::typechecker) fn retain_body_ir_iterator_hooks(&mut self, receiver: &ResolvedType, span: Span) {
-        let Some(item) = receiver.iterator_item_type().cloned() else {
-            return;
-        };
-        let key = (span.start, span.end);
-        self.type_info.protocols.body_ir_iterations.remove(&key);
-        let errors = self.errors.clone();
-        let warnings = self.warnings.clone();
-        let info = self.type_info.clone();
-        let consumed = self.consumed_iterator_bindings.clone();
-        let source_dispatch = self
-            .type_info
-            .resolved_method_call(span)
-            .map(|call| call.dispatch.clone());
-        let hooks = (|| {
-            let returned =
-                self.resolve_protocol_operator_dunder(receiver, "iter", &[], &[], span, source_dispatch.as_ref())?;
-            if returned.iterator_item_type() != Some(&item) {
-                return None;
-            }
-            let iter = self.body_ir_protocol_call(receiver, "iter", &returned, span);
-            let dispatch = iter.dispatch.clone();
-            self.type_info.clear_body_ir_call_site_facts(span);
-            let next_type =
-                self.resolve_protocol_operator_dunder(&returned, "__next__", &[], &[], span, dispatch.as_ref())?;
-            if next_type.option_inner_type() != Some(&item) {
-                return None;
-            }
-            let next = self.body_ir_protocol_call(&returned, "__next__", &next_type, span);
-            if [&iter, &next]
-                .iter()
-                .any(|hook| hook.canonical.is_none() || hook.params.is_none() || hook.receiver_is_mutable.is_none())
-            {
-                return None;
-            }
-            Some(BodyIrIterationHooksInfo { iter, next })
-        })();
-        self.errors = errors;
-        self.warnings = warnings;
-        self.type_info = info;
-        self.consumed_iterator_bindings = consumed;
-        if let Some(hooks) = hooks {
-            self.type_info.protocols.body_ir_iterations.insert(key, hooks);
-        }
-    }
-
     /// Resolve the shared `__iter__` and `__next__` hook pair for one custom iteration route.
     ///
     /// The hooks are resolved as calls at `protocol_span`, and their dispatches reach lowering through the protocol's

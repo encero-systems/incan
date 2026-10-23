@@ -168,8 +168,8 @@ impl TypeChecker {
         }
     }
 
-    /// Whether `local_name` already binds the declaration `item` of the Loaf module `module` names (the builtin `Error`
-    /// trait, imported explicitly from `std.traits.error`): binding it again changes nothing, so it is no collision.
+    /// Whether a visible binding names the same checked Loaf declaration. A builtin trait placeholder also matches its
+    /// registered source module, but the caller must materialize that import before treating it as complete.
     fn rebinds_same_declaration(&self, local_name: &str, module: &[String], item: &str) -> bool {
         let Some(symbol) = self.symbols.lookup_local(local_name) else {
             return false;
@@ -179,7 +179,7 @@ impl TypeChecker {
                 self.loaf_member_identity(module, item).as_ref() == Some(existing)
             }
             // A compiler-owned builtin trait carries no Loaf identity; its declaring module names it.
-            _ => {
+            Some(existing) if existing.origin == SymbolOrigin::Builtin => {
                 local_name == item
                     && matches!(
                         self.symbols.get(symbol).map(|found| &found.kind),
@@ -188,6 +188,7 @@ impl TypeChecker {
                     && incan_lang::lang::traits::from_str(item).and_then(incan_lang::lang::traits::source_module)
                         == Some(module.join(".").as_str())
             }
+            _ => false,
         }
     }
 
@@ -334,7 +335,9 @@ impl TypeChecker {
         names
     }
 
-    /// Bind `from <module> import item, …` where the module belongs to a compiled Loaf.
+    /// Bind `from <module> import item, …` from a compiled Loaf. Builtin trait placeholders are replaced through
+    /// ordinary import binding so the manifest supplies their parameters, declaration identities, and accepted import
+    /// paths together.
     pub(in crate::typechecker) fn collect_loaf_from_imports(
         &mut self,
         import: &LoafImport,
@@ -362,69 +365,50 @@ impl TypeChecker {
             if let Some(existing_kind) = self.existing_local_symbol_kind(&local_name) {
                 let mut module = root.clone();
                 module.extend(path.iter().cloned());
-                if self.rebinds_same_declaration(&local_name, &module, &item.name) {
+                if !self.rebinds_same_declaration(&local_name, &module, &item.name) {
+                    self.errors.push(errors::pub_library_import_name_collision(
+                        &local_name,
+                        existing_kind,
+                        span,
+                    ));
                     continue;
                 }
-                self.errors.push(errors::pub_library_import_name_collision(
-                    &local_name,
-                    existing_kind,
-                    span,
-                ));
-                continue;
+                if !self
+                    .symbols
+                    .lookup_local(&local_name)
+                    .and_then(|symbol| self.symbols.identity_of(symbol))
+                    .is_some_and(|identity| identity.origin == SymbolOrigin::Builtin)
+                {
+                    continue;
+                }
             }
             let imported_type_aliases = self.public_library_type_import_remapping(library, &manifest);
+            if path.is_empty() {
+                self.collect_loaf_root_from_import(import, &manifest, item, local_name, &imported_type_aliases, span);
+                continue;
+            }
             let mut child_module_path = path.to_vec();
             child_module_path.push(item.name.clone());
             let imports_namespace = Self::manifest_public_module_exists(&manifest, &child_module_path);
             let mut namespace_path = root.clone();
             namespace_path.extend(child_module_path.iter().cloned());
 
-            if !path.is_empty() {
-                let resolved = match self.public_module_member(library, &manifest, path, &item.name) {
-                    Ok(resolved) => resolved,
-                    Err(source_modules) => {
-                        self.errors.push(errors::pub_library_module_member_ambiguous(
-                            library,
-                            path,
-                            &item.name,
-                            &source_modules,
-                            span,
-                        ));
-                        continue;
-                    }
-                };
-                if let Some(member) = resolved {
-                    self.define_pub_module_import_symbol(library, local_name.clone(), namespace_path, member, span);
-                    self.record_standard_surface_import(&root, path, item, &local_name, span);
+            let resolved = match self.public_module_member(library, &manifest, path, &item.name) {
+                Ok(resolved) => resolved,
+                Err(source_modules) => {
+                    self.errors.push(errors::pub_library_module_member_ambiguous(
+                        library,
+                        path,
+                        &item.name,
+                        &source_modules,
+                        span,
+                    ));
                     continue;
                 }
-                if imports_namespace {
-                    let target_identity = SymbolTable::module_path_identity(&namespace_path);
-                    self.define_import_symbol(local_name, namespace_path, false, target_identity, span);
-                    continue;
-                }
-                self.errors.push(errors::pub_library_symbol_not_exported(
-                    &item.name,
-                    &format!("{}.{}", root.join("."), path.join(".")),
-                    &available_exports,
-                    span,
-                ));
-                continue;
-            }
-
-            let flat_function = self.pub_library_function_symbol(&manifest, &item.name);
-            let flat_export = Self::find_manifest_export(&manifest, &item.name);
-            if imports_namespace && (flat_function.is_some() || flat_export.is_some()) {
-                self.errors.push(errors::pub_library_module_member_ambiguous(
-                    library,
-                    &[],
-                    &item.name,
-                    &[
-                        format!("package-root export `{}`", item.name),
-                        format!("module `{}`", child_module_path.join(".")),
-                    ],
-                    span,
-                ));
+            };
+            if let Some(member) = resolved {
+                self.define_pub_module_import_symbol(library, local_name.clone(), namespace_path, member, span);
+                self.record_standard_surface_import(&root, path, item, &local_name, span);
                 continue;
             }
             if imports_namespace {
@@ -432,66 +416,111 @@ impl TypeChecker {
                 self.define_import_symbol(local_name, namespace_path, false, target_identity, span);
                 continue;
             }
-
-            if let Some(mut kind) = flat_function {
-                self.remap_symbol_kind_with_import_aliases(&mut kind, &imported_type_aliases);
-                let canonical = manifest
-                    .contract_metadata
-                    .identity_graph
-                    .canonical_for_public_name(&item.name);
-                let mut binding_path = root.clone();
-                binding_path.push(item.name.clone());
-                let symbol_id = self.symbols.define_import_binding_at_path(
-                    Symbol {
-                        name: local_name.clone(),
-                        kind: kind.clone(),
-                        span,
-                        scope: 0,
-                    },
-                    canonical.clone(),
-                    binding_path,
-                );
-                if self.symbols.is_active_lookup_binding(symbol_id) {
-                    if let Some(identity) = canonical {
-                        self.type_info
-                            .declarations
-                            .resolved_import_identities
-                            .insert(local_name.clone(), identity);
-                    }
-                    self.record_imported_function_binding(&local_name, &kind);
-                }
-                continue;
-            }
-
-            let Some(export) = flat_export else {
-                if let Some(feature_sets) = Self::inactive_pub_export_features(&manifest, &item.name) {
-                    self.errors.push(errors::pub_library_symbol_requires_features(
-                        &item.name,
-                        library,
-                        &feature_sets,
-                        span,
-                    ));
-                } else {
-                    self.errors.push(errors::pub_library_symbol_not_exported(
-                        &item.name,
-                        library,
-                        &available_exports,
-                        span,
-                    ));
-                }
-                continue;
-            };
-
-            self.define_pub_import_symbol(
-                library,
-                &manifest,
+            self.errors.push(errors::pub_library_symbol_not_exported(
                 &item.name,
-                local_name,
-                export,
-                &imported_type_aliases,
+                &format!("{}.{}", root.join("."), path.join(".")),
+                &available_exports,
                 span,
-            );
+            ));
         }
+    }
+
+    /// Bind a package-root member after collision checks. The caller has proved that the import's module path is empty;
+    /// namespace/function ambiguity and feature-visibility rules remain shared with ordinary imports.
+    fn collect_loaf_root_from_import(
+        &mut self,
+        import: &LoafImport,
+        manifest: &LibraryManifest,
+        item: &ImportItem,
+        local_name: String,
+        imported_type_aliases: &HashMap<String, String>,
+        span: Span,
+    ) {
+        let library = import.key.as_str();
+        let root = self.loaf_binding_root(library);
+        let child_module_path = vec![item.name.clone()];
+        let imports_namespace = Self::manifest_public_module_exists(manifest, &child_module_path);
+        let mut namespace_path = root.clone();
+        namespace_path.extend(child_module_path.iter().cloned());
+        let flat_function = self.pub_library_function_symbol(manifest, &item.name);
+        let flat_export = Self::find_manifest_export(manifest, &item.name);
+        if imports_namespace && (flat_function.is_some() || flat_export.is_some()) {
+            self.errors.push(errors::pub_library_module_member_ambiguous(
+                library,
+                &[],
+                &item.name,
+                &[
+                    format!("package-root export `{}`", item.name),
+                    format!("module `{}`", child_module_path.join(".")),
+                ],
+                span,
+            ));
+            return;
+        }
+        if imports_namespace {
+            let target_identity = SymbolTable::module_path_identity(&namespace_path);
+            self.define_import_symbol(local_name, namespace_path, false, target_identity, span);
+            return;
+        }
+
+        if let Some(mut kind) = flat_function {
+            self.remap_symbol_kind_with_import_aliases(&mut kind, imported_type_aliases);
+            let canonical = manifest
+                .contract_metadata
+                .identity_graph
+                .canonical_for_public_name(&item.name);
+            let mut binding_path = root;
+            binding_path.push(item.name.clone());
+            let symbol_id = self.symbols.define_import_binding_at_path(
+                Symbol {
+                    name: local_name.clone(),
+                    kind: kind.clone(),
+                    span,
+                    scope: 0,
+                },
+                canonical.clone(),
+                binding_path,
+            );
+            if self.symbols.is_active_lookup_binding(symbol_id) {
+                if let Some(identity) = canonical {
+                    self.type_info
+                        .declarations
+                        .resolved_import_identities
+                        .insert(local_name.clone(), identity);
+                }
+                self.record_imported_function_binding(&local_name, &kind);
+            }
+            return;
+        }
+
+        let Some(export) = flat_export else {
+            if let Some(feature_sets) = Self::inactive_pub_export_features(manifest, &item.name) {
+                self.errors.push(errors::pub_library_symbol_requires_features(
+                    &item.name,
+                    library,
+                    &feature_sets,
+                    span,
+                ));
+            } else {
+                self.errors.push(errors::pub_library_symbol_not_exported(
+                    &item.name,
+                    library,
+                    &Self::loaf_module_member_names(manifest, &[]),
+                    span,
+                ));
+            }
+            return;
+        };
+
+        self.define_pub_import_symbol(
+            library,
+            manifest,
+            &item.name,
+            local_name,
+            export,
+            imported_type_aliases,
+            span,
+        );
     }
 
     /// Record the compiler-known surface a `std.*` import binds: surface types (`Html`), surface functions and the
