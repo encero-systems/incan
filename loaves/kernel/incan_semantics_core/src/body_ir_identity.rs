@@ -440,10 +440,23 @@ impl BodyIrModule {
                 .all(|binding| is_closed_type(&binding.argument))
     }
 
+    /// Whether a callable must retain its governed body rather than name a single compiled Loaf item.
+    /// Method-local parameters and parameters of its canonical nominal owner both require consumer instantiation.
+    pub fn body_requires_instantiation(&self, body: &Body) -> bool {
+        !body.type_parameters.is_empty()
+            || body.canonical.as_ref().is_some_and(|identity| {
+                self.nominal_declarations.iter().any(|owner| {
+                    owner.type_parameter_count != 0
+                        && owner.canonical.origin == identity.origin
+                        && declares_member(&owner.canonical, identity)
+                })
+            })
+    }
+
     /// Whether a retained layout agrees with its canonical identities and physical declaration scope. Native layouts
     /// either match a fixed carrier or extend an opaque skeleton with public metadata-selected fields, whose exact
-    /// native types rustc verifies. A selected native equality witness must be a member of its model; lowering
-    /// separately validates that body's executable ABI.
+    /// native types rustc verifies. A linked Loaf's item must encode its canonical declaration. A selected native
+    /// equality witness must be a member of its model; lowering separately validates that body's executable ABI.
     pub fn is_well_formed_nominal_declaration(&self, declaration: &NominalDeclaration) -> bool {
         if declaration.trait_adoptions.iter().enumerate().any(|(index, adoption)| {
             adoption.trait_identity.kind != SemanticSourceTargetKind::Trait
@@ -477,6 +490,8 @@ impl BodyIrModule {
         }
         if !declaration.native_item.is_empty()
             && crate::body_ir::native_nominal_item(&declaration.canonical).as_deref()
+                != Some(declaration.native_item.as_str())
+            && crate::body_ir::loaf_item_path(&declaration.canonical).as_deref()
                 != Some(declaration.native_item.as_str())
         {
             return false;

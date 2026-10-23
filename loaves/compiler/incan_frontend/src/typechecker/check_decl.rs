@@ -1480,6 +1480,8 @@ impl TypeChecker {
     }
 
     /// Resolve one method entry through a concrete trait adoption, preserving the originating trait provenance.
+    /// A builtin identity names a methodless placeholder; its standard declaration remains authoritative even when
+    /// an imported adoption retains a provider-relative module path.
     pub(in crate::typechecker) fn trait_method_entry_resolved_for_adoption(
         &mut self,
         adoption: &TypeBoundInfo,
@@ -1500,9 +1502,15 @@ impl TypeChecker {
         }
         // A compiler-owned builtin trait (`TryFrom`) is declared by a standard package: its methods come from that
         // declaration, not from the root table's builtin entry.
-        let standard = (adoption.module_path.is_none() && incan_lang::lang::traits::from_str(&adoption.name).is_some())
-            .then(|| self.standard_trait(&adoption.name))
-            .flatten();
+        let builtin_stub = self
+            .symbols
+            .lookup(&adoption.name)
+            .and_then(|symbol| self.symbols.identity_of(symbol))
+            .is_some_and(|identity| matches!(identity.origin, incan_semantics_core::SymbolOrigin::Builtin));
+        let standard = ((adoption.module_path.is_none() || builtin_stub)
+            && incan_lang::lang::traits::from_str(&adoption.name).is_some())
+        .then(|| self.standard_trait(&adoption.name))
+        .flatten();
         let root = standard
             .or_else(|| self.lookup_trait_adoption_info(adoption).cloned())
             .or_else(|| {

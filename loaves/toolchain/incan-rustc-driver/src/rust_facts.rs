@@ -424,6 +424,7 @@ fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTyp
 }
 
 /// A function's signature: parameters with a method's receiver first, as written (`&self`, `&mut self`, `self`).
+/// Async signatures expose the declared future output; the separate async flag retains the pending-call boundary.
 fn signature(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustFunctionSig {
     let signature = tcx
         .fn_sig(def)
@@ -448,7 +449,13 @@ fn signature(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustFun
             }
         })
         .collect();
-    note_named(signature.output(), named);
+    let is_async = tcx.asyncness(def).is_async();
+    let output = if is_async {
+        async_output(tcx, signature.output()).unwrap_or(signature.output())
+    } else {
+        signature.output()
+    };
+    note_named(output, named);
     let type_params = tcx
         .generics_of(def)
         .own_params
@@ -462,8 +469,8 @@ fn signature(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustFun
         bounds: trait_bounds(tcx, def),
         type_params,
         params,
-        return_type: display(signature.output()),
-        is_async: tcx.asyncness(def).is_async(),
+        return_type: display(output),
+        is_async,
         is_unsafe: signature.safety().is_unsafe(),
     }
 }
@@ -588,6 +595,28 @@ fn trait_impls(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> Vec<R
             })
         })
         .collect()
+}
+
+/// Read an async function's declared `Future::Output` from its opaque return bounds, preserving generic arguments.
+/// No hidden future layout is revealed, and an unproven output keeps the original opaque signature for refusal.
+fn async_output<'tcx>(tcx: TyCtxt<'tcx>, output: Ty<'tcx>) -> Option<Ty<'tcx>> {
+    let ty::Alias(_, alias) = output.kind() else {
+        return None;
+    };
+    let ty::Opaque { def_id, .. } = alias.kind else {
+        return None;
+    };
+    let output_item = tcx.lang_items().future_output()?;
+    tcx.explicit_item_bounds(def_id)
+        .iter_instantiated_copied(tcx, alias.args)
+        .find_map(|bound| {
+            let (clause, _) = bound.skip_normalization();
+            let projection = clause.as_projection_clause()?.skip_binder();
+            if !matches!(projection.projection_term.kind, ty::AliasTermKind::ProjectionTy { def_id } if def_id == output_item) {
+                return None;
+            }
+            projection.term.as_type()
+        })
 }
 
 /// A method receiver as written: `&self`, `&mut self`, or `self` (and a typed receiver as its type).
