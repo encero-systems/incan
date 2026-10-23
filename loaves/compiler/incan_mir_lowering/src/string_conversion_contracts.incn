@@ -131,16 +131,10 @@ pub def conversion_chain(
 
 
 def underlying_identity(declaration: &NominalDeclaration, name: str) -> Option[CanonicalSymbolId]:
-    """
-    Read the exact retained key and copy only its identity, preserving the map's canonical provenance.
-
-    Cold legacy interop emission can pass an owned key to BTreeMap.get. Borrowed entry iteration avoids that defect
-    without changing the frozen emitter; this small metadata lookup stays linear until key borrowing is repaired.
-    """
-    for key, identity in declaration.named_type_identities.iter():
-        if str(key) == name:
-            return Some(identity.clone())
-    return None
+    """Borrow the exact retained key for native lookup, copying only the selected canonical identity."""
+    match declaration.named_type_identities.get(name):
+        Some(identity) => return Some(identity.clone())
+        None => return None
 
 
 def conversion_owner_name(declaration: &NominalDeclaration) -> bool:

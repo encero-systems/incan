@@ -473,7 +473,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 })
     }
 
-    /// Dispatch a checked constructor through its carrier, nominal and enum identity boundaries.
+    /// Dispatch a checked constructor through its carrier, nominal and enum identity boundaries. References expose
+    /// the retained referent layout for constructor selection; payload binding types and ownership remain checked
+    /// independently by `lower_match_pattern`.
     #[allow(clippy::too_many_arguments)] // Carries one pattern and its recursive lowering context.
     fn lower_constructor_pattern(
         &mut self,
@@ -487,6 +489,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         seen: &mut HashMap<String, bir::LocalId>,
         saved_bindings: &mut Vec<(String, Option<bir::LocalId>)>,
     ) -> bir::Pattern {
+        let mut expected_ty = expected_ty;
+        while let IncanType::Ref(inner) | IncanType::RefMut(inner) = expected_ty {
+            expected_ty = inner;
+        }
         if let Some(value) = self.lower_rust_enum_pattern(name, args, place, arm_scope, reads, seen, saved_bindings) {
             return value;
         }
