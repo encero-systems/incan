@@ -1,5 +1,4 @@
 # behavior: None initializes a model field whose instantiated type is None (#1978)
-# pending: #1978 the checker refuses Option[?] for a Unit model field
 # expect-stdout:
 #   constructed
 

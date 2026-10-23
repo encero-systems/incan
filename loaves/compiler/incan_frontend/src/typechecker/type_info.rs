@@ -1638,6 +1638,8 @@ pub struct NewtypeConstructionInfo {
     pub checked_constructor: Option<String>,
     /// Exact declaration identity of `checked_constructor`, when source provenance is available.
     pub checked_constructor_identity: Option<CanonicalSymbolId>,
+    /// Checked hook signature available to consumers even when its declaration span belongs to another module.
+    pub checked_constructor_binding: Option<FunctionBindingInfo>,
     /// Compiler-generated constrained-primitive predicates used when no checked constructor exists.
     pub constraints: Vec<NewtypePrimitiveConstraint>,
     /// Whether ordinary implicit construction from the underlying value is allowed.

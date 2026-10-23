@@ -1,6 +1,7 @@
 //! Lowering for literal and aggregate forms: lists, dicts, f-strings, slices, `?`, constructors, surface exprs.
 //! By-value scalar and text entries are captured at their evaluation point before subsequent entries can mutate global
-//! storage. Spread sources and live collection handles keep their existing ownership rules.
+//! storage. List spreads capture their source contents before subsequent entries can mutate them; ordinary collection
+//! handles retain their borrowing rules.
 
 use super::args::*;
 use super::primitives::*;
@@ -11,7 +12,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower a list literal, including spread entries, into a [`bir::AggregateKind::List`] aggregate.
     ///
     /// Elements are lowered in written source order, so a spread source's evaluation is interleaved with the fixed
-    /// elements around it exactly as written. A spread contributes one [`bir::ArgumentElement::Spread`] whose
+    /// elements around it exactly as written. Each source is captured into an owned temporary using its checked
+    /// ownership fact before later entries run. A spread contributes one [`bir::ArgumentElement::Spread`] whose
     /// length is a runtime fact; surrounding fixed elements keep their positions relative to it.
     pub(super) fn lower_list_literal(
         &mut self,
@@ -30,7 +32,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     elements.push(bir::ArgumentElement::One(value));
                 }
                 ast::ListEntry::Spread(source) => {
-                    elements.push(self.lower_spread_element(source, bir::SpreadKind::Sequence, scope, out));
+                    let operand = self.lower_expr_to_operand(source, scope, out);
+                    let ty = self.resolve_ty(source.span);
+                    let operand =
+                        self.push_assign_temp(bir::Rvalue::Use(operand), ty, scope, hir_span(source.span), out);
+                    elements.push(bir::ArgumentElement::Spread(bir::SpreadElement {
+                        source: operand,
+                        kind: bir::SpreadKind::Sequence,
+                    }));
                 }
             }
         }

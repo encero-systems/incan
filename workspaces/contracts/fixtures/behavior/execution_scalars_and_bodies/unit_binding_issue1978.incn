@@ -1,5 +1,4 @@
 # behavior: None initializes a local binding explicitly typed as None (#1978)
-# pending: #1978 the checker refuses Option[?] for a Unit binding
 # expect-stdout:
 #   bound
 
