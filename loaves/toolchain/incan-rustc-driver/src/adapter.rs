@@ -8,7 +8,7 @@ use crate::{bodies, callees, declarations, types, union_debug, validation, value
 use incan_driver::unit::UnitKind;
 use rustc_ast as ast;
 use rustc_data_structures::steal::Steal;
-use rustc_hir::def_id::LocalDefId;
+use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_interface::interface;
 use rustc_middle::mir::Body;
 use rustc_middle::ty::{Ty, TyCtxt};
@@ -515,13 +515,13 @@ fn has_opaque_return_abi(tcx: TyCtxt<'_>, output: rustc_middle::ty::Ty<'_>) -> b
 
 /// Check a retained native layout against its crate's metadata at the plan's explicit type arguments, including their
 /// bounds. Fields keep their names and instantiated types in order; a field marked public must be public in metadata.
-/// An opaque layout records no fields and grants no projection.
+/// An opaque struct, enum or alias grants no projection; a field-bearing layout requires an actual struct declaration.
 fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration) -> Result<(), PlanError> {
     let invalid = |reason: &str| PlanError::Unsupported {
         function: model.library_item.clone(),
         reason: reason.into(),
     };
-    let def = callees::native_type_item(tcx, &model.library_item)?;
+    let def = library_model_item(tcx, model)?;
     if !callees::arity_admits(tcx, def, model.library_type_arguments.len()) {
         return Err(invalid(
             "unsupported stdlib layout type argument count differs from metadata",
@@ -531,9 +531,6 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
     callees::verify_bounds(tcx, def, arguments)?;
     if model.fields.is_empty() {
         return Ok(());
-    }
-    if tcx.def_kind(def) != rustc_hir::def::DefKind::Struct {
-        return Err(invalid("native field layout requires a struct"));
     }
     let adt = tcx.adt_def(def);
     let declared = &adt.non_enum_variant().fields;
@@ -551,6 +548,15 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
         }
     }
     Ok(())
+}
+
+/// Select the public carrier kind once for every layout and generic-profile validation pass.
+/// Only an opaque declaration admits enums and type aliases; any retained fields require a struct.
+fn library_model_item(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration) -> Result<DefId, PlanError> {
+    if model.fields.is_empty() {
+        return callees::native_type_item(tcx, &model.library_item);
+    }
+    callees::library_item(tcx, &model.library_item, rustc_hir::def::DefKind::Struct)
 }
 
 /// Check the concrete SDK enum's argument count, bounds, ordered variants and instantiated payload types against
@@ -736,7 +742,7 @@ pub fn compile(
 /// Bounds follow argument dependency order, so an invalid child cannot surface as a Rust alias diagnostic first.
 fn verify_library_argument_profiles(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), PlanError> {
     for model in plan.models.iter().filter(|model| !model.library_item.is_empty()) {
-        let def = callees::native_type_item(tcx, &model.library_item)?;
+        let def = library_model_item(tcx, model)?;
         let generics = tcx.generics_of(def);
         let reason = if !callees::arity_admits(tcx, def, model.library_type_arguments.len()) {
             Some("stdlib layout type argument count differs from metadata")
@@ -762,7 +768,7 @@ fn verify_library_argument_profiles(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), 
         if model.library_item.is_empty() {
             continue;
         }
-        let def = callees::native_type_item(tcx, &model.library_item)?;
+        let def = library_model_item(tcx, model)?;
         let arguments = callees::arguments(tcx, def, &model.library_type_arguments)?;
         callees::verify_bounds(tcx, def, arguments)?;
     }
