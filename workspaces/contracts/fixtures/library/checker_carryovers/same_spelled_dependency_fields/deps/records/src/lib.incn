@@ -1,0 +1,9 @@
+pub model EvidenceId:
+    """The dependency's identifier carried by decision fields."""
+    pub text: str
+
+
+pub model Decision:
+    """A decision that retains the dependency's identifier type."""
+    pub evidence_ids: list[EvidenceId]
+    pub first: Option[EvidenceId]

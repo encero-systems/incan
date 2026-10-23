@@ -1,0 +1,22 @@
+# behavior: empty list and None fields use a dependency's identifier type even when the caller declares its own type with the same name
+# pending: needs Oven path-dependency compilation
+# expect-stdout:
+#   0
+#   true
+#   local
+
+from pub::records import Decision
+
+
+model EvidenceId:
+    """The caller's own identifier, independent of the dependency's type."""
+    text: str
+
+
+def main() -> None:
+    """Build empty dependency fields and keep a local identifier usable."""
+    decision = Decision(evidence_ids=[], first=None)
+    println(len(decision.evidence_ids))
+    println(decision.first is None)
+    own = EvidenceId(text="local")
+    println(own.text)

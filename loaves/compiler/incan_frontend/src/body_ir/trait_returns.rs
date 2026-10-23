@@ -471,7 +471,8 @@ fn refresh_hidden_arguments(
     if target.type_args.len() != signature.parameters.len() {
         return;
     }
-    let bir::ArgumentBinding::Resolved { arguments, .. } = &target.binding else {
+    // Hidden carriers map by slot, so a declaration-order binding of a named call supplies them as well.
+    let Some(arguments) = target.binding.slot_arguments() else {
         return;
     };
     for (slot, parameter) in &signature.hidden_inputs {
