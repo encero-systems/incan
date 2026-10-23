@@ -311,11 +311,13 @@ impl TypeChecker {
         })
     }
 
-    /// Bind `import <module>` where `import` names a module of a compiled Loaf.
+    /// Bind a compiled module while preserving its written source root for reserved-name validation. A `pub::` import
+    /// supplies no standard root exemption, even when its dependency happens to provide standard modules.
     pub(in crate::typechecker) fn collect_loaf_module_import(
         &mut self,
         import: &LoafImport,
         alias: Option<&Ident>,
+        source_root: Option<&str>,
         span: Span,
     ) {
         let library = import.key.as_str();
@@ -323,7 +325,7 @@ impl TypeChecker {
             .cloned()
             .or_else(|| import.module.last().cloned())
             .unwrap_or_else(|| library.to_string());
-        self.validate_root_namespace(&name, span);
+        self.validate_module_import_binding(&name, source_root, span);
         let Some(manifest) = self.loaf_manifest_or_refuse(library, span) else {
             return;
         };

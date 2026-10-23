@@ -164,18 +164,18 @@ pub def display_model_operand(
     value: &RustOperand,
     span: SourceSpan,
 ) -> Result[Option[Place], str]:
-    """Display native carriers through their Rust implementation; source carriers use their checked string method or derive."""
+    """Prefer a source carrier's checked string method across Loaf boundaries; native carriers use their Rust implementation."""
     match nominal_place(builder, value, span)?:
         None => return Ok(None)
         Some(place) =>
             match place_type(builder.locals, place):
                 PlanType.Model(owner, _name) =>
-                    if library_item(builder.nominals[owner]) != "":
-                        argument = borrow_model(builder, place, place_type(builder.locals, place), span)?
-                        return Ok(Some(runtime_text(builder, "incan_native_runtime::display_value", argument, span)?))
                     match builder.nominals[owner].display_method:
                         Some(_selected) => return Ok(Some(display_checked_model(builder, owner, place, span)?))
                         None => pass
+                    if library_item(builder.nominals[owner]) != "":
+                        argument = borrow_model(builder, place, place_type(builder.locals, place), span)?
+                        return Ok(Some(runtime_text(builder, "incan_native_runtime::display_value", argument, span)?))
                     if "Display" not in builder.nominals[owner].derives:
                         return Err("unsupported Body IR model display without derived Display")
                 _ => return Err("unsupported Body IR model display carrier")

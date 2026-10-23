@@ -1,4 +1,4 @@
-# behavior: foreign supertraits constrain source-authored codecs without synthetic serde blanket implementations
+# behavior: foreign supertraits constrain source-authored codecs through declared native dependencies without synthetic serde blanket implementations
 # expect-accepted:
 
 """Foreign supertraits constrain source-authored codecs without synthetic serde blanket implementations."""

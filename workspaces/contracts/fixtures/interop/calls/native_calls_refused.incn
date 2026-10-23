@@ -1,9 +1,12 @@
-# behavior: native calls the checker cannot admit are refused with their own reasons: a native variant pattern must belong to the scrutinee's checked Rust owner, an unknown Rust associated method is refused by its requested public item name, a source method cannot mutate a value through a native shared Option view, and a native usize variable needs an explicit conversion at an Incan int return boundary
+# behavior: native calls the checker cannot admit are refused with their own reasons: a native variant pattern must belong to the scrutinee's checked Rust owner, an unknown Rust associated method is refused by its requested public item name, a source method cannot mutate a value through a native shared Option view, a native usize variable needs an explicit conversion at an Incan int return boundary, and types without constructors fail checking rather than entering native compilation with Unknown (#2256)
 # expect-stderr-contains:
 #   does not resolve for this match
 #   Rust method `rust::std::path::Path::missing_contract` has no admitted callable signature
 #   has no method 'change(...)'
 #   Return type mismatch: expected 'Int', found 'usize'
+#   Type 'u64' has no constructor
+#   Type 'i32' has no constructor
+#   Type 'bytes' has no constructor
 # expect-exit: 1
 
 """A known native owner does not authorize a guessed associated method signature, and no refused call executes."""
@@ -52,9 +55,18 @@ def size() -> int:
     return value
 
 
+def unavailable_constructors() -> None:
+    """Refuse sized integer and byte-buffer calls whose types declare no constructor."""
+    value: int = 42
+    println(u64(value))
+    println(i32(value))
+    println(bytes([1u8, 2u8]))
+
+
 def main() -> None:
     """Request every refused function, so admission rejects each before anything could execute."""
     println(classify(Ordering.Equal))
     guessed_method()
     shared_mutation()
     println(size())
+    unavailable_constructors()

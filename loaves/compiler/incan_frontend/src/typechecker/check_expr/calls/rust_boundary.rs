@@ -454,7 +454,8 @@ impl TypeChecker {
     }
 
     /// Normalize native defaults before projecting an ordinary collection shape, preserving the checked public
-    /// owner path for storage. A nondefault allocator remains an exact native argument.
+    /// owner path for storage. Builtin tuple applications become structural tuples before shared inference matches
+    /// Rust return signatures; a nondefault allocator remains an exact native argument.
     pub(in crate::typechecker) fn rust_inference_constructor(
         &self,
         base: &str,
@@ -473,6 +474,9 @@ impl TypeChecker {
             .iter()
             .map(|argument| self.rust_inference_type(argument, parameters))
             .collect();
+        if collection_type_id(base) == Some(CollectionTypeId::Tuple) {
+            return ResolvedType::Tuple(arguments);
+        }
         if !base.contains("::") {
             return ResolvedType::Generic(base.to_owned(), arguments);
         }

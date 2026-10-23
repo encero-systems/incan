@@ -704,7 +704,8 @@ impl TypeChecker {
             _ => ResolvedType::Named(name.to_string()),
         }
     }
-    /// Typecheck a constructor-style call and return its constructed value type.
+    /// Typecheck a constructor-style call and return its constructed value type. A type name without declared
+    /// construction semantics is refused here; scalar conversions already resolve through builtin call checking.
     pub(in crate::typechecker::check_expr) fn check_constructor(
         &mut self,
         name: &str,
@@ -834,7 +835,8 @@ impl TypeChecker {
                 if let Some(fields) = ctor_fields {
                     self.check_model_or_class_constructor_call(name, name, &fields, args, span)
                 } else {
-                    self.constructor_result_type(name)
+                    self.errors.push(errors::type_constructor_unavailable(name, span));
+                    ResolvedType::Unknown
                 }
             }
             Some(SymbolKind::Variant(info)) => {

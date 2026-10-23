@@ -1,4 +1,4 @@
-# behavior: Rust generic functions and references keep their argument shapes: a Rust generic function retains concrete instantiations and source function binders (#2256), Rust scalar reference parameters borrow caller storage while mutable references update both caller bindings, Rust generic references borrow owned text while literal str parameters receive its slice and checked dereference chains retain shared String receivers while source text indexing observes Unicode scalars through locals and fields, and imported Rust functions retain direct and stored callable results plus nonreturning results in source return expressions
+# behavior: Rust generic functions retain concrete instantiations, source binders and tuple-typed factory results (#2256), scalar references borrow caller storage while mutable references update both bindings, text loans retain shared String receivers while indexing observes Unicode scalars through locals and fields, and imported functions retain direct and stored callable results plus nonreturning results in source return expressions
 # expect-stdout:
 #   7
 #   leaf
@@ -12,6 +12,7 @@
 #   true
 #   leaf
 #   ea
+#   typed channel
 #   false
 
 """Retain generic instantiations, scalar and text loans, and a nonreturning native result in one case."""
@@ -21,6 +22,7 @@ from rust::std::convert import identity
 from rust::std::mem import size_of_val, swap
 from rust::std::process import exit
 from rust::std::sync import Arc
+from rust::std::sync::mpsc import Sender as NativeSender, Receiver as NativeReceiver, channel as native_channel
 from rust::std::thread import panicking
 
 
@@ -96,6 +98,18 @@ def show_text_references() -> None:
     assert view.value == unicode_text
 
 
+def show_typed_factory() -> None:
+    """Infer a native factory's element from the tuple destination and use both returned handles."""
+    pair: Tuple[NativeSender[str], NativeReceiver[str]] = native_channel()
+    tx, rx = pair
+    match tx.send("typed channel"):
+        Ok(_) => pass
+        Err(_) => assert false
+    match rx.recv():
+        Ok(value) => println(value)
+        Err(_) => assert false
+
+
 def show_nonreturning_call() -> None:
     """Print the result of the selected Rust function, then end the program through a nonreturning one."""
     println(panicking())
@@ -111,4 +125,5 @@ def main() -> None:
     show_generic_instantiations()
     show_scalar_references()
     show_text_references()
+    show_typed_factory()
     show_nonreturning_call()

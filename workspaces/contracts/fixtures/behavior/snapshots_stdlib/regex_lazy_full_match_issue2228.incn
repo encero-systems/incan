@@ -1,5 +1,4 @@
 # behavior: full_match extends a lazy quantifier to cover the entire input and keeps its captures (#2228)
-# pending: #2228 the regex standard package is not available to this toolchain
 # expect-stdout:
 #   abc +
 

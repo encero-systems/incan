@@ -1591,6 +1591,12 @@ pub fn supertrait_bound_invalid(span: Span) -> CompileError {
     )
 }
 
+/// Refuse a type used as a callable when no checked constructor supplies its value semantics.
+pub fn type_constructor_unavailable(type_name: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Type '{type_name}' has no constructor"), span)
+        .with_hint("Use an associated constructor or an explicit conversion method")
+}
+
 /// Emitted when a trait is used like a concrete type in a constructor call (RFC 042: traits are abstract).
 pub fn cannot_instantiate_trait(trait_name: &str, span: Span) -> CompileError {
     CompileError::type_error(

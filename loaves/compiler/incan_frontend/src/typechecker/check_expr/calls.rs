@@ -120,7 +120,8 @@ impl TypeChecker {
     ///
     /// Contextual return hints are part of the generic call plan, not a desugaring special case. They let direct
     /// source, vocab-produced AST, and nested call arguments all use the same inference path when a destination
-    /// type is known.
+    /// type is known. A type without a construction contract delegates to constructor checking, which refuses the
+    /// call instead of admitting an unknown result that cannot cross into Body IR.
     pub(in crate::typechecker::check_expr) fn check_call_with_expected(
         &mut self,
         callee: &Spanned<Expr>,
@@ -511,7 +512,7 @@ impl TypeChecker {
                             _ => None,
                         };
                         let Some(mut fields) = ctor_fields else {
-                            return ResolvedType::Unknown;
+                            return self.check_constructor(name, args, span);
                         };
                         self.record_direct_callee_identity(name, callee.span);
                         if let Some((_, type_bindings)) = &constructor_context {

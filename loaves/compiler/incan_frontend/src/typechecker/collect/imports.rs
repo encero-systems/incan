@@ -22,6 +22,16 @@ impl TypeChecker {
         }
     }
 
+    /// Preserve a module import's own source root while rejecting another reserved root and protected bindings.
+    /// Compiled Loaf paths carry that source root explicitly because their physical package key is not source syntax.
+    pub(super) fn validate_module_import_binding(&mut self, name: &str, source_root: Option<&str>, span: Span) {
+        if source_root == Some(name) {
+            self.validate_protected_builtin_binding(name, span);
+        } else {
+            self.validate_root_namespace(name, span);
+        }
+    }
+
     /// Register an import declaration in the symbol table.
     pub(super) fn collect_import(&mut self, import: &ImportDecl, span: Span) {
         self.validate_import_visibility(import, span);
@@ -37,7 +47,7 @@ impl TypeChecker {
                     key: library.clone(),
                     module: path.clone(),
                 };
-                self.collect_loaf_module_import(&target, import.alias.as_ref(), span);
+                self.collect_loaf_module_import(&target, import.alias.as_ref(), None, span);
             }
             ImportKind::PubFrom { library, path, items } => {
                 let target = LoafImport {
@@ -108,7 +118,7 @@ impl TypeChecker {
                 .unwrap_or_else(|| "module".to_string())
         });
         if let Some(target) = self.std_loaf_import(path) {
-            self.collect_loaf_module_import(&target, Some(&name), span);
+            self.collect_loaf_module_import(&target, Some(&name), Some(stdlib::STDLIB_ROOT), span);
             return;
         }
         // Reject `import std.f64.consts` - unknown stdlib module; suggest `import rust::std::f64::consts`.
@@ -117,14 +127,7 @@ impl TypeChecker {
                 .push(errors::unknown_stdlib_module(&path.segments.join("."), span));
         }
 
-        // Allow `import std.web as std` (alias matches source root), but reject `import std.web as rust` (alias is a
-        // different reserved root).
-        let same_root = path.segments.first().map(|segment| segment.as_str()) == Some(&name);
-        if !same_root {
-            self.validate_root_namespace(&name, span);
-        } else {
-            self.validate_protected_builtin_binding(&name, span);
-        }
+        self.validate_module_import_binding(&name, path.segments.first().map(String::as_str), span);
         // `import a::b::C` is ambiguous: it can name a module, or an item inside its parent module. Module
         // resolution already tries the full path and then the parent (see `module::source_import_candidates`), and
         // symbol collection has to follow the same order or the two disagree about what was imported.
@@ -274,13 +277,13 @@ impl TypeChecker {
         let module = vec![stdlib::STDLIB_ROOT.to_string(), item.name.clone()];
         let local_name = Self::import_item_local_name(item);
         if self.owns_standard_module(&module) {
-            self.validate_root_namespace(&local_name, span);
+            self.validate_module_import_binding(&local_name, Some(stdlib::STDLIB_ROOT), span);
             let target_identity = SymbolTable::module_path_identity(&module);
             self.define_import_symbol(local_name, module, false, target_identity, span);
             return;
         }
         if let Some(target) = self.standard_loaf_import(&module) {
-            self.collect_loaf_module_import(&target, Some(&local_name), span);
+            self.collect_loaf_module_import(&target, Some(&local_name), Some(stdlib::STDLIB_ROOT), span);
             return;
         }
         self.refuse_std_root_member_import(item, span);

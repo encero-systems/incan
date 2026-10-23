@@ -280,7 +280,8 @@ pub struct LoafIndex {
     /// The ABI caches of the Rust crates the compilation links: the toolchain's standard crates and each compiled
     /// unit's.
     rust_abi_caches: Vec<Arc<RustAbiCache>>,
-    /// The Rust crates the unit declares itself, read in the unit's session rather than from a standard Loaf's closure.
+    /// The Rust crates the unit declares itself, read in the unit's session rather than from a standard Loaf's
+    /// closure.
     declared_rust_crates: BTreeSet<String>,
     /// Rust facts the compiler read from rustc's crate metadata for paths no cache holds, keyed by path.
     rust_facts: BTreeMap<String, RustItemMetadata>,
