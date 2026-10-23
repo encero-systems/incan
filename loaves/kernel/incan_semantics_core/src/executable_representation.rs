@@ -35,7 +35,8 @@ use crate::body_ir::{
 /// declarations name their compiled item, and modules no longer carry re-exported names.
 /// Version 22 appends metadata-selected native Rust constants with their checked carrier types.
 /// Version 23 appends builtin codec label guards; their conditional evaluation is retained in ordinary Body IR blocks.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 23;
+/// Version 24 distinguishes compiled callable contracts from caller-instantiated executable bodies.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 24;
 
 /// Largest index this format admits, in bytes.
 ///
@@ -222,6 +223,8 @@ pub enum ExecutableDeclaration {
         /// Only explicit original-callable reads select this implementation under the same declared binders.
         binding: Box<crate::body_ir::DecoratedBinding>,
     },
+    /// Authenticated signature and defaults of a compiled item. Its empty statement block is never executable.
+    CompiledCallable(Box<Body>),
 }
 
 impl ExecutableDeclaration {
@@ -229,6 +232,10 @@ impl ExecutableDeclaration {
     pub fn identity(&self) -> Option<&CanonicalSymbolId> {
         match self {
             Self::Body(body) => body.canonical.as_ref(),
+            Self::CompiledCallable(frame) => (frame.block.stmts.is_empty()
+                && crate::body_ir::LoafCallable::from_body(frame).is_some())
+            .then_some(frame.canonical.as_ref())
+            .flatten(),
             Self::InvocationDecoratedBody { body, binding } => {
                 let identity = body.canonical.as_ref()?;
                 (binding.initialization == crate::body_ir::DecoratedInitialization::PerInvocation
@@ -802,6 +809,7 @@ fn record_type_context_members(
             }
             ExecutableDeclaration::Enum(value) => value.variants.iter().map(|variant| &variant.canonical).collect(),
             ExecutableDeclaration::Body(_)
+            | ExecutableDeclaration::CompiledCallable(_)
             | ExecutableDeclaration::DecoratedBody { .. }
             | ExecutableDeclaration::InvocationDecoratedBody { .. }
             | ExecutableDeclaration::Trait(_)
@@ -1154,12 +1162,12 @@ mod tests {
         }
     }
 
-    /// Build a checked, empty unit function with a stable canonical identity and no callable signature proof; it has
-    /// executable coverage distinct from an uncovered export.
+    /// Build a governed template with a stable identity so codec and body-audit tests retain executable statements.
+    /// Tests of compiled contracts explicitly clear this fixture binder.
     fn body(name: &str, ordinal: usize) -> Body {
         let identity = identity(name, ordinal);
         Body {
-            type_parameters: Vec::new(),
+            type_parameters: vec!["Fixture".into()],
             decl_id: CompilerNodeId::declaration_span(
                 "lib",
                 identity.declaration_span.start,
@@ -1328,6 +1336,34 @@ mod tests {
             reader.declaration(&identity("public", 1))?.direct_call_id.path(),
             "pub::probe::lib#decl.100..199"
         );
+        Ok(())
+    }
+
+    /// Native implementation calls do not enter compiled contracts; governed bodies still need a portable closure.
+    #[test]
+    fn compiled_contract_excludes_native_implementation() -> Result<(), Box<dyn std::error::Error>> {
+        let mut native = identity("serialize", 9);
+        native.origin = SymbolOrigin::RustCrate(vec!["serde_json".into()]);
+        let mut compiled = body("compiled", 1);
+        compiled.type_parameters.clear();
+        compiled.block.stmts.push(call(native.clone()));
+        let mut governed = body("governed", 2);
+        governed.block.stmts.push(call(native));
+        let bytes = publish(
+            &module(vec![compiled, governed]),
+            &BTreeSet::from([identity("compiled", 1), identity("governed", 2)]),
+        )?;
+        let reader = SurfaceReader::open(&bytes)?;
+        let ExecutableDeclaration::CompiledCallable(frame) = reader.fragment(&identity("compiled", 1))? else {
+            return Err("compiled callable contract missing".into());
+        };
+        assert!(frame.block.stmts.is_empty());
+        assert!(frame.locals.is_empty());
+        assert!(reader.declaration(&identity("compiled", 1)).is_err());
+        assert!(matches!(
+            reader.index().coverage(&identity("governed", 2))?,
+            DeclarationCoverage::Uncovered(CoverageReason::UnsupportedConstruct)
+        ));
         Ok(())
     }
 

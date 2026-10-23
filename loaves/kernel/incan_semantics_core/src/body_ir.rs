@@ -423,6 +423,16 @@ impl BodyIrModule {
         }
     }
 
+    /// Read signatures and defaults from governed bodies and authenticated compiled declaration frames. Compiled
+    /// frames contribute declaration facts only; execution and instance scheduling must keep using `bodies`.
+    pub fn callable_declaration_frames(&self) -> impl Iterator<Item = &Body> {
+        self.bodies.iter().chain(
+            self.loaf_callables
+                .iter()
+                .filter_map(|callable| callable.declaration_frame.as_deref()),
+        )
+    }
+
     /// Resolve a canonical callable identity to the body that declares it, when this module owns the declaration.
     ///
     /// This is the consumer seam for [`CanonicalSymbolId`]: a backend asks *which declaration was selected* and gets

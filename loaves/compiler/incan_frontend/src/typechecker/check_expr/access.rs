@@ -2107,12 +2107,19 @@ impl TypeChecker {
         Some(Self::synthetic_member_identity(owner, member, kind))
     }
 
-    /// Record one compiler-generated member without classifying its generated Rust helper as a source declaration.
-    fn record_compiler_generated_member_identity(&mut self, owner_name: &str, member: &str, span: Span) {
+    /// Record one compiler-generated member under its checked lexical or provider-owned type identity. Returned
+    /// submodule types retain their admitted identity even when no lexical binding uses their internal spelling.
+    pub(in crate::typechecker::check_expr) fn record_compiler_generated_member_identity(
+        &mut self,
+        owner_name: &str,
+        member: &str,
+        span: Span,
+    ) {
         let Some(owner) = self
             .symbols
             .lookup(owner_name)
             .and_then(|symbol| self.symbols.identity_of(symbol))
+            .or_else(|| self.public_library_type_identities.get(owner_name)?.canonical.as_ref())
             .cloned()
         else {
             return;

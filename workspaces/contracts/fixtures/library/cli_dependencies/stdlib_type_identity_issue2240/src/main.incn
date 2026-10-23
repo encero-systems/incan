@@ -1,5 +1,5 @@
 # behavior: JsonValue returned by a library is accepted as the consumer's own JsonValue (#2240)
-# pending: #2240 data standard package compilation is refused by ambiguous Rust registry artifacts
+# pending: #2240 data requires std.io from system, whose BytesIO return is refused as &Bytes instead of Bytes
 # expect-stdout:
 #   0
 

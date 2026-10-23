@@ -1,0 +1,25 @@
+# behavior: library trait defaults call their concrete compiled methods and preserve mutable receivers
+# expect-stdout:
+#   <linked>
+#   second
+#   second
+
+from pub::labels import Item, Labeled
+
+
+def display[T with Labeled](value: T) -> str:
+    """Select the library's default through its checked trait bound."""
+    return value.decorated()
+
+
+def replace[T with Labeled](mut value: T) -> str:
+    """Keep the exclusive receiver through the library's inherited default."""
+    return value.replace("first", "second")
+
+
+def main() -> None:
+    """Execute the default with a receiver implemented in the library."""
+    mut item = Item(value="linked")
+    println(display(item))
+    println(replace(item))
+    println(item.value)

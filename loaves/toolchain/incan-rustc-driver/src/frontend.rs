@@ -269,7 +269,8 @@ fn load_loaf_modules(loaves: &LoafIndex, requested: &BTreeSet<CanonicalSymbolId>
 }
 
 /// Complete the dependency context with the checked comparison slots needed by native bridges, then retain linked
-/// contracts and held Rust layouts. The added defaults introduce no new source checking or invented implementations.
+/// contracts and held Rust layouts. Install the sole callable inventory before collecting its native signature
+/// carriers. The added defaults introduce no new source checking or invented implementations.
 fn complete_dependency_context(
     mut program: CheckedProgram,
     loaves: &LoafIndex,
@@ -301,6 +302,11 @@ fn complete_dependency_context(
         program.modules = expanded;
     }
     let loaf_callables = retain_linked_loaf_declarations(&mut program.modules, program.own);
+    program
+        .modules
+        .get_mut(program.entry)
+        .ok_or("selected Body IR entry is missing")?
+        .loaf_callables = loaf_callables;
     let opaque = incan_semantics_core::body_ir::held_rust_items(&program.modules);
     let layouts = take_rust_layouts(&mut program.modules)?;
     let native_enums = take_rust_enums(&mut program.modules)?;
@@ -335,17 +341,17 @@ fn complete_dependency_context(
         .modules
         .get_mut(program.entry)
         .ok_or("selected Body IR entry is missing")?;
-    entry_module.loaf_callables = loaf_callables;
     entry_module.native_union_declarations = native_union_layouts(loaves);
     Ok(program)
 }
 
 /// Replace standalone package bodies with linked contracts. Body IR keeps governed templates, including defaults
-/// with an open Self receiver, available for checked adopter specialization.
+/// with an open Self receiver, available for checked adopter specialization. Move existing contracts into the
+/// returned inventory so joining declaration modules cannot publish the same compiled callable twice.
 fn retain_linked_loaf_declarations(modules: &mut [BodyIrModule], linked: usize) -> Vec<LoafCallable> {
     let mut loaf_callables = modules
-        .iter()
-        .flat_map(|module| module.loaf_callables.iter().cloned())
+        .iter_mut()
+        .flat_map(|module| std::mem::take(&mut module.loaf_callables))
         .collect::<Vec<_>>();
     for module in modules.iter_mut().take(linked) {
         for declaration in &mut module.nominal_declarations {

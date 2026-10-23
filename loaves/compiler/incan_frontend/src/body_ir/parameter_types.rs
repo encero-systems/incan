@@ -78,7 +78,7 @@ pub(super) fn checked_context_type(
     refuse_runtime_conflicts(checked_parameter_type(ty, facts, parameters), conflicts)
 }
 
-/// Collect same-spelled source types from the already checked provider modules, including function-only imports.
+/// Collect same-spelled source types from checked provider declarations, including compiled function-only imports.
 pub(super) fn runtime_name_conflicts(context: &[bir::BodyIrModule]) -> std::collections::BTreeSet<String> {
     context
         .iter()
@@ -114,8 +114,7 @@ pub(super) fn runtime_name_conflicts(context: &[bir::BodyIrModule]) -> std::coll
                 .chain(module.trait_declarations.iter())
                 .chain(
                     module
-                        .bodies
-                        .iter()
+                        .callable_declaration_frames()
                         .flat_map(|body| body.named_type_identities.values()),
                 )
                 .chain(

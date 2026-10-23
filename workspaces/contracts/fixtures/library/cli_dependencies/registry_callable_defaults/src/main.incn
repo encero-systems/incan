@@ -1,0 +1,12 @@
+# behavior: a compiled registry-backed callable retains computed defaults and explicit arguments (#2241)
+# expect-stdout:
+#   42
+#   7
+
+from pub::numbers import encoded
+
+
+def main() -> None:
+    """Call the library through both forms of its published parameter contract."""
+    println(encoded())
+    println(encoded(7))

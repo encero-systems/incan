@@ -32,7 +32,7 @@ pub(super) fn retain_returns(
             signatures.insert(identity.clone(), signature(body));
         }
     }
-    for body in context.iter().flat_map(|module| &module.bodies) {
+    for body in context.iter().flat_map(|module| module.callable_declaration_frames()) {
         if let Some(identity) = &body.canonical {
             signatures.entry(identity.clone()).or_insert_with(|| signature(body));
         }

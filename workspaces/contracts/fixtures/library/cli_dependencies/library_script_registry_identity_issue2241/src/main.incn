@@ -1,5 +1,4 @@
 # behavior: a library with a registry Rust dependency and its own script remains callable by a consumer (#2241) (#2216)
-# pending: #2241 #2216 Rust facts find two serde_json artifacts without a selected extern
 # expect-stdout:
 #   42
 

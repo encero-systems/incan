@@ -314,21 +314,6 @@ pub def method_index(
     return owner_method_index(module, target, owner, intrinsics)
 
 
-pub def receiver_method_identity(
-    module: &BodyIrModule,
-    target: &MethodTarget,
-    locals: list[Local],
-    argument: &ArgumentElement,
-    span: SourceSpan,
-    unions: list[RustType],
-    intrinsics: list[EnumDeclaration],
-) -> Result[Option[CanonicalSymbolId], str]:
-    """Read the checked implementation for a concrete receiver; other receiver kinds keep their ordinary call path."""
-    match receiver_owner(module, locals, argument, span, unions, intrinsics):
-        Err(_error) => return Ok(None)
-        Ok(owner) => return Ok(Some(owner_method_identity(module, target, owner)?))
-
-
 def owner_method_identity(
     module: &BodyIrModule,
     target: &MethodTarget,
@@ -416,6 +401,33 @@ pub def owner_method_index(
     return Err(
         f"unsupported Body IR nonlocal or trait-object Method; target={target.canonical:?}; owner={owner:?}; owner_identity={identity:?}; implementation={canonical:?}; canonical_candidates={candidate_count}; candidates_limit=6; candidates=[{candidates}]",
     )
+
+
+pub def receiver_method_target(
+    module: &BodyIrModule,
+    target: &MethodTarget,
+    locals: list[Local],
+    argument: &ArgumentElement,
+    span: SourceSpan,
+    unions: list[RustType],
+    intrinsics: list[EnumDeclaration],
+) -> Result[MethodTarget, str]:
+    """Read an implementation target from a retained concrete receiver; nonnominal calls keep their original target."""
+    match receiver_owner(module, locals, argument, span, unions, intrinsics):
+        Ok(owner) => return implementation_target(module, target, owner)
+        Err(_reason) => return Ok(target.clone())
+
+
+pub def implementation_target(module: &BodyIrModule, target: &MethodTarget, owner: PlanType) -> Result[MethodTarget, str]:
+    """Name the retained concrete implementation rather than its trait slot when calling an already compiled method."""
+    mut selected = target.clone()
+    canonical = owner_method_identity(module, target, owner)?
+    selected.canonical = Some(canonical)
+    if selected.canonical != target.canonical:
+        # The selected item is the implementation's ordinary compiled entry, not the trait's native generic item.
+        selected.loaf_trait = None
+        selected.native_trait_delegation = None
+    return Ok(selected)
 
 
 def owner_identity(module: &BodyIrModule, owner: PlanType) -> Result[CanonicalSymbolId, str]:

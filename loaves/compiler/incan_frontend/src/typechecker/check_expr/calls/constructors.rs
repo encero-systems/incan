@@ -536,7 +536,7 @@ impl TypeChecker {
             .is_some_and(|sym| matches!(sym.kind, SymbolKind::Type(TypeInfo::Enum(_))))
     }
 
-    /// Typecheck `Enum.from_value(...)` against the value enum backing type.
+    /// Typecheck `Enum.from_value(...)` against the backing type and retain its generated member identity for Body IR.
     pub(in crate::typechecker::check_expr::calls) fn check_value_enum_from_value_call(
         &mut self,
         enum_name: &str,
@@ -572,10 +572,11 @@ impl TypeChecker {
                 ));
             }
         }
+        self.record_compiler_generated_member_identity(enum_name, "from_value", span);
         option_ty(ResolvedType::Named(enum_name.to_string()))
     }
 
-    /// Typecheck `value()` calls on value enum instances.
+    /// Typecheck `value()` calls and retain the exact generated member of their checked enum owner for Body IR.
     pub(in crate::typechecker::check_expr::calls) fn check_value_enum_value_call(
         &mut self,
         enum_name: &str,
@@ -598,6 +599,7 @@ impl TypeChecker {
             ));
             return ResolvedType::Unknown;
         }
+        self.record_compiler_generated_member_identity(enum_name, "value", span);
         value_enum.value_type.resolved_type()
     }
     /// Return the result type produced by a constructor call.
