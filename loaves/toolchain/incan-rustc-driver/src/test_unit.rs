@@ -15,7 +15,8 @@ pub(crate) struct CollectedTest {
 }
 
 /// Collect a test unit using the session's vocabulary and active features; unsupported harness contracts refuse by
-/// name.
+/// name. An async test is collected like any other: the lowering registers a synchronous function that runs its
+/// coroutine to completion on the canonical executor.
 pub(crate) fn collect(unit: &UnitDescription, session: &CompilationSession) -> Result<Vec<CollectedTest>, String> {
     if unit.kind != UnitKind::Test {
         return Ok(Vec::new());
@@ -33,9 +34,9 @@ pub(crate) fn collect(unit: &UnitDescription, session: &CompilationSession) -> R
     }
     let mut collected = Vec::new();
     for test in discovery.tests {
-        if test.is_async || !test.parameter_names.is_empty() || test.timeout.is_some() {
+        if !test.parameter_names.is_empty() || test.timeout.is_some() {
             return Err(format!(
-                "unsupported test contract for `{}`: async, parameters or timeout",
+                "unsupported test contract for `{}`: parameters or timeout",
                 test.function_name
             ));
         }

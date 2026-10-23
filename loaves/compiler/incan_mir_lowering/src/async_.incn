@@ -245,11 +245,30 @@ pub def integer_entry(body: Function) -> Function:
     )
 
 
-pub def async_entry(module: &BodyIrModule, body: Function, intrinsics: list[EnumDeclaration]) -> Result[tuple[Function, Function, ExternalFunction], str]:
-    """Return the coroutine's checked output through native main, preserving Result termination after executor setup."""
+pub def async_test_name(native: str) -> str:
+    """Name the synchronous function that drives one async test's coroutine for the native test harness."""
+    return f"__incan_test_{native}"
+
+
+pub def async_entry(
+    module: &BodyIrModule,
+    body: Function,
+    intrinsics: list[EnumDeclaration],
+    entry_name: str,
+) -> Result[tuple[Function, Function, ExternalFunction], str]:
+    """
+    Return the coroutine's checked output through the native function `entry_name`, preserving Result termination
+    after executor setup: `main` for a program, the test wrapper for an async test.
+    """
     span = body.span
     future = PlanType.Future([body.return_type])
-    constructor = boxed_future_constructor("__incan_main_future", CalleeKind.Planned(body.name), [], body.return_type, span)
+    constructor = boxed_future_constructor(
+        f"__incan_{entry_name}_future",
+        CalleeKind.Planned(body.name),
+        [],
+        body.return_type,
+        span,
+    )
     mut path = "incan_native_runtime::run_future_entry"
     mut arguments = [future]
     if body.return_type != PlanType.Unit:
@@ -268,7 +287,7 @@ pub def async_entry(module: &BodyIrModule, body: Function, intrinsics: list[Enum
                 path = "incan_native_runtime::run_result_future_entry"
             _ => return Err("unsupported Body IR async main output")
     entry = Function(
-        name="main",
+        name=entry_name,
         parameters=[],
         return_type=body.return_type,
         locals=[Local(ty=body.return_type, span=span), Local(ty=future, span=span)],

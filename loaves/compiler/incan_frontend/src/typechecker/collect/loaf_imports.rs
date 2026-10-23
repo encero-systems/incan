@@ -731,7 +731,8 @@ impl TypeChecker {
             .collect::<Vec<_>>();
         let (source_module_path, declarations) = match matches.as_slice() {
             [only] => only,
-            _ => Self::one_declaration_behind_namespace_matches(manifest, member, &matches)
+            _ => Self::namespace_own_module_match(module_path, &matches)
+                .or_else(|| Self::one_declaration_behind_namespace_matches(manifest, member, &matches))
                 .ok_or_else(|| source_modules.clone())?,
         };
         let mut kinds = declarations
@@ -832,6 +833,21 @@ impl TypeChecker {
     /// Choose one of several source modules that each publish `member` into the same derived namespace, when the
     /// identity graph says they all publish the same declarations.
     ///
+    /// Select the declaration the namespace's own module makes when an immediate child module declares the same name.
+    ///
+    /// A module such as `snappy` that owns the default surface of its namespace and keeps an alternative (`snappy.raw`)
+    /// in a child module is not ambiguous: the own module's declaration takes precedence, as a declared member does
+    /// over a child namespace, and the child stays reachable through its exact module path. Two child modules that
+    /// declare the name remain ambiguous.
+    pub(super) fn namespace_own_module_match<'m, 'a>(
+        namespace_path: &[String],
+        matches: &'m [(Vec<String>, Vec<&'a ApiDeclaration>)],
+    ) -> Option<&'m (Vec<String>, Vec<&'a ApiDeclaration>)> {
+        matches
+            .iter()
+            .find(|(module_path, _)| module_path.as_slice() == namespace_path)
+    }
+
     /// A directory namespace exposes its entrypoint's declarations and its source-file children's, so a facade that
     /// re-exports a child's declaration (`pkg/mod.incn` holding `pub from crate.pkg.inner import Greeting`) puts the
     /// name there twice. Each source module publishes the member at its own namespace path, and the identity graph

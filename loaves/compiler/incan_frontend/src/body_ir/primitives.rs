@@ -106,10 +106,16 @@ pub(super) fn collection_equality_borrows(op: ast::BinaryOp, lhs_ty: &IncanType,
         && shared_equality_operand(rhs_ty)
 }
 
-/// Recognize checked equality operands with owned collection storage, including bytes' primitive spelling.
+/// Recognize checked equality operands with owned collection storage, including bytes' primitive spelling. A type
+/// parameter qualifies too: equality never consumes an operand, and the parameter's instantiation may be a collection.
 fn shared_equality_operand(ty: &IncanType) -> bool {
-    builtin_collection_id(ty).is_some() || matches!(ty, IncanType::Primitive(IncanPrimitiveType::Bytes))
+    builtin_collection_id(ty).is_some()
+        || matches!(
+            ty,
+            IncanType::Primitive(IncanPrimitiveType::Bytes) | IncanType::TypeVar(_)
+        )
 }
+
 /// The mutable collection a `FrozenList`, `FrozenSet` or `FrozenDict` type answers membership like, or `None`.
 fn frozen_collection_counterpart(ty: &IncanType) -> Option<CollectionTypeId> {
     let IncanType::Generic { base, args } = ty else {

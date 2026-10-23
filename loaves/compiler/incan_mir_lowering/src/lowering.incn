@@ -387,6 +387,7 @@ from async_ import (
     boxed_future_constructor,
     await_future,
     async_entry,
+    async_test_name,
     integer_entry,
     evaluator_name,
     is_future,
@@ -7135,11 +7136,7 @@ def lowered_plan(
                 ))
             emitted_frames.append(body.clone())
             append_synthesized(functions, synthesized)?
-            if body.is_async and function_name(context, body) == "main":
-                entry_function, entry_constructor, entry_runtime = async_entry(context, function, intrinsics)?
-                functions.append(entry_function)
-                functions.append(entry_constructor)
-                _ = merge_externals(externals, [entry_runtime])?
+            append_async_entry(context, body, function, index == entry, tests, intrinsics, functions, externals)?
             append_generator_constructor(functions, context, body, sources[index], files[index], intrinsics)?
             _ = merge_externals(externals, runtime)?
     mut owners: list[str] = []
@@ -7191,8 +7188,41 @@ def lowered_plan(
     )
 
 
+def async_entry_name(context: &BodyIrModule, body: &RustBody, in_entry: bool, tests: list[str]) -> Option[str]:
+    """Name the native function that runs an async body under the executor: `main`, or a collected test's wrapper."""
+    if not body.is_async:
+        return None
+    native = function_name(context, body)
+    if native == "main":
+        return Some(native)
+    if in_entry and str(body.name) in tests:
+        return Some(async_test_name(native))
+    return None
+
+
+def append_async_entry(
+    context: &BodyIrModule,
+    body: &RustBody,
+    function: Function,
+    in_entry: bool,
+    tests: list[str],
+    intrinsics: list[EnumDeclaration],
+    mut functions: list[Function],
+    mut externals: list[ExternalFunction],
+) -> Result[None, str]:
+    """Add the native function that runs an async `main` or collected async test, when the body is one."""
+    match async_entry_name(context, body, in_entry, tests):
+        Some(entry_name) =>
+            entry_function, entry_constructor, entry_runtime = async_entry(context, function, intrinsics, entry_name)?
+            functions.append(entry_function)
+            functions.append(entry_constructor)
+            _ = merge_externals(externals, [entry_runtime])?
+        None => pass
+    return Ok(None)
+
+
 def collected_test_entries(context: &BodyIrModule, entry: &BodyIrModule, tests: list[str], functions: list[Function]) -> Result[list[str], str]:
-    """Resolve collected zero-argument tests to their checked native functions and refuse unsupported signatures."""
+    """Resolve collected zero-argument tests to the native functions that run them and refuse unsupported signatures."""
     mut entries: list[str] = []
     for name in tests:
         mut found = false
@@ -7201,11 +7231,14 @@ def collected_test_entries(context: &BodyIrModule, entry: &BodyIrModule, tests: 
                 continue
             native = function_name(context, body)
             for function in functions:
-                if function.name != native:
+                if function.name != evaluator_name(context, body):
                     continue
-                if len(function.parameters) != 0 or function.return_type != PlanType.Unit or function.is_async:
-                    return Err(f"unsupported test signature for {name}: requires synchronous () -> None")
-                entries.append(native)
+                if len(function.parameters) != 0 or function.return_type != PlanType.Unit:
+                    return Err(f"unsupported test signature for {name}: requires () -> None")
+                if function.is_async:
+                    entries.append(async_test_name(native))
+                else:
+                    entries.append(native)
                 found = true
         if not found:
             return Err(f"unsupported collected test body {name}")
