@@ -74,6 +74,8 @@ pub enum ListLeaf:
     Set(list[ListLeaf])
     # Preserve the native pointer-width unsigned carrier in collection storage.
     USize
+    # A local collection may hold an exact shared reference without copying its referent into the collection.
+    Reference(list[PlanType])
 
 
 @derive(Clone, PartialEq)
@@ -247,6 +249,7 @@ pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
         ListLeaf.List(element, depth) => return PlanType.List(element[0], depth)
         ListLeaf.Dict(entry) => return PlanType.Dict(entry[0], entry[1])
         ListLeaf.Set(element) => return PlanType.Set(element[0])
+        ListLeaf.Reference(element) => return element[0]
 
 
 pub def range_field_types() -> list[PlanType]:

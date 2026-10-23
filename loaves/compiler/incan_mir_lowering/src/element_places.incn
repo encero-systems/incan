@@ -30,6 +30,7 @@ pub def is_element_place(builder: Builder, source: &RustPlace) -> Result[bool, s
             if is_list(root) or is_collection(root) or root in [PlanType.String, PlanType.StringRef, PlanType.StringMutRef, PlanType.FrozenStr, PlanType.FrozenBytes]:
                 return Ok(true)
             match root:
+                PlanType.NativeArray(_elements, _length) => return Ok(true)
                 PlanType.FrozenCollection(_name, _elements) => return Ok(true)
                 _ => pass
     match structural_prefix(builder, source)?:
@@ -69,10 +70,15 @@ pub def element_prefix_type(builder: Builder, source: &RustPlace, count: int) ->
 
 
 def projected_type(builder: Builder, ty: PlanType, projection: &PlaceElem) -> Result[PlanType, str]:
-    """Select one step's type: a collection element, sequence slice, or structural field or tuple element."""
+    """Select one step's carrier: an indexed Unicode scalar string, collection element, slice, field or tuple element."""
     match projection:
         PlaceElem.Index(_index) =>
+            if ty == PlanType.String:
+                return Ok(PlanType.String)
             match ty:
+                PlanType.NativeArray(elements, _length) =>
+                    if len(elements) == 1:
+                        return Ok(elements[0])
                 PlanType.FrozenCollection(name, elements) =>
                     if name == "FrozenDict" and len(elements) == 2:
                         return Ok(frozen_read_type(elements[1]))

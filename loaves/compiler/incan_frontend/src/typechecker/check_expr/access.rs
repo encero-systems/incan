@@ -5082,6 +5082,16 @@ impl TypeChecker {
             base_ty = *inner;
         }
         let index_ty = self.check_expr(index);
+        // A native fixed-size array reads its checked element type at any integer index.
+        if let ResolvedType::RustPath(path) = &base_ty
+            && let Some((element, _length)) = self.rust_array_parts(path)
+        {
+            if !is_intlike_for_index(&index_ty) {
+                self.errors
+                    .push(errors::index_type_mismatch("int", &index_ty.to_string(), index.span));
+            }
+            return element;
+        }
         if self.is_std_json_value_type(&base_ty) && !Self::is_std_json_value_index_type(&index_ty) {
             self.errors.push(errors::json_value_index_type_mismatch(
                 &index_ty.to_string(),
@@ -5549,6 +5559,16 @@ impl TypeChecker {
                 ResolvedType::Unknown
             }
             RustItemKind::Type(owner) => {
+                let selected = format!("{path}::{field}");
+                if let Some(metadata) = self.rust_item_metadata_for_path(&selected)
+                    && let RustItemKind::Constant { type_display } = &metadata.kind
+                {
+                    self.type_info
+                        .rust
+                        .checked_constants
+                        .insert((span.start, span.end), selected);
+                    return self.native_rust_signature_type(type_display, path);
+                }
                 if let Some(method) = owner
                     .methods
                     .iter()
@@ -6568,6 +6588,10 @@ impl TypeChecker {
         // checked, so the payload expectation has to be resolved before the loop below rather than corrected after it.
         let enum_variant_construction =
             self.enum_variant_construction_instantiation(&base_ty, method, expected_return_ty);
+        let enum_variant_parameters = match &base_ty {
+            ResolvedType::Named(enum_name) => self.checked_enum_variant_parameters(enum_name, method),
+            _ => None,
+        };
 
         // Collect arg types for method-specific validation. A fold's callback reads the accumulator type the
         // argument before it gives, so each argument is checked after the ones before it.
@@ -6584,6 +6608,12 @@ impl TypeChecker {
                 let variant_payload_ty = enum_variant_construction
                     .as_ref()
                     .and_then(|construction| construction.payloads.get(index))
+                    .or_else(|| {
+                        enum_variant_parameters
+                            .as_ref()
+                            .and_then(|parameters| parameters.get(index))
+                            .map(|parameter| &parameter.ty)
+                    })
                     .filter(|payload| !matches!(payload, ResolvedType::Unknown));
                 if defer_rust_closures && contextual_rust_callable.is_none() && is_closure {
                     // The closure's parameter types are not known until the Rust method signature is selected,
@@ -6812,10 +6842,9 @@ impl TypeChecker {
             && (enum_info.variants.iter().any(|v| v == method) || enum_info.variant_aliases.contains_key(method))
         {
             let variant_identity = enum_info.variant_identities.get(method).cloned();
-            let variant_params = self.checked_enum_variant_parameters(enum_name, method);
             // Args were checked above; no strict arity enforcement here.
             let _ = &arg_types; // keep for potential future validation
-            if let Some(parameters) = variant_params {
+            if let Some(parameters) = enum_variant_parameters {
                 self.type_info.record_call_site_callable_params_exact(span, &parameters);
             }
             if let Some(identity) = variant_identity {

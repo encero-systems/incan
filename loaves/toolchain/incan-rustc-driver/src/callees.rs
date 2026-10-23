@@ -6,10 +6,16 @@ use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 
-/// Resolve a retained public constant or unit-variant constructor. Statics and associated constants still require
-/// their own contracts; a variant must belong to the exact public enum and expose a public constant constructor.
+/// Resolve a retained public module constant, inherent associated constant or unit-variant constructor. Inherent
+/// constants use the same metadata lookup as checking; statics and trait constants still require their own
+/// contracts, and a variant must belong to the exact public enum and expose a public constant constructor.
 pub fn constant(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
     if let Ok(constant) = library_item(tcx, path, DefKind::Const { is_type_const: false }) {
+        return Ok(constant);
+    }
+    if let Some(constant) = crate::rust_facts::resolve(tcx, path, false)
+        .filter(|def| matches!(tcx.def_kind(*def), DefKind::AssocConst { .. }))
+    {
         return Ok(constant);
     }
     let (owner, name) = path

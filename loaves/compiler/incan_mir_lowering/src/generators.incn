@@ -4,6 +4,7 @@ from rust::incan_semantics_core import IncanType as RustType
 from pub::incan_mir_plan import (
     Callee,
     CalleeKind,
+    BasicBlock,
     ExternalFunction,
     Function,
     ListLeaf,
@@ -250,7 +251,7 @@ pub def generator_constructor(
     call = Callee(kind=CalleeKind.SpawnGenerator(producer_name(name), leaf, depth), span=span)
     mut locals = [Local(ty=result, span=span)]
     mut captures: list[Operand] = []
-    mut blocks = []
+    mut blocks: list[BasicBlock] = []
     for index in range(len(parameters)):
         locals.append(Local(ty=parameters[index].ty, span=parameters[index].span))
         parameter = plan_place(index + 1, span)

@@ -63,7 +63,8 @@ fn rust_path_last_segment_looks_like_type(path: &str) -> bool {
 }
 
 impl TypeChecker {
-    /// Retain a nongeneric variant's checked positional payload signature for both constructor call spellings.
+    /// Read a nongeneric variant's declared positional payload signature for contextual checking and both constructor
+    /// spellings.
     ///
     /// Generic variants need a concrete instantiation before they can claim declaration-slot types.
     pub(in crate::typechecker::check_expr) fn checked_enum_variant_parameters(
@@ -207,7 +208,12 @@ impl TypeChecker {
                     self.errors
                         .push(errors::explicit_call_site_type_args_not_supported(span));
                 }
-                self.check_call_args(args);
+                match variant_params.as_deref() {
+                    Some(parameters) => {
+                        self.check_call_arg_types_for_params(args, parameters);
+                    }
+                    None => self.check_call_args(args),
+                }
                 // Retain the checked positional payload surface for Body IR's declaration-slot binder.
                 if let Some(parameters) = variant_params {
                     self.type_info.record_call_site_callable_params_exact(span, &parameters);

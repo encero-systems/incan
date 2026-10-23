@@ -254,7 +254,7 @@ from model_values import (
 )
 from enum_values import serialize_enum_operand
 from enums import lower_enum_declarations, enum_owner, variant_index, unit_variant
-from enum_display import display_enum_operand, native_enum_text, native_enum_owner
+from enum_display import display_enum_operand, native_enum_text, native_enum_owner, borrowed_enum_debug
 from enums import validate_unit_comparison, validate_unit_ordering
 from value_enums import (
     value_variant,
@@ -324,6 +324,7 @@ from numerics import (
 from builtins import scalar_builtin, list_call, emit_boolean_operator, emit_power_operator
 from strings import text_helper, emit_text_helper, text_helper_arity, text_method
 from patterns import (
+    enum_pattern_place,
     pattern_tests,
     pattern_binds,
     binds_in_place,
@@ -703,7 +704,7 @@ def is_direct_tuple_field(place: Place) -> bool:
 
 
 def target_read(mut builder: Builder, target: Place, fact: &OwnershipFact, span: SourceSpan) -> Result[Operand, str]:
-    """Read resolved storage from retained ownership facts, materializing borrowed owned fields and payloads through their existing clone operation."""
+    """Read resolved storage from retained ownership facts, materializing borrowed owned fields and payloads, including enum fields read through a reference, through their existing clone operation."""
     match partial_flags(builder, target.local):
         Some(_flags) => return Err("unsupported Body IR partial read outside a call or a binding")
         None => pass
@@ -1092,7 +1093,10 @@ def scalar_rvalue(
 ) -> Result[RvalueKind, str]:
     """Read the checked expression; the retained destination carrier selects a proven constructor's closed layout."""
     match value:
-        RustRvalue.Use(operand) => return Ok(RvalueKind.Use(value_operand(builder, operand, span)?))
+        RustRvalue.Use(operand) =>
+            match retained_reference_value(builder, operand, expected, span)?:
+                Some(reference) => return Ok(RvalueKind.Use(reference))
+                None => return Ok(RvalueKind.Use(value_operand(builder, operand, span)?))
         RustRvalue.UnaryOp(operator, operand) =>
             match operator:
                 UnOp.Not => return Ok(RvalueKind.Unary(UnaryOp.Not, scalar_operator_operand(builder, operand, span)?))
@@ -1189,34 +1193,29 @@ def comparison_collection_place(
     mut builder: Builder,
     value: &RustOperand,
     span: SourceSpan,
-) -> Result[Option[Place], str]:
-    """Borrow a checked collection owner or materialize a literal or collection-valued projection once. A scalar
-    element stays on the scalar path, and existing owners still require Body IR's retained shared read."""
+) -> Result[Place, str]:
+    """Borrow checked collection storage, materializing a byte literal or an indexed or sliced operand once before its
+    shared read. Callers classify both operands first, so only owners, projections and byte literals arrive here."""
     match value:
-        RustOperand.Constant(constant) =>
-            match constant:
-                RustConstant.Bytes(_bytes) => return Ok(Some(bytes_literal(builder, constant, span)?))
-                _ => return Ok(None)
+        RustOperand.Constant(constant) => return bytes_literal(builder, constant, span)
         RustOperand.Place(read) =>
-            if is_element_place(builder, read.place)?:
-                match equality_shape(element_place_type(builder, read.place)?):
-                    None => return Ok(None)
-                    Some(_shape) =>
-                        if read.fact != OwnershipFact.Borrow:
-                            return Err("unsupported Body IR collection equality without retained shared read")
-                        return Ok(Some(materialized_receiver(builder, read.place, span)?))
-            match read.place.local_id():
-                None => return Ok(None)
-                Some(_local) => pass
-            place = scalar_place(builder, read.place, span)?
-            match equality_shape(place_type(builder.locals, place)):
-                None => return Ok(None)
-                Some(shape) =>
-                    if len(read.place.projection) != 0 and shape != place_type(builder.locals, place):
-                        return Err("unsupported Body IR projected collection reference equality")
             if read.fact != OwnershipFact.Borrow:
                 return Err("unsupported Body IR collection equality without retained shared read")
-            return Ok(Some(place))
+            if is_element_place(builder, read.place)?:
+                return materialized_receiver(builder, read.place, span)
+            place = scalar_place(builder, read.place, span)?
+            ty = place_type(builder.locals, place)
+            if len(read.place.projection) != 0 and equality_shape(ty) != Some(ty):
+                return Err("unsupported Body IR projected collection reference equality")
+            return Ok(place)
+        _ => return Err("invalid Body IR collection comparison operand")
+
+
+def comparison_operand_type(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[PlanType, str]:
+    """Read a comparison operand's carrier without evaluating it; a byte literal is an owned unsigned byte list."""
+    match value:
+        RustOperand.Constant(_constant) => return Ok(PlanType.List(ListLeaf.U8, 1))
+        _ => return source_operand_type(builder, value, span)
 
 
 def collection_equality(
@@ -1226,15 +1225,21 @@ def collection_equality(
     right: &RustOperand,
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
-    """Borrow both checked collection layouts and invoke legacy equality without value-materialization clones."""
-    mut places: list[Place] = []
+    """Classify both checked layouts before evaluating either operand, then compare their shared collection views."""
     for operand in [left, right]:
-        match comparison_collection_place(builder, operand, span)?:
-            Some(place) => places.append(place)
-            None => return Ok(None)
-    left_shape = equality_shape(place_type(builder.locals, places[0]))
-    if left_shape != equality_shape(place_type(builder.locals, places[1])):
+        match operand:
+            RustOperand.Place(read) =>
+                if read.place.local_id() == None:
+                    return Ok(None)
+            RustOperand.Constant(RustConstant.Bytes(_bytes)) => pass
+            _ => return Ok(None)
+    left_shape = equality_shape(comparison_operand_type(builder, left, span)?)
+    right_shape = equality_shape(comparison_operand_type(builder, right, span)?)
+    if left_shape == None or right_shape == None:
+        return Ok(None)
+    if left_shape != right_shape:
         return Err("unsupported Body IR collection equality across different layouts")
+    places = [comparison_collection_place(builder, left, span)?, comparison_collection_place(builder, right, span)?]
     match left_shape:
         Some(ty) =>
             references = [list_borrow(builder, places[0], false, span)?, list_borrow(builder, places[1], false, span)?]
@@ -1794,6 +1799,17 @@ pub def lower_assignment(
                         return dictionary_entry_assignment(builder, destination, receiver, count, value, span)
                     return indexed_assignment_at(builder, destination, count, value, span)
             None => pass
+    if len(destination.projection) == 0:
+        match value:
+            RustRvalue.Use(operand) =>
+                root = list_root_place(builder, destination, span)?
+                if root.local > builder.parameter_count and root.local not in builder.iteration_locals:
+                    match retained_reference_value(builder, operand, place_type(builder.locals, root), span)?:
+                        Some(reference) =>
+                            builder.emit(plan_assign(root, RvalueKind.Use(reference), span))
+                            return Ok(None)
+                        None => pass
+            _ => pass
     target = assignment_place(builder, destination, span)?
     match value:
         RustRvalue.Match(scrutinee=scrutinee, arms=arms) =>
@@ -6095,7 +6111,7 @@ def lower_text_scalar_conversion(
     integer: bool,
     span: SourceSpan,
 ) -> Result[bool, str]:
-    """Parse borrowed text through legacy's raising runtime functions, preserving the original input."""
+    """Inspect the retained operand type before parsing borrowed text, without materializing an indexed value twice."""
     if len(arguments) != 1:
         return Ok(false)
     match arguments[0].as_one():
@@ -6416,13 +6432,18 @@ def type_parameter_display_operand(mut builder: Builder, value: &RustOperand, sp
 
 
 def debug_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
-    """Render native enums through their Rust Debug implementation and materialize other admitted Debug values."""
+    """Borrow structural nominal places through their retained Debug implementation before materializing other values."""
     match native_enum_text(builder, value, true, span)?:
         Some(text) => return Ok(text)
         None => pass
     match value:
         RustOperand.Place(read) =>
-            if len(read.place.projection) == 0:
+            if is_element_place(builder, read.place)?:
+                # An indexed model, including an opaque native one, materializes once for its retained Debug call.
+                match element_place_type(builder, read.place)?:
+                    PlanType.Model(_owner, _name) => return debug_model_operand(builder, value, span)
+                    _ => pass
+            else:
                 match read.place.global():
                     None =>
                         place = scalar_place(builder, read.place, span)?
@@ -6436,6 +6457,12 @@ def debug_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -
         _ => pass
     operand = value_operand(builder, value, span)?
     ty = operand_type(builder, operand)?
+    match ty:
+        PlanType.Enum(owner, _name) =>
+            declared_debug = owner >= 0 and owner < len(builder.enums) and "Debug" in builder.enums[owner].derives
+            if native_enum_owner(builder, owner) or declared_debug:
+                return debug_plan_operand(builder, operand, span)
+        _ => pass
     if (
         has_sized_numeric(ty)
         or ty in [PlanType.Int, PlanType.Float, PlanType.Bool, PlanType.Unit,
@@ -6566,14 +6593,18 @@ pub def display_plan_value(
     type_parameter: bool,
 ) -> Result[Place, str]:
     """
-    Format a materialized scalar, as generic code formats it when its checked type is a type parameter. A retained
-    shared string reference produces owned display text through the ordinary text materialization boundary.
+    Format a materialized scalar, as generic code formats it when its checked type is a type parameter, retaining a
+    native enum's own Display implementation. A retained shared string reference produces owned display text through
+    the ordinary text materialization boundary.
 
     A list, set or dictionary displays through its structure, as legacy's Debug spells it. A shared scalar reference
     retains its pointer once, then copies its numeric or boolean referent into the ordinary scalar formatter.
     """
     ty = operand_type(builder, operand)?
     match ty:
+        PlanType.Enum(owner, _name) =>
+            if native_enum_owner(builder, owner):
+                return type_parameter_display(builder, operand, span)
         PlanType.FrozenCollection(_name, _elements) => return debug_plan_operand(builder, operand, span)
         PlanType.ScalarRef(elements) =>
             if len(elements) != 1:
@@ -6629,15 +6660,20 @@ pub def display_plan_value(
 
 
 def debug_enum_operand(mut builder: Builder, place: Place, owner: int, span: SourceSpan) -> Result[Place, str]:
-    """Render unions through member Debug and checked text Options through native Some/None Debug on a clone."""
+    """Borrow a source enum's checked Debug implementation; unions and text Options retain their existing rendering."""
+    if owner >= 0 and owner < len(builder.enums):
+        declaration = builder.enums[owner]
+        if "Debug" in declaration.derives:
+            ty = PlanType.Enum(owner, str(declaration.name))
+            return borrowed_enum_debug(builder, place, ty, owner, str(declaration.name), span)
     if is_union_carrier(builder, owner):
         copied = clone_nominal_operand(builder, place, span)?
         return debug_plan_operand(builder, copied, span)
     if owner >= len(builder.enums) and owner < len(builder.enums) + len(builder.intrinsics):
         declaration = builder.intrinsics[owner - len(builder.enums)]
-        if declaration.carrier == "Option" and declaration.variants[1].fields == [PlanType.String]:
-            copied = carrier_payload_value(builder, place, span)?
-            return debug_plan_operand(builder, copied, span)
+        if declaration.carrier == "Option" or declaration.carrier == "Result":
+            ty = PlanType.Enum(owner, declaration.name)
+            return borrowed_enum_debug(builder, place, ty, owner, declaration.name, span)
     return Err("unsupported Body IR nonmodel FormatStyle.Debug")
 
 
@@ -8372,6 +8408,9 @@ def element_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> 
                     text = Place(local=root.local, projection=Projection.Deref(PlanType.String), span=span)
                 return Ok(Some(projected_element_read(builder, source, text, 0, span)?))
             match place_type(builder.locals, root):
+                PlanType.NativeArray(_elements, _length) =>
+                    if len(source.projection) != 0:
+                        return Ok(Some(projected_element_read(builder, source, root, 0, span)?))
                 PlanType.FrozenCollection(_name, _elements) =>
                     if len(source.projection) != 0:
                         return Ok(Some(projected_element_read(builder, source, root, 0, span)?))
@@ -8451,6 +8490,9 @@ def read_indexed_element(
     if is_tuple_type(place_type(builder.locals, place)):
         return read_element_field(builder, place, source.projection[slot], span)
     match place_type(builder.locals, place):
+        PlanType.NativeArray(elements, _length) =>
+            index = list_index_operand(builder, source, slot, span)?
+            return read_native_text_array(builder, place, elements, index, span)
         PlanType.FrozenCollection(name, _elements) =>
             if name == "FrozenDict":
                 return frozen_dictionary_element(builder, place, source, slot, span)
@@ -8464,6 +8506,34 @@ def read_indexed_element(
     if place_type(builder.locals, place) == PlanType.String:
         return read_text_element(builder, place, argument, span)
     return read_list_element(builder, place, argument, span)
+
+
+def read_native_text_array(
+    mut builder: Builder,
+    place: Place,
+    elements: list[PlanType],
+    index: Operand,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Borrow a native array of sized text references as a slice and reuse core's checked signed-index operation."""
+    if elements != [PlanType.StrRef]:
+        return Err("unsupported Body IR native array element carrier")
+    match borrow_array_slice(builder, place, elements, false, OwnershipFact.Borrow, span)?:
+        None => return Err("unsupported Body IR native array element read without an array carrier")
+        Some(view) =>
+            result_type = PlanType.ScalarRef([PlanType.StrRef])
+            result = temporary(builder, result_type, span)
+            instantiated_external_call(
+                builder,
+                "incan_std_core::collections::list_get",
+                [PlanType.StrRef],
+                [PlanType.SliceRef(elements), PlanType.Int],
+                result_type,
+                [view, index],
+                result,
+                span,
+            )?
+            return Ok(Place(local=result.local, projection=Projection.Deref(PlanType.StrRef), span=span))
 
 
 def read_text_element(mut builder: Builder, place: Place, index: Operand, span: SourceSpan) -> Result[Place, str]:
@@ -9488,6 +9558,10 @@ def lower_list_builtin(
         return list_length(builder, element, destination, span)
     ty = argument_type(builder, arguments, 0, span)?
     match ty:
+        PlanType.NativeArray(_elements, count) =>
+            output = call_destination(builder, destination, PlanType.Int, span)?
+            builder.emit(plan_assign(output, RvalueKind.Use(literal(Constant.Int(count), span)), span))
+            return Ok(None)
         PlanType.FrozenCollection(name, elements) =>
             value = borrow_frozen_argument(builder, arguments[0], span)?
             output = call_destination(builder, destination, PlanType.Int, span)?
@@ -9750,12 +9824,12 @@ def membership_receiver(
     arguments: &list[RustArgumentElement],
     span: SourceSpan,
 ) -> Result[Place, str]:
-    """Read immutable frozen membership through an owned primitive snapshot; ordinary collections retain their root."""
+    """Read frozen snapshots or shared collection receivers, materializing indexed fields once without changing their owners."""
     match argument_type(builder, arguments, 0, span)?:
         PlanType.FrozenCollection(_name, _elements) =>
             value = argument_value(builder, arguments, 0, span)?
             return frozen_list_snapshot(builder, value, span)
-        _ => return argument_place(builder, arguments, 0, span)
+        _ => return shared_receiver_place(builder, arguments, 0, span)
 
 
 def frozen_dictionary_element(
@@ -9990,7 +10064,8 @@ def list_next(
             if is_owned_list_iterator(place_type(builder.locals, candidate)):
                 if read.fact != OwnershipFact.MutBorrow:
                     return Err("unsupported Body IR consuming iterator poll ownership")
-                return owned_list_next(builder, candidate, scalar_place(builder, destination, span)?, span)
+                target = list_root_place(builder, destination, span)?
+                return owned_list_next(builder, candidate, target, span)
         _ => pass
     receiver = operand_list_place(builder, iterator, span)?
     match zip_shape(place_type(builder.locals, receiver)):
@@ -10866,14 +10941,7 @@ def match_scrutinee_place(
             source = scalar_place(builder, read.place, span)?
             if in_place and source.local in builder.borrowed_items:
                 return Err("unsupported Body IR in-place match on a copied loop variable")
-            if source.projection == Projection.Whole:
-                match place_type(builder.locals, source):
-                    PlanType.EnumRef(owner, name) =>
-                        return Ok(Place(local=source.local, projection=Projection.Deref(PlanType.Enum(owner, name)), span=span))
-                    PlanType.EnumMutRef(owner, name) =>
-                        return Ok(Place(local=source.local, projection=Projection.Deref(PlanType.Enum(owner, name)), span=span))
-                    _ => pass
-            return Ok(source)
+            return Ok(enum_pattern_place(builder, source, span))
         _ => return Err("unsupported Body IR nonplace enum match scrutinee")
 
 
@@ -11142,10 +11210,11 @@ def bind_structural_pattern(
         RustPattern.Literal(_value) => pass
         _ =>
             if pattern_binds(pattern):
-                match place_type(builder.locals, source):
+                carrier = enum_pattern_place(builder, source, span)
+                match place_type(builder.locals, carrier):
                     PlanType.Enum(owner, _name) =>
                         slot = carrier_pattern_slot(builder, owner, pattern)?
-                        return bind_enum_payload(builder, source, slot, pattern, span)
+                        return bind_enum_payload(builder, carrier, slot, pattern, span)
                     _ => return Err("unsupported Body IR structural pattern binding")
     return Ok(None)
 
@@ -12751,6 +12820,36 @@ def element_copy(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> 
         _ => return Err("unsupported Body IR carrier receiver element")
 
 
+def retained_reference_value(
+    builder: Builder,
+    value: &RustOperand,
+    expected: PlanType,
+    span: SourceSpan,
+) -> Result[Option[Operand], str]:
+    """Read a whole native shared-reference value at its exact retained destination carrier, without dereferencing it."""
+    match expected:
+        PlanType.ModelRef(_owner, _name) => pass
+        PlanType.EnumRef(_owner, _name) => pass
+        PlanType.StringRef => pass
+        PlanType.ScalarRef(_elements) => pass
+        PlanType.SliceRef(_elements) => pass
+        _ => return Ok(None)
+    match value:
+        RustOperand.Place(read) =>
+            if len(read.place.projection) != 0:
+                return Ok(None)
+            match read.place.local_id():
+                None => return Ok(None)
+                Some(local) =>
+                    place = plan_place(int(local.index()) + 1 + builder.local_offset, span)
+                    if place_type(builder.locals, place) != expected:
+                        return Ok(None)
+                    if read.fact == OwnershipFact.Unknown or read.fact == OwnershipFact.MutBorrow:
+                        return Err("unsupported Body IR shared-reference value ownership")
+                    return Ok(Some(read_place(place, read.fact == OwnershipFact.Move, span)))
+        _ => return Ok(None)
+
+
 def typed_carrier_operand(
     mut builder: Builder,
     operand: &RustOperand,
@@ -12764,6 +12863,9 @@ def typed_carrier_operand(
     """
     if ty == PlanType.FrozenStr:
         return frozen_operand(builder, operand, span)
+    match retained_reference_value(builder, operand, ty, span)?:
+        Some(reference) => return Ok(reference)
+        None => pass
     match operand:
         RustOperand.Constant(RustConstant.None) => return none_operand(builder, ty, span)
         _ => pass

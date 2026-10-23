@@ -94,8 +94,8 @@ fn constant<'tcx>(tcx: TyCtxt<'tcx>, value: &Constant, span: Span) -> Result<mir
     Ok(match value {
         Constant::RustItem(path, carrier) => {
             let def = crate::callees::constant(tcx, path)?;
-            let actual = tcx.type_of(def).instantiate_identity().skip_normalization();
-            if actual != native_type(tcx, carrier)? {
+            let actual = tcx.erase_and_anonymize_regions(tcx.type_of(def).instantiate_identity().skip_normalization());
+            if actual != tcx.erase_and_anonymize_regions(native_type(tcx, carrier)?) {
                 return Err(PlanError::Invalid {
                     function: path.clone(),
                     reason: "Rust constant carrier differs from its checked type".into(),

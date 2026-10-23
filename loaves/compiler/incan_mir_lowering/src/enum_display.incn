@@ -6,6 +6,7 @@ from pub::incan_mir_plan import PlanType, Place, Operand, SourceSpan, RvalueKind
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, temporary, place_type, read_place, terminate_call
 from lowering import scalar_place, runtime_text
+from element_places import is_element_place
 from decls import library_enum_item
 
 
@@ -44,10 +45,10 @@ pub def native_enum_text(
     debug: bool,
     span: SourceSpan,
 ) -> Result[Option[Place], str]:
-    """Borrow an exact native enum for its Rust Display or Debug implementation; trait validation stays in rustc."""
+    """Borrow an exact native enum local or structural field for Rust Display or Debug; trait validation stays in rustc."""
     match value:
         RustOperand.Place(read) =>
-            if len(read.place.projection) != 0 or read.place.local_id() == None:
+            if read.place.local_id() == None or is_element_place(builder, read.place)?:
                 return Ok(None)
             place = scalar_place(builder, read.place, span)?
             mut argument = read_place(place, false, span)
@@ -76,7 +77,7 @@ pub def native_enum_owner(builder: Builder, owner: int) -> bool:
         _ => return false
 
 
-def borrowed_enum_debug(
+pub def borrowed_enum_debug(
     mut builder: Builder,
     value: Place,
     ty: PlanType,
@@ -84,7 +85,7 @@ def borrowed_enum_debug(
     name: str,
     span: SourceSpan,
 ) -> Result[Place, str]:
-    """Call the existing generic Debug runtime without cloning or consuming the enum's payload."""
+    """Format an enum through its retained Debug implementation without cloning or consuming its payload."""
     reference_type = PlanType.EnumRef(owner, name)
     argument = enum_reference(builder, value, owner, name, span)
     result = temporary(builder, PlanType.String, span)

@@ -199,6 +199,7 @@ fn describe_paths(tcx: TyCtxt<'_>, paths: &BTreeSet<String>, depth: usize) -> BT
                     .into_iter()
                     .map(|dependency| (visible_path(tcx, dependency), dependency)),
             );
+            pending.extend(public_associated_constants(tcx, def, &path));
             let metadata = describe(tcx, def, &path, &mut named);
             for (constructor_path, constructor) in enum_constructors(tcx, def, &path) {
                 let metadata = describe(tcx, constructor, &constructor_path, &mut named);
@@ -395,7 +396,10 @@ fn public_items(tcx: TyCtxt<'_>, root: DefId, name: &str) -> Vec<(String, DefId)
                 | DefKind::Trait
                 | DefKind::Fn
                 | DefKind::Const { .. }
-                | DefKind::Static { .. } => items.push((child_path, def)),
+                | DefKind::Static { .. } => {
+                    items.extend(public_associated_constants(tcx, def, &child_path));
+                    items.push((child_path, def));
+                }
                 DefKind::Macro(kinds) if !macro_forms(kinds).is_empty() => items.push((child_path, def)),
                 _ => {}
             }
@@ -433,18 +437,44 @@ fn enum_constructors(tcx: TyCtxt<'_>, owner: DefId, path: &str) -> Vec<(String, 
         .collect()
 }
 
-/// Resolve a path through public module children. Ordinary lookup prefers types over values and macros; derive lookup
-/// selects only the macro namespace so a same-named trait and derive retain independent facts.
-fn resolve(tcx: TyCtxt<'_>, path: &str, derive_macro: bool) -> Option<DefId> {
+/// Return public inherent constants under their owner's exported path, preserving the exact associated item.
+/// Trait constants and generic instantiations need a selected impl and are not inferred by this lookup.
+fn public_associated_constants(tcx: TyCtxt<'_>, owner: DefId, path: &str) -> Vec<(String, DefId)> {
+    if !matches!(tcx.def_kind(owner), DefKind::Struct | DefKind::Enum | DefKind::Union) {
+        return Vec::new();
+    }
+    tcx.inherent_impls(owner)
+        .iter()
+        .flat_map(|implementation| tcx.associated_item_def_ids(*implementation).iter().copied())
+        .filter(|item| matches!(tcx.def_kind(*item), DefKind::AssocConst { .. }) && tcx.visibility(*item).is_public())
+        .map(|item| (format!("{path}::{}", tcx.item_name(item)), item))
+        .collect()
+}
+
+/// Resolve a path through public module children and inherent constants. Ordinary lookup prefers types over values and
+/// macros; derive lookup selects only the macro namespace so a same-named trait and derive retain independent facts. A
+/// type may precede a final associated-constant segment; competing impl constants remain unresolved rather than
+/// selecting one by iteration order.
+pub(crate) fn resolve(tcx: TyCtxt<'_>, path: &str, derive_macro: bool) -> Option<DefId> {
     let mut segments = path.split("::").peekable();
     let root = segments.next()?;
     let mut current = crate::native_crates::root(tcx, root)?;
     while let Some(segment) = segments.next() {
         let last = segments.peek().is_none();
-        if tcx.def_kind(current) == DefKind::Enum {
-            return last
-                .then(|| crate::callees::enum_constructor(tcx, current, segment))
-                .flatten();
+        if tcx.def_kind(current) != DefKind::Mod {
+            if !last {
+                return None;
+            }
+            if tcx.def_kind(current) == DefKind::Enum
+                && let Some(constructor) = crate::callees::enum_constructor(tcx, current, segment)
+            {
+                return Some(constructor);
+            }
+            let mut constants = public_associated_constants(tcx, current, "")
+                .into_iter()
+                .filter(|(_, item)| tcx.item_name(*item).as_str() == segment);
+            let (_, selected) = constants.next()?;
+            return constants.next().is_none().then_some(selected);
         }
         let children = tcx
             .module_children(current)
@@ -462,9 +492,11 @@ fn resolve(tcx: TyCtxt<'_>, path: &str, derive_macro: bool) -> Option<DefId> {
                 })
                 .min_by_key(|child| resolution_rank(tcx.def_kind(*child)))?
         } else {
-            children
-                .into_iter()
-                .find(|child| tcx.def_kind(*child) == DefKind::Mod)?
+            children.into_iter().min_by_key(|child| match tcx.def_kind(*child) {
+                DefKind::Mod => 0,
+                DefKind::Struct | DefKind::Enum | DefKind::Union => 1,
+                _ => 2,
+            })?
         };
     }
     Some(current)
@@ -528,11 +560,12 @@ fn describe(tcx: TyCtxt<'_>, def: DefId, path: &str, named: &mut HashSet<DefId>)
         DefKind::Fn | DefKind::Ctor(_, rustc_hir::def::CtorKind::Fn) => {
             RustItemKind::Function(signature(tcx, def, named))
         }
-        DefKind::Const { .. } | DefKind::Static { .. } | DefKind::Ctor(_, rustc_hir::def::CtorKind::Const) => {
-            RustItemKind::Constant {
-                type_display: display(tcx.type_of(def).instantiate_identity().skip_normalization()),
-            }
-        }
+        DefKind::Const { .. }
+        | DefKind::AssocConst { .. }
+        | DefKind::Static { .. }
+        | DefKind::Ctor(_, rustc_hir::def::CtorKind::Const) => RustItemKind::Constant {
+            type_display: display(tcx.type_of(def).instantiate_identity().skip_normalization()),
+        },
         DefKind::Trait => {
             let mut info = trait_info(tcx, def, named);
             if resolve(tcx, path, true).is_some() {

@@ -1,4 +1,4 @@
-# behavior: native enum payloads retain identities through borrowed fields, boxed construction, nested re-exported variants and exact unsigned payload carriers (#2256)
+# behavior: native and source payloads and associated array constants retain identities through shared references, reference collections, optional results, borrowed and copied fields, boxed construction, nested re-exported variants and exact unsigned payload carriers (#2256)
 # expect-stdout:
 #   checked
 #   7
@@ -27,13 +27,31 @@
 #   true
 #   true
 #   true
+#   7
+#   true
+#   7
+#   native message
+#   native message
+#   1
 #   checked
 
-from rust::messages import CopyNumber, Message, category, message, boxed_message, message_envelope, wrapped_message
+from rust::messages import CopyNumber, Envelope, Message, category, message, boxed_message, message_envelope, wrapped_message
 from rust::messages::category import Kind as Category
 from rust::std::net import IpAddr
 from rust::std::io import SeekFrom
-from copying import borrowed_copy
+from copying import borrowed_copy, maybe_record
+
+
+model MessageHolder:
+    """Retain a native enum owner across an ordinary read through a shared source field."""
+
+    value: Message
+
+
+def copy_field(holder: &MessageHolder) -> Message:
+    """Copy a borrowed enum field into independent value storage before returning it."""
+    copied = holder.value
+    return copied
 
 
 def loopback[T](value: &IpAddr, unused: T) -> bool:
@@ -98,15 +116,57 @@ def inspect_optional(values: &list[Message]) -> None:
         None => println("missing message")
 
 
+def inspect_nested_optional(values: &list[Message]) -> None:
+    """Match a native enum through the shared reference stored in an Option payload."""
+    match values[0].borrowed_message():
+        Some(Message.Record(count=number)) => println(number)
+        _ => println("missing nested record")
+
+
+def borrowed_record(envelope: &Envelope) -> bool:
+    """Bind a native shared result and pass its reference to a separate source function."""
+    frame = envelope.message.as_ref()
+    return has_record(frame)
+
+
+def has_record(value: &Message) -> bool:
+    """Observe a shared native enum without moving its referent."""
+    match value:
+        Message.Record(count=number) => return number == 7
+        _ => return false
+
+
+def reference_records(left: &Message, right: &Message) -> bool:
+    """Keep a temporary list's native references while visiting both original owners."""
+    for value in [left, right]:
+        if not has_record(value):
+            return false
+    return true
+
+
 def main() -> None:
-    """Keep the native owner alive while its record payload is borrowed."""
+    """Observe retained native layouts, methods and associated text-array constants."""
+    match maybe_record():
+        Some(record) => assert record.value == 7
+        None => assert false
+    labels = Message.LABELS
+    assert len(labels) == 4
+    assert str(labels[0]) == "start"
+    assert str(labels[-1]) == "inclusive"
+    for index in range(len(labels)):
+        assert len(str(labels[index])) > 0
     println("checked")
     value = message()
+    assert reference_records(value, value)
+    borrowed = value.borrowed_message()
+    assert f"{borrowed:?}" == 'Some(Record { count: 7, text: "native", ready: false })'
     inspect(value)
     inspect_count(value)
     boxed = boxed_message()
     inspect_count(boxed.as_ref())
     envelope = message_envelope()
+    assert borrowed_record(envelope)
+    assert borrowed_record(envelope)
     inspect_count(envelope.message.as_ref())
     wrapped = wrapped_message()
     inspect_wrapped(wrapped)
@@ -147,4 +207,12 @@ def main() -> None:
     first_error: Result[Message, str] = Err("first")
     other_error: Result[Message, str] = Err("other")
     println(first_error != other_error)
+    inspect_nested_optional([message()])
+    holder = MessageHolder(value=message())
+    println(copy_field(holder) == value)
+    inspect_count(holder.value)
+    indexed = [value]
+    println(f"{indexed[0]}")
+    println(f"{indexed[0]}")
+    println(len(indexed))
     println("checked")

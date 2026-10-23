@@ -2,7 +2,9 @@
 
 use crate::error::PlanError;
 use crate::identity::DriverIdentity;
-use crate::plan::{CalleeKind, Plan, PlanType, TerminatorKind};
+use crate::plan::{
+    CalleeKind, Constant, Operand, OperandKind, Plan, PlanType, RvalueKind, StatementKind, TerminatorKind,
+};
 use crate::spans::Sources;
 use crate::{bodies, callees, declarations, types, union_debug, validation, value_enum_serde};
 use incan_driver::unit::UnitKind;
@@ -401,6 +403,7 @@ impl rustc_driver::Callbacks for Callbacks {
                     .filter(|root| !root.is_empty()),
             )
             .collect();
+        roots.extend(constant_crate_roots(&self.plan));
         if self.plan.functions.iter().any(|function| {
             function.locals.iter().any(|local| {
                 matches!(
@@ -543,6 +546,28 @@ fn verify_planned_clone_bounds(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), PlanE
         }
     }
     Ok(())
+}
+
+/// Load the explicit crate aliases of retained native constants even when their value types name no native owner.
+/// Body IR materializes each constant read into a Use assignment before other operations consume that temporary.
+fn constant_crate_roots(plan: &Plan) -> impl Iterator<Item = &str> {
+    plan.functions
+        .iter()
+        .flat_map(|function| &function.blocks)
+        .flat_map(|block| &block.statements)
+        .filter_map(|statement| {
+            let StatementKind::Assign(_, value) = &statement.kind else {
+                return None;
+            };
+            let RvalueKind::Use(Operand {
+                kind: OperandKind::Literal(Constant::RustItem(path, _)),
+                ..
+            }) = &value.kind
+            else {
+                return None;
+            };
+            path.split("::").next()
+        })
 }
 
 /// Identify opaque return ABIs before normalization can reveal their implementation layout. Ordinary associated

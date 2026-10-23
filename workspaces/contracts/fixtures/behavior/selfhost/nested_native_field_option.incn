@@ -1,7 +1,9 @@
-# behavior: fields reached through a native optional record and its collection retain their own Option payload types
+# behavior: native optional record fields retain their payload types and vector methods infer their owner without value arguments (#2256)
 # expect-stdout:
 #   impl AsRef<std::path::Path>
 #   impl AsRef<[u8]>
+#   0
+#   2
 
 from rust::incan_lang::interop import metadata_free_function_signature
 
@@ -16,3 +18,7 @@ def main() -> None:
                 match value:
                     Some(text) => println(text)
                     None => println("missing parameter")
+            mut copied = signature.clone()
+            copied.params.clear()
+            println(len(copied.params))
+            println(len(signature.params))

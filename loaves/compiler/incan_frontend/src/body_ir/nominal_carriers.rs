@@ -7,6 +7,8 @@ use constructor_arguments::ConstructorCarriers;
 use std::collections::BTreeMap;
 
 use super::{CanonicalSymbolId, IncanType, TypeCheckInfo, ast, bir, semantic_type_from_resolved};
+use incan_lang::lang::surface::constructors::ConstructorId;
+use incan_lang::lang::types::collections::{CollectionTypeId, from_str as collection_type};
 use incan_semantics_core::body_ir::nominal_carrier_key;
 
 type Identities = BTreeMap<String, CanonicalSymbolId>;
@@ -699,8 +701,19 @@ fn retain_selected_returns(
                 bir::Rvalue::Generator { body, .. } => {
                     retain_selected_returns(&body.stmts, locals, identities, returns)
                 }
-                bir::Rvalue::Match { arms, .. } => {
+                bir::Rvalue::Match { scrutinee, arms } => {
+                    let matched = match scrutinee {
+                        bir::Operand::Place(read) if read.place.projection.is_empty() => read
+                            .place
+                            .local_id()
+                            .and_then(|id| locals.get(id.index()))
+                            .map(|local| local.ty.clone()),
+                        _ => None,
+                    };
                     for arm in arms {
+                        if let Some(matched) = &matched {
+                            retain_pattern_binding_carriers(&arm.pattern, matched, locals, identities);
+                        }
                         retain_selected_returns(&arm.guard_stmts, locals, identities, returns);
                         retain_selected_returns(&arm.body_stmts, locals, identities, returns);
                     }
@@ -725,6 +738,67 @@ fn retain_selected_returns(
             }
             _ => {}
         }
+    }
+}
+
+/// Preserve the retained scrutinee's nominal identity in checked intrinsic and tuple payload bindings. Each pattern
+/// already fixes its payload slot; this pass qualifies names without changing binding ownership or inventing layouts.
+fn retain_pattern_binding_carriers(
+    pattern: &bir::Pattern,
+    matched: &IncanType,
+    locals: &mut [bir::LocalDecl],
+    identities: &Identities,
+) {
+    let mut matched = matched;
+    while let IncanType::Ref(inner) | IncanType::RefMut(inner) = matched {
+        matched = inner;
+    }
+    match pattern {
+        bir::Pattern::Var(binding) => {
+            if let Some(local) = locals.get_mut(binding.local.index()) {
+                qualify_type(&mut local.ty, Some(matched), identities);
+            }
+        }
+        bir::Pattern::Tuple(patterns) => {
+            if let IncanType::Tuple(elements) = matched
+                && patterns.len() == elements.len()
+            {
+                for (pattern, element) in patterns.iter().zip(elements) {
+                    retain_pattern_binding_carriers(pattern, element, locals, identities);
+                }
+            }
+        }
+        bir::Pattern::Enum { canonical, fields, .. }
+            if canonical.as_ref()
+                == Some(&crate::symbols::canonical_builtin_constructor_identity(
+                    ConstructorId::Some,
+                )) =>
+        {
+            if let IncanType::Generic { base, args } = matched
+                && collection_type(base) == Some(CollectionTypeId::Option)
+                && let ([field], [element]) = (fields.as_slice(), args.as_slice())
+            {
+                retain_pattern_binding_carriers(field, element, locals, identities);
+            }
+        }
+        bir::Pattern::Result { variant, fields } => {
+            if let IncanType::Generic { base, args } = matched
+                && collection_type(base) == Some(CollectionTypeId::Result)
+                && let ([field], [ok, error]) = (fields.as_slice(), args.as_slice())
+            {
+                let element = match variant {
+                    bir::ResultVariantKind::Ok => ok,
+                    bir::ResultVariantKind::Err => error,
+                };
+                retain_pattern_binding_carriers(field, element, locals, identities);
+            }
+        }
+        bir::Pattern::Or(alternatives) => {
+            for alternative in alternatives {
+                retain_pattern_binding_carriers(alternative, matched, locals, identities);
+            }
+        }
+        _ => {}
     }
 }
 

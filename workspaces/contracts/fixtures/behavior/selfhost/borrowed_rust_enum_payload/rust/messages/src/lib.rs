@@ -61,6 +61,9 @@ pub struct Envelope {
 }
 
 impl Message {
+    /// Ordered native text labels expose associated-constant type and array storage retention.
+    pub const LABELS: [&'static str; 4] = ["start", "end", "step", "inclusive"];
+
     /// Return a shared enum reference inside an optional native result.
     pub fn borrowed_message(&self) -> Option<&Message> {
         Some(self)

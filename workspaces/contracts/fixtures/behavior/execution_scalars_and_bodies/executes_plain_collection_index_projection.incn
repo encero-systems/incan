@@ -1,4 +1,4 @@
-# behavior: tuple and nested list projections read their elements, and local or model-field list slices return fresh lists
+# behavior: tuple and nested list projections read their elements, local or model-field list slices return fresh lists, and text indexing preserves Unicode scalar positions, negative indices and nested text owners (#2256)
 # expect-stdout:
 #   1
 #   1
@@ -6,14 +6,23 @@
 #   40
 #   [40]
 #   [40]
+#   é
+#   猫
+#   猫
+#   aé猫
 
 
 """Executes plain collection index projection."""
 def program_result() -> int:
-  """Compute and return `pair.0`."""
-  pairs = [(1, 2)]
-  pair = pairs[0]
-  return pair.0
+    """Compute and return `pair.0`."""
+    pairs = [(1, 2)]
+    pair = pairs[0]
+    return pair.0
+
+
+def text_at(value: &str, index: int) -> str:
+    """Index borrowed Unicode text by scalar position without changing its owner."""
+    return value[index]
 
 
 model Bucket:
@@ -59,3 +68,8 @@ def main() -> None:
     println(field_projection())
     println(local_slice())
     println(field_slice())
+    text = "aé猫"
+    println(text_at(text, 1))
+    println(text_at(text, -1))
+    println([text][0][2])
+    println(text)

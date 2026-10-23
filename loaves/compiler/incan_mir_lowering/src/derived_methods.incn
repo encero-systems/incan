@@ -13,7 +13,8 @@ from rust::incan_semantics_core::body_ir import (
 from pub::incan_mir_plan import CalleeKind, Operand, OperandKind, Place, PlanType, Projection, RvalueKind, SourceSpan
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, place_type, read_place, temporary, drop_owned, forget_owned, track_rvalue_moves
-from lowering import scalar_place, lower_callable_result, lower_assignment, binary_operator
+from lowering import scalar_place, lower_callable_result, lower_assignment, binary_operator, materialized_receiver
+from element_places import is_element_place, element_place_type
 from numerics import numeric_carrier
 from trait_links import contains
 from options import carrier_payload_value, clone_tuple_operand
@@ -65,7 +66,7 @@ pub def lower_derived_clone(
     """
     Clone a standard or inferred Clone receiver through its concrete native representation.
 
-    Scalars copy and owned strings clone through the runtime. Models and classes always derive Clone; a source enum's checked derives must name it. Builtin aggregates and synthetic union, Option, and Result carriers use the same native cloning path as a borrowed payload read.
+    Scalars copy and owned strings clone through the runtime. Models and classes always derive Clone; a source enum's checked derives must name it. Builtin aggregates and synthetic union, Option, and Result carriers use the same native cloning path as a borrowed payload read. An indexed receiver follows the ordinary element read once before its selected Clone call.
     """
     if len(arguments) != 1:
         return Err("invalid Body IR Clone arguments")
@@ -73,6 +74,9 @@ pub def lower_derived_clone(
         Some(value) =>
             match value:
                 RustOperand.Place(read) =>
+                    if is_element_place(builder, read.place)?:
+                        source = materialized_receiver(builder, read.place, span)?
+                        return clone_place(builder, source, destination, span)
                     source = scalar_place(builder, read.place, span)?
                     return clone_place(builder, source, destination, span)
                 _ => return Err("unsupported Body IR Clone of a nonplace receiver")
@@ -364,11 +368,16 @@ def declares_own_method(
     names: list[str],
     span: SourceSpan,
 ) -> Result[bool, str]:
-    """Whether the receiver's source nominal or enum declares a method of one of `names` or fills one from a trait."""
+    """Whether the retained receiver type declares a method of one of `names` or fills one from a trait, without evaluating an index."""
     match receiver:
         RustOperand.Place(read) =>
-            source = scalar_place(builder, read.place, span)?
-            match place_type(builder.locals, source):
+            mut ty = PlanType.Unit
+            if is_element_place(builder, read.place)?:
+                ty = element_place_type(builder, read.place)?
+            else:
+                source = scalar_place(builder, read.place, span)?
+                ty = place_type(builder.locals, source)
+            match ty:
                 PlanType.Model(index, _name) => return Ok(owns_method(module, builder.nominals[index].canonical, names))
                 PlanType.Enum(index, _name) =>
                     if index >= 0 and index < len(builder.enums):

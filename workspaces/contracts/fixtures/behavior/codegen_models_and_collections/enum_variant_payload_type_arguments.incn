@@ -1,4 +1,4 @@
-# behavior: an empty list payload of a generic enum variant takes the enum's supplied type argument from its destination, whether the names differ, match, the payload is concrete, or a local's annotation differs from the enclosing return (#1516)
+# behavior: empty enum payload lists take declared concrete or supplied generic element types, including constructors nested in Result and differently typed locals (#1516, #2256)
 # expect-stdout:
 #   0
 #   0
@@ -11,6 +11,17 @@ enum Holder[Elem with Clone]:
     Names(list[str])
     Items(list[Elem])
     Empty
+
+
+enum Concrete:
+    """Keep a declared text payload independent of an enclosing result constructor."""
+
+    Names(list[str])
+
+
+def build_concrete() -> Result[Concrete, str]:
+    """Contextually type an empty payload before wrapping the concrete enum in a result."""
+    return Ok(Concrete.Names([]))
 
 
 @derive(Clone)
@@ -50,6 +61,14 @@ def show[E with Clone](holder: Holder[E]) -> str:
 
 
 def main() -> None:
+    """Observe generic destinations and a concrete payload nested inside a result."""
+    match build_concrete():
+        case Ok(value):
+            match value:
+                case Concrete.Names(names):
+                    assert len(names) == 0
+        case Err(_error):
+            assert false
     m = Maker[int](seed=1)
     h: Holder[str] = m.build[str]()
     println(show(h))

@@ -139,6 +139,8 @@ enum Scalar {
 /// Comparison mirror of scalar and tuple leaves; the public plan remains Incan-authored.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Leaf {
+    /// One exact shared-reference carrier, never an owned copy of its referent.
+    Reference(Vec<Scalar>),
     FunctionPointer(Vec<Scalar>),
     Int,
     Float,
@@ -177,6 +179,7 @@ impl Leaf {
             ),
             ListLeaf::Model(index, _) => Leaf::Model(*index),
             ListLeaf::Enum(index, _) => Leaf::Enum(*index),
+            ListLeaf::Reference(elements) => Leaf::Reference(elements.iter().map(scalar).collect()),
             ListLeaf::U8 => Leaf::U8,
             ListLeaf::USize => Leaf::USize,
             ListLeaf::Unit => Leaf::Unit,
@@ -741,7 +744,7 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
                 }
                 Scalar::GeneratorMutRef(leaf, depth) => Scalar::Generator(leaf, depth),
                 Scalar::ListIntoIterMutRef(leaf, depth) => Scalar::ListIntoIter(leaf, depth),
-                Scalar::StringMutRef => Scalar::String,
+                Scalar::StringRef | Scalar::StringMutRef => Scalar::String,
                 Scalar::EnumMutRef(owner) => Scalar::Enum(owner),
                 Scalar::TupleMutRef(elements) => Scalar::Tuple(elements),
                 Scalar::ListRef(leaf, depth) | Scalar::ListMutRef(leaf, depth) => Scalar::List(leaf, depth),
@@ -1403,10 +1406,10 @@ fn external_signature_type(ty: &Scalar) -> bool {
     | Scalar::NativeArrayRef(elements, length)
     | Scalar::NativeArrayMutRef(elements, length) = ty
     {
-        return *length >= 0 && matches!(elements.as_slice(), [element] if source_signature_type(element));
+        return *length >= 0 && matches!(elements.as_slice(), [element] if native_sequence_element(element));
     }
     if let Scalar::SliceRef(elements) | Scalar::SliceMutRef(elements) = ty {
-        return matches!(elements.as_slice(), [element] if source_signature_type(element));
+        return matches!(elements.as_slice(), [element] if native_sequence_element(element));
     }
     if let Scalar::ScalarRef(elements) | Scalar::ScalarMutRef(elements) = ty {
         return matches!(elements.as_slice(), [inner] if scalar_referent(inner));
@@ -1433,7 +1436,7 @@ fn external_signature_type(ty: &Scalar) -> bool {
         )
 }
 
-/// The scalar reference carrier borrows exact primitive storage or an admitted native function pointer.
+/// The scalar reference carrier borrows exact primitive storage, a sized native text reference, or a function pointer.
 fn scalar_referent(ty: &Scalar) -> bool {
     if matches!(ty, Scalar::FunctionPointer(_)) {
         return source_signature_type(ty);
@@ -1441,7 +1444,13 @@ fn scalar_referent(ty: &Scalar) -> bool {
     sized_numeric(ty).is_some()
         || matches!(
             ty,
-            Scalar::Int | Scalar::Float | Scalar::Bool | Scalar::Decimal | Scalar::FrozenStr | Scalar::FrozenBytes
+            Scalar::Int
+                | Scalar::Float
+                | Scalar::Bool
+                | Scalar::Decimal
+                | Scalar::FrozenStr
+                | Scalar::FrozenBytes
+                | Scalar::StrRef
         )
 }
 
@@ -2160,6 +2169,15 @@ fn hashable_payload(plan: &Plan, ty: &Scalar, carrier: i64) -> bool {
 /// changes the existing carrier recursion or nominal cycle rules.
 fn checked_list_leaf_type(leaf: &ListLeaf) -> Result<PlanType, PlanError> {
     let valid = match leaf {
+        ListLeaf::Reference(elements) => matches!(
+            elements.as_slice(),
+            [PlanType::EnumRef(..)
+                | PlanType::ModelRef(..)
+                | PlanType::StringRef
+                | PlanType::StrRef
+                | PlanType::ScalarRef(_)
+                | PlanType::SliceRef(_)]
+        ),
         ListLeaf::List(elements, _) => elements.len() == 1,
         ListLeaf::Set(elements) => elements.len() == 1,
         ListLeaf::Dict(elements) => elements.len() == 2,
@@ -2168,10 +2186,16 @@ fn checked_list_leaf_type(leaf: &ListLeaf) -> Result<PlanType, PlanError> {
     if !valid {
         return Err(PlanError::Invalid {
             function: "collection leaf".into(),
-            reason: "nested collection leaf requires one list or set child, or two dictionary children".into(),
+            reason: "collection leaf has invalid child arity or reference carrier".into(),
         });
     }
     Ok(list_leaf_type(leaf.clone()))
+}
+
+/// Whether a native array or slice may hold this element: any source signature type, or a sized text reference
+/// (`[&str; N]`), which source signatures reach only through parameters.
+fn native_sequence_element(element: &Scalar) -> bool {
+    source_signature_type(element) || matches!(element, Scalar::StrRef)
 }
 
 /// Validate retained nominal identities and the exact shape of nested and borrowed native carriers before MIR
@@ -2200,7 +2224,7 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
                 });
             }
             for element in elements {
-                if !source_signature_type(&scalar(element)) {
+                if !native_sequence_element(&scalar(element)) {
                     return Err(PlanError::Unsupported {
                         function: "native array".into(),
                         reason: "unsupported array element".into(),
@@ -2216,7 +2240,7 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
                     reason: "slice requires one element".into(),
                 });
             };
-            if !source_signature_type(&scalar(element)) {
+            if !native_sequence_element(&scalar(element)) {
                 return Err(PlanError::Unsupported {
                     function: "native slice".into(),
                     reason: "unsupported slice element".into(),
@@ -2243,7 +2267,7 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
             if !matches!(elements.as_slice(), [inner] if scalar_referent(&scalar(inner))) {
                 return Err(PlanError::Unsupported {
                     function: "scalar reference".into(),
-                    reason: "scalar reference requires one numeric, Boolean, decimal or frozen referent".into(),
+                    reason: "scalar reference requires one admitted sized scalar referent".into(),
                 });
             }
         }

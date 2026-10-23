@@ -1,4 +1,4 @@
-# behavior: native durations compare through all six operators without consuming their operands; list elements, shared indexing, opaque Copy receivers and projected fields retain their owners (#2256)
+# behavior: native durations compare through all six operators without consuming their operands, whole or indexed, in either operand position and through nested fields; trait-qualified calls take an explicit borrowed argument; associated constants, list elements, shared indexing, scalar field conversions, opaque Copy receivers and projected fields retain their owners (#2256)
 # expect-stdout:
 #   true
 #   true
@@ -8,14 +8,27 @@
 #   true
 #   2
 #   3
+#   true
+#   true
+#   true
+#   true
+#   true
+#   true
+#   true
+#   2
 #   1
 #   3
 #   1
 #   1
 #   true
 #   false
+#   3
+#   3
+#   5
 
+from rust::std::ops import Range
 from rust::std::time import Duration
+from rust::std::cmp import PartialEq
 
 
 model Timed:
@@ -24,9 +37,25 @@ model Timed:
     pub duration: Duration
 
 
+model Stamped:
+    """Keep an exact native comparison carrier inside an indexed source model."""
+
+    value: Duration
+
+
 def same_time(left: &Timed, right: &Timed) -> bool:
     """Borrow native fields for their actual Rust equality implementation."""
     return left.duration == right.duration
+
+
+def same_index(values: &list[Duration], index: int, other: Duration) -> bool:
+    """Compare a dynamically selected native element with a whole value."""
+    return values[index] == other
+
+
+def same_reference(left: Duration, right: &Duration) -> bool:
+    """Preserve an explicit borrowed argument in a trait-qualified native call."""
+    return PartialEq.eq(left, right)
 
 
 def add_seconds(value: &Duration) -> Duration:
@@ -37,6 +66,11 @@ def add_seconds(value: &Duration) -> Duration:
 def first_seconds(values: &list[Duration]) -> int:
     """Keep the native element type when a shared list is indexed for a method receiver."""
     return int(values[0].as_secs())
+
+
+def range_start(values: &list[Range[usize]], index: int) -> int:
+    """Convert an indexed native field without changing the borrowed list or evaluating its index twice."""
+    return int(values[index].start)
 
 
 def cloned_element() -> None:
@@ -51,6 +85,12 @@ def cloned_element() -> None:
     println(first_seconds(values))
     println(same_time(Timed(duration=value), Timed(duration=value)))
     println(same_time(Timed(duration=value), Timed(duration=combined)))
+    start: usize = 3
+    end: usize = 5
+    ranges = [Range(start=start, end=end)]
+    println(range_start(ranges, 0))
+    println(range_start(ranges, -1))
+    println(int(ranges[0].end))
 
 
 def main() -> None:
@@ -66,4 +106,17 @@ def main() -> None:
     println(right >= left)
     println(left.as_secs())
     println(right.as_secs())
+    values = [left, right]
+    println(same_index(values, 0, same))
+    println(same < values[-1])
+    println(values[0] <= same)
+    println(values[-1] > values[0])
+    println(values[-1] >= right)
+    println(values[0] != values[-1])
+    wrapped = [Stamped(value=left)]
+    mapping = {"right": right}
+    println(wrapped[0].value < mapping["right"])
+    println(len(values))
+    assert Duration.ZERO == Duration.from_secs(0)
+    assert same_reference(left, same)
     cloned_element()

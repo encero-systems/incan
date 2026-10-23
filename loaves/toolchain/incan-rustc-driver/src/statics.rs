@@ -146,6 +146,7 @@ fn guard_owned_leaf(
     tcx: Option<TyCtxt<'_>>,
 ) -> bool {
     match leaf {
+        ListLeaf::Reference(_) => false,
         ListLeaf::Model(index, name) => guard_owned_result(plan, &PlanType::Model(*index, name.clone()), visiting, tcx),
         ListLeaf::Enum(index, name) => guard_owned_result(plan, &PlanType::Enum(*index, name.clone()), visiting, tcx),
         ListLeaf::Tuple(elements) => guard_owned_result(plan, &PlanType::Tuple(elements.clone()), visiting, tcx),
