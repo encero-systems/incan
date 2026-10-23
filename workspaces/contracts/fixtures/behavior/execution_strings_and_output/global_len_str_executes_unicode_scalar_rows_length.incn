@@ -1,6 +1,15 @@
-# behavior: global len str executes unicode scalar rows
+# behavior: len and str.len count Unicode scalars in empty, ASCII, accented, astral and combining text
 # expect-stdout:
 #   0
+#   3
+#   1
+#   1
+#   2
+#   0
+#   3
+#   1
+#   1
+#   2
 
 """Global len str executes unicode scalar rows."""
 def length(value: str) -> int:
@@ -8,6 +17,20 @@ def length(value: str) -> int:
     return len(value)
 
 
+def method_length(value: str) -> int:
+    """Count scalars through the string method rather than the builtin."""
+    return value.len()
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(length(""))
+    println(length("abc"))
+    println(length("é"))
+    println(length("😀"))
+    println(length("é"))
+    println(method_length(""))
+    println(method_length("abc"))
+    println(method_length("é"))
+    println(method_length("😀"))
+    println(method_length("é"))

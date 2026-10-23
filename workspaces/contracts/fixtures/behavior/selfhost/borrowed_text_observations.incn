@@ -1,4 +1,4 @@
-# behavior: borrowed text supports display, debug, numeric parsing and JSON without consuming its owner
+# behavior: shared text supports display, debug, parsing, JSON, Unicode iteration and native String cloning without consuming its owner
 # expect-stdout:
 #   value: 42
 #   42
@@ -7,6 +7,12 @@
 #   42.0
 #   "42"
 #   42!
+#   a
+#   ç
+#   retained
+#   retained
+
+from rust::std::string import String as RustString
 
 def observe(value: &str) -> None:
     """Read shared text through formatting and conversion boundaries."""
@@ -18,9 +24,29 @@ def observe(value: &str) -> None:
     println(json_stringify(value))
 
 
+def inspect(values: &str) -> None:
+    """Read each Unicode scalar through borrowed text."""
+    for value in values:
+        println(value)
+
+
+def copy(value: &RustString) -> RustString:
+    """Clone the native referent into independently owned text."""
+    return value.clone()
+
+
+def copied_native_text() -> None:
+    """Copy the same borrowed native text twice."""
+    value: RustString = "retained"
+    println(copy(value))
+    println(copy(value))
+
+
 def main() -> None:
     """Keep the source string available after each borrowed observation."""
     mut value = "42"
     observe(value)
     value += "!"
     println(value)
+    inspect("aç")
+    copied_native_text()

@@ -1,9 +1,11 @@
-# behavior: executes core body and binds a real receipt
+# behavior: ordinary local bindings and branch returns run beside a None-typed binding (#1978) and an integer parameter call
 # expect-stdout:
+#   42
+#   bound
 #   42
 
 
-"""Executes core body and binds a real receipt."""
+"""Observe local bindings, branch returns and integer parameter calls."""
 def program_result() -> int:
   """Return the sum when left is larger; otherwise return right."""
   left = 40
@@ -13,6 +15,19 @@ def program_result() -> int:
   return right
 
 
+def unit_binding() -> None:
+    """Initialize an explicitly None-typed local before continuing."""
+    value: None = None
+    println("bound")
+
+
+def add(x: int, y: int) -> int:
+    """Return the sum of two integer parameters."""
+    return x + y
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(program_result())
+    unit_binding()
+    println(add(40, 2))

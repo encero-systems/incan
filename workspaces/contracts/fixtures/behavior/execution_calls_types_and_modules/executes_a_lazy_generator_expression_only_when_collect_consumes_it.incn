@@ -1,5 +1,7 @@
-# behavior: executes a lazy generator expression only when collect consumes it
+# behavior: collecting a filtered generator expression evaluates its mapped items and returns a fresh indexable list on each source call
 # expect-stdout:
+#   70
+#   70
 #   70
 
 
@@ -12,4 +14,6 @@ def program_result() -> int:
 
 def main() -> None:
     """Print the fixture values in the expected order."""
+    println(program_result())
+    println(program_result())
     println(program_result())

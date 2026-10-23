@@ -1,6 +1,8 @@
-# behavior: executes the selected string ownership control flow and assertion cases
+# behavior: string functions return a concatenation or an owned local and preserve the parameter text in their result
 # expect-stdout:
 #   hi Ada
+#   owned
+#   hello, Ada
 
 """Executes the selected string ownership control flow and assertion cases."""
 def program_result() -> str:
@@ -9,6 +11,19 @@ def program_result() -> str:
   return "hi " + name
 
 
+def owned_text() -> str:
+    """Return text that was first bound to a local."""
+    value = "owned"
+    return value
+
+
+def greet(name: str) -> str:
+    """Concatenate a literal and the string parameter."""
+    return "hello, " + name
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(program_result())
+    println(owned_text())
+    println(greet("Ada"))

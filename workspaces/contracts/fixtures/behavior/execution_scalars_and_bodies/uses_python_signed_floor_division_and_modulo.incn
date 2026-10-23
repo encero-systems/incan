@@ -1,6 +1,9 @@
-# behavior: uses python signed floor division and modulo
+# behavior: signed floor division and modulo follow the divisor sign, and guarded nonzero divisions preserve their result
 # expect-stdout:
 #   -3
+#   -2
+#   42
+#   42
 
 """Uses python signed floor division and modulo."""
 def program_result() -> int:
@@ -8,6 +11,28 @@ def program_result() -> int:
   return 7 // -3
 
 
+def remainder() -> int:
+    """Return the remainder with a negative divisor."""
+    return 7 % -3
+
+
+def guarded_floor_div(a: int, b: int) -> int:
+    """Assert a nonzero divisor before division."""
+    assert b != 0
+    return a // b
+
+
+def local_guarded_division() -> int:
+    """Guard local divisor bindings before division."""
+    a = 84
+    b = 2
+    assert b != 0
+    return a // b
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(program_result())
+    println(remainder())
+    println(guarded_floor_div(84, 2))
+    println(local_guarded_division())

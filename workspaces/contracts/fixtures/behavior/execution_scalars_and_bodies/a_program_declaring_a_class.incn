@@ -1,11 +1,61 @@
-# behavior: a program that declares a class runs
+# behavior: unused classes, aliased and generic models, model methods and properties, payload enums and constructed float fields coexist with ordinary function results
 # expect-stdout:
+#   42
+#   42
+#   42
+#   42
+#   42
+#   42
 #   42
 
 """A program that declares a class runs."""
 class Pair:
     """Hold left used by this fixture."""
     left: int
+
+
+model AliasedPair:
+    """Retain a field's wire alias in an unused model."""
+    left [alias="wire_left"]: int
+
+
+model Box[T]:
+    """Retain an unused generic model declaration."""
+    value: T
+
+
+model MethodPair:
+    """Retain an unused model's instance method."""
+    left: int
+
+    def score(self) -> int:
+        """Return the stored field."""
+        return self.left
+
+
+model PropertyPair:
+    """Retain an unused model's computed property."""
+    left: int
+
+    property score -> int:
+        """Return the stored field."""
+        return self.left
+
+
+enum Flag:
+    """Retain an unused payload enum declaration."""
+    On(int)
+
+
+model FloatBox:
+    """Hold the float constructed beside a scalar result."""
+    value: float
+
+
+def float_model_result() -> int:
+    """Construct the float model before returning the scalar."""
+    boxed = FloatBox(value=1.5)
+    return 42
 
 
 def program_result() -> int:
@@ -16,3 +66,9 @@ def program_result() -> int:
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(program_result())
+    println(program_result())
+    println(program_result())
+    println(program_result())
+    println(program_result())
+    println(program_result())
+    println(float_model_result())

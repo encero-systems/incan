@@ -1,10 +1,47 @@
-# behavior: preserves typed numeric values in print and fstring paths
+# behavior: typed f32 and u128 values preserve their rendering through direct print, f-strings, function returns, closures and str
 # expect-stdout:
 #   1.2345679
+#   1.2345679
+#   1.2345679
+#   1.2345679
+#   10
 
 
 """Preserves typed numeric values in print and fstring paths."""
+def interpolated() -> str:
+    """Interpolate a typed single-precision local."""
+    value: f32 = 1.23456789
+    return f"{value}"
+
+
+def identity(value: f32) -> f32:
+    """Return the exact single-precision argument."""
+    return value
+
+
+def returned_interpolation() -> str:
+    """Interpolate the function's typed result."""
+    return f"{identity(1.23456789)}"
+
+
+def captured_print() -> None:
+    """Print a single-precision local captured by a closure expression."""
+    value: f32 = 1.23456789
+    render: () -> None = () => println(value)
+    render()
+
+
+def wide_text() -> str:
+    """Render a typed wide unsigned local."""
+    value: u128 = 10
+    return str(value)
+
+
 def main() -> None:
   """Print `value` after preparing the fixture inputs."""
   value: f32 = 1.23456789
   println(value)
+  println(interpolated())
+  println(returned_interpolation())
+  captured_print()
+  println(wide_text())

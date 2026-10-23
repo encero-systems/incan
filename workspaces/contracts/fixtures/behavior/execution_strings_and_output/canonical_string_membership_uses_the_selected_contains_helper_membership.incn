@@ -1,6 +1,10 @@
-# behavior: canonical string membership uses the selected contains helper
+# behavior: substring membership handles Unicode, reversed operands, empty strings and present or absent ASCII needles
 # expect-stdout:
 #   true
+#   false
+#   true
+#   true
+#   false
 
 """Canonical string membership uses the selected contains helper."""
 def membership(needle: str, haystack: str) -> bool:
@@ -8,6 +12,15 @@ def membership(needle: str, haystack: str) -> bool:
     return needle in haystack
 
 
+def contains(needle: str, haystack: str) -> bool:
+    """Test ASCII substring membership through a separate source function."""
+    return needle in haystack
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(membership("éll", "héllo"))
+    println(membership("héllo", "éll"))
+    println(membership("", ""))
+    println(contains("a", "abc"))
+    println(contains("xyz", "hello"))

@@ -1,7 +1,10 @@
-# behavior: a trait-qualified clone of a borrowed list produces independent owned storage
+# behavior: shared lists borrow owned and temporary arguments, preserve the caller and clone through a native trait into independent storage
 # expect-stdout:
 #   [3.0, 1.0]
 #   [9.0, 1.0]
+#   2
+#   3
+#   2
 
 from rust::std::clone import Clone as RuntimeClone
 
@@ -12,6 +15,19 @@ def copy_values(values: &list[float]) -> list[float]:
     return owned
 
 
+def size(values: &list[int]) -> int:
+    """Read a shared list without consuming its owned storage."""
+    return len(values)
+
+
+def shared_arguments() -> None:
+    """Borrow places and materialized values, then reuse the original."""
+    values = [1, 2]
+    println(size(values))
+    println(size([3, 4, 5]))
+    println(len(values))
+
+
 def main() -> None:
     """Mutate the result while retaining the borrowed original."""
     values = [3.0, 1.0]
@@ -19,3 +35,4 @@ def main() -> None:
     copied[0] = 9.0
     println(values)
     println(copied)
+    shared_arguments()

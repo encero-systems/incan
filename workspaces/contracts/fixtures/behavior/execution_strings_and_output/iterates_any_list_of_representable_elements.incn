@@ -1,6 +1,10 @@
-# behavior: iterates any list of representable elements
+# behavior: list iteration preserves integer, text, boolean, nested list and destructured tuple elements
 # expect-stdout:
 #   6
+#   2
+#   2
+#   2
+#   3
 
 """Iterates any list of representable elements."""
 def program_result() -> int:
@@ -11,6 +15,42 @@ def program_result() -> int:
   return total
 
 
+def text_count() -> int:
+    """Count each text element once."""
+    mut seen = 0
+    for value in ["a", "b"]:
+        seen += 1
+    return seen
+
+
+def bool_count() -> int:
+    """Count each boolean element once."""
+    mut seen = 0
+    for value in [true, false]:
+        seen += 1
+    return seen
+
+
+def nested_count() -> int:
+    """Count each nested list rather than its members."""
+    mut seen = 0
+    for value in [[1], [2, 3]]:
+        seen += 1
+    return seen
+
+
+def tuple_total() -> int:
+    """Destructure each tuple before summing its members."""
+    mut total = 0
+    for left, right in [(1, 2)]:
+        total += left + right
+    return total
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(program_result())
+    println(text_count())
+    println(bool_count())
+    println(nested_count())
+    println(tuple_total())

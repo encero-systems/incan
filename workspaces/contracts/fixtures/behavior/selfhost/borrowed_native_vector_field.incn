@@ -1,8 +1,12 @@
-# behavior: a public Rust vector field can supply an Incan shared list parameter
+# behavior: native vector and Option fields preserve shared list arguments, cloned list methods and native mutation methods
 # expect-stdout:
+#   checked
+#   checked
+#   checked
 #   checked
 
 from rust::incan_lang::interop import RustTypeInfo, RustMethodSig
+from rust::std::process import Output
 
 
 def size(values: &list[RustMethodSig]) -> int:
@@ -15,6 +19,25 @@ def inspect[T](value: RustTypeInfo) -> int:
     return size(value.methods)
 
 
+def cloned_names[T](value: RustTypeInfo) -> bool:
+    """Use the cloned field as its checked source list type."""
+    names = value.type_params.clone()
+    return "T" in names
+
+
+def discard[T](mut value: Output) -> None:
+    """Clear the native byte vector through its public field."""
+    value.stdout.clear()
+
+
+def optional_target[T](value: RustTypeInfo) -> None:
+    """Borrow the optional alias through its retained Rust field type."""
+    target = value.alias_target.as_ref()
+
+
 def main() -> None:
-    """Execute after checking the native field borrow."""
+    """Execute after all four native field declarations have checked."""
+    println("checked")
+    println("checked")
+    println("checked")
     println("checked")

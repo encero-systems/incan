@@ -1,6 +1,9 @@
-# behavior: a for loop with continue and a while loop whose condition is false fall through to the final return (parity corpus row replacement-body-v0-004)
+# behavior: continue and never-entered while loops fall through, nested loops break independently and statements after an unconditional return do not run
 # expect-stdout:
 #   10
+#   10
+#   6
+#   1
 
 """A for loop with continue and a while loop whose condition is false fall through to the final return (parity corpus row replacement-body-v0-004)."""
 def control_flow() -> int:
@@ -13,6 +16,35 @@ def control_flow() -> int:
     return 10
 
 
+def grid(rows: int, cols: int) -> int:
+    """Break each nested loop and continue only its current iteration."""
+    mut cells = 0
+    mut r = 0
+    loop:
+        if r >= rows:
+            break
+        mut c = 0
+        loop:
+            if c >= cols:
+                break
+            c += 1
+            if c % 2 == 0:
+                continue
+            cells += 1
+        r += 1
+    return cells
+
+
+def early_return() -> int:
+    """Leave the following print and return unreachable."""
+    return 1
+    println("dead code")
+    return 2
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(control_flow())
+    println(control_flow())
+    println(grid(3, 4))
+    println(early_return())

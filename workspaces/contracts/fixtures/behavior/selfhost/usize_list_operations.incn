@@ -1,9 +1,44 @@
-# behavior: native unsigned list elements survive mutation, cloning and iteration
+# behavior: native unsigned list elements retain their carrier through mutation, cloning, iteration, shared parameters and owned or borrowed scalar Clone (#2256)
 # expect-stdout:
 #   3
 #   3
 #   5
 #   3
+#   1
+#   3
+#   3
+#   7
+#   3
+
+
+def count(values: &list[usize]) -> int:
+    """Observe the shared list without converting its element carrier."""
+    return len(values)
+
+
+def shared_values() -> None:
+    """Construct, borrow and index an unsigned list."""
+    values: list[usize] = [3]
+    println(count(values))
+    println(values[0])
+
+
+def borrowed_integer(value: &int) -> int:
+    """Copy the value of a shared integer reference through Clone."""
+    return value.clone()
+
+
+def borrowed_unsigned(value: &usize) -> usize:
+    """Preserve the native unsigned carrier while cloning through a shared reference."""
+    return value.clone()
+
+
+def cloned_scalar() -> None:
+    """Clone an unsigned scalar and convert the retained value to int."""
+    value: usize = 3
+    println(int(value.clone()))
+    println(borrowed_integer(7))
+    println(int(borrowed_unsigned(value)))
 
 
 def main() -> None:
@@ -14,3 +49,5 @@ def main() -> None:
     println(len(copy))
     for value in copy:
         println(int(value))
+    shared_values()
+    cloned_scalar()

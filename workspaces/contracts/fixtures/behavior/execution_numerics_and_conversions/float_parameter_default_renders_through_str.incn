@@ -1,6 +1,7 @@
-# behavior: a float parameter default applies when the argument is omitted, and str() renders both the passed and the default value
+# behavior: float parameter defaults apply when omitted and str renders explicit and default arguments inside a returned f-string
 # expect-stdout:
 #   1.5
+#   3.14 1.5
 #   3.14 1.5
 
 """A float parameter default applies when the argument is omitted, and str() renders both the passed and the default value."""
@@ -17,4 +18,5 @@ def both() -> str:
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(render())
+    println(both())
     println(both())

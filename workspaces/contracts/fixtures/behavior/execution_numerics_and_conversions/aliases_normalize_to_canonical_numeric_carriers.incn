@@ -1,6 +1,7 @@
-# behavior: aliases normalize to canonical numeric carriers
+# behavior: real and hugeint aliases retain their canonical numeric carriers when returned and printed
 # expect-stdout:
 #   1.2345679
+#   170141183460469231731687303715884105727
 
 
 """Aliases normalize to canonical numeric carriers."""
@@ -16,3 +17,4 @@ def huge_value() -> hugeint:
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(real_value())
+    println(huge_value())

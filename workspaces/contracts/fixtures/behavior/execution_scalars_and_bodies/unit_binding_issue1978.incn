@@ -1,8 +1,0 @@
-# behavior: None initializes a local binding explicitly typed as None (#1978)
-# expect-stdout:
-#   bound
-
-def main() -> None:
-    """Bind the unit value without manufacturing it through a helper."""
-    value: None = None
-    println("bound")
