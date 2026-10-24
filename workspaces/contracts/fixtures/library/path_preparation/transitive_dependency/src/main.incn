@@ -1,10 +1,12 @@
-# behavior: a path dependency is available through its declared alias on the first run, and it calls its own aliased path dependency without the consumer declaring that one
+# behavior: Incan and Rust consumers share a hybrid library and its aliased transitive dependency on the first run
 # expect-stdout:
 #   42
 
 from pub::cost import price
+from rust::transitive_dependency import native_price
 
 
 def main() -> None:
     """Print the price computed across both libraries."""
+    assert native_price() == price()
     println(price())

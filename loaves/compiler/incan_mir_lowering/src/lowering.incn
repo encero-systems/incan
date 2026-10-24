@@ -4900,20 +4900,9 @@ def emit_selected_body_call(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Preserve the selected body's result carrier and unwind cleanup for direct and guarded static calls."""
-    mut output = plan_place(0, span)
-    match destination:
-        Some(place) => output = scalar_place(builder, place, span)?
-        None =>
-            result = native_source_type(
-                builder.nominals,
-                builder.enums,
-                builder.unions,
-                body.return_type,
-                builder.intrinsics,
-            )?
-            output = temporary(builder, result, span)
     declared = native_source_type(builder.nominals, builder.enums, builder.unions, body.return_type, builder.intrinsics)?
     result_type = return_representation(body, declared)?
+    output = call_destination(builder, destination, result_type, span)?
     return lower_callable_result(builder, callee, operands, output, result_type, span)
 
 
@@ -6510,9 +6499,10 @@ pub def clone_nominal_operand(mut builder: Builder, value: Place, span: SourceSp
     Materialize the checker's clone fact through a source nominal's real derived Clone implementation.
 
     A shared model reference, such as a receiver, already is the borrow that Clone takes. An immutable scalar
-    reference, including a text reference, copies the reference itself through the ordinary carrier-payload read.
+    reference, including a text reference, or function pointer copies the value through the ordinary carrier-payload read.
     """
     match place_type(builder.locals, value):
+        PlanType.FunctionPointer(_signature) => return carrier_payload_value(builder, value, span)
         PlanType.ScalarRef(_elements) => return carrier_payload_value(builder, value, span)
         PlanType.TupleRef(_elements) => return Ok(read_place(value, false, span))
         PlanType.FrozenCollectionRef(_name, _elements) => return Ok(read_place(value, false, span))

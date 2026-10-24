@@ -2,5 +2,11 @@
 name = "pricing"
 version = "0.1.0"
 
+[rust]
+name = "pricing_native"
+
+[rust.source]
+root = "rust"
+
 [dependencies]
 stock = { path = "deps/catalog" }

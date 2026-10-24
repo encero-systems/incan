@@ -32,8 +32,9 @@ from std.fs import Path
 from features import FeatureRequest
 from home import TOOLCHAIN, dependency_artifact_dir
 from unit import describe
-from unit_rust import describe_native
-from incan_units import check_unit, compile_unit, crate_name, program_binary, run_program
+from unit_rust import compile_incan_library, describe_native
+from incan_units import check_unit, compile_unit, program_binary, run_program
+from unit_compiler import crate_name
 from rust_units import RustBuild, build_rust, read_registry_units
 from toolchain import load_toolchain, rust_compiler
 from formatting import format_paths
@@ -382,6 +383,7 @@ def build_project(options: Options) -> Result[list[str], str]:
         features=options.request.features,
         default_features=options.request.default_features,
         substitutes=options.substitutes,
+        incan_compiler=Some(compile_incan_library),
     )
     return build_rust(request)
 
