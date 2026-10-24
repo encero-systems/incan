@@ -704,27 +704,13 @@ pub fn enum_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Result<Ty<'tcx>, PlanEr
     Ok(tcx.type_of(definition).instantiate_identity().skip_normalization())
 }
 
-/// Resolve the explicitly bound Incan runtime's lazy zip wrapper with its checked flat element arguments.
+/// Resolve the retained zip storage alias, selected from the governed result carrier or the linked runtime ABI.
 fn zip_type<'tcx>(
     tcx: TyCtxt<'tcx>,
     left: &crate::plan::TupleElement,
     right: &crate::plan::TupleElement,
 ) -> Result<Ty<'tcx>, PlanError> {
-    let root = crate::native_crates::root(tcx, "incan_native_runtime")
-        .ok_or_else(|| PlanError::UnknownCallee("incan_native_runtime".into()))?;
-    let definition = tcx
-        .module_children(root)
-        .iter()
-        .find(|child| child.ident.name.as_str() == "ZipLists" && child.vis.is_public())
-        .and_then(|child| child.res.opt_def_id())
-        .ok_or_else(|| PlanError::UnknownCallee("incan_native_runtime::ZipLists".into()))?;
-    let left = native_type(tcx, &tuple_element_type(left.clone()))?;
-    let right = native_type(tcx, &tuple_element_type(right.clone()))?;
-    Ok(Ty::new_adt(
-        tcx,
-        tcx.adt_def(definition),
-        tcx.mk_args(&[left.into(), right.into()]),
-    ))
+    enum_type(tcx, &crate::zip_carriers::alias_name(left, right))
 }
 
 /// Resolve the bound core dependency's TypeToken carrier with its exact represented native type. A same-named

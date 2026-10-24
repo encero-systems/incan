@@ -403,7 +403,7 @@ impl TypeChecker {
 
     /// Retain a qualified method on a source type parameter from its declared native trait bound. The bound fixes
     /// the trait arguments, while the active source instance later closes Self; no concrete impl is guessed here.
-    /// A shared argument identifies its referent as Self only when metadata proves a shared receiver.
+    /// An explicit loan selects its referent's bound only when the native receiver is the same kind of Self loan.
     pub(super) fn retain_bound_rust_trait_call(
         &mut self,
         call: &RustTraitQualifiedCall<'_>,
@@ -417,17 +417,16 @@ impl TypeChecker {
         if original.is_async || original.is_unsafe || !original.type_params.is_empty() || !call.type_args.is_empty() {
             return None;
         }
-        let owner = match source {
-            ResolvedType::Ref(inner)
-                if original.params.first().is_some_and(|parameter| {
-                    Self::rust_display_borrow_kind(&parameter.type_display).is_some_and(|(mutable, _)| !mutable)
-                }) =>
-            {
-                inner.as_ref()
-            }
-            other => other,
+        let borrowed_self = original.params.first().and_then(|parameter| {
+            let display = Self::rust_display_without_lifetimes(&parameter.type_display);
+            Self::rust_display_borrow_kind(&display)
+                .and_then(|(mutable, inner)| matches!(inner.trim(), "Self" | "self").then_some(mutable))
+        });
+        let referent = match (source, borrowed_self) {
+            (ResolvedType::Ref(inner), Some(false)) | (ResolvedType::RefMut(inner), Some(true)) => inner.as_ref(),
+            _ => source,
         };
-        let name = self.generic_placeholder_name(owner)?;
+        let name = self.generic_placeholder_name(referent)?;
         let source = ResolvedType::TypeVar(name.to_owned());
         let mut selected = None;
         for frame in self.current_type_param_bound_details.iter().rev() {
@@ -507,7 +506,8 @@ impl TypeChecker {
         Some(result)
     }
 
-    /// Keep a metadata-selected result item's identity before source scalar and collection projection.
+    /// Keep a metadata-selected result item's identity before source scalar and collection projection, normalizing
+    /// token-printer spacing before the exact metadata lookup.
     pub(in crate::typechecker::check_expr) fn rust_result_item_path(
         &self,
         display: &str,
@@ -515,6 +515,7 @@ impl TypeChecker {
     ) -> Option<String> {
         let display = self.rust_display_for_owner_path(display, owner);
         let display = Self::rust_display_without_lifetimes(&display);
+        let display = Self::compact_rust_display(&display);
         let referent = Self::rust_display_borrow_kind(&display).map_or(display.as_str(), |(_, inner)| inner);
         let base = Self::rust_generic_base_and_args(referent).map_or(referent, |(base, _)| base);
         let native = incan_lang::interop::ancestral_rust_path(base);

@@ -41,6 +41,7 @@ pub from pub::incan_mir_plan import (
     Parameter,
     Place,
     Plan,
+    ZipCarrier,
     PlanExport,
     GenericLayoutType,
     GenericLayoutField,

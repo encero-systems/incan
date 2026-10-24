@@ -61,6 +61,10 @@ pub def native_source_type(
             signature.append(native_source_type(nominals, enums, unions, result, intrinsics)?)
             return Ok(PlanType.FunctionPointer(signature))
         RustType.Generic(base=base, args=arguments) =>
+            if base == "<owned-callable>" and len(arguments) == 1:
+                match native_source_type(nominals, enums, unions, arguments[0], intrinsics)?:
+                    PlanType.FunctionPointer(signature) => return Ok(PlanType.Closure(signature))
+                    _ => return Err("invalid owned callable storage signature")
             if base == "[]" and len(arguments) == 1:
                 return Ok(PlanType.NativeSlice([native_source_type(nominals, enums, unions, arguments[0], intrinsics)?]))
             if base == "Awaitable" and len(arguments) == 1:
@@ -87,8 +91,9 @@ pub def native_source_type(
                 element = native_source_type(nominals, enums, unions, arguments[0], intrinsics)?
                 match element:
                     PlanType.Model(owner, name) => return Ok(PlanType.Generator(ListLeaf.Model(owner, name), 0))
-                    PlanType.List(ListLeaf.Model(owner, name), depth) =>
-                        return Ok(PlanType.Generator(ListLeaf.Model(owner, name), depth))
+                    PlanType.Tuple(elements) => return Ok(PlanType.Generator(ListLeaf.Tuple(elements), 0))
+                    PlanType.Enum(owner, name) => return Ok(PlanType.Generator(ListLeaf.Enum(owner, name), 0))
+                    PlanType.List(leaf, depth) => return Ok(PlanType.Generator(leaf, depth))
                     _ => pass
             match collection_type(str(base)):
                 Some(CollectionTypeId.Tuple) => return layout_tuple_type(nominals, enums, unions, arguments, intrinsics)
@@ -127,6 +132,7 @@ pub def shared_receiver_type(ty: PlanType) -> Result[PlanType, str]:
     """Borrow the exact retained carrier, preserving an existing reference as a sized referent for native calls."""
     match ty:
         PlanType.Tuple(elements) => return Ok(PlanType.TupleRef(elements))
+        PlanType.ZipIterator(left, right) => return Ok(PlanType.ZipIteratorRef(left, right))
         PlanType.StrRef => return Ok(PlanType.ScalarRef([ty]))
         PlanType.StringRef => return Ok(PlanType.ScalarRef([ty]))
         PlanType.ModelRef(_owner, _name) => return Ok(PlanType.ScalarRef([ty]))
@@ -153,6 +159,7 @@ pub def mutable_receiver_type(ty: PlanType) -> Result[PlanType, str]:
     """Reuse exclusive source parameter storage for native references, retaining scalar reference carriers explicitly."""
     match ty:
         PlanType.NativeArray(elements, length) => return Ok(PlanType.NativeArrayMutRef(elements, length))
+        PlanType.Generator(leaf, depth) => return Ok(PlanType.GeneratorMutRef(leaf, depth))
         PlanType.NativeSlice(elements) => return Ok(PlanType.SliceMutRef(elements))
         _ => pass
     match exclusive_reference(ty):

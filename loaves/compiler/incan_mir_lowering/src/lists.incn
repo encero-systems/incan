@@ -162,6 +162,7 @@ pub def is_exclusive_borrow(ty: PlanType) -> bool:
     if is_mutable_list_reference(ty):
         return true
     match ty:
+        PlanType.GeneratorMutRef(_leaf, _depth) => return true
         PlanType.StringMutRef => return true
         PlanType.ModelMutRef(_owner, _name) => return true
         PlanType.EnumMutRef(_owner, _name) => return true

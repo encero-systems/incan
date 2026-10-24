@@ -64,7 +64,7 @@ def owned_slots_for_bindings(
                         closed.params[slot].ty,
                         builder.intrinsics,
                     )?
-                    if expected != PlanType.FunctionPointer(signature):
+                    if expected != PlanType.FunctionPointer(signature) and expected != PlanType.Closure(signature):
                         return Err("unsupported Body IR generic callable signature mismatch")
                     owned.append(slot)
                 Some(PlanType.ClosureRef(_signature)) =>

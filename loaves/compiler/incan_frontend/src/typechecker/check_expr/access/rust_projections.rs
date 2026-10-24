@@ -42,7 +42,7 @@ impl TypeChecker {
         self.rust_associated_type_at_depth(ty, trait_path, member, 0)
     }
 
-    /// Bound recursive projection normalization and refuse competing associated values rather than choosing one.
+    /// Bound recursive projection normalization and refuse competing equally specific associated values.
     /// Scalar carriers select their native primitive cache entry. Conflicting values require retained predicate
     /// evidence; a unique value still leaves complete native obligations to rustc.
     /// A named Deref target retains its native owner before source collection projection so method lookup can select
@@ -158,7 +158,7 @@ impl TypeChecker {
         self.select_rust_projection(candidates, &owner)
     }
 
-    /// Preserve unambiguous associated values and use retained obligations only to distinguish competing templates.
+    /// Preserve unambiguous associated values and rank applicable competing templates by owner specificity.
     /// This does not turn incomplete conditional facts into proof; rustc checks the final closed native signature.
     fn select_rust_projection(
         &self,
@@ -170,16 +170,24 @@ impl TypeChecker {
             return candidates.into_iter().next().map(|(_, value)| value);
         }
         let mut selected = None;
+        let mut specificity = 0;
+        let mut ambiguous = false;
         for (implementation, value) in candidates {
             if !self.rust_impl_may_apply(implementation, owner) {
                 continue;
             }
-            if selected.as_ref().is_some_and(|previous| previous != &value) {
-                return None;
+            let candidate_specificity = self.rust_projection_specificity(implementation);
+            if selected.is_none() || candidate_specificity > specificity {
+                selected = Some(value);
+                specificity = candidate_specificity;
+                ambiguous = false;
+            } else if candidate_specificity == specificity
+                && selected.as_ref().is_some_and(|previous| previous != &value)
+            {
+                ambiguous = true;
             }
-            selected = Some(value);
         }
-        selected
+        if ambiguous { None } else { selected }
     }
 
     /// Filter borrowed owners and blanket Self binders before selecting an associated value. A bare binder can match
@@ -191,6 +199,15 @@ impl TypeChecker {
                 .type_params
                 .iter()
                 .any(|name| name == &implementation.self_type)
+    }
+
+    /// Prefer an owner-shaped impl over an unconstrained blanket Self before reading its associated value.
+    /// This is a metadata projection, not trait-obligation proof; the adapter still verifies the complete native
+    /// signature and predicates against rustc's selected trait reference.
+    fn rust_projection_specificity(&self, implementation: &RustImplementedTrait) -> usize {
+        let template = self.native_rust_signature_type(&implementation.self_type, "");
+        let template = self.rust_inference_type(&template, &implementation.type_params);
+        native_template_specificity(&template)
     }
 
     /// Read generic projection equalities from active bounds and their metadata-defined supertraits. A Future also
@@ -321,18 +338,40 @@ impl TypeChecker {
     /// Select an associated impl through its retained native item before source collection projection erases that
     /// owner's path. Declared placeholders keep their bound lookup; metadata supplies every concrete owner and arity.
     fn rust_projection_owner(&self, display: &str, owner: ResolvedType) -> ResolvedType {
+        let display = Self::compact_rust_display(display);
         if matches!(&owner, ResolvedType::Ref(_) | ResolvedType::RefMut(_))
             || self.generic_placeholder_name(&owner).is_some()
-            || self.rust_canonical_path_for_receiver_type(&owner).is_some()
         {
             return owner;
         }
-        let Some(path) = self.rust_result_item_path(display, "") else {
+        let Some(path) = self.rust_result_item_path(&display, "") else {
             return owner;
         };
         if let Some(arguments) = self.rust_owner_type_args(&owner, &path) {
             return ResolvedType::Generic(path, arguments);
         }
+        if let Some((base, arguments)) = Self::rust_generic_base_and_args(&display)
+            && ancestral_rust_path(base) == ancestral_rust_path(&path)
+        {
+            let arguments = arguments
+                .into_iter()
+                .filter(|argument| !Self::rust_generic_arg_is_lifetime(argument))
+                .map(|argument| self.native_rust_signature_type(argument, &path))
+                .collect();
+            return ResolvedType::Generic(path, arguments);
+        }
         owner
+    }
+}
+
+/// Count fixed carrier structure while leaving declared impl binders unconstrained.
+fn native_template_specificity(ty: &ResolvedType) -> usize {
+    match ty {
+        ResolvedType::TypeVar(_) => 0,
+        ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => 1 + native_template_specificity(inner),
+        ResolvedType::Generic(_, arguments) | ResolvedType::Tuple(arguments) => {
+            1 + arguments.iter().map(native_template_specificity).sum::<usize>()
+        }
+        _ => 1,
     }
 }

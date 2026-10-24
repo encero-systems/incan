@@ -4,24 +4,33 @@ from std.derives.collection import Iterator
 from std.derives.copying import Clone
 from std.rust import Static
 from std.traits.callable import Callable1
-from rust::std::iter import IntoIterator
-from rust::std::vec import Vec
+from rust::incan_std_core::iter import Generator as NativeGenerator
+from rust::incan_std_core::iter import range as native_range
+from rust::incan_std_core::iter import batch as native_batch
+from rust::incan_std_core::iter import nonnegative_count
+from rust::std::iter import Iterator as NativeIterator, IntoIterator
+from rust::std::iter import once as native_once, successors
+from rust::std::clone import Clone as NativeClone
 
 
-pub def poll_generator[T with Clone](mut values: Generator[T], mut output: list[T]) -> bool:
-    """Poll once, appending one owned item on success and leaving output unchanged on exhaustion."""
-    match values.__next__():
+pub def poll_generator[T with Clone](values: &mut NativeGenerator[T], mut output: list[T]) -> bool:
+    """Poll once: 1. Advance the borrowed generator. 2. Append an item on success, preserving output on exhaustion."""
+    # 1. Advance the borrowed generator.
+    mut iterator = values
+    match iterator.next():
         Some(value) =>
+            # 2. Append the owned item.
             output.append(value)
             return true
         None => return false
 
 
 pub def list_generator[T with (Clone, Static)](values: list[T]) -> Generator[T]:
-    """Yield an owned list snapshot's items lazily and in order, as a generator expression's first source."""
-    native: Vec[T] = values
-    for value in native.into_iter():
-        yield value
+    """Yield an independent snapshot lazily and in order: 1. Clone the source. 2. Wrap its consuming native iterator."""
+    # 1. Clone the source.
+    snapshot = values.clone()
+    # 2. Wrap its consuming native iterator.
+    return NativeGenerator.new(IntoIterator.into_iter(snapshot))
 
 
 pub def set_generator[T with (Clone, Static)](values: set[T]) -> Generator[T]:
@@ -34,18 +43,18 @@ pub def set_generator[T with (Clone, Static)](values: set[T]) -> Generator[T]:
 
 pub def range_generator(start: int, end: int, step: int) -> Generator[int]:
     """Construct the builtin range now, rejecting a zero step, and yield its integers lazily."""
-    return (value for value in range(start, end, step))
+    return NativeGenerator.new(native_range(start, end, step))
 
 
 pub def once_generator[T with (Clone, Static)](value: T) -> Generator[T]:
     """Yield one item a generator-expression step accepted."""
-    return (item for item in [value])
+    return NativeGenerator.new(native_once(value))
 
 
 pub def empty_generator[T with (Clone, Static)]() -> Generator[T]:
     """Yield nothing for an item a generator-expression step filtered out."""
     values: list[T] = []
-    return (item for item in values)
+    return list_generator(values)
 
 
 pub def int_step_generator[T with (Clone, Static)](source: Generator[int], step: (int) -> Generator[T]) -> Generator[T]:
@@ -73,64 +82,97 @@ pub def int_callable_step_generator[T with (Clone, Static), F with (Callable1[in
     source: Generator[int],
     step: F,
 ) -> Generator[T]:
-    """Expand each integer source item through a callable step, such as one holding a generator expression's captures."""
-    return (value for item in source for value in step(item))
+    """1. Forward the integer source and its owned callable to the native lazy chain."""
+    # 1. Forward the integer source and its owned callable to the native lazy chain.
+    native: NativeGenerator[int] = source
+    adapted = native.flat_map((item) => step(item))
+    _ = step
+    return NativeGenerator.new(adapted)
 
 
 pub def float_callable_step_generator[T with (Clone, Static), F with (Callable1[float, Generator[T]], Static)](
     source: Generator[float],
     step: F,
 ) -> Generator[T]:
-    """Expand each float source item through a callable step, such as one holding a generator expression's captures."""
-    return (value for item in source for value in step(item))
+    """1. Forward the float source and its owned callable to the native lazy chain."""
+    # 1. Forward the float source and its owned callable to the native lazy chain.
+    native: NativeGenerator[float] = source
+    adapted = native.flat_map((item) => step(item))
+    _ = step
+    return NativeGenerator.new(adapted)
 
 
 pub def bool_callable_step_generator[T with (Clone, Static), F with (Callable1[bool, Generator[T]], Static)](
     source: Generator[bool],
     step: F,
 ) -> Generator[T]:
-    """Expand each boolean source item through a callable step, such as one holding a generator expression's captures."""
-    return (value for item in source for value in step(item))
+    """1. Forward the boolean source and its owned callable to the native lazy chain."""
+    # 1. Forward the boolean source and its owned callable to the native lazy chain.
+    native: NativeGenerator[bool] = source
+    adapted = native.flat_map((item) => step(item))
+    _ = step
+    return NativeGenerator.new(adapted)
 
 
 pub def str_callable_step_generator[T with (Clone, Static), F with (Callable1[str, Generator[T]], Static)](
     source: Generator[str],
     step: F,
 ) -> Generator[T]:
-    """Expand each text source item through a callable step that takes the item by value."""
-    return (value for item in source for value in step(item))
+    """1. Forward owned text and its callable to the native lazy chain."""
+    # 1. Forward owned text and its callable to the native lazy chain.
+    native: NativeGenerator[str] = source
+    adapted = native.flat_map((item) => step(item))
+    _ = step
+    return NativeGenerator.new(adapted)
 
 
-pub def item_callable_step_generator[S with (Clone, Static), T with (Clone, Static), F with (Callable1[S, Generator[T]], Static)](
+pub def item_callable_step_generator[
+    S with (Clone, Static), T with (Clone, Static), F with (Callable1[S, Generator[T]], Static),
+](
     source: Generator[S],
     step: F,
 ) -> Generator[T]:
-    """
-    Expand each source item, such as an `enumerate` or `zip` pair, through a callable step that takes it by value.
+    """Expand source items only as they are polled: 1. Retain the native source. 2. Wrap its lazy flat-map.
 
-    A function pointer step is a callable too, so a capture-free step goes through this chain as well.
+    The native iterator owns its source and callable without spawning a producer thread. A function pointer and an
+    environment-carrying callable both retain their checked native storage throughout the chain.
     """
-    return (value for item in source for value in step(item))
+    # 1. Retain the native source.
+    native: NativeGenerator[S] = source
+    # 2. Wrap its lazy flat-map.
+    adapted = native.flat_map((item) => step(item))
+    _ = step
+    return NativeGenerator.new(adapted)
 
 
 pub def take_generator[T with (Clone, Static)](values: Generator[T], count: int) -> Generator[T]:
     """Stop after at most `count` items, drawing each only when polled; a negative count yields nothing."""
-    return values.take(count)
+    native: NativeGenerator[T] = values
+    return NativeGenerator.new(NativeIterator.take(native, nonnegative_count(count)))
 
 
 pub def skip_generator[T with (Clone, Static)](values: Generator[T], count: int) -> Generator[T]:
-    """Drop the first `count` items when the first item is polled, then yield the rest."""
-    return (value for value in values.skip(count))
+    """Skip lazily: 1. Retain the native source. 2. Wrap its skip adapter with a nonnegative count."""
+    # 1. Retain the native source.
+    native: NativeGenerator[T] = values
+    # 2. Wrap the native skip adapter.
+    return NativeGenerator.new(native.skip(nonnegative_count(count)))
 
 
 pub def batch_generator[T with (Clone, Static)](values: Generator[T], size: int) -> Generator[list[T]]:
-    """Group the items in lists of `size`, the last one possibly shorter, drawing each group when it is polled."""
-    return (batch for batch in values.batch(size))
+    """Draw batches only when polled: 1. Retain the native source. 2. Wrap the native batch iterator."""
+    # 1. Retain the native source.
+    native: NativeGenerator[T] = values
+    # 2. Wrap the native batch iterator.
+    return NativeGenerator.new(native_batch(native, size))
 
 
 pub def chain_generators[T with (Clone, Static)](first: Generator[T], second: Generator[T]) -> Generator[T]:
-    """Yield the first generator's items, then the second's once the first is exhausted."""
-    return (value for value in first.chain(second))
+    """Yield both sources in order: 1. Retain the first source. 2. Wrap its chain with the second source."""
+    # 1. Retain the first source.
+    native: NativeGenerator[T] = first
+    # 2. Wrap the native chain.
+    return NativeGenerator.new(native.chain(second))
 
 
 pub def take_while_int_generator(values: Generator[int], predicate: (int) -> bool) -> Generator[int]:
@@ -189,16 +231,23 @@ pub def any_text_callable_generator[F with Callable1[str, bool]](values: Generat
 
 
 pub def enumerate_generator[T with (Clone, Static)](values: Generator[T]) -> Generator[tuple[int, T]]:
-    """Pair each item with its zero-based position when it is polled."""
-    return (pair for pair in values.enumerate())
+    """Pair items with signed positions lazily: 1. Create the index stream. 2. Pair it with the source."""
+    # 1. Create the index stream.
+    indices: NativeGenerator[int] = NativeGenerator.new(successors(Some(0), next_index))
+    # 2. Pair it with the source.
+    native: NativeGenerator[T] = values
+    return NativeGenerator.new(indices.zip(native))
 
 
 pub def zip_generators[T with (Clone, Static), U with (Clone, Static)](
     left: Generator[T],
     right: Generator[U],
 ) -> Generator[tuple[T, U]]:
-    """Pair the items of two generators until either is exhausted."""
-    return (pair for pair in left.zip(right))
+    """Pair items until either source is exhausted: 1. Retain the left source. 2. Wrap its zip with the right."""
+    # 1. Retain the left source.
+    native: NativeGenerator[T] = left
+    # 2. Wrap the native zip.
+    return NativeGenerator.new(native.zip(right))
 
 
 pub def map_int_generator[U with (Clone, Static)](values: Generator[int], transform: (int) -> U) -> Generator[U]:
@@ -232,33 +281,52 @@ pub def filter_bool_generator(values: Generator[bool], predicate: (bool) -> bool
 
 
 pub def count_generator[T with (Clone, Static)](values: Generator[T]) -> int:
-    """Count the remaining items, draining the generator."""
-    return values.count()
+    """Drain and count the remaining items: 1. Retain the native source. 2. Count through its iterator."""
+    # 1. Retain the native source.
+    native: NativeGenerator[T] = values
+    # 2. Count through its iterator.
+    return int(native.count())
 
 
 pub def sum_int_generator(values: Generator[int]) -> int:
-    """Sum the remaining integer items, draining the generator."""
-    return values.sum()
+    """Drain and sum the remaining integers: 1. Retain the native source. 2. Sum its items."""
+    # 1. Retain the native source.
+    native: NativeGenerator[int] = values
+    # 2. Sum its items.
+    total: int = native.sum()
+    return total
 
 
 pub def fold_int_generator(values: Generator[int], initial: int, combine: (int, int) -> int) -> int:
-    """Combine the remaining integer items from `initial`, in order."""
-    return values.fold(initial, combine)
+    """Combine items from `initial`, in order: 1. Retain the native source. 2. Fold its remaining items."""
+    # 1. Retain the native source.
+    native: NativeGenerator[int] = values
+    # 2. Fold the remaining items.
+    return native.fold(initial, combine)
 
 
 pub def reduce_int_generator(values: Generator[int], initial: int, combine: (int, int) -> int) -> int:
-    """Combine the remaining integer items from `initial`, in order, through the iterator's `reduce`."""
-    return values.reduce(initial, combine)
+    """Reduce items from `initial`, in order: 1. Retain the native source. 2. Fold with the supplied initial value."""
+    # 1. Retain the native source.
+    native: NativeGenerator[int] = values
+    # 2. Fold with the source language's explicit initial value.
+    return native.fold(initial, combine)
 
 
 pub def any_int_generator(values: Generator[int], predicate: (int) -> bool) -> bool:
-    """Report whether some integer item is accepted, drawing items only until the first one is."""
-    return values.any(predicate)
+    """Stop at the first accepted item: 1. Retain the mutable native source. 2. Test its remaining items."""
+    # 1. Retain the mutable native source.
+    mut native: NativeGenerator[int] = values
+    # 2. Test until an item is accepted.
+    return native.any(predicate)
 
 
 pub def all_int_generator(values: Generator[int], predicate: (int) -> bool) -> bool:
-    """Report whether every integer item is accepted, drawing items only until the first one is not."""
-    return values.all(predicate)
+    """Stop at the first rejected item: 1. Retain the mutable native source. 2. Test its remaining items."""
+    # 1. Retain the mutable native source.
+    mut native: NativeGenerator[int] = values
+    # 2. Test until an item is rejected.
+    return native.all(predicate)
 
 
 pub def find_int_generator(values: Generator[int], predicate: (int) -> bool) -> Option[int]:
@@ -267,5 +335,13 @@ pub def find_int_generator(values: Generator[int], predicate: (int) -> bool) -> 
 
 
 pub def for_each_int_generator(values: Generator[int], action: (int) -> None) -> None:
-    """Run the action on each remaining integer item, in order."""
-    values.for_each(action)
+    """Run the action in order: 1. Retain the native source. 2. Visit every remaining item."""
+    # 1. Retain the native source.
+    native: NativeGenerator[int] = values
+    # 2. Visit every remaining item.
+    native.for_each(action)
+
+
+def next_index(previous: &int) -> Option[int]:
+    """Advance the private signed index stream using the language's integer arithmetic."""
+    return Some(NativeClone.clone(previous) + 1)

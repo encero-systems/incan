@@ -1,14 +1,18 @@
-# behavior: a local annotated with its static's type reads the static and stays a live alias of the static's storage
+# behavior: annotated static aliases read current scalar and list storage, including integer, float, boolean and text lists
 # expect-stdout:
 #   3
 #   4
 #   1
 #   2
+#   2 2 2
 
 type Ints = list[int]
 
 static COUNT: int = 3
 static ITEMS: list[int] = []
+static FRACTIONS: list[float] = [1.5]
+static FLAGS: list[bool] = [true]
+static WORDS: list[str] = ["first"]
 
 
 def main() -> None:
@@ -22,3 +26,10 @@ def main() -> None:
     aliased: Ints = ITEMS
     aliased.append(8)
     println(len(ITEMS))
+    fractions: list[float] = FRACTIONS
+    fractions.append(2.5)
+    flags: list[bool] = FLAGS
+    flags.append(false)
+    words: list[str] = WORDS
+    words.append("second")
+    println(f"{len(FRACTIONS)} {len(FLAGS)} {len(WORDS)}")

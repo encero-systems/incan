@@ -59,6 +59,7 @@ mod value_enum_serde;
 mod values;
 #[cfg(unix)]
 mod worker;
+mod zip_carriers;
 
 use std::path::Path;
 

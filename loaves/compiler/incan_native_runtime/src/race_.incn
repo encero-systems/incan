@@ -3,14 +3,22 @@
 import std.async
 from std.rust import Send, Static
 from rust::incan_std_async::task import RuntimeFuture
-from rust::incan_std_async::race import scoped_arm, scoped_race
+from rust::incan_std_async::race import RaceArm as NativeRaceArm, arm as native_arm, race as native_race
 
 
-pub async def race_pair[T, U, R with (Send, Static), F with RuntimeFuture[T], G with RuntimeFuture[U]](
+type OwnedArm[R] = rusttype NativeRaceArm[R]:
+    """Retain the SDK's owned arm identity through source bindings and collection element annotations."""
+
+
+pub async def race_pair[
+    T with Static, U with Static, R with (Send, Static), F with RuntimeFuture[T], G with RuntimeFuture[U],
+](
     first: F,
     on_first: (T) -> R,
     second: G,
     on_second: (U) -> R,
 ) -> R:
-    """Poll two owned futures in source order and run the winning callback before dropping losing arms."""
-    return await scoped_race([scoped_arm(first, on_first), scoped_arm(second, on_second)])
+    """Race owned futures: 1. Build owned arms with their callbacks. 2. Poll in source order and cancel losers."""
+    # 1. Build owned arms; RuntimeFuture and function-pointer captures satisfy the SDK's static contract.
+    # 2. Poll in source order and cancel losing arms before returning.
+    return await native_race([native_arm(first, on_first), native_arm(second, on_second)])

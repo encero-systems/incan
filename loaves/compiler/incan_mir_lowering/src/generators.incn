@@ -158,6 +158,8 @@ def swap_rvalue(value: RvalueKind, handle: int) -> RvalueKind:
     """Permute every place-bearing plan expression without changing its operation."""
     match value:
         RvalueKind.Use(value) => return RvalueKind.Use(swap_operand(value, handle))
+        RvalueKind.NativeAlias(value, source, target) =>
+            return RvalueKind.NativeAlias(swap_operand(value, handle), source, target)
         RvalueKind.Binary(op, left, right) =>
             return RvalueKind.Binary(op, swap_operand(left, handle), swap_operand(right, handle))
         RvalueKind.Unary(op, value) => return RvalueKind.Unary(op, swap_operand(value, handle))

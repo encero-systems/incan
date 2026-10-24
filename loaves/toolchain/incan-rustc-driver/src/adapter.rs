@@ -280,6 +280,10 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
             Err(error) => compiler.sess.dcx().fatal(error.to_string()),
         }
         krate.items.extend(crate::formatting::items(&self.plan, span));
+        match crate::zip_carriers::items(&self.plan, span) {
+            Ok(items) => krate.items.extend(items),
+            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+        }
         for output in crate::futures::outputs(&self.plan) {
             krate.items.push(crate::futures::alias(&output, krate.spans.inner_span));
             krate

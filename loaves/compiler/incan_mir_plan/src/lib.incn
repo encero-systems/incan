@@ -436,6 +436,7 @@ pub enum RvalueKind:
     projections are valid only on the selected variant branch.
 
     NumericCast retains both checked source and destination carriers. FloatToInt preserves Rust truncation and saturation; BoolToInt produces zero or one.
+    NativeAlias forwards ownership between retained plan aliases only after rustc proves their native types identical.
 
     Tuple preserves the ordered operand layout of its destination type.
     Range preserves the four scalar operands in Body IR's declared range field order and requires a RangeValue destination.
@@ -447,6 +448,8 @@ pub enum RvalueKind:
     """
 
     Use(Operand)
+    # Preserve one native value across two retained plan aliases; rustc must prove their native types identical.
+    NativeAlias(Operand, PlanType, PlanType)
     # Reify a validated zero-argument unit function for the canonical async entry bridge.
     UnitFunction(str)
     FrozenText(Operand)
@@ -678,6 +681,8 @@ pub model Plan:
     pub exports: list[PlanExport] = []
     # Collected test entry functions; the adapter registers these with rustc's native test harness.
     pub tests: list[str] = []
+    # A governed runtime's checked zip result owns each consumer-local carrier; absent entries use the linked ABI.
+    pub zip_carriers: list[ZipCarrier] = []
     # Canonically lowered program entries; rustc applies Termination to the one selected for this process.
     pub programs: list[str] = []
     # A library publishes each generic ADT once; concrete layouts alias its instantiations.
@@ -715,6 +720,15 @@ pub model GenericModelDeclaration:
     pub fields: list[GenericLayoutField]
     pub derives: list[str]
     pub span: SourceSpan
+
+
+@derive(Clone, PartialEq)
+pub model ZipCarrier:
+    """Associate a builtin zip's checked element layouts with the published runtime result's closed source carrier."""
+
+    pub left: TupleElement
+    pub right: TupleElement
+    pub target: PlanType
 
 
 @derive(Clone, PartialEq)

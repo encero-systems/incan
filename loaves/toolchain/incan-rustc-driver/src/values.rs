@@ -12,6 +12,27 @@ use rustc_middle::mir::{self, interpret::Scalar};
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_span::Span;
 
+/// Preserve ownership across checked plan aliases only when rustc resolves both to the identical native type.
+/// This is an identity move, with no cast, layout assumption, or conversion between distinct carriers.
+fn native_alias<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    sources: &Sources<'_>,
+    value: &Operand,
+    source: &PlanType,
+    target: &PlanType,
+    destination: &PlanType,
+) -> Result<mir::Rvalue<'tcx>, PlanError> {
+    if native_type(tcx, source)? != native_type(tcx, target)?
+        || native_type(tcx, target)? != native_type(tcx, destination)?
+    {
+        return Err(PlanError::Invalid {
+            function: "native alias".into(),
+            reason: "retained aliases name different native types".into(),
+        });
+    }
+    Ok(mir::Rvalue::Use(operand(tcx, sources, value)?, mir::WithRetag::Yes))
+}
+
 /// Convert a prevalidated signed index without truncation.
 pub fn index(value: i64) -> Result<usize, PlanError> {
     usize::try_from(value).map_err(|_| PlanError::Invalid {
@@ -339,6 +360,9 @@ pub fn rvalue<'tcx>(
             mir::Rvalue::Cast(mir::CastKind::IntToInt, operand(tcx, sources, value)?, tcx.types.i64)
         }
         RvalueKind::Use(value) => mir::Rvalue::Use(operand(tcx, sources, value)?, mir::WithRetag::Yes),
+        RvalueKind::NativeAlias(value, source, target) => {
+            native_alias(tcx, sources, value, source, target, destination_type)?
+        }
         RvalueKind::NumericCast(value, source, target) => {
             let source_float = matches!(source, PlanType::Float | PlanType::F32 | PlanType::F64);
             let target_float = matches!(target, PlanType::Float | PlanType::F32 | PlanType::F64);
