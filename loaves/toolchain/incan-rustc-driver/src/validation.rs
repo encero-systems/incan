@@ -532,9 +532,7 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
     let returned = scalar(&function.return_type);
     // A checked element reborrow may return an exclusive model reference; the lifetime-contract guard above still
     // applies.
-    if scalar(&function.locals[0].ty) != returned
-        || !(source_signature_type(&returned) || matches!(returned, Scalar::ModelMutRef(_)))
-    {
+    if scalar(&function.locals[0].ty) != returned || !source_return_type(&returned) {
         return Err(invalid(function, "return local must match a scalar return type"));
     }
     let mut parameters = BTreeSet::new();
@@ -1408,6 +1406,15 @@ fn source_parameter_type(ty: &Scalar) -> bool {
             ty,
             Scalar::StringRef | Scalar::ModelRef(_) | Scalar::ModelMutRef(_) | Scalar::EnumRef(_)
         )
+}
+
+/// Preserve explicit shared element returns and checked exclusive model reborrows under the signature's existing
+/// lifetime-contract guard.
+fn source_return_type(ty: &Scalar) -> bool {
+    if let Scalar::ScalarRef(elements) = ty {
+        return matches!(elements.as_slice(), [inner] if scalar_referent(inner));
+    }
+    source_signature_type(ty) || matches!(ty, Scalar::ModelRef(_) | Scalar::ModelMutRef(_) | Scalar::EnumRef(_))
 }
 
 /// Admit source storage, owned data, retained nominal values and callable signatures.

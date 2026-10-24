@@ -7,7 +7,7 @@ from files import json_text, make_directory, read, remove
 from graph_cache import cache_file, is_unchecked, publish_unchecked, tree_inputs
 from publication import publish, publish_binary
 from unit_freshness import artifact_identity, cache_identities, fingerprint, native_identities
-from incan_units import crate_name, run_compiler, write_unit
+from unit_compiler import crate_name, run_compiler, write_unit
 from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription, UnitLoaf, describe
 

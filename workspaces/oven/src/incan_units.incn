@@ -12,35 +12,21 @@ replays them; crashes, signals, resource failures and missing successful outputs
 """
 
 from rust::std::os::unix::process import CommandExt
-from rust::std::process import Command, Stdio
+from rust::std::process import Command
 from std.fs import Path
-from codegen import driver_arguments
-from files import discard_file, open_stream
-from compiler_refusals import compile_or_replay
-from home import dependency_artifact_dir
-from observation import trace, trace_boundary, trace_launch
-from compiler_worker import compile_resident
-from publication import place, publish
+from files import discard_file
+from observation import trace, trace_launch
+from publication import place
 from toolchain import Toolchain
-from unit import UnitDescription, dependency_units
-from unit_freshness import Key, artifact_files, artifact_identity, install_all, record, reusable, staleness, unit_key
+from unit import UnitDescription
+from unit_compiler import compile_prepared_unit, crate_name, run_compiler, write_unit
+from unit_freshness import Key, install_all, reusable, staleness, unit_key
 from unit_rust import prepare_native
-from apple_sdk import configure_sdk
-from shared_link import development_link, library_witness, linkage_key, shared_arguments, shared_current
-
-
-pub def crate_name(unit: UnitDescription) -> str:
-    """The crate a unit compiles to: its package, or its source file's stem when it has no project."""
-    if unit.package != "":
-        return unit.package.replace("-", "_")
-    return Path(unit.source).stem().replace("-", "_")
+from shared_link import development_link, library_witness, linkage_key, shared_current
 
 
 pub def check_unit(unit: UnitDescription, toolchain: Toolchain, format: str) -> Result[i32, str]:
     """Check the unit against its crates and their Rust facts; the compiler prints the report. Returns the exit code."""
-    prepared = prepare_dependencies(unit, toolchain)?
-    if prepared != 0:
-        return Ok(prepared)
     ready = prepare_native(unit, toolchain)?
     path = write_unit(ready, crate_name(ready))?
     arguments = ["--check", path.0, toolchain.sysroot, "--format", format]
@@ -67,71 +53,15 @@ pub def compile_unit(
 
     A development request may share debug native inputs; ordinary builds and all libraries retain archive linkage.
 
-    1. Prepare the path libraries it depends on.
-    2. Prepare its native inputs.
-    3. A library is compiled; an executable whose inputs are unchanged since it was built is kept instead.
+    1. Prepare the shared local graph and bind the exact native inputs.
+    2. Compile a library, or reuse an executable whose inputs have not changed.
     """
-    # 1. Every path library the unit links is current before the unit itself is compiled.
-    prepared = prepare_dependencies(unit, toolchain)?
-    if prepared != 0:
-        return Ok(prepared)
-    # 2. The unit names the exact native crates, ABI caches and search directories its compilation reads.
+    # 1. Every provider is current before the unit receives the exact artifacts and ABI caches it reads.
     ready = prepare_native(unit, toolchain)?
-    # 3. A library is always compiled; an executable is compiled only when its key has changed.
+    # 2. A library is always compiled; an executable is compiled only when its key has changed.
     if ready.kind == "library":
         return compile_prepared_unit(ready, toolchain, output)
     return compile_executable(ready, toolchain, output, unit_key(ready, toolchain)?, development)
-
-
-pub def prepare_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[i32, str]:
-    """
-    Prepare path libraries once in dependency order for every command that checks or compiles a unit.
-
-    1. Describe the active path dependencies, each before the units that consume it.
-    2. Prepare each one: keep its stored library while its key is unchanged, otherwise compile it.
-    3. Stop at the first library the compiler refuses, and report its exit code.
-    """
-    for dependency in dependency_units(unit)?:
-        code = prepare_library(unit, dependency, toolchain)?
-        if code != 0:
-            return Ok(code)
-    return Ok(0)
-
-
-def prepare_library(consumer: UnitDescription, dependency: UnitDescription, toolchain: Toolchain) -> Result[i32, str]:
-    """
-    Keep the stored library of a path dependency of `consumer`, or compile it. Returns the compiler's exit code.
-
-    1. Key the dependency as a library and look at its stamp.
-    2. An unchanged library is kept.
-    3. Otherwise withdraw the stamp, compile the library and check that every artifact was published.
-    4. Record the stamp of the completed build.
-    """
-    # 1. The dependency is keyed as the library it will be, against the stamp of the build it last had.
-    mut library_unit = prepare_native(dependency, toolchain)?
-    library_unit.kind = "library"
-    directory = dependency_artifact_dir(consumer.project_root, dependency.package, consumer.profile)
-    artifacts = artifact_files(directory, dependency.package)
-    key = unit_key(library_unit, toolchain)?
-    stamp = directory.joinpath(".oven-inputs.sha256")
-    why = staleness(artifacts, stamp, key)?
-    # 2. A library whose stamp vouches for its key starts no compiler.
-    if why == "":
-        trace(f"unit {dependency.package} library: reused")
-        return Ok(0)
-    # 3. A stale library loses its stamp first, so no stamp vouches for a build the compiler is about to replace.
-    if stamp.is_file():
-        stamp.unlink().map_err((error) => f"{stamp.0}: {error.message()}")?
-    output = directory.joinpath(f"lib{crate_name(dependency)}.rlib")
-    compiled = compile_prepared_unit(library_unit, toolchain, output, Some(key), why)?
-    if compiled != 0:
-        return Ok(compiled)
-    for artifact in artifacts:
-        if not artifact.is_file():
-            return Err(f"compiler did not publish {artifact.0}")
-    # 4. The new stamp binds the key to the artifacts the compiler published.
-    record(stamp, key, artifacts)?
-    return Ok(0)
 
 
 pub def compile_executable(
@@ -252,39 +182,6 @@ def discard(staged: Path, kind: str, shared: bool = false) -> None:
         _ = debug_bundle(staged).remove_tree()
 
 
-def compile_prepared_unit(
-    unit: UnitDescription,
-    toolchain: Toolchain,
-    output: Path,
-    known_key: Option[Key] = None,
-    reason: str = "no stored build",
-    development: bool = false,
-) -> Result[i32, str]:
-    """
-    Compile one unit after dependency preparation, without recursive orchestration.
-
-    1. Write the description and prepare its output directory.
-    2. Select the same native flags that bind the unit's reuse key.
-    3. Run the compiler or replay its certified refusal, preserving the exit code and output bytes.
-    """
-    # 1. Write the description and prepare its output directory.
-    mut key = Key(digest="", parts=[])
-    match known_key:
-        Some(value) => key = value
-        None => key = unit_key(unit, toolchain)?
-    compiled = crate_name(unit)
-    trace_boundary("unit_write_begin")
-    path = write_unit(unit, compiled, None, described_by(key))?
-    trace_boundary("unit_written")
-    output.parent().mkdir(true, true).map_err((error) => f"{output.parent().0}: {error.message()}")?
-    # 2. Frame the same native flags that bind the unit's reuse key.
-    native = driver_arguments(unit.profile) + shared_arguments(unit, development)?
-    arguments = ["--unit", path.0, compiled, output.0, toolchain.sysroot] + native
-    # 3. Run the compiler or replay its certified refusal for the full input identity.
-    trace_boundary("compiler_request")
-    return compile_or_replay(unit, toolchain, arguments, Path(f"{output.0}.oven-refusal"), key, reason)
-
-
 pub def run_program(binary: Path, arguments: list[str], argv0: Option[str] = None) -> Result[i32, str]:
     """
     Become the compiled program: this process is replaced by it, so it keeps the caller's arguments, standard
@@ -300,105 +197,6 @@ pub def run_program(binary: Path, arguments: list[str], argv0: Option[str] = Non
     trace_launch(program)
     failure = command.exec()
     return Err(f"cannot run {program}: {failure}")
-
-
-pub def write_unit(
-    unit: UnitDescription,
-    compiled: str,
-    owner: Option[Path] = None,
-    described: str = "",
-) -> Result[Path, str]:
-    """
-    Publish a unit description, reusing its exact file generation when the caller supplies its description digest.
-
-    1. Select a description-specific path when the caller already reconciled its complete identity.
-    2. Keep the file while its generation matches the published description witness.
-    3. Otherwise publish the description and its new witness; source checking still runs on every changed unit.
-    """
-    # 1. Different descriptions have different paths, so simultaneous profiles cannot replace one another's JSON.
-    mut root = Path(unit.project_root)
-    if let Some(selected) = owner:
-        root = selected
-    directory = root.joinpath("target").joinpath("incan").joinpath("units")
-    directory.mkdir(true, true).map_err((error) => f"{directory.0}: {error.message()}")?
-    mut name = compiled
-    if described != "":
-        name = described
-    path = directory.joinpath(f"{name}.unit.json")
-    witness = Path(f"{path.0}.oven-description")
-    # 2. The witness vouches only for this description's unchanged emitted bytes, never for source or acceptance.
-    if described != "" and description_current(path, witness, described):
-        return Ok(path)
-    # 3. An absent, changed or unwitnessed file is emitted again and published atomically.
-    text = unit.to_json().to_pretty_json().map_err((error) => error.message())?
-    publish(path, text)?
-    if described != "":
-        publish(witness, description_witness(described, artifact_identity(path)?))?
-    return Ok(path)
-
-
-def described_by(key: Key) -> str:
-    """The already reconciled complete description identity; an absent part disables descriptor reuse."""
-    for part in key.parts:
-        if part.startswith("description "):
-            return part[len("description "):]
-    return ""
-
-
-def description_current(path: Path, witness: Path, described: str) -> bool:
-    """Reuse emitted JSON only while its generation matches an exact description witness on both observations."""
-    match verified_description(path, witness, described):
-        Ok(current) => return current
-        Err(_) => return false
-
-
-def verified_description(path: Path, witness: Path, described: str) -> Result[bool, str]:
-    """Bracket the witness read with complete file observations; failed reads cause ordinary descriptor publication."""
-    stamp = artifact_identity(path)?
-    text = witness.read_text("utf-8", "strict").map_err((error) => error.message())?
-    if text != description_witness(described, stamp):
-        return Ok(false)
-    return Ok(artifact_identity(path)? == stamp)
-
-
-def description_witness(described: str, stamp: str) -> str:
-    """An exact-format witness binding a published descriptor to its caller's complete description identity."""
-    return f"incan.oven.description/1\n{described}\n{stamp}\n"
-
-
-pub def run_compiler(toolchain: Toolchain, arguments: list[str]) -> Result[i32, str]:
-    """
-    Run the toolchain's compiler without inheriting `RUSTC_BOOTSTRAP`.
-
-    1. Native units use the shared worker when it is available.
-    2. Other commands, and startup fallbacks, run the original compiler process.
-    3. A project owner captures the process's console for its caller.
-    """
-    # 1. A submitted worker request is never replayed through another compiler process.
-    if len(arguments) > 0 and arguments[0] == "--unit":
-        match compile_resident(toolchain, arguments)?:
-            Some(code) => return Ok(code)
-            None => pass
-    # 2. The cold process receives the original arguments and no bootstrap override.
-    mut command = configure_sdk(Command.new(toolchain.driver), toolchain.sysroot)?
-    for argument in arguments:
-        command.arg(argument)
-    command.env_remove("RUSTC_BOOTSTRAP")
-    # 3. Project owners report console output separately from the completion status.
-    if toolchain.console != "":
-        command.stdout(Stdio.from(open_stream(f"{toolchain.console}.out")?))
-        command.stderr(Stdio.from(open_stream(f"{toolchain.console}.err")?))
-    return status_of(command, toolchain.driver)
-
-
-def status_of(mut command: Command, program: str) -> Result[i32, str]:
-    """Run a command with the caller's standard streams; a process ended by a signal counts as exit code 1."""
-    match command.status():
-        Err(error) => return Err(f"cannot run {program}: {error}")
-        Ok(status) =>
-            match status.code():
-                Some(code) => return Ok(code)
-                None => return Ok(1)
 
 
 pub def program_binary(unit: UnitDescription) -> Path:

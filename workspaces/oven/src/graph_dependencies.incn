@@ -17,7 +17,7 @@ from rust_activation import DependencyDomain
 from rust_units import (
     BuiltUnit,
     RustBuild,
-    compile_library,
+    compile_rust_library,
     identity,
     ordered,
     read_receipt,
@@ -241,7 +241,7 @@ def build_native_units(
                 None => pass
         require_native_links(facet, declared.package, built)?
         output = rust_output(root, request.profile)
-        unit = compile_library(facet, declared, output, request, built, search)?
+        unit = compile_rust_library(facet, declared, output, request, built, search)?
         built[facet.key()] = unit
         search.append(unit.directory)
     return Ok(built)

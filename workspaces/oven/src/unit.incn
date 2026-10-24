@@ -139,44 +139,6 @@ pub def describe(source: Path, profile: str, request: FeatureRequest) -> Result[
             return project_unit(entry, projects[root.0], profile, root.0, active, projects)
 
 
-pub def dependency_units(unit: UnitDescription) -> Result[list[UnitDescription], str]:
-    """
-    Describe active path dependencies before their consumers, using the root graph's unified features and artifact
-    directories.
-
-    The root's already selected feature closure reproduces its request without re-enabling defaults. Each library
-    sees only the closure it reaches, including features contributed by other edges in the root graph.
-
-    1. A unit that links no path dependency has none to describe.
-    2. Read the project graph and select the features the unit already has, without defaults.
-    3. Describe each reached project in dependency order. Every one must have a library and its own package name.
-    """
-    # 1. A unit that links only standard packages has no path dependency to prepare.
-    if len([loaf for loaf in unit.loaves if not loaf.standard]) == 0:
-        return Ok([])
-    # 2. The dependencies see the features the unit already has, with defaults left off, not a new request's.
-    graph = intake(Path(unit.project_root)).map_err((error) => error.message())?
-    request = FeatureRequest(features=unit.active_features, default_features=false)
-    active = resolve_features(graph, unit.project_root, request)?
-    projects = projects_by_root(graph.projects)
-    # 3. Each reached project is a library of its own package name, described before the projects that consume it.
-    mut units: list[UnitDescription] = []
-    mut names: Dict[str, str] = {}
-    for root in graph.dependency_order:
-        if root == unit.project_root or root not in active.reached:
-            continue
-        project = projects[root]
-        package = project.intent.name
-        if package in names:
-            return Err(f"path dependencies {names[package]} and {root} share package name `{package}`")
-        names[package] = root
-        entry = Path(root).joinpath("src").joinpath("lib.incn")
-        if not entry.is_file():
-            return Err(f"path dependency {package} has no library: {entry.0}")
-        units.append(project_unit(entry, project, unit.profile, unit.project_root, active, projects)?)
-    return Ok(units)
-
-
 def projects_by_root(found: list[LocalProject]) -> Dict[str, LocalProject]:
     """The projects of a graph, by their root directories."""
     mut projects: Dict[str, LocalProject] = {}

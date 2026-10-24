@@ -1,9 +1,10 @@
-# behavior: native receivers retain owners, trait projections, opaque children, borrows, CommandExt and lengths (#2256)
+# behavior: native receivers retain owners, trait projections, opaque children, borrowed returns and CommandExt (#2256)
 # expect-stdout:
 #   allocated
 #   1
 #   1
 #   2
+#   7
 #   hello
 #   hello
 #   hello
@@ -77,6 +78,9 @@ def show_receiver_methods() -> None:
     assert qualified(5u64).as_secs() == 5u64
     samples = [Duration.from_secs(7u64)]
     assert first_duration_seconds(samples) == 7u64
+    assert first_duration(samples).as_secs() == 7u64
+    numbers = [7]
+    println(first_number(numbers))
     match BytesIO(b"abc").read():
         Ok(data) => assert data == b"abc"
         Err(_) => assert false
@@ -86,6 +90,18 @@ def first_duration_seconds(values: &list[Duration]) -> u64:
     """Resolve Index's Output from both its native list owner and its concrete usize trait argument."""
     slot: usize = 0
     return Index.index(values, slot).as_secs()
+
+
+def first_duration(values: &list[Duration]) -> &Duration:
+    """Return the shared element selected by Index without copying its storage."""
+    slot: usize = 0
+    return Index.index(values, slot)
+
+
+def first_number(values: &list[int]) -> &int:
+    """Return the same shared Index contract for an exact scalar element."""
+    slot: usize = 0
+    return Index.index(values, slot)
 
 
 def show_trait_methods() -> None:
