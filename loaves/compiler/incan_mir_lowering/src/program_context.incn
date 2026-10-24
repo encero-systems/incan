@@ -18,7 +18,7 @@ pub model DisplayFunction:
 
 
 pub model ProgramContext:
-    """Share ordered program tables and checked body positions without copying their contents into each frame."""
+    """Share checked declaration tables, body positions and the unit's arithmetic policy across ordinary and lifted frames."""
 
     pub body_indices: BodyIndex
     # This immutable copy keeps the specialized module's order, so the checked index selects the same executable facts.
@@ -27,6 +27,8 @@ pub model ProgramContext:
     pub statics: Arc[list[StaticDeclaration]]
     pub comparison_functions: Arc[list[list[str]]]
     pub union_types: Arc[BTreeSet[RustType]]
+    # Lifted functions share their unit's ordinary integer policy along with its checked declaration tables.
+    pub overflow_checks: bool = true
 
 
 pub def synthetic_program_context(module: &BodyIrModule) -> ProgramContext:

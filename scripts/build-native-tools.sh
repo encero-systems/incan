@@ -16,7 +16,7 @@ if [[ -n ${2:-} && $2 != --rebuild ]] || (( $# > 2 )); then
 fi
 
 export INCAN_HOME=${SELFBUILD_HOME:-$lane/dev8-home}
-export INCAN_STDLIB=$lane/bootstrap/stdlib-available
+export INCAN_STDLIB=${SELFBUILD_STDLIB:-$lane/bootstrap/stdlib-available}
 builder=${SELFBUILD_OVEN:-$lane/oven-bin/incan}
 project=$lane/incan/workspaces/$name
 output=$project/target/incan/release/bin/$name

@@ -1902,8 +1902,8 @@ fn validate_array(
     })
 }
 
-/// Sized integer arithmetic retains its carrier for legacy release wrapping; an explicit pair destination requests
-/// checked arithmetic.
+/// Integer arithmetic retains its exact carrier unless an explicit pair destination requests checked arithmetic.
+/// Lowering selects that destination from the unit policy or an explicit helper, independently of rustc defaults.
 fn binary_result(function: &Function, op: &BinaryOp, ty: Scalar, expected: Scalar) -> Result<Scalar, PlanError> {
     if let Some(kind) = sized_numeric(&ty) {
         return match op {
@@ -1928,7 +1928,13 @@ fn binary_result(function: &Function, op: &BinaryOp, ty: Scalar, expected: Scala
     }
     match op {
         BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor if ty == Scalar::Int => Ok(Scalar::Int),
-        BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply if ty == Scalar::Int => Ok(Scalar::CheckedInt),
+        BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply if ty == Scalar::Int => {
+            Ok(if expected == Scalar::CheckedInt {
+                Scalar::CheckedInt
+            } else {
+                Scalar::Int
+            })
+        }
         BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide if ty == Scalar::Float => {
             Ok(Scalar::Float)
         }
@@ -2094,6 +2100,17 @@ fn signature(plan: &Plan, function: &Function, callee: &Callee) -> Result<(Vec<S
         CalleeKind::StaticForce(slot) => {
             crate::statics::cell(plan, *slot)?;
             Ok((Vec::new(), Scalar::Unit))
+        }
+        CalleeKind::ModuleInitialized(slot) | CalleeKind::ModuleComplete(slot) => {
+            if !crate::statics::cell(plan, *slot)?.module_completion {
+                return Err(invalid(function, "module completion requires its first computed cell"));
+            }
+            let result = if matches!(callee.kind, CalleeKind::ModuleInitialized(_)) {
+                Scalar::Bool
+            } else {
+                Scalar::Unit
+            };
+            Ok((Vec::new(), result))
         }
         CalleeKind::FieldMetadata(owner, info) => {
             Ok((Vec::new(), scalar(&crate::field_metadata::result(plan, *owner, *info)?)))

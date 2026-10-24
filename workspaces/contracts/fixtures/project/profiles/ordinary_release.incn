@@ -1,0 +1,32 @@
+# behavior: ordinary integer arithmetic wraps in release while explicit overflow helpers retain their selected policy (#2256)
+# cli-commands:
+#   run src/main.incn --profile release
+# expect-stdout:
+#   -9223372036854775808
+#   -128
+#   127
+#   -128
+#   0
+#   checked
+#   0
+#   255
+
+"""Observe release overflow for ordinary and exact-width integers beside explicit policies."""
+
+
+def main() -> None:
+    """Exercise addition, subtraction, multiplication, negation and explicit overflow policies."""
+    large: int = 9223372036854775807
+    small: i8 = 127
+    low: i8 = -128
+    unsigned: u8 = 255
+    println(large + 1)
+    println(small + 1)
+    println(low - 1)
+    println(-low)
+    println(unsigned * 2u8 + 2u8)
+    match unsigned.checked_add(1u8):
+        None => println("checked")
+        Some(_value) => println("unexpected")
+    println(unsigned.wrapping_add(1u8))
+    println(unsigned.saturating_add(1u8))

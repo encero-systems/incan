@@ -77,6 +77,22 @@ fn inline_range_parts(
     }
 }
 
+/// Recognize only zero-based, unit-step builtin argument layouts before any argument is evaluated.
+/// Canonical builtin identity is checked separately; computed starts and steps retain ordinary iteration.
+fn zero_based_unit_arguments(arguments: &[ast::CallArg]) -> bool {
+    let integer = |argument: &ast::CallArg, expected| {
+        matches!(argument, ast::CallArg::Positional(value)
+            if matches!(&value.node, ast::Expr::Literal(ast::Literal::Int(number))
+                if number.value == expected && number.suffix.is_none()))
+    };
+    match arguments {
+        [ast::CallArg::Positional(end)] => inline_range_parts(end).is_none(),
+        [start, ast::CallArg::Positional(_)] => integer(start, 0),
+        [start, ast::CallArg::Positional(_), step] => integer(start, 0) && integer(step, 1),
+        _ => false,
+    }
+}
+
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower `if`/`elif`/`else` into a [`bir::StatementKind::If`] chain. Evaluate ownership facts in written order,
     /// then fold the already lowered `elif` branches into nested `else { if ... }` wrappers from the last branch
@@ -801,6 +817,67 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             end,
             step,
         }))))
+    }
+
+    /// Retain the exact count of a canonical zero-based unit-step range, evaluating its bound once.
+    /// Other range shapes remain on their existing iteration path. The count is clamped before a list fill so a
+    /// negative upper bound constructs an empty list rather than requesting a negative repetition count.
+    pub(super) fn zero_based_unit_range_count(
+        &mut self,
+        expr: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Result<Option<bir::Operand>, String> {
+        if let ast::Expr::Paren(inner) = &expr.node {
+            return self.zero_based_unit_range_count(inner, scope, out);
+        }
+        let ast::Expr::Call(_, _, args) = &expr.node else {
+            return Ok(None);
+        };
+        if self.type_info.resolved_builtin_call(expr.span) != Some(bir::BuiltinFnId::Range)
+            || !zero_based_unit_arguments(args)
+        {
+            return Ok(None);
+        }
+        let Some(RangeLoopSource::Builtin(bounds)) = self.builtin_range_loop_source(expr, scope, out)? else {
+            return Err("exact comprehension count lacks checked scalar range bounds".into());
+        };
+        let span = hir_span(expr.span);
+        let int_ty = IncanType::Primitive(IncanPrimitiveType::Int);
+        let count = self.new_temp(int_ty, scope, span);
+        out.push(bir::Statement {
+            kind: bir::StatementKind::Assign {
+                place: bir::Place::from_local(count),
+                rvalue: bir::Rvalue::Use(bounds.end),
+            },
+            span,
+        });
+        let zero = bir::Operand::Constant(bir::Constant::Int(0));
+        let negative = self.push_assign_temp(
+            bir::Rvalue::BinaryOp(bir::BinOp::Lt, index_read(count), zero.clone()),
+            IncanType::Primitive(IncanPrimitiveType::Bool),
+            scope,
+            span,
+            out,
+        );
+        out.push(bir::Statement {
+            kind: bir::StatementKind::If {
+                cond: negative,
+                then_block: bir::Block {
+                    scope: self.new_scope(Some(scope), span),
+                    stmts: vec![bir::Statement {
+                        kind: bir::StatementKind::Assign {
+                            place: bir::Place::from_local(count),
+                            rvalue: bir::Rvalue::Use(zero),
+                        },
+                        span,
+                    }],
+                },
+                else_block: None,
+            },
+            span,
+        });
+        Ok(Some(index_read(count)))
     }
 
     /// Select positive-step or negative-step exhaustion from the retained scalar builtin arguments.

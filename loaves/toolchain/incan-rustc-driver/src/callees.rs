@@ -65,6 +65,8 @@ pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
         CalleeKind::StaticLoad(slot) => planned(tcx, &crate::statics::load_name(*slot)),
         CalleeKind::StaticStore(slot) => planned(tcx, &crate::statics::store_name(*slot)),
         CalleeKind::StaticForce(slot) => planned(tcx, &crate::statics::force_name(*slot)),
+        CalleeKind::ModuleInitialized(slot) => planned(tcx, &crate::statics::initialized_name(*slot)),
+        CalleeKind::ModuleComplete(slot) => planned(tcx, &crate::statics::complete_name(*slot)),
         CalleeKind::FieldMetadata(owner, _) => planned(tcx, &crate::field_metadata::name(*owner)),
         CalleeKind::StaticMethod(slot, method) => planned(tcx, &crate::statics::method_name(*slot, method)),
     }
@@ -251,6 +253,12 @@ fn layout_definition(tcx: TyCtxt<'_>, definition: DefId, expected: DefKind) -> O
 /// concrete Self arguments and bounds remain subject to native signature validation.
 /// A structural slice owner selects one public builtin impl item through the same rustc index used by extraction.
 pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
+    if let Some(primitive) = path
+        .strip_prefix("std::primitive::")
+        .or_else(|| path.strip_prefix("core::primitive::"))
+    {
+        return primitive_path(tcx, primitive).ok_or_else(|| PlanError::UnknownCallee(path.into()));
+    }
     if let Some((owner, method)) = path.split_once("::") {
         let native = match owner {
             "f32" => Some(tcx.types.f32),
@@ -301,6 +309,24 @@ pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
         return Err(PlanError::UnknownCallee(path.into()));
     }
     Ok(current)
+}
+
+/// Resolve a primitive's public inherent function from rustc's own impl bucket and canonical primitive identity.
+/// Method spelling alone grants no signature; the ordinary native signature and predicate checks still apply.
+fn primitive_path(tcx: TyCtxt<'_>, path: &str) -> Option<DefId> {
+    let (owner, method) = path.split_once("::")?;
+    let (_, native) = crate::rust_facts::primitive_types(tcx)
+        .into_iter()
+        .find(|(name, _)| *name == owner)?;
+    let bucket = match native.kind() {
+        rustc_middle::ty::Bool => SimplifiedType::Bool,
+        rustc_middle::ty::Char => SimplifiedType::Char,
+        rustc_middle::ty::Int(kind) => SimplifiedType::Int(*kind),
+        rustc_middle::ty::Uint(kind) => SimplifiedType::Uint(*kind),
+        rustc_middle::ty::Float(kind) => SimplifiedType::Float(*kind),
+        _ => return None,
+    };
+    primitive_function(tcx, bucket, method)
 }
 
 /// Select the exact public constructor definition of a tuple or unit enum variant. The caller distinguishes
@@ -467,12 +493,12 @@ pub fn arguments<'tcx>(
                 Some(ty) => crate::types::native_type(tcx, ty)?.into(),
                 None => parameter
                     .default_value(tcx)
+                    .map(|default| default.instantiate(tcx, tcx.mk_args(&arguments)).skip_normalization())
+                    .or_else(|| owner_parameter_default(tcx, def, index, &arguments))
                     .ok_or_else(|| PlanError::Invalid {
                         function: tcx.def_path_str(def),
                         reason: "omitted generic argument has no default".into(),
-                    })?
-                    .instantiate(tcx, tcx.mk_args(&arguments))
-                    .skip_normalization(),
+                    })?,
             },
             rustc_middle::ty::GenericParamDefKind::Const { .. } => {
                 return Err(PlanError::Unsupported {
@@ -486,6 +512,39 @@ pub fn arguments<'tcx>(
     Ok(tcx.mk_args(&arguments))
 }
 
+/// Recover an inherent impl parameter's default from its exact receiver ADT, such as Vec's allocator.
+/// Impl generics do not repeat the ADT's defaults. Map the impl parameter through Self's actual arguments instead
+/// of guessing an allocator by name; earlier explicit bindings instantiate any default referring to them.
+fn owner_parameter_default<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def: DefId,
+    index: usize,
+    supplied: &[rustc_middle::ty::GenericArg<'tcx>],
+) -> Option<rustc_middle::ty::GenericArg<'tcx>> {
+    let implementation = tcx.impl_of_assoc(def)?;
+    let mut arguments = rustc_middle::ty::GenericArgs::identity_for_item(tcx, implementation).to_vec();
+    for (slot, argument) in arguments.iter_mut().zip(supplied) {
+        *slot = *argument;
+    }
+    let owner = tcx
+        .type_of(implementation)
+        .instantiate(tcx, tcx.mk_args(&arguments))
+        .skip_normalization();
+    let rustc_middle::ty::Adt(owner, owner_arguments) = owner.kind() else {
+        return None;
+    };
+    let position = owner_arguments.iter().position(|argument| {
+        argument.as_type().is_some_and(|ty| {
+            matches!(ty.kind(), rustc_middle::ty::Param(parameter)
+            if usize::try_from(parameter.index).ok() == Some(index))
+        })
+    })?;
+    tcx.generics_of(owner.did())
+        .param_at(position, tcx)
+        .default_value(tcx)
+        .map(|default| default.instantiate(tcx, owner_arguments).skip_normalization())
+}
+
 /// Whether `written` type arguments instantiate `def`: lifetimes consume no slot, omitted types need defaults, and
 /// const arguments require a separate value contract.
 pub fn arity_admits(tcx: TyCtxt<'_>, def: DefId, written: usize) -> bool {
@@ -497,7 +556,9 @@ pub fn arity_admits(tcx: TyCtxt<'_>, def: DefId, written: usize) -> bool {
             rustc_middle::ty::GenericParamDefKind::Lifetime => continue,
             rustc_middle::ty::GenericParamDefKind::Const { .. } => return false,
             rustc_middle::ty::GenericParamDefKind::Type { .. } if supplied < written => supplied += 1,
-            rustc_middle::ty::GenericParamDefKind::Type { .. } if parameter.default_value(tcx).is_some() => {}
+            rustc_middle::ty::GenericParamDefKind::Type { .. }
+                if parameter.default_value(tcx).is_some()
+                    || owner_parameter_default(tcx, def, index, &[]).is_some() => {}
             _ => return false,
         }
     }

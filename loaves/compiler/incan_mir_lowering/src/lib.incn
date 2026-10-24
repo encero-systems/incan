@@ -61,11 +61,13 @@ pub from pub::incan_mir_plan import (
 
 
 pub model SourceInputs:
-    """Own source text, paths and collected test names across the compiler's Rust caller boundary."""
+    """Own source provenance, collected tests and the unit's ordinary integer overflow policy across the Rust boundary."""
 
     pub sources: list[str]
     pub files: list[str]
     pub tests: list[str]
+    # Ordinary integer operations follow the selected unit's profile; explicit helpers keep their own policies.
+    pub overflow_checks: bool = true
 
 
 pub def unit_plan(
@@ -76,7 +78,16 @@ pub def unit_plan(
     mut published: list[NativeUnionDeclaration],
 ) -> Result[Option[Plan], str]:
     """Borrow checked modules and consume their source inputs to lower a program, library or collected test unit."""
-    return checked_unit_plan(modules, inputs.sources, inputs.files, entry, kind, inputs.tests, published)
+    return checked_unit_plan(
+        modules,
+        inputs.sources,
+        inputs.files,
+        entry,
+        kind,
+        inputs.tests,
+        published,
+        inputs.overflow_checks,
+    )
 
 
 pub def program_refusals(

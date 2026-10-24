@@ -4548,6 +4548,9 @@ pub enum HelperOp {
     TextCodecErrorsValid,
     /// Register a checked native function pointer as the standard panic hook; the native boundary boxes it.
     InstallPanicHook,
+    /// Fill a list comprehension's scalar literal over a checked zero-based, unit-step range.
+    /// Its arguments retain the literal and exact nonnegative cardinality; the source span remains the comprehension's.
+    RangeListFill,
 }
 
 impl HelperOp {
@@ -4610,6 +4613,7 @@ impl HelperOp {
             Self::StrNotContains => "str_not_contains",
             Self::ListConcat => "list_concat",
             Self::ListRepeat => "list_repeat",
+            Self::RangeListFill => "range_list_fill",
             Self::ListContains => "list_contains",
             Self::ListNotContains => "list_not_contains",
             Self::SetContains => "set_contains",

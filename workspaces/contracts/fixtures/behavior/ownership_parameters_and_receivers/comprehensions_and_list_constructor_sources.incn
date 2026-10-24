@@ -1,4 +1,4 @@
-# behavior: filtered and plain comprehensions over lists of strings and ints, a comprehension over a mut list parameter, and list() over a list, a mut parameter, a str, a frozen list, a frozen set and a dict each produce the expected items while their sources stay intact
+# behavior: comprehensions and list constructors preserve their sources; uniform range comprehensions evaluate bounds once, preserve empty ranges, indexing, sum and independent mutable storage (#2256)
 # expect-stdout:
 #   ["ab", "def"] 3
 #   [3, 1, 2] 9 4
@@ -6,6 +6,11 @@
 #   ["ab", "c", "def"] ["ab", "c", "def", "z"] 4
 #   ["h", "e", "y"]
 #   ["x", "y"] 2 2
+#   bound
+#   3 true 3
+#   2 3
+#   0 0 0
+#   4 5
 
 const FROZEN_TEXT: FrozenList[str] = ["x", "y"]
 const FROZEN_NUMBERS: FrozenSet[int] = {7, 8}
@@ -25,7 +30,30 @@ def from_mut_param(mut items: list[str]) -> list[str]:
     return list(items)
 
 
+def bound() -> int:
+    """Expose the range bound's single evaluation before list observations."""
+    println("bound")
+    return 3
+
+
+def uniform_ranges() -> None:
+    """Observe exact scalar fills, empty ranges, independent storage and non-unit fallback iteration."""
+    mut flags = [True for item in range(bound())]
+    copy = flags
+    println(f"{len(flags)} {flags[-1]} {sum(flags)}")
+    flags[1] = False
+    println(f"{sum(flags)} {sum(copy)}")
+    negative = [7 for item in range(-2)]
+    empty = [1.5 for item in range(0)]
+    explicit = [False for item in range(0, 0, 1)]
+    println(f"{len(negative)} {len(empty)} {len(explicit)}")
+    regular = [4 for item in range(0, 2)]
+    stepped = [5 for item in range(1, 6, 2)]
+    println(f"{regular[1]} {stepped[2]}")
+
+
 def main() -> None:
+    """Compare source-preserving constructors and exact scalar range comprehensions."""
     names = ["ab", "c", "def"]
     long_names = [name for name in names if len(name) > 1]
     println(f"{long_names:?} {len(names)}")
@@ -44,3 +72,4 @@ def main() -> None:
     println(f"{letters:?}")
     keyed: dict[str, int] = {"k": 1, "j": 2}
     println(f"{list(FROZEN_TEXT):?} {len(list(FROZEN_NUMBERS))} {len(list(keyed))}")
+    uniform_ranges()

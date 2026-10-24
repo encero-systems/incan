@@ -8,10 +8,9 @@ use super::reads::*;
 use super::*;
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
-    /// Lower a list comprehension `[expr for pattern in iter if filter]` into: an empty `AggregateKind::List`
-    /// temporary, the desugared clause-chain loop (see [`Self::lower_comprehension_clauses`]), pushing each accepted
-    /// element into it via a compiler-synthesized `push` [`bir::Callee::Method`] call, then a read of the completed
-    /// list. Only v0's single mirrored `(pattern, iter, filter)` clause is lowered -- `comp.clauses` is intentionally
+    /// Lower a scalar-literal range comprehension through its retained exact cardinality when available. Other
+    /// list comprehensions build an empty list and push each accepted element through the desugared clause loop.
+    /// Only v0's single mirrored `(pattern, iter, filter)` clause is lowered -- `comp.clauses` is intentionally
     /// not consulted, since neither the typechecker (`check_list_comp` in
     /// `loaves/compiler/incan_frontend/src/typechecker/check_expr/comps.rs`) nor the existing Rust-emission backend
     /// (`loaves/compiler/incan_ir/src/lower/expr/comprehensions.rs`) reads it either; a list comprehension with more
@@ -37,6 +36,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let Some([element_ty]) = collection_member_types(&ty, CollectionTypeId::List) {
             self.settle_open_result_value(&comp.expr, element_ty);
         }
+        if let Some(filled) = self.lower_uniform_range_list(comp, &ty, span, scope, out) {
+            return filled;
+        }
         let list_local = self.new_temp(ty.clone(), scope, hir_span_value);
         out.push(bir::Statement {
             kind: bir::StatementKind::Assign {
@@ -54,6 +56,51 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         };
         self.lower_scoped_comprehension_clauses(&clauses, &terminal, scope, hir_span_value, out);
         self.temp_operand(list_local, &self.locals[list_local.index()].ty)
+    }
+
+    /// Retain a scalar literal comprehension's exact cardinality instead of discarding it into repeated pushes.
+    /// Literal evaluation has no effects or ownership transfers. Filters, computed elements and non-unit ranges
+    /// keep ordinary iteration; bounds still evaluate once through the canonical range boundary.
+    fn lower_uniform_range_list(
+        &mut self,
+        comp: &ast::ListComp,
+        ty: &IncanType,
+        span: ast::Span,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::Operand> {
+        if comp.filter.is_some()
+            || !matches!(
+                &comp.expr.node,
+                ast::Expr::Literal(ast::Literal::Bool(_) | ast::Literal::Int(_) | ast::Literal::Float(_))
+            )
+        {
+            return None;
+        }
+        let count = match self.zero_based_unit_range_count(&comp.iter, scope, out) {
+            Ok(Some(count)) => count,
+            Ok(None) => return None,
+            Err(reason) => return Some(self.unsupported_operand(reason, scope, hir_span(span), out)),
+        };
+        let value = self.lower_expr_to_operand(&comp.expr, scope, out);
+        let helper = bir::HelperOp::RangeListFill;
+        let span = hir_span(span);
+        self.record_runtime_requirement(AbiV0RuntimeRequirement::RuntimeHelper(helper.as_str().into()));
+        self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
+        self.record_runtime_requirement(AbiV0RuntimeRequirement::PanicStrategy);
+        self.panic_facts.push(bir::PanicFact {
+            span,
+            reason: bir::PanicReason::HelperMayPanic(helper),
+        });
+        Some(self.push_call_temp(
+            bir::Callee::Helper(helper),
+            fixed_elements(vec![value, count]),
+            ty.clone(),
+            scope,
+            span,
+            true,
+            out,
+        ))
     }
 
     /// Lower a dict comprehension `{key: value for pattern in iter if filter}` the same way

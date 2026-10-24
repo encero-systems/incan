@@ -7,47 +7,64 @@ congruential sequence, and every lookup path contributes to a checksum so optimi
 
 from std.collections import OrdinalMap, OrdinalMapError
 from std.datetime import Instant
+from std.environ import args
 
 
 def make_keys(count: int) -> list[str]:
-    """
-    Build deterministic column-name keys for the benchmark.
-    """
+    """Build deterministic column-name keys for the benchmark."""
     return [f"field_{idx:08d}" for idx in range(count)]
 
 
 def make_probe_indexes(key_count: int, probe_count: int) -> list[int]:
-    """
-    Build a repeatable pseudo-random probe sequence over the key range.
-    """
+    """Build a repeatable pseudo-random probe sequence over the key range."""
     mut indexes: list[int] = []
     for idx in range(probe_count):
         indexes.append((idx * 1103515245 + 12345) % key_count)
     return indexes
 
 
-def main() -> None:
+def main() -> Result[None, str]:
     """
-    Construct the map once, then time safe, required, unchecked, and batch lookup paths.
-    """
-    key_count = 100_000
-    probe_count = 1_000_000
+    Construct the map once, then time each lookup path on the requested corpus.
 
+    1. Read the optional key and probe counts supplied by the comparison runner.
+    2. Construct the map from deterministic keys.
+    3. Time safe, required, unchecked, and batch lookup paths.
+    """
+    # 1. The runner validates and normalizes both counts before invoking Incan.
+    arguments = args().map_err((error) => error.message())?
+    key_count = requested_count(arguments, 1, 100_000)
+    probe_count = requested_count(arguments, 2, 1_000_000)
+
+    # 2. Every lookup uses the same deterministic key corpus.
     keys = make_keys(key_count)
 
     build_started = Instant.now()
     map_result = OrdinalMap.from_keys(keys)
     build_nanoseconds = build_started.elapsed().total_nanoseconds()
 
+    # 3. Report every lookup path against the constructed map.
     match map_result:
         Ok(columns) => run_lookup(columns, keys, key_count, probe_count, build_nanoseconds)
         Err(err) => println(err.message())
+    return Ok(None)
 
 
-def run_lookup(columns: OrdinalMap[str], keys: list[str], key_count: int, probe_count: int, build_nanoseconds: int) -> None:
-    """
-    Time lookup variants over the same probe sequence and report checksum-preserving durations.
-    """
+def requested_count(arguments: list[str], index: int, default: int) -> int:
+    """Use the runner's validated positional count, or the default for a direct invocation."""
+    if index < len(arguments):
+        return int(arguments[index])
+    return default
+
+
+def run_lookup(
+    columns: OrdinalMap[str],
+    keys: list[str],
+    key_count: int,
+    probe_count: int,
+    build_nanoseconds: int,
+) -> None:
+    """Time lookup variants over the same probe sequence and report checksum-preserving durations."""
     probe_indexes = make_probe_indexes(key_count, probe_count)
 
     get_started = Instant.now()
@@ -120,9 +137,7 @@ def print_results(
     batch_require_nanoseconds: int,
     batch_unchecked_nanoseconds: int,
 ) -> None:
-    """
-    Print machine-readable benchmark counters and storage-size metrics.
-    """
+    """Print machine-readable benchmark counters and storage-size metrics."""
     println("implementation=incan_ordinal_map")
     println(f"keys={key_count}")
     println(f"probes={probe_count}")

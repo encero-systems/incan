@@ -1196,6 +1196,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         unit.kind = UnitKind::Library;
     }
     let kind = unit.kind;
+    let overflow_checks = unit.profile != "release";
     let loaves = unit.loaves.clone();
     let loaf_links: std::collections::BTreeSet<String> =
         unit.loaves.iter().map(|loaf| loaf.name.replace('-', "_")).collect();
@@ -1224,6 +1225,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
             sources: program.sources,
             files: program.files,
             tests: program.tests.iter().map(|test| test.name.clone()).collect(),
+            overflow_checks,
         };
         unit_plan(
             &program.modules,
@@ -1335,6 +1337,7 @@ fn census_complete(program: &CheckedProgram) -> Result<bool, Box<dyn std::error:
             sources: program.sources.clone(),
             files: program.files.clone(),
             tests: Vec::new(),
+            overflow_checks: true,
         },
         program.entry.try_into()?,
         std::env::var_os("INCAN_DIRECT_CENSUS_PROGRESS").is_some(),

@@ -581,6 +581,9 @@ pub enum CalleeKind:
     StaticStore(int)
     # Run computed static slot `n`'s initializer unless it has already run, keeping the value in its storage.
     StaticForce(int)
+    # Observe or publish completion of this module's declaration-order initialization, keyed by its first cell.
+    ModuleInitialized(int)
+    ModuleComplete(int)
     # Call the selected planned method while holding computed slot n's actual shared or exclusive storage guard.
     StaticMethod(int, str)
     # Clone the captured concrete environment behind an authenticated shared callable object.
@@ -805,6 +808,8 @@ pub model StaticCell:
     pub ty: PlanType
     pub initializer: str
     pub span: SourceSpan
+    # Only the first computed cell of a module owns its initialization completion flag.
+    pub module_completion: bool = false
 
 
 @derive(Clone, PartialEq)

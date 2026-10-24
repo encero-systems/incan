@@ -342,7 +342,7 @@ from numerics import (
     has_sized_numeric,
     sized_plan_type,
     numeric_name,
-    sized_signed_integer,
+    numeric_zero,
     numeric_carrier,
     integer_carrier,
 )
@@ -2221,23 +2221,11 @@ def lower_local_assignment(
             else:
                 converted = boundary_plan_operand(builder, operand, ty, span)?
                 operation = RvalueKind.Use(converted)
-        RvalueKind.Unary(operator, operand) =>
-            if operator == UnaryOp.Negate and sized_signed_integer(ty):
-                external_call(
-                    builder,
-                    f"incan_native_runtime::negate_{numeric_name(ty)}",
-                    [ty],
-                    ty,
-                    [operand],
-                    target,
-                    span,
-                )
-                return Ok(None)
         _ => pass
     track_rvalue_moves(builder, operation)
-    if ty == PlanType.Int:
-        operation = negation_as_subtraction(operation, span)
-        if is_checked_int_operation(operation):
+    if integer_carrier(ty):
+        operation = negation_as_subtraction(operation, ty, span)?
+        if builder.program.overflow_checks and is_checked_int_operation(operation):
             return lower_checked_int_assignment(builder, target, operation, span)
     if is_nominal_type(place_type(builder.locals, target)) or is_future(place_type(builder.locals, target)):
         replace_owned_destination(builder, target, operation, span)
@@ -3007,18 +2995,18 @@ def bind_closure_input(
     return Ok(None)
 
 
-def negation_as_subtraction(operation: RvalueKind, span: SourceSpan) -> RvalueKind:
-    """Rewrite integer `-x` as `0 - x`, so it gets the same overflow check as any other subtraction."""
+def negation_as_subtraction(operation: RvalueKind, ty: PlanType, span: SourceSpan) -> Result[RvalueKind, str]:
+    """Rewrite integer negation with a zero of its exact carrier so the unit's subtraction policy applies."""
     match operation:
         RvalueKind.Unary(operator, operand) =>
             if operator == UnaryOp.Negate:
-                return RvalueKind.Binary(BinaryOp.Subtract, literal(Constant.Int(0), span), operand)
+                return Ok(RvalueKind.Binary(BinaryOp.Subtract, literal(numeric_zero(ty)?, span), operand))
         _ => pass
-    return operation
+    return Ok(operation)
 
 
 def is_checked_int_operation(operation: RvalueKind) -> bool:
-    """Whether an integer operation can overflow: `+`, `-` and `*` panic on overflow, as the legacy route does."""
+    """Identify addition, subtraction and multiplication, whose overflow follows the unit's selected policy."""
     match operation:
         RvalueKind.Binary(operator, _left, _right) =>
             return operator == BinaryOp.Add or operator == BinaryOp.Subtract or operator == BinaryOp.Multiply
@@ -5885,7 +5873,7 @@ def lower_runtime_helper(
         RustHelper.StrSplit => return lower_split_helper(builder, arguments, destination, span)
         RustHelper.StrJoin => return lower_join_helper(builder, arguments, destination, span)
         RustHelper.ListConcat => return lower_list_concat(builder, arguments, destination, span)
-        RustHelper.ListRepeat => return lower_list_repeat(builder, arguments, destination, span)
+        RustHelper.ListRepeat | RustHelper.RangeListFill => return lower_list_repeat(builder, arguments, destination, span)
         RustHelper.ListContains => return lower_list_helper(builder, false, arguments, destination, span)
         RustHelper.ListNotContains => return lower_list_helper(builder, true, arguments, destination, span)
         _ => pass
@@ -7488,17 +7476,19 @@ pub def unit_plan(
     kind: str,
     tests: list[str],
     mut published: list[NativeUnionDeclaration],
+    overflow_checks: bool = true,
 ) -> Result[Option[Plan], str]:
     """Lower one checked unit by kind; test entries come from session collection, never from naming heuristics here."""
     if kind != "program" and kind != "library" and kind != "test":
         return Err(f"unsupported unit kind {kind}")
-    return lowered_plan(modules, sources, files, entry, kind, tests, published)
+    return lowered_plan(modules, sources, files, entry, kind, tests, published, overflow_checks)
 
 
 def program_context(
     module: &BodyIrModule,
     mut intrinsics: list[EnumDeclaration],
     unions: list[RustType],
+    overflow_checks: bool = true,
 ) -> Result[ProgramContext, str]:
     """Freeze program dispatch mappings after layout admission, copying storage once from the still-borrowed checked module."""
     return Ok(
@@ -7509,6 +7499,7 @@ def program_context(
             statics=Arc.new(list(module.static_declarations)),
             comparison_functions=Arc.new(comparison_functions(module, intrinsics)?),
             union_types=union_index(unions),
+            overflow_checks=overflow_checks,
         ),
     )
 
@@ -7521,6 +7512,7 @@ def lowered_plan(
     kind: str,
     tests: list[str],
     mut published: list[NativeUnionDeclaration],
+    overflow_checks: bool,
 ) -> Result[Option[Plan], str]:
     """Lower all three unit kinds through one pipeline, optionally tracing stages through `INCAN_TRACE_LOWERING`; only a program requires an authored main."""
     trace_key: str = "INCAN_TRACE_LOWERING"
@@ -7574,7 +7566,8 @@ def lowered_plan(
         println("lowering: enum declarations")
     mut enums = lower_enum_declarations(context, files[entry], intrinsics)?
     attach_enum_comparisons(context, enums, intrinsics)?
-    program = program_context(context, intrinsics, unions)?
+    program = program_context(context, intrinsics, unions, overflow_checks)?
+    # Native comparison bridges call their checked slots without an ordinary source call to schedule them.
     mut bridge_bodies: list[str] = []
     for declaration in models:
         bridge_bodies.extend(declaration.comparison_methods)
@@ -7999,8 +7992,14 @@ def lower_computed_statics(
                 )?
                 if initializer.return_type != ty:
                     return Err("invalid Body IR computed static initializer carrier")
-                cells.append(StaticCell(slot=slot, ty=ty, initializer=initializer.name, span=initializer.span))
                 key = module_static_key(program.statics.as_ref(), owner)
+                cells.append(StaticCell(
+                    slot=slot,
+                    ty=ty,
+                    initializer=initializer.name,
+                    span=initializer.span,
+                    module_completion=slot == key,
+                ))
                 if key not in keys:
                     keys.append(key)
                     functions.append(module_initializer(program.statics.as_ref(), key, initializer.span))
@@ -9725,6 +9724,8 @@ def lower_builtin_method(
         None => pass
     if member == "f32.powf":
         return Err("unsupported Body IR f32 powf: its checked float result differs from the carrier's f32 powf")
+    if member in ["f32.sqrt", "f64.sqrt"]:
+        return lower_float_square_root(builder, member, receiver_type, arguments, destination, span)
     match float_method(member, receiver_type):
         Some((name, parameters, result)) =>
             return lower_float_method(builder, name, parameters, result, arguments, destination, span)
@@ -9916,6 +9917,31 @@ def lower_text_codec_method(
     return Ok(true)
 
 
+def lower_float_square_root(
+    mut builder: Builder,
+    member: str,
+    receiver: PlanType,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Call native square root at the checker's float result type, widening an f32 receiver before evaluation."""
+    if len(arguments) != 1:
+        return Err("invalid Body IR square-root arity")
+    mut width = "f64"
+    if receiver == PlanType.F32:
+        width = "f32"
+    elif receiver != PlanType.Float and receiver != PlanType.F64:
+        return Err("invalid Body IR square-root receiver")
+    if member != f"{width}.sqrt":
+        return Err("invalid Body IR square-root declaration identity")
+    output = call_destination(builder, destination, PlanType.Float, span)?
+    operand = numeric_receiver(builder, arguments, span)?
+    widened = coerce_numeric_operand(builder, operand, PlanType.Float, span)?
+    external_call(builder, "std::primitive::f64::sqrt", [PlanType.Float], PlanType.Float, [widened], output, span)
+    return Ok(None)
+
+
 def float_method(member: str, receiver: PlanType) -> Option[tuple[str, list[PlanType], PlanType]]:
     """Select the checked native float member; these primitives must not reenter their runtime wrappers."""
     mut width = ""
@@ -10077,6 +10103,8 @@ def lower_list_method(
         None => pass
     if member == "List.iter":
         return lower_list_iter(builder, arguments, destination, span)
+    if member in ["List.reserve", "List.reserve_exact"]:
+        return lower_list_reservation(builder, member, arguments, destination, span)
     if member == "bytes.as_slice":
         if (
             len(arguments) != 1
@@ -10165,11 +10193,7 @@ def lower_list_method(
             match arguments[index + 1].as_one():
                 Some(value) => operands.append(boundary_operand(builder, value, parameters[index], span)?)
                 None => return Err("unsupported Body IR list method spread argument")
-    cell = static_collection_receiver(builder, arguments, mutable, span)?
-    mut reference = read_place(plan_place(0, span), false, span)
-    match cell:
-        Some((_global, receiver)) => reference = list_borrow(builder, receiver, mutable, span)?
-        None => reference = borrowed_list_argument(builder, arguments, 0, mutable, span)?
+    reference, cell = list_method_receiver(builder, arguments, mutable, span)?
     mut receiver_type = PlanType.ListRef(leaf, depth)
     if mutable:
         receiver_type = PlanType.ListMutRef(leaf, depth)
@@ -10184,6 +10208,57 @@ def lower_list_method(
             Some((global, receiver)) => persist_static_value(builder, global, receiver, span)?
             None => pass
     return Ok(None)
+
+
+def lower_list_reservation(
+    mut builder: Builder,
+    member: str,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Reserve additional capacity on the actual checked list receiver, preserving the existing int-to-usize contract."""
+    if len(arguments) != 2:
+        return Err("invalid Body IR list reservation arity")
+    ty = argument_type(builder, arguments, 0, span)?
+    leaf, depth = require_list_shape(ty, "invalid Body IR list reservation receiver")?
+    count = argument_value(builder, arguments, 1, span)?
+    if operand_type(builder, count)? != PlanType.Int:
+        return Err("invalid Body IR list reservation count")
+    additional = temporary(builder, PlanType.USize, span)
+    builder.emit(plan_assign(additional, RvalueKind.NumericCast(count, PlanType.Int, PlanType.USize), span))
+    reference, cell = list_method_receiver(builder, arguments, true, span)?
+    output = call_destination(builder, destination, PlanType.Unit, span)?
+    mut method = "reserve"
+    if member == "List.reserve_exact":
+        method = "reserve_exact"
+    instantiated_external_call(
+        builder,
+        f"alloc::vec::Vec::{method}",
+        [list_element(leaf, depth)],
+        [PlanType.ListMutRef(leaf, depth), PlanType.USize],
+        PlanType.Unit,
+        [reference, read_place(additional, false, span)],
+        output,
+        span,
+    )?
+    match cell:
+        Some((global, receiver)) => persist_static_value(builder, global, receiver, span)?
+        None => pass
+    return Ok(None)
+
+
+def list_method_receiver(
+    mut builder: Builder,
+    arguments: &list[RustArgumentElement],
+    mutable: bool,
+    span: SourceSpan,
+) -> Result[tuple[Operand, Option[tuple[RustGlobalPlace, Place]]], str]:
+    """Borrow ordinary receiver storage or a retained static snapshot after argument evaluation."""
+    cell = static_collection_receiver(builder, arguments, mutable, span)?
+    match cell:
+        Some((_global, receiver)) => return Ok((list_borrow(builder, receiver, mutable, span)?, cell))
+        None => return Ok((borrowed_list_argument(builder, arguments, 0, mutable, span)?, cell))
 
 
 def static_collection_receiver(

@@ -367,25 +367,7 @@ fn describe_str(tcx: TyCtxt<'_>, facts: &mut BTreeMap<String, RustItemMetadata>,
 /// DefId for the public module walker; their methods, impl templates and associated types come from rustc's exact
 /// scalar type. Public primitive re-exports are transparent aliases to that scalar, never new nominal layouts.
 fn describe_primitives(tcx: TyCtxt<'_>, facts: &mut BTreeMap<String, RustItemMetadata>, named: &mut HashSet<DefId>) {
-    let primitives = [
-        ("bool", tcx.types.bool),
-        ("char", tcx.types.char),
-        ("i8", tcx.types.i8),
-        ("i16", tcx.types.i16),
-        ("i32", tcx.types.i32),
-        ("i64", tcx.types.i64),
-        ("i128", tcx.types.i128),
-        ("isize", tcx.types.isize),
-        ("u8", tcx.types.u8),
-        ("u16", tcx.types.u16),
-        ("u32", tcx.types.u32),
-        ("u64", tcx.types.u64),
-        ("u128", tcx.types.u128),
-        ("usize", tcx.types.usize),
-        ("f32", tcx.types.f32),
-        ("f64", tcx.types.f64),
-    ];
-    for (name, native) in primitives {
+    for (name, native) in primitive_types(tcx) {
         let info = RustTypeInfo {
             methods: inherent_methods(tcx, crate::callees::primitive_inherent_impls(tcx, native), named),
             implemented_traits: trait_impls(tcx, native, named),
@@ -410,6 +392,28 @@ fn describe_primitives(tcx: TyCtxt<'_>, facts: &mut BTreeMap<String, RustItemMet
             );
         }
     }
+}
+
+/// Canonical primitive identities shared by metadata extraction and native inherent-method resolution.
+pub(crate) fn primitive_types(tcx: TyCtxt<'_>) -> [(&'static str, Ty<'_>); 16] {
+    [
+        ("bool", tcx.types.bool),
+        ("char", tcx.types.char),
+        ("i8", tcx.types.i8),
+        ("i16", tcx.types.i16),
+        ("i32", tcx.types.i32),
+        ("i64", tcx.types.i64),
+        ("i128", tcx.types.i128),
+        ("isize", tcx.types.isize),
+        ("u8", tcx.types.u8),
+        ("u16", tcx.types.u16),
+        ("u32", tcx.types.u32),
+        ("u64", tcx.types.u64),
+        ("u128", tcx.types.u128),
+        ("usize", tcx.types.usize),
+        ("f32", tcx.types.f32),
+        ("f64", tcx.types.f64),
+    ]
 }
 
 /// The public items of one crate's module tree, each module walked once under the first path that reaches it.

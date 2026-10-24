@@ -1,14 +1,39 @@
-# behavior: module statics are mutable shared storage: reassignment and += update an int static, and a list static appended through a live alias shows the change (RFC 052)
+# behavior: module statics initialize once in declaration order despite reentrant function calls, and mutable scalar and list storage preserves aliases (RFC 052, #2256)
 # expect-stdout:
+#   first
+#   second
 #   3
 #   2
 #   2
+#   4
+#   4
+#   5
 
 static counter: int = 0
 static items: list[int] = []
+static first_value: int = initialize_first()
+static second_value: int = initialize_second()
+
+
+def initialization_probe() -> int:
+    """Reenter this module during initialization without claiming its statics again."""
+    return 4
+
+
+def initialize_first() -> int:
+    """Record the first initializer and call back into its module."""
+    println("first")
+    return initialization_probe()
+
+
+def initialize_second() -> int:
+    """Observe the already initialized first declaration."""
+    println("second")
+    return first_value + 1
 
 
 def main() -> None:
+    """Observe shared mutation, then call a completed module repeatedly."""
     counter = counter + 1
     counter += 2
     items.append(counter)
@@ -17,3 +42,6 @@ def main() -> None:
     println(counter)
     println(len(items))
     println(len(live))
+    println(initialization_probe())
+    println(initialization_probe())
+    println(second_value)
