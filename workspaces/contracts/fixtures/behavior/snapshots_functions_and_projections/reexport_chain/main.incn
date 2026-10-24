@@ -1,9 +1,12 @@
-# behavior: a function re-exported under a new alias at each of two facade modules is callable from the consumer through the last alias
+# behavior: function facade aliases remain callable when provider and facade modules declare the same payload-enum name
 # expect-stdout:
 #   42
 
 from crate.public_api import exported_calculate as compute
+from crate.public_api import label
 
 
 def main() -> None:
-    println(compute(41))
+    """Use both distinct enum owners through a facade and preserve the original result."""
+    if label("ready") == "ready":
+        println(compute(41))

@@ -58,6 +58,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+pub(crate) use nominal_carriers::{retain_published_frame, retain_published_module};
 pub use source_comparison::required_published_defaults as required_comparison_defaults;
 
 use incan_lang::lang::keywords::KeywordId;

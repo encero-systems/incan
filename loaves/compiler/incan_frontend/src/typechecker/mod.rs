@@ -100,7 +100,7 @@ use std::sync::Arc;
 
 use crate::ast::*;
 use crate::diagnostics::{CompileError, ErrorKind, errors};
-use crate::loaf_index::{LoafIdentity, LoafIndex, LoafNamespace};
+use crate::loaf_index::{LoafIdentity, LoafIndex};
 use crate::module::{
     ExportedSymbol, canonicalize_library_declaration_module_path, canonicalize_source_module_segments,
     exported_symbols, logical_source_import_candidates,
@@ -3868,10 +3868,7 @@ impl TypeChecker {
             .method_identities
             .values()
             .filter(|identity| match &identity.origin {
-                SymbolOrigin::Package { library, .. } => loaves.entries().any(|entry| {
-                    matches!(entry.namespace, LoafNamespace::Standard { .. })
-                        && &entry.artifact.manifest.name == library
-                }),
+                SymbolOrigin::Package { library, .. } => loaves.is_standard_package(library),
                 _ => false,
             })
             .cloned()
@@ -7310,7 +7307,7 @@ impl TypeChecker {
         self.export_type_alias_targets();
         self.record_binding_collision_diagnostics();
 
-        if self.loaves.entries().next().is_some() {
+        if self.loaves.keys().next().is_some() {
             for (name, identity) in &self.public_library_type_identities {
                 if identity.selected_provider.is_none()
                     && matches!(
@@ -7326,6 +7323,10 @@ impl TypeChecker {
             }
         }
         self.settle_open_value_destinations();
+        if let Err(error) = self.loaves.validate_demands() {
+            self.errors
+                .push(CompileError::type_error(error.to_string(), Span::default()));
+        }
         // Split fatal errors from non-fatal diagnostics.
         let all = std::mem::take(&mut self.errors);
         let (fatal, non_fatal): (Vec<_>, Vec<_>) = all
@@ -7338,6 +7339,9 @@ impl TypeChecker {
             self.publish_rust_storage_types(program);
             self.type_info.body_ir_newtypes = native_newtype_facts::project(program, &self.type_info);
             self.publish_body_ir_empty_lists();
+            if let Err(error) = self.loaves.validate_demands() {
+                return Err(vec![CompileError::type_error(error.to_string(), Span::default())]);
+            }
             Ok(())
         } else {
             Err(fatal)

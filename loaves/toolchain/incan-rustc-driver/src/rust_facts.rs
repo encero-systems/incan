@@ -293,23 +293,7 @@ fn describe_crates(tcx: TyCtxt<'_>, crates: &BTreeSet<String>) -> BTreeMap<Strin
         .any(|name| matches!(name.as_str(), "std" | "core" | "alloc"))
     {
         describe_primitives(tcx, &mut facts, &mut named);
-        facts.insert(
-            "str".into(),
-            RustItemMetadata {
-                canonical_path: "str".into(),
-                definition_path: None,
-                visibility: RustVisibility::Public,
-                kind: RustItemKind::Type(RustTypeInfo {
-                    methods: inherent_methods(
-                        tcx,
-                        tcx.incoherent_impls(ty::fast_reject::SimplifiedType::Str),
-                        &mut named,
-                    ),
-                    implemented_traits: trait_impls(tcx, tcx.types.str_, &mut named),
-                    ..RustTypeInfo::default()
-                }),
-            },
-        );
+        describe_str(tcx, &mut facts, &mut named);
         let element = Ty::new_param(tcx, 0, rustc_span::Symbol::intern("T"));
         facts.insert(
             "[]".into(),
@@ -339,6 +323,30 @@ fn describe_crates(tcx: TyCtxt<'_>, crates: &BTreeSet<String>) -> BTreeMap<Strin
             .or_insert_with(|| describe(tcx, def, &path, &mut HashSet::new()));
     }
     facts
+}
+
+/// Publish the same unsized text owner under its primitive re-exports. Their methods and trait facts come from
+/// rustc's primitive impl bucket, just as the bare `str` path does; the alias never becomes a nominal empty type.
+fn describe_str(tcx: TyCtxt<'_>, facts: &mut BTreeMap<String, RustItemMetadata>, named: &mut HashSet<DefId>) {
+    let info = RustTypeInfo {
+        methods: inherent_methods(tcx, tcx.incoherent_impls(ty::fast_reject::SimplifiedType::Str), named),
+        implemented_traits: trait_impls(tcx, tcx.types.str_, named),
+        ..RustTypeInfo::default()
+    };
+    for path in ["str", "std::primitive::str", "core::primitive::str"] {
+        let definition_path = (path != "str").then(|| "str".to_owned());
+        let mut selected = info.clone();
+        selected.alias_target = definition_path.clone();
+        facts.insert(
+            path.to_owned(),
+            RustItemMetadata {
+                canonical_path: path.to_owned(),
+                definition_path,
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(selected),
+            },
+        );
+    }
 }
 
 /// Publish primitive trait facts under their native and standard public paths. Primitive items have no DefId for

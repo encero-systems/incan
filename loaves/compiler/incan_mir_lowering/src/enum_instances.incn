@@ -65,7 +65,7 @@ def collect_type(
             if not closed_arguments(arguments):
                 return Ok(None)
             for declaration in module.enum_declarations:
-                if declaration.name != str(base) or len(declaration.type_parameters) == 0:
+                if declaration.carrier_name() != str(base) or len(declaration.type_parameters) == 0:
                     continue
                 if len(declaration.type_parameters) != len(arguments):
                     return Err(f"unsupported Body IR enum type argument arity on {base}")
@@ -118,7 +118,7 @@ def closed_arguments(arguments: list[RustType]) -> bool:
 def close_layout(instance: EnumInstance) -> Result[EnumDeclaration, str]:
     """Substitute payload fields while keeping each source variant's declaration and canonical identities."""
     mut result = instance.declaration.clone()
-    symbol: str = nominal_symbol(str(instance.declaration.name), instance.arguments)
+    symbol: str = nominal_symbol(instance.declaration.carrier_name(), instance.arguments)
     result.name = symbol
     result.native_type_arguments = instance.arguments.clone()
     result.variants.clear()

@@ -17,7 +17,10 @@ use incan_lang::interop::{RustAbiCache, RustItemMetadata};
 use incan_lang::lang::standard_packages::{STANDARD_PACKAGE_NAMESPACE_POLICIES, StandardPackageNamespacePolicy};
 use incan_vocab::{KeywordActivation, KeywordRegistration, KeywordSpec};
 
+mod decoded_manifest;
+mod lazy_entry;
 mod manifest_input;
+use lazy_entry::IndexedLoaf;
 
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
@@ -76,8 +79,7 @@ impl LoafArtifact {
             path: path.clone(),
             reason,
         };
-        let (content, digest) = manifest_input::read(&path).map_err(|error| unreadable(error.to_string()))?;
-        let manifest = LibraryManifest::from_json_str(&content).map_err(|error| unreadable(error.to_string()))?;
+        let (manifest, digest) = decoded_manifest::read(&path).map_err(unreadable)?;
         if manifest.name != name {
             return Err(unreadable(format!("the manifest names the Loaf `{}`", manifest.name)));
         }
@@ -92,7 +94,7 @@ impl LoafArtifact {
             identity,
             name: name.to_owned(),
             dir: dir.to_path_buf(),
-            manifest: Arc::new(manifest),
+            manifest,
             rust_abi_cache,
         })
     }
@@ -234,13 +236,7 @@ impl LoafEntry {
     /// Whether this Loaf owns `module` (`["pub", key, ..]` for a dependency, `["std", root, ..]` for a standard
     /// package).
     pub fn owns(&self, module: &[String]) -> bool {
-        match (&self.namespace, module) {
-            (LoafNamespace::Dependency { key }, [root, name, ..]) => root == "pub" && name == key,
-            (LoafNamespace::Standard { policy }, [root, name, ..]) => {
-                root == "std" && policy.namespace_roots.contains(&name.as_str())
-            }
-            _ => false,
-        }
+        owns(&self.namespace, module)
     }
 
     /// The path this Loaf's public modules are bound under: `["pub", key]` for a dependency, `["std"]` for a standard
@@ -281,7 +277,7 @@ pub enum LoafIndexError {
 /// Every Loaf a compilation reaches, each owning its namespace.
 #[derive(Debug, Clone, Default)]
 pub struct LoafIndex {
-    entries: BTreeMap<String, LoafEntry>,
+    entries: BTreeMap<String, IndexedLoaf>,
     /// The ABI caches of the Rust crates the compilation links: the toolchain's standard crates and each compiled
     /// unit's.
     rust_abi_caches: Vec<Arc<RustAbiCache>>,
@@ -293,8 +289,6 @@ pub struct LoafIndex {
     /// Items already resolved through the lookup order, decoded once and shared: the checker asks for the same
     /// items many times, and a trait's metadata carries every implementation it has.
     resolved_rust_items: Arc<Mutex<HashMap<String, Arc<RustItemMetadata>>>>,
-    /// Canonical lookups made by this analysis, shared across its checker clones. Inventory iteration is not demand.
-    requested: Option<Arc<Mutex<BTreeSet<String>>>>,
 }
 
 impl LoafIndex {
@@ -303,7 +297,7 @@ impl LoafIndex {
         let mut indexed = BTreeMap::new();
         for entry in entries {
             let key = entry.key.clone();
-            if indexed.insert(key.clone(), entry).is_some() {
+            if indexed.insert(key.clone(), IndexedLoaf::admitted(entry)).is_some() {
                 return Err(LoafIndexError::DuplicateKey { key });
             }
         }
@@ -313,7 +307,69 @@ impl LoafIndex {
             declared_rust_crates: BTreeSet::new(),
             rust_facts: BTreeMap::new(),
             resolved_rust_items: Arc::default(),
-            requested: None,
+        })
+    }
+
+    /// Admit every location's inventory while deferring full manifests to canonical demand. Each inventory records
+    /// all global contributors and shipped Rust paths; missing or stale private proofs require full admission.
+    pub fn deferred(
+        locations: impl IntoIterator<Item = (String, String, PathBuf, bool)>,
+    ) -> Result<Self, LoafIndexError> {
+        let mut index = Self::default();
+        for (key, name, dir, standard) in locations {
+            let namespace = if standard {
+                let policy = STANDARD_PACKAGE_NAMESPACE_POLICIES
+                    .iter()
+                    .find(|policy| policy.package_name == name)
+                    .ok_or_else(|| LoafIndexError::UnknownStandardPackage { package: name.clone() })?;
+                LoafNamespace::Standard { policy }
+            } else {
+                LoafNamespace::Dependency { key: key.clone() }
+            };
+            let entry = IndexedLoaf::open(key.clone(), namespace, dir, &name)?;
+            if index.entries.insert(key.clone(), entry).is_some() {
+                return Err(LoafIndexError::DuplicateKey { key });
+            }
+        }
+        Ok(index)
+    }
+
+    /// Canonical demand with explicit artifact failure, distinct from an absent namespace. Nullable checker lookup
+    /// adapters retain failures in the entry; `validate_demands` must gate successful analysis and closure publication.
+    pub fn demand(&self, key: &str) -> Result<Option<&LoafEntry>, LoafIndexError> {
+        let Some(indexed) = self.entries.get(key) else {
+            return Ok(None);
+        };
+        let entry = indexed.demand()?;
+        Ok(Some(entry))
+    }
+
+    /// Refuse any failed demand before an analysis or executable closure can be accepted. Untouched entries stay lazy.
+    pub fn validate_demands(&self) -> Result<(), LoafIndexError> {
+        for entry in self.entries.values() {
+            if let Some(error) = entry.failure() {
+                return Err(error.clone());
+            }
+        }
+        Ok(())
+    }
+
+    /// Declared keys without reading manifests or recording a semantic lookup.
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        self.entries.keys().map(String::as_str)
+    }
+
+    /// Admitted identities without decoding complete manifests; package ambiguity is checked before loading bodies.
+    pub fn identities(&self) -> impl Iterator<Item = (&str, &LoafIdentity)> {
+        self.entries
+            .iter()
+            .map(|(key, entry)| (key.as_str(), &entry.summary.identity))
+    }
+
+    /// Whether a compiler-pinned standard package owns a canonical package identity.
+    pub fn is_standard_package(&self, package: &str) -> bool {
+        self.entries.values().any(|entry| {
+            matches!(entry.namespace, LoafNamespace::Standard { .. }) && entry.summary.identity.name == package
         })
     }
 
@@ -368,7 +424,7 @@ impl LoafIndex {
 
     /// Every entry, in key order.
     pub fn entries(&self) -> impl Iterator<Item = &LoafEntry> {
-        self.entries.values()
+        self.entries.values().filter_map(|entry| entry.demand().ok())
     }
 
     /// Read the provider-operation environment as a manifest contract, retaining every nonempty contributor. Empty
@@ -376,16 +432,8 @@ impl LoafIndex {
     pub fn provider_operation_entries(&self) -> impl Iterator<Item = &LoafEntry> {
         self.entries
             .values()
-            .filter(|entry| {
-                !entry
-                    .artifact
-                    .manifest
-                    .contract_metadata
-                    .provider
-                    .operation_descriptors
-                    .is_empty()
-            })
-            .inspect(|entry| self.note_request(entry))
+            .filter(|entry| entry.summary.provider_operations)
+            .filter_map(|entry| entry.demand().ok())
     }
 
     /// Read the native-union catalog without silently dropping an unimported producer's layout contract. Lowering
@@ -393,22 +441,19 @@ impl LoafIndex {
     pub fn native_union_entries(&self) -> impl Iterator<Item = &LoafEntry> {
         self.entries
             .values()
-            .filter(|entry| !entry.artifact.manifest.contract_metadata.native_unions.is_empty())
-            .inspect(|entry| self.note_request(entry))
+            .filter(|entry| entry.summary.native_unions)
+            .filter_map(|entry| entry.demand().ok())
     }
 
     /// The entry indexed as `key`.
     pub fn entry(&self, key: &str) -> Option<&LoafEntry> {
-        let entry = self.entries.get(key)?;
-        self.note_request(entry);
-        Some(entry)
+        self.demand(key).ok().flatten()
     }
 
     /// The one entry owning `module`, if any.
     pub fn owner_of(&self, module: &[String]) -> Option<&LoafEntry> {
         let entry = self.entries.values().find(|entry| entry.owns(module))?;
-        self.note_request(entry);
-        Some(entry)
+        self.entry(&entry.key)
     }
 
     /// The Loaf that declares `canonical` (a package identity) among its public exports.
@@ -419,18 +464,22 @@ impl LoafIndex {
         let SymbolOrigin::Package { library, .. } = &canonical.origin else {
             return None;
         };
-        let entry = self.entries.values().find(|entry| {
-            &entry.artifact.manifest.name == library
-                && entry
-                    .artifact
-                    .manifest
-                    .contract_metadata
-                    .identity_graph
-                    .exports
-                    .iter()
-                    .any(|export| export.canonical.as_ref().and_then(|id| id.hydrate()).as_ref() == Some(canonical))
-        })?;
-        self.note_request(entry);
+        let entry = self
+            .entries
+            .values()
+            .filter(|entry| &entry.summary.identity.name == library)
+            .filter_map(|entry| entry.demand().ok())
+            .find(|entry| {
+                &entry.artifact.manifest.name == library
+                    && entry
+                        .artifact
+                        .manifest
+                        .contract_metadata
+                        .identity_graph
+                        .exports
+                        .iter()
+                        .any(|export| export.canonical.as_ref().and_then(|id| id.hydrate()).as_ref() == Some(canonical))
+            })?;
         Some(entry)
     }
 
@@ -468,43 +517,6 @@ impl LoafIndex {
         self.entry(key).map(|entry| entry.artifact.manifest.as_ref())
     }
 
-    /// Read the analysis's canonical lookup footprint, retaining every entry if observation became unavailable.
-    pub fn requested_keys(&self) -> BTreeSet<String> {
-        let Some(requested) = &self.requested else {
-            return self.entries.keys().cloned().collect();
-        };
-        requested
-            .lock()
-            .map(|keys| keys.clone())
-            .unwrap_or_else(|_| self.entries.keys().cloned().collect())
-    }
-
-    /// Enable canonical demand observation for one native unit; ordinary checker and editor indexes pay no tracking
-    /// cost.
-    pub fn enable_request_tracking(&mut self) {
-        self.requested = Some(Arc::default());
-    }
-
-    /// Retain the authenticated package owners visited by executable closure, including private defaults and
-    /// derives that have no public namespace lookup in the consuming source.
-    pub(crate) fn note_resolved_package(&self, package: &str) {
-        for entry in self.entries.values().filter(|entry| entry.artifact.name == package) {
-            self.note_request(entry);
-        }
-    }
-
-    /// Retain a resolved owner, never a source-spelling guess or an unsuccessful lookup.
-    fn note_request(&self, entry: &LoafEntry) {
-        let Some(requested) = &self.requested else {
-            return;
-        };
-        if let Ok(mut requested) = requested.lock()
-            && !requested.contains(&entry.key)
-        {
-            requested.insert(entry.key.clone());
-        }
-    }
-
     /// Rust item metadata for `canonical_path`: a Loaf's shipped manifest ABI first (in key order), then the linked
     /// crates' ABI caches, then facts read at check time. A standard Loaf's shipped facts do not answer for a crate the
     /// unit declares. Each item is decoded once and then shared.
@@ -530,7 +542,8 @@ impl LoafIndex {
                 .values()
                 .filter(move |entry| !(declared && matches!(entry.namespace, LoafNamespace::Standard { .. })))
         };
-        for entry in shipping() {
+        for entry in shipping().filter(|entry| entry.summary.rust_paths.contains(canonical_path)) {
+            let entry = entry.demand().ok()?;
             if let Some(item) = entry
                 .artifact
                 .manifest
@@ -538,18 +551,17 @@ impl LoafIndex {
                 .as_ref()
                 .and_then(|abi| abi.get(canonical_path))
             {
-                self.note_request(entry);
                 return Some(item.clone());
             }
         }
-        for entry in shipping() {
+        for entry in shipping().filter(|entry| entry.summary.rust_abi_cache) {
+            let entry = entry.demand().ok()?;
             if let Some(item) = entry
                 .artifact
                 .rust_abi_cache
                 .as_ref()
                 .and_then(|cache| cache.get(canonical_path))
             {
-                self.note_request(entry);
                 return Some(item);
             }
         }
@@ -563,6 +575,12 @@ impl LoafIndex {
     pub fn imported_vocab(&self) -> crate::parser::ImportedLibraryVocab {
         let mut map = std::collections::HashMap::new();
         for (key, entry) in &self.entries {
+            if !entry.summary.vocabulary {
+                continue;
+            }
+            let Some(entry) = self.entry(key) else {
+                continue;
+            };
             let Some(vocab) = &entry.artifact.manifest.vocab else {
                 continue;
             };
@@ -572,7 +590,6 @@ impl LoafIndex {
                 .filter_map(|registration| normalize_keyword_registration(key, registration))
                 .collect::<Vec<_>>();
             if !registrations.is_empty() {
-                self.note_request(entry);
                 map.insert(key.clone(), registrations);
             }
         }
@@ -583,10 +600,15 @@ impl LoafIndex {
     pub fn imported_dsl_surfaces(&self) -> crate::parser::ImportedLibraryDslSurfaces {
         let mut map = std::collections::HashMap::new();
         for (key, entry) in &self.entries {
+            if !entry.summary.vocabulary {
+                continue;
+            }
+            let Some(entry) = self.entry(key) else {
+                continue;
+            };
             if let Some(vocab) = &entry.artifact.manifest.vocab
                 && !vocab.dsl_surfaces.is_empty()
             {
-                self.note_request(entry);
                 map.insert(key.clone(), vocab.dsl_surfaces.clone());
             }
         }
@@ -600,18 +622,23 @@ impl LoafIndex {
         for entry in self.entries.values() {
             hasher.update(entry.key.as_bytes());
             hasher.update([0]);
-            hasher.update(entry.artifact.dir.as_os_str().as_encoded_bytes());
+            hasher.update(entry.dir.as_os_str().as_encoded_bytes());
             hasher.update([0]);
-            let manifest = entry
-                .artifact
-                .manifest
-                .to_json_string()
-                .map(String::into_bytes)
-                .unwrap_or_default();
-            hasher.update(manifest.len().to_le_bytes());
-            hasher.update(manifest);
+            hasher.update(entry.summary.identity.stable_key().as_bytes());
+            hasher.update([0]);
         }
         format!("{:x}", hasher.finalize())
+    }
+}
+
+/// Namespace ownership depends only on the unit's declared binding and compiler-pinned standard-package policy.
+fn owns(namespace: &LoafNamespace, module: &[String]) -> bool {
+    match (namespace, module) {
+        (LoafNamespace::Dependency { key }, [root, name, ..]) => root == "pub" && name == key,
+        (LoafNamespace::Standard { policy }, [root, name, ..]) => {
+            root == "std" && policy.namespace_roots.contains(&name.as_str())
+        }
+        _ => false,
     }
 }
 

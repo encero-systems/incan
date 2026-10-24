@@ -26,7 +26,7 @@ pub def hint_path(root: Path, family: str) -> Option[Path]:
         Err(_) => return None
         Ok(canonical) =>
             scope = canonical.0.replace("_", "_u").replace("/", "_s")
-            directory = Path(toolchain_home).joinpath("cache").joinpath("contract-groups-v1")
+            directory = Path(toolchain_home).joinpath("cache").joinpath("contract-groups-v2")
             return Some(directory.joinpath(f"{scope}-{family}.tsv"))
 
 

@@ -391,7 +391,7 @@ impl BodyIrModule {
                             && declares_member(&owner.canonical, canonical)
                             && body.locals.first().is_none_or(|receiver| {
                                 !matches!(receiver.origin, LocalOrigin::Receiver { .. })
-                                    || receiver.ty == crate::IncanType::Named(owner.name.clone())
+                                    || receiver.ty == crate::IncanType::Named(owner.carrier_name())
                             })
                     }) || self.trait_declarations.iter().any(|owner| {
                         canonical.kind == SemanticSourceTargetKind::Method

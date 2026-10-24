@@ -327,6 +327,14 @@ pub struct LoafCallable {
     pub declaration_frame: Option<Box<Body>>,
 }
 
+impl LoafCallable {
+    /// Borrow the authenticated declaration frame without exposing its optional Box storage to consumers. The
+    /// frame remains declaration-only and grants no implementation body or additional execution authority.
+    pub fn declaration_frame(&self) -> Option<&Body> {
+        self.declaration_frame.as_deref()
+    }
+}
+
 /// The crate a Loaf compiles to (DD-0007): its package name in lowercase, with every character other than an ASCII
 /// letter or digit spelled `_`, and a leading `_` when the name would start with a digit.
 pub fn loaf_crate_name(package: &str) -> String {
@@ -4968,6 +4976,7 @@ pub fn nominal_carrier_key(identity: &CanonicalSymbolId) -> Option<String> {
         SemanticSourceTargetKind::Model => "model",
         SemanticSourceTargetKind::Class => "class",
         SemanticSourceTargetKind::Newtype => "newtype",
+        SemanticSourceTargetKind::Enum => "enum",
         _ => return None,
     };
     match &identity.origin {
@@ -5054,6 +5063,18 @@ impl NominalDeclaration {
         self.retained_carrier_key()
             .filter(|_| self.type_parameter_count == 0)
             .unwrap_or_else(|| self.name.clone())
+    }
+}
+
+impl EnumDeclaration {
+    /// Read the source enum's identity-bound carrier independently of its diagnostic name. Closed instances retain
+    /// their specialization symbol; native Rust enums keep their metadata-selected name. The validated layout's own
+    /// canonical identity attests its owner; payload type bindings need not redundantly retain that identity.
+    pub fn carrier_name(&self) -> String {
+        if !self.native_type_arguments.is_empty() {
+            return self.name.clone();
+        }
+        nominal_carrier_key(&self.canonical).unwrap_or_else(|| self.name.clone())
     }
 }
 

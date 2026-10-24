@@ -71,6 +71,13 @@ pub(super) fn retain(module: &mut bir::BodyIrModule, facts: &TypeCheckInfo, cont
     for alias in &mut module.type_alias_declarations {
         qualify_type(&mut alias.ty, None, &alias.named_type_identities);
     }
+    for declaration in &mut module.enum_declarations {
+        for variant in &mut declaration.variants {
+            for ty in &mut variant.fields {
+                qualify_type(ty, None, &declaration.named_type_identities);
+            }
+        }
+    }
     for body in &mut module.bodies {
         retain_body(body, facts, &constructors);
     }
@@ -165,13 +172,69 @@ fn retain_body(body: &mut bir::Body, facts: &TypeCheckInfo, constructors: &Const
             );
         }
     }
+    retain_body_types(body, Some(facts));
+}
+
+/// Project authenticated published types through their retained bindings, including pre-carrier-key enum bodies.
+/// This consumes declaration-owned identities only; no consumer spelling, source lookup or inference participates.
+pub(crate) fn retain_published_frame(body: &mut bir::Body) {
+    let keys: Vec<_> = body
+        .named_type_identities
+        .values()
+        .filter_map(|identity| nominal_carrier_key(identity).map(|key| (key, identity.clone())))
+        .collect();
+    for (key, identity) in keys {
+        body.named_type_identities.entry(key).or_insert(identity);
+    }
+    retain_body_types(body, None);
+}
+
+/// Retain canonical carriers on decoded declarations without rechecking or changing their persisted ownership.
+pub(crate) fn retain_published_module(module: &mut bir::BodyIrModule) {
+    for declaration in &mut module.nominal_declarations {
+        for ty in &mut declaration.field_types {
+            qualify_type(ty, None, &declaration.named_type_identities);
+        }
+        if let Some(body) = &mut declaration.field_default_body {
+            retain_published_frame(body);
+        }
+        for partial in &mut declaration.method_partial_defaults {
+            retain_published_frame(&mut partial.frame);
+        }
+    }
+    for declaration in &mut module.enum_declarations {
+        for variant in &mut declaration.variants {
+            for ty in &mut variant.fields {
+                qualify_type(ty, None, &declaration.named_type_identities);
+            }
+        }
+    }
+    for alias in &mut module.type_alias_declarations {
+        qualify_type(&mut alias.ty, None, &alias.named_type_identities);
+    }
+    for body in &mut module.bodies {
+        retain_published_frame(body);
+    }
+    for binding in &mut module.decorated_bindings {
+        retain_published_frame(&mut binding.original_body);
+    }
+    for storage in &mut module.static_declarations {
+        if let bir::StaticInitializer::Computed(body) = &mut storage.initial {
+            retain_published_frame(body);
+            storage.ty = body.return_type.clone();
+        }
+    }
+}
+
+/// Apply one identity map to every frame type; checked source spans refine erased aliases only during creation.
+fn retain_body_types(body: &mut bir::Body, facts: Option<&TypeCheckInfo>) {
     let identities = &body.named_type_identities;
     let binding = body.canonical.as_ref().and_then(|canonical| {
-        facts
+        facts?
             .declarations
             .function_bindings_by_span
             .values()
-            .chain(facts.declarations.method_bindings_by_span.values())
+            .chain(facts?.declarations.method_bindings_by_span.values())
             .find(|binding| binding.identity.as_ref() == Some(canonical))
     });
     let checked_return = binding.map(|binding| semantic_type_from_resolved(&binding.return_type));
@@ -179,12 +242,13 @@ fn retain_body(body: &mut bir::Body, facts: &TypeCheckInfo, constructors: &Const
     for local in &mut body.locals {
         let span = ast::Span::new(local.span.start, local.span.end);
         let checked = facts
-            .expr_type(span)
-            .or_else(|| {
-                local
-                    .name
-                    .as_deref()
-                    .and_then(|name| facts.resolved_write_type(span, name))
+            .and_then(|facts| {
+                facts.expr_type(span).or_else(|| {
+                    local
+                        .name
+                        .as_deref()
+                        .and_then(|name| facts.resolved_write_type(span, name))
+                })
             })
             .map(semantic_type_from_resolved);
         qualify_type(&mut local.ty, checked.as_ref(), identities);

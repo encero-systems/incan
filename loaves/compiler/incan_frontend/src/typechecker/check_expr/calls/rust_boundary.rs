@@ -42,7 +42,7 @@ impl TypeChecker {
         match (native, source) {
             (ResolvedType::Named(_) | ResolvedType::TypeVar(_), _) => native.clone(),
             (ResolvedType::Generic(base, _), ResolvedType::RustPath(_))
-                if self.lookup_semantic_type_info(base).is_some() =>
+                if base == "[]" || self.lookup_semantic_type_info(base).is_some() =>
             {
                 native.clone()
             }

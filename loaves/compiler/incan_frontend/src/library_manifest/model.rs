@@ -1880,6 +1880,15 @@ pub struct StaticExport {
 }
 
 impl LibraryManifest {
+    /// Encode already admitted facts for a private generation-bound cache, preserving the public JSON contract.
+    pub(crate) fn encode_retained(&self) -> Result<Vec<u8>, String> {
+        super::retained::encode(self)
+    }
+
+    /// Decode a private cache after its caller verifies the exact compiler and source-file generations.
+    pub(crate) fn decode_retained(bytes: &[u8]) -> Result<Self, String> {
+        super::retained::decode(bytes)
+    }
     /// Create a new manifest seeded with the current compiler version and format version.
     pub fn new(name: impl Into<String>, version: impl Into<String>) -> Self {
         Self {

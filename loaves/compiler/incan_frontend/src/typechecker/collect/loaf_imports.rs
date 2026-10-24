@@ -349,7 +349,7 @@ impl TypeChecker {
         if let Some(entry) = self.loaves.entry(library) {
             return Some(std::sync::Arc::clone(&entry.artifact.manifest));
         }
-        let known = self.loaves.entries().map(|entry| entry.key.clone()).collect::<Vec<_>>();
+        let known = self.loaves.keys().map(str::to_owned).collect::<Vec<_>>();
         self.errors.push(errors::unknown_pub_library(library, &known, span));
         None
     }

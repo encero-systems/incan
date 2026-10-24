@@ -1,2 +1,10 @@
+pub enum Shape:
+    """A provider-owned integer payload, distinct from the facade's text payload."""
+
+    Item(int)
+
+
 pub def calculate(value: int) -> int:
-    return value + 1
+    """Construct and match this module's owner before returning the re-exported calculation."""
+    match Shape.Item(value):
+        Shape.Item(number) => return number + 1

@@ -251,7 +251,7 @@ fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup) -> Result<Chec
         requested,
         package_identity,
     )?;
-    session.retain_native_loaf_reachability();
+    session.loaves().validate_demands().map_err(|error| error.to_string())?;
     Ok(program)
 }
 

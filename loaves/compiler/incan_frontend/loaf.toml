@@ -1,4 +1,5 @@
 [dependencies]
+postcard = { default-features = false, features = ["use-std"], loaf = "crates-io/postcard", version = "1.1" }
 hex = { loaf = "crates-io/hex", version = "0.4.3" }
 incan_format = { loaf = "incan_format", path = "../incan_format" }
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }

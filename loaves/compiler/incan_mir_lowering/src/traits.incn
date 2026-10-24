@@ -13,13 +13,14 @@ from rust::std::cmp import PartialEq
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     Body,
+    NominalDeclaration,
+    EnumDeclaration as RustEnumDeclaration,
     MethodTarget,
     NamedCallableTarget,
     ArgumentElement,
     Operand as RustOperand,
     TraitImplementation,
     TraitTypeArgument,
-    NominalDeclaration,
 )
 from pub::incan_mir_plan import SourceSpan, PlanType
 from frame import Builder
@@ -37,12 +38,20 @@ pub def specialize_project_traits(module: &BodyIrModule, modules: &list[BodyIrMo
 
     An imported trait's default lives in the module that declares the trait, while its adopter's implementation records live in the adopter's module, so the records of every module are consulted. Each instance keeps the default's canonical identity, and with it the declaring module's source provenance. A generic receiver keeps its owner's ordered parameters until nominal specialization closes the checked instance.
     """
+    mut has_default = false
+    for body in module.bodies:
+        if len(body.locals) > 0 and body.locals[0].ty == RustType.SelfType:
+            has_default = true
+            break
+    if not has_default:
+        return Ok(module.clone())
     mut implementations: list[TraitImplementation] = []
     mut owners: list[NominalDeclaration] = []
+    mut enum_owners: list[RustEnumDeclaration] = []
     for adopter in modules:
         append_records(implementations, adopter)
-        append_owners(owners, adopter)
-    return specialize_for(module, implementations, owners)
+        append_layouts(owners, enum_owners, adopter)
+    return specialize_for(module, implementations, owners, enum_owners)
 
 
 pub def is_default_body(module: &BodyIrModule, body: &Body) -> bool:
@@ -88,16 +97,21 @@ def append_records(mut records: list[TraitImplementation], module: &BodyIrModule
         records.append(implementation.clone())
 
 
-def append_owners(mut owners: list[NominalDeclaration], module: &BodyIrModule) -> None:
-    """Retain the checked owner frames whose parameters a default's Self must carry into layout specialization."""
-    for declaration in module.nominal_declarations:
-        owners.append(declaration.clone())
+def append_layouts(
+    mut owners: list[NominalDeclaration], mut enums: list[RustEnumDeclaration], module: &BodyIrModule,
+) -> None:
+    """Retain each module's owner layouts once for the borrowed trait-specialization lookup tables."""
+    for owner in module.nominal_declarations:
+        owners.append(owner.clone())
+    for owner in module.enum_declarations:
+        enums.append(owner.clone())
 
 
 def specialize_for(
     module: &BodyIrModule,
     implementations: list[TraitImplementation],
     mut owners: list[NominalDeclaration],
+    mut enums: list[RustEnumDeclaration],
 ) -> Result[BodyIrModule, str]:
     """Replace each open default of the module by one instance per adopter whose implementation it is."""
     mut result = module.clone()
@@ -115,7 +129,7 @@ def specialize_for(
             if not first_instantiation(instantiated, implementation)?:
                 continue
             instantiated.append(implementation.clone())
-            concrete: RustType = concrete_self_type(implementation.owner, owners)?
+            concrete: RustType = concrete_self_type(implementation.owner, owners, enums)?
             # A default with overlapping owner/method scopes is not representable by the current flat binding
             # environment. Do not construct that unused instance; selecting it still refuses at method_index.
             # In particular, never substitute the adopter's U for the default's independent method U.
@@ -228,11 +242,14 @@ def tuple_type_of(elements: list[RustType]) -> RustType:
     return RustType.Tuple(elements)
 
 
-def concrete_self_type(owner: &CanonicalSymbolId, mut owners: list[NominalDeclaration]) -> Result[RustType, str]:
+def concrete_self_type(
+    owner: &CanonicalSymbolId, mut owners: list[NominalDeclaration], mut enums: list[RustEnumDeclaration],
+) -> Result[RustType, str]:
     """
     Retain the implementing owner's own parameters in Self until checked nominal instance scheduling closes them.
 
-    A canonical owner lookup supplies the template carrier and declared frame; the trait's arguments never stand in for independent owner arguments. Enums use their already-retained non-generic owner name. No missing class or model layout is guessed.
+    An exact owner lookup supplies the nominal or enum carrier and its frame. Trait arguments never replace owner arguments.
+    Missing layouts are refused.
     """
     for declaration in owners:
         if not PartialEq.eq(declaration.canonical, owner):
@@ -244,8 +261,9 @@ def concrete_self_type(owner: &CanonicalSymbolId, mut owners: list[NominalDeclar
             placeholder: RustType = RustType.TypeVar(str(parameter))
             arguments.append(placeholder.clone())
         return Ok(generic(str(declaration.template_carrier_name()), arguments))
-    if owner.kind == SemanticSourceTargetKind.Enum:
-        return Ok(RustType.Named(str(owner.declaration_name)))
+    for declaration in enums:
+        if PartialEq.eq(declaration.canonical, owner):
+            return Ok(RustType.Named(declaration.carrier_name()))
     return Err("unsupported Body IR trait default without retained owner layout")
 
 
