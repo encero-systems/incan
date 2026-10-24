@@ -284,11 +284,9 @@ pub fn build_body_ir_module(
                     IncanType::SelfType,
                     &lowering_facts,
                 ),
-                // A newtype's receiver is the newtype itself, not its underlying type: a method reading the wrapped
-                // value goes through the nominal receiver. `rusttype` is a flag on the same declaration rather than a
-                // separate kind, so its methods take this arm too: one with a body (a `for Trait` implementation, say)
-                // lowers like any other newtype method, and one without contributes nothing through
-                // `lower_method_body`'s existing `body: None` check.
+                // Transparent native stubs supply checked native adapters, never source executable bodies.
+                ast::Declaration::Newtype(newtype) if is_direct_native_rusttype_alias(newtype, type_info) => Vec::new(),
+                // A body-bearing newtype/rusttype method retains its nominal receiver and executable source body.
                 ast::Declaration::Newtype(newtype) => lower_owner_method_bodies(
                     &newtype.methods,
                     &newtype.name,
@@ -357,6 +355,7 @@ pub fn build_body_ir_module(
     nominal_carriers::retain(&mut module, type_info, context);
     primitive_adapters::retain(&mut module);
     union_layouts::retain(&mut module);
+    shared_reads::retain(&mut module, program);
     module
 }
 
@@ -759,7 +758,8 @@ pub fn is_direct_replacement_model_derive(decorator: &ast::Decorator) -> bool {
 }
 
 /// Admit a transparent rusttype only when checking retained its underlying storage and it authors no executable
-/// members, conversions, or trait implementations. It introduces no wrapper layout or constructor.
+/// members or trait implementations. Native declaration stubs and infallible edges require exact checked native
+/// signatures for every edge. It introduces no wrapper layout or constructor.
 pub fn is_direct_native_rusttype_alias(newtype: &ast::NewtypeDecl, type_info: &TypeCheckInfo) -> bool {
     let alias = if newtype.type_params.is_empty() {
         IncanType::Named(newtype.name.clone())
@@ -779,12 +779,27 @@ pub fn is_direct_native_rusttype_alias(newtype: &ast::NewtypeDecl, type_info: &T
             .iter()
             .all(|decorator| is_lint_suppression_decorator(&decorator.node))
         && newtype.traits.is_empty()
-        && newtype.methods.is_empty()
+        && newtype.methods.iter().all(|method| {
+            method
+                .node
+                .body
+                .as_ref()
+                .is_none_or(|body| crate::typechecker::is_trivial_body(body))
+                && newtype.interop_edges.iter().any(
+                    |edge| matches!(&edge.node.adapter.node, ast::Expr::Field(_, name) if name == &method.node.name),
+                )
+        })
         && newtype.rebindings.is_empty()
         && newtype.method_aliases.is_empty()
         && newtype.method_partials.is_empty()
         && newtype.associated_types.is_empty()
-        && newtype.interop_edges.is_empty()
+        && newtype.interop_edges.iter().all(|edge| {
+            type_info
+                .rust
+                .declared_conversions
+                .iter()
+                .any(|checked| checked.span == edge.span)
+        })
         && type_info.rust.storage_types.get(&alias).is_some_and(|storage| {
             !matches!(
                 storage,
@@ -2143,6 +2158,7 @@ mod provider_ops;
 mod refusals;
 
 mod reads;
+mod shared_reads;
 
 mod carrier_projection;
 mod collect;

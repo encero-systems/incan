@@ -327,6 +327,9 @@ pub struct LoafCallable {
     /// these arguments from names.
     #[serde(default)]
     pub native_type_arguments: Vec<IncanType>,
+    /// Checked callback parameter slots and their exact native generic argument positions, before signature erasure.
+    #[serde(default)]
+    pub native_callable_parameters: Vec<(usize, usize)>,
     /// What each parameter takes when a call omits it, in `parameters` order, a method's receiver first.
     ///
     /// A parameter without a default is [`CallableParamDefault::Required`]. A default is a
@@ -419,6 +422,7 @@ impl LoafCallable {
             },
             type_parameters: body.type_parameters.clone(),
             native_type_arguments: Vec::new(),
+            native_callable_parameters: Vec::new(),
             parameter_defaults: body.params.iter().map(|param| param.default.clone()).collect(),
             declaration_frame: Some(Box::new(frame)),
             canonical,
@@ -2836,6 +2840,9 @@ impl DefaultComputation {
 /// own parameters and captures show up in the ordinary `locals:` listing like any other local.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ClosureBody {
+    /// Native callback storage checked against the callee's retained bounds. Absent storage grants no auto traits.
+    #[serde(default)]
+    pub native_storage: Option<NativeClosureStorage>,
     /// Compiler-retained original callable read during RFC 036 initialization. This must resolve to exactly one
     /// decorated binding, and is never inferred from a forwarding closure's source spelling.
     #[serde(default)]
@@ -2859,6 +2866,17 @@ pub struct ClosureBody {
     pub stmts: Vec<Statement>,
     /// The closure body expression's value.
     pub result: Operand,
+}
+
+/// Checked ownership and auto-trait obligations of a callback retained by Rust.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct NativeClosureStorage {
+    /// The native environment owns its captures rather than borrowing its creating frame.
+    pub move_capture: bool,
+    /// Every captured value has retained Send evidence.
+    pub send: bool,
+    /// Every captured value has retained Sync evidence.
+    pub sync: bool,
 }
 
 impl ClosureBody {
@@ -5863,6 +5881,7 @@ mod tests {
                             false,
                         )],
                         body: Box::new(ClosureBody {
+                            native_storage: None,
                             original_callable: None,
                             function_item: false,
                             consumes_environment: false,

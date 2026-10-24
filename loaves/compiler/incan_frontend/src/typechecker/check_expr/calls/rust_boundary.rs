@@ -380,6 +380,14 @@ impl TypeChecker {
             ));
         }
         if let Some(coercion) = self.type_info.rust_arg_coercion(expression.span) {
+            // Builtin boundary types retain unsized text and slices. The source-facing target intentionally
+            // normalizes those to source str/List, which would change a second inference pass to &String/&Vec.
+            if matches!(
+                coercion.kind,
+                RustArgCoercionKind::Builtin(_) | RustArgCoercionKind::Borrow { mutable: false }
+            ) {
+                return Some(self.native_rust_signature_type(&coercion.rust_target_type, ""));
+            }
             return Some(coercion.target_type.clone());
         }
         match &expression.node {
@@ -804,6 +812,7 @@ impl TypeChecker {
         if signature.is_unsafe {
             return;
         }
+        self.retain_native_callback_parameters(path, signature, &signature.type_params);
         let arguments = signature
             .type_params
             .iter()
@@ -1789,7 +1798,8 @@ impl TypeChecker {
     }
 
     /// Validate a Rust function from its metadata, instantiate its parameters from inputs and expected output, and
-    /// retain the selected safe synchronous callee for Body IR when validation succeeds.
+    /// retain the selected callee for Body IR when validation succeeds. Unsafe signatures are refused independently
+    /// of checked C acknowledgment regions: RFC 005 provides no Rust safety opt-in.
     pub(in crate::typechecker::check_expr) fn validate_rust_function_call_with_expected(
         &mut self,
         path: &str,
@@ -1799,6 +1809,11 @@ impl TypeChecker {
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
         let errors_before = self.errors.len();
+        if sig.is_unsafe {
+            self.check_call_args(args);
+            self.errors.push(errors::rust_unsafe_call_not_supported(path, span));
+            return ResolvedType::Unknown;
+        }
         if sig.is_async {
             self.type_info
                 .rust

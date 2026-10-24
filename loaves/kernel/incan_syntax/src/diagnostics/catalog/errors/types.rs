@@ -1145,6 +1145,17 @@ pub fn capturing_callable_in_function_slot(what: &str, slot: &str, span: Span) -
         )
 }
 
+/// Refuse native callback storage when one named capture lacks the callee's required auto-trait evidence.
+/// Missing metadata is an admission gap rather than a claim that the captured Rust type has a negative impl.
+pub fn rust_callback_capture_missing_auto_trait(name: &str, ty: &str, marker: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Captured value '{name}' of type '{ty}' lacks retained `{marker}` evidence for this Rust callback"),
+        span,
+    )
+    .with_note("The callback owns its captures; every captured value must satisfy the Rust callee's storage bounds")
+    .with_hint(format!("Use captured values with a retained `{marker}` implementation"))
+}
+
 /// Refuse a method of a value as a local partial's target (RFC 084): an overloaded method, a generic method, or one
 /// that takes `mut self`. `reason` says which, as the end of the sentence the message starts.
 pub fn local_partial_method_target_refused(method: &str, reason: &str, span: Span) -> CompileError {
@@ -2372,6 +2383,16 @@ pub fn rust_item_shape_not_supported(path: &str, description: &str, span: Span) 
     )
     .with_hint("Import a module, type, function, or constant instead")
     .with_note("RFC 041 intentionally limits which Rust item shapes are typechecked directly")
+}
+
+/// Unsafe Rust calls have no author-facing safety contract, including inside checked C acknowledgment blocks.
+pub fn rust_unsafe_call_not_supported(path: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Unsafe Rust call `rust::{path}` is unsupported: unsafe interop is out of scope"),
+        span,
+    )
+    .with_note("RFC 005 excludes unsafe Rust calls; `unsafe:` acknowledges checked C bindings only")
+    .with_hint("Use a safe Rust API whose signature the compiler can validate")
 }
 
 /// A source signature names a lifetime-bearing Rust owner without a retained lifetime contract, by value or reference.

@@ -250,7 +250,7 @@ pub def model_prefix(
             if count == 0:
                 return Ok(Place(local=index, projection=Projection.Whole, span=span))
             fields = field_path(declarations, locals[index].ty, value.projection, count, enums, unions, intrinsics)?
-            if len(fields) == 1:
+            if len(fields) == 1 and fields[0].dereferences == 0:
                 if fields[0].variant >= 0:
                     return Ok(
                         Place(
@@ -293,6 +293,12 @@ pub def field_projection(
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[FieldProjection, str]:
     """Validate one ordered payload or canonical field through the typed Rust enum boundary required by #459."""
+    match field_referent(root):
+        Some(referent) =>
+            mut field = field_projection(declarations, referent, projection, enums, unions, intrinsics)?
+            field.dereferences += 1
+            return Ok(field)
+        None => pass
     match projection:
         RustPlaceElem.OptionPayload(option_type=container, payload_type=payload) =>
             if retained_type(declarations, enums, unions, container, intrinsics)? != root:
@@ -329,17 +335,23 @@ pub def field_projection(
         PlanType.Tuple(elements) =>
             slot = tuple_slot(projection, len(elements))?
             return Ok(FieldProjection(slot=slot, ty=tuple_element_type(elements[slot])))
-        PlanType.TupleMutRef(elements) =>
-            slot = tuple_slot(projection, len(elements))?
-            return Ok(FieldProjection(slot=slot, ty=tuple_element_type(elements[slot])))
-        PlanType.TupleRef(elements) =>
-            slot = tuple_slot(projection, len(elements))?
-            return Ok(FieldProjection(slot=slot, ty=tuple_element_type(elements[slot])))
         PlanType.RangeValue => return range_field(projection)
         _ =>
             return Err(
                 f"unsupported Body IR model index or slice projection at root {root:?}; projection {projection:?}",
             )
+
+
+def field_referent(ty: PlanType) -> Option[PlanType]:
+    """Retain each reference layer traversed before a canonical field, including references stored in tuple slots."""
+    match ty:
+        (PlanType.ModelRef(owner, name) | PlanType.ModelMutRef(owner, name)) => return Some(PlanType.Model(owner, name))
+        (PlanType.TupleRef(elements) | PlanType.TupleMutRef(elements)) => return Some(PlanType.Tuple(elements))
+        (PlanType.ScalarRef(elements) | PlanType.ScalarMutRef(elements)) =>
+            if len(elements) == 1:
+                return Some(elements[0])
+        _ => pass
+    return None
 
 
 pub def field_slot(value: &RustPlaceElem, declaration: &NominalDeclaration) -> Result[int, str]:
@@ -410,6 +422,7 @@ def validate_constructor_binding(binding: &ArgumentBinding, count: int, fields: 
                 if slot < 0 or slot >= fields or slot in slots:
                     return Err("invalid Body IR model default slot map")
                 slots.append(slot)
+                # Aliases change diagnostic spelling, never the retained constructor identity or physical layout.
             return Ok(None)
         _ => return Err("unsupported Body IR unresolved model constructor")
 
@@ -457,4 +470,3 @@ def receiver_owner(ty: PlanType) -> Option[tuple[int, str]]:
         PlanType.ModelRef(owner, name) => return Some((owner, name))
         PlanType.ModelMutRef(owner, name) => return Some((owner, name))
         _ => return None
-                # Aliases change diagnostic spelling, never the retained constructor identity or physical layout.

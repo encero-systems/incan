@@ -80,6 +80,26 @@ pub(crate) fn native_trait_object<'tcx>(
 /// List references preserve source parameter borrowing; checked pairs and other shared references are body-internal.
 pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, PlanError> {
     Ok(match ty {
+        PlanType::NativeTraitObject(path, send, sync) => {
+            let principal = crate::callees::library_item(tcx, path, rustc_hir::def::DefKind::Trait)?;
+            let object = native_trait_object(tcx, principal, &[])?;
+            let rustc_middle::ty::Dynamic(predicates, region) = object.kind() else {
+                return Err(PlanError::UnknownCallee(path.clone()));
+            };
+            let mut predicates: Vec<_> = predicates.iter().collect();
+            for (required, name) in [(*send, rustc_span::sym::Send), (*sync, rustc_span::sym::Sync)] {
+                if required {
+                    let marker = tcx
+                        .get_diagnostic_item(name)
+                        .ok_or_else(|| PlanError::UnknownCallee(name.to_string()))?;
+                    predicates.push(rustc_middle::ty::Binder::dummy(
+                        rustc_middle::ty::ExistentialPredicate::AutoTrait(marker),
+                    ));
+                }
+            }
+            predicates.sort_by(|left, right| left.skip_binder().stable_cmp(tcx, &right.skip_binder()));
+            Ty::new_dynamic(tcx, tcx.mk_poly_existential_predicates(&predicates), *region)
+        }
         PlanType::TypeToken(elements) => type_token_type(tcx, elements)?,
         PlanType::ScalarRef(elements) => scalar_reference_type(tcx, elements, false)?,
         PlanType::ScalarMutRef(elements) => scalar_reference_type(tcx, elements, true)?,
@@ -199,6 +219,9 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::Bool => tcx.types.bool,
         PlanType::FunctionPointer(signature) => function_pointer_type(tcx, signature)?,
         PlanType::Closure(signature) => Ty::new_box(tcx, callable_object_type(tcx, signature)?),
+        PlanType::NativeClosure(signature, send, sync) => {
+            Ty::new_box(tcx, native_callable_object_type(tcx, signature, *send, *sync)?)
+        }
         PlanType::SharedCallable(signature) => model_type(tcx, &crate::shared_callables::name(signature))?,
         PlanType::ClosureOnce(signature) => Ty::new_box(tcx, consuming_callable_object_type(tcx, signature)?),
         PlanType::ClosureRef(signature) => {
@@ -407,6 +430,27 @@ fn callable_object_type_for_kind<'tcx>(
     signature: &[PlanType],
     consumes_environment: bool,
 ) -> Result<Ty<'tcx>, PlanError> {
+    bounded_callable_object_type(tcx, signature, consumes_environment, false, false)
+}
+
+/// Retain the exact auto traits admitted by checking on a native owned callback object.
+fn native_callable_object_type<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    signature: &[PlanType],
+    send: bool,
+    sync: bool,
+) -> Result<Ty<'tcx>, PlanError> {
+    bounded_callable_object_type(tcx, signature, false, send, sync)
+}
+
+/// Construct one Fn-family object with structural inputs, output, and checked native auto traits.
+fn bounded_callable_object_type<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    signature: &[PlanType],
+    consumes_environment: bool,
+    send: bool,
+    sync: bool,
+) -> Result<Ty<'tcx>, PlanError> {
     let (result, parameters) = signature.split_last().ok_or_else(|| PlanError::Invalid {
         function: "callable object".into(),
         reason: "callable signature has no return type".into(),
@@ -424,7 +468,7 @@ fn callable_object_type_for_kind<'tcx>(
     let (inputs, bound) = bound_callable_inputs(tcx, parameters)?;
     let arguments = Ty::new_tup(tcx, &inputs);
     let bound = tcx.mk_bound_variable_kinds(&bound);
-    let predicates = tcx.mk_poly_existential_predicates(&[
+    let mut predicates = vec![
         rustc_middle::ty::Binder::bind_with_vars(
             rustc_middle::ty::ExistentialPredicate::Trait(rustc_middle::ty::ExistentialTraitRef::new(
                 tcx,
@@ -442,7 +486,17 @@ fn callable_object_type_for_kind<'tcx>(
             )),
             bound,
         ),
-    ]);
+    ];
+    for (required, name) in [(send, rustc_span::sym::Send), (sync, rustc_span::sym::Sync)] {
+        if required {
+            let marker = tcx.get_diagnostic_item(name).ok_or_else(|| missing(name.as_str()))?;
+            predicates.push(rustc_middle::ty::Binder::dummy(
+                rustc_middle::ty::ExistentialPredicate::AutoTrait(marker),
+            ));
+        }
+    }
+    predicates.sort_by(|left, right| left.skip_binder().stable_cmp(tcx, &right.skip_binder()));
+    let predicates = tcx.mk_poly_existential_predicates(&predicates);
     Ok(Ty::new_dynamic(tcx, predicates, tcx.lifetimes.re_static))
 }
 

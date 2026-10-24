@@ -43,6 +43,7 @@ pub def type_name(ty: &RustType) -> str:
         RustType.RustInteropPath(_path) => return "RustInteropPath"
         RustType.NativeArray(element=_element, length=_length) => return "NativeArray"
         RustType.NativeBuiltin(_builtin) => return str(ty)
+        RustType.NativeTraitObject(path=_path, send=_send, sync=_sync) => return str(ty)
         RustType.Unsupported(description) => return f"Unsupported[{description}]"
         RustType.Never => return "Never"
         RustType.SelfType => return "SelfType"

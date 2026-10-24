@@ -7,6 +7,7 @@ use crate::diagnostics::errors::{self, SelfMutation};
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved};
 use crate::symbols::*;
 use incan_lang::NumericTy;
+use incan_lang::lang::derives::DeriveId;
 use incan_lang::lang::errors as runtime_errors;
 use incan_lang::lang::keywords;
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
@@ -15,6 +16,7 @@ use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_semantics_core::SurfaceStmtTypeCheck;
 use incan_semantics_core::rust_tuple_arity;
 
+use super::derive_requirements::DeriveSupport;
 use super::{CAbiSpanLocal, CBindingType, COutputMode, LoopContextKind, TypeChecker};
 
 mod chained;
@@ -866,6 +868,7 @@ impl TypeChecker {
     /// refused (see `capturing_callables.rs`).
     fn check_assignment(&mut self, assign: &AssignmentStmt, span: Span) {
         self.check_assignment_binding(assign, span);
+        self.refuse_owned_native_tuple_field(assign);
         self.note_static_alias_binding(assign);
         let declares = self
             .lookup_symbol(&assign.name)
@@ -1036,6 +1039,56 @@ impl TypeChecker {
         }
         self.consumed_iterator_bindings.remove(&assign.name);
         self.transferred_c_resource_bindings.remove(&assign.name);
+    }
+
+    /// Require retained ownership evidence for a foreign tuple field bound by value. Explicit references keep
+    /// the existing loan representation; unsupported owned bindings refuse before Body IR requests Clone.
+    fn refuse_owned_native_tuple_field(&mut self, assign: &AssignmentStmt) {
+        if !self.is_tuple_field_read(&assign.value) {
+            return;
+        }
+        let Some(target) = self.lookup_variable_info_in_scope_chain(&assign.name) else {
+            return;
+        };
+        if matches!(target.ty, ResolvedType::Ref(_) | ResolvedType::RefMut(_)) {
+            return;
+        }
+        let Some(value) = self.type_info.expr_type(assign.value.span) else {
+            return;
+        };
+        if self.native_field_clone_candidate(value) == Some(false)
+            && !matches!(self.derive_support(value, DeriveId::Clone), DeriveSupport::Supported)
+        {
+            self.errors.push(errors::native_tuple_field_copy_not_retained(
+                &assign.name,
+                &value.to_string(),
+                assign.value.span,
+            ));
+        }
+    }
+
+    /// Recognize checked tuple projections through either field spelling or literal indexing and transparent
+    /// parentheses. The base's checked storage distinguishes a tuple read from a computed property or user indexer.
+    fn is_tuple_field_read(&self, value: &Spanned<Expr>) -> bool {
+        match &value.node {
+            Expr::Paren(inner) => self.is_tuple_field_read(inner),
+            Expr::Field(base, _) | Expr::Index(base, _) => self
+                .type_info
+                .expr_type(base.span)
+                .is_some_and(|ty| self.has_tuple_storage(ty)),
+            _ => false,
+        }
+    }
+
+    /// Normalize the checker's tuple annotation and reference forms through the same collection registry as ordinary
+    /// tuple access. Alias expansion remains in the accepting checker, never in a downstream ownership consumer.
+    fn has_tuple_storage(&self, ty: &ResolvedType) -> bool {
+        match self.expand_type_aliases(ty.clone()) {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.has_tuple_storage(&inner),
+            ResolvedType::Tuple(_) => true,
+            ResolvedType::Generic(name, _) => collection_type_id(&name) == Some(CollectionTypeId::Tuple),
+            _ => false,
+        }
     }
 
     /// Whether this spelling deliberately declares a new source binding instead of resolving an active one.

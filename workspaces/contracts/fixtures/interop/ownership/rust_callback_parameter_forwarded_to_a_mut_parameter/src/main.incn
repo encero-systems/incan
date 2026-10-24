@@ -1,15 +1,40 @@
-# behavior: the mutable Rust value a Rust callback lends to a closure is forwarded to an Incan function declaring its parameter mut, and the changes that function makes are seen by the host after each call
+# behavior: Rust callbacks lend mutable values and boxed callbacks outlive their creating frame (#2256)
 # expect-stdout:
 #   11
+#   retained 7
+#   retained 7
 
-from rust::tiny_ui import Ui, with_ui
+"""Observe borrowed callbacks and Rust-owned callback storage across an Incan return."""
+
+from rust::tiny_ui import StoredCallback, Ui, with_ui
 
 
 # The host starts its counter at 1 and calls the closure twice; `paint` adds 5 each time. A copy of the lent value,
 # rather than the value itself, would leave the host at 1.
 def paint(mut ui: Ui) -> None:
+    """Update the mutable value lent by the Rust callback host."""
     ui.n += 5
 
 
+def retained_callback() -> StoredCallback:
+    """Return Rust storage whose boxed closure owns both local captures."""
+    text = "retained"
+    number = 7
+    return StoredCallback.new(() => f"{text} {number}")
+
+
 def main() -> None:
+    """
+    Observe callback mutation and Rust storage that outlives its creating frame.
+
+    1. Observe the borrowed callback's mutation.
+    2. Create a callback and return from its Incan creating frame.
+    3. Invoke the Rust-boxed callback twice.
+    """
+    # 1. Observe the borrowed callback's mutation.
     println(with_ui((ui) => paint(ui)))
+    # 2. Create a callback and return from its Incan creating frame.
+    callback = retained_callback()
+    # 3. Invoke the Rust-boxed callback twice.
+    println(callback.call())
+    println(callback.call())

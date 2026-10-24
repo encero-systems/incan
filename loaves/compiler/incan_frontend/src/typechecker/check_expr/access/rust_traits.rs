@@ -789,8 +789,9 @@ impl TypeChecker {
         incan_lang::interop::ancestral_rust_path(definition.unwrap_or(path))
     }
 
-    /// Bind one impl's declared Self template to a concrete native owner before inspecting its members or projections.
-    pub(in crate::typechecker::check_expr) fn rust_impl_self_bindings(
+    /// Bind one impl's declared Self template to a concrete native owner before member, projection, or ownership
+    /// admission. A matching Self template is a candidate only; native predicate obligations remain unproven here.
+    pub(in crate::typechecker) fn rust_impl_self_bindings(
         &self,
         implementation: &RustImplementedTrait,
         owner: &ResolvedType,

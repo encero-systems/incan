@@ -55,6 +55,7 @@ use super::calls::PublicModuleConstructorContext;
 
 use super::{GenericPartialTarget, TypeChecker};
 
+mod declared_edges;
 mod native_methods;
 mod rust_deref;
 mod rust_projections;
@@ -3453,6 +3454,8 @@ impl TypeChecker {
             arg_types,
             Some(result),
         );
+        // An open result contributes no binding. Keep it from masking the exact owner's concrete argument below.
+        bindings.retain(|_, value| !matches!(value, ResolvedType::Unknown | ResolvedType::CallSiteInfer));
         if let (Some(receiver), Some(template)) = (receiver, method.impl_self_type.as_deref()) {
             let receiver = match receiver {
                 ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref(),
@@ -3466,6 +3469,12 @@ impl TypeChecker {
             );
         }
         let Some(type_arguments) = self.rust_method_type_arguments(&native_parameters, owner, &bindings) else {
+            if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
+                eprintln!(
+                    "rust method unresolved: {path}.{} parameters {native_parameters:?}, receiver {receiver:?}, template {:?}, bindings {bindings:?}",
+                    method.name, method.impl_self_type
+                );
+            }
             return;
         };
         if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
@@ -3526,6 +3535,11 @@ impl TypeChecker {
             .rust_definition_for_path(path)
             .filter(|definition| definition == "str")
             .unwrap_or_else(|| path.to_owned());
+        self.retain_native_callback_parameters(
+            &format!("{callee_owner}::{}", method.name),
+            &method.signature,
+            &native_parameters,
+        );
         self.type_info.rust.checked_calls.insert(
             (span.start, span.end),
             crate::typechecker::type_info::RustCheckedCall {

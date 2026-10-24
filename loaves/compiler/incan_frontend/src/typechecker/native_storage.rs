@@ -32,6 +32,7 @@ impl TypeChecker {
         let mut calls = std::mem::take(&mut self.type_info.rust.checked_calls);
         let mut awaits = std::mem::take(&mut self.type_info.rust.await_conversions);
         let mut arguments = std::mem::take(&mut self.type_info.rust.argument_adjustments);
+        let mut conversions = std::mem::take(&mut self.type_info.rust.declared_conversions);
         let mut elements = std::mem::take(&mut self.type_info.rust.element_adjustments);
         let mut fields = std::mem::take(&mut self.type_info.rust.field_adjustments);
         let mut function_values = std::mem::take(&mut self.type_info.rust.checked_function_values);
@@ -42,6 +43,7 @@ impl TypeChecker {
             .chain(awaits.values_mut())
             .chain(arguments.values_mut().flatten())
             .chain(elements.values_mut())
+            .chain(conversions.iter_mut().map(|edge| &mut edge.call))
             .chain(fields.values_mut().flatten())
             .chain(function_values.values_mut())
         {
@@ -76,6 +78,7 @@ impl TypeChecker {
         self.type_info.rust.checked_calls = calls;
         self.type_info.rust.await_conversions = awaits;
         self.type_info.rust.argument_adjustments = arguments;
+        self.type_info.rust.declared_conversions = conversions;
         self.type_info.rust.element_adjustments = elements;
         self.type_info.rust.field_adjustments = fields;
         self.type_info.rust.checked_function_values = function_values;
@@ -438,6 +441,10 @@ impl TypeChecker {
     ) {
         match ty {
             IncanType::RustInteropPath(path) => {
+                if let Some(object) = self.native_bounded_rust_object_storage(path) {
+                    *ty = object;
+                    return;
+                }
                 if let Some(array) = self.rust_array_storage(path, parameters, identities) {
                     *ty = array;
                 }
@@ -621,6 +628,62 @@ fn source_storage_parameters(program: &Program, span: (usize, usize)) -> Vec<Str
     Vec::new()
 }
 
+impl TypeChecker {
+    /// Freeze a nongeneric dyn principal and its explicit auto traits while native metadata still owns resolution.
+    /// Associated equalities and lifetime-bearing objects require a richer storage contract and stay refused.
+    fn native_bounded_rust_object_storage(&self, display: &str) -> Option<IncanType> {
+        let syn::Type::TraitObject(object) = syn::parse_str::<syn::Type>(display).ok()? else {
+            return None;
+        };
+        let mut principal = None;
+        let mut send = false;
+        let mut sync = false;
+        for bound in object.bounds {
+            let bound = match bound {
+                syn::TypeParamBound::Trait(bound) => bound,
+                syn::TypeParamBound::Lifetime(lifetime) if lifetime.ident == "static" => continue,
+                _ => return None,
+            };
+            if bound
+                .path
+                .segments
+                .iter()
+                .any(|segment| !matches!(segment.arguments, syn::PathArguments::None))
+            {
+                return None;
+            }
+            let path = bound.path.to_token_stream().to_string().replace(' ', "");
+            match path.as_str() {
+                "std::marker::Send" | "core::marker::Send" => send = true,
+                "std::marker::Sync" | "core::marker::Sync" => sync = true,
+                _ if principal.is_none() => principal = Some(path),
+                _ => return None,
+            }
+        }
+        if !send && !sync {
+            return None;
+        }
+        let path = principal?;
+        let metadata = self.rust_item_metadata_for_path(&path)?;
+        let incan_lang::interop::RustItemKind::Trait(info) = &metadata.kind else {
+            return None;
+        };
+        if !info.type_params.is_empty()
+            || info
+                .items
+                .iter()
+                .any(|item| matches!(item, incan_lang::interop::RustTraitAssoc::TypeAlias { .. }))
+        {
+            return None;
+        }
+        Some(IncanType::NativeTraitObject {
+            path: metadata.canonical_path.clone(),
+            send,
+            sync,
+        })
+    }
+}
+
 /// Recognize only the source frame's declared binders before any nominal or native storage projection.
 fn source_binder(ty: &ResolvedType, parameters: &[String]) -> Option<ResolvedType> {
     match ty {
@@ -634,7 +697,7 @@ fn source_binder(ty: &ResolvedType, parameters: &[String]) -> Option<ResolvedTyp
 /// Select types containing native storage; source binders and declarations keep their own lexical facts.
 fn has_native_storage(ty: &IncanType) -> bool {
     match ty {
-        IncanType::RustInteropPath(_) => true,
+        IncanType::RustInteropPath(_) | IncanType::NativeTraitObject { .. } => true,
         IncanType::Named(name) => body_ir::rust_item_identity(name).is_some(),
         IncanType::Generic { base, args } => {
             body_ir::rust_item_identity(base).is_some() || args.iter().any(has_native_storage)

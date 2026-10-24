@@ -58,6 +58,12 @@ pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::LoafCallable> {
             return_type: storage.return_type.clone(),
             type_parameters: Vec::new(),
             native_type_arguments: storage.type_arguments.clone(),
+            native_callable_parameters: facts
+                .rust
+                .native_callable_parameters
+                .get(&call.path)
+                .cloned()
+                .unwrap_or_default(),
             parameter_defaults: Vec::new(),
             declaration_frame: None,
         };
@@ -295,6 +301,7 @@ impl BodyBuilder<'_, '_> {
                 params: parameters,
                 captured_operands: Vec::new(),
                 body: Box::new(bir::ClosureBody {
+                    native_storage: None,
                     function_item: true,
                     consumes_environment: false,
                     original_callable: None,
@@ -346,12 +353,11 @@ impl BodyBuilder<'_, '_> {
                 };
                 (receiver, &args[1..])
             };
-            return Some(
-                match self.lower_adjusted_rust_call(&call, receiver, args, span, scope, out) {
-                    Ok(value) => value,
-                    Err(reason) => self.unsupported_operand(reason, scope, hir_span(span), out),
-                },
-            );
+            let value = match self.lower_adjusted_rust_call(&call, receiver, args, span, scope, out) {
+                Ok(value) => value,
+                Err(reason) => self.unsupported_operand(reason, scope, hir_span(span), out),
+            };
+            return Some(self.retain_checked_numeric_result(value, span, scope, out));
         }
         let mut arguments = Vec::new();
         if call.has_receiver {
@@ -382,7 +388,8 @@ impl BodyBuilder<'_, '_> {
                 self.moved_out.remove(&local);
             }
         }
-        self.emit_checked_rust_call(&call, operands, binding, span, scope, out)
+        let value = self.emit_checked_rust_call(&call, operands, binding, span, scope, out)?;
+        Some(self.retain_checked_numeric_result(value, span, scope, out))
     }
 
     /// Emit an already bound call through the shared canonical external target; no method resolution occurs here.

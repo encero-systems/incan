@@ -74,7 +74,7 @@ def owned_slots_for_bindings(
     return Ok(owned)
 
 
-def argument_storage(mut builder: Builder, argument: &RustArgument) -> Result[Option[PlanType], str]:
+pub def argument_storage(mut builder: Builder, argument: &RustArgument) -> Result[Option[PlanType], str]:
     """Inspect a proven frame local without reading it, executing an index, or manufacturing a projected field ABI."""
     match argument.as_one():
         Some(RustOperand.Place(read)) =>

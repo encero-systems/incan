@@ -1,4 +1,4 @@
-# behavior: Unadmitted native calls and out-of-range CommandExt integers are refused before execution (#2256)
+# behavior: Unadmitted native calls, owned foreign fields and unsafe callback storage are refused (#2256)
 # expect-stderr-contains:
 #   does not resolve for this match
 #   Rust method `rust::std::path::Path::missing_contract` has no admitted callable signature
@@ -8,17 +8,55 @@
 #   Type 'i32' has no constructor
 #   Type 'bytes' has no constructor
 #   Integer literal 2147483648 does not fit in i32
+#   Unsafe Rust call `rust::std::env::set_var` is unsupported: unsafe interop is out of scope
+#   Captured value 'handle'
+#   Send
+#   cannot be passed to a Rust generic parameter without retained callable bounds
+#   Field 'handle' of model 'ForeignModel'
+#   Field 'handle' of class 'ForeignClass'
+#   Field 'handle' of model 'AliasModel'
+#   Owned binding 'copied' of foreign tuple field type
+#   Owned binding 'typed' of foreign tuple field type
+#   Owned binding 'indexed' of foreign tuple field type
+#   Owned binding 'annotated' of foreign tuple field type
+#   Owned binding 'through_reference' of foreign tuple field type
 # expect-exit: 1
 
 """A known native owner does not authorize a guessed associated method signature, and no refused call executes."""
 
 from rust::std::cell import RefCell
 from rust::std::cmp import Ordering
-from rust::std::env import VarError
+from rust::std::convert import identity
+from rust::std::env import VarError, set_var
 from rust::std::mem import size_of_val
 from rust::std::os::unix::process import CommandExt
 from rust::std::path import Path
 from rust::std::process import Command
+from rust::std::rc import Rc
+from rust::std::sync import Mutex
+from rust::std::thread import spawn
+
+
+type Lock = rusttype Mutex[int]:
+    """Retain the native owner's Clone obligation through a transparent alias."""
+
+
+model ForeignModel:
+    """Require the automatic Clone obligation of a directly imported foreign owner."""
+
+    handle: Mutex[int]
+
+
+class ForeignClass:
+    """Require the same owned-field obligation for a class."""
+
+    pub handle: Mutex[int]
+
+
+model AliasModel:
+    """Require the native owner's Clone evidence through a rusttype alias."""
+
+    handle: Lock
 
 
 model Value:
@@ -66,17 +104,70 @@ def unavailable_constructors() -> None:
     println(bytes([1u8, 2u8]))
 
 
-def main() -> None:
-    """Request every refused function, so admission rejects each before anything could execute."""
-    println(classify(Ordering.Equal))
-    guessed_method()
-    shared_mutation()
-    println(size())
-    unavailable_constructors()
-    oversized_process_group()
+def unsafe_rust_call() -> None:
+    """Keep checked C acknowledgment from authorizing unsafe Rust calls."""
+    unsafe:
+        set_var("INCAN_INTEROP_UNSAFE_PROBE", "unused")
+
+
+def captured_thread_callback() -> None:
+    """Name the captured non-Send value before a Rust thread can retain it."""
+    handle = Rc.new(3)
+    worker = spawn(() => Rc.strong_count(handle))
+
+
+def stored_native_callback() -> None:
+    """Refuse captured environments passed through an unbounded native binder."""
+    text = "owned"
+    callback = identity(() => text)
+    println(callback())
+
+
+def owned_tuple_fields() -> None:
+    """Refuse inferred and explicitly owned copies when a foreign tuple field has no Clone evidence."""
+    handles = (Mutex.new(3), 7)
+    copied = handles.0
+    typed: Mutex[int] = handles.0
+    indexed = handles[0]
+    typed_tuple: Tuple[Mutex[int], int] = (Mutex.new(4), 8)
+    annotated = typed_tuple[0]
+    println(copied.is_poisoned())
+    println(typed.is_poisoned())
+
+
+def borrowed_tuple_owner(handles: &Tuple[Mutex[int], int]) -> None:
+    """Require the same owned-copy evidence when the tuple owner is itself borrowed."""
+    through_reference = handles[0]
+    println(through_reference.is_poisoned())
 
 
 def oversized_process_group() -> None:
     """Refuse an unsuffixed literal outside the native extension method's integer parameter range."""
     mut command = Command.new("true")
     command.process_group(2147483648)
+
+
+def main() -> None:
+    """
+    Request refused native calls before anything can execute.
+
+    1. Check native owners, mutation, numeric boundaries, and unavailable constructors.
+    2. Check that C acknowledgment does not authorize unsafe Rust calls.
+    3. Check captured callbacks against retained native storage bounds.
+    4. Check that foreign tuple fields require a borrow or retained Clone evidence.
+    """
+    # 1. Check native owners, mutation, numeric boundaries, and unavailable constructors.
+    println(classify(Ordering.Equal))
+    guessed_method()
+    shared_mutation()
+    println(size())
+    unavailable_constructors()
+    oversized_process_group()
+    # 2. Check that C acknowledgment does not authorize unsafe Rust calls.
+    unsafe_rust_call()
+    # 3. Check captured callbacks against retained native storage bounds.
+    captured_thread_callback()
+    stored_native_callback()
+    # 4. Check that foreign tuple fields require a borrow or retained Clone evidence.
+    owned_tuple_fields()
+    borrowed_tuple_owner((Mutex.new(3), 7))

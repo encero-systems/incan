@@ -73,6 +73,12 @@ pub fn place<'tcx>(tcx: TyCtxt<'tcx>, value: &Place) -> Result<mir::Place<'tcx>,
                 place
             };
             for field in fields {
+                for _ in 0..index(field.dereferences)? {
+                    projected = tcx.mk_place_deref(projected);
+                }
+                if field.slot == -1 {
+                    continue;
+                }
                 if field.variant >= 0 {
                     projected = projected.project_deeper(
                         &[mir::ProjectionElem::Downcast(
@@ -432,60 +438,9 @@ pub fn rvalue<'tcx>(
         ),
 
         RvalueKind::Model(_, elements) | RvalueKind::Enum(_, _, elements) => {
-            let ty = native_type(tcx, destination_type)?;
-            let rustc_middle::ty::Adt(definition, args) = ty.kind() else {
-                return Err(PlanError::Invalid {
-                    function: "model".into(),
-                    reason: "model construction requires an ADT destination".into(),
-                });
-            };
-            let mut operands = elements
-                .iter()
-                .map(|value| operand(tcx, sources, value))
-                .collect::<Result<Vec<_>, _>>()?;
-            if matches!(value, RvalueKind::Model(..))
-                && let Some(marker) = crate::generic_layouts::marker_type(tcx, *definition, args, operands.len())
-            {
-                operands.push(mir::Operand::Constant(Box::new(mir::ConstOperand {
-                    span: rustc_span::DUMMY_SP,
-                    user_ty: None,
-                    const_: mir::Const::Val(mir::ConstValue::ZeroSized, marker),
-                })));
-            }
-            mir::Rvalue::Aggregate(
-                Box::new(mir::AggregateKind::Adt(
-                    definition.did(),
-                    rustc_abi::VariantIdx::from_usize(match value {
-                        RvalueKind::Enum(_, variant, _) => index(*variant)?,
-                        _ => 0,
-                    }),
-                    *args,
-                    None,
-                    None,
-                )),
-                IndexVec::from_raw(operands),
-            )
+            nominal_aggregate(tcx, sources, value, destination_type, elements)?
         }
-        RvalueKind::Array(elements) => {
-            let element = match destination_type {
-                PlanType::StringArray(_) => native_type(tcx, &PlanType::String)?,
-                PlanType::StrArray(_) => native_type(tcx, &PlanType::StrRef)?,
-                _ => {
-                    return Err(PlanError::Invalid {
-                        function: "array".into(),
-                        reason: "array expression requires a formatting array destination".into(),
-                    });
-                }
-            };
-            let operands = elements
-                .iter()
-                .map(|value| operand(tcx, sources, value))
-                .collect::<Result<Vec<_>, _>>()?;
-            mir::Rvalue::Aggregate(
-                Box::new(mir::AggregateKind::Array(element)),
-                IndexVec::from_raw(operands),
-            )
-        }
+        RvalueKind::Array(elements) => formatting_array(tcx, sources, destination_type, elements)?,
         RvalueKind::MutBorrow(value) => mir::Rvalue::Ref(
             tcx.lifetimes.re_erased,
             mir::BorrowKind::Mut {
@@ -505,6 +460,83 @@ pub fn rvalue<'tcx>(
             native_type(tcx, destination_type)?,
         ),
     })
+}
+
+/// Construct a checked nominal payload with its exact native field count. An opaque zero-field metadata view never
+/// authorizes constructing a native owner that actually contains hidden fields; real unit structs remain supported.
+fn nominal_aggregate<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    sources: &Sources<'_>,
+    value: &RvalueKind,
+    destination_type: &PlanType,
+    elements: &[Operand],
+) -> Result<mir::Rvalue<'tcx>, PlanError> {
+    let ty = native_type(tcx, destination_type)?;
+    let ty::Adt(definition, args) = ty.kind() else {
+        return Err(PlanError::Invalid {
+            function: "model".into(),
+            reason: "model construction requires an ADT destination".into(),
+        });
+    };
+    let mut operands = elements
+        .iter()
+        .map(|value| operand(tcx, sources, value))
+        .collect::<Result<Vec<_>, _>>()?;
+    if matches!(value, RvalueKind::Model(..)) {
+        if let Some(marker) = crate::generic_layouts::marker_type(tcx, *definition, args, operands.len()) {
+            operands.push(mir::Operand::Constant(Box::new(mir::ConstOperand {
+                span: rustc_span::DUMMY_SP,
+                user_ty: None,
+                const_: mir::Const::Val(mir::ConstValue::ZeroSized, marker),
+            })));
+        }
+        if !definition.is_struct() || definition.non_enum_variant().fields.len() != operands.len() {
+            return Err(PlanError::Unsupported {
+                function: tcx.def_path_str(definition.did()),
+                reason: "constructor payload does not match the complete native struct layout".into(),
+            });
+        }
+    }
+    Ok(mir::Rvalue::Aggregate(
+        Box::new(mir::AggregateKind::Adt(
+            definition.did(),
+            rustc_abi::VariantIdx::from_usize(match value {
+                RvalueKind::Enum(_, variant, _) => index(*variant)?,
+                _ => 0,
+            }),
+            *args,
+            None,
+            None,
+        )),
+        IndexVec::from_raw(operands),
+    ))
+}
+
+/// Preserve owned versus borrowed text elements in the formatting helper's fixed native array.
+fn formatting_array<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    sources: &Sources<'_>,
+    destination_type: &PlanType,
+    elements: &[Operand],
+) -> Result<mir::Rvalue<'tcx>, PlanError> {
+    let element = match destination_type {
+        PlanType::StringArray(_) => native_type(tcx, &PlanType::String)?,
+        PlanType::StrArray(_) => native_type(tcx, &PlanType::StrRef)?,
+        _ => {
+            return Err(PlanError::Invalid {
+                function: "array".into(),
+                reason: "array expression requires a formatting array destination".into(),
+            });
+        }
+    };
+    let operands = elements
+        .iter()
+        .map(|value| operand(tcx, sources, value))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(mir::Rvalue::Aggregate(
+        Box::new(mir::AggregateKind::Array(element)),
+        IndexVec::from_raw(operands),
+    ))
 }
 
 /// Decode exact frontend-owned numeric payloads only after the Incan admission table selects their carrier.

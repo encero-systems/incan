@@ -2397,6 +2397,11 @@ impl TypeChecker {
         if !has_shape_error {
             self.type_info
                 .record_rust_named_field_constructor_fields(span, vec![String::new(); type_info.fields.len()]);
+            if type_info.fields.is_empty()
+                && let Some(result) = self.retain_rust_construction(path, type_info, args, &[], span)
+            {
+                return result;
+            }
         }
         ResolvedType::RustPath(path.to_string())
     }

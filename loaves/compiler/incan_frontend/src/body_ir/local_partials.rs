@@ -246,6 +246,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 params,
                 captured_operands: frame.operands,
                 body: Box::new(bir::ClosureBody {
+                    native_storage: None,
                     original_callable: None,
                     consumes_environment: false,
                     function_item: false,

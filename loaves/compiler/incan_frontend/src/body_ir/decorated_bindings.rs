@@ -354,6 +354,7 @@ fn initializer(
             params: parameters,
             captured_operands: Vec::new(),
             body: Box::new(bir::ClosureBody {
+                native_storage: None,
                 original_callable: original.canonical.clone(),
                 function_item: true,
                 consumes_environment: false,

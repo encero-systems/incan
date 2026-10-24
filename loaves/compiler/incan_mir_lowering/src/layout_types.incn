@@ -36,6 +36,8 @@ pub def native_source_type(
         Some(result) => return Ok(result)
         None => pass
     match ty:
+        RustType.NativeTraitObject(path=path, send=send, sync=sync) =>
+            return Ok(PlanType.NativeTraitObject(str(path), send.clone(), sync.clone()))
         RustType.NativeArray(element=element, length=length) =>
             # The bootstrap binds Rust enum scalar fields by reference; copy the checked integer before conversion.
             count = length.clone()
@@ -166,18 +168,22 @@ pub def shared_receiver_type(ty: PlanType) -> Result[PlanType, str]:
     match ty:
         PlanType.Tuple(elements) => return Ok(PlanType.TupleRef(elements))
         PlanType.ZipIterator(left, right) => return Ok(PlanType.ZipIteratorRef(left, right))
-        PlanType.StrRef => return Ok(PlanType.ScalarRef([ty]))
-        PlanType.StringRef => return Ok(PlanType.ScalarRef([ty]))
-        PlanType.ModelRef(_owner, _name) => return Ok(PlanType.ScalarRef([ty]))
-        PlanType.EnumRef(_owner, _name) => return Ok(PlanType.ScalarRef([ty]))
-        PlanType.ScalarRef(_elements) => return Ok(PlanType.ScalarRef([ty]))
+        (
+            PlanType.StrRef
+            | PlanType.StringRef
+            | PlanType.ModelRef(_, _)
+            | PlanType.ModelMutRef(_, _)
+            | PlanType.EnumRef(_, _)
+            | PlanType.TupleRef(_)
+            | PlanType.TupleMutRef(_)
+            | PlanType.ScalarRef(_)
+            | PlanType.ScalarMutRef(_)
+        ) => return Ok(PlanType.ScalarRef([ty]))
         PlanType.FrozenCollection(name, elements) => return Ok(PlanType.FrozenCollectionRef(name, elements))
         PlanType.NativeArray(elements, length) => return Ok(PlanType.NativeArrayRef(elements, length))
         PlanType.NativeSlice(elements) => return Ok(PlanType.SliceRef(elements))
         PlanType.FunctionPointer(_signature) => return Ok(PlanType.ScalarRef([ty]))
         PlanType.Model(index, name) => return Ok(PlanType.ModelRef(index, name))
-        PlanType.Tuple(_elements) => return Ok(PlanType.ScalarRef([ty]))
-        PlanType.FrozenCollection(name, elements) => return Ok(PlanType.FrozenCollectionRef(name, elements))
         PlanType.Enum(index, name) => return Ok(PlanType.EnumRef(index, name))
         PlanType.ValidationError => return Ok(PlanType.ValidationErrorRef)
         PlanType.String => return Ok(PlanType.StringRef)

@@ -4966,7 +4966,11 @@ impl TypeChecker {
             }
 
             if let Some(adapter_sig) = self.resolve_interop_adapter_signature(nt, edge) {
+                let errors_before = self.errors.len();
                 self.validate_interop_adapter_signature(nt, edge, &boundary_ty, &rusttype_ty, &adapter_sig);
+                if self.errors.len() == errors_before {
+                    self.retain_declared_rusttype_edge(nt, edge, &boundary_ty, &rusttype_ty);
+                }
             }
         }
 

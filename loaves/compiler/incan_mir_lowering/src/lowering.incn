@@ -59,6 +59,8 @@ from pub::incan_mir_plan import (
 )
 from pub::incan_mir_plan import assign as plan_assign, place as plan_place, block as plan_block
 from bytes_plan import bytes_literal
+from native_callables import native_callable_storage
+from rust::incan_semantics_core::body_ir import NativeClosureStorage
 from newtype_constants import numeric_newtype_literal
 from sdk_async_types import close_async_types, primary_async_body, async_call_type_arguments, selected_async_receiver
 from layout_types import shared_receiver_type, mutable_receiver_type, stored_field_type
@@ -372,6 +374,7 @@ from frame import (
     text_literal,
     finish_fallthrough,
     appended_field,
+    dereferenced_place,
 )
 from array_views import borrow_array_slice
 from collections import (
@@ -782,6 +785,10 @@ def target_read(mut builder: Builder, target: Place, fact: &OwnershipFact, span:
                 OwnershipFact.Unknown => return Err("unsupported Body IR unknown callable-object ownership")
                 OwnershipFact.MutBorrow => return Err("unsupported Body IR mutable callable-object borrow")
                 _ => return Ok(read_place(target, false, span))
+        PlanType.NativeClosure(_signature, _send, _sync) =>
+            if fact != OwnershipFact.Move or target.projection != Projection.Whole:
+                return Err("unsupported Body IR native callback read without owned transfer")
+            return Ok(read_place(target, true, span))
         PlanType.Closure(signature) =>
             # A narrowed payload stays owned by its carrier; reading its value snapshots only the selected environment.
             if fact == OwnershipFact.Borrow:
@@ -2103,6 +2110,7 @@ def lower_local_assignment(
                     closure.stmts,
                     closure.result,
                     closure.consumes_environment,
+                    closure.native_storage,
                     span,
                 )
         RustRvalue.Generator(source=source, captured_operands=captures, body=generator) =>
@@ -2114,6 +2122,10 @@ def lower_local_assignment(
             ):
                 callable = stored_callable(builder, operand, span)?
                 match operand_type(builder, callable)?:
+                    PlanType.NativeClosure(signature, send, sync) =>
+                        move_closure(builder, target, callable, signature, false, span)?
+                        builder.locals[target.local].ty = PlanType.NativeClosure(signature, send, sync)
+                        return Ok(None)
                     PlanType.Closure(signature) =>
                         return move_closure(builder, target, callable, signature, false, span)
                     PlanType.ClosureOnce(signature) =>
@@ -2278,17 +2290,9 @@ def in_place_iteration_binding(
             else:
                 match place_type(builder.locals, source):
                     PlanType.ModelMutRef(owner, name) =>
-                        source = Place(
-                            local=source.local,
-                            projection=Projection.Deref(PlanType.Model(owner, name)),
-                            span=span,
-                        )
+                        source = dereferenced_place(source, PlanType.Model(owner, name), span)?
                     PlanType.TupleMutRef(elements) =>
-                        source = Place(
-                            local=source.local,
-                            projection=Projection.Deref(PlanType.Tuple(elements)),
-                            span=span,
-                        )
+                        source = dereferenced_place(source, PlanType.Tuple(elements), span)?
                     _ => pass
                 bind_payload_in_place(builder, destination.local, source, span)?
             if destination.local not in builder.in_place_items:
@@ -2440,6 +2444,7 @@ def lower_closure(
     statements: &list[RustStatement],
     result: &RustOperand,
     consumes_environment: bool,
+    native_storage: &Option[NativeClosureStorage],
     span: SourceSpan,
 ) -> Result[None, str]:
     """
@@ -2502,10 +2507,30 @@ def lower_closure(
     if target.local in builder.function_pointer_locals:
         return Err("unsupported Body IR capturing closure stored as a function pointer")
     _ = closure_arguments(signature)?
-    constructor = closure_constructor(f"{name}_new", name, capture_types, signature, consumes_environment, span)
+    mut native_send = false
+    mut native_sync = false
+    match native_storage:
+        Some(storage) =>
+            if not storage.move_capture:
+                return Err("invalid Body IR native callback without owned capture storage")
+            native_send = storage.send
+            native_sync = storage.sync
+        None => pass
+    constructor = closure_constructor(
+        f"{name}_new",
+        name,
+        capture_types,
+        signature,
+        consumes_environment,
+        span,
+        native_send,
+        native_sync,
+    )
     synthesize(builder, constructor)
     drop_owned(builder, target.local, span)
     hold_closure(builder, target.local, signature, flags, consumes_environment)?
+    if native_send or native_sync:
+        builder.locals[target.local].ty = PlanType.NativeClosure(signature, native_send, native_sync)
     terminate_call(builder, CalleeKind.Planned(f"{name}_new"), operands, target, span)
     mut scalar_environment = true
     for capture in capture_types:
@@ -5269,6 +5294,15 @@ def lower_delegated_call(
         type_arguments.append(
             native_source_type(builder.nominals, builder.enums, builder.unions, argument, builder.intrinsics)?,
         )
+    if checked_rust:
+        parameters, type_arguments = native_callable_storage(
+            builder,
+            delegation,
+            arguments,
+            target.binding,
+            parameters,
+            type_arguments,
+        )?
     operands = library_call_operands(module, builder, delegation, target.binding, arguments, parameters, span, 0, true)?
     output = call_destination(builder, destination, result, span)?
     match delegation.rust_path():

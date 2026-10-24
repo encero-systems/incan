@@ -782,6 +782,51 @@ fn inherent_methods(tcx: TyCtxt<'_>, implementations: &[DefId], named: &mut Hash
         .collect()
 }
 
+/// Retain rustc-proven auto traits for closed owners, including primitives whose auto impls have no impl item.
+/// Open owners keep their explicit conditional templates; a missing proof never becomes a negative trait fact.
+fn closed_auto_trait_impls<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    owner: Ty<'tcx>,
+    named: &mut HashSet<DefId>,
+) -> Vec<RustImplementedTrait> {
+    use rustc_infer::infer::TyCtxtInferExt;
+    use rustc_middle::ty::TypeVisitableExt;
+    use rustc_trait_selection::traits::query::evaluate_obligation::InferCtxtExt;
+
+    if owner.has_non_region_param() || owner.has_infer() {
+        return Vec::new();
+    }
+    let (infcx, environment) = tcx
+        .infer_ctxt()
+        .build_with_typing_env(ty::TypingEnv::fully_monomorphized());
+    [sym::Send, sym::Sync]
+        .into_iter()
+        .filter_map(|name| {
+            let trait_id = tcx.get_diagnostic_item(name)?;
+            let reference = ty::TraitRef::new(tcx, trait_id, [owner]);
+            let obligation = rustc_infer::traits::Obligation::new(
+                tcx,
+                rustc_middle::traits::ObligationCause::dummy(),
+                environment,
+                reference,
+            );
+            if !infcx.predicate_must_hold_modulo_regions(&obligation) {
+                return None;
+            }
+            named.insert(trait_id);
+            Some(RustImplementedTrait {
+                path: visible_path(tcx, trait_id),
+                self_type: display(owner),
+                mutable_reference: false,
+                type_params: Vec::new(),
+                type_arguments: Vec::new(),
+                bounds: Vec::new(),
+                associated_type_bindings: Vec::new(),
+            })
+        })
+        .collect()
+}
+
 /// Project a metadata-selected field type into the checker's structural carrier without parsing its display.
 /// Nominal paths and type parameters stay distinct; references retain the payload's semantic type for matching.
 /// Sized primitives keep their native names; only Rust's i64 and f64 use the Incan scalar shapes.
@@ -966,7 +1011,7 @@ fn trait_impls<'tcx>(tcx: TyCtxt<'tcx>, owner: Ty<'tcx>, named: &mut HashSet<Def
     }
     let mut implementations = implementations.into_iter().collect::<Vec<_>>();
     sort_trait_implementations(tcx, &mut implementations);
-    implementations
+    let mut result: Vec<_> = implementations
         .into_iter()
         .filter_map(|implementation| {
             if tcx.impl_polarity(implementation) != ty::ImplPolarity::Positive {
@@ -983,7 +1028,9 @@ fn trait_impls<'tcx>(tcx: TyCtxt<'tcx>, owner: Ty<'tcx>, named: &mut HashSet<Def
             }
             trait_impl_template(tcx, implementation, named)
         })
-        .collect()
+        .collect();
+    result.extend(closed_auto_trait_impls(tcx, owner, named));
+    result
 }
 
 /// Extract one positive implementation once for both owner and trait ABIs. Const binders remain unsupported;

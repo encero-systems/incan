@@ -992,6 +992,9 @@ pub struct RustInteropArtifacts {
     /// Checked native argument adaptations, including dereference calls and owned payload storage constructors,
     /// keyed by argument expression span. Body IR emits these exact steps before the source call.
     pub argument_adjustments: HashMap<(usize, usize), Vec<RustCheckedCall>>,
+    /// Exact infallible rusttype edges selected from authored adapters and inspected native signatures.
+    /// Ordinary source boundaries select only a matching source/destination pair, never any edge on the owner.
+    pub(crate) declared_conversions: Vec<RustDeclaredConversion>,
     /// Exact owned native From calls applied to each source list element at an argument boundary. The list is
     /// evaluated once; the selected conversion is executed once per element in source order.
     pub element_adjustments: HashMap<(usize, usize), RustCheckedCall>,
@@ -1094,6 +1097,10 @@ pub struct RustInteropArtifacts {
     /// whose parameter shape cannot be faithfully represented by ordinary Incan surface types, such as `&[T]`.
     /// Lowering/emission consumes the displays directly so generated closures keep Rust inference stable.
     pub closure_param_type_displays: HashMap<(usize, usize), Vec<String>>,
+    /// Native closure storage admitted at a Rust callback boundary, keyed by its originating closure expression.
+    pub closure_storage: HashMap<(usize, usize), incan_semantics_core::body_ir::NativeClosureStorage>,
+    /// Native callback parameter slots paired with their exact declaration-order generic argument positions.
+    pub native_callable_parameters: HashMap<String, Vec<(usize, usize)>>,
     /// Exact Rust parameter displays for source functions passed directly to a Rust callable boundary.
     ///
     /// Source annotations intentionally use Incan collection vocabulary (`&mut list[f32]`), while Rust callback
@@ -1143,6 +1150,19 @@ pub struct RustCheckedEnum {
     /// Ordered variant names, exact native payload templates and named-field slots, before match ergonomics adds
     /// references.
     pub variants: Vec<(String, Vec<ResolvedType>, Vec<String>)>,
+}
+
+/// One authored rusttype edge and the exact native adapter selected for its source and destination types.
+#[derive(Debug, Clone)]
+pub(crate) struct RustDeclaredConversion {
+    /// Exact source type accepted by this edge.
+    pub(crate) source: ResolvedType,
+    /// Exact destination selected by this edge.
+    pub(crate) destination: ResolvedType,
+    /// The authored edge's span, used to admit only declarations whose complete native edges were checked.
+    pub(crate) span: Span,
+    /// Inspected adapter signature and canonical callable identity.
+    pub(crate) call: RustCheckedCall,
 }
 
 /// A metadata-selected Rust call, retaining the signature and receiver passing mode the checker admitted.

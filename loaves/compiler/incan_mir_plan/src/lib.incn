@@ -219,6 +219,10 @@ pub enum PlanType:
     FunctionPointer(list[PlanType])
     FunctionItem(str, list[PlanType])
     Closure(list[PlanType])
+    # A Rust callback environment retains exactly its checked Send and Sync obligations.
+    NativeClosure(list[PlanType], bool, bool)
+    # A checked nongeneric Rust trait principal and its retained Send/Sync bounds.
+    NativeTraitObject(str, bool, bool)
     # A one-argument SDK callable shares an immutable primitive-capture environment and implements its published Clone and Callable1 bounds.
     SharedCallable(list[PlanType])
     # An owned FnOnce object whose invocation transfers its environment instead of borrowing it.
@@ -336,12 +340,13 @@ pub model Local:
 
 @derive(Clone, PartialEq)
 pub model FieldProjection:
-    """One canonical field slot and its exact retained native type."""
+    """One typed projection step. A negative slot is a dereference-only step; ordinary slots select a field."""
 
     pub slot: int
     pub ty: PlanType
     # A nonnegative variant selects the checked enum payload before this field; -1 keeps an ordinary field.
     pub variant: int = -1
+    pub dereferences: int = 0
 
 
 @derive(Clone, PartialEq)

@@ -50,6 +50,10 @@ pub(super) struct CapturingCallables {
     capturing_closures: HashSet<(usize, usize)>,
     /// Declaration spans of the locals bound to a capturing callable.
     capturing_bindings: HashSet<(usize, usize)>,
+    /// Captured names and checked value types, frozen before a closure shadows its enclosing scope.
+    pub(super) captures: HashMap<(usize, usize), Vec<(String, ResolvedType)>>,
+    /// Originating closure spans for locally retained callable values.
+    pub(super) origins: HashMap<(usize, usize), (usize, usize)>,
 }
 
 /// One function or method whose parameters and return this module may spell as `impl Fn(...) -> R`.
@@ -264,6 +268,19 @@ impl TypeChecker {
     ///
     /// Called before the closure's parameters are defined, so each name resolves in the scope the closure is built in.
     pub(super) fn note_closure_captures(&mut self, params: &[Spanned<Param>], body: &Spanned<Expr>, span: Span) {
+        let captures = free_vars_in_closure_body(params, body)
+            .iter()
+            .filter_map(|name| {
+                let symbol = self.lookup_symbol(name)?;
+                let SymbolKind::Variable(info) = &symbol.kind else {
+                    return None;
+                };
+                Some((name.clone(), info.ty.clone()))
+            })
+            .collect();
+        self.capturing_callables
+            .captures
+            .insert((span.start, span.end), captures);
         let reads_self = any_expr_in_expr(&body.node, |expr| matches!(expr, Expr::SelfExpr));
         let captures_local = free_vars_in_closure_body(params, body).iter().any(|name| {
             self.lookup_symbol(name)
@@ -570,6 +587,11 @@ impl TypeChecker {
     pub(super) fn note_capturing_binding(&mut self, value: &Spanned<Expr>, binding_span: Span, statement_span: Span) {
         if self.capturing_callable_description(value).is_none() {
             return;
+        }
+        if let Some(origin) = self.native_closure_origin(value) {
+            self.capturing_callables
+                .origins
+                .insert((binding_span.start, binding_span.end), origin);
         }
         self.capturing_callables
             .capturing_bindings

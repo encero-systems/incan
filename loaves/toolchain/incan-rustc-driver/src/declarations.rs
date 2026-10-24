@@ -275,6 +275,19 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
             }
             ast::TyKind::Path(None, path)
         }
+        PlanType::NativeClosure(signature, send, sync) => {
+            let mut path = boxed_path(span);
+            if let Some(segment) = path.segments.last_mut() {
+                segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
+                    span,
+                    args: thin_vec![ast::AngleBracketedArg::Arg(ast::GenericArg::Type(
+                        native_callable_object_ast(signature, span, false, *send, *sync)
+                    ))],
+                })));
+            }
+            ast::TyKind::Path(None, path)
+        }
+        PlanType::NativeTraitObject(path, send, sync) => native_object_ast(path, *send, *sync, span),
         PlanType::ClosureRef(signature) => ast::TyKind::Ref(
             None,
             ast::MutTy {
@@ -480,6 +493,34 @@ fn generator_ty(name: &str, leaf: &ListLeaf, depth: i64, span: Span) -> Box<ast:
     })
 }
 
+/// Declare a checked nongeneric native principal and its explicit auto traits without parsing display syntax.
+fn native_object_ast(path: &str, send: bool, sync: bool, span: Span) -> ast::TyKind {
+    let mut bounds = Vec::new();
+    for path in std::iter::once(path)
+        .chain(send.then_some("std::marker::Send"))
+        .chain(sync.then_some("std::marker::Sync"))
+    {
+        let native = ast::Path {
+            span,
+            segments: std::iter::once(ast::PathSegment::path_root(span))
+                .chain(
+                    path.split("::")
+                        .map(|segment| ast::PathSegment::from_ident(ident(segment, span))),
+                )
+                .collect(),
+            tokens: None,
+        };
+        bounds.push(ast::GenericBound::Trait(ast::PolyTraitRef::new(
+            ThinVec::new(),
+            native,
+            ast::TraitBoundModifiers::NONE,
+            span,
+            ast::Parens::No,
+        )));
+    }
+    ast::TyKind::TraitObject(bounds, ast::TraitObjectSyntax::Dyn)
+}
+
 /// Select the private reusable Fn alias or construct the distinct consuming FnOnce object structurally.
 /// The reusable alias retains rustc-owned bound-input lifetimes and is rooted at the crate so fields inside concrete
 /// layout namespaces see the same object type. Consuming environments never acquire its clone ABI.
@@ -498,6 +539,17 @@ pub(crate) fn callable_object_ast(signature: &[PlanType], span: Span, consumes_e
         });
     }
 
+    native_callable_object_ast(signature, span, consumes_environment, false, false)
+}
+
+/// Construct the native Fn-family object and the auto traits proven for its owned captures, without a clone alias.
+fn native_callable_object_ast(
+    signature: &[PlanType],
+    span: Span,
+    consumes_environment: bool,
+    send: bool,
+    sync: bool,
+) -> Box<ast::Ty> {
     let (inputs, output) = match signature.split_last() {
         Some((result, parameters)) => (
             parameters.iter().map(|parameter| ty(parameter, span)).collect(),
@@ -519,9 +571,24 @@ pub(crate) fn callable_object_ast(signature: &[PlanType], span: Span, consumes_e
         span,
         ast::Parens::No,
     ));
+    let mut bounds = vec![bound];
+    for (required, marker) in [(send, "Send"), (sync, "Sync")] {
+        if required {
+            let mut path = ast::Path::from_ident(ident("std", span));
+            path.segments.push(ast::PathSegment::from_ident(ident("marker", span)));
+            path.segments.push(ast::PathSegment::from_ident(ident(marker, span)));
+            bounds.push(ast::GenericBound::Trait(ast::PolyTraitRef::new(
+                ThinVec::new(),
+                path,
+                ast::TraitBoundModifiers::NONE,
+                span,
+                ast::Parens::No,
+            )));
+        }
+    }
     Box::new(ast::Ty {
         id: ast::DUMMY_NODE_ID,
-        kind: ast::TyKind::TraitObject(vec![bound], ast::TraitObjectSyntax::Dyn),
+        kind: ast::TyKind::TraitObject(bounds, ast::TraitObjectSyntax::Dyn),
         span,
         tokens: None,
     })
@@ -571,9 +638,10 @@ pub fn function(function: &Function, span: Span) -> Result<Box<ast::Item>, crate
     let inputs = function
         .parameters
         .iter()
-        .map(|parameter| ast::Param {
+        .enumerate()
+        .map(|(index, parameter)| ast::Param {
             attrs: ThinVec::new(),
-            ty: crate::futures::constructor_parameter_type(function, &parameter.ty, span),
+            ty: crate::futures::constructor_parameter_type(function, index, span),
             pat: Box::new(ast::Pat {
                 id: ast::DUMMY_NODE_ID,
                 kind: ast::PatKind::Ident(ast::BindingMode::NONE, ident(&parameter.name, span), None),

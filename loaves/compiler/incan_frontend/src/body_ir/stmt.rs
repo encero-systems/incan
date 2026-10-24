@@ -163,6 +163,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Read a return value on a terminal function path, where enclosing loops cannot repeat the read.
     /// New loops inside the return expression still establish their own repeated-read scopes. Borrowed receivers and
     /// parameters retain their normal ownership rules, and Result constructors use the declared return channels.
+    /// Reads in sibling return branches cannot keep an owned local alive on this terminal path.
     fn lower_return_operand(
         &mut self,
         returned: &ast::Spanned<ast::Expr>,
@@ -172,8 +173,20 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let destination = self.owner_return_type.clone();
         self.settle_open_result_value(returned, &destination);
         let enclosing_loops = std::mem::take(&mut self.loop_scopes);
-        let operand = self.lower_boundary_value(returned, Some(&destination), scope, out);
+        let mut operand = self.lower_boundary_value(returned, Some(&destination), scope, out);
         self.loop_scopes = enclosing_loops;
+        if let bir::Operand::Place(read) = &mut operand
+            && read.place.projection.is_empty()
+            && read.fact == bir::OwnershipFact::Clone
+            && let Some(local) = read.place.local_id()
+            && !self.is_receiver_local(local)
+            && !self.is_borrowed_parameter(local)
+            && !self.pending_argument_reads.contains(&local)
+        {
+            read.fact = bir::OwnershipFact::Move;
+            read.last_use = true;
+            self.moved_out.insert(local);
+        }
         self.owned_parameter_operand(returned, operand)
     }
 
