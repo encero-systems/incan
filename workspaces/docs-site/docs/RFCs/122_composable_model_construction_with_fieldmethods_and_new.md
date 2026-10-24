@@ -7,8 +7,10 @@
     - RFC 017 (validated newtypes with implicit coercion)
     - RFC 021 (model field metadata and schema-safe aliases)
     - RFC 084 (RHS partial callable presets)
+    - RFC 085 (field metadata and fallible default factories)
     - RFC 086 (schema descriptors and adapters)
-    - RFC 087 (reusable field contracts and structural model composition)
+    - RFC 087 (reusable fields, named checks, and model contract composition)
+    - RFC 094 (context-manager entry and guaranteed scope exit)
     - RFC 097 (Rust-hosted Incan caller)
     - RFC 109 (receiver chain combinators)
 - **Issue:** [#1295](https://github.com/encero-systems/incan/issues/1295)
@@ -29,8 +31,8 @@ This RFC introduces composable model construction through model-only `@fieldmeth
 5. **Construction is context-delimited:** `partial Dog.paws(4)` preserves a reusable constructor plan, while `new Dog.paws(4)` and `Dog.paws(4)()` finalize one construction. A fieldmethod chain that forms the complete right-hand side of a direct module-level assignment may omit `partial` and still denote a reusable plan; an unmarked chain inside executable code is rejected.
 6. **All construction spellings converge:** fluent construction, direct keyword construction, RFC 084 model partials, decoding, and supported foreign construction use the same checked construction-plan metadata and canonical finalizer.
 7. **Private state remains model-owned:** a public model may retain private fields, and a public computed fieldmethod may provide a controlled construction input for private stored targets without exposing those fields directly.
-8. **Fieldmethod and checked-conversion behavior is statically safe:** every fieldmethod and RFC 017 `from_underlying` hook must be a compiler-classified construction-safe callable: synchronous, deterministic, and free of externally observable effects across its transitive call graph. Existing whole-model validators retain their current effect contract in this RFC.
-9. **Later calls to the same construction input win:** a later call replaces an earlier preset for the same fieldmethod identity, and superseded fieldmethod bodies do not execute. Stored defaults initialize the context before the surviving fieldmethods run.
+8. **Construction hooks and registered checks are statically safe:** every fieldmethod, RFC 017 `from_underlying` hook, and registered field or model check must be a compiler-classified construction-safe callable: synchronous, deterministic, and free of externally observable effects across its transitive call graph. The legacy Validate mechanism requires an explicit breaking migration rather than an automatic adapter.
+9. **Later calls to the same construction input win:** a later call replaces an earlier preset for the same fieldmethod identity, and superseded fieldmethod bodies do not execute. Dependency-free stored defaults initialize the context before the surviving fieldmethods run; RFC 085 dependency-bearing factories resolve when their effective normalized inputs are ready.
 10. **Construction preserves type boundaries:** fieldmethod parameters use the declared field type, RFC 017 checked newtype coercion may be inserted at its existing approved sites, and unrelated primitive widening or parsing is not introduced.
 11. **Constructor specialization is not inheritance:** a partial derived from `Dog` is a callable that constructs `Dog`; it is not a type, subtype, model declaration, or source of inherited behavior.
 
@@ -82,7 +84,7 @@ def adopt_dogs() -> tuple[Dog, Dog]:
 - Adding fieldmethods to classes, traits, enums, or newtypes.
 - Calling fieldmethods on completed model instances or turning them into copy-update methods.
 - Replacing ordinary instance methods, static methods, computed properties, RFC 109 receiver combinators, or whole-model validation.
-- Applying the construction-safe callable classification to whole-model `validate` methods. Existing validators retain their current effect rules to avoid expanding their established contract inside this RFC; a later RFC may unify validator and construction-hook safety.
+- A general capability or effect system for external application validation. Registered field and model checks follow the construction-safety contract; external work remains an explicit application operation.
 - Introducing implicit primitive parsing or widening such as `str -> int` or `int -> float`.
 - Changing RFC 017's explicit `from_underlying` recovery surface or its failure behavior for implicit checked coercion.
 - Defining frozen constructor bindings in the initial surface; the construction-plan representation must leave room for them without making them part of this RFC.
@@ -306,7 +308,7 @@ Field-backed constructor arguments and virtual inputs use the same hooks:
 interval = DateTimeInterval(days=14, hours=20, minutes=3, seconds=42)
 ```
 
-Constructor arguments are collected as effective construction inputs rather than executed in caller source order. Model defaults initialize pending stored state first, effective field-backed inputs run in canonical field declaration order, and effective computed fieldmethods then run in their model declaration order. A later explicit input replaces an earlier preset for the same fieldmethod identity. An authored field-backed method normalizes or otherwise transforms its supplied value before binding the field; it does not use the field's declared default as an accumulator. Computed fieldmethods own additive or cross-field behavior.
+Explicitly resolved composed normalize pipelines retain their declared internal order as specified under "Registered checks and composed contracts." The following scheduling rules describe the default construction order outside those explicit pipelines. Constructor arguments are collected as effective construction inputs rather than executed in caller source order. Dependency-free model defaults initialize pending stored state first, effective field-backed inputs run in canonical field declaration order, and effective computed fieldmethods then run in their model declaration order. RFC 085 dependency-bearing default factories resolve when their effective normalized dependencies are ready without silently reordering authored fieldmethods. A later explicit input replaces an earlier preset for the same fieldmethod identity. An authored field-backed method normalizes or otherwise transforms its supplied value before binding the field; it does not use the field's declared default as an accumulator. Computed fieldmethods own additive or cross-field behavior.
 
 ### Public models may retain private state
 
@@ -425,24 +427,31 @@ interval = new TypedDateTimeInterval.days(days)
 
 ### Validated models
 
-Keyword `new` must not bypass a model's canonical validation contract. `TypeName.new(...)` is the existing compiler-generated associated constructor for a model deriving `Validate`; it is an ordinary member call on the model type, not an instance method, Python-style `__new__`, or language keyword. Finalizing a construction expression has the same result type and validation behavior as that associated constructor:
+Keyword `new` must not bypass a model's canonical validation contract. Registered field and named model checks activate fallible construction without a Validate derive. The following application-defined declarations use the proposed error and validation syntax; ValidationError is RFC 131's shared umbrella, whose final stdlib module placement remains open:
 
 ```incan
-@derive(Validate)
+error RangeError:
+    Reversed:
+        start: int
+        end: int
+
 model PortRange:
     start: int
     end: int
 
-    def validate(self) -> Result[Self, str]:
+    @validate
+    def ordered(self) -> Result[None, RangeError]:
         if self.start > self.end:
-            return Err("start must not exceed end")
-        return Ok(self)
+            return Err(RangeError.Reversed(start=self.start, end=self.end))
+        return Ok(None)
 
-def configured_range() -> Result[PortRange, str]:
+def configured_range() -> Result[PortRange, ValidationError]:
     return new PortRange.start(7000).end(8000)
 ```
 
-For an ordinary model, a `new` expression has type `Model`. For a model whose canonical validated constructor has type `(...) -> Result[Model, E]`, the `new` expression has type `Result[Model, E]`. Existing raw-construction restrictions remain in force.
+The check accepts or rejects rather than returning a replacement model. Its precise RangeError failure is retained under canonical `Result[PortRange, ValidationError]` construction. Transformations belong in fieldmethods; external operations belong in application code. The old `@derive(Validate)` and value-returning validate mechanism is replaced through the breaking migration specified below, not silently invoked alongside registered checks.
+
+For an ordinary model with an infallible construction contract, a `new` expression has type Model. Registered checks or fallible default factories require the canonical `Result[Model, ValidationError]` result. Every finalization spelling must preserve that result and must not expose an unchecked construction path.
 
 ## Reference-level explanation
 
@@ -561,7 +570,7 @@ When the same fieldmethod identity appears more than once within one syntactic f
 
 Replacement must occur before fieldmethod execution, so an effective fieldmethod body executes at most once per finalized construction. Repeated calls to one fieldmethod must not accumulate, merge, append, or otherwise combine their arguments, regardless of the operations in the authored body.
 
-At finalization, model defaults must initialize pending stored fields first. Effective field-backed fieldmethods must then execute in canonical stored-field declaration order. After every effective field-backed input has executed, effective computed fieldmethods must execute in their declaration order within the model. Distinct fieldmethods must all execute even when their declared write targets overlap; the compiler must not infer mutual exclusion, replacement, or precedence merely from target overlap. Assignment by one fieldmethod to a field that is subsequently assigned by an effective computed fieldmethod follows ordinary scheduled behavior: a direct assignment replaces the earlier value, while a computed update such as `+=` observes and updates the earlier value.
+At finalization, dependency-free model defaults must initialize pending stored fields first. RFC 085 dependency-bearing default factories must resolve after their effective normalized dependencies become available and before a consuming operation reads their target fields. The dependency schedule must preserve the authored fieldmethod order below; an unsatisfiable or cyclic schedule must receive a diagnostic rather than use stale values, expose incomplete state, or silently reorder authored methods. Effective field-backed fieldmethods must then execute in canonical stored-field declaration order. After every effective field-backed input has executed, effective computed fieldmethods must execute in their declaration order within the model. Distinct fieldmethods must all execute even when their declared write targets overlap; the compiler must not infer mutual exclusion, replacement, or precedence merely from target overlap. Explicit composed normalize pipelines instead use their declared internal order and input bindings below; competing producers for the same pipeline-step input must receive a diagnostic rather than be treated as ordinary independent overlapping writes. Assignment by one fieldmethod to a field that is subsequently assigned by an effective computed fieldmethod follows ordinary scheduled behavior: a direct assignment replaces the earlier value, while a computed update such as `+=` observes and updates the earlier value.
 
 Argument expressions must still be evaluated exactly once in their ordinary left-to-right source order when an executable local partial or construction expression captures them. Capture order and fieldmethod execution order are separate: captured values are placed into the construction plan, then only effective fieldmethod bodies run according to the model-defined schedule at finalization.
 
@@ -573,11 +582,11 @@ Assignment to `mod.field` inside a fieldmethod is a primitive construction-conte
 
 Construction-context read safety is plan-insensitive and checkable from the model declaration. A read of `mod.field` is permitted only when at least one of these conditions holds:
 
-- the field has a declared default, except that a field-backed fieldmethod may not read its own target before assigning it;
+- the field has a declared default whose checked dependency schedule establishes its value before the read, except that a field-backed fieldmethod may not read its own target before assigning it;
 - the field is required, is not in the write-target set of any computed fieldmethod, and its field-backed execution slot precedes the current execution point; or
 - the current fieldmethod has definitely assigned the field earlier on every control-flow path reaching the read.
 
-All field-backed slots precede the computed phase. A computed fieldmethod may therefore read every defaulted field and every required field that no computed fieldmethod targets: successful finalization guarantees that such a required field was supplied through its field-backed input. A required field targeted by any computed fieldmethod is not considered definitely bound merely because an earlier computed slot could supply it; computed inputs are optional, so that reasoning would depend on the caller's plan. The method must assign such a field before reading it or the declaration is rejected. Within a field-backed method, the required-field rule applies only to earlier field-backed slots. These rules deliberately reject some conditionally safe programs rather than introduce a maybe-bound construction-state type.
+All field-backed slots precede the computed phase. A computed fieldmethod may therefore read every defaulted field whose checked dependency schedule makes it available at that point and every required field that no computed fieldmethod targets: successful finalization guarantees that such a required field was supplied through its field-backed input. A required field targeted by any computed fieldmethod is not considered definitely bound merely because an earlier computed slot could supply it; computed inputs are optional, so that reasoning would depend on the caller's plan. The method must assign such a field before reading it or the declaration is rejected. Within a field-backed method, the required-field rule applies only to earlier field-backed slots. These rules deliberately reject some conditionally safe programs rather than introduce a maybe-bound construction-state type.
 
 An accumulator such as `mod.minutes += value` reads its target before writing it. A computed accumulator therefore requires that target to have a declared default unless the method definitely assigns it earlier on every path. A required field targeted by a computed fieldmethod cannot be used directly as an accumulator merely because some caller might also supply its field-backed input.
 
@@ -589,6 +598,8 @@ Construction-context state must never escape a fieldmethod, be stored in a model
 
 `partial ModelName.field(value)` must open a reusable construction plan seeded with the model defaults and the supplied effective binding. `partial PartialName.field(value)` must seed that plan with the named partial's effective bindings before applying the new input. Without that marker, a fieldmethod chain produces a reusable value only when it is the complete right-hand side of a direct module-level assignment. This declaration-context shorthand does not apply inside functions, to nested expressions, or to constructor calls. Consequently, `Dog(paws=4)` constructs a value even at module scope, while `partial Dog(paws=4)` is required to preserve a call-form constructor partial.
 
+A reusable partial retains checked default-factory references and dependencies as construction-plan facts; creating or inspecting that partial must not invoke the factories. Factories run only when needed during an actual construction attempt.
+
 `new ModelName` must open and finalize a construction plan seeded with the model defaults. `new PartialName` must do the same with the partial's effective bindings. A `new` expression may contain one fieldmethod chain or one direct constructor template, but not a constructor call followed by fieldmethod calls.
 
 `ModelName.field(value)()` and `PartialName.field(value)()` are postfix-finalized fieldmethod chains. The terminating call must be empty. The typechecker checks the entire operand as a construction chain rather than first requiring the unmarked inner chain to have a standalone value. The result and behavior are identical to the corresponding `new` expression.
@@ -597,23 +608,42 @@ A newline followed by an indented leading `.` must continue the same constructio
 
 The full syntactic expression boundary finalizes a `new` expression; the empty terminating call finalizes a postfix expression. Finalization must verify that every required field has an effective binding, apply checked field conversions and effective authored fieldmethods, invoke the target model's canonical constructor exactly once, and return exactly that constructor's result type.
 
-An ordinary model's canonical constructor returns the model value. A model deriving `Validate` retains its generated associated constructor `TypeName.new(...) -> Result[TypeName, E]`; the contextual `new` expression and postfix finalizer must therefore return `Result[TypeName, E]` and must not expose or use forbidden raw construction.
+An ordinary model without fallible construction obligations returns the model value from its canonical constructor. Registered checks or fallible default factories require `Result[Self, ValidationError]`. Contextual new, postfix finalization, and callable construction must preserve the checked canonical result and must not expose forbidden raw construction. The legacy Validate-generated constructor is not a second supported validation mechanism after migration.
 
-Keyword `new` and the existing member name `.new` occupy structurally distinct syntactic positions. `new Model.field(value)` begins a construction expression because `new` precedes its target. `Model.new(field=value)` remains an ordinary associated validated-constructor call because `new` follows a dot. The parser cannot confuse those forms, and a computed fieldmethod named `new` is prohibited as a collision with the reserved constructor member.
+RFC 085 additionally makes canonical construction fallible when a model declares a fallible default factory, even without deriving Validate. Such a constructor returns `Result[Self, ValidationError]` and captures the original factory failure under RFC 131's validation umbrella. Every construction and finalization form here must preserve that checked result type, including when effective supplied values skip the factories, without adding a nested Result or exposing partially initialized state. The reference to an ordinary model's value-returning constructor above applies only when its canonical construction contract is infallible. RFC 085 and RFC 087 registered checks likewise require `Result[Self, ValidationError]` without an additional Validate derive. Source validation retained through a from composition header must remain enforced. The breaking migration below replaces legacy Validate registration; RFC 131 and RFC 146 retain the shared umbrella and typed decoding integration.
 
-A stored model field named `new` is legal only when the model has no ordinary associated callable named `.new`. When `Validate` is derived, its generated `TypeName.new(...)` constructor counts as such a callable, so the compiler must reject a stored field named `new` on that model. RFC 084 already permits a local partial over a dotted callable target; rejecting the collision preserves the existing meaning of `partial Model.new(...)` rather than making argument shape or construction context silently choose between the validated constructor and a synthesized fieldmethod. On a model without an associated `.new`, `partial Model.new(value)` remains the ordinary field-backed construction form.
+Keyword `new` and the member name `.new` occupy structurally distinct syntactic positions. `new Model.field(value)` begins a construction expression because new precedes its target. Constructor `.new` calls are ordinary member calls with the alias semantics below. The parser cannot confuse those forms, and a computed fieldmethod named new is prohibited as a collision with the reserved constructor member.
+
+### Constructor aliases on types and instances
+
+A compiler-provided model `.new` entry must be an alias for ordinary canonical construction, not a separate validation path. It must expose two distinct methods with the same name: a classmethod selected through the model type and an instance method selected through a model value. `Model.new(...)` selects the classmethod; `instance.new(...)` selects the instance method. The latter is not classmethod access through an instance. Existing classmethod receiver restrictions remain unchanged, and these two checked method identities must remain distinct across metadata, dispatch, and tooling.
+
+The instance method is a forwarder to the classmethod constructor alias for its receiver's concrete model type. It forwards the explicitly supplied construction inputs, preserving the checked keyword surface rather than introducing an untyped argument bag. Both methods must reach the same canonical constructor and preserve its required fields, defaults, visibility, normalization, validation policy, and result type. This forwarding behavior does not select a source spelling for retrieving a value's type. The instance method constructs the same concrete model type and generic arguments as its receiver. It must evaluate its receiver normally and once, but must not seed construction from its stored values, clone it, or replay its original inputs. Omitted inputs use ordinary construction defaults or remain required. RFC 143 keyword cloning separately preserves the cloned baseline. This alias contract concerns compiler-provided constructor entries; an unrelated authored method named new does not become a constructor alias by its spelling alone.
+
+For the application-defined PortRange above, the following proposed helper demonstrates the equivalent construction paths:
+
+```incan
+def equivalent_ranges() -> Result[PortRange, ValidationError]:
+    first = PortRange(start=7000, end=8000)?
+    second = PortRange.new(start=7000, end=8000)?  # Classmethod alias.
+    return second.new(start=7000, end=8000)  # Instance method forwards to the classmethod.
+```
+
+No completed value is mutated by these calls, and every successful range satisfies the same ordered check. Providing the two aliases must not expose a raw constructor or reinstate legacy Validate dispatch. This is proposed behavior; it does not claim the current compiler already supports the paired method surface.
+
+A stored model field named `new` is legal only when the model has no ordinary associated callable named `.new`. Any generated associated `.new` constructor counts as such a callable, so a model exposing it must reject a stored field named new. RFC 084 already permits a local partial over a dotted callable target; rejecting the collision preserves the existing meaning of `partial Model.new(...)` rather than making argument shape or construction context silently choose between the validated constructor and a synthesized fieldmethod. On a model without an associated `.new`, `partial Model.new(value)` remains the ordinary field-backed construction form.
 
 Callable construction remains available. `Model(field=value)` and `PartialName(field=value)` invoke callables; `new Model.field(value)` and `new PartialName.field(value)` finalize fluent plans; `Model.field(value)()` and `PartialName.field(value)()` provide the equivalent postfix form. At module scope, `Name = Model.field(value)` and `Name = PartialName.field(value)` preserve fluent plans without changing the call semantics of `Name = Model(field=value)`. `new Model(field=value)` is permitted as the symmetric immediate-finalization form of `partial Model(field=value)`, although ordinary `Model(field=value)` remains the shorter spelling. Mixed syntax such as `new Model(field=value).field(other)` or `partial Model(field=value).field(other)` must be rejected.
 
-Using `new` with a class, newtype, enum, arbitrary function partial, instance, or non-constructor callable must be rejected under this RFC.
+Using prefix new with a class, newtype, enum, arbitrary function partial, instance, or non-constructor callable must be rejected under this RFC. This restriction does not reject the ordinary instance-method constructor alias `instance.new(...)`.
 
 ### Direct constructor integration
 
-Ordinary model construction through `ModelName(...)`, validated construction through `ModelName.new(...)`, invocation of an RFC 084 model-constructor partial, and every finalization form introduced here must route each effective construction input through the same authored or synthesized fieldmethod contract.
+Ordinary model construction through `ModelName(...)`, provided type and instance constructor aliases through `.new(...)`, invocation of an RFC 084 model-constructor partial, and every finalization form introduced here must route each effective construction input through the same authored or synthesized fieldmethod contract.
 
 This requirement applies to direct keyword arguments, effective partial presets, field-backed inputs, and computed inputs. A computed fieldmethod introduces an optional constructor keyword of the same name, so `DateTimeInterval(hours=12)` and `new DateTimeInterval.hours(12)` use the same `hours` fieldmethod. The constructor keyword must have the computed fieldmethod's declared input type and no implicit default value beyond absence. This prevents a model author from defining normalization that fluent syntax enforces while ordinary construction bypasses it.
 
-Stored defaults initialize the construction context directly before authored fieldmethods run; they are not fieldmethod invocations and therefore do not execute authored logic merely because the caller omitted a field. An explicit value for a defaulted field does invoke its field-backed fieldmethod. This distinction keeps a declared default stable while ensuring every caller-supplied value uses the authored construction contract.
+Dependency-free stored defaults initialize the construction context directly before authored fieldmethods run; dependency-bearing factories follow RFC 085 resolution against effective normalized field values. Defaults are not fieldmethod invocations and therefore do not execute the target field's authored fieldmethod merely because the caller omitted that field. An explicit value for a defaulted field does invoke its field-backed fieldmethod. This distinction keeps a declared default stable while ensuring every caller-supplied value uses the authored construction contract.
 
 Adding an authored fieldmethod may therefore change how future constructions of that model bind that field. This is an intentional source-level API change and must be reflected in checked API metadata and compatibility tooling.
 
@@ -622,10 +652,10 @@ Adding an authored fieldmethod may therefore change how future constructions of 
 Decoding a stored model field is a construction path and must not bypass its authored field-backed fieldmethod. A schema adapter must construct a model in this order:
 
 1. Resolve each present wire alias to its canonical stored-field identity.
-2. Seed every omitted defaulted field directly from its declared default without invoking a fieldmethod.
+2. Seed omitted dependency-free defaults directly without invoking their fieldmethods, and register omitted dependency-bearing factories under RFC 085's checked resolution contract.
 3. Route every present decoded stored value through that field's authored or synthesized field-backed fieldmethod in canonical field order.
-4. Run computed fieldmethods only when the adapter explicitly maps a wire input to that virtual construction input.
-5. Assemble the concrete model and run whole-model validation once.
+4. Run computed fieldmethods only when the adapter explicitly maps a wire input to that virtual construction input. Dependency-bearing factories resolve when their effective normalized inputs are available, before any consumer reads their target fields; they must not force a silent reordering of authored fieldmethods.
+5. Complete the target model's canonical finalization, enforcing registered checks on final normalized field values and the model contract without exposing a partially validated instance. Retain checks and normalization obligations from RFC 087 from-composed sources; source obligations must not disappear behind a synthesized target fieldmethod. Legacy whole-model validation still participates through its supported finalization contract.
 
 Computed fieldmethods are not wire fields merely because they are constructor keywords. An adapter may deliberately expose one, but the mapping must be explicit and must preserve its canonical fieldmethod identity and declared input type. Whether a private stored field participates in a wire schema remains governed by the model's existing derive, schema, and adapter rules; fieldmethod visibility neither includes nor excludes that field from serialization.
 
@@ -649,7 +679,173 @@ Field-backed fieldmethod call arguments must typecheck against the exact declare
 
 Checked newtype conversion must occur before the authored fieldmethod body observes the value. If implicit conversion fails, RFC 017's ordinary failure behavior applies. Authors requiring recoverable boundary diagnostics should perform explicit `from_underlying` conversion before supplying the typed result to a fieldmethod.
 
-Whole-model validation must run only after all effective fieldmethods have completed and the concrete model value has been assembled. Fieldmethods must not bypass, replace, or suppress model validation. This RFC does not require the existing whole-model `validate` method itself to be construction-safe; its established effect rules remain unchanged, so the construction-safety guarantee covers fieldmethods and RFC 017 conversion hooks rather than every operation performed by a validated constructor.
+Whole-model validation must run only after all effective fieldmethods have completed and the concrete model value has been assembled. Fieldmethods must not bypass, replace, or suppress model validation. Registered checks use the construction-safety rules below. Legacy value-returning validate methods require explicit migration; this proposal must not silently preserve their effects or model replacement through an adapter.
+
+### Registered checks and composed contracts
+
+RFC 085 field validate metadata and RFC 087 named `@validate` declarations register checks in the target construction contract. A field check receives one explicitly typed final field value and returns `Result[None, E]`; a bare `@validate` whole-model check receives an immutable self view and returns `Result[None, E]`. These checks declare acceptance or failure rather than value replacement. All successful values must retain every applicable check obligation under direct construction, fluent finalization, supported decoding, and keyword cloning. Registered checks require `Result[Self, ValidationError]` canonical construction without an additional Validate derive, retaining original typed failures under RFC 131.
+
+Field validate metadata follows the ordinary local field-declaration grammar in RFC 087: the optional field keyword does not become mandatory merely because validate metadata is present. Module-level reusable fields still require field. This RFC selects one callable metadata value and single-target `@validate(field_name)` declarations; list-valued and multiple-target check spellings are future extensions, not requirements of this construction contract.
+
+Every new registered check must be deterministic and free of external side effects under the construction-safe classification below, including checks referenced through validate metadata and model-local field or whole-model checks. The requirement applies transitively to helpers and retained source checks across composition and package boundaries. Checks may inspect supplied field values, immutable self state, compiler-known constants, and construction-safe helpers. They must not fetch external data, read ambient environment or mutable global state, consult a clock or randomness, perform I/O, or start asynchronous work. External lookup and other application operations must occur explicitly outside registered validation; a supplied reference-data snapshot may be checked under the same read and effect rules without authorizing a fetch from within the check.
+
+Capability-governed external validation is a possible future extension, not an exception to this contract. This RFC selects no capability annotation or ambient permission that makes an effectful registered check valid. Legacy value-returning validate methods require the explicit breaking migration below; they do not provide an exception for effectful registered validation.
+
+For example, a customer object may satisfy its data contract even when its email already exists in a database. Construction must not query that database or reject an otherwise valid object on that basis. The persistence operation owns insertion, the database's uniqueness rejection, and application handling and logging of that rejection. A successful constructor does not certify that an external system will accept the object. This separates data validity from the success of an application operation, rather than merely postponing an external check until after construction.
+
+Check resolution, metadata extraction, reusable constructor-plan creation, and schema inspection must not execute validation. Finalization must preserve checked callable identities, canonical target fields, source-contract ownership, and source provenance. A model-owned `@validate(field_name)` check remains specific to that model contract; it does not change a reusable module-level field for other consumers. Same-spelled checks from independent source contracts do not collide merely because their declaration names match.
+
+Registered validation runs after the effective normalization pipeline. Within a model, field-targeted checks run in canonical field declaration order, followed by whole-model checks in their declaration order. Every eligible check inspects the same final normalized state; a check does not transform that state or pass a replacement value to the next check. Under CollectAll, an ordinary failure does not prevent later eligible checks from running. Failures must remain available in this deterministic check order. For several checks on the same canonical field, reusable field-contract and retained source-model checks precede target-local checks. Source traversal and first appearance fix retained-check positions, coalescing only same-origin, same-binding obligations. Target-local field checks follow their declaration order. Complete that field's eligible checks before advancing to the next canonical field. Nested whole-model composition follows the first-appearance rule specified here.
+
+For example, RFC 087's Account retains non_empty from its reusable name field before running its own not_reserved check registered through `@validate(name)`. Further local name checks follow in declaration order. The whole-model limits_ordered check remains in the later whole-model phase. CollectAll continues eligible name checks after a typed failure, without changing their input value.
+
+For whole-model checks retained through a from header, traverse sources recursively from left to right, visiting each source's composed sources before its own checks and preserving its own declaration order. Target-owned whole-model checks follow the source traversal. First appearance fixes each check's position: a same-origin check with the same target binding already placed through another path must not be placed or executed again. A shared check therefore retains its first position rather than requiring every source path's relative ordering to survive composition. All field-targeted checks still precede the whole-model phase. Independently declared checks remain separate even when their names match. The following application-defined declarations describe proposed behavior:
+
+```incan
+error WindowError:
+    Reversed:
+        start: int
+        end: int
+    NegativeStart:
+        value: int
+
+error CapacityError:
+    NonPositive:
+        value: int
+
+model Window:
+    start: int
+    end: int
+
+    @validate
+    def ordered(self) -> Result[None, WindowError]:
+        if self.start > self.end:
+            return Err(WindowError.Reversed(start=self.start, end=self.end))
+        return Ok(None)
+
+    @validate
+    def starts_nonnegative(self) -> Result[None, WindowError]:
+        if self.start < 0:
+            return Err(WindowError.NegativeStart(value=self.start))
+        return Ok(None)
+
+model Capacity:
+    capacity: int
+
+    @validate
+    def positive(self) -> Result[None, CapacityError]:
+        if self.capacity <= 0:
+            return Err(CapacityError.NonPositive(value=self.capacity))
+        return Ok(None)
+
+model Booking from Window, Capacity:
+    reference: str
+```
+
+For `Booking(start=-1, end=-2, capacity=0, reference="demo")`, the whole-model phase runs Window.ordered, Window.starts_nonnegative, then Capacity.positive. CollectAll retains all three original failures under ValidationError in that order; FailFast stops at Window.ordered. Any whole-model checks authored on Booking would follow those source checks. Normalization continues to follow explicit normalize lists, independently of this check ordering.
+
+This is a bounded linearization of validation obligations with observable ordering: changing source order can change report order and the first FailFast failure. It must not become general method resolution, overriding, nominal subtyping, or virtual dispatch. All distinct applicable checks remain obligations, and source ownership must not be replaced by target-method lookup. Shared source checks use the same first-appearance rule even when independent paths list their sources in different orders. Such a difference alone must not reject an otherwise valid contract composition or select a general MRO algorithm.
+
+For example, the following table describes a composition graph using the application-defined Window and Capacity above; it is not additional source syntax:
+
+| Target model  | Ordered sources            |
+| ------------- | -------------------------- |
+| WindowFirst   | Window, Capacity           |
+| CapacityFirst | Capacity, Window           |
+| SharedBooking | WindowFirst, CapacityFirst |
+
+SharedBooking places Window.ordered, Window.starts_nonnegative, and Capacity.positive through its first source. Its second source reaches those same origins and target bindings, so it contributes no duplicate executions. The Capacity-first order of that second path does not move a check already placed. Every distinct obligation remains enforced; first appearance chooses position, not an overriding implementation.
+
+Registered checks must handle their own inputs without relying on another check having run or succeeded. A failed check must not be used as a prerequisite that silently makes another check safe; invalid domain assumptions should be checked locally and reported as typed failures. Each check observes the same immutable final state and does not establish a replacement state or success condition for later checks. Construction-safety verification enforces the transitive effect contract, not a general proof that arbitrary authored checks cannot panic; this order-resilience requirement does not introduce panic recovery or change ordinary runtime-failure behavior. Under CollectAll, independently runnable checks returning their declared Results must not change their acceptance decisions merely because traversal order changes. Report order and explicit FailFast stopping remain observable.
+
+Registered validation checks default to CollectAll. Once check evaluation is reached, an ordinary typed Err must not by itself stop other eligible checks; their original typed failures must be retained together under ValidationError. Explicit FailFast must stop check evaluation at the first observed failure. Both policies retain the same canonical `Result[Self, ValidationError]` return type, and neither may expose an invalid or partially initialized model. Ignore must not suppress a failed validation obligation to permit construction. CollectAll concerns reported typed failures; it does not introduce panic recovery, retries, concurrent execution, or effect rollback.
+
+Models declare validation obligations; the runtime owns their execution policy for a construction attempt. Policy is not model data, a model-owned default, or part of the successful value's identity. The selected caller-facing form is a scoped context manager, `with validation_policy(ErrorPolicy.FailFast):`, leaving ordinary constructor arguments unchanged. The following application helper uses the Window declared above. The std.validation export path is a proposed placement for the helper and shared ErrorPolicy and ValidationError vocabulary, not a claim that this API exists today:
+
+```incan
+from std.validation import ErrorPolicy, ValidationError, validation_policy
+
+def demonstrate_policy() -> None:
+    complete = Window(start=-1, end=-2)  # Default CollectAll: both failures.
+
+    with validation_policy(ErrorPolicy.FailFast):
+        first_failure = Window(start=-1, end=-2)  # Reversed only.
+
+    complete_again = Window(start=-1, end=-2)  # CollectAll restored.
+```
+
+Ordinary helper and library calls within the same execution context inherit the active scope, including model construction they trigger. A function call does not reset runtime policy. An explicitly nested validation_policy scope temporarily selects its own mode and restores the enclosing mode when it exits. This inheritance follows runtime scope ownership; it is not an opt-in convention each helper must implement. Reusable constructor plans use the active runtime policy when finalization executes their checks, rather than capturing the policy merely because a plan was created inside a scope.
+
+The scope selects check scheduling policy without changing the constructor's checked inputs or static `Result[Self, ValidationError]` result. At scope exit, the prior policy must be restored through RFC 094's guaranteed cleanup rules, including early return and question-mark propagation. Scope state must not leak into unrelated concurrent execution. This is runtime execution context, not an additional stored field, a new model type, or a distinct constructor-validation mechanism. The active policy is consumed when checks execute; creating or inspecting a reusable constructor plan must not run checks or encode runtime policy into model data. Registered checks retain their deterministic, side-effect-free contract and must not inspect ambient policy to change their own acceptance rules.
+
+The scope controls validation checks only; RFC 085's separate factory-evaluation policy and default remain unchanged. Ignore must not bypass validation obligations or authorize successful construction. Type and instance new aliases, fluent finalization, and keyword cloning must retain canonical check semantics and return types; zero-argument cloning remains its existing copying operation. Ordinary helper-call and nested model-construction inheritance is settled. Suspension behavior is deferred to RFC 094 and explicitly spawned-task propagation to RFC 142, with shared runtime-context integration between them. RFC 146 owns how complete JSON input reporting integrates with the selected registered-check policy; ordinary call inheritance must not be silently reset at a decoder boundary, and the default remains CollectAll.
+
+Check eligibility follows availability of the required final typed inputs, not whether earlier checks passed. A field check may run when its final normalized field value is available. A whole-model check requires a complete typed view of its owning contract; a retained source check requires that source contract's complete view over the target's final canonical fields. A typed value rejected by another check remains available to later eligible checks under CollectAll. A check requiring unavailable data must remain unexecuted and observable as blocked, rather than contribute an invented failure. Diagnostics must distinguish blocked coverage from checks that ran and returned Err, and neither a partial model nor a partial Self view may escape construction. This check policy does not change RFC 085's FailFast default for factory evaluation or cause additional factories to execute after that policy has stopped construction. RFC 146 retains complete typed JSON input reporting through the same registered-check mechanism; JSON conversion and coverage reporting remain its responsibility. Task and suspension integration belong with RFC 094 and RFC 142.
+
+For RFC 087's Account, incoming JSON `{"name": "", "minimum": 10, "maximum": "oops"}` permits the name checks to run, but the failed conversion of maximum blocks limits_ordered. Reporting ReversedLimits would invent a check outcome. With maximum instead supplied as 1, the whole-model check is eligible despite EmptyName, and CollectAll retains both original failures. These are boundary inputs, not legal typed constructor arguments; RFC 146 owns conversion diagnostics. Neither attempt returns an Account.
+
+Model composition uses RFC 087 from headers to retain complete declared contracts. Source normalization must affect the actual stored target values, and retained checks must inspect the final normalized values. Executing a source constructor on a temporary and discarding its normalized result cannot satisfy this contract. Arbitrary source utility methods are not imported, and source-owned helpers must not be rebound through accidental target-method lookup. Source ownership and check scheduling follow the rules above. Composed-pipeline activation and overlapping-pipeline coordination remain deferred design work below; the syntax and migration decisions do not establish that the current compiler supports these paths. Legacy effects and value replacement must be migrated explicitly rather than retained through an automatic adapter.
+
+Distinct retained normalizers with overlapping declared write targets must require explicit target-owned resolution. The compiler must diagnose unresolved overlaps using normalizer identities, source contracts, canonical target fields, and available source locations. From-header order must not implicitly define the normalization pipeline. The same originating operation with the same target binding must coalesce rather than run again merely because several composition paths reach it. An explicit resolution must retain all applicable validation obligations on the actual final state; schema := metadata overrides do not resolve construction overlap.
+
+For single-field field-backed operations, the target resolves the pipeline with an ordered normalize list on that field:
+
+```incan
+# TrimmedName and LowercaseName are application-defined source models.
+# RFC 087 contains their declarations and the complete validation example.
+model Account from TrimmedName, LowercaseName:
+    field name [normalize=[TrimmedName.name, LowercaseName.name]]: str
+```
+
+In this single-field form, each entry must resolve to a retained source field-backed fieldmethod whose checked canonical target and input type match the target field. The list must account for every distinct conflicting retained normalizer, preserving checked source identities and provenance. Unknown, unrelated, incorrectly targeted, or incompatible entries, and omitted conflicting normalizers, must receive diagnostics. Resolving an identity here does not make a fieldmethod an ordinary first-class callable or execute its source constructor.
+
+When this field's effective supplied input activates normalization, the pipeline occupies its field-backed construction slot. Its first operation receives that captured input; every later operation receives the field value bound by its predecessor. Each operation executes once on the target pending state under the existing exact-write and construction-safety rules. Earlier operations do not also execute independently through their composition paths. The local declaration refines the composed field's normalization without replacing its type, defaulting, alias, or retained checks. Registered checks subsequently inspect final normalized state through canonical finalization, rather than a separate metadata-driven execution engine.
+
+This selects input forwarding for single-field field-backed pipelines. It does not make omitted defaults or retained clone values into newly supplied inputs. Under RFC 143, overriding a different field retains the stored normalized name, while a newly supplied name activates this pipeline.
+
+The same ordered normalize spelling also admits a computed source operation producing multiple stored fields, followed by field-backed normalization of a resulting field. All declarations below are application-defined and proposed:
+
+```incan
+model TimeParts:
+    hours: int = 0
+    minutes: int = 0
+
+    @fieldmethod(hours, minutes)
+    def total_minutes(mod, value: int):
+        mod.hours = value // 60
+        mod.minutes = value % 60
+
+model FiveMinuteParts:
+    minutes: int = 0
+
+    @fieldmethod
+    def minutes(mod, value: int):
+        mod.minutes = value - value % 5
+
+model Duration from TimeParts, FiveMinuteParts:
+    field minutes [
+        normalize=[
+            TimeParts.total_minutes,
+            FiveMinuteParts.minutes,
+        ],
+    ]: int = 0
+```
+
+For `Duration(total_minutes=119)`, the computed operation receives its captured named construction input, 119, and binds hours to 1 and minutes to 59 on the target pending state. The following field-backed operation receives the newly bound minutes value, 59, and binds minutes to 55. Final validation sees hours 1 and minutes 55. The original 119 must not be passed to the minutes normalizer, which would incorrectly bind 115.
+
+Computed entries receive their own effective named construction inputs under their declared input types; those types need not match the field carrying normalize metadata. Their exact checked write sets must include that field and retain every additional target, so the example must not lose the hours write merely because the list is attached to minutes. A following field-backed entry receives the resulting value of its canonical target field under the existing exact-field-type rule. It must not receive an invented tuple of outputs or an implicitly reused original virtual input. All operations remain source-owned checked identities, construction-safe, and subject to retained final validation.
+
+The explicit list orders these operations, including placing the selected field-backed step after the computed step. The default field-backed-before-computed schedule must not override that declared pipeline or independently replay its operations. This decision selects the demonstrated computed-input-to-field-value binding, not automatic normalization after arbitrary field assignments. Activation when a virtual input is omitted and coordination of overlapping pipelines remain questions below.
+
+A composed pipeline must diagnose competing effective inputs to the same normalization step rather than silently select a value by argument order or implicit precedence. For the Duration above, this call is a conflict:
+
+```incan
+Duration(total_minutes=119, minutes=7)
+```
+
+The computed step supplies minutes 59 to the following field-backed step, while the caller explicitly supplies minutes 7. The compiler must identify both construction inputs, their available source locations, the affected canonical minutes field, and the composed pipeline step. It must explain that the caller must choose one input route or use an authored construction operation that explicitly defines how the inputs combine. Neither the computed value nor the explicitly supplied value may silently disappear, and the step must not run twice to consume both.
+
+This rule applies after ordinary same-identity preset replacement and concerns competing input producers within a composed pipeline. It must not infer mutual exclusion merely because independently authored fieldmethods have overlapping write targets: deliberately additive hours and minutes inputs retain their declared behavior. Stored defaults and retained clone baseline fields are initialization state, not competing newly supplied inputs. Thus `duration.clone(total_minutes=119)` is not a conflict merely because its baseline already stores minutes, while supplying both new inputs to that clone must receive the same conflict diagnostic as direct construction. The same checked input-conflict rule applies to type and instance constructor aliases, constructor partial finalization, and fluent finalization.
 
 ### Construction-safe callables
 
@@ -659,13 +855,13 @@ Builtin `dict` and `set` values have no iteration-order contract. Order-independ
 
 The sole traversal exemption is a compiler-recognized canonicalization form that directly consumes the unordered traversal and guarantees the same ordered result for every input permutation. A sort qualifies only when its element comparison is compiler-known to be total and deterministically distinguishes unequal elements. Stable sorting with a non-unique custom key does not qualify because ties retain the unordered input order; if such a keyed sorting API is added later, it must supply or infer a deterministic tie-breaker before the verifier can recognize it. `OrderedDict`, `OrderedSet`, `SortedDict`, and `SortedSet` retain their declared traversal contracts without an additional population-provenance rule.
 
-Construction safety is inferred for Incan-bodied callables rather than asserted through a new source annotation. The typechecker must inspect the callable body and its resolved transitive callees. It must compute a summary for every exported callable as well as every fieldmethod, RFC 017 hook, and helper reachable from those roots. Recursive functions and mutually recursive call groups are classified as strongly connected call-graph components; recursion does not itself make a callable unsafe. A component is construction-safe only when its own operations are permitted and every call edge leaving it resolves to a construction-safe callable.
+Construction safety is inferred for Incan-bodied callables rather than asserted through a new source annotation. The typechecker must inspect the callable body and its resolved transitive callees. It must compute a summary for every exported callable as well as every fieldmethod, RFC 017 hook, registered validation check, and helper reachable from those roots. Recursive functions and mutually recursive call groups are classified as strongly connected call-graph components; recursion does not itself make a callable unsafe. A component is construction-safe only when its own operations are permitted and every call edge leaving it resolves to a construction-safe callable.
 
 A direct function call, method call, or trait method call whose concrete implementation is statically selected may be classified by inspecting that implementation. A call through an open trait target, a dynamically unresolved callable, or another call site whose possible implementation set is not closed must be rejected in construction-safe code. This RFC does not introduce a trait-level construction-safety requirement; a future RFC may add one if open trait dispatch proves necessary.
 
 Imported Incan callables must carry their inferred classification in checked package metadata. Extern functions, Rust-backed functions, and host-backed stdlib leaves have no Incan body available to the verifier and are construction-safe only when compiler-recognized interop metadata or the stdlib registry certifies them. Such certification is an explicit foreign-boundary contract, not a fact inferred from an opaque implementation. An opaque callable without that metadata is unverified and must be rejected from construction-safe code.
 
-Every authored fieldmethod and every RFC 017 `from_underlying` hook must be construction-safe. This applies the same transitive enforcement mechanism to RFC 017's existing deterministic, side-effect-free validation contract; RFC 017's additional rule that `from_underlying` reports invalid input as `Err` rather than panicking remains unchanged. Construction safety is not totality: panic, assertion failure, arithmetic failure, and out-of-bounds indexing are deterministic and do not by themselves make a callable construction-unsafe. A fieldmethod introduces no typed validation or recovery channel of its own; deterministic runtime failures retain their ordinary language behavior, while domain validation and user-facing rejection diagnostics should normally use checked newtypes or whole-model validation.
+Every authored fieldmethod, every RFC 017 `from_underlying` hook, and every new registered validation check must be construction-safe. This applies the same transitive enforcement mechanism to RFC 017's existing deterministic, side-effect-free validation contract; RFC 017's additional rule that `from_underlying` reports invalid input as `Err` rather than panicking remains unchanged. Construction safety is not totality: panic, assertion failure, arithmetic failure, and out-of-bounds indexing are deterministic and do not by themselves make a callable construction-unsafe. A fieldmethod introduces no typed validation or recovery channel of its own; deterministic runtime failures retain their ordinary language behavior, while domain validation and user-facing rejection diagnostics should normally use checked newtypes or whole-model validation.
 
 Construction safety is also not compile-time evaluability. Const-evaluable code must satisfy the stricter const-expression rules in addition to being free of forbidden effects; a construction-safe runtime callable is not thereby accepted in a `const` initializer.
 
@@ -677,7 +873,7 @@ A computed fieldmethod uses its declared method visibility and may deliberately 
 
 Public constructor partials must not expose private fieldmethod surfaces or capture private preset values in ways RFC 084 forbids. A public partial may use a public computed fieldmethod that encapsulates private targets because its checked API records the public input and canonical private effects without exporting direct field access.
 
-Fields introduced by RFC 087 structural model composition receive synthesized fieldmethods on the target model like locally declared fields. Authored fieldmethods, including computed fieldmethods, are not inherited from the spread source. If the target model wants authored construction behavior for a composed field, it must declare that behavior on the target model itself.
+Fields introduced by RFC 087 from composition participate in the target constructor together with their retained normalization and validation obligations. A synthesized target fieldmethod must not replace source-owned normalization merely because the field was composed. This is contract composition rather than arbitrary method inheritance. Source operations must retain canonical target bindings and ownership. Activation and coordination when several explicit pipelines overlap remain deferred design work below; unsupported combinations must not silently fall back to raw binding or field-only copying.
 
 Aliases must continue to preserve canonical field identity, wire identity, diagnostics provenance, and privacy. Fluent aliases are code spellings only; they do not introduce additional pending fields.
 
@@ -693,10 +889,12 @@ The compiler must provide targeted diagnostics for at least:
 - control flow that may complete without binding every declared write target;
 - field-backed fieldmethod value parameter differs from the declared field type;
 - computed fieldmethod name collides with a field alias or existing member;
-- stored field named `new` collides with an ordinary associated `.new` callable, including the generated constructor on a model deriving `Validate`;
+- stored field named `new` collides with an ordinary associated `.new` callable, including any generated associated constructor;
 - computed fieldmethod lacks an explicit input type or explicit write-target list;
 - malformed construction-context receiver or unsupported additional parameters;
 - explicit return value;
+- competing effective virtual and stored inputs to the same composed normalization step; identify both inputs, the canonical field, and the pipeline operation rather than silently choosing precedence;
+- legacy Incan Validate registration or a retained imported legacy validation contract requires migration to registered checks; the diagnostic must identify the legacy declaration and explain the check, transformation, and external-operation migration paths;
 - fieldmethod access through a completed model instance;
 - inaccessible private fieldmethod surface;
 - bare fieldmethod chain appears outside the permitted direct module-level assignment context and lacks `partial`, `new`, or a terminating empty call;
@@ -711,14 +909,14 @@ The compiler must provide targeted diagnostics for at least:
 - unsupported construction-context escape or potentially unbound field read;
 - collision between an authored fieldmethod and an ordinary member that is not the permitted field-backed field pairing;
 - implicit conversion would require primitive widening, parsing, or a non-RFC-017 conversion;
-- fieldmethod or RFC 017 `from_underlying` hook directly or transitively reaches a forbidden effect;
+- fieldmethod, RFC 017 `from_underlying` hook, or registered validation check directly or transitively reaches a forbidden effect;
 - raw traversal or an order-exposing operation on builtin `dict` or `set` appears outside a compiler-recognized total canonicalization form; the diagnostic must suggest a qualifying `sorted(...)` form or an appropriate ordered or sorted collection;
 - construction-safe verification reaches an open trait dispatch or dynamically unresolved callable;
 - extern, Rust-backed, host-backed, or imported callable lacks checked construction-safety metadata.
 
 The compiler must additionally warn when one syntactic fluent chain supplies the same canonical fieldmethod identity more than once. The warning should label both calls and identify which binding survives.
 
-Diagnostics should identify the target model, construction-input identity, construction layer that supplied or replaced the input, and canonical field or fieldmethod declaration when authored behavior is involved. A construction-safety diagnostic should identify the first unsafe or unverified operation and show the reachable call chain from the fieldmethod or RFC 017 hook to that operation.
+Diagnostics should identify the target model, construction-input identity, construction layer that supplied or replaced the input, and canonical field or fieldmethod declaration when authored behavior is involved. A construction-safety diagnostic should identify the first unsafe or unverified operation and show the reachable call chain from the fieldmethod, RFC 017 hook, or registered validation check to that operation.
 
 ## Design details
 
@@ -802,7 +1000,11 @@ RFC 109's `tap` and `then` operate on completed receiver values. Fieldmethods op
 
 ### Compatibility and migration
 
-The syntax is additive for models that do not declare members colliding with the new contextual forms. Every existing model gains synthesized construction metadata, but fieldmethods are visible only inside a recognized construction context and completed instance member resolution remains unchanged. A bare expression such as `Dog.paws(4)` remains invalid inside executable code when `paws` is only a field; the improved diagnostic explains the `partial`, `new`, and terminating `()` choices and notes that an unmarked reusable chain is legal only as the complete right-hand side of a direct module-level assignment.
+Fieldmethod construction syntax is additive for models that do not declare members colliding with the new contextual forms. The validation migration is deliberately breaking. Every existing model gains synthesized construction metadata, but fieldmethods are visible only inside a recognized construction context and completed instance member resolution remains unchanged. A bare expression such as `Dog.paws(4)` remains invalid inside executable code when `paws` is only a field; the improved diagnostic explains the `partial`, `new`, and terminating `()` choices and notes that an unmarked reusable chain is legal only as the complete right-hand side of a direct module-level assignment.
+
+When the registered-check design lands, it must replace the legacy `@derive(Validate)` and constructor-dispatched `validate(self) -> Result[Self, E]` mechanism. The compiler must reject legacy registration with an actionable migration diagnostic rather than silently ignore it, automatically adapt it, or invoke it alongside named checks. A composed or imported legacy validation contract must likewise require migration rather than lose its enforcement. This is a proposed breaking change, not a statement that the current compiler already rejects the legacy mechanism. The migration specifies the Incan-facing contract; it does not require removing Rust-side validation traits or derives.
+
+Authors must move acceptance checks into named `@validate` declarations returning `Result[None, E]`, normalization and value transformations into fieldmethods, and external operations into explicit application code. Domain failures must satisfy RFC 131's common Error contract and remain typed under the canonical ValidationError umbrella; a legacy string failure must not be converted into a native error implicitly. Constructor callers and explicit result annotations must migrate from the authored error type to `Result[Self, ValidationError]`. Migration diagnostics must identify the legacy declaration, explain the new check result and constructor result, and flag unsupported effects or value replacement. Ordinary undecorated methods merely named validate remain ordinary methods; they must not acquire or silently satisfy construction obligations by name.
 
 An authored `@fieldmethod` changes all future construction paths for that field, including direct constructors and partial invocation. Adding, removing, changing, or reordering a fieldmethod in a way that changes its model-defined execution slot is therefore an API-significant change and should be visible to compatibility tooling.
 
@@ -812,7 +1014,7 @@ Checked package metadata produced before the construction-safety field exists mu
 
 Introducing contextual `new` may affect code that currently uses `new` as an identifier in the newly reserved prefix position. The lexer and parser must preserve ordinary identifier use outside that precise contextual form. Existing associated calls such as `TypeName.new(...)` are unaffected because the member name follows a dot and cannot be parsed as the contextual prefix.
 
-A model that declares both a stored field named `new` and an associated `.new` callable becomes invalid. This includes a stored `new` field on a model deriving `Validate`. Authors must rename the field or associated callable; the compiler must not choose between RFC 084 callable partial application and fieldmethod construction from positional-versus-keyword argument shape.
+A model that declares both a stored field named `new` and an associated `.new` callable becomes invalid. Any generated associated constructor must obey the same collision rule. Authors must rename the field or associated callable; the compiler must not choose between RFC 084 callable partial application and fieldmethod construction from positional-versus-keyword argument shape.
 
 ## Alternatives considered
 
@@ -851,9 +1053,15 @@ This section is non-normative. A coherent implementation should represent marked
 
 Fieldmethod resolution should occur in the compiler frontend against canonical model and fieldmethod identity, with canonical field identity attached to field-backed methods. Lowering should consume resolved construction-plan operations rather than rediscovering fieldmethods from source names. The final backend representation may use a generated wrapper, builder-like temporary, or direct constructor expansion, provided it evaluates captured expressions exactly once, invokes only effective fieldmethods, constructs the model exactly once, and preserves the canonical validation result.
 
-Checked API metadata should expose constructor partial provenance, authored versus synthesized fieldmethods, canonical write-target sets, projected required/defaulted fields, and whether the target uses ordinary or validated finalization. Tooling should consume the same metadata for completion, hover, signature help, and diagnostics.
+Checked API metadata should expose constructor partial provenance, authored versus synthesized fieldmethods, canonical write-target sets, projected required/defaulted fields, checked default-factory dependency identities and callable contracts under RFC 085, and whether the target uses ordinary or fallible finalization. Tooling should consume the same metadata for completion, hover, signature help, and diagnostics.
 
 Construction-safety verification should reuse the compiler's existing pattern of context-specific transitive validation rather than introduce a general effect system. The typechecker should build a resolved callable graph, classify recursive strongly connected components as units, reject direct forbidden operations, and propagate unsafe or unverified reasons through callers. Incan-bodied callables are inferred from that graph. Builtins and host-backed stdlib leaves use registry metadata; imported callables use checked package metadata; extern and Rust-backed leaves use compiler-recognized interop metadata. The registry and typechecker must classify raw unordered-collection traversal as unsafe and recognize only syntactically direct canonicalization forms with compiler-known total ordering and deterministic tie-breaking; it must not require a general order-taint analysis. Persisted metadata must be versioned and retain the public classification and foreign-certification provenance needed for downstream checking and API diffing. Local compiler state may retain private call-chain reasons for actionable diagnostics, but public metadata must not expose private declaration identities merely to justify a summary.
+
+### Retained contracts and integration boundaries
+
+Source-owned normalization, private helper dependencies, check identities, and contract-bound self views must survive local and external-loaf composition. The compiler representation is an implementation choice; it must retain source ownership and provenance, apply normalization to actual final target values, and never substitute target-method lookup or arbitrary method inheritance for a retained contract. Unsupported composition must receive a diagnostic rather than silently omit an obligation.
+
+RFC 094 owns validation_policy scope lifetime, guaranteed restoration, and suspension safety. RFC 142 owns explicitly spawned-task propagation in coordination with RFC 094; this RFC does not select task inheritance implicitly. RFC 146 owns complete JSON input traversal and conversion/validation reporting, consuming the shared eligibility rules rather than introducing a second check engine. Final shared stdlib export placement remains API integration work; std.validation in examples is proposed placement.
 
 ## Layers affected
 
@@ -862,7 +1070,7 @@ Construction-safety verification should reuse the compiler's existing pattern of
 - **Typechecker / Symbol resolution**: construction-context fieldmethod identity, canonical exact write-target sets, field-backed and computed construction inputs, plan-insensitive read safety, exact field-type contracts, required-field projection, definite assignment, visibility, aliases, partial typing, override ordering, and RFC 017 coercion integration.
 - **Construction-safety verification**: transitive callable-graph analysis, recursive-component classification, closed concrete trait dispatch, rejection of open or unresolved dispatch, operation-level rejection of unordered traversal with narrowly recognized total canonicalizers, and shared enforcement for fieldmethods and RFC 017 `from_underlying` hooks.
 - **IR Lowering / Emission**: one declarative construction plan, superseded-binding elimination, exactly-once argument evaluation, model-defined fieldmethod scheduling, and canonical constructor finalization.
-- **Validation / Derives**: preservation of `TypeName.new(...) -> Result[...]` for validated models, decoded-input routing through field-backed hooks, and whole-model validation after effective field binding.
+- **Validation / Derives**: registered field and whole-model checks, typed ValidationError finalization across constructor aliases and decoding, coverage diagnostics for blocked checks, and explicit migration from legacy Validate registration.
 - **Rust-hosted caller boundary**: canonical construction entrypoints for projected models whose authored fieldmethods or validation make raw native construction a semantic bypass.
 - **Checked API / Compatibility metadata**: authored and synthesized fieldmethod surfaces, canonical write-target sets, constructor-partial signatures, inferred construction-safety summaries and reasons, foreign certification provenance, construction behavior provenance, and API-diff visibility.
 - **LSP / Tooling**: fieldmethod completion on constructors and partials, field reads on instances, signature help, hover distinctions, rename by canonical field identity, targeted diagnostics, and explicit add/remove-`partial` code actions without unsolicited hints for either legal module-level spelling.
@@ -870,7 +1078,21 @@ Construction-safety verification should reuse the compiler's existing pattern of
 
 ## Design Decisions
 
-- Construction-context reads use a plan-insensitive rule. A fieldmethod may read a defaulted field, a required field established by an earlier field-backed slot and not targeted by any computed fieldmethod, or a field it has definitely assigned on every path before the read. Required computed targets are never assumed bound merely because a caller might supply them, and accumulators therefore need a default or an earlier definite assignment.
+- Require explicit resolution for distinct composed normalizers with overlapping declared write targets. From-header order must not implicitly choose a pipeline. Repeated references to the same originating operation and target binding coalesce. Conflict diagnostics must identify the normalizers, owning contracts, and shared fields; retained validation remains mandatory after resolution. For single-field field-backed pipelines, select ordered normalize metadata with checked source fieldmethod identities and forward each resulting field value into the next operation. Extend that spelling to computed operations receiving their own captured named inputs and following field-backed operations receiving the resulting target field values, preserving the full declared write sets.
+
+- Integrate RFC 085 validate metadata and RFC 087 named field/model checks into canonical construction. Registered checks return `Result[None, E]`, activate `Result[Self, ValidationError]` construction without an extra Validate derive, and retain original errors. From-composed model contracts must preserve declared normalization and validation rather than copying fields and warning about lost checks.
+
+- Run registered validation after normalization. Within a model, check fields in canonical declaration order, then run whole-model checks in their declaration order, all over the same final normalized state. Checks are acceptance rules, not a transformation pipeline. Within one field, reusable/source checks run first under first-appearance coalescing, then target-local checks in declaration order. Finish the field's eligible checks before advancing to the next field.
+
+- Order retained whole-model checks by recursive left-to-right from-source traversal, visiting composed sources before each source's own declaration-ordered checks and then target-owned checks. First appearance fixes the position of each same-origin, same-binding check; later duplicate paths do not rerun or reposition it. Differing nested source orders alone must not reject valid composition. This orders obligations rather than resolving or overriding methods. Checks must not rely on earlier checks having run or succeeded; report order and FailFast remain observable, while normalization retains its separately explicit pipeline order.
+
+- Diagnose competing effective inputs to the same composed normalization step, such as total_minutes and an explicit minutes value that would both feed the selected minutes normalizer. Do not silently choose precedence or run the step twice. Preserve deliberate authored overlapping-write behavior; retained clone state and stored defaults do not count as newly supplied competing inputs.
+
+- Models declare validation rules; the runtime owns evaluation policy. Select `with validation_policy(ErrorPolicy.FailFast):` for scoped check policy, with ordinary constructor arguments and result types unchanged and prior policy restored at scope exit through RFC 094. Policy is not model data or a model-owned default. Keep factory policy separate and prevent leakage into unrelated concurrent execution. Ordinary helper and library calls inherit the active scope; explicitly nested scopes restore their enclosing policy on exit. Spawned-task and suspension integration are deferred to RFC 142 and RFC 094 respectively.
+
+- Default registered validation checks to CollectAll, with explicit FailFast available. Eligibility depends on available final typed inputs, not earlier check success. Retain original typed failures and the same constructor result type; unavailable inputs block dependent checks with clear diagnostics. Ignore cannot authorize an invalid model. Factory evaluation retains RFC 085's separate FailFast default.
+
+- Construction-context reads use a plan-insensitive rule. A fieldmethod may read a defaulted field whose checked dependency schedule establishes its value before the read, a required field established by an earlier field-backed slot and not targeted by any computed fieldmethod, or a field it has definitely assigned on every path before the read. Required computed targets are never assumed bound merely because a caller might supply them, and accumulators therefore need a default or an earlier definite assignment.
 - Model-constructor partials retain RFC 084's ordinary projected callable type. This RFC adds checked construction-plan metadata but no source-spellable nominal partial type.
 - Repeated construction inputs use last-binding-wins replacement. Frozen constructor bindings are deferred; the canonical plan representation must preserve enough field identity and provenance for a later RFC to add them without changing this RFC's callable surface.
 - Construction safety is a reusable compiler classification, not a general effect system and not a synonym for const evaluability or totality.
@@ -879,6 +1101,13 @@ Construction-safety verification should reuse the compiler's existing pattern of
 - Imported Incan callables carry inferred summaries in checked package metadata. Opaque extern, Rust-backed, and host-backed callables require compiler-recognized interop or stdlib-registry certification and are rejected when that certification is absent.
 - Deterministic runtime failures remain permitted by the construction-safe classification. Fieldmethods add no typed recovery channel, and RFC 017 retains its stricter `Err`-based invalid-input contract.
 - Builtin unordered collections remain unordered. Raw traversal is rejected in construction-safe code unless a syntactically direct, compiler-recognized canonicalizer guarantees an input-order-independent result through total ordering and deterministic tie-breaking; no general order-taint analysis is introduced.
-- Whole-model `validate` methods retain their existing effect contract. Applying construction-safety verification to validators is deferred rather than silently widening this RFC's compatibility impact.
-- A stored field named `new` is rejected when its model also has an associated `.new` callable, including the generated constructor on a `Validate` model. This preserves RFC 084 dotted-callable partial semantics without argument-shape disambiguation.
-- Fieldmethods and RFC 017 `from_underlying` hooks use the same construction-safety verifier. A safety change to an exported callable is API-visible and must be reported by compatibility tooling.
+- New registered field and whole-model checks must be deterministic and free of external side effects, with transitive construction-safety verification and actionable call-chain diagnostics. Capability-governed external validation remains a possible future extension, with no exception selected here. Replace legacy Validate registration through an explicit breaking migration: checks move to named declarations, transformations to fieldmethods, and external operations to application code. Reject legacy registration with clear diagnostics; do not automatically adapt or silently combine mechanisms.
+- A stored field named `new` is rejected when its model also has an associated `.new` callable, including any generated associated constructor. This preserves RFC 084 dotted-callable partial semantics without argument-shape disambiguation.
+- Provided model `.new` constructor aliases must expose separate class and instance methods with the same canonical construction behavior and result type. Receiver kind selects the method; classmethods remain inaccessible through instances. The instance method uses the receiver's model type and generic arguments, not its stored field values. Keyword cloning retains its separate baseline-preserving contract.
+- Fieldmethods, RFC 017 `from_underlying` hooks, and new registered validation checks use the same construction-safety verifier. A safety change to an exported callable is API-visible and must be reported by compatibility tooling.
+
+## Unresolved questions
+
+- **Composed-pipeline activation and coordination:** activation when a computed input is absent, as in `Duration(minutes=59)` without total_minutes, and coordination of several overlapping explicit pipelines still need precise specification. Ordered normalize lists, computed entries receiving their named inputs, and following field-backed entries receiving resulting target values are settled. Any solution must preserve every obligation and full write set, avoid operation replay, diagnose competing effective inputs, and not infer normalization order from the from header. This remains deferred design work rather than another decision in the current review.
+
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->

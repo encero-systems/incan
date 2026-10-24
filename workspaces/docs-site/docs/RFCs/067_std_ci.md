@@ -9,7 +9,8 @@
     - RFC 055 (`std.fs` path-centric filesystem APIs)
     - RFC 063 (`std.process` process spawning and command execution)
     - RFC 066 (`std.http` HTTP client surface)
-- **Issue:** https://github.com/encero-systems/incan/issues/85
+    - RFC 103 (secret values and non-disclosure)
+- **Issue:** <https://github.com/encero-systems/incan/issues/85>
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** —
@@ -176,7 +177,7 @@ CI scripts must remain locally testable with fixture payloads and explicit envir
 
 ### Secrets and diagnostics
 
-The CI surface should avoid exposing secrets carelessly in debug-facing or error-facing helpers. It does not need to define a complete secret type system, but it should follow conservative diagnostic practices and defer richer secret handling to dedicated follow-up work where needed.
+The CI surface must preserve RFC 103 secret non-disclosure in debug output, errors, workflow outputs, summaries, annotations, and action receipts. SecretStr and SecretBytes values must retain their checked sensitivity at each boundary; CI helpers must not render their plaintext or claim that a logging convention replaces the secret-type contract. An explicitly authorized wire sink does not authorize publishing a secret into a workflow output or summary. This module consumes RFC 103 rather than defining another secret type system.
 
 ## Design details
 
@@ -209,11 +210,11 @@ This feature is additive. Existing bash, shell, or JavaScript-based CI steps rem
 ## Alternatives considered
 
 - **Keep shell and JavaScript glue only**
-  - Rejected because it leaves automation brittle, weakly typed, and difficult to test.
+    - Rejected because it leaves automation brittle, weakly typed, and difficult to test.
 - **Make GitHub a builtin**
-  - Rejected because it introduces too much provider policy too early.
+    - Rejected because it introduces too much provider policy too early.
 - **Push everything into `std.http` plus `std.fs`**
-  - Rejected because CI environments do have a small amount of distinct execution-context behavior worth standardizing.
+    - Rejected because CI environments do have a small amount of distinct execution-context behavior worth standardizing.
 
 ## Drawbacks
 

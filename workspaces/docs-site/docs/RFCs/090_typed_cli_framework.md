@@ -15,7 +15,7 @@
     - RFC 089 (`std.environ` runtime environment access)
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 118 (Incan and Oven command-line surfaces)
-- **Issue:** https://github.com/encero-systems/incan/issues/87
+- **Issue:** <https://github.com/encero-systems/incan/issues/87>
 - **RFC PR:** —
 - **Written against:** ~~v0.3~~ v0.5
 - **Shipped in:** —
@@ -134,14 +134,14 @@ ToolCommand.Serve(ServeArgs(
 
 The declaration controls the mapping:
 
-| Declaration | CLI behavior |
-| ----------- | ------------ |
-| `ToolCommand.Serve(ServeArgs)` | Adds a `serve` subcommand whose arguments are described by `ServeArgs`. |
-| `ToolCommand.Build(BuildArgs)` | Adds a `build` subcommand whose arguments are described by `BuildArgs`. |
-| `host: str = "127.0.0.1"` | Adds optional `--host HOST`; omitted input uses the typed default. |
-| `port [short="p", value_name="PORT"]: int = 8000` | Adds `--port PORT` and `-p PORT`; the string token is parsed as `int`. |
-| `reload: bool = false` | Adds a `--reload` flag that sets `reload` to `true` when present. |
-| `output: Path | None = None` | Adds optional `--output PATH`; omitted input produces `None`. |
+| Declaration                                       | CLI behavior                                                            |
+| ------------------------------------------------- | ----------------------------------------------------------------------- |
+| `ToolCommand.Serve(ServeArgs)`                    | Adds a `serve` subcommand whose arguments are described by `ServeArgs`. |
+| `ToolCommand.Build(BuildArgs)`                    | Adds a `build` subcommand whose arguments are described by `BuildArgs`. |
+| `host: str = "127.0.0.1"`                         | Adds optional `--host HOST`; omitted input uses the typed default.      |
+| `port [short="p", value_name="PORT"]: int = 8000` | Adds `--port PORT` and `-p PORT`; the string token is parsed as `int`.  |
+| `reload: bool = false`                            | Adds a `--reload` flag that sets `reload` to `true` when present.       |
+| `output: Path \| None = None`                     | Adds optional `--output PATH`; omitted input produces `None`.           |
 
 Command descriptions do not require new enum syntax. They can live in a typed sidecar spec:
 
@@ -390,7 +390,7 @@ Enum fields must parse from the accepted variant spelling set. Invalid enum valu
 
 Validated newtypes must be constructed through their checked construction path. If construction fails, the CLI error must identify the argument and surface the validation message without discarding the argument context.
 
-If a target type has no CLI parse path, spec derivation should fail before runtime parsing when possible.
+If a target type has no CLI parse path, spec derivation should fail before runtime parsing when possible. Parsed values must reach RFC 122's canonical construction path, preserving RFC 085 default factories, normalization, and RFC 087's complete composed validation obligations. Named registered checks do not require an extra Validate derive. CLI diagnostics must retain the original typed validation failures under CliError with argument and source context; converting them into message text alone or executing a second validation engine is not sufficient. The concrete CliError nesting follows the shared RFC 131 umbrella contract.
 
 ### Boolean flags
 
@@ -463,6 +463,8 @@ Secret fields must not appear as completable values; a secret option's own name 
 - invalid CLI spec.
 
 Errors must include enough structured context for alternate renderers: argument spelling, command path, expected type or accepted values where relevant, source kind, and span-like argv index information where possible.
+
+The default renderer must preserve RFC 103 sensitivity: argument tokens, environment-derived inputs, defaults, validation payloads, and usage examples must not reveal secrets. Structured diagnostics and alternate renderers must preserve that protection as well.
 
 The default renderer should produce concise command-line diagnostics suitable for stderr. It should include a usage hint for parse errors and avoid dumping full help unless configured.
 

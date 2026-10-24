@@ -5,351 +5,431 @@
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
     - RFC 023 (compilable stdlib and Rust module binding)
+    - RFC 025 (multiple generic trait instantiations)
     - RFC 042 (traits are always abstract)
     - RFC 043 (Rust trait implementation from Incan)
     - RFC 054 (explicit call-site generic arguments)
     - RFC 065 (`std.hash`)
+    - RFC 083 (symbol and method aliases)
     - RFC 088 (iterator adapter surface)
     - RFC 099 (generic trait-targeted methods)
     - RFC 101 (`std.collections.OrdinalMap`)
-- **Issue:** https://github.com/encero-systems/incan/issues/580
-- **Blocks:** https://github.com/encero-systems/incan/issues/596 (v0.5 RFC 101 trait-system bridge removal)
+    - RFC 128 (one Callable trait and the shared signature model)
+    - RFC 141 (type matching with infer and named type operations)
+    - RFC 144 (owner-qualified fields and constants)
+- **Issue:** [#580](https://github.com/encero-systems/incan/issues/580)
+- **Blocks:** [#596](https://github.com/encero-systems/incan/issues/596) (v0.5 RFC 101 trait-system bridge removal)
 - **RFC PR:** —
-- **Written against:** v0.3
+- **Written against:** v0.6
 - **Shipped in:** —
 
 ## Summary
 
-This RFC introduces native associated types for Incan traits: a trait may declare named type members that each implementation fills in, and trait methods, generic functions, and type annotations may refer to those members through checked type projections such as `Self.Item`, `H.Digest`, or `P.Value`. Associated types let libraries model Rust-shaped capability families without multiplying traits or helper functions for every implementer-selected type, while keeping runtime values, generic type parameters, and trait-owned type members separate in the language model.
+Declare implementation-chosen types in trait headers with `infer`, as in `trait PullIterator[infer Item]`. An implementing type supplies its choice through ordinary trait adoption syntax, such as `class Lines with PullIterator[str]`. Trait methods and generic consumers refer to that choice through `Self.Item` and `I.Item`. Ordinary trait parameters remain independent inputs that may distinguish multiple implementations; inferred members are fixed outputs of each implementation. This proposal gives iterators, parsers, codecs, hashers, and adapters named type relationships without body-level `type Item` declarations or additional generic parameters in every consumer. All syntax in this RFC is proposed, except where an existing contract is explicitly identified.
 
 ## Core model
 
-1. **Associated types are trait-owned type members:** `type Item` inside a trait declares that every implementation chooses a concrete type for `Item`.
-2. **Implementations bind the member:** a class, enum, newtype, or rusttype adopting the trait must provide a matching type declaration for each required associated type.
-3. **Trait methods may project the member:** signatures may use `Self.Item` to refer to the implementing type's chosen item type.
-4. **Generic code may project through bounds:** a generic parameter `H with StreamingHash` may use `H.Digest` in type positions when `StreamingHash` declares `Digest`.
-5. **Projection is checked statically:** every associated-type projection must resolve to exactly one trait-owned type member or produce a diagnostic.
-6. **Adjacent features are explicit design decisions:** associated type members sit next to generic associated types, associated constants, specialization, defaults, and trait-object dispatch; this RFC must explain those concepts and decide their relationship deliberately rather than excluding them by assumption.
+1. **Declare the relationship in the header:** `trait PullIterator[infer Item]` says that each implementation supplies one item type.
+2. **Supply the choice at adoption:** `class Lines with PullIterator[str]` chooses `str` as its item type.
+3. **Recover the choice through a projection:** `Self.Item` and `I.Item` name the implementation's selected type.
+4. **Separate inputs from outputs:** in `trait Lookup[K, infer Value]`, `K` is an ordinary parameter; `Value` is an implementation-chosen member.
+5. **Keep outputs unique for each implementation:** the implementing type, trait identity, and ordinary arguments determine all inferred members. Changing only an inferred member must not create another implementation.
+6. **Check the relationship statically:** missing choices, incompatible methods, conflicting implementations, and ambiguous projections produce diagnostics. Associated types do not add runtime fields or values.
 
 ## Motivation
 
-Incan's trait system can already express method requirements, generic bounds, supertraits, and Rust trait adoption. It cannot yet express a trait where each implementer chooses a type that other methods and generic helpers can refer to. That gap pushes library authors toward awkward designs: duplicated helper functions for each return type, parallel traits that differ only by final value shape, or stringly/runtime dispatch where a static type relationship should exist.
+An iterator's item type, a parser's output type, and a streaming hasher's digest type are part of their capabilities. Generic consumers should be able to name those types without making the same choice again. A helper returning `H.Digest` can work with both a hasher producing `bytes` and one producing `u64`, while preserving the exact return type for each caller.
 
-The `std.hash` surface is a concrete example. A streaming hasher has one common operation, `update(mut self, chunk: bytes)`, but different algorithms finalize to different digest shapes: fixed digest bytes, caller-sized SHAKE bytes, `u32`, `u64`, or `u128`. Without associated types, the shared reader-draining logic can be factored only up to the `update` operation; finalization still requires thin wrappers for each digest family. That is a reasonable current implementation, but it is not the best language model.
+Ordinary generic trait parameters remain useful when distinct instantiations represent distinct capabilities, as with indexing by different key types. They do not, by themselves, express that one implementation determines a unique output type. RFC 025 deliberately allows multiple instantiations of an ordinary generic trait.
 
-The same need appears in iterator-like abstractions, parser and codec APIs, resource readers, adapters, graph traversals, and Rust interop. RFC 023 explicitly deferred operations such as iterator item propagation because they require associated-type inference. RFC 042 left associated types as future trait-system work. RFC 043 handles associated types for Rust trait adoption, but native Incan traits need the same concept as a first-class language feature rather than an interop-only escape hatch.
+The original Draft spelling placed `type Item` inside a trait body and `type Item = str` inside the implementing type. The declaration named a requirement without making the implementation's choice visible in the header. This revision uses `infer Item` to identify the required type relationship where the trait's other type parameters already live, and uses the adoption's argument list to supply the choice.
 
-The end-state should be simple: if a capability has an implementer-selected type member, the trait should say so directly, and generic code should be able to use that type member without inventing extra type parameters or wrapper traits.
+RFC 023 deferred iterator item propagation requiring associated-type inference. RFC 042 identified associated types as future native trait-system work. RFC 043 supplies an existing Rust interop contract, but native Incan traits need their own readable authoring surface. The end-state is a shared checked model for these relationships, with source syntax that explains who supplies each type.
 
 ## Goals
 
-- Allow native Incan traits to declare associated types.
-- Allow adopting types to bind associated types with ordinary Incan type expressions.
-- Allow trait method signatures to reference associated types through `Self`.
-- Allow generic functions and methods to project associated types from bounded type parameters.
-- Define ambiguity, missing-binding, and signature-compatibility diagnostics.
-- Define how associated types interact with supertraits and same-name associated type members.
-- Align native associated types with the Rust trait adoption model from RFC 043 without making the feature Rust-only.
-- Provide enough expressive power for streaming hash digest values, iterator item propagation, parser value types, and adapter APIs.
-- Preserve associated type declarations, bindings, projections, trait-qualified targets, and resolution provenance in checked metadata, generated documentation, LSP views, and package manifests.
-- Identify adjacent trait-system features such as higher-rank associated types, specialization, associated constants, defaults, and trait objects so they can be accepted into this RFC or deferred by explicit design decision.
+- Declare native associated types through `infer Name` entries in trait headers.
+- Bind those members through trait adoption arguments.
+- Allow trait methods and generic signatures to project the selected types.
+- Support traits mixing ordinary parameters and inferred members.
+- Preserve RFC 025 multi-instantiation for ordinary parameters while preventing conflicting inferred outputs for the same implementation.
+- Define missing-binding, ambiguity, inheritance, cycle, and signature-compatibility behavior.
+- Preserve member identities, bindings, projections, and resolution provenance in checked API metadata, library manifests, generated documentation, and editor tooling.
+- Keep the existing RFC 043 Rust interop surface compatible.
 
 ## Non-Goals
 
-- This RFC does not replace generic trait parameters. Traits may still use ordinary type parameters when the caller chooses the type.
-- This RFC does not require every existing generic trait to migrate to associated types.
-- This RFC does not change runtime object layout; associated types are compile-time type relationships.
-- This RFC does not define an implementation ticket for each compiler subsystem.
+- Replacing ordinary generic traits or requiring existing traits to migrate.
+- Inferring a missing adoption argument from method bodies or return annotations.
+- Defining the complete generic constraint language, trait specialization, or overlapping implementation precedence.
+- Introducing runtime type fields, runtime reflection dispatch, or structural duck typing.
+- Defining generic associated types, associated constants, default associated types, or trait-object dispatch in this revision.
+- Changing RFC 128's callable contract or its signature parameter into an inferred member.
 
 ## Guide-level explanation
 
-A trait can declare an associated type with a `type` item in the trait body. The name is part of the trait's vocabulary, not a special keyword:
+### An iterator chooses its item type
+
+The trait declares the name of the type an implementation must supply:
 
 ```incan
-pub trait PullIterator:
-    type Item
-
+pub trait PullIterator[infer Item]:
     def next(mut self) -> Option[Self.Item]: ...
 ```
 
-`Item` is not a field and not a runtime value. It is a type member. The trait says every pull iterator yields some item type, but the trait does not choose that type itself.
+Read this as: “A pull iterator has an item type, chosen by its implementation. Its next method returns an optional item of that type.” `Item` is a type member, not an instance field. The `infer` marker describes how consumers obtain the type; the implementing declaration still supplies it explicitly.
 
-An implementation binds that member:
+An implementation supplies the choice beside the adopted trait:
 
 ```incan
-pub class Lines with PullIterator:
-    type Item = str
-
+pub class Lines with PullIterator[str]:
     def next(mut self) -> Option[str]:
         ...
-```
 
-Another implementation may choose a different type for the same associated member:
-
-```incan
-pub class ByteChunks with PullIterator:
-    type Item = bytes
-
+pub class ByteChunks with PullIterator[bytes]:
     def next(mut self) -> Option[bytes]:
         ...
 ```
 
-Generic code can use the implementer's chosen type:
+`Lines.Item` is `str`; `ByteChunks.Item` is `bytes`. No additional member declaration or alias is needed in either body.
+
+A generic consumer can recover that choice without introducing a separate item parameter:
 
 ```incan
 def next_or_default[I with PullIterator](
-    mut input: I,
+    mut source: I,
     default: I.Item,
 ) -> I.Item:
-    match input.next():
+    match source.next():
         Some(value) => return value
         None => return default
 ```
 
-The same mechanism works for `std.hash`, but the associated type name should match that domain:
+For `Lines`, the default and result must be strings. Passing a byte default does not select a different implementation of `Lines`; it is a type error.
+
+### A parser names both sides of its contract
+
+A trait can declare more than one inferred member:
 
 ```incan
-pub trait StreamingHash:
-    type Digest
+pub trait Parser[infer Input, infer Output]:
+    def parse(self, value: Self.Input) -> Self.Output: ...
 
-    def update(mut self, chunk: bytes) -> None: ...
-
-    def finalize(mut self) -> Result[Self.Digest, HashError]: ...
+pub class IntegerParser with Parser[str, Result[int, ParseError]]:
+    def parse(self, value: str) -> Result[int, ParseError]:
+        ...
 ```
 
-`Sha256Hasher` could bind `Digest` to `bytes`, while `Xxh64Hasher` could bind it to `u64`:
+`ParseError` here stands for the library's existing error type. Putting the complete `Result` in `Output` preserves the parser's checked success and failure contract without adding error-handling syntax to this proposal.
 
 ```incan
-pub class Xxh64Hasher with StreamingHash:
-    type Digest = u64
+def parse_one[P with Parser](parser: P, value: P.Input) -> P.Output:
+    return parser.parse(value)
+```
 
+The parameter named `Input` is still an inferred member: the parser implementation determines it. The marker, rather than the English meaning of the name, determines its role.
+
+### A hasher chooses its digest representation
+
+```incan
+pub trait StreamingHash[infer Digest]:
+    def update(mut self, chunk: bytes) -> None: ...
+    def finalize(mut self) -> Self.Digest: ...
+
+pub class Xxh64Hasher with StreamingHash[u64]:
     def update(mut self, chunk: bytes) -> None:
         ...
 
-    def finalize(mut self) -> Result[u64, HashError]:
+    def finalize(mut self) -> u64:
         ...
 ```
 
-A shared reader helper can then return the hasher's digest type without caring whether it is bytes, `u64`, or another concrete representation:
+A byte-digest implementation would instead adopt `StreamingHash[bytes]`. A shared helper preserves whichever representation its hasher supplies:
 
 ```incan
-def feed_reader[H with StreamingHash, R with BinaryReader](
+def hash_chunks[H with StreamingHash](
     mut hasher: H,
-    mut input: R,
-    chunk_size: int,
-) -> Result[H.Digest, HashError]:
-    loop:
-        let chunk = input.read_bytes(chunk_size).map_err((err) => HashError(kind="io", algorithm="", detail=err.detail))?
-        if len(chunk) == 0:
-            break
+    chunks: list[bytes],
+) -> H.Digest:
+    for chunk in chunks:
         hasher.update(chunk)
-
     return hasher.finalize()
 ```
 
-That helper returns `Result[bytes, HashError]` for a byte-digest hasher and `Result[u64, HashError]` for `Xxh64Hasher` without separate helper overloads.
+These are illustrative trait sketches, not claims about existing stdlib signatures. A fallible hasher can similarly make its declared output a `Result`, or use a separate inferred error member if its API needs to name that relationship independently.
 
-Associated types are useful when the implementer chooses the type. Ordinary generic parameters are still the right model when the caller chooses the type. For example, `Callable[T, U]` is still a generic trait because the call site controls parameter and return types through a concrete callable signature.
-
-When a type adopts multiple traits with the same associated type name, the implementation can target the declaration:
+### Ordinary parameters and inferred members can coexist
 
 ```incan
-pub class DualValue with TextParser and BinaryParser:
-    type Value for TextParser = str
-    type Value for BinaryParser = bytes
+pub trait Lookup[K, infer Value]:
+    def lookup(self, key: K) -> Option[Self.Value]: ...
+
+pub class Directory with Lookup[str, User], Lookup[int, User]:
+    def lookup(self, key: str) -> Option[User]:
+        ...
+
+    def lookup(self, key: int) -> Option[User]:
+        ...
 ```
 
-Most code should not need targeted syntax. It is for ambiguity, not for the common path.
+`User` stands for the library's user type. Different ordinary arguments allow the two lookup capabilities, following RFC 025. For the `str` capability, however, the directory must have exactly one selected `Value` type. Adding `Lookup[str, Team]` to this same class must fail even if a return annotation could distinguish the calls.
+
+A consumer supplies the ordinary argument and recovers the inferred member:
+
+```incan
+def lookup_one[K, L with Lookup[K]](
+    directory: L,
+    key: K,
+) -> Option[L.Value]:
+    return directory.lookup(key)
+```
+
+Within this signature, the bound selects `Lookup[K]`, so `L.Value` is unambiguous. A concrete `Directory.Value` without a selected trait instantiation is ambiguous, even if both implementations currently choose `User`.
+
+### Constrain an implementation's chosen type
+
+A bound can explicitly require a selected inferred type:
+
+```incan
+def next_byte_chunk[I with PullIterator[bytes]](
+    mut source: I,
+) -> Option[bytes]:
+    return source.next()
+```
+
+Here `PullIterator[bytes]` checks an existing choice. It does not let the caller change an iterator's item type.
+
+For a capability requirement instead of an exact type, the related generic constraint design can keep that requirement beside its owner:
+
+```incan
+def encode_all[
+    I with PullIterator where I.Item with TextEncodable,
+](mut source: I) -> list[str]:
+    mut output: list[str] = []
+    while let Some(item) = source.next():
+        output.append(item.encode())
+    return output
+```
+
+This sketch assumes a `TextEncodable` trait with `def encode(self) -> str`. The placement illustrates the separate generic constraint design; this RFC does not settle the full `where` grammar. When every implementation of a trait must satisfy a capability, its inferred member may instead declare the bound directly, using the existing `with` bound spelling:
+
+```incan
+trait TextEncodable:
+    def encode(self) -> str: ...
+
+trait EncodedIterator[infer Item with TextEncodable]:
+    def next(mut self) -> Option[Self.Item]: ...
+
+def encode_items[I with EncodedIterator](mut source: I) -> list[str]:
+    mut output: list[str] = []
+    while let Some(item) = source.next():
+        output.append(item.encode())
+    return output
+```
+
+An adoption must supply an item type satisfying `TextEncodable`. Consumers recover that checked fact through `I.Item`; they do not repeat the bound after the return type. A fully explicit generic formulation for the original unbounded iterator is also possible:
+
+```incan
+def encode_all[T with TextEncodable, I with PullIterator[T]](
+    mut source: I,
+) -> list[str]:
+    ...
+```
+
+### Identical member names belong to their respective traits
+
+```incan
+pub trait TextParser[infer Value]:
+    def parse_text(self, text: str) -> Self.Value: ...
+
+pub trait BinaryParser[infer Value]:
+    def parse_bytes(self, data: bytes) -> Self.Value: ...
+
+pub class DualParser with TextParser[str], BinaryParser[bytes]:
+    def parse_text(self, text: str) -> str:
+        ...
+
+    def parse_bytes(self, data: bytes) -> bytes:
+        ...
+```
+
+The adoption headers make both choices explicit without targeted body declarations. `DualParser.Value` is ambiguous because two distinct traits own that name. The proposed qualified projection, `DualParser.Value from TextParser`, selects `str`. `from` identifies the owning trait without repurposing comprehension syntax. Generic code bounded only by `TextParser` can use `P.Value` directly. The projection grouping rule below is shared with RFC 144's value-level projections.
 
 ## Reference-level explanation
 
-### Declarations and bindings
+### Header declarations and scope
 
-Associated types enter the model at the trait boundary. A trait body may declare a type member with `type Name`, where `Name` must be a type identifier and must not collide with another associated type declared directly by the same trait. The declaration creates a required member of the trait contract; it does not choose the concrete type and it does not create a runtime value. Every concrete adoption of a trait with required associated types must bind each required member before the type is considered to implement the trait, and an omitted binding must produce a diagnostic that names the adopting type, the trait, and the missing associated type.
+A native trait header may contain ordinary type parameters followed by one or more `infer Name` entries. The ordinary parameters must form a prefix and the inferred members must form a suffix. An ordinary parameter after an inferred member, duplicate names, or an inferred member that collides with an ordinary parameter must produce a diagnostic. An inferred declaration may use the existing bound syntax, such as `infer Item with TextEncodable`. Every supplied choice must satisfy that bound after substitution, and consumers of the selected trait must recover the bound as a checked requirement on the projected member. A generic adopting type must establish that requirement through its own checked bounds. This adds no separate `where` grammar or inference of omitted adoption choices.
 
-An adopting type binds an associated type with `type Name = TypeExpression` when the associated type name is unambiguous among the adopted trait and its supertraits. If multiple adopted traits or supertraits expose the same associated type name, the adoption must use the targeted form `type Name for TraitExpression = TypeExpression` so the binding's owner is explicit. The `TypeExpression` may use ordinary Incan type syntax, including the adopting type's generic parameters, and must be checked like any other type annotation. If the type expression cannot be resolved, cannot be lowered for the target backend, or violates a trait-imposed constraint, the compiler must reject the adoption.
+Each inferred member must have a checked identity owned by the trait. It must be available in type positions in that trait's body through `Self.Name`; its bare header name must denote that same type within the trait declaration. It must not create an instance field, runtime type object, alias declaration, or independent ordinary generic input.
 
-Trait-owned capability families from RFC 099 may also provide associated type bindings when the binding is determined by language metadata rather than an authored type body. For example, a storage-backed integer capability can bind `Storage` from the newtype's checked storage carrier, and a deterministic key capability can expose representation metadata for language scalar families. These bindings must enter the same implementation metadata as ordinary authored bindings; generic projection must not care whether the binding came from a type body or from a proven trait-owned capability family.
+The `infer` marker must be contextual in trait header member declarations. It must not become a general expression keyword, change ordinary identifiers named `infer` elsewhere, or authorize `infer` declarations on classes, functions, or ordinary type aliases. RFC 141 separately admits `infer` captures in type patterns.
+
+### Adoption arguments and implementation uniqueness
+
+An authored concrete adoption must supply all ordinary arguments and all inferred member choices, positionally in declaration order. For `trait Lookup[K, infer Value]`, `Lookup[str, User]` selects `K = str` and binds `Value = User`. Missing choices must produce a diagnostic naming the trait and each missing member. The compiler must not infer missing adoption choices from method signatures or bodies.
+
+A choice must be an ordinary checked type expression. It may use the adopting type's own generic parameters; for example, a generic `Buffer[T]` may adopt `PullIterator[T]`. Every choice must satisfy the trait's checked requirements. A choice that cannot be resolved or represented by the target backend must be rejected.
+
+The implementation key must consist of the implementing type, trait identity, and ordinary trait arguments. Inferred members must not be part of that key. Two adoptions with the same key and conflicting inferred choices must be rejected; inferred choices must not supply a second dispatch dimension. Repeated equivalent requirements through supertrait paths must merge as one conformance fact, rather than create competing implementations.
+
+For a trait with no ordinary parameters, a concrete implementing type must therefore have one binding for each inferred member of that trait. A mixed trait may have different bindings for different ordinary arguments. This must preserve RFC 025 multi-instantiation of ordinary generic traits and must not introduce specialization or precedence between overlapping adoption families.
+
+RFC 099 trait-owned capability families may supply inferred member bindings from checked language metadata. Such bindings must obey the same implementation key, uniqueness, and projection rules as authored adoptions. Metadata-provided bindings are an explicit capability-family mechanism, not permission to guess omitted source arguments.
+
+### Bounds and explicit output requirements
+
+A bound must supply all ordinary trait arguments. It may omit the entire inferred suffix, leaving those members to be recovered from the selected implementation. It may instead supply the complete inferred suffix, requiring exact type equality with the implementation's selected members. Partial inferred suffixes must be rejected; this revision does not introduce placeholders or named adoption arguments.
+
+For `PullIterator[infer Item]`, `I with PullIterator` exposes `I.Item`; `I with PullIterator[bytes]` additionally requires `I.Item` to equal `bytes`. For `Lookup[K, infer Value]`, `L with Lookup[K]` exposes `L.Value`, while `L with Lookup[K, User]` additionally fixes the required value type. Ordinary argument omission must not be inferred from this rule.
+
+Explicit inferred arguments in bounds must check equality rather than conversion, subtyping, or runtime validation. A bound must not mutate an implementation's choice. These requirements must be preserved during generic substitution and in checked metadata. A public API change from an unconstrained inferred member to an exact requirement must be treated as a contract change.
 
 ### Projection and resolution
 
-After an associated type is declared and bound, source code refers to the chosen type through projection syntax. Trait methods may use `Self.Name` to refer to an associated type declared by the trait or by exactly one of its supertraits. Generic functions, methods, and type aliases may use `T.Name` when `T` is a type parameter or concrete type whose active bounds or implementation metadata expose exactly one associated type named `Name`. Associated-type projection is valid only in type positions; it must not be treated as value-field access.
+A type projection must resolve to one trait-owned inferred member in one selected ordinary instantiation. `Self.Name` in a trait must resolve through that trait and its supertraits. `T.Name` in generic code must resolve through active bounds; on a concrete type, it must resolve through known conformance metadata. An ordinary trait parameter must not automatically become a projected member.
 
-Simple projection must resolve to exactly one associated type. When the simple form is ambiguous, source may use the trait-qualified projection form `T.Name for TraitExpression`, and the named `TraitExpression` must be one of the traits known to be implemented by `T` after generic substitutions and supertrait expansion. A projection from a concrete type must resolve through that type's known implementation, while a projection from a generic type parameter must resolve through the parameter's active bounds. If the compiler cannot prove the projection from those bounds, it must reject the code rather than treating the projection as `Unknown`.
+Distinct owners or distinct ordinary instantiations exposing the same member name must make an unqualified projection ambiguous, even when their current bindings normalize to the same type. A compiler must not choose based on declaration order, imports, capitalization, or convenient equality of the resulting types. The proposed trait-qualified projection `T.Name from TraitExpression` must identify the owner and ordinary instantiation. The qualifier applies to a member projection, not an arbitrary expression. The qualifier must bind to the immediately preceding member projection and form one primary type expression, consistently with RFC 144's value-level projections. The owning trait expression uses the existing type-name and generic-argument grammar; it must not consume a surrounding arithmetic, comparison, or comprehension clause. Delimited uses such as `Option[T.Item from Trait]` must not require extra parentheses. A further postfix operation on the selected result must parenthesize the projection, as in `(T.Item from Trait).Other`; the unparenthesized form must not be guessed to mean that result access. Any actual attachment ambiguity must produce a diagnostic requesting explicit parentheses. This rule does not change ordinary operator precedence.
 
-### Compatibility and inheritance
+Projections must be accepted in type positions, including parameters, return types, generic arguments, type operations, and checked constraints. They must not be interpreted as value-field access. A generic projection that is justified by its bounds may remain symbolic until substitution; an unjustified projection must produce a diagnostic instead of becoming `Unknown` or `Any`.
 
-Associated type bindings participate in method signature compatibility. If a trait requires `def finalize(mut self) -> Result[Self.Digest, HashError]`, then an implementation with `type Digest = u64` may implement `finalize` as returning `Result[u64, HashError]`; returning `Result[bytes, HashError]` for that implementation must be rejected. The binding is therefore not a separate annotation that merely documents the implementation. It is part of the signature contract used to compare the implementation against the trait.
+### Methods, inheritance, and cycles
 
-Supertraits may declare associated types, and subtraits inherit those requirements. A subtrait may refer to inherited associated types through `Self.Name` when the name is unambiguous, but it must not silently redeclare an inherited associated type with the same name unless a later design explicitly permits refinement or equality constraints. Trait cycles involving associated types must use the same diagnostic model as supertrait cycles: any cycle that prevents associated type resolution must produce a diagnostic rather than causing infinite expansion.
+Trait method compatibility must substitute the inferred bindings. An adopter of `StreamingHash[u64]` must satisfy a `Self.Digest` return requirement with `u64`; a method returning `bytes` must be rejected. An implementation may spell the resolved concrete type or use a valid `Self.Name` projection in its own body and signatures.
 
-Associated types have no runtime representation by themselves. They affect type checking, method compatibility, generic substitution, diagnostics, and generated backend signatures.
+Supertraits must retain their ordinary arguments, inferred bindings, and member ownership. A subtrait may inherit an unbound inferred requirement, which concrete adoption must satisfy through an explicit adoption of the owning supertrait. A subtrait may also bind a supertrait's inferred suffix in its adoption header. Conflicting bindings reached through direct or inherited adoptions must be rejected. Inherited members must remain projectable when they resolve uniquely; a subtrait must not silently redeclare a member with an inherited name.
 
-### Metadata and inspection contract
+For example, `trait ResettableHash with StreamingHash` inherits the digest requirement. A concrete type may adopt `ResettableHash, StreamingHash[bytes]` to supply it. `trait ByteDigestHasher with StreamingHash[bytes]` instead fixes that requirement for every adopter. The latter is an exact inherited requirement, not a new definition of `Digest` or an override of the owning trait.
 
-Associated type behavior must be inspectable as checked semantic data, not only as backend output. Checked API metadata, package manifests, generated documentation, semantic inspection, and LSP surfaces must be able to expose at least:
+Trait cycles, alias cycles, and inferred binding cycles that prevent resolution must produce bounded diagnostics. A circular binding such as an iterator choosing its own unresolved `Self.Item` must not satisfy the requirement by referring back to itself. A finite projection into an independently resolved associated member may be used as a binding.
 
-- associated type declarations owned by a trait, including source identity and supertrait provenance;
-- associated type bindings supplied by concrete adoptions, targeted bindings, Rust interop metadata, or RFC 099 trait-owned capability families;
-- projections used in public signatures and generic bounds, including the trait identity that made the projection legal;
-- ambiguity or degraded-state markers when a projection cannot be resolved in tolerant tooling modes;
-- signature-compatibility relationships that explain how a concrete method return or parameter type satisfies a trait requirement through an associated type binding.
+### Metadata, visibility, and tooling
 
-Generated documentation should show associated types as part of the public trait contract, not as hidden implementation detail. LSP hover and go-to-definition should let a reader move between a projection such as `H.Digest`, the trait-owned declaration of `Digest`, and the concrete binding when the binding is known. Diagnostics and `incan explain`-style tooling should report the same identities that metadata consumers see so there is one explanation for why a projection typechecks or fails.
+Checked API metadata, library manifests, generated documentation, semantic inspection, and editor tooling must preserve ordinary parameter roles separately from inferred member roles. They must expose trait-owned member identities, declaration order, concrete or symbolic bindings, the ordinary arguments selecting an implementation, supertrait provenance, exact output requirements, and the source of each resolved projection.
+
+Generated documentation should display the `infer` header and supplied adoption arguments together with method contracts. Hover and go-to-definition should connect `I.Item` to the owning declaration and its concrete binding when known. Diagnostics and semantic queries must use the same checked identities. Tolerant tooling may preserve an explicit unresolved or ambiguous marker, but must not turn that marker into a successful conformance fact.
+
+Existing visibility rules must govern projected members and their bindings. A public conformance or public signature must not expose an otherwise private type merely by routing it through an inferred member. Inferred members must not introduce a new field visibility syntax or grant access to private instance data.
 
 ## Design details
 
-### Syntax
+### Reading the same brackets in different contexts
 
-The trait declaration syntax is intentionally close to existing type declarations:
-
-```incan
-pub trait Parser:
-    type Value
-
-    def parse(self, input: str) -> Result[Self.Value, ParseError]: ...
-```
-
-The implementation binding syntax is:
+The header declares which positions are ordinary inputs and which are inferred members:
 
 ```incan
-pub class JsonParser with Parser:
-    type Value = JsonValue
+trait Lookup[K, infer Value]:
+    def lookup(self, key: K) -> Option[Self.Value]: ...
 ```
 
-The targeted binding syntax mirrors RFC 043's associated type target form:
+The adoption supplies all positions. A generic bound may leave the inferred suffix unspecified. This context-sensitive difference is deliberate: declarations identify the relationship, implementations supply it, and consumers either recover it or require a particular choice. Documentation and diagnostics must show the parameter roles rather than treating every bracket position as an ordinary generic parameter.
 
-```incan
-pub class Adapter with LeftTrait and RightTrait:
-    type Value for LeftTrait = str
-    type Value for RightTrait = bytes
-```
+The restriction to an ordinary prefix and inferred suffix keeps positional omission unambiguous. Arbitrary interleaving would require named arguments, placeholders, or an additional argument grouping syntax, none of which is needed for the initial contract.
 
-Projection syntax in type positions is:
+### Relationship to RFC 141
 
-```incan
-Self.Item
-H.Digest
-P.Value for Parser
-```
+In RFC 141, `infer element` captures a component of an existing type pattern. Here, `infer Item` declares a member whose binding is recovered from an implementation. Both uses introduce a type name determined through another checked relationship; neither requests runtime value synthesis. They have different scopes and must be represented as distinct constructs in checked metadata.
 
-The simple `H.Digest` form is preferred when it is unambiguous. The trait-qualified form is reserved for cases where multiple bounds expose the same name.
+RFC 141 named operations may consume a valid projection, such as `ElementOf[I.Item]` when the selected item type is an accepted container. This must not make an inferred member a match pattern or permit pattern syntax inside trait declarations. No new structural matching rules for trait adoption arguments are implied by the shared marker.
+
+### Relationship to RFCs 025, 099, and 128
+
+RFC 025 remains the authority for dispatch among ordinary trait instantiations. An inferred member is excluded from implementation identity and must not serve as an overload discriminator. This revision does not change method targeting syntax or permit arbitrary freestanding overloads.
+
+RFC 099 capability families can expose inferred members, such as a storage carrier, using the same checked binding model. Projected requirements in generic method headers must recover those members through active conformance facts. This RFC does not replace RFC 099's ownership or coherence boundaries.
+
+RFC 128 retains `Callable[S]` as its ordinary signature contract. This proposal does not turn that signature into an inferred output, revive the older `Callable[T, U]` shape, or change how callable signatures are selected.
+
+### Relationship to Rust interop
+
+RFC 043's existing body-level associated type declarations for imported Rust traits remain valid. This revision proposes the native trait header surface; it does not silently remove or reinterpret the interop spelling. A header-based facade for imported associated members would require a separately specified metadata and migration contract.
+
+Native inferred members should lower to Rust associated types where possible, while ordinary trait parameters remain Rust generic parameters. For example, the source adoption `Lookup[str, User]` expresses an implementation of `Lookup[str]` whose associated `Value` is `User`; it must not become a Rust trait with both `str` and `User` as independent generic inputs. A backend unable to preserve the relationship must reject it with a clear diagnostic.
+
+### Compatibility and migration
+
+Existing traits without inferred members retain their semantics. Adding or removing `infer` from a parameter changes implementation identity, projection availability, and allowable adoptions; it must be treated as an API change. Public inferred names and their namespace are API as well. Renaming `Item` or changing a binding can break consumers.
+
+Existing generic traits should migrate only when a unique implementation-chosen member is the intended contract. Native body-level declarations from the earlier RFC 098 Draft are superseded by this proposed surface; this statement does not claim that the revised syntax is implemented or deprecate RFC 043 interop support.
 
 ### Adjacent trait-system features
 
-Associated types are one trait-system feature, not the whole trait-system roadmap, but they sit close to several other features that need to be named rather than accidentally accepted or excluded. Generic associated types extend the idea by giving the associated type its own parameters: a normal trait says `type Item`, while a lending or borrowed-view trait might eventually want `type Item[Borrow]` and projections such as `Self.Item[SomeBorrow]`. That is more powerful because the implementation no longer chooses one concrete type member; it chooses a family of related types. Associated constants move in a different direction: they are trait-owned value members, such as `const DIGEST_SIZE: int` on a digest trait or `const RANK: int` on a matrix trait, and they require value-level rules for constant evaluation and backend representation rather than type projection alone. Trait-owned capability families, as described by RFC 099, are adjacent because they may supply associated type bindings from language metadata without reopening an existing type declaration.
+Generic associated types would let an inferred member itself accept parameters, choosing a type family rather than one type. Their declaration, projection, and borrowing rules need an additional contract; `infer Item` does not implicitly admit `infer Item[Borrow]`. Associated constants instead expose values, such as a digest width, and require constant-evaluation rules beyond checked type relationships.
 
-Defaults and dispatch-related features are adjacent for different reasons. Default associated types let a trait provide a fallback binding, such as `type Error = Never`, which can remove boilerplate but also changes ambiguity, semver, and inheritance behavior. Specialization would let a more specific implementation or method body override a generic one, raising coherence questions that should not enter through the side door of associated types. Trait-object dispatch for projected types, such as a hypothetical `Box[StreamingHash with Digest = bytes]`, is likewise not just surface syntax: it needs object-safety rules, method-availability rules, mutability rules, and a way to keep projected types known after dynamic dispatch.
-
-This RFC's north star is native trait-owned type members. Any of the adjacent features above may belong near that north star if they are required for a coherent design, but none of them should be pulled in by implication. Each needs an explicit decision about whether it is part of RFC 098 or belongs in a follow-up RFC.
-
-### Choosing associated types versus generic parameters
-
-Associated types should be used when the implementer chooses the type and generic consumers need to recover it. Generic type parameters should be used when the caller chooses the type.
-
-This distinction matters because the two designs express different contracts:
-
-```incan
-pub trait Decoder[T]:
-    def decode(self, input: bytes) -> Result[T, DecodeError]: ...
-```
-
-`Decoder[T]` means a caller can ask for a decoder of a particular `T`.
-
-```incan
-pub trait Decoder:
-    type Value
-
-    def decode(self, input: bytes) -> Result[Self.Value, DecodeError]: ...
-```
-
-`Decoder` with `Value` means the decoder implementation decides what it produces.
-
-### Interaction with supertraits
-
-Associated type requirements flow through supertraits. If `ByteDigestHasher` extends `StreamingHash`, any type that implements `ByteDigestHasher` also satisfies the `StreamingHash` associated type requirements.
-
-```incan
-pub trait StreamingHash:
-    type Digest
-
-pub trait ByteDigestHasher with StreamingHash:
-    def finalize(mut self) -> Result[Self.Digest, HashError]: ...
-```
-
-If a subtrait needs a stronger semantic promise about an inherited associated type, it should express that promise through method signatures or a separate associated-type constraint mechanism. This RFC does not introduce refinement syntax.
-
-### Interaction with Rust interop
-
-RFC 043 already defines associated type declarations for Rust trait adoption. This RFC generalizes the concept to native Incan traits and should align syntax and diagnostics with that existing surface.
-
-When an Incan type implements an imported Rust trait with associated types, the compiler should preserve RFC 043 behavior. When an Incan trait with associated types lowers to Rust, the generated Rust trait should use Rust associated types where possible. If a target backend cannot represent native associated types, it must reject the affected code with a clear diagnostic.
-
-### Interaction with `Self`
-
-`Self.Name` in a trait body refers to the associated type selected by the eventual implementation. `Self.Name` in an implementation body refers to the associated type binding for the implementing type and trait context.
-
-An associated type projection must not be confused with field access. `Self.Item`, `Self.Digest`, and `H.Digest` in type position are type projections. `self.value` in expression position remains ordinary value access.
+Default associated types would allow an implementation to omit a choice. They need explicit rules for default substitution, inherited defaults, and compatibility; this revision requires supplied choices so omission has one meaning. Specialization would choose among overlapping implementations, whereas this revision requires unique bindings without implementation precedence. Trait-object dispatch would additionally require object-safety and erased-representation rules. The header spelling alone settles none of these features. These features remain outside this RFC under its Non-Goals; their scope is not reopened by the infer header spelling. Associated constants are a separate value-level contract under RFC 144. Generic associated types, defaults, specialization, and trait-object dispatch require their own explicit design rather than adoption by implication.
 
 ### Diagnostics
 
-The compiler should provide focused diagnostics for:
+Diagnostics should identify the trait owner, selected ordinary arguments, and inferred member involved. Required categories include missing or extra adoption arguments, an ordinary parameter after an inferred member, duplicate or colliding member names, conflicting choices for one implementation key, incompatible method signatures, invalid or ambiguous projections, unsatisfied exact output requirements, and resolution cycles.
 
-- missing associated type binding
-- unknown associated type name
-- ambiguous associated type binding
-- ambiguous associated type projection
-- projection from a type without the required trait bound
-- implementation method signature incompatible with the associated type binding
-- associated type declaration cycle through supertraits or aliases
+A missing-choice diagnostic should suggest an adoption such as `with PullIterator[YourItemType]`, not a native body-level `type Item` declaration. An ambiguity diagnostic should identify the competing trait instantiations. Rust-only corrections should be reserved for explicit interop contexts.
 
-Diagnostics should avoid suggesting Rust syntax as the primary fix unless the code is inside an explicit Rust interop context.
+### Expected acceptance
 
-### Compatibility
+These cases describe required behavior for a future implementation; they are not compiler test results. They assume the trait declarations from the guide.
 
-This RFC is additive. Existing traits without associated types continue to work unchanged. Existing Rust trait associated type support from RFC 043 remains valid. Existing generic traits should not be migrated solely for style; migration is justified when associated types remove duplicated shape-specific traits or make generic consumers more precise.
+| Case                                                                                | Expected behavior                                                             |
+| ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| A concrete adoption of `PullIterator[str]` with a matching `next` method            | Accept; its `Item` is `str`.                                                  |
+| A concrete adoption of bare `PullIterator`                                          | Reject; the implementing declaration must supply `Item`.                      |
+| One type adopting both `PullIterator[str]` and `PullIterator[bytes]`                | Reject; there are no ordinary arguments distinguishing the implementations.   |
+| One type adopting `Lookup[str, User]` and `Lookup[int, User]` with matching methods | Accept; the ordinary key arguments differ.                                    |
+| One type adopting `Lookup[str, User]` and `Lookup[str, Team]`                       | Reject; the same ordinary argument cannot select conflicting inferred values. |
+| A `Lines` value passed to a parameter bounded by `PullIterator[bytes]`              | Reject; an output requirement cannot change `Lines.Item` from `str`.          |
+| `Directory.Value` without selecting one of its lookup instantiations                | Reject as ambiguous, even when both bindings equal `User`.                    |
+| A trait header listing `infer Value` before an ordinary `K`                         | Reject; inferred members must form a suffix.                                  |
+| An `EncodedIterator` adoption whose item does not satisfy `TextEncodable`             | Reject at adoption; the inferred member must satisfy its declared bound.       |
+| A generic consumer of `EncodedIterator` calling `encode` on its projected item         | Accept the capability proved by the inferred member bound.                    |
 
 ## Alternatives considered
 
-The closest alternative is to keep using ordinary generic trait parameters for every implementer-specific type family. That remains the right model when the caller chooses the type, but it is a poor fit when the implementation owns the choice. It forces APIs to carry generic arguments that are not real inputs to the capability, and it makes generic consumers restate type information the implementation should already provide.
+### Body-level required type declarations
 
-Shape-specific trait splitting solves some small cases but does not scale as a language model. Traits such as `ByteDigestHasher`, `Hash64DigestHasher`, and `Hash128DigestHasher` can be clear when the surface is tiny, yet they prevent one generic helper from returning the implementer's selected type and they multiply every adapter or helper by result shape. Union returns have the opposite problem: `Union[bytes, u64, u128]` puts every possible result into one signature, but it moves a static relationship into runtime branching and forces callers to narrow values even when the concrete implementation is already known.
+The previous Draft used `type Item` and `type Item = str` in trait and implementation bodies. Those forms align with Rust associated type items but leave the required implementation choice less visible in the trait header. Adding `= ...` makes the missing definition more explicit while retaining a separate declaration mechanism. This revision instead places both the requirement and its supplied argument beside the capability declaration.
 
-Overloading or multimethod dispatch would also miss the core relationship. Incan does not currently expose a general overload model, and overloads would still not give other signatures a stable name for the type selected by the implementation. Treating associated types as a Rust-only interop detail fails for the same reason: stdlib and user-authored Incan traits need this modeling power even when no external Rust trait is involved.
+### Ordinary generic parameters with an alias
+
+A declaration such as `trait PullIterator[T]` with a named alias for `T` can preserve the convenient `Item` vocabulary. Ordinary generic semantics, however, permit multiple item instantiations for one implementing type under RFC 025. Restricting those adoptions without a visible marker would change ordinary generics by implication. Naming `infer Item` directly states the distinct role and avoids a redundant alias. RFC 083's existing RHS-oriented symbol alias syntax does not itself define projected trait-owned type members.
+
+### Treat every header entry as inferred
+
+Making all trait parameters implementation-chosen would remove the distinction needed by existing capabilities such as multi-key indexing and conversions. The explicit marker lets native associated types coexist with ordinary trait parameters.
+
+### Shape-specific traits or union outputs
+
+Separate traits for byte, 64-bit, and other digest shapes multiply helpers and adapters. Union outputs require runtime narrowing even when the implementing type already fixes the representation. Neither gives generic signatures the exact named relationship expressed by `H.Digest`.
 
 ## Drawbacks
 
-Associated types add another dimension to trait reasoning. Users must learn the difference between a generic parameter chosen by the caller and an associated type chosen by the implementer, and that distinction has to stay visible in examples, diagnostics, and API design guidance. Projection syntax can also become noisy for types that implement several traits with the same associated type name; the simple form should remain common, but the language still needs a precise targeted form for ambiguous cases.
+Readers must learn that bracket entries can have two roles and that a bound may omit only the inferred suffix, while a concrete adoption must supply it. The `infer` spelling may initially suggest that the compiler also fills missing implementation arguments; examples and diagnostics must explain that implementations supply their choices explicitly.
 
-The implementation cost is also real. The typechecker must resolve projections through bounds, supertraits, concrete implementations, and generic substitutions, which makes ambiguity diagnostics and cycle detection more important. Backend emission must preserve associated type relationships instead of erasing them into unknown or cloned concrete types, raising the bar for generated Rust quality and for non-Rust backend parity.
+The marker also has a distinct proposed use in RFC 141 type patterns. A shared intuition does not remove the need to explain each context. Traits with several ordinary instantiations or colliding member names still need disambiguation through the owner-qualified projection and grouping rule shared with RFC 144.
+
+The typechecker and tooling must preserve implementation identity, output uniqueness, substitutions, inherited requirements, visibility, and provenance. The surface is compact, but its semantic checks are substantial. Rust interop temporarily retains a separate source spelling, and migration of ordinary traits is a deliberate API change.
 
 ## Implementation architecture
 
-Associated types should be represented as first-class trait members in checked metadata, not as synthetic methods or stringly annotations. Trait adoption should carry resolved associated type bindings alongside method implementations. Generic bound resolution should expose associated type projections from active bounds and supertrait closures. Backend lowering should preserve projected types until enough concrete information is available to emit target-language associated type items or substituted concrete types.
+This section is non-normative. Checked metadata should represent ordinary trait parameters and inferred members as distinct roles with stable trait-owned identities. Adoption should resolve supplied arguments into ordinary implementation inputs and associated member bindings. Projection resolution should use active bounds, selected ordinary arguments, and supertrait provenance. Backend lowering should preserve associated relationships until it can emit associated type items or substitute known concrete bindings.
 
-This section is non-normative. The contract is the language behavior above; compiler internals may choose a different representation if they preserve the same checked semantics and diagnostics.
+Inferred members should not be represented as runtime fields, synthetic methods, or unchecked strings. Compiler and editor queries should consume the same checked relationships so diagnostics, hover, manifests, and generated documentation agree.
 
 ## Layers affected
 
-- **Parser / AST**: trait bodies and adopting type bodies must accept associated type declarations and targeted associated type bindings. Type annotations must accept associated type projections in type positions.
-- **Typechecker / Symbol resolution**: trait metadata must record associated type declarations, adoption metadata and RFC 099 trait-owned capability metadata must record bindings, projections must resolve through active bounds and concrete implementations, and signature compatibility must substitute associated type bindings.
-- **IR Lowering**: checked associated type projections must remain visible enough for backend type lowering and diagnostics rather than degrading to unknown types.
-- **Emission**: Rust emission should lower native associated types to Rust associated type items where possible and substitute concrete bindings in generated method signatures as required.
-- **Stdlib / Runtime (`incan_stdlib`)**: stdlib traits such as streaming hashers, iterators, parsers, codecs, and adapters may use associated types to remove duplicated shape-specific abstractions.
-- **Formatter**: associated type declarations, targeted bindings, and projection types must format stably.
-- **Library manifests / checked API metadata**: public trait metadata must preserve associated type declarations, bindings, projections, trait-qualified targets, and degraded-state markers for downstream package consumers and generated documentation.
-- **LSP / Tooling**: completions, hover, go-to-definition, diagnostics, semantic inspection, and explanation commands should expose associated type members, concrete bindings, provenance, and ambiguity reasons.
+- **Parser / AST:** contextual `infer` in native trait headers, distinct header parameter roles, adoption arguments, and projections in type positions.
+- **Typechecker / Symbol resolution:** implementation keys based on ordinary parameters, inferred output uniqueness, bound argument omission, exact output requirements, inheritance, projection resolution, and method compatibility.
+- **IR Lowering:** preservation of checked associated members, selected instantiations, and symbolic projections for backend lowering and diagnostics.
+- **Emission:** native inferred members lower to associated type items where possible, with ordinary inputs retained as generic parameters.
+- **Stdlib / Runtime:** iterator, hasher, parser, codec, and adapter APIs may adopt the feature; associated types themselves add no runtime storage.
+- **Formatter:** trait headers, mixed parameter lists, adoption arguments, and projected types must format consistently.
+- **Library manifests / checked API metadata:** preserve parameter roles, member owners, bindings, exact requirements, implementation selection, and degraded-state markers.
+- **LSP / Tooling:** completion, hover, go-to-definition, diagnostics, semantic inspection, and explanation commands expose the same type relationships.
 
-## Unresolved questions
+## Design Decisions
 
-- Should this RFC include trait-qualified projection syntax exactly as `T.Item for Trait`, or should the language choose a more explicit projection form before implementation?
-- Should associated type names follow the same capitalization convention as nominal types, or should the formatter/linter enforce a Rust-like `UpperCamelCase` convention only as style?
-- Should generic associated types be part of RFC 098's north star, or should they be a separate RFC after non-generic associated type projection is settled?
-- Should associated constants be designed alongside associated types, especially for stdlib traits with fixed sizes or capabilities, or should value-level trait members stay separate?
-- Should default associated types be specified here, or should defaults be a separate design from required associated type bindings?
-- Should specialization or overlapping implementation behavior be considered in this RFC, or should associated types deliberately preserve today's trait coherence model?
-- Should trait-object dispatch with fixed associated type bindings be specified here, or should dynamic dispatch for associated-type traits remain a later trait-system RFC?
-- Should associated type equality constraints be introduced separately, or can APIs in this RFC rely on projection types and narrower traits without equality syntax?
+- Preserve the existing Non-Goals: no generic associated types, default associated types, specialization, or trait-object dispatch is introduced here. Required inferred choices and unique implementation bindings remain authoritative. Value-level associated constants belong to RFC 144.
 
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- Inferred declarations may carry ordinary `with` capability bounds, such as `infer Item with TextEncodable`. Adoptions must prove them and consumers inherit those checked facts through projections; omitted adoption choices are not inferred. The full generic `where` grammar remains separately scoped.
+- Owner-qualified type projections bind as primary member projections under the rule shared with RFC 144. Ordinary delimiters do not require redundant parentheses; further postfix access and actual attachment ambiguities require explicit grouping.
+- An unbound inferred supertrait requirement is supplied by explicitly adopting its owning supertrait. No additional shorthand is introduced; an already-bound supertrait retains its exact requirement.
+- Nominal-style capitalization is a style convention, not a typechecking restriction. Existing identifier rules govern validity, and source spelling remains part of the API.
+- RFC 043's imported Rust associated-type surface remains valid. A native-header facade for imported traits is outside this RFC; any later facade must use checked member identities and bindings rather than rendered type names.
