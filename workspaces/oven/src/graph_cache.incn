@@ -76,14 +76,16 @@ pub def stamp_file(unit: GraphUnit) -> Path:
     return unchecked_marker(unit.path)
 
 
-pub def read_graph(unit: GraphUnit, driver: str, group: str) -> Result[str, str]:
-    """Decode indexed binary records for query output; only the storage reader runs, never the checker or codegen."""
+pub def read_graph(unit: GraphUnit, driver: str, group: str, fields: str = "") -> Result[str, str]:
+    """Decode indexed records with an optional field projection; only storage runs, never checking or codegen."""
     if not unit.path.is_file() and is_unchecked(unit.path):
         return Ok("")
     mut command = Command.new(driver)
     command.env_remove("RUSTC_BOOTSTRAP")
     for argument in ["--read-codegraph", unit.path.0, unit.root.0, group]:
         command.arg(argument)
+    if fields != "":
+        command.arg(fields)
     result = command.output().map_err((error) => str(error))?
     if not result.status.success():
         return Err(output_text(result.stderr)?)
@@ -113,22 +115,6 @@ pub def tree_inputs(root: Path) -> Result[list[str], str]:
     return Ok(inputs)
 
 
-pub def graph_digest(path: Path) -> Result[str, str]:
-    """Return the exact content digest of a graph or unchecked note.
-
-    1. Load the file's retained observations from this consumer's home.
-    2. Reconcile its full identity, hashing again after a change or an unsettled observation.
-    3. Save the observation without changing the digest used by snapshot identity.
-    """
-    # 1. Load observations for this artifact.
-    mut ledger = graph_observations(path)?
-    # 2. Reconcile the artifact's bytes.
-    digest = ledger.digest(path)?
-    # 3. Retain its observation independently of its content key.
-    save_observations(ledger)
-    return Ok(digest)
-
-
 def graph_observations(root: Path) -> Result[Ledger, str]:
     """Keep inspection's optional observations in its own home, never inside a selected external source or artifact."""
     name = fingerprint([root.0])?
@@ -136,7 +122,7 @@ def graph_observations(root: Path) -> Result[Ledger, str]:
     return Ok(load_ledger(directory.joinpath(f"{name}.json"), SETTLE_SECONDS, ""))
 
 
-def save_observations(mut ledger: Ledger) -> None:
+pub def save_observations(mut ledger: Ledger) -> None:
     """An unavailable optional cache must leave inspection using the exact freshly computed content digests."""
     match ledger.save():
         Ok(_) => pass

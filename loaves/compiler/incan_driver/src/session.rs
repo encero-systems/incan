@@ -145,8 +145,9 @@ impl CompilationSession {
 
     /// Open a parsing-only session for formatting without preparing native dependencies or checked model bundles.
     ///
-    /// Available Loaf manifests still supply the vocabulary through the ordinary index. Missing manifests supply no
-    /// vocabulary; syntax that needs them must refuse at parsing rather than inventing a source-based replacement.
+    /// Available Loaf manifests use the ordinary admitted inventories and canonical demands, including every global
+    /// vocabulary contributor. Missing manifests supply no vocabulary; syntax that needs them must refuse at parsing
+    /// rather than inventing a source-based replacement.
     /// Checking and compilation must use [`Self::new`], which requires every reached artifact.
     pub fn for_formatting(unit: &UnitDescription) -> CliResult<Self> {
         Self::open(unit, true)
@@ -155,14 +156,9 @@ impl CompilationSession {
     /// Initialize the shared parser context from Loaf artifacts; only formatting may omit absent manifests.
     fn open(unit: &UnitDescription, formatting: bool) -> CliResult<Self> {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::open_session", input = %unit.source.display()).entered();
-        let mut entries = Vec::new();
         let mut deferred = Vec::new();
         for loaf in &unit.loaves {
             let key = if loaf.standard { &loaf.name } else { &loaf.key };
-            if !formatting {
-                deferred.push((key.clone(), loaf.name.clone(), loaf.dir.clone(), loaf.standard));
-                continue;
-            }
             let manifest = loaf.dir.join(format!("{}.{LIBRARY_MANIFEST_EXTENSION}", loaf.name));
             if formatting
                 && !manifest
@@ -171,20 +167,9 @@ impl CompilationSession {
             {
                 continue;
             }
-            let entry = if loaf.standard {
-                LoafIndex::standard(&loaf.name, &loaf.dir)
-            } else {
-                LoafIndex::dependency(&loaf.key, &loaf.name, &loaf.dir)
-            }
-            .map_err(|error| CliError::failure(error.to_string()))?;
-            entries.push(entry);
+            deferred.push((key.clone(), loaf.name.clone(), loaf.dir.clone(), loaf.standard));
         }
-        let loaves = if formatting {
-            LoafIndex::new(entries)
-        } else {
-            LoafIndex::deferred(deferred)
-        }
-        .map_err(|error| CliError::failure(error.to_string()))?;
+        let loaves = LoafIndex::deferred(deferred).map_err(|error| CliError::failure(error.to_string()))?;
         let loaves = Arc::new(loaves);
         // The implicit prelude also owns the linked string-conversion and entry-initialization contracts.
         let _ = loaves.owner_of(&[stdlib::STDLIB_ROOT.to_owned(), "prelude".to_owned()]);

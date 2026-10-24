@@ -177,6 +177,18 @@ impl GraphArtifact {
     /// Decode selected wire records for JSON query output. An empty group exports everything; `nodes` keeps module
     /// and declaration nodes, and every group retains headers so provenance remains available to consumers.
     pub fn records(&self, root: &Path, group: &str) -> Result<Vec<Value>, GraphArtifactError> {
+        self.projected_records(root, group, &BTreeMap::new())
+    }
+
+    /// Decode selected records with an optional consumer-owned field projection per record kind. Wire validation
+    /// precedes projection, the complete header remains available, and retained source paths are restored without
+    /// inferring any new facts.
+    pub fn projected_records(
+        &self,
+        root: &Path,
+        group: &str,
+        fields: &BTreeMap<String, Vec<String>>,
+    ) -> Result<Vec<Value>, GraphArtifactError> {
         let mut records = Vec::new();
         for entry in &self.index.entries {
             let selected = group.split(',').any(|group| {
@@ -186,6 +198,12 @@ impl GraphArtifact {
                 continue;
             }
             let mut value = self.value(entry)?;
+            if entry.kind != "header"
+                && let Some(kept) = fields.get(&entry.kind)
+                && let Some(object) = value.as_object_mut()
+            {
+                object.retain(|field, _| kept.contains(field));
+            }
             paths::restore(&mut value, root);
             records.push(value);
         }

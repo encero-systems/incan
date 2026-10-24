@@ -1,11 +1,13 @@
-"""Retain optional command durations for scheduling without storing compiler or case outcomes."""
+"""Retain scheduling durations and optional timing observations without storing compiler or case outcomes."""
 
 from rust::std::time import Instant
 from std.fs import Path
+from std.environ import get_or
 
 
 pub def elapsed_hint(project: Path) -> int:
-    """Read a bounded scheduling hint; unavailable or malformed data means zero.
+    """
+    Read a bounded scheduling hint; unavailable or malformed data means zero.
 
     1. Read the optional duration recorded for this project.
     2. Admit only bounded nonnegative integer milliseconds.
@@ -22,7 +24,8 @@ pub def elapsed_hint(project: Path) -> int:
 
 
 pub def record_elapsed(project: Path, clock: Instant) -> None:
-    """Retain a command's elapsed time without making hint storage part of its result.
+    """
+    Retain a command's elapsed time without making hint storage part of its result.
 
     1. Bound the observed duration to one day.
     2. Save it under retained build outputs when storage is available.
@@ -56,3 +59,9 @@ def parse_hint(text: str) -> int:
         if character not in "0123456789":
             return 0
     return min([86_400_000, int(value)])
+
+
+pub def report(label: str, clock: Instant, detail: str = "") -> None:
+    """Print elapsed milliseconds when `CONTRACT_TIMINGS=1`, without changing commands or their outcomes."""
+    if get_or("CONTRACT_TIMINGS", "") == "1":
+        println(f"TIME {label} {int(clock.elapsed().as_millis())} ms{detail}")

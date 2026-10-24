@@ -1,19 +1,22 @@
 """
 The contract table runner.
 
-    contracts INCAN FIXTURES_ROOT [--scratch DIR] [--isolated] [--no-group-hints] [--jobs N] [--timeout SECONDS]
+    contracts INCAN FIXTURES_ROOT [--scratch DIR] [--isolated] [--no-group-hints] [--serial-families]
+              [--jobs N] [--timeout SECONDS]
               [SELECTOR...]
 
 Runs every case of every family under FIXTURES_ROOT with the `incan` at INCAN, or only the cases a selector names
 (`<family>`, `<family>/<area>` or `<family>/<area>/<name>`). Compatible programs share compilation unless `--isolated`
-is selected. Every case runs in its own process and working directory under scratch, with at most `--jobs` children
-(twelve by default). The runner prints one line per case (`PASS`, `FAIL` with its reasons, `PEND` with what it waits
-for), one summary per area and one in total, and exits 1 when a case fails or a family cannot be read. A pending case
+is selected. Every case runs in its own process and working directory under scratch. Supervised families divide
+`--jobs` command slots (twelve by default). The runner prints one line per case (`PASS`, `FAIL` with its reasons,
+or `PEND` with what it waits for), one summary per area and one in total, and exits 1 when a case fails or a family
+cannot be read. A pending case
 that now holds fails: its `pending:` line is stale.
 """
 
-from rust::std::env import args
+from rust::std::env import args, current_exe
 from rust::std::process import exit
+from rust::std::time import Instant
 from std.fs import Path
 from std.tempfile import TemporaryDirectory
 from compare import compare
@@ -24,7 +27,9 @@ from formatting import compare_format
 from graph import compare_graph
 from batch import run_batches, run_separate
 from group_hints import hint_path
-
+from timing import report as report_time
+from files import make_directory
+from workers import Invocation, invoke_many
 
 # A timeout of this many digits or fewer fits an integer; a job count of this many digits stays under 10,000.
 const TIMEOUT_DIGITS: int = 18
@@ -69,6 +74,8 @@ model Settings:
     use_hints: bool = true
     jobs: int = 12
     timeout: Option[int] = None
+    serial_families: bool = false
+    family_worker: bool = false
 
 
 model Units:
@@ -81,10 +88,14 @@ model Units:
         """Print each note under its case, and count the units it says were compiled or reused."""
         for note in notes:
             println(f"  {note}")
-            if ": compiled" in note:
-                self.compiled += 1
-            elif ": reused" in note:
-                self.reused += 1
+            self.observe(note)
+
+    def observe(mut self, note: str) -> None:
+        """Count an already printed unit note, including one forwarded from a family worker."""
+        if ": compiled" in note:
+            self.compiled += 1
+        elif ": reused" in note:
+            self.reused += 1
 
 
 def main() -> None:
@@ -125,7 +136,7 @@ def main() -> None:
 
 def usage() -> str:
     """The runner's usage."""
-    flags = "[--scratch DIR] [--isolated] [--no-group-hints] [--jobs N] [--timeout SECONDS]"
+    flags = "[--scratch DIR] [--isolated] [--no-group-hints] [--serial-families] [--jobs N] [--timeout SECONDS]"
     return f"usage: contracts INCAN FIXTURES_ROOT {flags} [SELECTOR...]"
 
 
@@ -146,6 +157,13 @@ def parse_settings(arguments: list[str]) -> Result[Settings, str]:
             index += 1
         elif argument == "--no-group-hints":
             settings.use_hints = false
+            index += 1
+        elif argument == "--serial-families":
+            settings.serial_families = true
+            index += 1
+        elif argument == "--family-worker":
+            settings.serial_families = true
+            settings.family_worker = true
             index += 1
         elif argument == "--scratch" and index + 1 < len(arguments):
             settings.scratch_dir = arguments[index + 1]
@@ -203,16 +221,24 @@ def run_all(settings: Settings, scratch: Path) -> bool:
     """
     Run every selected case; whether all of them held.
 
+    Multiple families share the job budget across supervised processes unless `--serial-families` was selected.
+
     1. Each family a selector reaches is discovered; one that cannot be read is refused.
     2. Its selected cases run, sharing compilation unless the run is isolated, and are reported area by area.
     3. The total, the units Oven compiled and reused, and the families that could not be read are reported.
     """
+    families = [family for family in FAMILIES if selected_family(family, settings.selectors)]
+    if not settings.serial_families and settings.jobs > 1 and len(families) > 1:
+        return run_family_workers(settings, scratch, families)
     mut total = Tally(passed=0, failed=0, pending=0)
     mut units = Units()
     mut refused = 0
     for family in FAMILIES:
         if not selected_family(family, settings.selectors):
             continue
+        clock = Instant.now()
+        compiled = units.compiled
+        reused = units.reused
         # 1. A family a selector reaches is discovered, and one that cannot be read is refused and counted.
         match discover_family(settings.root, family):
             Err(reason) =>
@@ -223,13 +249,136 @@ def run_all(settings: Settings, scratch: Path) -> bool:
                 selected = [fixture for fixture in fixtures if selected_case(fixture.case_name(), settings.selectors)]
                 outcomes = family_outcomes(settings, scratch, family, fixtures, selected, units)
                 report_family(settings.incan, scratch, family, selected, outcomes, total, units)
+        detail = f" compiled={units.compiled - compiled} reused={units.reused - reused}"
+        report_time(f"family {family}", clock, detail)
     # 3. The total, the units Oven compiled and reused, and the families that could not be read close the report.
     println(total.line("total"))
     if units.compiled + units.reused > 0:
         println(f"oven: {units.compiled} units compiled, {units.reused} reused")
     if refused > 0:
         println(f"{refused} families could not be read")
+    if settings.family_worker:
+        println("CONTRACT FAMILY COMPLETE")
     return total.failed == 0 and refused == 0
+
+
+def run_family_workers(settings: Settings, scratch: Path, families: list[str]) -> bool:
+    """
+    Supervise whole families without sharing the callback pool's mutable state between them.
+
+    1. Divide command slots between at most three independent workers and prepare their requests.
+    2. Run workers without a family-wide deadline; each worker enforces the requested per-command deadline.
+    3. Forward complete reports in family order and aggregate their observed case and unit lines.
+    """
+    # 1. Every active worker receives the same share, so their command slots sum to at most the requested budget.
+    slots = min([3, settings.jobs, len(families)])
+    jobs = settings.jobs // slots
+    order = family_work_order(families)
+    match family_requests(settings, scratch, order, jobs):
+        Err(reason) =>
+            println(f"REFUSED family workers: {reason}")
+            return false
+        Ok(requests) =>
+            # 2. A whole family is not one command: its worker owns individual command deadlines and reaping.
+            set_timeout(0)
+            results = invoke_many(requests, slots)
+            if let Some(seconds) = settings.timeout:
+                set_timeout(seconds)
+            # 3. Reports retain their original order even when a later family finishes first.
+            mut total = Tally(passed=0, failed=0, pending=0)
+            mut units = Units()
+            mut refused = 0
+            for family in families:
+                for index in range(len(order)):
+                    if order[index] == family:
+                        refused += forward_family(family, results[index], total, units)
+            println(total.line("total"))
+            if units.compiled + units.reused > 0:
+                println(f"oven: {units.compiled} units compiled, {units.reused} reused")
+            if refused > 0:
+                println(f"{refused} families could not be read")
+            return total.failed == 0 and refused == 0
+
+
+def family_work_order(families: list[str]) -> list[str]:
+    """Start graph's sequential protocol probes first while other families fill the remaining command slots."""
+    if "graph" not in families:
+        return families
+    return ["graph"] + [family for family in families if family != "graph"]
+
+
+def family_requests(settings: Settings, scratch: Path, families: list[str], jobs: int) -> Result[list[Invocation], str]:
+    """Prepare independent capture directories while preserving the shared scratch and canonical fixture scope."""
+    executable = current_exe().map_err((error) => str(error))?
+    program = f"{executable.display()}"
+    root = settings.root.resolve().map_err((error) => error.message())?
+    retained = scratch.absolute().map_err((error) => error.message())?
+    mut incan = settings.incan
+    if "/" in incan:
+        incan = Path(incan).absolute().map_err((error) => error.message())?.0
+    mut requests: list[Invocation] = []
+    for family in families:
+        project = retained.joinpath(f"family-worker-{family}")
+        make_directory(project)?
+        mut arguments = [incan, root.0, "--family-worker", "--scratch", retained.0, "--jobs", str(jobs)]
+        if settings.isolated:
+            arguments.append("--isolated")
+        if not settings.use_hints:
+            arguments.append("--no-group-hints")
+        if let Some(seconds) = settings.timeout:
+            arguments.extend(["--timeout", str(seconds)])
+        mut selected = [item for item in settings.selectors if item == family or item.startswith(f"{family}/")]
+        if len(selected) == 0:
+            selected = [family]
+        arguments.extend(selected)
+        requests.append(Invocation(program=program, arguments=arguments, project=project, selector=None))
+    return Ok(requests)
+
+
+def forward_family(family: str, result: Result[Outcome, str], mut total: Tally, mut units: Units) -> int:
+    """Forward case evidence, refusing missing completion markers, abnormal exits and inconsistent worker status."""
+    match result:
+        Err(reason) =>
+            println(f"REFUSED {family}: {reason}")
+            return 1
+        Ok(outcome) =>
+            mut completed = 0
+            mut failed = 0
+            mut refused = 0
+            for line in outcome.stdout.split("\n"):
+                if line == "CONTRACT FAMILY COMPLETE":
+                    completed += 1
+                    continue
+                if worker_footer(line):
+                    continue
+                println(line)
+                if line.startswith("PASS "):
+                    total.passed += 1
+                elif line.startswith("FAIL "):
+                    total.failed += 1
+                    failed += 1
+                elif line.startswith("PEND "):
+                    total.pending += 1
+                elif line.startswith("REFUSED "):
+                    refused += 1
+                elif line.startswith("  oven: unit "):
+                    units.observe(line)
+            mut expected = Some(0)
+            if failed + refused > 0:
+                expected = Some(1)
+            if completed != 1 or outcome.code != expected or outcome.stderr != "":
+                println(f"REFUSED {family}: incomplete worker report or unexpected exit {outcome.exit_text()}")
+                if outcome.stderr != "":
+                    println(indented(outcome.stderr))
+                refused += 1
+            return refused
+
+
+def worker_footer(line: str) -> bool:
+    """Suppress only a worker's aggregate footer; indented diagnostic and unit lines remain untouched."""
+    if line == "" or line.startswith("total:") or line.startswith("oven:"):
+        return true
+    return not line.startswith(" ") and line.endswith(" families could not be read")
 
 
 def family_outcomes(
@@ -279,7 +428,9 @@ def report_family(
         mut batched: Option[Result[Outcome, str]] = None
         if fixture.case_name() in outcomes:
             batched = Some(outcomes[fixture.case_name()])
+        clock = Instant.now()
         result = run_case(incan, scratch, fixture, batched)
+        report_time(f"compare {fixture.case_name()}", clock)
         report_verdict(fixture, result.verdict, tally, total)
         units.count(result.notes)
     if area != "":

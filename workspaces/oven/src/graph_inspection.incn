@@ -20,10 +20,12 @@ from graph_dependencies import GraphDependencies, prepare_graph, unit_natives, u
 from observation import trace
 from graph_incan import inspect_incan
 from graph_loaves import registry_artifacts, registry_graphs, standard_graphs
-from graph_queries import query, query_group, text
+from graph_queries import matches, query, query_group, text
 from graph_identity import keyed, link_keys, declaration_digests
 from graph_snapshot import snapshot_identity, snapshot_status
 from graph_context import pack
+from graph_context_index import ContextIndex
+from graph_context_items import anchor_root
 from graph_process import process_facts
 from graph_rust import inspect_rust
 from json_fields import required_items, string_value
@@ -199,7 +201,9 @@ pub def graph_response(arguments: list[str], preferences: Dict[str, int] = {}) -
         paths = inspect_source(source, toolchain, selected.substitutes)?
     else:
         root = owning_project(path, selected.path)?
-        paths = inspect_rust(root, "debug", FeatureRequest(), selected.substitutes, toolchain)?
+        paths = inspect_rust(
+            root, "debug", FeatureRequest(), selected.substitutes, toolchain, selected.query == "defs",
+        )?
     trace(f"graph preparation: {started.elapsed().as_millis()} ms")
     # 3. CLI and service consumers share the same rendered facts and freshness checks.
     return response(paths, path.0, selected, toolchain, preferences)
@@ -250,7 +254,9 @@ def response(
     for note in notes:
         warn(unchecked_warning(note))
     # 2. The same selection over the same graphs gets its answer from the cache without decoding a record.
-    mut snapshot = snapshot_identity(paths, root, selected.strict)?
+    mut snapshot = ""
+    if needs_snapshot(selected):
+        snapshot = snapshot_identity(paths, root, selected.strict)?
     trace(f"graph snapshot: {started.elapsed().as_millis()} ms")
     lookup = Instant.now()
     mut process: list[JsonValue] = []
@@ -276,6 +282,11 @@ def response(
     publish(cached, rendered)?
     trace(f"graph answer evaluation: {evaluation.elapsed().as_millis()} ms")
     return Ok(rendered)
+
+
+def needs_snapshot(selected: GraphOptions) -> bool:
+    """Only snapshot-bearing responses hash graph contents; plain queries are keyed by prepared artifact identities."""
+    return selected.query == "" or selected.stale != "" or selected.risk
 
 
 def presentation_inputs(
@@ -308,13 +319,21 @@ def render(
 ) -> Result[str, str]:
     """The answer to a query, at most `limit` hits, or the merged records as one JSON array or one record per line."""
     if selected.task != "":
-        records = read_records(paths, root, toolchain, "", selected.strict, degraded, snapshot)?
+        started = Instant.now()
+        mut index = context_index(paths, root, toolchain.driver, process)?
+        trace(f"graph context index: {started.elapsed().as_millis()} ms")
         return pack(
-            records + process, selected.task, selected.budget, anchor_root(Path(root)).0, selected.format, preferences,
+            index, snapshot, JsonValue.bool(degraded), selected.task, selected.budget,
+            anchor_root(Path(root)).0, selected.format, preferences,
         )
     if selected.query != "":
+        started = Instant.now()
         group = query_group(selected.query)
-        records = read_records(paths, root, toolchain, group, selected.strict, degraded, snapshot)?
+        mut definition: Option[str] = None
+        if selected.query == "defs":
+            definition = Some(selected.term)
+        records = read_records(paths, root, toolchain, group, selected.strict, degraded, snapshot, definition)?
+        trace(f"graph query records: {started.elapsed().as_millis()} ms")
         hits = query(records, selected.query, selected.term, anchor_root(Path(root)).0)
         mut lines = hits[:selected.limit]
         if len(hits) > selected.limit:
@@ -324,6 +343,34 @@ def render(
     if selected.format == "json":
         return json_text(JsonValue.array(records))
     return Ok("\n".join([json_text(record)? for record in records]))
+
+
+def context_index(
+    paths: list[GraphUnit], root: str, driver: str, process: list[JsonValue],
+) -> Result[ContextIndex, str]:
+    """
+    Prepare demand-readable context facts without joining full graph payloads.
+
+    1. Validate each package header and load its ranking rows.
+    2. Join only the identity columns, then attach current process observations.
+    """
+    mut index = ContextIndex()
+    mut owner = Path(root)
+    if owner.is_file():
+        owner = owner.parent()
+    # 1. Header validation stays at the inspection boundary, shared with ordinary exports.
+    for unit in paths:
+        previous = len(index.headers)
+        index.add(unit, driver, owner)?
+        for header in index.headers[previous:]:
+            check_identity(unit, header)?
+            header_languages(header)?
+            if let Some(value) = header.get("semantic_contexts"):
+                value.expect_array().map_err((error) => error.message())?
+    # 2. Payloads remain unread until their ranked node or selected relationship is requested.
+    index.join()?
+    index.add_process(process, anchor_root(owner).0)?
+    return Ok(index)
 
 
 def unchecked_notes(paths: list[GraphUnit]) -> Result[list[str], str]:
@@ -341,25 +388,6 @@ def warn(message: str) -> None:
     mut err = stderr()
     # A closed standard error cannot be told about, so a failed write is ignored.
     _ = err.write_all(RustString.from(f"{message}\n").into_bytes())
-
-
-def anchor_root(path: Path) -> Path:
-    """Prefer repository-relative source anchors, falling back to the nearest owning project for standalone Loaves."""
-    mut directory = path
-    if directory.is_file():
-        directory = directory.parent()
-    mut project = directory
-    mut found = false
-    while true:
-        if directory.joinpath(".git").is_file() or directory.joinpath(".git").is_dir():
-            return directory
-        if not found and directory.joinpath("loaf.toml").is_file():
-            project = directory
-            found = true
-        parent = directory.parent()
-        if parent.0 == directory.0 or parent.0 in [".", ""]:
-            return project
-        directory = parent
 
 
 def inspect_source(source: Path, toolchain: Toolchain, substitutes: Dict[str, str]) -> Result[list[GraphUnit], str]:
@@ -414,6 +442,7 @@ def read_records(
     strict: bool,
     degraded: bool,
     snapshot: str,
+    definition: Option[str] = None,
 ) -> Result[list[JsonValue], str]:
     """
     Merge unit documents deterministically, retaining one header and one instance of each identified fact.
@@ -423,7 +452,7 @@ def read_records(
     1. Read the records of each unit for the group, one JSON document per line.
     2. A header is checked against the unit it came from. The first one is kept, and then that of the unit that holds
        the root; all of them contribute their languages and semantic contexts.
-    3. Any other record is kept once per identity.
+    3. Keep requested definition candidates, or all records, once per identity.
     4. The kept header is completed with the mode, degradation, languages and contexts of the whole selection.
     """
     mut records: list[JsonValue] = []
@@ -432,6 +461,7 @@ def read_records(
     mut languages: list[str] = []
     mut contexts: list[JsonValue] = []
     for unit in paths:
+        started = Instant.now()
         # 1. Each unit's records are read for the group the query needs, one JSON document to a line.
         document = read_graph(unit, toolchain.driver, group)?
         mut package_name = unit.package
@@ -454,12 +484,16 @@ def read_records(
                     None => pass
                 continue
             # 3. A fact several units report is kept once, under the first that reported it.
+            if let Some(term) = definition:
+                if not definition_candidate(record, term):
+                    continue
             record = keyed(record, package_name)?
             key = text(record, "id")
             if key != "" and key in seen:
                 continue
             seen[key] = true
             records.append(record)
+        trace(f"graph records {unit.package}: {started.elapsed().as_millis()} ms")
     # 4. The header tells the reader the mode, whether any unit was unchecked, and every language and context involved.
     header["root_path"] = JsonValue.string(root)
     header["mode"] = JsonValue.string("allow_errors")
@@ -473,6 +507,13 @@ def read_records(
     header["declaration_digests"] = declaration_digests(records)?
     header["snapshot_id"] = JsonValue.string(snapshot)
     return Ok([JsonValue.object(header)] + records)
+
+
+def definition_candidate(record: JsonValue, term: str) -> bool:
+    """Defer consumer-key matching until keys exist; ordinary names and export ids can filter before graph joins."""
+    if text(record, "record") != "declaration":
+        return false
+    return term.startswith("symbol:") or matches(record, term)
 
 
 def check_identity(unit: GraphUnit, header: JsonValue) -> Result[None, str]:

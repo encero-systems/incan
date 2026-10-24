@@ -63,8 +63,12 @@ pub def toolchain_directory() -> Result[Path, str]:
 
 
 pub def load_toolchain() -> Result[Toolchain, str]:
-    """The description of this Oven's toolchain, from its home directory."""
-    return read_toolchain(toolchain_directory()?)
+    """Read the installed toolchain through its physical directory so aliases share native preparation and exports."""
+    directory = toolchain_directory()?
+    if directory.is_dir():
+        physical = directory.resolve().map_err((error) => error.message())?
+        return read_toolchain(physical)
+    return read_toolchain(directory)
 
 
 pub def read_toolchain(directory: Path) -> Result[Toolchain, str]:

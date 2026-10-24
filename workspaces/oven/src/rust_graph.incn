@@ -367,7 +367,10 @@ def valid_role_kind(unit: AdmittedSelectedUnit) -> bool:
     """Check the raw graph's role/kind/domain matrix without reclassifying a target in the host."""
     if unit.role == SelectedUnitRole.ProcMacro:
         return unit.crate_kind == SelectedCrateKind.ProcMacro and unit.node.domain == DependencyDomain.Host
-    if unit.role in [SelectedUnitRole.Binary, SelectedUnitRole.UnitTest, SelectedUnitRole.IntegrationTest, SelectedUnitRole.Example, SelectedUnitRole.Doctest, SelectedUnitRole.Benchmark]:
+    if unit.role in [
+        SelectedUnitRole.Binary, SelectedUnitRole.UnitTest, SelectedUnitRole.IntegrationTest,
+        SelectedUnitRole.Example, SelectedUnitRole.Doctest, SelectedUnitRole.Benchmark,
+    ]:
         return unit.crate_kind == SelectedCrateKind.Binary and unit.node.domain == DependencyDomain.Target
     if unit.role == SelectedUnitRole.CallerProjection:
         return unit.crate_kind == SelectedCrateKind.Rlib and unit.node.domain == DependencyDomain.Target
@@ -380,7 +383,10 @@ def root_purpose(
     manifest: str,
 ) -> Result[ActivationPurpose, IntakeError]:
     """Derive purpose from authenticated target role and the selected graph's explicit global purpose."""
-    if unit.role in [SelectedUnitRole.UnitTest, SelectedUnitRole.IntegrationTest, SelectedUnitRole.Doctest, SelectedUnitRole.Benchmark]:
+    if unit.role in [
+        SelectedUnitRole.UnitTest, SelectedUnitRole.IntegrationTest,
+        SelectedUnitRole.Doctest, SelectedUnitRole.Benchmark,
+    ]:
         if selection != ActivationPurpose.Test:
             return Err(
                 IntakeError(
@@ -419,7 +425,13 @@ pub def propagate_features(
     max_rounds: int,
 ) -> Result[GraphActivation, IntakeError]:
     """
-    Run `activate_unit` over the graph until no node's demand grows.
+    Activate the admitted Rust graph until no node's demand grows, refusing inconsistent physical evidence.
+
+    1. Validate the selected units and resolve their physical bindings.
+    2. Seed policy demands from the explicitly authored root intents.
+    3. Propagate demands through internal edges and active dependency declarations to a fixed point.
+    4. Reconcile settled features and reachability with the complete physical projection.
+    5. Return activations in first-reached order, with their default intent and iteration count.
 
     The physical host first validates the complete selected Rust facet graph and projects its unit inventory and
     exact edges into this call. This function checks that projection for policy consistency; it does not claim to
@@ -434,6 +446,38 @@ pub def propagate_features(
     `max_rounds` bounds the iteration explicitly. Demands only grow and a graph's feature set is finite, so a fixed
     point exists; the bound is there so a malformed catalog reports a refusal instead of spinning.
     """
+    # 1. Validate physical identities before admitting any policy demand.
+    validate_selected_units(units, manifest)?
+    checked_bindings = admit_bindings(units, bindings, manifest)?
+
+    # 2. Only explicit roots seed authored feature and default intent.
+    mut state = seed_root_demands(units, roots, base.purpose, manifest)?
+
+    # 3. Every widened demand or newly reached physical child gets another activation pass.
+    settle_demands(state, catalogs, base, checked_bindings, manifest, max_rounds)?
+
+    # 4. Observed physical features are evidence to reconcile, never a source of demand.
+    reconcile_features(state, units, manifest)?
+    reconcile_bindings(state, checked_bindings, catalogs, manifest)?
+    require_reachable_units(state, units, manifest)?
+
+    # 5. Preserve the first-reached order independently of repeated queue visits.
+    return Ok(graph_activation(state))
+
+
+model PropagationState:
+    """Growing policy demands and physical reachability retained across fixed-point queue visits."""
+
+    demands: Dict[str, NodeDemand]
+    unit_purposes: Dict[str, ActivationPurpose]
+    order: list[PolicyNode]
+    queue: Deque[PolicyNode]
+    settled: Dict[str, RustActivation]
+    rounds: int
+
+
+def validate_selected_units(units: list[AdmittedSelectedUnit], manifest: str) -> Result[None, IntakeError]:
+    """Require unique, nonempty physical identities whose target roles agree with their crate kinds and domains."""
     for index in range(len(units)):
         unit = units[index]
         if unit.identity == "":
@@ -457,7 +501,16 @@ pub def propagate_features(
                     detail="selected Rust target role, crate kind and dependency domain disagree",
                 ),
             )
-    checked_bindings = admit_bindings(units, bindings, manifest)?
+    return Ok(None)
+
+
+def seed_root_demands(
+    units: list[AdmittedSelectedUnit],
+    roots: list[GraphRoot],
+    purpose: ActivationPurpose,
+    manifest: str,
+) -> Result[PropagationState, IntakeError]:
+    """Require explicit root owners and merge their authored demands without consulting effective unit features."""
     if len(roots) == 0:
         return Err(
             IntakeError(
@@ -468,10 +521,9 @@ pub def propagate_features(
                 detail="at least one explicitly selected physical root",
             ),
         )
-    mut demands: Dict[str, NodeDemand] = {}
-    mut unit_purposes: Dict[str, ActivationPurpose] = {}
-    mut order: list[PolicyNode] = []
-    mut queue = Deque[PolicyNode]()
+    mut state = PropagationState(
+        demands={}, unit_purposes={}, order=[], queue=Deque[PolicyNode](), settled={}, rounds=0,
+    )
     for root in roots:
         if root.intent_owner == "":
             return Err(
@@ -484,30 +536,47 @@ pub def propagate_features(
                 ),
             )
         selected = unit_for(units, root.unit, manifest)?
-        purpose = root_purpose(selected, base.purpose, manifest)?
-        unit_purposes[root.unit] = purpose
+        selected_purpose = root_purpose(selected, purpose, manifest)?
+        state.unit_purposes[root.unit] = selected_purpose
         root_demand = NodeDemand(features=root.requested_features, default_features=root.default_features)
-        policy_node = PolicyNode(node=selected.node, purpose=purpose)
-        key = activation_key(policy_node)
-        if key not in demands:
-            demands[key] = root_demand
-            order.append(policy_node)
-            queue.append(policy_node)
-        else:
-            if let Some(widened) = merged(demands[key], root_demand):
-                demands[key] = widened
-                queue.append(policy_node)
+        policy_node = PolicyNode(node=selected.node, purpose=selected_purpose)
+        enqueue_demand(state, policy_node, root_demand, false)
+    return Ok(state)
 
-    mut rounds = 0
-    mut settled: Dict[str, RustActivation] = {}
-    while len(queue) > 0:
-        policy_node = queue.popleft()
+
+def enqueue_demand(mut state: PropagationState, node: PolicyNode, incoming: NodeDemand, newly_reached: bool) -> None:
+    """Queue a new or widened demand, or revisit unchanged demand when another physical unit becomes reachable."""
+    key = activation_key(node)
+    if key not in state.demands:
+        state.demands[key] = incoming
+        state.order.append(node)
+        state.queue.append(node)
+        return
+    if let Some(widened) = merged(state.demands[key], incoming):
+        state.demands[key] = widened
+        state.queue.append(node)
+        return
+    if newly_reached:
+        state.queue.append(node)
+
+
+def settle_demands(
+    mut state: PropagationState,
+    catalogs: Dict[str, RustDependencyCatalog],
+    base: ActivationContext,
+    bindings: list[CheckedSlotBinding],
+    manifest: str,
+    max_rounds: int,
+) -> Result[None, IntakeError]:
+    """Activate each queued policy node, then forward its demand through physical and declared dependency edges."""
+    while len(state.queue) > 0:
+        policy_node = state.queue.popleft()
         node = policy_node.node
-        rounds += 1
-        if rounds > max_rounds:
+        state.rounds += 1
+        if state.rounds > max_rounds:
             return Err(rounds_exhausted(manifest, max_rounds))
         key = activation_key(policy_node)
-        demand = demands[key]
+        demand = state.demands[key]
         package = package_key(node.package)
         if package not in catalogs:
             return Err(
@@ -522,177 +591,179 @@ pub def propagate_features(
         unit = catalogs[package]
         context = demanded(base, demand, node.domain, policy_node.purpose)
         activation = activate_unit(unit, context, manifest)?
-        settled[key] = activation
+        state.settled[key] = activation
 
-        # First admit same-package physical edges. They make an owning library reachable without inventing a Cargo
-        # dependency declaration, so they carry the already-settled parent demand rather than reseeding from the
-        # child's observed effective features.
-        for physical in checked_bindings:
-            if not has_active_physical_parent(physical, node, policy_node.purpose, unit_purposes):
-                continue
-            if not physical.internal:
-                continue
-            if (
-                physical.child_unit in unit_purposes
-                and unit_purposes[physical.child_unit] != ActivationPurpose.Normal
-            ):
-                return Err(
-                    IntakeError(
-                        kind=IntakeErrorKind.Invalid,
-                        manifest=manifest,
-                        field=["bindings", physical.child_unit],
-                        location=None,
-                        detail="one physical unit cannot serve both normal and test activations",
-                    ),
-                )
-            newly_reached = physical.child_unit not in unit_purposes
-            unit_purposes[physical.child_unit] = ActivationPurpose.Normal
-            child_policy = PolicyNode(node=physical.child, purpose=ActivationPurpose.Normal)
-            child_key = activation_key(child_policy)
-            child_demand = NodeDemand(
-                features=demand.features,
-                default_features=demand.default_features,
+        propagate_internal_edges(state, bindings, policy_node, demand, manifest)?
+        propagate_active_slots(state, bindings, policy_node, unit, activation, catalogs, manifest)?
+    return Ok(None)
+
+
+def reach_normal_child(mut state: PropagationState, identity: str, manifest: str) -> Result[bool, IntakeError]:
+    """Admit normal child reachability, refusing reuse of a physical unit already serving a test activation."""
+    if identity in state.unit_purposes and state.unit_purposes[identity] != ActivationPurpose.Normal:
+        return Err(
+            IntakeError(
+                kind=IntakeErrorKind.Invalid,
+                manifest=manifest,
+                field=["bindings", identity],
+                location=None,
+                detail="one physical unit cannot serve both normal and test activations",
+            ),
+        )
+    newly_reached = identity not in state.unit_purposes
+    state.unit_purposes[identity] = ActivationPurpose.Normal
+    return Ok(newly_reached)
+
+
+def propagate_internal_edges(
+    mut state: PropagationState,
+    bindings: list[CheckedSlotBinding],
+    parent: PolicyNode,
+    demand: NodeDemand,
+    manifest: str,
+) -> Result[None, IntakeError]:
+    """Reach same-package libraries with the parent's settled demand rather than the child's observed features."""
+
+    for physical in bindings:
+        if not has_active_physical_parent(physical, parent.node, parent.purpose, state.unit_purposes):
+            continue
+        if not physical.internal:
+            continue
+        newly_reached = reach_normal_child(state, physical.child_unit, manifest)?
+        child = PolicyNode(node=physical.child, purpose=ActivationPurpose.Normal)
+        incoming = NodeDemand(features=demand.features, default_features=demand.default_features)
+        enqueue_demand(state, child, incoming, newly_reached)
+    return Ok(None)
+
+
+def propagate_active_slots(
+    mut state: PropagationState,
+    bindings: list[CheckedSlotBinding],
+    parent: PolicyNode,
+    unit: RustDependencyCatalog,
+    activation: RustActivation,
+    catalogs: Dict[str, RustDependencyCatalog],
+    manifest: str,
+) -> Result[None, IntakeError]:
+    """Forward each uniquely named active declaration through its exact selected child binding."""
+    for slot in activation.slots:
+        if let SlotActivation.Active(features, defaults, _) = slot.activation:
+            declaration = unit.dependencies[slot.index]
+            require_unique_active_alias(unit, activation, declaration, manifest)?
+            binding = binding_for(
+                bindings, parent.node, parent.purpose, state.unit_purposes, declaration, catalogs, manifest,
+            )?
+            validate_selected_child(binding, parent.node, declaration, manifest)?
+            added_physical = reach_declared_children(
+                state, bindings, parent, declaration, binding, catalogs, manifest,
+            )?
+            child = PolicyNode(node=binding.child, purpose=ActivationPurpose.Normal)
+            incoming = NodeDemand(features=features, default_features=defaults)
+            enqueue_demand(state, child, incoming, added_physical)
+    return Ok(None)
+
+
+def require_unique_active_alias(
+    unit: RustDependencyCatalog,
+    activation: RustActivation,
+    declaration: RustDependencyDeclaration,
+    manifest: str,
+) -> Result[None, IntakeError]:
+    """Refuse a raw alias unless exactly one active manifest declaration owns it."""
+    mut active_aliases = 0
+    for candidate in activation.slots:
+        if unit.dependencies[candidate.index].alias == declaration.alias:
+            if let SlotActivation.Active(_, _, _) = candidate.activation:
+                active_aliases += 1
+    if active_aliases != 1:
+        return Err(
+            IntakeError(
+                kind=IntakeErrorKind.Invalid, manifest=manifest, field=declaration.field, location=None,
+                detail="raw selected edge alias does not name exactly one active declaration",
+            ),
+        )
+    return Ok(None)
+
+
+def validate_selected_child(
+    binding: CheckedSlotBinding,
+    parent: GraphNode,
+    declaration: RustDependencyDeclaration,
+    manifest: str,
+) -> Result[None, IntakeError]:
+    """Check the selected child's package, version and host/target domain against its owning declaration."""
+    if declaration.package != binding.child.package.package:
+        return Err(
+            IntakeError(
+                kind=IntakeErrorKind.Invalid, manifest=manifest, field=declaration.field + ["package"], location=None,
+                detail="manifest package name disagrees with the admitted selected child",
+            ),
+        )
+    if let Some(requirement) = declaration.version_requirement:
+        if not version_matches(requirement, binding.child.package.version, manifest)?:
+            return Err(
+                IntakeError(
+                    kind=IntakeErrorKind.Invalid, manifest=manifest,
+                    field=declaration.field + ["version"], location=None,
+                    detail="selected child version does not satisfy the manifest requirement",
+                ),
             )
-            if child_key not in demands:
-                demands[child_key] = child_demand
-                order.append(child_policy)
-                queue.append(child_policy)
-            else:
-                match merged(demands[child_key], child_demand):
-                    Some(widened) =>
-                        demands[child_key] = widened
-                        queue.append(child_policy)
-                    None =>
-                        if newly_reached:
-                            queue.append(child_policy)
+    mut expected_domain = parent.domain
+    if binding.child_is_proc_macro:
+        expected_domain = DependencyDomain.Host
+    if binding.child.domain != expected_domain:
+        return Err(
+            IntakeError(
+                kind=IntakeErrorKind.Invalid, manifest=manifest, field=declaration.field, location=None,
+                detail="resolved child domain disagrees with parent propagation or proc-macro role",
+            ),
+        )
+    return Ok(None)
 
-        for slot in activation.slots:
-            match slot.activation:
-                SlotActivation.Inactive(_) => pass
-                SlotActivation.Active(features, defaults, _) =>
-                    declaration = unit.dependencies[slot.index]
-                    mut active_aliases = 0
-                    for candidate in activation.slots:
-                        if unit.dependencies[candidate.index].alias == declaration.alias:
-                            match candidate.activation:
-                                SlotActivation.Active(_, _, _) =>
-                                    active_aliases += 1
-                                _ => pass
-                    if active_aliases != 1:
-                        return Err(
-                            IntakeError(
-                                kind=IntakeErrorKind.Invalid,
-                                manifest=manifest,
-                                field=declaration.field,
-                                location=None,
-                                detail="raw selected edge alias does not name exactly one active declaration",
-                            ),
-                        )
-                    binding = binding_for(
-                        checked_bindings,
-                        node,
-                        policy_node.purpose,
-                        unit_purposes,
-                        declaration,
-                        catalogs,
-                        manifest,
-                    )?
-                    if declaration.package != binding.child.package.package:
-                        return Err(
-                            IntakeError(
-                                kind=IntakeErrorKind.Invalid,
-                                manifest=manifest,
-                                field=declaration.field + ["package"],
-                                location=None,
-                                detail="manifest package name disagrees with the admitted selected child",
-                            ),
-                        )
-                    if let Some(requirement) = declaration.version_requirement:
-                        if not version_matches(requirement, binding.child.package.version, manifest)?:
-                            return Err(
-                                IntakeError(
-                                    kind=IntakeErrorKind.Invalid,
-                                    manifest=manifest,
-                                    field=declaration.field + ["version"],
-                                    location=None,
-                                    detail="selected child version does not satisfy the manifest requirement",
-                                ),
-                            )
-                    mut expected_domain = node.domain
-                    if binding.child_is_proc_macro:
-                        expected_domain = DependencyDomain.Host
-                    if binding.child.domain != expected_domain:
-                        return Err(
-                            IntakeError(
-                                kind=IntakeErrorKind.Invalid,
-                                manifest=manifest,
-                                field=declaration.field,
-                                location=None,
-                                detail="resolved child domain disagrees with parent propagation or proc-macro role",
-                            ),
-                        )
-                    child_policy = PolicyNode(node=binding.child, purpose=ActivationPurpose.Normal)
-                    child_key = activation_key(child_policy)
-                    mut added_physical = false
-                    for physical in checked_bindings:
-                        if (
-                            has_active_physical_parent(physical, node, policy_node.purpose, unit_purposes)
-                            and edge_names_declaration(physical, declaration, catalogs)
-                            and not physical.internal
-                        ):
-                            if (
-                                physical.child != binding.child
-                                or physical.child_is_proc_macro != binding.child_is_proc_macro
-                            ):
-                                return Err(
-                                    IntakeError(
-                                        kind=IntakeErrorKind.Invalid,
-                                        manifest=manifest,
-                                        field=declaration.field,
-                                        location=None,
-                                        detail="physical units disagree on the selected child for one manifest alias",
-                                    ),
-                                )
-                            if (
-                                physical.child_unit in unit_purposes
-                                and unit_purposes[physical.child_unit] != ActivationPurpose.Normal
-                            ):
-                                return Err(
-                                    IntakeError(
-                                        kind=IntakeErrorKind.Invalid,
-                                        manifest=manifest,
-                                        field=["bindings", physical.child_unit],
-                                        location=None,
-                                        detail="one physical unit cannot serve both normal and test activations",
-                                    ),
-                                )
-                            if physical.child_unit not in unit_purposes:
-                                added_physical = true
-                            unit_purposes[physical.child_unit] = ActivationPurpose.Normal
-                    incoming = NodeDemand(features=features, default_features=defaults)
-                    if child_key not in demands:
-                        demands[child_key] = incoming
-                        order.append(child_policy)
-                        queue.append(child_policy)
-                    else:
-                        match merged(demands[child_key], incoming):
-                            None =>
-                                if added_physical:
-                                    queue.append(child_policy)
-                            Some(widened) =>
-                                demands[child_key] = widened
-                                queue.append(child_policy)
+
+def reach_declared_children(
+    mut state: PropagationState,
+    bindings: list[CheckedSlotBinding],
+    parent: PolicyNode,
+    declaration: RustDependencyDeclaration,
+    selected: CheckedSlotBinding,
+    catalogs: Dict[str, RustDependencyCatalog],
+    manifest: str,
+) -> Result[bool, IntakeError]:
+    """Reach every physical child of one declaration, requiring agreement with its selected policy identity."""
+    mut added_physical = false
+    for physical in bindings:
+        if not has_active_physical_parent(physical, parent.node, parent.purpose, state.unit_purposes):
+            continue
+        if not edge_names_declaration(physical, declaration, catalogs) or physical.internal:
+            continue
+        if physical.child != selected.child or physical.child_is_proc_macro != selected.child_is_proc_macro:
+            return Err(
+                IntakeError(
+                    kind=IntakeErrorKind.Invalid, manifest=manifest, field=declaration.field, location=None,
+                    detail="physical units disagree on the selected child for one manifest alias",
+                ),
+            )
+        if reach_normal_child(state, physical.child_unit, manifest)?:
+            added_physical = true
+    return Ok(added_physical)
+
+
+def reconcile_features(
+    state: PropagationState, units: list[AdmittedSelectedUnit], manifest: str,
+) -> Result[None, IntakeError]:
+    """Require every reached physical unit's effective features to equal its settled policy activation."""
 
     # Reconcile only after every declaration demand has reached its fixed point. The raw selected graph records the
     # actual effective features for each physical unit; policy is valid only when every reachable unit, including
     # compiler release support, agrees with the settled package/domain/purpose activation it participates in.
     # Default intent is derived policy state, never a raw-unit claim.
     for unit in units:
-        if unit.identity not in unit_purposes:
+        if unit.identity not in state.unit_purposes:
             continue
-        policy_node = PolicyNode(node=unit.node, purpose=unit_purposes[unit.identity])
+        policy_node = PolicyNode(node=unit.node, purpose=state.unit_purposes[unit.identity])
         key = activation_key(policy_node)
-        if key not in settled or key not in demands:
+        if key not in state.settled or key not in state.demands:
             return Err(
                 IntakeError(
                     kind=IntakeErrorKind.Missing,
@@ -702,7 +773,7 @@ pub def propagate_features(
                     detail="settled feature policy for reachable selected unit",
                 ),
             )
-        if sorted(unit.features) != settled[key].effective_features:
+        if sorted(unit.features) != state.settled[key].effective_features:
             return Err(
                 IntakeError(
                     kind=IntakeErrorKind.Invalid,
@@ -713,19 +784,18 @@ pub def propagate_features(
                 ),
             )
 
-    mut activations: list[RustActivation] = []
-    mut activation_defaults: list[bool] = []
-    mut reached: list[GraphNode] = []
-    mut reached_purposes: list[ActivationPurpose] = []
-    for policy_node in order:
-        key = activation_key(policy_node)
-        if key in settled:
-            reached.append(policy_node.node)
-            reached_purposes.append(policy_node.purpose)
-            activations.append(settled[key])
-            activation_defaults.append(demands[key].default_features)
-    for binding in checked_bindings:
-        if binding.parent_unit not in unit_purposes:
+    return Ok(None)
+
+
+def reconcile_bindings(
+    state: PropagationState,
+    bindings: list[CheckedSlotBinding],
+    catalogs: Dict[str, RustDependencyCatalog],
+    manifest: str,
+) -> Result[None, IntakeError]:
+    """Require reachable parents and exactly one active declaration for every external physical edge."""
+    for binding in bindings:
+        if binding.parent_unit not in state.unit_purposes:
             return Err(
                 IntakeError(
                     kind=IntakeErrorKind.Invalid,
@@ -737,8 +807,8 @@ pub def propagate_features(
             )
         if binding.internal:
             continue
-        parent_policy = PolicyNode(node=binding.parent, purpose=unit_purposes[binding.parent_unit])
-        parent_activation = settled[activation_key(parent_policy)]
+        parent_policy = PolicyNode(node=binding.parent, purpose=state.unit_purposes[binding.parent_unit])
+        parent_activation = state.settled[activation_key(parent_policy)]
         parent_catalog = catalogs[package_key(binding.parent.package)]
         mut matched = false
         for slot in parent_activation.slots:
@@ -768,8 +838,15 @@ pub def propagate_features(
                     detail="manifest declaration for raw selected edge alias",
                 ),
             )
+    return Ok(None)
+
+
+def require_reachable_units(
+    state: PropagationState, units: list[AdmittedSelectedUnit], manifest: str,
+) -> Result[None, IntakeError]:
+    """Refuse physical units not reachable from the admitted roots and active edges."""
     for unit in units:
-        if unit.identity not in unit_purposes:
+        if unit.identity not in state.unit_purposes:
             return Err(
                 IntakeError(
                     kind=IntakeErrorKind.Invalid,
@@ -779,15 +856,29 @@ pub def propagate_features(
                     detail="selected physical unit is unreachable from the admitted roots and edges",
                 ),
             )
-    return Ok(
-        GraphActivation(
-            nodes=reached,
-            purposes=reached_purposes,
-            activations=activations,
-            default_features=activation_defaults,
-            unit_purposes=unit_purposes,
-            rounds=rounds,
-        ),
+    return Ok(None)
+
+
+def graph_activation(state: PropagationState) -> GraphActivation:
+    """Collect settled activations in first-reached order without exposing repeated queue visits."""
+    mut activations: list[RustActivation] = []
+    mut activation_defaults: list[bool] = []
+    mut reached: list[GraphNode] = []
+    mut reached_purposes: list[ActivationPurpose] = []
+    for policy_node in state.order:
+        key = activation_key(policy_node)
+        if key in state.settled:
+            reached.append(policy_node.node)
+            reached_purposes.append(policy_node.purpose)
+            activations.append(state.settled[key])
+            activation_defaults.append(state.demands[key].default_features)
+    return GraphActivation(
+        nodes=reached,
+        purposes=reached_purposes,
+        activations=activations,
+        default_features=activation_defaults,
+        unit_purposes=state.unit_purposes,
+        rounds=state.rounds,
     )
 
 

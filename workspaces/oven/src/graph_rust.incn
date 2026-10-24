@@ -1,6 +1,7 @@
 """Read dependency Loaf graphs and export only the selected project's own Rust units."""
 
 from rust::std::process import Command, id
+from rust::std::time import Instant
 from std.fs import Path
 from features import FeatureRequest
 from files import remove
@@ -8,6 +9,7 @@ from graph_cache import GraphUnit, cache_file, is_unchecked, publish_unchecked, 
 from graph_dependencies import GraphDependencies, prepare_graph
 from graph_loaves import registry_artifacts, registry_graphs, standard_graphs
 from loaf_local_graph import LocalFacet
+from observation import trace
 from publication import publish_binary
 from rust_activation import DependencyDomain
 from rust_units import (
@@ -40,17 +42,18 @@ pub def inspect_rust(
     features: FeatureRequest,
     substitutes: Dict[str, str],
     toolchain: Toolchain,
+    published_only: bool = false,
 ) -> Result[list[GraphUnit], str]:
     """
     Dependencies contribute their published binary graphs; older local Loaves get one cached checked export.
 
-    1. Prepare the dependency graphs: the published ones, and the standard Loaves they reach.
+    1. Prepare dependency publications; declaration queries defer unrelated Incan source checking.
     2. Fix what keys and links a Rust export: the compiler, the libraries built and the registry artifacts.
     3. Add the graphs registry Loaves publish.
     4. Export each facet's own library, when no published graph covers it, and the root's binaries.
     """
     # 1. The dependencies contribute the graphs they published, and the standard Loaves those graphs reach add theirs.
-    prepared = prepare_graph(root, profile, features, substitutes, toolchain)?
+    prepared = prepare_graph(root, profile, features, substitutes, toolchain, [], published_only)?
     mut paths = prepared.paths
     if len(paths) > 0:
         paths = paths + standard_graphs(root, profile, toolchain, paths)?
@@ -121,8 +124,8 @@ def library_graph(
     """
     The graph of a facet's Rust library.
 
-    1. A library built for a dependency publishes its graph beside it, and that graph is used.
-    2. Otherwise the library is exported once per digest of its sources, features and inputs.
+    1. A dependency contributes its published graph, or refuses by name when the publication is missing.
+    2. Only the selected project's own library is exported from source, once per digest of its inputs.
     """
     # 1. A library built for a dependency has published its graph beside it, and that graph is the one used.
     key = facet.key()
@@ -132,6 +135,8 @@ def library_graph(
     if graph.0 != "" and graph.is_file():
         project = Path(facet.project)
         return Ok(GraphUnit(path=graph, root=project, package=declared.package, version=declared.version))
+    if not own:
+        return Err(f"{declared.package}: missing published dependency graph; build its Loaf before inspection")
     # 2. Any other library is exported once per digest of its sources, features and inputs.
     keyed = inputs + [facet.project, facet.domain.value(), str(facet.features), "library"]
     graph = cache_file(root, fingerprint(keyed + tree_inputs(Path(facet.project))?)?)?
@@ -198,7 +203,10 @@ def observe(
     analysis = ["--rust-codegraph", output.0, facet.project, "--sysroot", toolchain.sysroot, "--cap-lints", "allow"]
     for argument in analysis + arguments:
         command.arg(argument)
+    trace(f"graph analyzing Rust {unit_name}")
+    started = Instant.now()
     result = command.output().map_err((error) => str(error))?
+    trace(f"graph analyzed Rust {unit_name}: {started.elapsed().as_millis()} ms")
     # 2. A unit rustc refuses is cached as a note naming the refusal, unless the analysis was interrupted instead.
     if not result.status.success():
         match result.status.code():
