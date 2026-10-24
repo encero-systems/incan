@@ -22,7 +22,7 @@ fn rust_path_last_segment_looks_like_const(path: &str) -> bool {
 }
 
 impl TypeChecker {
-    /// Resolve an identifier to its type.
+    /// Resolve an identifier to its type, including the ambient logger's checked factory return identity.
     pub(in crate::typechecker::check_expr) fn check_ident(&mut self, name: &str, span: Span) -> ResolvedType {
         // Note: `math` module requires `import math` (like Python).
         // When imported, it's registered as a Module symbol and found via normal lookup.
@@ -57,7 +57,7 @@ impl TypeChecker {
                     .ident_kinds
                     .insert((span.start, span.end), IdentKind::Value);
                 self.type_info.record_ambient_logger_binding(span);
-                return ResolvedType::Named("Logger".to_string());
+                return self.ambient_logger_type().unwrap_or(ResolvedType::Unknown);
             }
             self.errors.push(errors::unknown_symbol(name, span));
             return ResolvedType::Unknown;

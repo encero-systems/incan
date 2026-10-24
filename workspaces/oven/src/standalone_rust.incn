@@ -1,0 +1,109 @@
+"""Bind standalone source imports to exact compiled registry Loaves before checking their Rust items."""
+
+from rust::std::process import Command
+from std.fs import Path
+from std.json import JsonValue
+from files import make_directory, parse_json, write
+from home import standard_packages
+from json_fields import array, field, required_text, strings
+from loaf_local_graph import unique
+from rust_units import RegistrySelection, decoded, read_registry_units
+from toml_fields import optional_string, optional_strings, read_manifest
+from toolchain import NativeCrate, Toolchain
+from unit import UnitDescription
+
+
+pub def standalone_crates(
+    described: UnitDescription,
+    toolchain: Toolchain,
+) -> Result[tuple[list[NativeCrate], list[str]], str]:
+    """
+    Resolve standalone Rust imports against the toolchain's compiled registry.
+
+    1. Ask the compiler for import syntax from the ordinary source graph.
+    2. Merge each crate's version and feature requests, using known defaults for omitted versions.
+    3. Bind one exact registry artifact per crate and retain its transitive search directories.
+    """
+    # 1. Parsing, including local module discovery, belongs to the compiler.
+    requests = source_requests(described, toolchain)?
+    # 2. A crate has one version requirement and the union of its requested features.
+    selections = merged_requests(requests)?
+    if len(selections) == 0:
+        return Ok(([], []))
+    # 3. The ordinary registry resolver selects exact artifacts and refuses missing or ambiguous units.
+    registry = read_registry_units(Path(toolchain.registry_units))?
+    mut externs: list[NativeCrate] = []
+    for name in sorted([name for name in selections.keys()]):
+        artifact = registry.artifact_for(selections[name], "target")?
+        externs.append(NativeCrate(name=name, path=artifact))
+    return Ok((externs, registry.search))
+
+
+def source_requests(unit: UnitDescription, toolchain: Toolchain) -> Result[list[JsonValue], str]:
+    """Read parser-owned import records without checking items that still need their dependency artifacts."""
+    directory = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath("units")
+    make_directory(directory)?
+    path = directory.joinpath(f"{unit.package}.imports.unit.json")
+    write(path, unit.to_json().to_pretty_json().map_err((error) => error.message())?)?
+    mut command = Command.new(toolchain.driver)
+    command.args(["--rust-imports", path.0])
+    output = command.output().map_err((error) => error.to_string())?
+    if not output.status.success():
+        return Err(decoded(output.stderr))
+    return array(parse_json(decoded(output.stdout))?, []).map_err((_) => "invalid Rust import records")
+
+
+def merged_requests(requests: list[JsonValue]) -> Result[dict[str, RegistrySelection], str]:
+    """Merge repeated crate requests; an explicit annotation governs unannotated imports of the same crate."""
+    mut versions: dict[str, str] = {}
+    mut features: dict[str, list[str]] = {}
+    for request in requests:
+        name = required_text(request, "crate")?
+        if name in ["std", "core", "alloc"]:
+            continue
+        selected = import_features(request)?
+        if name not in features:
+            features[name] = []
+        features[name] = unique(features[name] + selected)
+        version = field(request, "version", []).map_err((_) => "missing Rust import version")?
+        if version.is_null():
+            continue
+        requirement = match version.as_str():
+            Some(text) => text
+            None => return Err("invalid Rust import version")
+        if name in versions and versions[name] != requirement:
+            return Err(f"Rust crate `{name}` has conflicting inline versions: {versions[name]} and {requirement}")
+        versions[name] = requirement
+    mut selections: dict[str, RegistrySelection] = {}
+    for name in sorted([name for name in features.keys()]):
+        if name in versions:
+            selections[name] = RegistrySelection(
+                loaf=f"crates-io/{name}", requirement=versions[name], features=features[name],
+            )
+        else:
+            mut selected = known_request(name)?
+            selected.features = unique(selected.features + features[name])
+            selections[name] = selected
+    return Ok(selections)
+
+
+def import_features(request: JsonValue) -> Result[list[str], str]:
+    """Read the compiler's feature list, preserving a malformed-record refusal."""
+    value = field(request, "features", []).map_err((_) => "missing Rust import features")?
+    return strings(value, []).map_err((_) => "invalid Rust import features")
+
+
+def known_request(name: str) -> Result[RegistrySelection, str]:
+    """Read a known crate's default request from the standard packages' authored dependency declarations."""
+    for package in standard_packages()?:
+        manifest = read_manifest(Path(package.root))?
+        key = f"dependencies.{name}"
+        match optional_string(manifest, f"{key}.version")?:
+            Some(version) =>
+                loaf = optional_string(manifest, f"{key}.loaf")?.unwrap_or("")
+                if loaf != f"crates-io/{name}":
+                    continue
+                features = optional_strings(manifest, f"{key}.features")?.unwrap_or([])
+                return Ok(RegistrySelection(loaf=loaf, requirement=version, features=features))
+            None => pass
+    return Err(f"unknown Rust crate `{name}`: no version specified; add @ \"VERSION\" to its import")

@@ -47,6 +47,7 @@ mod rust_codegraph;
 mod rust_facts;
 mod rust_graph_bodies;
 mod rust_graph_records;
+mod rust_imports;
 mod shared_callables;
 mod spans;
 mod statics;
@@ -67,7 +68,7 @@ use incan_cli::commands::DiagnosticOutputFormat;
 use incan_driver::unit::UnitDescription;
 
 const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [OPTIONS] | --check UNIT SYSROOT [--format \
-                     text|json] [OPTIONS] | --fmt UNIT PATH [--check] | --codegraph UNIT SYSROOT OUTPUT | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --identity SYSROOT\n\
+                     text|json] [OPTIONS] | --fmt UNIT PATH [--check] | --rust-imports UNIT | --codegraph UNIT SYSROOT OUTPUT | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --identity SYSROOT\n\
                      OPTIONS: --rustc-arg ARG, --library (native artifacts and ABI caches come from UNIT)";
 
 /// Compile an Incan unit (`--unit`) or check one (`--check`), each from the unit description Oven wrote, or write the
@@ -89,6 +90,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("--rust-codegraph") => rust_codegraph::export(&args[1..]),
         Some("--rust-compile-codegraph") => rust_codegraph::compile(&args[1..]),
         Some("--rust-abi") => rust_abi(&args[1..]),
+        Some("--rust-imports") => rust_imports::export(&args[1..]),
         Some("--identity") => verify_sysroot(&args[1..]),
         _ => Err(USAGE.into()),
     }

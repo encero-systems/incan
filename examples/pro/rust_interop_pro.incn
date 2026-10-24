@@ -41,7 +41,7 @@ already return `String` (e.g. `to_string()`). This example uses Uuid which has `
 """
 
 from rust::std::time import Instant
-from rust::uuid import Uuid
+from rust::uuid @ "1.0" with ["v4"] import Uuid
 from std.async.task import spawn_blocking
 from std.async.time import sleep, timeout
 from std.rust import Send, Sync, Static
