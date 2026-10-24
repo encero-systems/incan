@@ -160,6 +160,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// the checker's applied type for the whole receiver, so an associated call closes the owner's type parameters at
     /// exactly those arguments; an application the checker did not type as that nominal is a value receiver.
     /// Qualified generic heads must agree with the receiver's checked declaration identity, not its source spelling.
+    /// A checked factory's retained owner closes a bare receiver even when its return value wraps Self in a Result.
     pub(super) fn static_receiver_type(
         &self,
         recv: &ast::Spanned<ast::Expr>,
@@ -176,6 +177,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             ast::Expr::Ident(name) => {
                 let identity = self.type_info.resolved_identity(recv.span)?;
                 let checked = named_static_receiver_type(name, identity)?;
+                if let Some(factory_owner) = self
+                    .type_info
+                    .calls
+                    .body_ir_factory_owner_types
+                    .get(&(call_span.start, call_span.end))
+                    .map(|ty| self.checked_type(ty))
+                    && let IncanType::Generic { base, .. } = &factory_owner
+                    && parameter_types::retained_nominal_identity(base, self.type_info) == Some(identity)
+                {
+                    return Some(factory_owner);
+                }
                 if let Some(ty @ IncanType::Generic { base, .. }) =
                     self.type_overrides.get(&(recv.span.start, recv.span.end))
                     && parameter_types::retained_nominal_identity(base, self.type_info) == Some(identity)
@@ -745,6 +757,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// The callee span names the nominal owner; the full call span selects its executable method and substituted
     /// parameters. Reading the former as a function would lose that selection. Ordinary functions and unresolved
     /// nominal calls keep their existing path, and no source spelling supplies a factory identity.
+    /// A same-module hook also keeps its checked local declaration ID; package calls remain canonically addressed.
     fn checked_nominal_factory_declaration(
         &self,
         callee_span: ast::Span,
@@ -765,10 +778,21 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return None;
         }
         let parameters = self.type_info.call_site_callable_params(call_span)?;
+        let direct_call_id =
+            if incan_semantics_core::canonical_module_identity(factory).as_deref() == Some(self.module_identity) {
+                self.type_info
+                    .declarations
+                    .method_bindings_by_span
+                    .iter()
+                    .find(|(_, binding)| binding.identity.as_ref() == Some(factory))
+                    .map(|((start, end), _)| CompilerNodeId::declaration_span(self.module_identity, *start, *end))
+            } else {
+                None
+            };
         Some(DirectCallDeclaration {
             is_async: false,
             slots: Some(parameters.iter().map(DeclaredSlot::from_checked_param).collect()),
-            direct_call_id: None,
+            direct_call_id,
             builtin: None,
             canonical: Some(factory.clone()),
         })
@@ -784,7 +808,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let owner = self.type_info.resolved_identity(callee_span)?;
         let result = self.resolve_ty(call_span);
         match &result {
-            IncanType::Generic { base, .. } if base == &owner.declaration_name => Some(result),
+            IncanType::Generic { base, .. }
+                if parameter_types::retained_nominal_identity(base, self.type_info) == Some(owner) =>
+            {
+                Some(result)
+            }
             _ => None,
         }
     }
@@ -1737,8 +1765,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // A name that resolves to a nominal type but has no recorded field binding is a construction the checker
         // declined to bind (a duplicate or unknown field). Refusing it as a call to an unknown function would name
         // the wrong construct entirely.
-        if self.type_info.declarations.class_layouts.contains_key(&name)
-            || self.type_info.declarations.model_field_visibilities.contains_key(&name)
+        if (self.type_info.declarations.class_layouts.contains_key(&name)
+            || self.type_info.declarations.model_field_visibilities.contains_key(&name))
+            && self.checked_nominal_factory_declaration(callee.span, span).is_none()
         {
             return self.unsupported_operand(
                 format!("construction of `{name}` with an unresolved field layout"),
@@ -2451,6 +2480,20 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             |member| member.return_type.clone(),
         );
         let ty = retained_method.as_ref().map_or(ty, |method| method.return_type.clone());
+        let ty = if self
+            .type_info
+            .calls
+            .body_ir_async_call_targets
+            .get(&(span.start, span.end))
+            .is_some_and(|identity| canonical.as_ref() == Some(identity))
+        {
+            IncanType::Generic {
+                base: "Awaitable".into(),
+                args: vec![ty],
+            }
+        } else {
+            ty
+        };
         if let Some(helper) = helper {
             self.record_runtime_requirement(AbiV0RuntimeRequirement::RuntimeHelper(helper.as_str().to_string()));
             self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);

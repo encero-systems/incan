@@ -808,8 +808,8 @@ pub model ModelDeclaration:
     # A checked standard Callable1 member and its ordered owned input/output carriers; empty grants no bridge.
     pub callable_method: str = ""
     pub callable_signature: list[PlanType] = []
-    # A source SDK TryFrom[str] implementation forwards to the exact validated Incan conversion root.
-    # Empty paired fields grant no implementation, independently of serde's Rust TryFrom contract.
+    # The selected source SDK TryFrom[str] identity authenticates this planned Incan conversion root.
+    # Empty paired fields grant no conversion, independently of serde's native Rust TryFrom contract.
     pub string_conversion_root: str = ""
     pub string_conversion_trait: str = ""
 

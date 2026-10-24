@@ -1,8 +1,9 @@
-# behavior: the two ends of a channel are unpacked into separate locals, two values sent through the sender arrive at the receiver in order, and the sender is still open afterwards
+# behavior: channel ends keep independent element binders and receive wrapped sender values in order (#2256)
 # expect-stdout:
 #   got 1
 #   got 2
 #   false
+#   hello
 
 import std.async
 from std.async.channel import channel
@@ -23,3 +24,11 @@ async def main() -> None:
         Some(value) => println(f"got {value}")
         None => println("closed")
     println(tx.is_closed())
+    text_tx, text_rx = channel(1)
+    cloned = text_tx.clone()
+    match await cloned.send("hello"):
+        Ok(_) => pass
+        Err(error) => println(error.message())
+    match await text_rx.recv():
+        Some(value) => println(value)
+        None => println("closed")

@@ -96,12 +96,19 @@ pub(in crate::typechecker) enum TupleShape {
 /// a tuple shape. This does not affect `tuple[K, V]`, whose *elements* are type variables but whose shape is
 /// known; that takes the [`TupleShape::Tuple`] arm above.
 /// A shared tuple reference binds a shared reference to each component, preserving the native iterator's borrow.
+/// A mutable tuple reference binds mutable component references under that same iterator borrow.
 pub(in crate::typechecker) fn classify_tuple_shape(ty: &ResolvedType) -> TupleShape {
     match ty {
         ResolvedType::Tuple(types) => TupleShape::Tuple(types.clone()),
         ResolvedType::Ref(inner) => match classify_tuple_shape(inner) {
             TupleShape::Tuple(types) => {
                 TupleShape::Tuple(types.into_iter().map(|ty| ResolvedType::Ref(Box::new(ty))).collect())
+            }
+            _ => TupleShape::NotTuple,
+        },
+        ResolvedType::RefMut(inner) => match classify_tuple_shape(inner) {
+            TupleShape::Tuple(types) => {
+                TupleShape::Tuple(types.into_iter().map(|ty| ResolvedType::RefMut(Box::new(ty))).collect())
             }
             _ => TupleShape::NotTuple,
         },
@@ -389,6 +396,7 @@ impl TypeChecker {
                     let ty = element_types.get(i).cloned().unwrap_or(ResolvedType::Unknown);
                     let target_span = unpack.name_spans.get(i).copied().unwrap_or(stmt.span);
                     self.check_unannotated_assignment_target(name, unpack.binding, ty, target_span, unpack.value.span);
+                    self.bind_open_tuple_element(unpack.value.span, i, target_span, name);
                 }
             }
             Statement::TupleAssign(assign) => {
@@ -413,6 +421,7 @@ impl TypeChecker {
                             target.span,
                             assign.value.span,
                         );
+                        self.bind_open_tuple_element(assign.value.span, i, target.span, name);
                         continue;
                     }
                     let target_ty = self.check_expr(target);
@@ -601,10 +610,15 @@ impl TypeChecker {
         self.errors.push(error);
     }
 
-    /// Validate assignment to an object field, including generic-owner field substitution.
+    /// Validate assignment to an object field, including generic-owner field substitution. Mutable references expose
+    /// their referent's fields; encountering a shared reference still refuses the write.
     fn check_field_assignment(&mut self, field_assign: &FieldAssignmentStmt, span: Span) {
         // Check the object expression
         let obj_ty = self.check_expr(&field_assign.object);
+        let mut obj_ty = &obj_ty;
+        while let ResolvedType::RefMut(inner) = obj_ty {
+            obj_ty = inner;
+        }
         self.refuse_write_through_read_only_binding(&field_assign.object, field_assign.target_span);
         self.note_mut_param_write(&field_assign.object);
         self.refuse_mut_param_held_by(&field_assign.value);

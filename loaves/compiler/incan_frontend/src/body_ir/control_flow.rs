@@ -2035,6 +2035,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Retain exclusive reads for changed non-Copy pattern bindings only. Ordinary aliases declared in the body
     /// keep their existing value-copy semantics; the pattern's own source spans identify its generated bindings.
+    /// Projected writes retain their own operand facts: changing a field does not reinitialize its owner binding.
     fn retain_in_place_iteration_bindings(&self, stmts: &mut [bir::Statement], item: bir::LocalId) {
         let pattern_span = self.locals[item.index()].span;
         let changed: Vec<_> = stmts
@@ -2065,6 +2066,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 place,
                 rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
             } = &mut statement.kind
+                && place.projection.is_empty()
                 && place.local_id().is_some_and(|local| changed.contains(&local))
             {
                 read.fact = bir::OwnershipFact::MutBorrow;

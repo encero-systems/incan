@@ -1127,8 +1127,12 @@ impl TypeChecker {
     ///
     /// A name imported on its own resolves through its import binding (`Serialize` to `std.serde.json.Serialize`); a
     /// module-qualified name resolves its module through the module's import (`json.Serialize`,
-    /// `serde.json.Serialize`), as the same spelling does after `with` (#1885). Anything else is the name alone.
+    /// `serde.json.Serialize`), as the same spelling does after `with` (#1885). A checked standard trait identity
+    /// takes precedence over a facade's import path. Anything else is the name alone.
     pub fn derive_trait_path(&self, derive_name: &str) -> Vec<String> {
+        if let Some(path) = self.checked_stdlib_trait_path(derive_name) {
+            return path;
+        }
         if let Some(path) = self.import_binding_path(derive_name) {
             return path.to_vec();
         }
@@ -1139,6 +1143,35 @@ impl TypeChecker {
             return path;
         }
         vec![derive_name.to_string()]
+    }
+
+    /// Recover a standard trait's declaring path from its selected identity, including reexports through a source
+    /// facade. A package must be the admitted owner of that standard module; an equal-spelled user trait grants no
+    /// protocol or derive. Source shadows are read from the active symbol binding rather than an earlier import.
+    pub(in crate::typechecker) fn checked_stdlib_trait_path(&self, name: &str) -> Option<Vec<String>> {
+        let symbol = self.symbols.lookup(name)?;
+        let identity = self.symbols.identity_of(symbol)?;
+        if identity.kind != SemanticSourceTargetKind::Trait || identity.scope_discriminant.is_some() {
+            return None;
+        }
+        let mut path = match &identity.origin {
+            incan_semantics_core::SymbolOrigin::Module(path) if path.first().is_some_and(|root| root == "std") => {
+                path.clone()
+            }
+            incan_semantics_core::SymbolOrigin::Package { library, module_path } => {
+                let path = std::iter::once("std".to_owned())
+                    .chain(module_path.iter().cloned())
+                    .collect::<Vec<_>>();
+                let owner = self.loaves.owner_of(&path)?;
+                if owner.artifact.manifest.name != *library {
+                    return None;
+                }
+                path
+            }
+            _ => return None,
+        };
+        path.push(identity.declaration_name.clone());
+        Some(path)
     }
 
     /// Resolve a module-qualified trait name through the imported-module metadata table.

@@ -11,8 +11,117 @@ from rust::incan_semantics_core::body_ir import (
     StaticInitializer,
     Rvalue,
     MatchArm,
+    MethodTarget,
+    ArgumentElement,
+    Operand,
+    Constant,
 )
 from type_parameters import substitute, instantiate
+
+
+pub model SelectedMember:
+    """One selected method identity together with the checked receiver that owns this invocation."""
+
+    pub identity: RustCanonicalSymbolId
+    pub receiver: RustType
+
+
+pub def called_members(body: &Body) -> list[SelectedMember]:
+    """Inventory selected member identities in one executable frame without admitting unused protocol defaults."""
+    mut selected: list[SelectedMember] = []
+    collect_member_block(body, body.block, selected)
+    return selected
+
+
+def collect_member_block(body: &Body, block: &Block, mut selected: list[SelectedMember]) -> None:
+    """Follow source control flow and match arms, retaining each exact checked call identity once."""
+    for statement in block.stmts:
+        collect_member_statement(body, statement.kind, selected)
+
+
+def collect_member_statement(body: &Body, kind: &StatementKind, mut selected: list[SelectedMember]) -> None:
+    """Read a foreign statement through its declared enum type before following checked member calls."""
+    match kind:
+        StatementKind.Call(destination=_destination, callee=callee, args=arguments, may_panic=_panic) =>
+            match callee:
+                Callee.Method(target) =>
+                    if len(arguments) > 0:
+                        collect_member_target(body, target, arguments[0], selected)
+                _ => pass
+        StatementKind.If(cond=_condition, then_block=then_body, else_block=else_body) =>
+            collect_member_block(body, then_body, selected)
+            match else_body:
+                Some(nested) => collect_member_block(body, nested, selected)
+                None => pass
+        StatementKind.Loop(body=nested) => collect_member_block(body, nested, selected)
+        StatementKind.UnsafeRegion(acknowledgment=_receipt, body=nested) =>
+            collect_member_block(body, nested, selected)
+        StatementKind.Race(destination=_destination, arms=arms) =>
+            for arm in arms:
+                collect_member_block(body, arm.body, selected)
+        StatementKind.Assign(place=_place, rvalue=value) =>
+            collect_member_value(body, value, selected)
+        _ => pass
+
+
+def collect_member_value(body: &Body, value: &Rvalue, mut selected: list[SelectedMember]) -> None:
+    """Match payload control flow keeps its selected calls within the surrounding executable frame."""
+    match value:
+        Rvalue.Match(scrutinee=_scrutinee, arms=arms) =>
+            for arm in arms:
+                collect_member_arm(body, arm, selected)
+        _ => pass
+
+
+def collect_member_target(
+    body: &Body,
+    target: &MethodTarget,
+    argument: &ArgumentElement,
+    mut selected: list[SelectedMember],
+) -> None:
+    """Borrow the retained target identity rather than moving its optional foreign field."""
+    receiver = selected_receiver_type(body, argument)
+    if receiver == None:
+        return
+    match target.canonical.clone():
+        Some(identity) =>
+            for retained in selected:
+                if retained.identity == identity and Some(retained.receiver) == receiver:
+                    return
+            match receiver:
+                Some(ty) => selected.append(SelectedMember(identity=identity.clone(), receiver=ty))
+                None => pass
+        None => pass
+
+
+def collect_member_arm(body: &Body, arm: &MatchArm, mut selected: list[SelectedMember]) -> None:
+    """Borrow a match arm's statement vectors through their declared foreign owner."""
+    for statement in arm.guard_stmts:
+        collect_member_statement(body, statement.kind, selected)
+    for statement in arm.body_stmts:
+        collect_member_statement(body, statement.kind, selected)
+
+
+def selected_receiver_type(body: &Body, argument: &ArgumentElement) -> Option[RustType]:
+    """Read a checked local receiver or static type token; projected receivers grant no unproven owner."""
+    match argument:
+        ArgumentElement.One(value) => return selected_operand_type(body, value)
+        _ => return None
+
+
+def selected_operand_type(body: &Body, value: &Operand) -> Option[RustType]:
+    """Keep the receiver's exact source frame type without deriving a nominal from its method spelling."""
+    match value:
+        Operand.Constant(constant) =>
+            match constant:
+                Constant.TypeToken(ty) => return Some(ty.clone())
+                _ => return None
+        Operand.Place(read) =>
+            if len(read.place.projection) != 0:
+                return None
+            match read.place.local_id():
+                Some(local) => return Some(body.locals[int(local.index())].ty.clone())
+                None => return None
 
 
 model ScheduledFrame:

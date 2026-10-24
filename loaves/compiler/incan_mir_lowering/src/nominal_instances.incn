@@ -2,10 +2,11 @@
 
 from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind
 from rust::incan_semantics_core::body_ir import BodyIrModule, Body, NominalDeclaration, LocalOrigin
+from rust::std::borrow import Borrow
 from symbols import type_component
 from type_parameters import substitute
 from class_inheritance import specialize_classes
-from nominal_frames import nominal_frames, closed_arguments, declaration_storage
+from nominal_frames import nominal_frames, closed_arguments, declaration_storage, called_members, SelectedMember
 from decls import library_item
 
 
@@ -100,6 +101,7 @@ pub def specialize_nominals_with_instances(
     """Retain checked frame and external-signature instances beside concrete layouts for native planning."""
     inherited = specialize_classes(module)?
     mut instances: list[NominalInstance] = []
+    mut selected: list[SelectedMember] = []
     for callable in module.loaf_callables:
         if len(callable.type_parameters) != 0:
             continue
@@ -117,6 +119,8 @@ pub def specialize_nominals_with_instances(
     for declaration in module.static_declarations:
         collect_nominal_type(module, declaration.ty, instances, [])?
     for body in nominal_frames(module)?:
+        if owner_template(module, body) == None and closed_arguments([body.return_type.clone()]):
+            retain_selected_members(body, selected)
         for local in body.locals:
             _ = collect_nominal_type(module, local.ty, instances, [])?
         _ = collect_nominal_type(module, body.return_type, instances, [])?
@@ -133,15 +137,21 @@ pub def specialize_nominals_with_instances(
                 _ = collect_nominal_type(module, field, instances, [declaration.canonical.render_compact()])?
     mut cursor = 0
     while cursor < len(instances):
-        instance = instances[cursor]
+        mut instance = instances[cursor]
         cursor += 1
+        declaration = close_layout(instance)?
+        lineage = instance.ancestors + [instance.declaration.canonical.render_compact()]
+        for field in declaration.field_types:
+            _ = collect_nominal_type(module, field, instances, lineage)?
+        previous = len(selected)
+        collect_owner_body_types(module, instance, instances, lineage, selected)?
+        if len(selected) != previous:
+            cursor = 0
+    for instance in instances:
         declaration = close_layout(instance)?
         for retained_index in range(len(result.nominal_declarations)):
             if result.nominal_declarations[retained_index].name == declaration.name:
                 return Err(f"unsupported Body IR nominal instance symbol collision {declaration.name}")
-        lineage = instance.ancestors + [instance.declaration.canonical.render_compact()]
-        for field in declaration.field_types:
-            _ = collect_nominal_type(module, field, instances, lineage)?
         result.nominal_declarations.push(declaration.clone())
     result.bodies.clear()
     for body in inherited:
@@ -155,6 +165,78 @@ pub def specialize_nominals_with_instances(
                         closed: Body = close_owner_body(body, instance)?
                         result.bodies.push(closed.clone())
     return Ok((result, instances))
+
+
+def collect_owner_body_types(
+    module: &BodyIrModule,
+    mut instance: NominalInstance,
+    mut instances: list[NominalInstance],
+    ancestors: list[str],
+    mut selected: list[SelectedMember],
+) -> Result[None, str]:
+    """Retain storage from selected frames, rejecting other owners before scanning their member inventory."""
+    for body in module.bodies:
+        match owner_template(module, body):
+            None =>
+                continue
+            Some(owner) =>
+                if module.nominal_declarations[owner].canonical != instance.declaration.canonical:
+                    continue
+        if not selected_owner_body(module, Borrow.borrow(instance), body, Borrow.borrow(selected)):
+            continue
+        closed = close_owner_body(body, instance)?
+        retain_selected_members(closed, selected)
+        for local in closed.locals:
+            collect_nominal_type(module, local.ty, instances, ancestors)?
+        collect_nominal_type(module, closed.return_type, instances, ancestors)?
+    return Ok(None)
+
+
+def selected_owner_body(
+    module: &BodyIrModule,
+    instance: &NominalInstance,
+    body: &Body,
+    selected: &list[SelectedMember],
+) -> bool:
+    """Match direct and adopted method identities before comparing each selected receiver's closed owner."""
+    match body.canonical:
+        None => return false
+        Some(identity) =>
+            for member in selected:
+                if member.identity == identity and selected_instance_receiver(member.receiver, instance):
+                    return true
+            for implementation in module.trait_implementations:
+                if implementation.owner != instance.declaration.canonical:
+                    continue
+                if implementation.implementation != identity:
+                    continue
+                for member in selected:
+                    if implementation.method != member.identity:
+                        continue
+                    if selected_instance_receiver(member.receiver, instance):
+                        return true
+    return false
+
+
+def retain_selected_members(body: &Body, mut selected: list[SelectedMember]) -> None:
+    """Keep invocation pairs distinct when the same protocol default is called on several owners."""
+    for member in called_members(body):
+        mut present = false
+        for retained in selected:
+            if retained.identity == member.identity and retained.receiver == member.receiver:
+                present = true
+        if not present:
+            selected.append(member)
+
+
+def selected_instance_receiver(receiver: &RustType, instance: &NominalInstance) -> bool:
+    """Match the exact checked receiver against a borrowed owner, stripping only reference carriers."""
+    match receiver:
+        RustType.Ref(inner) => return selected_instance_receiver(inner, instance)
+        RustType.RefMut(inner) => return selected_instance_receiver(inner, instance)
+        RustType.Generic(base=base, args=arguments) =>
+            return str(base) == template_base(instance.declaration) and arguments.clone() == instance.arguments
+        _ => return false
 
 
 def collect_nominal_type(
@@ -269,17 +351,18 @@ def retain_field_storage(mut declaration: NominalDeclaration, template: &Nominal
 
 
 def owner_template(module: &BodyIrModule, body: &Body) -> Option[int]:
-    """Locate an open nominal receiver already retained by the checker, without resolving a method spelling."""
+    """Locate an open receiver directly in the borrowed native table, avoiding a List.iter snapshot."""
     if len(body.locals) == 0 or not is_receiver(body.locals[0].origin):
         return None
     match body.locals[0].ty:
         RustType.Generic(base=base, args=_arguments) =>
-            for index in range(len(module.nominal_declarations)):
-                declaration = module.nominal_declarations[index]
+            mut index = 0
+            for declaration in module.nominal_declarations:
                 if admitted_owner(declaration) and len(declaration.type_parameters) != 0 and declaration.name == str(
                     base,
                 ):
                     return Some(index)
+                index += 1
         _ => pass
     return None
 

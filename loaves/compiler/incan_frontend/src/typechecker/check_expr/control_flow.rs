@@ -36,12 +36,35 @@ impl TypeChecker {
         self.await_operand_span = prev_await_operand_span;
 
         if let Some(output_ty) = self.await_output_type(inner, &inner_ty) {
+            self.retain_open_await_value(inner.span, span);
+            self.retain_body_ir_await_output(inner, &output_ty, span);
             return output_ty;
         }
 
         self.errors
             .push(errors::type_mismatch("Awaitable[_]", &inner_ty.to_string(), span));
         ResolvedType::Unknown
+    }
+
+    /// Preserve a selected operand's concrete output before legacy async checking reopens its declaration binders.
+    /// Source async calls keep their logical result while structural awaitable carriers expose their payload.
+    fn retain_body_ir_await_output(&mut self, inner: &Spanned<Expr>, legacy: &ResolvedType, span: Span) {
+        let Some(actual) = self.body_ir_checked_value_type(inner.span).cloned() else {
+            return;
+        };
+        let output = if self.expr_is_async_call_realization(inner) {
+            Some(actual)
+        } else {
+            self.await_output_type_from_type(&actual)
+        };
+        let Some(output) = output.filter(|output| self.types_compatible(legacy, output)) else {
+            return;
+        };
+        let output = self.body_ir_close_value_parts(legacy, &output);
+        self.type_info
+            .expressions
+            .body_ir_expr_types
+            .insert((span.start, span.end), output);
     }
 
     /// Resolve the output type of one checked await operand.

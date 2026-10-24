@@ -977,7 +977,7 @@ impl TypeChecker {
     ) -> Option<&'static TraitCapabilityInfo> {
         let capability = if let Some(module_path) = &bound.module_path {
             let trait_name = Self::type_bound_source_name(bound);
-            let capability = trait_capabilities::for_trait_path(module_path, trait_name)?;
+            let capability = self.temporary_trait_capability_at_path(module_path, trait_name)?;
             self.validated_temporary_trait_capability(
                 capability,
                 &bound.name,
@@ -991,6 +991,29 @@ impl TypeChecker {
         };
         self.capability_type_args_match(capability, bound, bindings)
             .then_some(capability)
+    }
+
+    /// Resolve a registered bridge through its published trait identity. Equal short names in another package grant
+    /// no capability; standard imports and package-qualified bounds must select the same canonical declaration.
+    fn temporary_trait_capability_at_path(
+        &self,
+        module_path: &[String],
+        trait_name: &str,
+    ) -> Option<&'static TraitCapabilityInfo> {
+        if let Some(capability) = trait_capabilities::for_trait_path(module_path, trait_name) {
+            return Some(capability);
+        }
+        let selected = self.package_trait_declaration(module_path, trait_name)?;
+        trait_capabilities::TRAIT_CAPABILITIES.iter().find(|capability| {
+            let standard_path = capability
+                .module_path
+                .iter()
+                .map(|part| (*part).to_string())
+                .collect::<Vec<_>>();
+            self.package_trait_declaration(&standard_path, capability.trait_name)
+                .as_ref()
+                == Some(&selected)
+        })
     }
 
     /// Return whether a checked trait bound carries the concrete arguments required by a capability bridge.
@@ -1037,8 +1060,10 @@ impl TypeChecker {
                 .find(|segment| !segment.is_empty())
                 .unwrap_or(visible_bound)
         });
-        let manifest_bound_identifies_capability = resolved_source_name == capability.trait_name
-            && module_path.is_some_and(|path| trait_capabilities::module_path_matches(capability, path));
+        let manifest_bound_identifies_capability = module_path.is_some_and(|path| {
+            self.temporary_trait_capability_at_path(path, resolved_source_name)
+                .is_some_and(|selected| selected.id == capability.id)
+        });
         manifest_bound_identifies_capability.then_some(capability)
     }
 

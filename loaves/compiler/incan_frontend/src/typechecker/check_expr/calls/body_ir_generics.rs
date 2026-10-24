@@ -89,15 +89,10 @@ impl TypeChecker {
         if !concrete(&output) {
             return;
         }
-        let native = if method.is_async {
-            ResolvedType::Generic("Awaitable".into(), vec![output])
-        } else {
-            output
-        };
         self.type_info
             .calls
             .body_ir_call_result_types
-            .insert((span.start, span.end), native);
+            .insert((span.start, span.end), output);
     }
 
     /// Record a concrete native instantiation from already checked parameter/argument relationships.
@@ -214,6 +209,8 @@ impl TypeChecker {
                     .inferred_call_result_types
                     .insert((span.start, span.end), result);
             }
+        } else {
+            self.retain_open_source_call(info, &names, &bindings, span, identity);
         }
     }
 

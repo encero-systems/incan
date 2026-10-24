@@ -1,10 +1,11 @@
-//! Validated String ingress trait headers forward to planned Incan reconstruction and conversion roots.
+//! Validate planned Incan string ingress roots; serde's native TryFrom header forwards to its reconstruction root.
 
 use crate::{
     declarations,
     error::PlanError,
     plan::{ModelDeclaration, Plan, PlanType},
 };
+use incan_semantics_core::{SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin, decode_incan_symbol_identity};
 use rustc_ast as ast;
 use rustc_span::{Ident, Span, Symbol};
 use thin_vec::{ThinVec, thin_vec};
@@ -91,14 +92,15 @@ pub(crate) fn validate_roots(plan: &Plan) -> Result<(), PlanError> {
     Ok(())
 }
 
-/// Source conversion grants exactly the linked SDK trait, separately from serde's Rust standard trait.
+/// Source conversion authenticates its checked SDK trait and planned root. Source trait calls already dispatch to
+/// that Incan root; this contract grants no Rust trait header, unlike serde's native String ingress.
 pub(crate) fn validate_source_roots(plan: &Plan) -> Result<(), PlanError> {
     for (index, model) in plan.models.iter().enumerate() {
         if model.string_conversion_root.is_empty() && model.string_conversion_trait.is_empty() {
             continue;
         }
         let reason = "unsupported source string conversion forwarding contract";
-        if model.string_conversion_trait != "incan_stdlib_core::traits::convert::TryFrom"
+        if !is_source_conversion_trait(&model.string_conversion_trait)
             || !model.string_conversion_root.starts_with("__incan_string_try_from_")
             || !matches!(model.fields.as_slice(), [field] if matches!(field.ty, PlanType::Int | PlanType::String | PlanType::Model(_, _)))
         {
@@ -110,6 +112,24 @@ pub(crate) fn validate_source_roots(plan: &Plan) -> Result<(), PlanError> {
         validate_string_root(plan, index, model, &model.string_conversion_root, reason)?;
     }
     Ok(())
+}
+
+/// Authenticate the encoded identity of the selected source conversion trait. Its decoded owner and crate must
+/// agree; an old module spelling, equal-named user trait, or malformed identity cannot authorize a conversion root.
+fn is_source_conversion_trait(path: &str) -> bool {
+    let Some((_, item)) = path.split_once("::") else {
+        return false;
+    };
+    let Ok(Some(identity)) = decode_incan_symbol_identity(item) else {
+        return false;
+    };
+    identity.kind == SemanticSourceTargetKind::Trait
+        && identity.namespace == SymbolNamespace::OrdinaryLexical
+        && identity.scope_discriminant.is_none()
+        && identity.declaration_name == "TryFrom"
+        && matches!(&identity.origin, SymbolOrigin::Package { library, module_path }
+            if library == "incan_stdlib_core" && module_path == &["traits", "convert"])
+        && incan_semantics_core::body_ir::loaf_item_path(&identity).as_deref() == Some(path)
 }
 
 /// Share only the owned input and standard Result geometry; each header policy validates its own selection first.
@@ -162,35 +182,7 @@ fn validate_string_root(
 
 /// Declare std TryFrom<String> with one forwarding call; validation and error rendering remain in the planned root.
 pub(crate) fn forwarding_impl(model: &ModelDeclaration, span: Span) -> Box<ast::Item> {
-    forwarding_header(
-        model,
-        ["std", "convert", "TryFrom"],
-        &model.checked_deserialize,
-        true,
-        span,
-    )
-}
-
-/// Declare the authenticated source SDK trait with no associated Error and no parsing or wrapping in Rust.
-pub(crate) fn source_forwarding_impl(model: &ModelDeclaration, span: Span) -> Box<ast::Item> {
-    forwarding_header(
-        model,
-        model.string_conversion_trait.split("::"),
-        &model.string_conversion_root,
-        false,
-        span,
-    )
-}
-
-/// Build one mechanical trait forwarder using only its already validated path, result ABI and root function.
-fn forwarding_header<'segment>(
-    model: &ModelDeclaration,
-    segments: impl IntoIterator<Item = &'segment str>,
-    root: &str,
-    associated_error: bool,
-    span: Span,
-) -> Box<ast::Item> {
-    let mut trait_path = global_path(segments, span);
+    let mut trait_path = global_path(["std", "convert", "TryFrom"], span);
     if let Some(segment) = trait_path.segments.last_mut() {
         segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
             span,
@@ -200,10 +192,10 @@ fn forwarding_header<'segment>(
             )))],
         })));
     }
-    let mut items = thin_vec![forwarding_method(model, root, span)];
-    if associated_error {
-        items.insert(0, error_association(span));
-    }
+    let items = thin_vec![
+        error_association(span),
+        forwarding_method(model, &model.checked_deserialize, span)
+    ];
     Box::new(ast::Item {
         attrs: ThinVec::new(),
         id: ast::DUMMY_NODE_ID,
@@ -228,7 +220,7 @@ fn forwarding_header<'segment>(
     })
 }
 
-/// Only Rust's serde ingress TryFrom declares this associated Error; the source SDK contract does not.
+/// Retain the string error of serde's native TryFrom ingress.
 fn error_association(span: Span) -> Box<ast::AssocItem> {
     Box::new(ast::AssocItem {
         attrs: ThinVec::new(),

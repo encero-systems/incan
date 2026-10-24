@@ -16,6 +16,7 @@ from rust::incan_semantics_core::body_ir import (
     NewtypeStringConversion,
     StringConversionContract,
     nominal_carrier_key,
+    loaf_item_path,
 )
 from symbols import symbol_component
 
@@ -32,7 +33,7 @@ pub def validate_conversion_placement(modules: &list[BodyIrModule], entry: int) 
 
 
 pub def conversion_trait(module: &BodyIrModule) -> Result[str, str]:
-    """Absent and fresh inactive states grant no headers; a selected linked trait keeps its exact canonical slot."""
+    """Absent and inactive states grant no conversion; a selected source trait keeps its encoded canonical identity."""
     match module.string_conversion_contract:
         StringConversionContract.Unselected => return Ok("")
         StringConversionContract.Inactive => return Ok("")
@@ -51,7 +52,9 @@ pub def conversion_trait(module: &BodyIrModule) -> Result[str, str]:
                 SymbolOrigin.Package(library=library, module_path=path) =>
                     if library != "incan_stdlib_core" or path != ["traits", "convert"]:
                         return Err("unsupported Body IR string conversion contract identity")
-                    return Ok(f"{library}::traits::convert::TryFrom")
+                    match loaf_item_path(owner):
+                        Some(item) => return Ok(str(item))
+                        None => return Err("unsupported Body IR string conversion contract item")
                 _ => return Err("unsupported Body IR string conversion contract identity")
 
 

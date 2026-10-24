@@ -16,10 +16,18 @@ impl TypeChecker {
     fn retain_body_ir_newtype_payload(
         &mut self,
         name: &str,
-        parameters: &[String],
+        declaration: &crate::symbols::NewtypeInfo,
+        value: &Spanned<Expr>,
         bindings: &std::collections::HashMap<String, ResolvedType>,
         span: Span,
     ) {
+        let parameters = &declaration.type_params;
+        let mut bindings = bindings.clone();
+        if let Some(actual) = self.body_ir_checked_value_type(value.span) {
+            let expected = self.rust_inference_type(&declaration.underlying, parameters);
+            let actual = self.rust_inference_type(actual, &self.native_call_type_parameters());
+            self.infer_type_param_bindings(&expected, &actual, &mut bindings);
+        }
         if parameters.is_empty()
             || parameters.iter().any(|parameter| {
                 bindings
@@ -29,7 +37,8 @@ impl TypeChecker {
         {
             return;
         }
-        let carrier = self.constructor_result_type_with_bindings(name, bindings);
+        self.refuse_unsatisfied_nominal_type_arguments(name, &bindings, TypeArgumentOrigin::Inferred, span);
+        let carrier = self.constructor_result_type_with_bindings(name, &bindings);
         self.type_info
             .calls
             .body_ir_constructor_types
@@ -519,10 +528,34 @@ impl TypeChecker {
             self.errors
                 .push(errors::constructor_single_arg_required(name, args.len(), call_span));
         } else if let Some(owner) = self.surface_type_identity(tid) {
-            self.type_info.record_body_ir_native_constructor(call_span, owner);
+            self.type_info
+                .record_body_ir_native_constructor(call_span, owner.clone());
+            self.retain_extractor_constructor(&owner, args, call_span);
         }
 
         ResolvedType::Generic(surface_types::as_str(tid).to_string(), vec![inner])
+    }
+
+    /// Retain the imported extractor's inspected tuple layout and infer its owner from the checked payload.
+    /// Named source value arguments bind the native slot selected by metadata, without re-evaluating their expressions.
+    fn retain_extractor_constructor(
+        &mut self,
+        owner: &incan_semantics_core::CanonicalSymbolId,
+        args: &[CallArg],
+        span: Span,
+    ) {
+        let Some(path) = incan_semantics_core::body_ir::native_nominal_item(owner) else {
+            return;
+        };
+        let Some(metadata) = self.rust_item_metadata_for_complete_type(&path) else {
+            return;
+        };
+        let incan_lang::interop::RustItemKind::Type(info) = &metadata.kind else {
+            return;
+        };
+        if info.fields.len() == 1 && info.fields[0].name == "0" {
+            self.retain_rust_construction(&path, info, args, &["0".into()], span);
+        }
     }
     /// Return whether a call target names an enum type.
     pub(in crate::typechecker::check_expr::calls) fn is_enum_type_name_expr_for_call(
@@ -814,7 +847,7 @@ impl TypeChecker {
                         span,
                     );
                     if self.errors.len() == errors_before_payload {
-                        self.retain_body_ir_newtype_payload(name, &newtype.type_params, &type_bindings, span);
+                        self.retain_body_ir_newtype_payload(name, &newtype, value, &type_bindings, span);
                     }
                     self.type_info.record_constructor_field_binding(
                         span,
@@ -852,7 +885,9 @@ impl TypeChecker {
         }
     }
 
-    /// Type-check a type constructor call by delegating to its source-defined static `__incan_new` method.
+    /// Type-check a type constructor call by delegating to its source-defined static `__incan_new` method. Written
+    /// brackets specialize the owner, retained by the checked result; the method's own arguments stay separate so
+    /// executable calls do not count the owner binders twice.
     pub(in crate::typechecker::check_expr::calls) fn check_type_constructor_hook_call(
         &mut self,
         type_name: &str,
@@ -887,7 +922,8 @@ impl TypeChecker {
         } else {
             ResolvedType::Generic(type_name.to_string(), resolved_type_args)
         };
-        Some(self.check_resolved_generic_method_call(
+        let errors_before_call = self.errors.len();
+        let result = self.check_resolved_generic_method_call(
             TYPE_CONSTRUCTOR_HOOK,
             hook,
             &[],
@@ -896,7 +932,14 @@ impl TypeChecker {
             span,
             &receiver_ty,
             None,
-        ))
+        );
+        let key = (span.start, span.end);
+        if self.errors.len() == errors_before_call
+            && let Some(arguments) = self.type_info.calls.call_site_monomorph_type_args.get(&key).cloned()
+        {
+            self.type_info.calls.body_ir_call_type_arguments.insert(key, arguments);
+        }
+        Some(result)
     }
 
     /// Return whether a call's named arguments exactly describe normal model/class field construction.

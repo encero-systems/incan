@@ -243,6 +243,7 @@ impl TypeChecker {
 
     /// Preserve an initializer's executable carrier under its canonical lexical binding identity.
     pub(in crate::typechecker) fn retain_body_ir_assignment_value(&mut self, assignment: &AssignmentStmt) {
+        self.bind_open_value(assignment.value.span, assignment.name_span, &assignment.name);
         self.retain_body_ir_empty_list_initializer(assignment);
         let Some(actual) = self.body_ir_checked_value_type(assignment.value.span).cloned() else {
             return;
@@ -260,13 +261,24 @@ impl TypeChecker {
             .insert(identity, actual);
     }
 
-    /// Propagate exact lexical reads, checked nominal members and canonical intrinsic Result contracts. Incompatible
-    /// constraints and members without a checked declaration publish no fact.
+    /// Propagate exact lexical reads, checked nominal members, Result success payloads and comprehension elements.
+    /// Incompatible constraints and members without a checked declaration publish no fact.
     pub(in crate::typechecker::check_expr) fn retain_body_ir_result_value(
         &mut self,
         expression: &Spanned<Expr>,
         recorded: &ResolvedType,
     ) {
+        if matches!(expression.node, Expr::MethodCall(..))
+            && self.expr_is_async_call_realization(expression)
+            && let Some(identity) = self.type_info.resolved_identity(expression.span).cloned()
+            && identity.kind == incan_semantics_core::SemanticSourceTargetKind::Method
+        {
+            self.type_info
+                .calls
+                .body_ir_async_call_targets
+                .insert((expression.span.start, expression.span.end), identity);
+        }
+        self.retain_open_value_expression(expression);
         if self
             .type_info
             .calls
@@ -296,6 +308,13 @@ impl TypeChecker {
                 .and_then(|identity| self.type_info.expressions.body_ir_binding_types.get(identity))
                 .cloned(),
             Expr::Paren(inner) => self.body_ir_checked_value_type(inner.span).cloned(),
+            Expr::Try(inner) => self
+                .body_ir_checked_value_type(inner.span)
+                .and_then(ResolvedType::result_ok_type)
+                .cloned(),
+            Expr::ListComp(comprehension) => self
+                .body_ir_checked_value_type(comprehension.expr.span)
+                .map(|element| ResolvedType::Generic("List".into(), vec![element.clone()])),
             Expr::MethodCall(receiver, method, _, arguments) => {
                 if let Some(actual) = self.body_ir_nominal_method_type(receiver, method, arguments, expression.span) {
                     self.type_info
@@ -344,6 +363,7 @@ impl TypeChecker {
     }
 
     /// Fill compatible holes from a checked value contract while preserving concrete leaves and caller-owned binders.
+    /// Nominal aliases meet only when their retained provider identities agree.
     pub(in crate::typechecker::check_expr) fn body_ir_close_value_parts(
         &self,
         recorded: &ResolvedType,
@@ -353,7 +373,9 @@ impl TypeChecker {
             (ResolvedType::Unknown | ResolvedType::CallSiteInfer, _) => actual.clone(),
             (ResolvedType::TypeVar(_), _) if self.active_type_param_name(recorded).is_none() => actual.clone(),
             (ResolvedType::Generic(name, parts), ResolvedType::Generic(other, values))
-                if name == other && parts.len() == values.len() =>
+                if parts.len() == values.len()
+                    && (name == other
+                        || self.public_library_type_identities_compatible(recorded, actual) == Some(true)) =>
             {
                 ResolvedType::Generic(
                     name.clone(),

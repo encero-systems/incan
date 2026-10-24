@@ -931,7 +931,15 @@ impl TypeChecker {
             (Expr::Match(subject, arms), Some(expected_ty)) => {
                 self.check_match(subject, arms, expr.span, Some(expected_ty))
             }
-            _ => return self.check_expr(expr),
+            _ => {
+                let ty = self.check_expr(expr);
+                if self.errors.len() == errors_before
+                    && let Some(expected) = expected
+                {
+                    self.constrain_open_value_destination(expr.span, expected);
+                }
+                return ty;
+            }
         };
 
         // A literal whose elements already failed to check is not refused a second time for its open type.

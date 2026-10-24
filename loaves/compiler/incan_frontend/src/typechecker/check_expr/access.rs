@@ -59,6 +59,7 @@ mod native_methods;
 mod rust_deref;
 mod rust_projections;
 mod rust_traits;
+mod web_extractors;
 
 /// The method the stdlib `Hash` trait declares, which no type meeting a `Hash` bound provides (#1822).
 const HASH_DUNDER: &str = "__hash__";
@@ -5397,6 +5398,9 @@ impl TypeChecker {
         }
         if matches!(base_ty, ResolvedType::Unknown) {
             return ResolvedType::Unknown;
+        }
+        if let Some(result) = self.resolve_checked_extractor_field(base, base_ty, field, span) {
+            return result;
         }
         if let Some(result) = self.resolve_rust_deref_field(base, base_ty, field, span) {
             return result;

@@ -36,6 +36,7 @@ mod body_ir_generics;
 mod builtins;
 mod constructors;
 mod generic_bounds;
+mod open_values;
 mod rust_boundary;
 mod rust_callable_bounds;
 mod rust_layouts;
