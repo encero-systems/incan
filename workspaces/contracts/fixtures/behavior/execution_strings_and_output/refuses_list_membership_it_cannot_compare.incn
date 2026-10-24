@@ -1,13 +1,16 @@
-# behavior: refuses list membership it cannot compare
+# behavior: nested list membership compares complete child lists (#2256)
 # expect-stdout:
 #   true
 
+"""Compare nested list elements without flattening their native slice storage."""
 
-"""Refuses list membership it cannot compare."""
+
 def program_result() -> bool:
-  """Compute and return `[1] in xs`."""
-  xs = [[1], [2]]
-  return [1] in xs
+    """Compare complete child lists while preserving the source collection."""
+    xs = [[1], [2]]
+    assert [2] in xs
+    assert [3] not in xs
+    return [1] in xs
 
 
 def main() -> None:

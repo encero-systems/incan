@@ -69,7 +69,9 @@ def argument_source(mut builder: Builder, value: &RustOperand, ty: PlanType, spa
 def checked_source(mut builder: Builder, place: Place, fact: &OwnershipFact, span: SourceSpan) -> Result[Place, str]:
     """Borrow a value the checker hands over exclusively in place, and copy one it only reads."""
     match builder.locals[place.local].ty:
-        PlanType.ModelRef(_owner, _name) => return Err("unsupported Body IR mutable argument through a shared receiver")
+        PlanType.ModelRef(_owner, _name) =>
+            site = f"{builder.name} frame local {place.local} at {span.file}:{span.line}"
+            return Err(f"unsupported Body IR mutable argument through a shared receiver in {site} ({fact:?})")
         _ => pass
     match fact:
         OwnershipFact.MutBorrow => return Ok(place)

@@ -1,9 +1,31 @@
-# behavior: imported Rust bounds accept lowered Incan scalars and collections; rustc checks their implementations
+# behavior: native bounds, structural slice methods and generic rusttype arguments retain their checked identities
 # expect-accepted:
 
-"""Imported Rust bounds accept lowered Incan scalars and collections; rustc checks their implementations."""
+"""Native generic signatures retain their checked owner, element and declaration binders."""
 
 from rust::serde::de import DeserializeOwned as Owned
+from rust::incan_std_core::frozen import FrozenList
+from rust::std::boxed import Box
+from rust::std::clone import Clone as NativeClone
+from rust::std::convert import identity as native_identity
+from rust::std::vec import Vec
+from std.rust import Static
+
+
+type NativeBox[R] = rusttype Box[R]:
+    """Keep the alias parameter distinct from a caller's parameter."""
+
+
+def native_snapshot[T with (NativeClone, Static)](values: FrozenList[T]) -> list[T]:
+    """Retain the exact generic element while selecting a structural slice method."""
+    return values.as_slice().to_vec()
+
+
+def native_boxes[T with NativeClone](value: T) -> Vec[Box[T]]:
+    """Match a native argument after substituting the alias's independent binder."""
+    boxed: NativeBox[T] = Box.new(value)
+    values: list[NativeBox[T]] = [boxed]
+    return native_identity(values)
 
 
 pub def identity[T with Owned](value: T) -> T:
@@ -23,4 +45,7 @@ def main() -> None:
     """Require native scalar and collection instantiations to work."""
     assert identity("demo") == "demo"
     assert Reader().identity(["linux", "macos"]) == ["linux", "macos"]
+    frozen = FrozenList.leak([1])
+    assert native_snapshot[int](frozen) == [1]
+    assert len(native_boxes(7)) == 1
     println("foreign generic bounds passed")

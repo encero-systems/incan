@@ -14,8 +14,59 @@ from models import model_type, hashed_element
 from tuples import tuple_element
 from enums import enum_type
 from closures import semantic_input
-from decls import library_enum_item
+from decls import library_enum_item, library_item
 from lists import exclusive_reference, list_parameter_type
+
+
+pub def native_alias_boundary(nominals: &list[NominalDeclaration], source: PlanType, target: PlanType) -> bool:
+    """Require a retained nominal carrier and unchanged loan mode; rustc proves exact type equality before any move."""
+    if alias_reference_mode(source) != alias_reference_mode(target):
+        return false
+    return retained_nominal_carrier(nominals, source) or retained_nominal_carrier(nominals, target)
+
+
+def alias_reference_mode(ty: PlanType) -> int:
+    """Keep shared and exclusive loans distinct from owners when forwarding exact native aliases."""
+    match ty:
+        (
+            PlanType.ModelRef(_, _)
+            | PlanType.EnumRef(_, _)
+            | PlanType.TupleRef(_)
+            | PlanType.ZipIteratorRef(_, _)
+            | PlanType.ListRef(_, _)
+            | PlanType.SetRef(_)
+            | PlanType.DictRef(_, _)
+            | PlanType.ScalarRef(_)
+            | PlanType.SliceRef(_)
+            | PlanType.StringRef
+            | PlanType.StrRef
+            | PlanType.FrozenCollectionRef(_, _)
+        ) => return 1
+        (
+            PlanType.ModelMutRef(_, _)
+            | PlanType.EnumMutRef(_, _)
+            | PlanType.TupleMutRef(_)
+            | PlanType.ZipIteratorMutRef(_, _)
+            | PlanType.ListMutRef(_, _)
+            | PlanType.SetMutRef(_)
+            | PlanType.DictMutRef(_, _)
+            | PlanType.ScalarMutRef(_)
+            | PlanType.SliceMutRef(_)
+            | PlanType.StringMutRef
+            | PlanType.GeneratorMutRef(_, _)
+        ) => return 2
+        _ => return 0
+
+
+def retained_nominal_carrier(nominals: &list[NominalDeclaration], ty: PlanType) -> bool:
+    """Require a compiled nominal alias or a closed source template whose consumer owns its native declaration."""
+    match ty:
+        (PlanType.Model(owner, _name) | PlanType.ModelRef(owner, _name) | PlanType.ModelMutRef(owner, _name)) =>
+            declaration = nominals[owner]
+            if library_item(declaration) != "":
+                return true
+            return declaration.type_parameter_count != 0
+        _ => return false
 
 
 pub def native_source_type(
@@ -184,6 +235,12 @@ pub def shared_receiver_type(ty: PlanType) -> Result[PlanType, str]:
         ) => return Ok(PlanType.ScalarRef([ty]))
         PlanType.FrozenCollection(name, elements) => return Ok(PlanType.FrozenCollectionRef(name, elements))
         PlanType.NativeArray(elements, length) => return Ok(PlanType.NativeArrayRef(elements, length))
+        PlanType.StringRef => return Ok(PlanType.ScalarRef([ty]))
+        PlanType.ModelRef(_owner, _name) => return Ok(PlanType.ScalarRef([ty]))
+        PlanType.EnumRef(_owner, _name) => return Ok(PlanType.ScalarRef([ty]))
+        PlanType.ScalarRef(_elements) => return Ok(PlanType.ScalarRef([ty]))
+        PlanType.SliceRef(_elements) => return Ok(PlanType.ScalarRef([ty]))
+        PlanType.StrArray(count) => return Ok(PlanType.StrArrayRef(count))
         PlanType.NativeSlice(elements) => return Ok(PlanType.SliceRef(elements))
         PlanType.FunctionPointer(_signature) => return Ok(PlanType.ScalarRef([ty]))
         PlanType.Model(index, name) => return Ok(PlanType.ModelRef(index, name))
@@ -202,6 +259,7 @@ pub def shared_receiver_type(ty: PlanType) -> Result[PlanType, str]:
 pub def mutable_receiver_type(ty: PlanType) -> Result[PlanType, str]:
     """Reuse exclusive source parameter storage for native references, retaining scalar reference carriers explicitly."""
     match ty:
+        PlanType.Generator(leaf, depth) => return Ok(PlanType.GeneratorMutRef(leaf, depth))
         PlanType.NativeArray(elements, length) => return Ok(PlanType.NativeArrayMutRef(elements, length))
         PlanType.Generator(leaf, depth) => return Ok(PlanType.GeneratorMutRef(leaf, depth))
         PlanType.NativeSlice(elements) => return Ok(PlanType.SliceMutRef(elements))

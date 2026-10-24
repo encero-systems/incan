@@ -1,4 +1,4 @@
-# behavior: functions with type parameters retain imported iterator adoption, iter defaults and comprehensions, borrowed tuple items and native key queries
+# behavior: native aliases, iterators, slices and read-only collection returns retain checked storage (#2256)
 # expect-stdout:
 #   checked
 #   checked
@@ -9,8 +9,40 @@
 from std.derives.collection import Iterator, ListIterator, ZipIterator
 from std.derives.copying import Clone
 from std.rust import Static
-from rust::incan_std_core::frozen import FrozenDict
+from rust::incan_std_core::frozen import FrozenDict, FrozenList, FrozenBytes as NativeFrozenBytes
+from rust::incan_std_core::iter import Generator as NativeGenerator
+from rust::std::cell import RefCell, RefMut
+from rust::std::clone import Clone as NativeClone
+from rust::std::cmp import Ordering
+from rust::std::boxed import Box
 from rust::std::collections import BTreeMap
+from rust::std::convert import identity
+from rust::std::iter import IntoIterator
+from rust::std::panic import PanicHookInfo
+from rust::std::ops import DerefMut
+from rust::std::path import PathBuf
+from rust::std::primitive import str as NativeStr
+from rust::std::vec import Vec as NativeVec
+
+const NATIVE_BYTE_VALUES: bytes = b"ab"
+
+
+pub type NativePath = rusttype PathBuf:
+    """Retain the native carrier through source method selection."""
+
+
+type NativeBox[R] = rusttype Box[R]:
+    """Retain a generic native owner inside a source list."""
+
+
+pub def clone_and_change(value: &NativePath) -> Result[PathBuf, str]:
+    """1. Clone the carrier. 2. Mutate the owned copy. 3. Return its inspected native Result identity."""
+    # 1. Select the native carrier's Clone implementation.
+    mut copied = value.clone()
+    # 2. Mutate the owned result, preserving the borrowed original.
+    copied.push("child")
+    # 3. Keep the inspected item identity in the Result payload.
+    return Ok(copied)
 
 
 def preserve[T with Clone, U with Clone](
@@ -45,10 +77,168 @@ def inspect_keys[T](values: &BTreeMap[str, T]) -> None:
         found = values.get(key)
 
 
+def copy_native_slice[T with (NativeClone, Static)](values: FrozenList[T]) -> list[T]:
+    """Copy the exact generic element of a native slice through its inspected method."""
+    return values.as_slice().to_vec()
+
+
+def sorted_native_slice(values: list[int]) -> list[int]:
+    """1. Copy native vector storage. 2. Mutate its slice. 3. Return the sorted owner."""
+    # 1. Retain the caller's vector.
+    mut owned: NativeVec[int] = NativeClone.clone(values)
+    # 2. Select the structural slice's own methods.
+    mut view = owned.as_mut_slice()
+    view.swap(0usize, 1usize)
+    view.sort()
+    # 3. Keep ownership on the vector whose slice was borrowed.
+    return owned
+
+
+def native_path_count(values: NativeVec[PathBuf]) -> int:
+    """Receive native owners through a collection whose source element uses a rusttype alias."""
+    return int(values.len())
+
+
+def sorted_native_float_slice(values: list[float]) -> list[float]:
+    """Sort an independent native slice with a borrowed-input function item."""
+    mut owned: NativeVec[float] = NativeClone.clone(values)
+    mut view = owned.as_mut_slice()
+    view.sort_by(compare_native_float)
+    return owned
+
+
+def compare_native_float(left: &float, right: &float) -> Ordering:
+    """Keep the exact borrowed scalar inputs and native ordering result of a function item."""
+    if left.clone() < right.clone():
+        return Ordering.Less
+    if left.clone() > right.clone():
+        return Ordering.Greater
+    return Ordering.Equal
+
+
+def native_boxes[T with NativeClone](value: T) -> NativeVec[Box[T]]:
+    """Pass a list of generic rusttype owners through an inspected native argument."""
+    boxed: NativeBox[T] = Box.new(value)
+    values: list[NativeBox[T]] = [boxed]
+    return identity(values)
+
+
+def native_iterator_length[T with NativeClone](value: T) -> int:
+    """Count a consuming native iterator while retaining its generic item identity."""
+    values: NativeVec[T] = [value]
+    iterator = values.into_iter()
+    mut count = 0
+    for item in iterator:
+        count += 1
+    return count
+
+
+def poll_native_generator_guard() -> None:
+    """Keep a generator's exclusive native guard loan inside one poll."""
+    native: NativeGenerator[int] = NativeGenerator.new(IntoIterator.into_iter([9]))
+    cell: RefCell[NativeGenerator[int]] = RefCell.new(native)
+    mut loan: RefMut[NativeGenerator[int]] = cell.borrow_mut()
+    mut iterator: &mut NativeGenerator[int] = loan.deref_mut()
+    assert iterator.next() == Some(9)
+
+
+def retained_callback_text() -> str:
+    """Return the value held by an exact function pointer in native tuple storage."""
+    return "retained"
+
+
+def copy_native_byte_slice(value: NativeFrozenBytes) -> bytes:
+    """Copy a native byte slice without losing its borrowed structural receiver."""
+    return value.as_slice().to_vec()
+
+
+def inspect_native_text_slice(value: &str) -> None:
+    """Resolve the public primitive alias's native whitespace iterator."""
+    mut count = 0
+    for piece in NativeStr.split_whitespace(value):
+        count += 1
+    assert count == 2
+
+
+def inspect_callback_records() -> None:
+    """Keep a tuple's callable identity through collection length and indexed reads."""
+    records: list[tuple[str, () -> str, str]] = [("module", retained_callback_text, "name")]
+    assert len(records) == 1
+    callback: () -> str = records[0][1]
+    assert callback() == "retained"
+
+
+def retained_collection_value[T with Clone](value: T) -> T:
+    """Return the logical value of a read-only parameter without consuming its caller's collection."""
+    return value
+
+
+def inspect_collection_returns() -> None:
+    """Keep independent returned dictionary and set owners while retaining the caller's values."""
+    mapping: Dict[str, int] = {"answer": 42}
+    mut copied_mapping = retained_collection_value(mapping)
+    copied_mapping["answer"] = 7
+    assert mapping["answer"] == 42
+    assert copied_mapping["answer"] == 7
+    values: Set[int] = {1, 2}
+    mut copied_values = retained_collection_value(values)
+    copied_values.add(3)
+    assert len(values) == 2
+    assert len(copied_values) == 3
+
+
 def main() -> None:
-    """Run after all five iterator declarations have checked."""
+    """1. Check the iterator declarations. 2. Exercise native ownership and membership."""
+    # 1. Preserve the existing declaration checks and their output.
     println("checked")
     println("checked")
     println("checked")
     println("checked")
     println("checked")
+    # 2. Owned iterator items, shared membership needles and rusttype values retain their checked storage.
+    mut values: NativeVec[int] = NativeVec.new()
+    values.push(7)
+    mut total = 0
+    for value in values:
+        total += value
+    assert total == 7
+    paths: list[PathBuf] = [PathBuf.from("alpha")]
+    sought: PathBuf = PathBuf.from("alpha")
+    assert has_path(paths, sought)
+    assert has_reference(7)
+    original: NativePath = PathBuf.from("alpha")
+    match clone_and_change(original):
+        Ok(copied) =>
+            assert copied == PathBuf.from("alpha/child")
+        Err(_error) =>
+            assert false
+    assert original == PathBuf.from("alpha")
+    frozen = FrozenList.leak([3, 1, 2])
+    assert copy_native_slice[int](frozen) == [3, 1, 2]
+    assert sorted_native_slice([3, 1, 2]) == [1, 2, 3]
+    assert sorted_native_float_slice([3.0, 1.0, 2.0]) == [1.0, 2.0, 3.0]
+    aliases: list[NativePath] = [PathBuf.from("alpha")]
+    assert native_path_count(aliases) == 1
+    assert len(native_boxes(7)) == 1
+    assert native_iterator_length(7) == 1
+    poll_native_generator_guard()
+    inspect_callback_records()
+    assert copy_native_byte_slice(NATIVE_BYTE_VALUES) == b"ab"
+    inspect_native_text_slice(" alpha\tbeta ")
+    inspect_collection_returns()
+
+
+def observe_info(_info: &PanicHookInfo) -> None:
+    """Admit the metadata lifetime on a native input without erasing its signature binder."""
+    pass
+
+
+def has_path(paths: list[PathBuf], sought: &PathBuf) -> bool:
+    """Compare the native needle in place without moving or cloning it."""
+    return paths.contains(sought)
+
+
+def has_reference(value: &int) -> bool:
+    """Borrow a shared reference value when comparing a collection of references."""
+    values: list[&int] = [value]
+    return value in values

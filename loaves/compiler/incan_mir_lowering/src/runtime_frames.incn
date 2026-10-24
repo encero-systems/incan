@@ -19,9 +19,8 @@ from pub::incan_mir_plan import (
 )
 from pub::incan_mir_plan import assign as plan_assign, block as plan_block, place as plan_place
 from frame import read_place
-from layout_types import shared_receiver_type
+from layout_types import shared_receiver_type, native_alias_boundary
 from rust::incan_semantics_core::body_ir import BodyIrModule
-from decls import library_item
 
 
 pub def runtime_frame_adapter(
@@ -67,7 +66,7 @@ pub def runtime_frame_adapter(
         if actual == expected:
             operands.append(read_place(source, true, span))
             continue
-        if native_alias_boundary(module, actual, expected):
+        if native_alias_boundary(module.nominal_declarations, actual, expected):
             alias = plan_place(len(locals), span)
             locals.append(Local(ty=expected, span=span))
             statements.append(
@@ -76,7 +75,7 @@ pub def runtime_frame_adapter(
             operands.append(read_place(alias, true, span))
             continue
         borrowed = shared_receiver_type(actual)?
-        if borrowed != expected and not native_alias_boundary(module, borrowed, expected):
+        if borrowed != expected and not native_alias_boundary(module.nominal_declarations, borrowed, expected):
             return Err(f"unsupported governed runtime frame argument {actual:?} to {expected:?} for {external.path}")
         reference = plan_place(len(locals), span)
         locals.append(Local(ty=borrowed, span=span))
@@ -99,7 +98,7 @@ pub def runtime_frame_adapter(
     mut output = plan_place(0, span)
     mut normal = owner_cleanup(blocks, owners, false, span)
     if result != external.return_type:
-        if not native_alias_boundary(module, result, external.return_type):
+        if not native_alias_boundary(module.nominal_declarations, result, external.return_type):
             return Err(f"unsupported governed runtime result alias for {external.path}")
         output = plan_place(len(locals), span)
         locals.append(Local(ty=result, span=span))
@@ -134,57 +133,6 @@ pub def runtime_frame_adapter(
             ),
         ),
     )
-
-
-def native_alias_boundary(module: &BodyIrModule, source: PlanType, target: PlanType) -> bool:
-    """Require a retained nominal carrier; rustc later proves exact type equality before emitting any move."""
-    if alias_reference_mode(source) != alias_reference_mode(target):
-        return false
-    return retained_nominal_carrier(module, source) or retained_nominal_carrier(module, target)
-
-
-def alias_reference_mode(ty: PlanType) -> int:
-    """Keep shared and exclusive loans distinct from owners when forwarding exact native aliases."""
-    match ty:
-        (
-            PlanType.ModelRef(_, _)
-            | PlanType.EnumRef(_, _)
-            | PlanType.TupleRef(_)
-            | PlanType.ZipIteratorRef(_, _)
-            | PlanType.ListRef(_, _)
-            | PlanType.SetRef(_)
-            | PlanType.DictRef(_, _)
-            | PlanType.ScalarRef(_)
-            | PlanType.SliceRef(_)
-            | PlanType.StringRef
-            | PlanType.StrRef
-            | PlanType.FrozenCollectionRef(_, _)
-        ) => return 1
-        (
-            PlanType.ModelMutRef(_, _)
-            | PlanType.EnumMutRef(_, _)
-            | PlanType.TupleMutRef(_)
-            | PlanType.ZipIteratorMutRef(_, _)
-            | PlanType.ListMutRef(_, _)
-            | PlanType.SetMutRef(_)
-            | PlanType.DictMutRef(_, _)
-            | PlanType.ScalarMutRef(_)
-            | PlanType.SliceMutRef(_)
-            | PlanType.StringMutRef
-            | PlanType.GeneratorMutRef(_, _)
-        ) => return 2
-        _ => return 0
-
-
-def retained_nominal_carrier(module: &BodyIrModule, ty: PlanType) -> bool:
-    """Require a compiled nominal alias or a closed source template whose consumer owns its native declaration."""
-    match ty:
-        (PlanType.Model(owner, _name) | PlanType.ModelRef(owner, _name) | PlanType.ModelMutRef(owner, _name)) =>
-            declaration = module.nominal_declarations[owner]
-            if library_item(declaration) != "":
-                return true
-            return declaration.type_parameter_count != 0
-        _ => return false
 
 
 def owner_cleanup(mut blocks: list[BasicBlock], owners: list[Place], unwinding: bool, span: SourceSpan) -> int:

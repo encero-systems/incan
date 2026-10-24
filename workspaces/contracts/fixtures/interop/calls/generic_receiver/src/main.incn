@@ -1,4 +1,4 @@
-# behavior: native receivers retain owners, iterator outputs, primitive views, callbacks and lazy captures (#2256)
+# behavior: native receivers retain owners, iterator outputs, primitive views, callbacks, lazy captures and independently bound borrowed inputs (#2256, #2368)
 # expect-stdout:
 #   1
 #   770
@@ -23,6 +23,7 @@ from rust::blake3 import hash as blake3_hash
 from rust::byteorder import BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt
 from rust::encoding_rs import Encoding
 from rust::rand import Rng, thread_rng
+from rust::regex import Regex, Captures as NativeCaptures
 from rust::sha2 import Digest, Sha224
 from rust::sha3 import Shake128
 from rust::sha3::digest import ExtendableOutputReset, Update, XofReader
@@ -169,7 +170,7 @@ def show_generic_receivers() -> None:
     digest.update(b"abc")
     output = digest.finish()
     assert len(output) == 28
-    assert output == b"\x23\x09\x7d\x22\x34\x05\xd8\x22\x86\x42\xa4\x77\xbd\xa2\x55\xb3\x2a\xad\xbc\xe4\xbd\xa0\xb3\xf7\xe3\x6c\x9d\xa7"
+    assert output == b"#\x09}\"4\x05\xd8\"\x86B\xa4w\xbd\xa2U\xb3*\xad\xbc\xe4\xbd\xa0\xb3\xf7\xe3l\x9d\xa7"
     mut other = Blake2b512.default()
     Digest.update(other, b"abc".as_slice())
     assert len(other.finalize_reset().to_vec()) == 64
@@ -178,7 +179,7 @@ def show_generic_receivers() -> None:
     mut reader = ExtendableOutputReset.finalize_xof_reset(shake)
     mut output = b"\x00\x00\x00\x00"
     reader.read(output)
-    assert output == b"\x58\x81\x09\x2d"
+    assert output == b"X\x81\x09-"
     owner = blake3_hash(b"abc".as_slice())
     assert size_of_val(owner.as_bytes()) == 32
     view = owner.as_bytes()
@@ -199,11 +200,15 @@ def show_generic_receivers() -> None:
     assert wide.digest() == xxh3_64(input.as_slice())
     assert wide.digest128() == xxh3_128(input.as_slice())
     match GenericReader().integer():
-        Ok(decoded) => assert decoded == 7
-        Err(_error) => assert false
+        Ok(decoded) =>
+            assert decoded == 7
+        Err(_error) =>
+            assert false
     match GenericReader().native():
-        Ok(decoded) => assert decoded.as_secs() == 9u64
-        Err(_error) => assert false
+        Ok(decoded) =>
+            assert decoded.as_secs() == 9u64
+        Err(_error) =>
+            assert false
     increment = 3
     assert GenericReader().apply(transform=(value) => value + increment, value=4) == 7
     retained = GenericReader().keep((value) => value + increment)
@@ -319,6 +324,28 @@ def captured_chain[F with (Callable1[int, Generator[int]], Static)](
     return NativeGenerator.new(adapted)
 
 
+def observe_captures(captures: &NativeCaptures) -> bool:
+    """Read a lifetime-bearing native input without erasing its call-scoped binders (#2368)."""
+    if let Some(found) = captures.name("word"):
+        return found.as_str() == "ab"
+    return false
+
+
+def check_borrowed_captures() -> None:
+    """1. Create native captures. 2. Pass their borrowed owner through an authored signature."""
+    # 1. Keep the pattern and its source text alive while the native capture exists.
+    match Regex.new("(?P<word>ab)(c)?"):
+        Ok(pattern) =>
+            # 2. The callee's opaque input receives independently bound native lifetimes.
+            match pattern.captures("ab"):
+                Some(captures) =>
+                    assert observe_captures(captures)
+                None =>
+                    assert false
+        Err(_error) =>
+            assert false
+
+
 def main() -> None:
     """Run each registry-crate observation in the order of the cases it carries."""
     show_extension_traits()
@@ -336,3 +363,4 @@ def main() -> None:
     deferred = captured_chain(singleton(1), (value) => singleton(value + offset))
     println("captured chain created")
     println(native_snapshot_length[str](words))
+    check_borrowed_captures()

@@ -2366,8 +2366,9 @@ impl TypeChecker {
     ///
     /// Every `for` statement and comprehension clause iterates through here, so this is also where iterating a
     /// generator that a caller-visible `mut` parameter holds is recorded as a change to the parameter. Builtin
-    /// iterator values retain builtin polling. Native iterator items come from the retained `Iterator::Item`
-    /// projection; structural hooks are selected only by the custom protocol resolver.
+    /// iterator values retain builtin polling. Native items come from the selected `Iterator::Item` or
+    /// `IntoIterator::Item` projection; a collection's owned iteration need not implement Iterator itself. Structural
+    /// hooks are selected only by the custom protocol resolver.
     pub fn infer_iterator_element_type_from_expr(
         &mut self,
         iter_expr: &Spanned<Expr>,
@@ -2405,6 +2406,9 @@ impl TypeChecker {
             return item;
         }
         if let Some(item) = self.rust_associated_type(iter_ty, "std::iter::Iterator", "Item") {
+            return item;
+        }
+        if let Some(item) = self.rust_associated_type(iter_ty, "std::iter::IntoIterator", "Item") {
             return item;
         }
         if self.is_user_operator_receiver(iter_ty) {

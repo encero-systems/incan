@@ -515,8 +515,7 @@ def runtime_callable_argument(
             is_mut=false,
         )
         parameters.append(parameter.clone())
-    declared: RustType = function_type(parameters, runtime_argument(module, signature[len(signature) - 1], intrinsics)?)
-    return Ok(generic("<native-callable>", [declared]))
+    return Ok(function_type(parameters, runtime_argument(module, signature[len(signature) - 1], intrinsics)?))
 
 
 def runtime_enum_argument(

@@ -78,7 +78,9 @@ impl TypeChecker {
     }
 
     /// Compare a retained nominal carrier with its accepted source binding before checking its exact nested arguments.
-    /// Equal-spelled declarations from other modules never establish compatibility.
+    /// Equal-spelled declarations from other modules never establish compatibility. A bare carrier of a declaration
+    /// with type parameters, such as a payload-free generic enum variant, takes its arguments from the other side, as
+    /// a bare source name does.
     pub(super) fn retained_nominal_types_compatible(
         &self,
         actual: &ResolvedType,
@@ -91,6 +93,9 @@ impl TypeChecker {
         if !same_declaration {
             return None;
         }
+        if actual_args.is_empty() != expected_args.is_empty() {
+            return Some(self.declares_type_parameters(actual_name) || self.declares_type_parameters(expected_name));
+        }
         Some(
             actual_args.len() == expected_args.len()
                 && actual_args
@@ -98,6 +103,17 @@ impl TypeChecker {
                     .zip(expected_args)
                     .all(|(actual, expected)| self.nested_types_compatible(actual, expected)),
         )
+    }
+
+    /// Whether a source or carrier name selects a model, class, newtype or enum declaration with type parameters.
+    fn declares_type_parameters(&self, name: &str) -> bool {
+        match self.lookup_semantic_type_info(name) {
+            Some(TypeInfo::Model(model)) => !model.type_params.is_empty(),
+            Some(TypeInfo::Class(class)) => !class.type_params.is_empty(),
+            Some(TypeInfo::Newtype(newtype)) => !newtype.type_params.is_empty(),
+            Some(TypeInfo::Enum(enum_info)) => !enum_info.type_params.is_empty(),
+            _ => false,
+        }
     }
 
     /// Record which modules of a check declare each nominal name: the checked program and every source dependency.

@@ -122,7 +122,7 @@ fn same_artifact(left: &Path, right: &Path) -> Result<bool, String> {
     Ok(read(left)? == read(right)?)
 }
 
-/// The crate a retained callee needs loaded. A slice or `str` method's internal owner is not a crate; its primitive
+/// The crate a retained callee needs loaded. A primitive method's internal owner is not a crate; its primitive
 /// impl bucket belongs to the always-linked standard closure. Full path and signature validation remain separate.
 pub(crate) fn callee_root(path: &str) -> Option<&str> {
     path.split("::").next().map(|root| {

@@ -59,7 +59,6 @@ mod helpers;
 mod json_member_requirements;
 mod mut_arguments;
 mod mut_marker;
-mod native_lifetimes;
 mod native_newtype_facts;
 mod native_storage;
 mod nominal_type_param_bounds;
@@ -1427,21 +1426,10 @@ impl TypeChecker {
     /// This must stay metadata-light. `types_compatible(...)` calls it frequently, so it may only use symbol-local
     /// metadata already attached during import collection plus cache-only Rust ABI/rust-inspect reads. Fresh
     /// rust-inspect extraction from this path would leak a heavy workspace/indexing concern into ordinary semantic
-    /// checks.
+    /// checks. Transparent rusttypes use the checked native template's binders before identity comparison.
     fn rust_identity_for_type(&self, ty: &ResolvedType) -> Option<RustTypeIdentity> {
-        let nominal = match ty {
-            ResolvedType::Named(name) => Some((name, &[][..])),
-            ResolvedType::Generic(name, arguments) => Some((name, arguments.as_slice())),
-            _ => None,
-        };
-        if let Some((name, arguments)) = nominal
-            && let Some(TypeInfo::Newtype(info)) = self.lookup_semantic_type_info(name)
-            && info.is_rusttype
-        {
-            let bindings = type_param_subst_map(&info.type_params, arguments);
-            let underlying = substitute_resolved_type(&info.underlying, &bindings);
-            let path = self.rust_path_for_rusttype_underlying(&underlying)?;
-            return self.rust_identity_for_type(&ResolvedType::RustPath(path));
+        if let Some(target) = self.rusttype_native_target(ty) {
+            return self.rust_identity_for_type(&target);
         }
         match ty {
             ResolvedType::RustPath(path) => {
@@ -2640,8 +2628,10 @@ impl TypeChecker {
         self.type_info.expressions.expr_types.insert(span, ty);
     }
 
-    /// Project named leaves through the accepted module/provider binding or retained carrier identity, retaining an
-    /// inspected runtime carrier's identity before Body IR normalizes its dedicated builtin type.
+    /// Project named leaves through their checked module, provider or native binding. Structured native displays
+    /// recurse through the same type conversion as signatures, so Result payload identities survive native values. A
+    /// `rusttype` value retains its inspected native item identity; its source declaration identity does not authorize
+    /// a distinct nominal payload.
     fn collect_expression_type_identities(
         &self,
         ty: &ResolvedType,
@@ -2651,6 +2641,15 @@ impl TypeChecker {
         match ty {
             ResolvedType::RustPath(display) => self.collect_rust_expression_type_identities(display, path, identities),
             ResolvedType::Named(name) => {
+                if matches!(self.lookup_semantic_type_info(name), Some(TypeInfo::Newtype(info)) if info.is_rusttype)
+                    && let Some(native) = self.rust_canonical_path_for_receiver_type(ty)
+                {
+                    let public = self.type_info.rust.item_public_paths.get(&native).unwrap_or(&native);
+                    if let Some(identity) = incan_semantics_core::body_ir::rust_item_identity(public) {
+                        identities.insert(path.clone(), identity);
+                    }
+                    return;
+                }
                 // Resolved nominal types keep their accepted module/provider binding even when a local value
                 // shadows the source alias. Provider-only return types may have no lexical symbol at all.
                 let identity = match self.public_library_type_identities.get(name) {
@@ -3748,15 +3747,18 @@ impl TypeChecker {
                     method_rebindings.push((sym.name.clone(), aliases));
                     if !info.is_rusttype {
                         newtype_construction.push((sym.name.clone(), info.clone()));
-                    } else if let Some((path, _, arguments, _)) =
-                        self.rust_identity_for_type(&ResolvedType::Named(sym.name.clone()))
-                    {
-                        let template =
-                            self.rust_inference_type(&ResolvedType::Generic(path, arguments), &info.type_params);
-                        self.type_info
-                            .rust
-                            .type_aliases
-                            .insert(sym.name.clone(), (info.type_params.clone(), template));
+                    } else {
+                        let alias = ResolvedType::Generic(
+                            sym.name.clone(),
+                            info.type_params.iter().cloned().map(ResolvedType::TypeVar).collect(),
+                        );
+                        if let Some(template) = self.rusttype_native_target(&alias) {
+                            let template = self.rust_storage_resolved(&template, &info.type_params);
+                            self.type_info
+                                .rust
+                                .type_aliases
+                                .insert(sym.name.clone(), (info.type_params.clone(), template));
+                        }
                     }
                     adopted_traits.extend(info.trait_adoptions.clone());
                 }

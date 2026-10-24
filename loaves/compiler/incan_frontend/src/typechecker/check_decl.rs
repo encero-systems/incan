@@ -6643,13 +6643,13 @@ impl TypeChecker {
     /// it may not read `self` or another callable parameter. Keeping this check before the frame bindings makes the
     /// source typechecker agree with call-time default materialization and records canonical expression facts for
     /// compiler-owned consumers without requiring them to reconstruct source typing.
-    /// Borrowed native parameter annotations require a retained lifetime contract for lifetime-bearing owners.
+    /// Native inputs keep their checked borrow shape; their erased metadata regions receive independent input
+    /// binders at the native signature boundary, without granting an output or field an escaping loan.
     fn resolve_callable_parameter_types_and_check_defaults(&mut self, params: &[Spanned<Param>]) -> Vec<ResolvedType> {
         params
             .iter()
             .map(|param| {
                 let param_ty = self.resolve_type_checked(&param.node.ty);
-                self.refuse_uncontracted_rust_borrows(&param_ty, param.node.ty.span);
                 self.record_mutable_rust_parameter_projection(&param.node);
                 self.refuse_unbounded_nominal_type_arguments(&param_ty, param.node.ty.span);
                 self.refuse_trait_type_nested_in_annotation(&param_ty, param.node.ty.span);

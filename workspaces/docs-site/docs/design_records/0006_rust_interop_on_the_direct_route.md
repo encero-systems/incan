@@ -36,7 +36,7 @@ Source models and newtypes may derive builtin traits or a dependency's inspected
 
 Native trait objects retain their principal identity, arguments, and declaration-ordered associated equalities. Rustc verifies object safety; auto traits require their own retained facts.
 
-Body-local storage erases lifetimes, while native input signatures bind each metadata lifetime independently before rustc checks outlives bounds. This input contract grants no escaping output or field borrow without a retained relationship to its owner.
+Body-local storage erases lifetimes, while native input signatures bind each metadata lifetime independently, including inside function pointers, before rustc checks outlives bounds. This input contract grants no escaping output or field borrow without a retained relationship to its owner.
 
 ## Consequences
 
@@ -49,13 +49,13 @@ Body-local storage erases lifetimes, while native input signatures bind each met
 
 - Layouts with hidden fields, and construction of items whose fields are not all public.
 - Const-generic arguments.
-- Borrowed Rust types in Incan signatures and fields, and Rust statics, until a lifetime or storage contract exists.
+- Borrowed Rust outputs and fields without a retained relationship to their owners.
 - Changing RFC 005's source surface.
-- Rust statics without a storage contract, borrowed aliases in source signatures/fields without retained lifetime contracts, and unsafe or unsupported calls without complete checked facts.
+- Rust statics without a storage contract, and unsafe or unsupported calls without complete checked facts.
 
 ## Revisit condition
 
-Revisit when a consumer needs layouts with hidden fields, or when a lifetime contract for borrowed Rust types in Incan signatures is designed.
+Revisit when a consumer needs layouts with hidden fields, or a retained lifetime relationship for borrowed Rust outputs or fields.
 
 ## Provenance
 

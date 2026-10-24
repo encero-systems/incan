@@ -347,20 +347,7 @@ fn describe_str(tcx: TyCtxt<'_>, facts: &mut BTreeMap<String, RustItemMetadata>,
         implemented_traits: trait_impls(tcx, tcx.types.str_, named),
         ..RustTypeInfo::default()
     };
-    for path in ["str", "std::primitive::str", "core::primitive::str"] {
-        let definition_path = (path != "str").then(|| "str".to_owned());
-        let mut selected = info.clone();
-        selected.alias_target = definition_path.clone();
-        facts.insert(
-            path.to_owned(),
-            RustItemMetadata {
-                canonical_path: path.to_owned(),
-                definition_path,
-                visibility: RustVisibility::Public,
-                kind: RustItemKind::Type(selected),
-            },
-        );
-    }
+    publish_primitive(facts, "str", info);
 }
 
 /// Publish primitive inherent methods and trait facts under native and standard public paths. Primitive items have no
@@ -373,24 +360,30 @@ fn describe_primitives(tcx: TyCtxt<'_>, facts: &mut BTreeMap<String, RustItemMet
             implemented_traits: trait_impls(tcx, native, named),
             ..RustTypeInfo::default()
         };
-        for path in [
-            name.to_owned(),
-            format!("std::primitive::{name}"),
-            format!("core::primitive::{name}"),
-        ] {
-            let definition_path = (path != name).then(|| name.to_owned());
-            let mut selected = info.clone();
-            selected.alias_target = definition_path.clone();
-            facts.insert(
-                path.clone(),
-                RustItemMetadata {
-                    canonical_path: path,
-                    definition_path,
-                    visibility: RustVisibility::Public,
-                    kind: RustItemKind::Type(selected),
-                },
-            );
-        }
+        publish_primitive(facts, name, info);
+    }
+}
+
+/// Publish one primitive's metadata under its native and public reexport identities. Each alias retains the same
+/// inherent methods and impl facts; a public primitive path never creates a different nominal carrier.
+fn publish_primitive(facts: &mut BTreeMap<String, RustItemMetadata>, name: &str, info: RustTypeInfo) {
+    for path in [
+        name.to_owned(),
+        format!("std::primitive::{name}"),
+        format!("core::primitive::{name}"),
+    ] {
+        let definition_path = (path != name).then(|| name.to_owned());
+        let mut selected = info.clone();
+        selected.alias_target = definition_path.clone();
+        facts.insert(
+            path.clone(),
+            RustItemMetadata {
+                canonical_path: path,
+                definition_path,
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(selected),
+            },
+        );
     }
 }
 

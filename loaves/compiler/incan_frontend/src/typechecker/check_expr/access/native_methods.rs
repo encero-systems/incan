@@ -556,8 +556,8 @@ impl TypeChecker {
         Some(self.resolved_type_from_rust_display(owner.type_param_defaults.get(index)?.as_deref()?))
     }
 
-    /// Retain the selected native result, normalizing associated projections and preserving a proven bytes carrier.
-    /// The source bytes carrier and Vec<u8> have the same ABI; retaining bytes avoids changing its indexing contract.
+    /// Retain the selected native result and normalize associated projections. Source projection stays separate:
+    /// borrowed byte slices keep their native reference even when the source-facing result is bytes.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn native_method_result(
         &self,
@@ -586,8 +586,11 @@ impl TypeChecker {
                 native = projected;
             }
         }
-        if *result == ResolvedType::Bytes && self.rust_trait_carriers_match(&native, result) {
-            return ResolvedType::Bytes;
+        if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
+            eprintln!(
+                "rust result: {path}.{} {} => {native:?}, source {result:?}",
+                method.name, method.signature.return_type
+            );
         }
         native
     }

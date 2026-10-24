@@ -117,6 +117,7 @@ pub enum PlanType:
     StringRef borrows an owned String, StringMutRef is the exclusive borrow a `mut str` parameter receives, and StrRef is a string literal's shared str view.
     ScalarRef and ScalarMutRef borrow one sized scalar, checked tuple, function pointer or shared reference with explicit
     shared or exclusive intent. Borrowing a reference preserves its referent without making that referent writable.
+    Nested shared references retain their exact pointee and binders; exclusive references remain outside copying.
     List stores its scalar or flat tuple leaf element and a positive nesting depth; ListRef and ListMutRef borrow that same Vec representation.
     ModelRef and ModelMutRef retain shared and mutable nominal receiver references; ModelMutRef, EnumMutRef and
     TupleMutRef are also the exclusive borrow a `mut` parameter or an in-place loop item holds. TupleRef and TupleMutRef

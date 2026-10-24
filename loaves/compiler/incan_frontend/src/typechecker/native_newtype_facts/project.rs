@@ -795,6 +795,9 @@ fn close_method_type(
 }
 
 /// Preserve all concrete checked positions while closing only the guarded owner or its original binder holes.
+///
+/// A checked tuple and a closed `Tuple[...]` signature are the same slots in either encoding: a method declared to
+/// return `Tuple[T, T]` closes to the written encoding, while its checked call result can retain the structural one.
 fn refines_checked_type(checked: &ResolvedType, native: &NativeValue, info: &TypeCheckInfo) -> bool {
     /// Preserve concrete positions and close only the exact retained owner template holes.
     fn agrees(
@@ -807,24 +810,12 @@ fn refines_checked_type(checked: &ResolvedType, native: &NativeValue, info: &Typ
         if old == new {
             return true;
         }
+        if let (Some(old), Some(new)) = (tuple_elements(old), tuple_elements(new)) {
+            return slots_agree(old, new, value, info, path);
+        }
         match (old, new) {
             (ResolvedType::Generic(old_name, old_args), ResolvedType::Generic(new_name, new_args)) => {
-                if old_name != new_name || old_args.len() != new_args.len() {
-                    return false;
-                }
-                old_args.iter().zip(new_args).enumerate().all(|(index, (old, new))| {
-                    let mut child = path.to_vec();
-                    child.push(index);
-                    agrees(old, new, value, info, &child)
-                })
-            }
-            (ResolvedType::Tuple(old), ResolvedType::Tuple(new)) => {
-                old.len() == new.len()
-                    && old.iter().zip(new).enumerate().all(|(index, (old, new))| {
-                        let mut child = path.to_vec();
-                        child.push(index);
-                        agrees(old, new, value, info, &child)
-                    })
+                old_name == new_name && slots_agree(old_args, new_args, value, info, path)
             }
             (ResolvedType::TypeVar(name), _) => {
                 value.holes.contains(path) && value.parameter.as_ref().is_some_and(|origin| origin.name == *name)
@@ -838,5 +829,22 @@ fn refines_checked_type(checked: &ResolvedType, native: &NativeValue, info: &Typ
             _ => false,
         }
     }
+
+    /// Compare positional children of one owner or tuple, each under its own hole path.
+    fn slots_agree(
+        old: &[ResolvedType],
+        new: &[ResolvedType],
+        value: &NativeValue,
+        info: &TypeCheckInfo,
+        path: &[usize],
+    ) -> bool {
+        old.len() == new.len()
+            && old.iter().zip(new).enumerate().all(|(index, (old, new))| {
+                let mut child = path.to_vec();
+                child.push(index);
+                agrees(old, new, value, info, &child)
+            })
+    }
+
     agrees(checked, &native.ty, native, info, &[])
 }

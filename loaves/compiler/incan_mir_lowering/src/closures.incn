@@ -563,21 +563,12 @@ def named_function_item(
 
 def item_component(mut builder: Builder, ty: &RustType) -> Result[PlanType, str]:
     """
-    Admit a function item's signature component: a callable component, a source model or enum, or a standard carrier.
+    Retain a function item's signature component through its checked frame's ordinary layout context.
 
-    The item's own frame takes and returns models, enums and carriers by value under the frame's own layout, which is
-    the representation a closure expression's item already carries.
+    Its inputs and result use the same nominal, scalar, borrowed and collection storage as its own frame. A second
+    signature whitelist would reject admitted borrowed scalar inputs before the native callable can be verified.
     """
-    match callable_component(ty):
-        Ok(component) => return Ok(component)
-        Err(reason) =>
-            match native_source_type(builder.nominals, builder.enums, builder.unions, ty, builder.intrinsics):
-                Ok(PlanType.Model(index, name)) => return Ok(PlanType.Model(index, name))
-                Ok(PlanType.ModelRef(index, name)) => return Ok(PlanType.ModelRef(index, name))
-                Ok(PlanType.ModelMutRef(index, name)) => return Ok(PlanType.ModelMutRef(index, name))
-                Ok(PlanType.Enum(index, name)) => return Ok(PlanType.Enum(index, name))
-                Ok(PlanType.FunctionPointer(signature)) => return Ok(PlanType.FunctionPointer(signature))
-                _ => return Err(reason)
+    return native_source_type(builder.nominals, builder.enums, builder.unions, ty, builder.intrinsics)
 
 
 def item_input(mut builder: Builder, ty: &RustType) -> Result[PlanType, str]:

@@ -35,7 +35,9 @@ Oven's `incan toolchain pack OUT` produces the archive from an installed toolcha
 
 CI runners first install Rust 1.98.0 with `rustc-dev`, then install the dev.8 release artifact. Later development lanes use the same published artifact rather than reconstructing the private bootstrap environment. The artifact and Rust installation must match the runner's host platform.
 
-Until self-hosting is proven, the maintainer's bootstrap machine produces the release toolchain with the frozen dev.7 builder. After the installed dev.8 toolchain can build its compiler's Incan Loaves, CI builds each PR's compiler with that installed toolchain and verifies the resulting compiler. Installing a release artifact is a prerequisite for that build, not evidence that the PR's compiler was tested.
+Release production must build the runtime, lowering, driver, ten standard packages, Oven, contract runner and LSP from source with an installed dev.8 release pack. The frozen dev.7 builder and generated Rust are retired production paths. Acceptance requires an audit of every build unit excluding the private bootstrap inputs, a case-for-case census match on the same source and keys, and a second generation with identical driver, runtime, lowering, standard core, Oven and runner bytes. Until that complete gate passes, a partial native build does not establish a bootstrap-free release producer.
+
+CI builds each PR's compiler with the installed toolchain and verifies the resulting compiler. Installing a release artifact is a prerequisite for that build, not evidence that the PR's compiler was tested.
 
 ## Consequences
 

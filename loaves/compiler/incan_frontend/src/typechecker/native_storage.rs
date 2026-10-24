@@ -267,7 +267,7 @@ impl TypeChecker {
     /// A transparent alias already selects its native owner; freeze that owner before diagnostic runtime projection
     /// can translate it back into the same source alias. Rust's owned text keeps the primitive String carrier even
     /// when a lexical import contributes another public path for that same definition.
-    fn rust_storage_resolved(&self, ty: &ResolvedType, parameters: &[String]) -> ResolvedType {
+    pub(super) fn rust_storage_resolved(&self, ty: &ResolvedType, parameters: &[String]) -> ResolvedType {
         map_resolved_type_leaves(ty, &|leaf| {
             if let Some(binder) = source_binder(leaf, parameters) {
                 return Some(binder);

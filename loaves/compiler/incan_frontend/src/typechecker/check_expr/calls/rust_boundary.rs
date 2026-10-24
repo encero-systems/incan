@@ -411,6 +411,12 @@ impl TypeChecker {
             if let Some(name) = self.generic_placeholder_name(leaf) {
                 return Some(ResolvedType::TypeVar(name.to_owned()));
             }
+            if let ResolvedType::Named(name) = leaf
+                && matches!(self.lookup_semantic_type_info(name), Some(TypeInfo::Newtype(info)) if info.is_rusttype)
+                && let Some(path) = self.rust_canonical_path_for_receiver_type(leaf)
+            {
+                return Some(self.rust_inference_type(&ResolvedType::RustPath(path), parameters));
+            }
             if matches!(leaf, ResolvedType::Named(_) | ResolvedType::Generic(_, _)) {
                 let expanded = self.expand_type_aliases(leaf.clone());
                 if expanded != *leaf {

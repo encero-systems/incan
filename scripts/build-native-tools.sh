@@ -1,13 +1,25 @@
 #!/bin/zsh
-# Build and install Oven or the contract runner using only an installed dev.8 toolchain.
-# Usage: DEV8_LANE=/path/to/lane SELFBUILD_HOME=/installed/home scripts/build-native-tools.sh oven|contracts [--rebuild]
+# Build and install Oven, the contract runner or the LSP with an installed dev.8 toolchain.
+# Usage: DEV8_LANE=/path/to/lane SELFBUILD_HOME=/installed/home scripts/build-native-tools.sh oven|contracts|lsp [--rebuild]
 set -e
 
 lane=${DEV8_LANE:?set DEV8_LANE to the lane directory}
-name=${1:?select oven or contracts}
+name=${1:?select oven, contracts or lsp}
 case $name in
-    oven) destination=$lane/oven-bin/incan ;;
-    contracts) destination=$lane/contracts-bin/contracts ;;
+    oven|contracts)
+        project=$lane/incan/workspaces/$name
+        output=$project/target/incan/release/bin/$name
+        if [[ $name == oven ]]; then
+            destination=$lane/oven-bin/incan
+        else
+            destination=$lane/contracts-bin/contracts
+        fi
+        ;;
+    lsp)
+        project=$lane/incan/loaves/toolchain/incan-lsp
+        output=$project/target/incan/rust/release/bin/incan-lsp
+        destination=$lane/lsp-bin/incan-lsp
+        ;;
     *) print -u2 "unknown native tool: $name"; exit 2 ;;
 esac
 if [[ -n ${2:-} && $2 != --rebuild ]] || (( $# > 2 )); then
@@ -16,11 +28,10 @@ if [[ -n ${2:-} && $2 != --rebuild ]] || (( $# > 2 )); then
 fi
 
 export INCAN_HOME=${SELFBUILD_HOME:-$lane/dev8-home}
-export INCAN_STDLIB=${SELFBUILD_STDLIB:-$lane/bootstrap/stdlib-available}
+export INCAN_STDLIB=${SELFBUILD_STDLIB:-$lane/incan/loaves/stdlib}
 builder=${SELFBUILD_OVEN:-$lane/oven-bin/incan}
-project=$lane/incan/workspaces/$name
-output=$project/target/incan/release/bin/$name
-log=$lane/bootstrap/native-$name-build.log
+mkdir -p "$lane/out/native-builds"
+log=$lane/out/native-builds/$name.log
 
 # A generation proof must compile the source again, even when its executable stamp remains valid.
 if [[ ${2:-} == --rebuild && -f $output.oven-inputs ]]; then

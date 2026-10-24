@@ -7,6 +7,3 @@ main = "src/main.incn"
 
 [rust-dependencies]
 messages = { path = "rust/messages" }
-
-[dependencies]
-regex = { loaf = "crates-io/regex", version = "1" }

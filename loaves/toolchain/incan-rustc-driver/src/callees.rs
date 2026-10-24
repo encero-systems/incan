@@ -253,12 +253,14 @@ fn layout_definition(tcx: TyCtxt<'_>, definition: DefId, expected: DefKind) -> O
 /// concrete Self arguments and bounds remain subject to native signature validation.
 /// A structural slice owner selects one public builtin impl item through the same rustc index used by extraction.
 pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
-    if let Some(primitive) = path
+    // A public primitive alias names the primitive itself; scalar buckets resolve first, text and slices below.
+    let primitive = path
         .strip_prefix("std::primitive::")
-        .or_else(|| path.strip_prefix("core::primitive::"))
-    {
-        return primitive_path(tcx, primitive).ok_or_else(|| PlanError::UnknownCallee(path.into()));
+        .or_else(|| path.strip_prefix("core::primitive::"));
+    if let Some(definition) = primitive.and_then(|primitive| primitive_path(tcx, primitive)) {
+        return Ok(definition);
     }
+    let path = primitive.unwrap_or(path);
     if let Some((owner, method)) = path.split_once("::") {
         let native = match owner {
             "f32" => Some(tcx.types.f32),

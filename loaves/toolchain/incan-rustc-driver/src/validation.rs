@@ -1619,7 +1619,8 @@ fn external_signature_type(ty: &Scalar) -> bool {
 }
 
 /// The scalar reference carrier borrows primitive storage, a checked tuple, a function pointer, or a sized shared
-/// reference. Borrowing a reference preserves its referent and does not make that referent writable.
+/// reference. Borrowing a reference preserves its referent and does not make that referent writable; exclusive
+/// reference values do not acquire copying authority.
 fn scalar_referent(ty: &Scalar) -> bool {
     if shared_reference(ty) {
         return true;
@@ -2527,7 +2528,7 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
             if !matches!(elements.as_slice(), [inner] if scalar_referent(&scalar(inner))) {
                 return Err(PlanError::Unsupported {
                     function: "scalar reference".into(),
-                    reason: "scalar reference requires one admitted sized scalar referent".into(),
+                    reason: "scalar reference requires one admitted sized scalar or shared-reference referent".into(),
                 });
             }
             for element in elements {

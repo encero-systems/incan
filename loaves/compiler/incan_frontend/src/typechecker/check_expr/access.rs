@@ -2170,7 +2170,8 @@ impl TypeChecker {
 
     /// Record one compiler-generated member under its checked lexical or provider-owned type identity. Returned
     /// submodule types retain their admitted identity even when no lexical binding uses their internal spelling.
-    /// A selected field or result uses its declaration's nominal scope before any same-named consumer binding.
+    /// A selected field or result uses its declaration's nominal scope before any same-named consumer binding. An
+    /// internal carrier uses the checker-retained nominal identity table rather than a reconstructed source spelling.
     pub(in crate::typechecker::check_expr) fn record_compiler_generated_member_identity(
         &mut self,
         owner_name: &str,
@@ -2183,6 +2184,15 @@ impl TypeChecker {
             .and_then(|declaration| self.declaration_nominal_scopes.get(declaration))
             .and_then(|scope| scope.get(owner_name));
         let Some(owner) = declared_owner
+            .or_else(|| {
+                self.type_info
+                    .declarations
+                    .named_type_identities
+                    .get(owner_name)
+                    .filter(|identity| {
+                        incan_semantics_core::body_ir::nominal_carrier_key(identity).as_deref() == Some(owner_name)
+                    })
+            })
             .or_else(|| {
                 self.symbols
                     .lookup(owner_name)
@@ -6748,11 +6758,13 @@ impl TypeChecker {
         let rust_receiver_path = self.rust_canonical_path_for_receiver_type(&base_ty).or_else(|| {
             // Source Result combinators keep their callback's environment even when Rust supplied the carrier.
             let source_builtin_method = (base_ty == ResolvedType::Str && string_methods::from_str(method).is_some())
+                || (base_ty == ResolvedType::Bytes && bytes_methods::from_str(method).is_some())
                 || result_callback.is_some();
             if source_list_method || source_builtin_method {
                 return None;
             }
             self.rust_value_item_path(base)
+                .or_else(|| self.rust_method_receiver_path(base))
         });
         let defer_rust_closures = rust_receiver_path.is_some();
 

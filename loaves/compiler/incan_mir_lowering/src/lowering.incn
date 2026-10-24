@@ -63,7 +63,7 @@ from native_callables import native_callable_storage
 from rust::incan_semantics_core::body_ir import NativeClosureStorage
 from newtype_constants import numeric_newtype_literal
 from sdk_async_types import close_async_types, primary_async_body, async_call_type_arguments, selected_async_receiver
-from layout_types import shared_receiver_type, mutable_receiver_type, stored_field_type
+from layout_types import shared_receiver_type, mutable_receiver_type, stored_field_type, native_alias_boundary
 from native_call_keys import native_result_matches
 from text_ownership import drop_borrowed_text_temporaries
 from signature_lifetimes import signature_lifetimes
@@ -7177,7 +7177,7 @@ pub def list_slice_view(
         method = "core::convert::AsMut::as_mut"
     parameter = operand_type(builder, reference)?
     element, depth = require_list_shape(parameter, "unsupported Body IR native slice owner")?
-    if list_element(element, depth) != elements[0]:
+    if depth < 1 or list_element(element, depth) != elements[0]:
         return Err("unsupported Body IR native slice element mismatch")
     output = temporary(builder, reference_type, span)
     arguments = [PlanType.List(element, depth), PlanType.NativeSlice(elements)]
@@ -7212,6 +7212,7 @@ def borrow_scalar_operand(
                 return Err("unsupported Body IR scalar reference without an exclusive borrow fact")
             owner = scalar_borrow_owner(builder, read, referent, mutable, span)?
             actual = place_type(builder.locals, owner)
+            # An exact reference-valued referent needs another loan; an additional existing loan is reborrowed.
             if actual != referent:
                 match actual:
                     PlanType.ScalarRef(inner) =>
@@ -10123,8 +10124,11 @@ def lower_list_method(
             None => return Err("invalid Body IR bytes.as_slice spread")
     if member == "List.contains":
         leaf, _depth = require_list_shape(receiver_ty, "unsupported Body IR List.contains receiver")?
+        # Opaque native records use the primitive's verified PartialEq; source layouts keep their equality boundary.
         match leaf:
-            ListLeaf.Model(_owner, _name) => return Err("unsupported Body IR List.contains nominal equality")
+            ListLeaf.Model(owner, _name) =>
+                if library_item(builder.nominals[owner]) == "":
+                    return Err("unsupported Body IR List.contains nominal equality")
             ListLeaf.Enum(_owner, _name) => return Err("unsupported Body IR List.contains enum equality")
             ListLeaf.FunctionPointer(_signature) => return Err("unsupported Body IR List.contains callable equality")
             ListLeaf.Tuple(_fields) => return Err("unsupported Body IR List.contains tuple equality")
@@ -10167,10 +10171,6 @@ def lower_list_method(
         "List.clone" =>
             name = "clone_list"
             result = PlanType.List(leaf, depth)
-        "List.contains" =>
-            name = "contains_list"
-            result = PlanType.Bool
-            parameters = [element]
         "List.count" =>
             result = PlanType.Int
             if len(arguments) == 1:
@@ -10409,25 +10409,34 @@ def lower_list_helper(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Keep Body IR's haystack-first membership argument order and explicit negation."""
+    """Borrow both operands for native PartialEq, retaining haystack-first order and explicit negation."""
     if len(arguments) != 2:
         return Err("unsupported Body IR list membership arity")
     receiver = shared_sequence_receiver(builder, arguments, span)?
     leaf, depth = require_list_shape(place_type(builder.locals, receiver), "unsupported Body IR membership on non-list")?
-    mut argument = argument_value(builder, arguments, 1, span)?
-    argument = element_plan_operand(builder, argument, list_element(leaf, depth), span)?
+    element = list_element(leaf, depth)
+    mut needle_type = PlanType.Unit
+    match shared_receiver_type(element):
+        Ok(reference_type) => needle_type = reference_type
+        Err(reason) => return Err(f"{reason} in {builder.name} membership needle at {span.file}:{span.line}")
+    mut argument = literal(Constant.Unit, span)
+    match arguments[1].as_one():
+        Some(value) => argument = call_argument_operand(builder, value, needle_type, span, false)?
+        None => return Err("unsupported Body IR list membership needle spread")
     reference = list_borrow(builder, receiver, false, span)?
+    slice_type = PlanType.SliceRef([element])
+    slice_reference = list_slice_view(builder, reference, [element], false, span)?
     output = call_destination(builder, destination, PlanType.Bool, span)?
-    list_call(
+    instantiated_external_call(
         builder,
-        "contains_list",
-        list_element(leaf, depth),
-        [PlanType.ListRef(leaf, depth), list_element(leaf, depth)],
+        "incan_std_core::collections::list_contains",
+        [element],
+        [slice_type, needle_type],
         PlanType.Bool,
-        [reference, argument],
+        [slice_reference, argument],
         output,
         span,
-    )
+    )?
     if negated:
         builder.emit(plan_assign(output, RvalueKind.Unary(UnaryOp.Not, read_place(output, false, span)), span))
     return Ok(None)
@@ -12791,7 +12800,7 @@ pub def boundary_plan_operand(
     target: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Convert an evaluated value to its checked boundary carrier, preserving tuple layouts and ownership without repeating source effects."""
+    """Convert an evaluated value to its checked boundary carrier, retaining exact native aliases, tuple layouts and ownership without repeating source effects."""
     source = operand_type(builder, value)?
     if source == PlanType.StrRef and target == PlanType.String:
         owned = owned_slice_text(builder, value, span)
@@ -12855,7 +12864,16 @@ pub def boundary_plan_operand(
         builder.intrinsics,
     )?
     match operation:
-        RvalueKind.Use(result) => return Ok(result)
+        RvalueKind.Use(result) =>
+            if actual_source == target or not native_alias_boundary(builder.nominals, actual_source, target):
+                return Ok(result)
+            alias = temporary(builder, target, span)
+            alias_operation = RvalueKind.NativeAlias(result, actual_source, target)
+            forget_moved_arguments(builder, [result])
+            builder.emit(plan_assign(alias, alias_operation, span))
+            if snapshot_owns(target):
+                builder.owned.append(alias.local)
+            return Ok(read_place(alias, snapshot_owns(target), span))
         _ =>
             output = temporary(builder, target, span)
             track_rvalue_moves(builder, operation)

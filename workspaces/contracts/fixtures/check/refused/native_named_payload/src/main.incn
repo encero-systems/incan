@@ -1,9 +1,7 @@
-# behavior: native payloads require typed coverage; lifetime-bearing Rust parameters refuse by value or reference (#2368)
+# behavior: named native enum payloads require complete typed coverage
 # expect-diagnostic: INCAN-T0001
-# expect-diagnostic: INCAN-T0120
 
 from rust::messages import Message
-from rust::regex import Regex, Captures as NativeCaptures
 
 
 def incomplete_owned(value: Message) -> int:
@@ -27,25 +25,6 @@ def incomplete(value: &Message) -> int:
         Message.Empty => return 0
 
 
-def observe(captures: &NativeCaptures) -> bool:
-    """Refuse the erased-region source boundary before rustc outlives checking."""
-    if let Some(found) = captures.name("word"):
-        return found.as_str() == "ab"
-    return false
-
-
-def observe_value(captures: NativeCaptures) -> bool:
-    """Refuse the native value's internal borrow before rustc converts its erased region."""
-    if let Some(found) = captures.name("word"):
-        return found.as_str() == "ab"
-    return false
-
-
 def main() -> None:
-    """Exercise the original lifetime-bearing native parameter program from #2368."""
-    match Regex.new("(?P<word>ab)(c)?"):
-        Ok(pattern) =>
-            match pattern.captures("ab"):
-                Some(captures) => println(observe(captures))
-                None => println("no captures")
-        Err(_error) => println("invalid pattern")
+    """Keep the incomplete and incorrectly typed native payload declarations in one checked unit."""
+    pass

@@ -50,7 +50,7 @@ impl TypeChecker {
     /// Unanchored Self templates require bound filtering before their associated values compete with concrete owner
     /// templates. Native signature and predicate validation remains authoritative for a selected concrete call.
     /// An unresolved blanket projection does not prevent a later concrete candidate from supplying its associated
-    /// value.
+    /// value; only successfully normalized candidates participate in specificity selection.
     fn rust_associated_type_at_depth(
         &self,
         ty: &ResolvedType,

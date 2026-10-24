@@ -643,6 +643,27 @@ impl TypeChecker {
         }
     }
 
+    /// Select a native method receiver before materializing a direct borrowed return as its owned source surface.
+    /// The same consumer marker used for native arguments prevents a later return pass from recreating that copy;
+    /// assigned source locals retain their already selected storage, and parentheses preserve the inner identity.
+    pub(super) fn rust_method_receiver_path(&mut self, expression: &Spanned<Expr>) -> Option<String> {
+        if let Expr::Paren(inner) = &expression.node {
+            return self.rust_method_receiver_path(inner);
+        }
+        let key = expression.span;
+        let native = self
+            .type_info
+            .rust
+            .checked_calls
+            .get(&key)
+            .map(|call| call.return_type.clone())
+            .or_else(|| self.rust_native_value_type(expression))?;
+        let path = self.rust_canonical_path_for_receiver_type(&native)?;
+        self.type_info.rust.native_return_consumers.insert(key);
+        self.type_info.rust.return_coercions.remove(&key);
+        Some(path)
+    }
+
     /// Recover the exact native carrier of a public Rust field, selected call, checked source view, or local alias for
     /// generic inference. A source view's flattened public type must not replace its already retained executable
     /// borrow.
