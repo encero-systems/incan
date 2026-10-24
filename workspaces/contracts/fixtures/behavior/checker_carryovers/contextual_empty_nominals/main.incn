@@ -1,4 +1,4 @@
-# behavior: plain and shared list elements retain declaring field owners despite unimported or same-named caller types
+# behavior: declaring owners survive plain and shared fields, source aliases, typed collections and Result payloads
 # expect-stdout:
 #   0
 #   true
@@ -10,14 +10,21 @@
 #   foreign
 #   foreign
 #   foreign
+#   2
+#   2
+#   foreign
+#   2
 
 """Read provider collections beside a distinct caller model with the same name."""
 
-from records import Decision, Shared, count, make, make_shared, text_of
+from records import Decision, Shared, count, count_decision, make, make_shared, text_of
+from records import EvidenceId as ForeignEvidenceId
+from records import populated as make_decision
 
 
 model EvidenceId:
     """An identifier owned by the caller."""
+
     text: str
 
 
@@ -28,6 +35,7 @@ def main() -> None:
     1. Construct empty collections under the provider's declared owners.
     2. Read the caller's own identifier independently.
     3. Read populated plain and shared collections through their declaring fields.
+    4. Reuse their types through annotated functions and dictionary assignments.
     """
     # 1. Empty values take their field and parameter context.
     decision = Decision(evidence_ids=[], first=None, by_name={})
@@ -46,6 +54,25 @@ def main() -> None:
         println(evidence.text)
     println(populated.evidence_ids[0].text)
     observe_shared(make_shared())
+    # 4. Field collections and returned identifiers retain their own declaration contracts.
+    println(count_decision(populated))
+    println(count_foreign(populated.evidence_ids))
+    println(text_of(make()))
+    match reply():
+        Ok(decision) => println(count_decision(decision))
+        Err(error) => println(error)
+
+
+def reply() -> Result[Decision, str]:
+    """Wrap a provider-owned decision while retaining every Result payload identity."""
+    return Ok(make_decision())
+
+
+def count_foreign(values: list[ForeignEvidenceId]) -> int:
+    """Reuse an imported field collection through lexical annotations and typed element assignment."""
+    mut by_name: Dict[str, ForeignEvidenceId] = {}
+    by_name["entry"] = values[0]
+    return len(values) + len(by_name)
 
 
 def observe_shared(shared: Shared) -> None:

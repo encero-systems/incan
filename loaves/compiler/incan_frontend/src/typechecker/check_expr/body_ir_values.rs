@@ -715,13 +715,7 @@ fn same_retained_nominal_head(checker: &TypeChecker, recorded: &str, actual: &st
     if recorded == actual {
         return true;
     }
-    let source_name = checker
-        .symbols
-        .module_type_identity(recorded)
-        .map_or(recorded, |identity| identity.declaration_name.as_str());
-    checker.declaration_nominal_scopes.keys().any(|identity| {
-        identity.declaration_name == source_name && nominal_carrier_key(identity).as_deref() == Some(actual)
-    })
+    checker.source_nominal_carrier_key(recorded).as_deref() == Some(actual)
 }
 
 /// Preserve expected nominal leaves through their declaration's retained bindings. This only projects a

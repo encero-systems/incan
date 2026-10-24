@@ -1707,7 +1707,8 @@ impl TypeChecker {
     }
 
     /// Validate a Rust method call, letting the type its result is expected to have bind method binders the
-    /// arguments leave open (`parse::<F>()` reads `F` from `Result<i64, _>`).
+    /// arguments leave open (`parse::<F>()` reads `F` from `Result<i64, _>`). Literal aggregates are checked against
+    /// the specialized parameter before their concrete storage is retained for Body IR.
     pub(in crate::typechecker) fn validate_rust_method_call_with_expected(
         &mut self,
         callable_display: &str,
@@ -1764,8 +1765,16 @@ impl TypeChecker {
             );
             let contextual_arg_ty = if (matches!(arg_expr.node, Expr::Closure(_, _))
                 && matches!(&target_ty, ResolvedType::Function(_, _)))
-                || matches!(arg_expr.node, Expr::Literal(_) | Expr::Unary(_, _))
                 || super::super::ops::is_unsuffixed_integer_literal(arg_expr)
+                || matches!(
+                    arg_expr.node,
+                    Expr::Literal(_)
+                        | Expr::Unary(_, _)
+                        | Expr::List(_)
+                        | Expr::Dict(_)
+                        | Expr::Set(_)
+                        | Expr::Tuple(_)
+                )
                 || (matches!(arg_expr.node, Expr::Call(..) | Expr::MethodCall(..))
                     && Self::rust_call_arg_wants_owner_expectation(binding.arg_ty, &target_ty))
             {

@@ -2986,7 +2986,8 @@ fn enum_declaration(plan: &Plan, index: i64) -> Option<&crate::plan::EnumDeclara
 
 /// Reject malformed enum layouts and unsupported derives; validate exact forward references before size-cycle checks.
 /// Native Option/Result carriers and library enums retain their checked borrowed payloads; source-owned enum fields
-/// remain limited to source signature types.
+/// remain limited to source signature types. Library Copy and Clone markers are capabilities verified against rustc,
+/// not requests to synthesize derive implementations on the native alias.
 fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
     let mut names: BTreeSet<_> = plan
         .functions
@@ -3032,7 +3033,10 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
             || (declaration.library_item.is_empty() && !declaration.library_type_arguments.is_empty())
             || (!declaration.library_item.is_empty()
                 && (!declaration.carrier.is_empty()
-                    || declaration.derives.iter().any(|derive| derive != "Clone")
+                    || declaration
+                        .derives
+                        .iter()
+                        .any(|derive| !matches!(derive.as_str(), "Clone" | "Copy"))
                     || !declaration.raw_kind.is_empty()))
             || declaration.derives.iter().any(|name| match name.as_str() {
                 "Debug" | "Clone" | "Copy" | "PartialEq" | "Eq" | "PartialOrd" | "Ord" | "Hash" => false,

@@ -232,7 +232,8 @@ impl BodyIrModule {
             })
     }
 
-    /// Whether a normal enum layout belongs to this module and every variant identity belongs to its declared owner.
+    /// Whether a normal enum layout and every variant belong to their exact declared owner. A native enum may retain
+    /// only its checked Copy capability beside that identity; the adapter verifies it against the concrete Rust type.
     pub fn is_well_formed_native_enum_declaration(&self, declaration: &crate::body_ir::EnumDeclaration) -> bool {
         if declaration.type_parameters.iter().any(String::is_empty)
             || declaration.type_parameters.iter().collect::<BTreeSet<_>>().len() != declaration.type_parameters.len()
@@ -240,7 +241,7 @@ impl BodyIrModule {
             return false;
         }
         if matches!(declaration.canonical.origin, crate::SymbolOrigin::RustCrate(_)) {
-            let Some(expected) = crate::body_ir::native_enum_declaration(
+            let Some(mut expected) = crate::body_ir::native_enum_declaration(
                 &declaration.native_item,
                 declaration.type_parameters.clone(),
                 declaration
@@ -251,6 +252,10 @@ impl BodyIrModule {
             ) else {
                 return false;
             };
+            if declaration.derives.len() > 1 || declaration.derives.iter().any(|derive| derive != "Copy") {
+                return false;
+            }
+            expected.derives.clone_from(&declaration.derives);
             return declaration == &expected
                 && crate::body_ir::native_nominal_module(&declaration.canonical).as_deref()
                     == Some(self.module_id.path())

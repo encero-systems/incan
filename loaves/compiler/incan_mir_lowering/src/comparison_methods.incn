@@ -10,13 +10,17 @@ from rust::incan_semantics_core import (
 )
 from rust::incan_semantics_core::body_ir import BodyIrModule, Body, MethodTarget, CallableParamDefault
 from pub::incan_mir_plan import PlanType, EnumDeclaration
-from classes import frame_type, function_name
+from classes import frame_type, function_name, parameter_local_index
 from decls import library_item, library_enum_item
 
 
 pub def standard_comparison_slot(identity: &CanonicalSymbolId, name: str) -> bool:
     """Require the checked member identity of the standard comparison protocol, in source or SDK form."""
-    if identity.kind != SemanticSourceTargetKind.Method or identity.namespace != SymbolNamespace.Member or identity.declaration_name != name:
+    if (
+        identity.kind != SemanticSourceTargetKind.Method
+        or identity.namespace != SymbolNamespace.Member
+        or identity.declaration_name != name
+    ):
         return false
     match identity.origin:
         SymbolOrigin.Module(path) =>
@@ -26,7 +30,10 @@ pub def standard_comparison_slot(identity: &CanonicalSymbolId, name: str) -> boo
         _ => return false
 
 
-pub def comparison_functions(module: &BodyIrModule, mut intrinsics: list[EnumDeclaration]) -> Result[list[list[str]], str]:
+pub def comparison_functions(
+    module: &BodyIrModule,
+    mut intrinsics: list[EnumDeclaration],
+) -> Result[list[list[str]], str]:
     """Retain one borrowed equality body, and all four owned ordering bodies when a checked source Ord slot is supplied."""
     mut owners: list[list[str]] = []
     for owner in range(len(module.nominal_declarations)):
@@ -71,8 +78,7 @@ def comparison_body(
             Some(previous) =>
                 if previous != implementation.implementation:
                     return Err("unsupported Body IR ambiguous native comparison implementation")
-            None =>
-                selected = Some(implementation.implementation.clone())
+            None => selected = Some(implementation.implementation.clone())
     match selected:
         None => return Err(f"unsupported Body IR unavailable native comparison slot {name}")
         Some(identity) =>
@@ -81,7 +87,7 @@ def comparison_body(
             for body in module.bodies:
                 if body.canonical != Some(identity.clone()) or len(body.params) != 2:
                     continue
-                first = body.locals[int(body.params[0].local.index())]
+                first = body.locals[parameter_local_index(body, 0)]
                 match frame_type(list(module.nominal_declarations), list(module.enum_declarations), first, intrinsics):
                     Ok(receiver) =>
                         if receiver == PlanType.ModelRef(owner, str(declaration.name)):
@@ -103,8 +109,8 @@ def validate_comparison_body(
         return Err("unsupported Body IR generic or nonbinary native comparison body")
     name = str(module.nominal_declarations[owner].name)
     reference = PlanType.ModelRef(owner, name)
-    first = body.locals[int(body.params[0].local.index())]
-    second = body.locals[int(body.params[1].local.index())]
+    first = body.locals[parameter_local_index(body, 0)]
+    second = body.locals[parameter_local_index(body, 1)]
     mut expected = PlanType.Model(owner, name)
     if borrowed:
         expected = reference
@@ -113,7 +119,10 @@ def validate_comparison_body(
             _ => return Err("unsupported Body IR native equality with a defaulted other operand")
     mut nominals = module.nominal_declarations
     mut enums = module.enum_declarations
-    if frame_type(nominals, enums, first, intrinsics)? != reference or frame_type(nominals, enums, second, intrinsics)? != expected:
+    if (
+        frame_type(nominals, enums, first, intrinsics)? != reference
+        or frame_type(nominals, enums, second, intrinsics)? != expected
+    ):
         return Err("unsupported Body IR native comparison input ABI")
     if body.return_type != RustType.Primitive(IncanPrimitiveType.Bool):
         return Err("unsupported Body IR native comparison result ABI")
@@ -125,17 +134,20 @@ pub def source_equality_value(module: &BodyIrModule, target: &MethodTarget, body
     if body.canonical == None:
         return None
     for owner in range(len(module.nominal_declarations)):
-        if target.canonical == body.canonical and module.nominal_declarations[owner].comparison_equality == body.canonical:
+        if (
+            target.canonical == body.canonical
+            and module.nominal_declarations[owner].comparison_equality == body.canonical
+        ):
             return Some(PlanType.Model(owner, str(module.nominal_declarations[owner].name)))
     for owner in range(len(module.enum_declarations)):
         declaration = module.enum_declarations[owner]
         for implementation in module.trait_implementations:
-            if implementation.owner == declaration.canonical and standard_comparison_slot(
-                implementation.method,
-                "__eq__",
-            ) and Some(implementation.implementation.clone()) == body.canonical and (target.canonical == body.canonical or target.canonical == Some(
-                implementation.method.clone(),
-            )):
+            if (
+                implementation.owner == declaration.canonical
+                and standard_comparison_slot(implementation.method, "__eq__")
+                and Some(implementation.implementation.clone()) == body.canonical
+                and (target.canonical == body.canonical or target.canonical == Some(implementation.method.clone()))
+            ):
                 if len(body.params) == 2 and body.params[1].ty == RustType.Ref(RustType.Named(str(declaration.name))):
                     return Some(PlanType.Enum(owner, str(declaration.name)))
     return None
@@ -152,16 +164,20 @@ pub def enum_comparison_functions(
         mut symbols: list[str] = []
         if library_enum_item(declaration) == "" and len(declaration.type_parameters) == 0:
             for implementation in module.trait_implementations:
-                if implementation.owner != declaration.canonical or not standard_comparison_slot(
-                    implementation.method,
-                    "__eq__",
+                if (
+                    implementation.owner != declaration.canonical
+                    or not standard_comparison_slot(implementation.method, "__eq__")
                 ):
                     continue
                 if implementation.implementation == implementation.method:
                     continue
                 symbols.append(enum_comparison_body(module, owner, "__eq__", true, intrinsics)?)
                 for slot in module.trait_implementations:
-                    if slot.owner == declaration.canonical and standard_comparison_slot(slot.method, "__lt__") and slot.implementation != slot.method:
+                    if (
+                        slot.owner == declaration.canonical
+                        and standard_comparison_slot(slot.method, "__lt__")
+                        and slot.implementation != slot.method
+                    ):
                         for name in ["__lt__", "__le__", "__gt__", "__ge__"]:
                             symbols.append(enum_comparison_body(module, owner, name, false, intrinsics)?)
                         break
@@ -205,8 +221,7 @@ def enum_comparison_body(
             Some(previous) =>
                 if previous != implementation.implementation:
                     return Err("unsupported Body IR ambiguous enum comparison implementation")
-            None =>
-                selected = Some(implementation.implementation.clone())
+            None => selected = Some(implementation.implementation.clone())
     match selected:
         None => return Err(f"unsupported Body IR unavailable enum comparison slot {name}")
         Some(identity) =>
@@ -219,11 +234,14 @@ def enum_comparison_body(
                 mut other = PlanType.Enum(owner, str(declaration.name))
                 if borrowed:
                     other = reference
-                first = body.locals[int(body.params[0].local.index())]
-                second = body.locals[int(body.params[1].local.index())]
+                first = body.locals[parameter_local_index(body, 0)]
+                second = body.locals[parameter_local_index(body, 1)]
                 mut nominals = module.nominal_declarations
                 mut enums = module.enum_declarations
-                if frame_type(nominals, enums, first, intrinsics)? != reference or frame_type(nominals, enums, second, intrinsics)? != other:
+                if (
+                    frame_type(nominals, enums, first, intrinsics)? != reference
+                    or frame_type(nominals, enums, second, intrinsics)? != other
+                ):
                     continue
                 match body.params[1].default:
                     CallableParamDefault.Required => return Ok(function_name(module, body))

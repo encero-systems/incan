@@ -35,7 +35,7 @@ from pub::incan_mir_plan import (
 )
 from pub::incan_mir_plan import block as plan_block, place as plan_place
 from types import primitive_type
-from classes import receiver_mode
+from classes import receiver_mode, parameter_local_index
 from async_ import evaluator_name
 from collections import is_collection, is_owned_collection
 from layout_types import native_source_type, callable_parameter_type, collection_leaf
@@ -707,7 +707,7 @@ def item_signature(
     for index in range(len(parameters)):
         if parameters[index].kind != body.params[index].kind:
             return Err("unsupported Body IR function-item parameter role")
-        match receiver_mode(body.locals[int(body.params[index].local.index())].origin):
+        match receiver_mode(body.locals[parameter_local_index(body, index)].origin):
             Some(mutable) =>
                 match parameters[index].ty:
                     RustType.Ref(inner) =>

@@ -106,6 +106,7 @@ impl TypeChecker {
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
         let errors_before_call = self.errors.len();
+        let callee_identity = self.called_function_identity(func_name);
         let mut seeded_type_bindings: std::collections::HashMap<String, ResolvedType> =
             std::collections::HashMap::new();
         if !explicit_type_args.is_empty() {
@@ -187,7 +188,6 @@ impl TypeChecker {
                 call_span,
             );
         }
-        let callee_identity = self.called_function_identity(func_name);
         self.refuse_unhashable_type_arguments(
             func_name,
             callee_identity.as_ref(),
@@ -264,8 +264,14 @@ impl TypeChecker {
         }
         self.type_info
             .calls
-            .inferred_call_result_types
+            .body_ir_call_result_types
             .get(&(call_span.start, call_span.end))
+            .or_else(|| {
+                self.type_info
+                    .calls
+                    .inferred_call_result_types
+                    .get(&(call_span.start, call_span.end))
+            })
             .cloned()
             .unwrap_or_else(|| substitute_resolved_type(&info.return_type, &type_bindings))
     }
@@ -1148,7 +1154,12 @@ impl TypeChecker {
                 method_info.identity.as_ref(),
             );
         }
-        substitute_resolved_type(&return_type, &type_bindings)
+        self.type_info
+            .calls
+            .body_ir_call_result_types
+            .get(&(call_site_span.start, call_site_span.end))
+            .cloned()
+            .unwrap_or_else(|| substitute_resolved_type(&return_type, &type_bindings))
     }
 
     /// Project a generic `CallableN` bound into the contextual function type used to check a callback argument.

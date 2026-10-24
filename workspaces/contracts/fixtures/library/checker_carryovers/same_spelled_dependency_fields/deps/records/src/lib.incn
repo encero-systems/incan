@@ -1,9 +1,19 @@
+"""Declare the provider's identifiers and decision collections."""
+
+
 pub model EvidenceId:
     """The dependency's identifier carried by decision fields."""
+
     pub text: str
 
 
 pub model Decision:
     """A decision that retains the dependency's identifier type."""
+
     pub evidence_ids: list[EvidenceId]
     pub first: Option[EvidenceId]
+
+
+pub def populated() -> Decision:
+    """Return a collection under the provider's own identifier declaration."""
+    return Decision(evidence_ids=[EvidenceId(text="foreign")], first=None)

@@ -1,5 +1,4 @@
-//! Union member identity: a member that names a model, class, enum or newtype is the declaration its name resolves to
-//! where the union is written (#1796).
+//! Nominal declaration identity for retained values and union members (#1796).
 //!
 //! The checker spells a nominal type by its bare name, so `Product | int` written in two modules that each declare
 //! `Product` was one union type, and a value of one module's union was accepted where the other's was expected. When
@@ -68,6 +67,39 @@ fn identity_module_path(identity: &CanonicalSymbolId) -> Option<Vec<String>> {
 }
 
 impl TypeChecker {
+    /// Return the retained carrier of an accepted source type binding, including a provider-qualified import. No
+    /// declaration is inferred from a display spelling.
+    pub(in crate::typechecker) fn source_nominal_carrier_key(&self, name: &str) -> Option<String> {
+        self.public_library_type_identities
+            .get(name)
+            .and_then(|identity| identity.canonical.as_ref())
+            .or_else(|| self.symbols.module_type_identity(name))
+            .and_then(incan_semantics_core::body_ir::nominal_carrier_key)
+    }
+
+    /// Compare a retained nominal carrier with its accepted source binding before checking its exact nested arguments.
+    /// Equal-spelled declarations from other modules never establish compatibility.
+    pub(super) fn retained_nominal_types_compatible(
+        &self,
+        actual: &ResolvedType,
+        expected: &ResolvedType,
+    ) -> Option<bool> {
+        let (actual_name, actual_args) = nominal_parts(actual)?;
+        let (expected_name, expected_args) = nominal_parts(expected)?;
+        let same_declaration = self.source_nominal_carrier_key(expected_name).as_deref() == Some(actual_name)
+            || self.source_nominal_carrier_key(actual_name).as_deref() == Some(expected_name);
+        if !same_declaration {
+            return None;
+        }
+        Some(
+            actual_args.len() == expected_args.len()
+                && actual_args
+                    .iter()
+                    .zip(expected_args)
+                    .all(|(actual, expected)| self.nested_types_compatible(actual, expected)),
+        )
+    }
+
     /// Record which modules of a check declare each nominal name: the checked program and every source dependency.
     ///
     /// Called before any dependency is imported, so every union a dependency's signatures or aliases spell is already

@@ -54,7 +54,8 @@ impl TypeChecker {
 
     /// Retain native dereferences when their metadata-selected target satisfies a source parameter. Shared parameters
     /// keep the loan; owned parameters require the target's own Clone implementation so the caller retains its owner.
-    /// These adjustments apply only at a call boundary, never to assignment compatibility.
+    /// Builtin reference views do not add a trait call: native Deref selection starts at their referent. These
+    /// adjustments apply only at a call boundary, never to assignment compatibility.
     pub(in crate::typechecker) fn retain_argument_dereferences(
         &mut self,
         actual: &ResolvedType,
@@ -71,6 +72,9 @@ impl TypeChecker {
             return None;
         }
         let mut owner = self.rust_inference_type(actual, &[]);
+        while let ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) = owner {
+            owner = *inner;
+        }
         if owned {
             self.rust_canonical_path_for_receiver_type(&owner)?;
         }
@@ -453,8 +457,7 @@ impl TypeChecker {
         Some(())
     }
 
-    /// Require the exact adjustment trait on the closed owner and preserve its shared or exclusive signature.
-    /// A reference implementing Deref is itself Self; removing that reference would select another implementation.
+    /// Require the exact adjustment trait on the closed owner and preserve its shared or exclusive signature. A reference implementing Deref is itself Self; each step keeps its selected referent rather than borrowing its wrapper again.
     fn rust_deref_adjustment(
         &self,
         owner: &ResolvedType,

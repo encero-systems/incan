@@ -10,7 +10,7 @@ from rust::incan_semantics_core import (
 )
 from rust::incan_semantics_core::body_ir import BodyIrModule, Body
 from pub::incan_mir_plan import IteratorMethods, EnumDeclaration, PlanType
-from classes import frame_type, function_name
+from classes import frame_type, function_name, parameter_local_index
 from unions import native_source_type, collect_unions
 from trait_links import contains
 from native_arguments import uses_native_argument
@@ -34,9 +34,10 @@ pub def iterator_methods(
         mut next: Option[CanonicalSymbolId] = None
         mut slots: list[str] = []
         for implementation in module.trait_implementations:
-            if implementation.owner != declaration.canonical or implementation.method.origin != protocol.origin or not contains(
-                protocol,
-                implementation.method,
+            if (
+                implementation.owner != declaration.canonical
+                or implementation.method.origin != protocol.origin
+                or not contains(protocol, implementation.method)
             ):
                 continue
             name = str(implementation.method.declaration_name)
@@ -45,9 +46,10 @@ pub def iterator_methods(
             slots.append(name)
             if name == "__next__":
                 identity = implementation.implementation
-                if identity == implementation.method or identity.origin != declaration.canonical.origin or not contains(
-                    declaration.canonical,
-                    identity,
+                if (
+                    identity == implementation.method
+                    or identity.origin != declaration.canonical.origin
+                    or not contains(declaration.canonical, identity)
                 ):
                     return Err("unsupported Body IR native iterator without source poll")
                 next = Some(identity.clone())
@@ -96,7 +98,11 @@ pub def iterator_methods(
 
 pub def standard_protocol(identity: &CanonicalSymbolId) -> bool:
     """Authenticate the standard declaring trait rather than a source trait with the same spelling."""
-    if identity.kind != SemanticSourceTargetKind.Trait or identity.namespace != SymbolNamespace.OrdinaryLexical or identity.declaration_name != "Iterator":
+    if (
+        identity.kind != SemanticSourceTargetKind.Trait
+        or identity.namespace != SymbolNamespace.OrdinaryLexical
+        or identity.declaration_name != "Iterator"
+    ):
         return false
     match identity.origin:
         SymbolOrigin.Package(library=library, module_path=path) =>
@@ -119,6 +125,7 @@ def poll_abi(
         Some(_gap) => return Ok(false)
         None => pass
     reference = PlanType.ModelMutRef(owner, str(module.nominal_declarations[owner].name))
-    if frame_type(list(module.nominal_declarations), list(module.enum_declarations), body.locals[int(body.params[0].local.index())], intrinsics)? != reference:
+    local = body.locals[parameter_local_index(body, 0)]
+    if frame_type(list(module.nominal_declarations), list(module.enum_declarations), local, intrinsics)? != reference:
         return Ok(false)
     return Ok(body.return_type == generic("Option", [item.clone()]))

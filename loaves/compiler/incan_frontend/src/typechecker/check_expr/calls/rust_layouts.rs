@@ -33,6 +33,7 @@ impl TypeChecker {
 
     /// Read a complete native enum template for both construction and matching. Exact field displays retain Box and
     /// reference storage; named slots follow metadata order. Neither caller may invent a partial executable layout.
+    /// Unconditional Copy capability remains a separate checked fact from the open payload templates.
     pub(in crate::typechecker::check_expr) fn checked_rust_enum_layout(
         &self,
         path: &str,
@@ -47,6 +48,10 @@ impl TypeChecker {
             return None;
         }
         Some(RustCheckedEnum {
+            is_copy: self.derive_support(
+                &ResolvedType::RustPath(path.into()),
+                incan_lang::lang::derives::DeriveId::Copy,
+            ) == crate::typechecker::derive_requirements::DeriveSupport::Supported,
             type_parameters: info.type_params.clone(),
             variants: info
                 .variants

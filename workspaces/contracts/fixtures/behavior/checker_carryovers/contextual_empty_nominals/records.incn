@@ -6,11 +6,13 @@ from rust::std::sync import Arc
 @derive(Clone)
 pub model EvidenceId:
     """An identifier owned by this module."""
+
     pub text: str
 
 
 pub model Decision:
     """Collection and optional fields whose leaf owner belongs to this module."""
+
     pub evidence_ids: list[EvidenceId]
     pub first: Option[EvidenceId]
     pub by_name: Dict[str, EvidenceId]
@@ -21,9 +23,21 @@ pub def count(values: list[EvidenceId], first: Option[EvidenceId], by_name: Dict
     return len(values) + len(by_name)
 
 
+pub def count_decision(value: Decision) -> int:
+    """Reuse retained collection fields through source annotations and a typed dictionary assignment."""
+    mut by_name: Dict[str, EvidenceId] = {}
+    by_name["entry"] = value.evidence_ids[0]
+    return count(value.evidence_ids, value.first, by_name)
+
+
 pub def make() -> EvidenceId:
     """Return a populated identifier owned by this module."""
     return EvidenceId(text="foreign")
+
+
+pub def populated() -> Decision:
+    """Return a decision whose identifier belongs to this module."""
+    return Decision(evidence_ids=[make()], first=None, by_name={})
 
 
 pub def text_of(value: EvidenceId) -> str:
@@ -33,6 +47,7 @@ pub def text_of(value: EvidenceId) -> str:
 
 pub model Shared:
     """Hold identifiers inside a shared native container without exporting its element binding."""
+
     pub evidence_ids: Arc[list[EvidenceId]]
 
 

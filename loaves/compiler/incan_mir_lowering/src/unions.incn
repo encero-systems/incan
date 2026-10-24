@@ -389,7 +389,7 @@ def native_union_payload(
     member: &RustType,
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
-    """Read the declaration's checked ownership once when resolving either a local or a published payload."""
+    """Read checked payload ownership once; the explicit enum Clone keeps the #2256 bootstrap compatible."""
     payload = retained_source_type(
         list(module.nominal_declarations),
         list(module.enum_declarations),
@@ -397,7 +397,7 @@ def native_union_payload(
         member,
         intrinsics,
     )?
-    if member not in declaration.closure_members:
+    if member.clone() not in declaration.closure_members:
         return Ok(payload)
     match payload:
         PlanType.FunctionPointer(signature) => return Ok(PlanType.Closure(signature))

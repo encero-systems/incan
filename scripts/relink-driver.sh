@@ -1,6 +1,6 @@
 #!/bin/zsh
-# Rebuild a dev.8 bootstrap lane's driver with its installed Oven and optional optimized local Rust units.
-# Usage: DEV8_LANE=/path/to/lane scripts/relink-driver.sh [--lowering] [--release] [--refresh-build-toolchain]
+# Rebuild a dev.8 lane's driver and Incan lowering with its installed toolchain.
+# Usage: DEV8_LANE=/path/to/lane scripts/relink-driver.sh [--lowering] [--release]
 # INCAN_DRIVER_INSTALL=0 builds without replacing the lane's installed driver, for baseline comparisons.
 set -e
 set -o pipefail
@@ -10,47 +10,34 @@ started=$EPOCHREALTIME
 lane=${DEV8_LANE:?set DEV8_LANE to the bootstrap lane directory}
 repo=$lane/incan
 bootstrap=$lane/bootstrap
-toolchain=$lane/dev8-home/toolchains/0.6.0-dev.8
+toolchain_home=${SELFBUILD_HOME:-$lane/dev8-home}
+toolchain=$toolchain_home/toolchains/0.6.0-dev.8
+builder=${SELFBUILD_OVEN:-$lane/oven-bin/incan}
 profile=debug
 refresh=false
-refresh_toolchain=false
 
 for argument in "$@"; do
     case $argument in
         --lowering) refresh=true ;;
         --release) profile=release ;;
-        --refresh-build-toolchain) refresh_toolchain=true ;;
         *) print -u2 "unknown option: $argument"; exit 2 ;;
     esac
 done
 
 if $refresh; then
-    zsh "$repo/scripts/refresh-lowering.sh"
+    # Withdraw only the generated library stamp; Oven recompiles the lowering through the installed driver.
+    stamp=$repo/loaves/toolchain/incan-rustc-driver/target/incan/loaves/incan_mir_lowering/$profile/.oven-inputs.sha256
+    [[ ! -f $stamp ]] || rm "$stamp"
 fi
 emitted=$EPOCHREALTIME
 
-# Build with a pinned compiler rather than the output of the previous relink. Otherwise installing a changed
-# driver invalidates every Rust library on the next build even though none of their sources changed.
-build_home=$bootstrap/driver-build-home
-build_toolchain=$build_home/toolchains/0.6.0-dev.8
-mkdir -p "$build_toolchain"
-if $refresh_toolchain || [[ ! -f $build_toolchain/toolchain.json ]]; then
-    # Toolchain paths can be relative to their manifest. Keep their meaning when copying only the description.
-    jq --arg base "$toolchain/" '
-        def absolute: if startswith("/") then . else $base + . end;
-        .driver |= absolute | .sysroot |= absolute | .rust_abi |= map(absolute) |
-        .externs |= map(.path |= absolute) | .search |= map(absolute) |
-        if (.registry_units // "") != "" then .registry_units |= absolute else . end
-    ' "$toolchain/toolchain.json" > "$build_toolchain/toolchain.json.new"
-    mv "$build_toolchain/toolchain.json.new" "$build_toolchain/toolchain.json"
-fi
-sysroot=$(jq -er '.sysroot' "$build_toolchain/toolchain.json")
-export RUSTC=$sysroot/bin/rustc INCAN_STDLIB=$repo/loaves/stdlib INCAN_HOME=$build_home
+sysroot=$(jq -er '.sysroot' "$toolchain/toolchain.json")
+export RUSTC=$sysroot/bin/rustc INCAN_STDLIB=$bootstrap/stdlib-available INCAN_HOME=$toolchain_home
 prepared=$EPOCHREALTIME
 build_log=${INCAN_RELINK_LOG:-$bootstrap/driver-build-$profile.log}
 
-if ! (cd "$repo" && "$lane/oven-bin/incan" build loaves/toolchain/incan-rustc-driver \
-    --profile "$profile" --substitute "incan_mir_lowering=$bootstrap/loaves/incan_mir_lowering" \
+if ! (cd "$repo" && OVEN_TRACE=- "$builder" build loaves/toolchain/incan-rustc-driver \
+    --profile "$profile" \
     2>&1 | while IFS= read -r line; do
         if [[ ${INCAN_RELINK_TRACE:-0} == 1 ]]; then
             print -r -- "$EPOCHREALTIME $line"

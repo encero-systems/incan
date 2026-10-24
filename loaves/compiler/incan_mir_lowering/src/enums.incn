@@ -73,13 +73,18 @@ pub def unit_variant(
     """Resolve the older fieldless constructor vocabulary against the same canonical layout."""
     for owner in range(len(declarations)):
         declaration = declarations[owner]
-        if declaration.canonical != target.enum_canonical or declaration.direct_declaration_id != target.enum_declaration_id:
+        if (
+            declaration.canonical != target.enum_canonical
+            or declaration.direct_declaration_id != target.enum_declaration_id
+        ):
             continue
         for slot in range(len(declaration.variants)):
             variant = declaration.variants[slot]
-            if variant.canonical == target.variant_canonical and variant.direct_declaration_id == target.variant_declaration_id and len(
-                variant.fields,
-            ) == 0:
+            if (
+                variant.canonical == target.variant_canonical
+                and variant.direct_declaration_id == target.variant_declaration_id
+                and len(variant.fields) == 0
+            ):
                 if declaration.canonical.declaration_name != target.enum_name or variant.name != target.variant_name:
                     return Err("invalid Body IR fieldless enum spelling")
                 return Ok((owner, slot))
@@ -102,13 +107,18 @@ pub def pattern_variant(declaration: &RustEnumDeclaration, pattern: &RustPattern
                     validate_payload_patterns(fields)?
                     return Ok(slot)
         RustPattern.FieldlessEnumVariant(target) =>
-            if target.enum_canonical != declaration.canonical or target.enum_declaration_id != declaration.direct_declaration_id:
+            if (
+                target.enum_canonical != declaration.canonical
+                or target.enum_declaration_id != declaration.direct_declaration_id
+            ):
                 return Err("invalid Body IR fieldless enum pattern owner")
             for slot in range(len(declaration.variants)):
                 variant = declaration.variants[slot]
-                if target.variant_canonical == variant.canonical and target.variant_declaration_id == variant.direct_declaration_id and len(
-                    variant.fields,
-                ) == 0:
+                if (
+                    target.variant_canonical == variant.canonical
+                    and target.variant_declaration_id == variant.direct_declaration_id
+                    and len(variant.fields) == 0
+                ):
                     return Ok(slot)
         _ => pass
     return Err("unsupported Body IR enum pattern")
@@ -194,7 +204,7 @@ pub def lower_enum_declarations(
 
     A source enum also takes the serde derives a serde-deriving declaration's fields require of it. Value enums retain
     the same checked raw values for explicit and propagated serde selections. Source Display uses its checked Debug
-    path rather than a native Rust derive.
+    path rather than a native Rust derive. Native enums retain only the checked Copy fact verified on their SDK type.
     """
     reached = serde_propagation(module)?
     mut declarations: list[EnumDeclaration] = []
@@ -204,7 +214,13 @@ pub def lower_enum_declarations(
             mut fields: list[PlanType] = []
             for ty in variant.fields:
                 fields.append(
-                    retained_source_type(list(module.nominal_declarations), list(module.enum_declarations), [], ty, intrinsics)?,
+                    retained_source_type(
+                        list(module.nominal_declarations),
+                        list(module.enum_declarations),
+                        [],
+                        ty,
+                        intrinsics,
+                    )?,
                 )
             variants.append(EnumVariant(name=str(variant.name), fields=fields))
         # A stdlib enum is the SDK crate's own type; its derives and storage belong to that crate.
@@ -213,7 +229,13 @@ pub def lower_enum_declarations(
         if item != "":
             for argument in declaration.native_type_arguments:
                 native_arguments.append(
-                    retained_source_type(list(module.nominal_declarations), list(module.enum_declarations), [], argument, intrinsics)?,
+                    retained_source_type(
+                        list(module.nominal_declarations),
+                        list(module.enum_declarations),
+                        [],
+                        argument,
+                        intrinsics,
+                    )?,
                 )
         selected = with_serde_derives(declaration.derives, str(declaration.name), reached)
         mut derives: list[str] = []
@@ -221,6 +243,8 @@ pub def lower_enum_declarations(
             for derive in selected:
                 if derive != "Display":
                     derives.append(str(derive))
+        elif "Copy" in declaration.derives:
+            derives.append("Copy")
         raw_kind, raw_values = value_enum_raw_values(module, declaration)?
         declarations.append(
             EnumDeclaration(
@@ -278,8 +302,7 @@ pub def validate_unit_comparison(
         return Err("unsupported Body IR mixed enum comparison")
     mut owner = -1
     match left:
-        PlanType.Enum(index, _name) =>
-            owner = index
+        PlanType.Enum(index, _name) => owner = index
         _ => return Err("unsupported Body IR nonenum comparison")
     if owner < 0 or owner >= len(declarations):
         return Err("unsupported Body IR non-source enum comparison")

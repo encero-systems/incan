@@ -3522,13 +3522,19 @@ impl TypeChecker {
         }
         if receiver.is_some()
             && owner.type_params.is_empty()
-            && owner.variants.is_empty()
             && parameters
                 .first()
                 .is_some_and(|parameter| !matches!(parameter.ty, ResolvedType::Ref(_) | ResolvedType::RefMut(_)))
             && self.derive_support(&ResolvedType::RustPath(path.into()), DeriveId::Copy) == DeriveSupport::Supported
         {
-            self.retain_rust_layout(path, owner);
+            if owner.variants.is_empty() {
+                self.retain_rust_layout(path, owner);
+            } else if let Some(layout) = self.checked_rust_enum_layout(path, owner) {
+                self.type_info
+                    .rust
+                    .checked_enums
+                    .insert(self.rust_public_type_path(path), layout);
+            }
             self.type_info
                 .rust
                 .copy_receivers
@@ -5525,19 +5531,24 @@ impl TypeChecker {
     /// Retain a source declaration's exact field owner without replacing a source surface wrapper with its native
     /// storage type.
     fn retained_source_field_receiver(&self, span: Span) -> Option<ResolvedType> {
-        let retained = self.body_ir_checked_value_type(span)?;
-        let mut referent = retained;
+        let mut retained = self.body_ir_checked_value_type(span)?.clone();
+        let mut referent = &mut retained;
         while let ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) = referent {
             referent = inner;
         }
         let (ResolvedType::Named(name) | ResolvedType::Generic(name, _)) = referent else {
             return None;
         };
-        matches!(
+        if !matches!(
             self.lookup_semantic_type_info(name),
             Some(TypeInfo::Model(_) | TypeInfo::Class(_) | TypeInfo::Enum(_) | TypeInfo::Newtype(_))
-        )
-        .then(|| retained.clone())
+        ) {
+            return None;
+        }
+        if let Some(key) = self.source_nominal_carrier_key(name) {
+            *name = key;
+        }
+        Some(retained)
     }
 
     /// Resolve imported module members from checked symbol metadata before treating a receiver as a value.

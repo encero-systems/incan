@@ -1637,7 +1637,7 @@ fn checked_newtype_export(newtype_decl: &NewtypeDecl, checker: &TypeChecker) -> 
         derives: sorted_vec(derives.clone()),
         is_rusttype: *is_rusttype,
         underlying: underlying.clone(),
-        checked_constructor: TypeChecker::validated_newtype_ctor_name(&newtype_decl.name, info),
+        checked_constructor: checker.validated_newtype_ctor_name(&newtype_decl.name, info),
         constraints: constraints.clone(),
         implicit_coercion_enabled: *implicit_coercion_enabled,
         methods: map_method_overloads_with_defaults(method_overloads, &newtype_decl.methods, checker),

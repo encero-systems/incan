@@ -1,7 +1,9 @@
 """Publish vault containers while keeping each vault's secret private."""
 
+
 pub model Vault:
     """A public label and a module-private secret."""
+
     secret: str = "sealed"
     pub label: str
 
@@ -12,6 +14,7 @@ pub model Vault:
 
 pub model Bag:
     """Expose vaults without importing their element declaration into the caller."""
+
     pub entries: list[Vault]
 
 

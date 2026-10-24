@@ -1326,7 +1326,8 @@ impl TypeChecker {
     /// Rebuild one artifact's exported symbol layouts with foreign type names already resolved.
     ///
     /// Member types are read in the declaring module's scope before the artifact's top-level spellings, so a layout
-    /// names the declaration its own module names whether the root republishes it or not.
+    /// names the declaration its own module names whether the root republishes it or not. Retained carriers receive the
+    /// same published layout even when no source import binds the type.
     pub(super) fn rebuild_artifact_symbol_layouts(
         &mut self,
         entry: &LoafEntry,
@@ -1369,6 +1370,7 @@ impl TypeChecker {
             self.remap_symbol_kind_with_import_aliases(&mut kind, local_remapping);
             Self::mark_compiled_class_field_provider(&mut kind, owner_route);
             if let SymbolKind::Type(info) = kind {
+                self.cache_retained_nominal_layout(declaration.as_ref(), &info);
                 self.transitive_pub_types.entry(qualified).or_default().push(info);
             }
         }
@@ -1748,9 +1750,26 @@ impl TypeChecker {
             self.remap_symbol_kind_with_import_aliases(&mut kind, &canonical_remapping);
             Self::mark_compiled_class_field_provider(&mut kind, library);
             if let SymbolKind::Type(info) = kind {
+                self.cache_retained_nominal_layout(declaration.as_ref(), &info);
                 self.transitive_pub_types.entry(canonical_name).or_default().push(info);
             }
         }
+    }
+
+    /// Index an admitted nominal layout by its retained identity without creating a source-visible binding. Repeated
+    /// imports share the first admitted layout.
+    pub(in crate::typechecker) fn cache_retained_nominal_layout(
+        &mut self,
+        declaration: Option<&incan_semantics_core::CanonicalSymbolId>,
+        info: &TypeInfo,
+    ) {
+        let Some(declaration) = declaration else { return };
+        let Some(carrier) = incan_semantics_core::body_ir::nominal_carrier_key(declaration) else {
+            return;
+        };
+        self.transitive_pub_types
+            .entry(carrier)
+            .or_insert_with(|| vec![info.clone()]);
     }
 
     /// Return all exported names in a manifest for diagnostics.
@@ -2592,7 +2611,7 @@ impl TypeChecker {
     }
 
     /// Rewrite resolved type names through import aliases after stdlib materialization.
-    pub(super) fn remap_resolved_type_with_import_aliases(
+    pub(in crate::typechecker) fn remap_resolved_type_with_import_aliases(
         ty: &mut ResolvedType,
         imported_type_aliases: &HashMap<String, String>,
     ) {

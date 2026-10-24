@@ -677,7 +677,7 @@ fn verify_library_layout(tcx: TyCtxt<'_>, model: &crate::plan::ModelDeclaration)
 
 /// Check the concrete SDK enum's argument count, bounds, ordered variants and instantiated payload types against
 /// native metadata. Variant indices select rustc's own constructors and discriminants, including explicit tags.
-/// Generic templates never authorize storage.
+/// Generic templates never authorize storage; retained Copy and Clone capabilities must hold for the concrete type.
 fn verify_library_enum(tcx: TyCtxt<'_>, value: &crate::plan::EnumDeclaration) -> Result<(), PlanError> {
     let invalid = |reason: &str| PlanError::Invalid {
         function: value.library_item.clone(),
@@ -696,6 +696,12 @@ fn verify_library_enum(tcx: TyCtxt<'_>, value: &crate::plan::EnumDeclaration) ->
     }
     let arguments = callees::arguments(tcx, def, &value.library_type_arguments)?;
     callees::verify_bounds(tcx, def, arguments)?;
+    if value.derives.iter().any(|derive| derive == "Copy") {
+        let native = rustc_middle::ty::Ty::new_adt(tcx, owner, arguments);
+        if !tcx.type_is_copy_modulo_regions(rustc_middle::ty::TypingEnv::fully_monomorphized(), native) {
+            return Err(invalid("native enum Copy capability differs from metadata"));
+        }
+    }
     if value.derives.iter().any(|derive| derive == "Clone") {
         let owner = rustc_middle::ty::Ty::new_adt(tcx, tcx.adt_def(def), arguments);
         callees::verify_bounds(tcx, callees::clone_method(tcx)?, tcx.mk_args(&[owner.into()]))?;

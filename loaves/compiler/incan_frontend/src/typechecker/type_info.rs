@@ -1162,6 +1162,8 @@ pub struct RustCheckedFieldValue {
 /// A complete native enum layout selected from metadata; declaration binders remain open until storage is closed.
 #[derive(Debug, Clone)]
 pub struct RustCheckedEnum {
+    /// Unconditional native Copy capability, retained before any concrete enum carrier is emitted.
+    pub is_copy: bool,
     /// Type binders in native declaration order, excluding lifetimes.
     pub type_parameters: Vec<String>,
     /// Ordered variant names, exact native payload templates and named-field slots, before match ergonomics adds

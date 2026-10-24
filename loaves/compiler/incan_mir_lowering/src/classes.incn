@@ -25,6 +25,12 @@ from symbols import symbol_component, type_component
 pub from type_parameters import static_type_arguments
 
 
+pub def parameter_local_index(body: &Body, index: int) -> int:
+    """Read a parameter's retained local identity after materializing its native Copy field (#2256 bootstrap)."""
+    parameter = body.params[index]
+    return int(parameter.local.index())
+
+
 pub def frame_type(
     mut nominals: list[NominalDeclaration],
     mut enums: list[RustEnumDeclaration],
@@ -40,13 +46,7 @@ pub def frame_type(
     """
     if range_value_local(local.ty, local.origin):
         return Ok(PlanType.RangeValue)
-    ty = native_source_type(
-        nominals,
-        enums,
-        [],
-        local.ty,
-        intrinsics,
-    )?
+    ty = native_source_type(nominals, enums, [], local.ty, intrinsics)?
     match receiver_mode(local.origin):
         Some(mutable) =>
             match ty:
@@ -186,8 +186,7 @@ def module_function_symbol(owner: str, body: &Body) -> str:
     # A trait default can have the same canonical declaration and span in several concrete receiver frames.
     if len(body.locals) != 0:
         match receiver_mode(body.locals[0].origin):
-            Some(_mutable) =>
-                symbol += f"_receiver{symbol_component(str(body.locals[0].ty))}"
+            Some(_mutable) => symbol += f"_receiver{symbol_component(str(body.locals[0].ty))}"
             None => pass
     if len(body.type_parameters) != 0:
         symbol += symbol_component(str(body.name))
@@ -233,15 +232,7 @@ def receiver_borrow(
                 _ => return Err("unsupported Body IR Method receiver ownership")
             mut frame_locals = locals
             mut union_layouts = unions
-            mut receiver = model_place(
-                declarations,
-                frame_locals,
-                read.place,
-                span,
-                enums,
-                union_layouts,
-                intrinsics,
-            )?
+            mut receiver = model_place(declarations, frame_locals, read.place, span, enums, union_layouts, intrinsics)?
             receiver.local += local_offset
             match receiver_type:
                 PlanType.ModelRef(_owner, _name) => return Ok((receiver_type, RvalueKind.Borrow(receiver)))

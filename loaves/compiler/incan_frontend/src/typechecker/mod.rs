@@ -2643,8 +2643,8 @@ impl TypeChecker {
         self.type_info.expressions.expr_types.insert((span.start, span.end), ty);
     }
 
-    /// Project named leaves through the module/provider or native metadata binding retained by this compilation,
-    /// retaining an inspected runtime carrier's identity before Body IR normalizes its dedicated builtin type.
+    /// Project named leaves through the accepted module/provider binding or retained carrier identity, retaining an
+    /// inspected runtime carrier's identity before Body IR normalizes its dedicated builtin type.
     fn collect_expression_type_identities(
         &self,
         ty: &ResolvedType,
@@ -2658,7 +2658,11 @@ impl TypeChecker {
                 // shadows the source alias. Provider-only return types may have no lexical symbol at all.
                 let identity = match self.public_library_type_identities.get(name) {
                     Some(binding) => binding.canonical.clone(),
-                    None => self.symbols.module_type_identity(name).cloned(),
+                    None => self
+                        .symbols
+                        .module_type_identity(name)
+                        .or_else(|| self.type_info.declarations.named_type_identities.get(name))
+                        .cloned(),
                 };
                 if let Some(identity) = identity {
                     identities.insert(path.clone(), identity);
@@ -3810,11 +3814,7 @@ impl TypeChecker {
             let supports_string_conversion = self
                 .temporary_trait_capability_supports_type(string_conversion, &concrete_type)
                 .unwrap_or(false);
-            let declared_name = self
-                .symbols
-                .module_type_identity(&name)
-                .map_or(name.as_str(), |identity| identity.declaration_name.as_str());
-            let checked_constructor = Self::validated_newtype_ctor_name(declared_name, &info);
+            let checked_constructor = self.validated_newtype_ctor_name(&name, &info);
             let checked_constructor_binding = checked_constructor
                 .as_deref()
                 .and_then(|constructor| info.methods.get(constructor))
@@ -7336,6 +7336,15 @@ impl TypeChecker {
         // successful-check timing.
         self.type_info.declarations.body_ir_native_type_identities = self.checked_native_nominal_type_identities();
         self.type_info.rust.item_public_paths = self.checked_rust_item_public_paths();
+        // Internal carrier identities must survive per-module fact resets before Result payloads are checked. Source
+        // alias entries still publish only after successful checking.
+        self.type_info.declarations.named_type_identities = self
+            .checked_nominal_type_identities()
+            .into_iter()
+            .filter(|(name, identity)| {
+                incan_semantics_core::body_ir::nominal_carrier_key(identity).as_ref() == Some(name)
+            })
+            .collect();
 
         // Second pass: check consts first so their resolved types are available to later checks.
         self.validate_source_type_names = true;
@@ -8105,8 +8114,8 @@ impl TypeChecker {
         }
     }
 
-    /// Cache dependency declarations and their canonical semantic type keys while their declaring scope still owns
-    /// field and native generic argument resolution.
+    /// Cache dependency declarations in their declaring nominal scope before consumer imports expose them. Fields and
+    /// callable signatures retain the same declaration owners as their carrier metadata.
     fn cache_dependency_direct_member_symbols(&mut self, module_name: &str, module_ast: &Program, public_only: bool) {
         let mut direct_symbols = HashMap::new();
         let mut direct_type_aliases = HashMap::new();
@@ -8126,21 +8135,18 @@ impl TypeChecker {
             }
         }
         let scope = self.checked_nominal_type_identities();
-        for (name, kind) in &direct_symbols {
+        let remapping = scope
+            .iter()
+            .filter_map(|(name, identity)| {
+                incan_semantics_core::body_ir::nominal_carrier_key(identity).map(|key| (name.clone(), key))
+            })
+            .collect();
+        for (name, kind) in &mut direct_symbols {
             if let Some(identity) = direct_identities.get(name) {
                 self.retain_declaration_nominal_scope(identity, kind, &scope);
-                if let Some(key) = incan_semantics_core::body_ir::nominal_carrier_key(identity) {
-                    let remapping = scope
-                        .iter()
-                        .filter_map(|(name, identity)| {
-                            incan_semantics_core::body_ir::nominal_carrier_key(identity).map(|key| (name.clone(), key))
-                        })
-                        .collect();
-                    let mut qualified = kind.clone();
-                    self.remap_symbol_kind_with_import_aliases(&mut qualified, &remapping);
-                    if let SymbolKind::Type(info) = qualified {
-                        self.transitive_pub_types.entry(key).or_insert_with(|| vec![info]);
-                    }
+                self.remap_symbol_kind_with_import_aliases(kind, &remapping);
+                if let SymbolKind::Type(info) = kind {
+                    self.cache_retained_nominal_layout(Some(identity), info);
                 }
             }
         }
@@ -8152,7 +8158,14 @@ impl TypeChecker {
                 continue;
             }
             if let Some(target) = self.type_aliases.get(&alias.name) {
-                direct_type_aliases.insert(alias.name.clone(), target.clone());
+                let mut target = target.clone();
+                let bindings = remapping
+                    .iter()
+                    .filter(|(name, _)| !target.type_params.contains(*name))
+                    .map(|(name, qualified)| (name.clone(), qualified.clone()))
+                    .collect();
+                Self::remap_resolved_type_with_import_aliases(&mut target.target, &bindings);
+                direct_type_aliases.insert(alias.name.clone(), target);
             }
         }
         for (name, kind) in &direct_symbols {
@@ -9243,7 +9256,7 @@ impl TypeChecker {
             visiting.remove(target_name);
             return Some(Vec::new());
         }
-        let ctor = Self::validated_newtype_ctor_name(target_name, &newtype);
+        let ctor = self.validated_newtype_ctor_name(target_name, &newtype);
         let ctor_identity = ctor
             .as_deref()
             .and_then(|name| newtype.methods.get(name))
@@ -9253,7 +9266,7 @@ impl TypeChecker {
             owner_identity: self.checked_nominal_type_identities().get(target_name).cloned(),
             ctor,
             ctor_identity,
-            constraints: if Self::validated_newtype_ctor_name(target_name, &newtype).is_some() {
+            constraints: if self.validated_newtype_ctor_name(target_name, &newtype).is_some() {
                 Vec::new()
             } else {
                 newtype.constraints.clone()
@@ -9286,8 +9299,9 @@ impl TypeChecker {
         }
     }
 
-    /// Return the canonical checked-construction hook for a newtype when the collected method shape is usable.
-    pub fn validated_newtype_ctor_name(newtype_name: &str, newtype: &NewtypeInfo) -> Option<String> {
+    /// Return the checked-construction hook only when its collected signature returns this newtype's exact owner.
+    /// Source aliases and retained carriers compare through their admitted declaration identities.
+    pub fn validated_newtype_ctor_name(&self, newtype_name: &str, newtype: &NewtypeInfo) -> Option<String> {
         let method = newtype.methods.get(conventions::NEWTYPE_FROM_UNDERLYING_METHOD)?;
         if method.receiver.is_some() || method.params.len() != 1 {
             return None;
@@ -9303,7 +9317,9 @@ impl TypeChecker {
         }
         let ok_ty = result_args.first()?;
         if !(matches!(ok_ty, ResolvedType::Named(name) if name == newtype_name)
-            || matches!(ok_ty, ResolvedType::SelfType))
+            || matches!(ok_ty, ResolvedType::SelfType)
+            || self.retained_nominal_types_compatible(ok_ty, &ResolvedType::Named(newtype_name.to_owned()))
+                == Some(true))
         {
             return None;
         }
@@ -9450,6 +9466,10 @@ impl TypeChecker {
 
         if actual == expected {
             return true;
+        }
+
+        if let Some(matches) = self.retained_nominal_types_compatible(actual, expected) {
+            return matches;
         }
 
         if let Some(matches) = self.module_qualified_nominals_compatible(actual, expected) {

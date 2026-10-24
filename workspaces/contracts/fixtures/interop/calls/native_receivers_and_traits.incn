@@ -1,4 +1,4 @@
-# behavior: native receivers retain owners, trait projections, opaque children, borrowed returns and CommandExt (#2256)
+# behavior: native receivers retain indexed Copy, defaults, owners, projections, loans, Clone and CommandExt (#2256)
 # expect-stdout:
 #   allocated
 #   1
@@ -13,9 +13,11 @@
 
 """Observe native receivers through associated functions, inherent methods, blanket traits and iterators."""
 
-from rust::std::collections import VecDeque
+from rust::std::collections import BTreeMap, VecDeque
+from rust::std::cmp import Ordering
 from rust::std::env import args, args_os
 from rust::std::hash import Hash as NativeHash, Hasher, DefaultHasher
+from rust::std::net import Ipv4Addr
 from rust::std::os::raw import c_int
 from rust::std::ops import Index, Range
 from rust::std::os::unix::process import CommandExt as UnixCommandExt
@@ -36,6 +38,20 @@ model Allocation:
     """Keep an imported allocation in a source model field."""
 
     raw: AllocationHandle
+
+
+model Flag:
+    """Keep scalar, enum and native Copy fields in one indexed record."""
+
+    enabled: bool
+    ordering: Ordering
+    address: Ipv4Addr
+
+
+model FlagSet:
+    """Keep indexed records behind a borrowed model field."""
+
+    flags: list[Flag]
 
 
 def native_hash[T with NativeHash](value: T) -> u64:
@@ -82,8 +98,10 @@ def show_receiver_methods() -> None:
     numbers = [7]
     println(first_number(numbers))
     match BytesIO(b"abc").read():
-        Ok(data) => assert data == b"abc"
-        Err(_) => assert false
+        Ok(data) =>
+            assert data == b"abc"
+        Err(_) =>
+            assert false
 
 
 def first_duration_seconds(values: &list[Duration]) -> u64:
@@ -144,6 +162,9 @@ def show_native_constructor() -> None:
             snapshot = Output(status=report.status, stdout=report.stdout, stderr=report.stderr)
             copied = snapshot.clone()
             assert copied.status.success()
+            reports = [snapshot, copied]
+            assert reports[1].status.success()
+            assert len(reports[1].stdout) > 0
         Err(_) => assert false
     match Command.new("true").spawn():
         Ok(child) =>
@@ -155,8 +176,58 @@ def show_native_constructor() -> None:
         Err(_) => assert false
 
 
+def show_entry_defaults() -> None:
+    """Infer an empty native entry default from its concrete value type before materializing the collection."""
+    mut entries: BTreeMap[int, list[int]] = BTreeMap.new()
+    entries.entry(7).or_insert([]).push(11)
+    entries.entry(7).or_insert([]).push(13)
+    match entries.get(7):
+        Some(values) =>
+            assert len(values) == 2
+            assert values[0] == 11
+            assert values[1] == 13
+        None =>
+            assert false
+
+
+def show_indexed_flags() -> None:
+    """Read a scalar field from a constant-indexed record without moving the list."""
+    address = Ipv4Addr.new(127u8, 0u8, 0u8, 1u8)
+    addresses = [address, address]
+    assert addresses[1].to_bits() == 2130706433u32
+    flags = [Flag(enabled=false, ordering=Ordering.Less, address=address), Flag(
+        enabled=true,
+        ordering=Ordering.Greater,
+        address=address,
+    )]
+    assert flags[1].enabled
+    match flags[1].ordering:
+        Ordering.Greater => pass
+        _ =>
+            assert false
+    assert not flags[0].enabled
+    inspect_flag_set(FlagSet(flags=flags))
+
+
+def inspect_flag_set(values: &FlagSet) -> None:
+    """Observe fields after a borrowed model and list-element prefix."""
+    assert values.flags[1].enabled
+    assert values.flags[1].address.to_bits() == 2130706433u32
+    match values.flags[1].ordering:
+        Ordering.Greater => pass
+        _ =>
+            assert false
+    assert not values.flags[0].enabled
+
+
+def reverse_ordering(value: &Ordering) -> Ordering:
+    """Copy a borrowed native enum into its by-value method receiver."""
+    return value.reverse()
+
+
 def main() -> None:
-    """Observe native receivers.
+    """
+    Observe native receivers.
 
     1. Exercise associated functions and argument iteration.
     2. Exercise inherent methods, trait methods and constructed records.
@@ -171,6 +242,11 @@ def main() -> None:
     show_mutable_tuple_fields()
     configure_process_group()
     show_native_constructor()
+    show_entry_defaults()
+    show_indexed_flags()
+    match reverse_ordering(Ordering.Less):
+        Ordering.Greater => pass
+        _ => assert false
 
 
 def configure_process_group() -> None:
