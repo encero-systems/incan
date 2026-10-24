@@ -8,7 +8,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// one is given the statement suffix that follows it (`&stmts[index + 1..]`), so last-use countdowns seeded by
     /// [`Self::declare_new_local`] only count reads that can still occur after the declaration. Nested blocks cannot
     /// change an enclosing static binding's handle selection: that needs a runtime handle fact, so it refuses
-    /// explicitly rather than retaining whichever branch happened to lower last.
+    /// explicitly rather than retaining whichever branch happened to lower last. Non-escaping compiler temporaries
+    /// end at the source statement boundary, so a native borrow guard cannot remain live into the next statement.
     pub(super) fn lower_block_into(
         &mut self,
         stmts: &[ast::Spanned<ast::Statement>],
@@ -22,7 +23,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
         // ---- Context: source-order statements ----
         for (index, stmt) in stmts.iter().enumerate() {
+            let first_temporary = self.locals.len();
             self.lower_stmt_into(stmt, &stmts[index + 1..], scope, out);
+            self.insert_statement_temporary_drops(out, scope, first_temporary, hir_span(stmt.span));
         }
 
         // ---- Context: a handle selected by runtime control flow ----
@@ -38,6 +41,33 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 );
             }
             self.static_aliases = enclosing_aliases;
+        }
+    }
+
+    /// End fresh compiler-owned expression storage after its source statement, in reverse construction order.
+    /// Named bindings keep their lexical lifetime. Nested blocks handle their own locals, and moved temporaries
+    /// carry no drop obligation; recording these ends prevents a second lexical-scope drop for the same storage.
+    fn insert_statement_temporary_drops(
+        &mut self,
+        out: &mut Vec<bir::Statement>,
+        scope: bir::ScopeId,
+        first: usize,
+        span: HirSourceSpan,
+    ) {
+        let candidates = self.locals[first..]
+            .iter()
+            .rev()
+            .filter(|local| local.scope == scope && local.origin == bir::LocalOrigin::Temporary)
+            .filter(|local| !local.ty.abi_v0_facts().ownership.is_trivially_copy())
+            .filter(|local| !self.moved_out.contains(&local.id))
+            .map(|local| local.id)
+            .collect::<Vec<_>>();
+        for local in candidates {
+            out.push(bir::Statement {
+                kind: bir::StatementKind::Drop { local },
+                span,
+            });
+            self.moved_out.insert(local);
         }
     }
 

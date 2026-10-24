@@ -8,6 +8,43 @@ use crate::symbols::{CallableParam, ResolvedType};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
 impl TypeChecker {
+    /// Retain an inline closure parameter's checked nominal owner after its selected caller supplies the channel.
+    /// Lexical checking remains unchanged; only this parameter's identity-matching reads and callable storage close.
+    pub(super) fn retain_body_ir_callback_parameter(&mut self, callback: &Spanned<Expr>, input: &ResolvedType) {
+        if let Expr::Paren(inner) = &callback.node {
+            self.retain_body_ir_callback_parameter(inner, input);
+            return;
+        }
+        let Expr::Closure(params, _) = &callback.node else {
+            return;
+        };
+        let [source] = params.as_slice() else { return };
+        let Some(ResolvedType::Function(mut parameters, returned)) =
+            self.body_ir_checked_value_type(callback.span).cloned()
+        else {
+            return;
+        };
+        let [parameter] = parameters.as_mut_slice() else { return };
+        let closed = self.body_ir_close_value_parts(&parameter.ty, input);
+        if closed == parameter.ty || !Self::is_settled_type_argument(&closed) || !self.types_compatible(&closed, input)
+        {
+            return;
+        }
+        let Some(identity) = self
+            .type_info
+            .resolved_write_identity(source.span, &source.node.name)
+            .cloned()
+        else {
+            return;
+        };
+        parameter.ty = closed.clone();
+        self.retain_body_ir_parameter_reads(&identity, &closed);
+        self.type_info.expressions.body_ir_expr_types.insert(
+            (callback.span.start, callback.span.end),
+            ResolvedType::Function(parameters, returned),
+        );
+    }
+
     /// Retain agreed requirements only from a successfully validated, independently identified function call.
     /// Conflicts remain explicit so a later matching call cannot reinstate a previously invalidated grant.
     pub(in crate::typechecker::check_expr) fn retain_body_ir_parameter_requirements(

@@ -353,6 +353,7 @@ impl TypeChecker {
                             arg_types.first().cloned().unwrap_or(ResolvedType::Unknown)
                         }
                     };
+                    self.retain_body_ir_some_payload(call_span, args, &inner);
                     Some(option_ty(inner))
                 }
                 ConstructorId::None => Some(option_ty(ResolvedType::Unknown)),

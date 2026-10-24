@@ -1,11 +1,17 @@
-# behavior: native vector and Option fields preserve shared list arguments, cloned list methods and native mutation methods
+# behavior: fields keep shared views, guards end per statement and trait inputs contextually type integers (#1530)
 # expect-stdout:
 #   checked
 #   checked
 #   checked
 #   checked
+#   3
+#   1
+
+"""Retain native field contracts and observe temporary borrow lifetimes."""
 
 from rust::incan_lang::interop import RustTypeInfo, RustMethodSig
+from rust::std::cell import RefCell
+from rust::std::io import BufRead, Cursor
 from rust::std::process import Output
 
 
@@ -36,8 +42,33 @@ def optional_target[T](value: RustTypeInfo) -> None:
 
 
 def main() -> None:
-    """Execute after all four native field declarations have checked."""
+    """Observe native field admission and repeated borrow-guard method chains.
+
+    1. Confirm that the four native field declarations checked.
+    2. Mutate one native vector through successive temporary guards.
+    3. Contextually type a literal passed to an imported native trait method.
+    """
+    # 1. Reach execution after checking each native field declaration.
     println("checked")
     println("checked")
     println("checked")
     println("checked")
+    # 2. Release each guard before beginning the next statement's borrow.
+    repeated_borrows()
+    # 3. An unsuffixed integer takes the selected trait method's exact-width parameter type.
+    contextual_trait_input()
+
+
+def repeated_borrows() -> None:
+    """Keep the RefCell owner while each temporary guard ends after its method chain."""
+    values = RefCell.new([6])
+    values.borrow_mut().push(7)
+    values.borrow_mut().push(8)
+    println(values.borrow().len())
+
+
+def contextual_trait_input() -> None:
+    """Advance an in-memory cursor through a portable trait's usize parameter."""
+    mut cursor = Cursor.new(b"abc")
+    cursor.consume(1)
+    println(cursor.position())

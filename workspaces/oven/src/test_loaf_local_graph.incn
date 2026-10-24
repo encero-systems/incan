@@ -4,7 +4,7 @@ from std import toml
 from std.fs import Path
 from std.json import JsonValue
 from std.testing import fail_t
-from loaf_local_graph import LocalDemand, select
+from loaf_local_graph import LocalDemand, catalog, select
 from rust_activation import CfgSnapshot, DependencyDomain, TargetConfiguration
 
 
@@ -78,7 +78,12 @@ pub def test_local_graph_normal_selection_excludes_root_test_environment() -> No
 
 
 pub def test_local_graph_overlay_does_not_invent_root_features() -> None:
-    """An environment makes the dependency mandatory without enabling the root's optional default feature."""
+    """Check project features in test overlays.
+
+    1. Make the dependency mandatory without enabling the root's optional default feature.
+    2. Refuse malformed project or feature tables instead of treating them as absent.
+    """
+    # 1. A dependency-only environment contributes no project features.
     source = checked(Path("tests/fixtures/local-test-graph/resolved-test.toml").read_text("utf-8", "strict").map_err((e) => e.message()))
     environment = checked(toml.parse(source).map_err((e) => e.message()))
     result = checked(select(root(false), configuration(), Some(environment)))
@@ -86,6 +91,12 @@ pub def test_local_graph_overlay_does_not_invent_root_features() -> None:
         if text(facet, "project").endswith("/leaf"):
             selected = [checked(value.expect_str().map_err((e) => e.message())) for value in array(facet, "features")]
             assert selected == ["test-only"]
+    # 2. Absence is supported, but a present table must have the declared shape.
+    for malformed in ["project=1\n", "[project]\nfeatures=1\n"]:
+        document = checked(toml.parse(malformed).map_err((error) => error.message()))
+        match catalog(document):
+            Ok(_) => fail_t[None]("malformed project feature table was accepted")
+            Err(_) => pass
 
 
 pub def test_local_graph_retains_inactive_original_target_decisions() -> None:

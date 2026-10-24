@@ -548,14 +548,14 @@ pub def validate_static_receiver(
     names: list[str],
     arguments: list[RustType],
 ) -> Result[None, str]:
-    """Close the checked receiver in the caller's binding before requiring a retained model or source enum."""
+    """Close the checked receiver in its active frame; only a retained model or enum admits an associated call."""
     match target.receiver_type:
         Some(template) =>
-            ty = substitute(template, names, arguments)?
-            match enum_type(list(module.enum_declarations), ty):
+            closed: RustType = substitute(template, names, arguments)?
+            match enum_type(list(module.enum_declarations), closed):
                 Some(_owner) => return Ok(None)
                 None => pass
-            match model_type(list(module.nominal_declarations), ty)?:
+            match model_type(list(module.nominal_declarations), closed)?:
                 PlanType.Model(_owner, _name) => return Ok(None)
                 _ => return Err("unsupported Body IR nonnominal static receiver")
         None => return Ok(None)

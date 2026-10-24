@@ -1,8 +1,9 @@
-# behavior: map_err closures over a Result see the concrete error's methods and may return a str literal as the new error
+# behavior: map_err callbacks see concrete errors, including a shared collection view of an owned payload
 # expect-stdout:
 #   ok:7
 #   err:disk full
 #   err:malformed
+#   err:wire:bad
 
 pub model Failure:
     pub detail: str
@@ -26,6 +27,14 @@ def show(result: Result[int, str]) -> str:
 
 
 def main() -> None:
+    """Print scalar, model and collection error mappings in order."""
     println(show(describe(Ok(7))))
     println(show(describe(Err(Failure(detail="disk full")))))
     println(show(normalize(Err(1))))
+    messages: Result[int, list[str]] = Err(["wire", "bad"])
+    println(show(messages.map_err(describe_messages)))
+
+
+def describe_messages(messages: list[str]) -> str:
+    """Borrow a collection payload while constructing its replacement error."""
+    return messages[0] + ":" + messages[1]

@@ -2,9 +2,9 @@
 
 use super::*;
 
-/// Prove that a declaration-owned default constructs only fresh literal data. This recognizes the same collection
-/// literals after library publication without consulting source syntax or allowing calls, parameter reads, or writes
-/// to existing storage to cross a supplied argument's observable evaluation.
+/// Prove that a declaration-owned default constructs only fresh literal data, including checked enum variants.
+/// Publication preserves this proof without source syntax; calls, parameter reads and writes to existing storage
+/// cannot cross a supplied argument's observable evaluation.
 pub(super) fn is_literal_default(default: &bir::CallableParamDefault) -> bool {
     let bir::CallableParamDefault::Source(computation) = default else {
         return false;
@@ -26,15 +26,21 @@ pub(super) fn is_literal_default(default: &bir::CallableParamDefault) -> bool {
     literal_default_operand(&computation.result, &initialized)
 }
 
-/// Admit builtin literal containers whose elements refer only to constants or preceding fresh literal temporaries.
+/// Admit literal containers and checked enum variants whose payloads refer only to constants or fresh temporaries.
+/// Variant construction has no user callable; retained enum targets supply its declaration-owned layout.
 fn literal_default_rvalue(value: &bir::Rvalue, initialized: &HashSet<bir::LocalId>) -> bool {
     match value {
         bir::Rvalue::Use(operand) => literal_default_operand(operand, initialized),
-        bir::Rvalue::Aggregate(bir::AggregateKind::List | bir::AggregateKind::Set | bir::AggregateKind::Tuple, elements) => {
-            elements.iter().all(|element| {
-                matches!(element, bir::ArgumentElement::One(operand) if literal_default_operand(operand, initialized))
-            })
-        }
+        bir::Rvalue::FieldlessEnumVariant(_) | bir::Rvalue::ValueEnumVariant(_) => true,
+        bir::Rvalue::Aggregate(
+            bir::AggregateKind::List
+            | bir::AggregateKind::Set
+            | bir::AggregateKind::Tuple
+            | bir::AggregateKind::EnumVariant(_),
+            elements,
+        ) => elements.iter().all(|element| {
+            matches!(element, bir::ArgumentElement::One(operand) if literal_default_operand(operand, initialized))
+        }),
         bir::Rvalue::Dict(entries) => entries.iter().all(|entry| {
             matches!(entry, bir::DictEntry::Pair(key, value)
                 if literal_default_operand(key, initialized) && literal_default_operand(value, initialized))

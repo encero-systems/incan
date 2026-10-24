@@ -40,23 +40,42 @@ pub def test_rust_requirements_preserve_features_and_package_alias() -> None:
 
 
 pub def test_unsupported_intent_is_not_dropped() -> None:
-    """Refuse unimplemented top-level and project intent instead of producing a partial request."""
-    for extra in ["[workspace]\nmembers=[]\n", "[project.features]\ndefault=[]\n", "[interop.c]\n", "[rust]\ncrate-name='legacy'\n"]:
-        source = "[project]\nname='app'\nversion='0.1.0'\n" + extra
-        match parse_intent(source, "loaf.toml"):
+    """Check the intake boundary.
+
+    1. Accept implemented features and empty C intent.
+    2. Refuse unsupported manifest sections.
+    """
+    # 1. Implemented intent remains accepted.
+    for extra in ["[project.features]\ndefault=[]\n", "[interop.c]\n"]:
+        match parse_intent(project_manifest(extra), "loaf.toml"):
+            Ok(_) => pass
+            Err(error) => fail(error.message())
+    # 2. Unsupported intent must still be named instead of ignored.
+    for extra in ["[workspace]\nmembers=[]\n", "[interop.cuda]\n", "[rust]\ncrate-name='legacy'\n"]:
+        match parse_intent(project_manifest(extra), "loaf.toml"):
             Ok(_) => fail("unsupported intent was accepted")
             Err(error) =>
                 assert error.kind == IntakeErrorKind.Unsupported
 
 
 pub def test_dependency_options_are_not_silently_ignored() -> None:
-    """Name the exact unsupported local dependency feature field."""
-    source = "[project]\nname='app'\nversion='0.1.0'\n[dependencies]\nstock={path='../catalog', features=['extra']}\n"
-    match parse_intent(source, "loaf.toml"):
-        Ok(_) => fail("unimplemented local feature selection was accepted")
+    """Check local dependency options.
+
+    1. Retain supported local features.
+    2. Name the exact unsupported dependency option.
+    """
+    # 1. Feature requests survive intake.
+    supported = "[dependencies]\nstock={path='../catalog', features=['extra']}\n"
+    match parse_intent(project_manifest(supported), "loaf.toml"):
+        Ok(project) => assert project.dependencies[0].features == ["extra"]
+        Err(error) => fail(error.message())
+    # 2. An unknown option does not disappear beside supported ones.
+    unsupported = "[dependencies]\nstock={path='../catalog', features=['extra'], workspace=true}\n"
+    match parse_intent(project_manifest(unsupported), "loaf.toml"):
+        Ok(_) => fail("unsupported local dependency option was accepted")
         Err(error) =>
             assert error.kind == IntakeErrorKind.Unsupported
-            assert error.field == ["dependencies", "stock", "features"]
+            assert error.field == ["dependencies", "stock", "workspace"]
 
 
 pub def test_workbench_aliases_and_unselected_rust_request() -> None:
@@ -154,3 +173,8 @@ pub def test_amended_loaf_refuses_retired_grammar() -> None:
         match parse_intent(source, "loaf.toml"):
             Ok(_) => fail("removed or noncanonical grammar was admitted")
             Err(_) => pass
+
+
+def project_manifest(extra: str) -> str:
+    """Supply the required project identity before the intent under test."""
+    return "[project]\nname='app'\nversion='0.1.0'\n" + extra

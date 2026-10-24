@@ -1,4 +1,4 @@
-# behavior: generic functions that call a callable parameter twice, reuse a str beside a type parameter, copy a concrete model, return self from a generic method, and return a field or a loop item inside Ok all run with concrete int and str arguments
+# behavior: generic callables, model reuse, Result payloads and static constructors retain checked types (#1530)
 # expect-stdout:
 #   2 3
 #   ab-ab 5
@@ -6,6 +6,14 @@
 #   codec codec
 #   9
 #   b
+#   0
+#   0 -1 1
+#   0
+
+"""Exercise generic calls, retained values and constructor owner arguments with concrete types."""
+
+from std.collections import OrderedSet
+from std.graph import Dag
 
 model Algorithm:
     name: str
@@ -54,6 +62,12 @@ def increment(value: int) -> int:
 
 
 def main() -> None:
+    """Exercise concrete generic values, then close a constructor's owner binder exactly once.
+
+    1. Call generic functions with concrete callable, model and payload values.
+    2. Construct an empty generic model through its static constructor.
+    """
+    # 1. Retain the concrete arguments of generic calls and their result payloads.
     println(call_both(increment, 1, 2))
     println(label_twice("ab", 5))
     println(copy_algorithm(Algorithm(name="fast"), 1, "x"))
@@ -65,3 +79,17 @@ def main() -> None:
     match find(["a", "b"], 1):
         Ok(value) => println(value)
         Err(message) => println(message)
+    # 2. Keep the owner's argument separate from the constructor's method arguments.
+    batch = OrderedSet[str]()
+    println(len(batch))
+    println(f"{position(['kept'], 'kept')} {position(['kept'], 'missing')} {position([2, 3], 3)}")
+    graph = Dag[str]()
+    println(graph.graph.next_node_id)
+
+
+def position[T with (Clone, Eq)](items: list[T], value: T) -> int:
+    """Compare indexed generic values without treating a collection element as a structural field."""
+    for index in range(len(items)):
+        if items[index] == value:
+            return index
+    return -1

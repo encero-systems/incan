@@ -71,7 +71,7 @@ fn is_exact_integer_type(ty: &ResolvedType) -> bool {
 /// Return whether an AST expression is an unsuffixed integer literal, negated or parenthesized or not.
 ///
 /// These are the operands whose type comes from their context: a suffixed literal (`7i8`) names its own type.
-fn is_unsuffixed_integer_literal(expr: &Spanned<Expr>) -> bool {
+pub(super) fn is_unsuffixed_integer_literal(expr: &Spanned<Expr>) -> bool {
     match &expr.node {
         Expr::Literal(Literal::Int(value)) => value.suffix.is_none(),
         Expr::Unary(UnaryOp::Neg, inner) => {
@@ -84,7 +84,7 @@ fn is_unsuffixed_integer_literal(expr: &Spanned<Expr>) -> bool {
 
 /// Return whether an unsuffixed integer literal operand, negated or parenthesized or not, holds a value of the integer
 /// type `ty`.
-fn integer_literal_fits(expr: &Spanned<Expr>, ty: &ResolvedType) -> bool {
+pub(super) fn integer_literal_fits(expr: &Spanned<Expr>, ty: &ResolvedType) -> bool {
     let Some(id) = numeric_type_id_for_compat(ty) else {
         return false;
     };

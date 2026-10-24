@@ -104,7 +104,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
             self.in_place_pattern = enclosing_in_place;
             if arm.node.guard.is_none() {
-                self.retain_owned_native_payload_move(&scrutinee_place, &mut pattern);
+                self.retain_owned_carrier_payload_move(&scrutinee_place, &mut pattern);
             }
 
             // ---- Guard and body see this arm's own pattern bindings, shadowing any outer binding of the same name
@@ -169,11 +169,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     }
 
     /// Transfer a single owned native payload from an unguarded match on a fresh Option/Result temporary or the last
-    /// read of an owned native iterator item or owned parameter. No later read can reuse that carrier, and a successful
-    /// arm has no other payload to preserve. Borrowed parameters, loop-reused carriers, nested patterns and guards
-    /// retain their facts. Checked non-Clone tuple newtypes retain the same transfer boundary as their native
-    /// payload.
-    fn retain_owned_native_payload_move(&mut self, source: &bir::Place, pattern: &mut bir::Pattern) {
+    /// read of an owned native iterator item, local binding or owned parameter. No later read can reuse that carrier,
+    /// and a successful arm has no other payload to preserve. Borrowed parameters, loop-reused carriers, nested
+    /// patterns and guards retain their facts. A final owned local read authorizes transfer independently of whether
+    /// its payload's declaration is available in this consumer; reference payloads retain their existing facts.
+    fn retain_owned_carrier_payload_move(&mut self, source: &bir::Place, pattern: &mut bir::Pattern) {
         if !source.projection.is_empty() {
             return;
         }
@@ -184,7 +184,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return;
         };
         let owned_last_read = (self.native_enum_payload_bindings.contains(&id)
-            || local.origin == bir::LocalOrigin::Parameter)
+            || matches!(
+                local.origin,
+                bir::LocalOrigin::Parameter | bir::LocalOrigin::UserBinding
+            ))
             && !self.is_borrowed_parameter(id)
             && !self.loop_reuses_local(id)
             && !self.pending_argument_reads.contains(&id)
@@ -205,8 +208,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let Some(payload) = self.locals.get(binding.local.index()) else {
             return;
         };
-        let native = self.payload_needs_owned_transfer(&payload.ty);
-        if native
+        let owned_local = local.origin == bir::LocalOrigin::UserBinding
+            && owned_last_read
+            && !matches!(payload.ty, IncanType::Ref(_) | IncanType::RefMut(_));
+        if (owned_local || self.payload_needs_owned_transfer(&payload.ty))
             && matches!(
                 binding.fact,
                 bir::OwnershipFact::Borrow | bir::OwnershipFact::Clone | bir::OwnershipFact::Move
@@ -293,7 +298,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             &mut saved_bindings,
         );
         self.in_place_pattern = enclosing_in_place;
-        self.retain_owned_native_payload_move(scrutinee_place, &mut lowered_pattern);
+        self.retain_owned_carrier_payload_move(scrutinee_place, &mut lowered_pattern);
 
         let mut body_stmts = Vec::new();
         self.lower_block_into(body, arm_scope, &mut body_stmts);

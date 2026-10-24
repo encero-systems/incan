@@ -8097,8 +8097,8 @@ impl TypeChecker {
             .insert(module_name.to_string(), direct_projections);
     }
 
-    /// Retain a declaration and its own methods' lexical nominal bindings before imports or trait adoption copy them.
-    /// A facade cannot replace the original scope, and inherited methods keep their declaring module's scope.
+    /// Retain a declaration and its own fields' and methods' lexical nominal bindings before imports copy them.
+    /// A facade cannot replace the original scope, and inherited members keep their declaring module's scope.
     fn retain_declaration_nominal_scope(
         &mut self,
         identity: &CanonicalSymbolId,
@@ -8117,6 +8117,20 @@ impl TypeChecker {
                     params: function.params.clone(),
                     return_type: function.return_type.clone(),
                 });
+        }
+        let fields = match kind {
+            SymbolKind::Type(TypeInfo::Model(info)) => Some(&info.fields),
+            SymbolKind::Type(TypeInfo::Class(info)) => Some(&info.fields),
+            _ => None,
+        };
+        if let Some(fields) = fields {
+            for member in fields.values().filter_map(|field| field.identity.as_ref()) {
+                if member.origin == identity.origin {
+                    self.declaration_nominal_scopes
+                        .entry(member.clone())
+                        .or_insert_with(|| scope.clone());
+                }
+            }
         }
         let methods = match kind {
             SymbolKind::Type(TypeInfo::Model(info)) => &info.methods,

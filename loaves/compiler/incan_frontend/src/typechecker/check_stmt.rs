@@ -1843,6 +1843,7 @@ impl TypeChecker {
                         // iterable before ordinary `Option`-based iteration; it is not the fallible-poll protocol.
                         let unwrapped_iter_ty = self.validate_try_result_type(&iter_ty, for_stmt.iter.span);
                         self.record_expr_type(for_stmt.iter.span, unwrapped_iter_ty.clone());
+                        self.retain_body_ir_result_value(&for_stmt.iter, &unwrapped_iter_ty);
                         self.infer_iterator_element_type_from_expr(&for_stmt.iter, &unwrapped_iter_ty)
                     }
                 } else {
@@ -1871,6 +1872,7 @@ impl TypeChecker {
         // bindings would carry `Unknown` even though the element type is fully resolved right here.
         self.record_expr_type(for_stmt.pattern.span, elem_ty.clone());
         self.define_for_pattern_bindings(&for_stmt.pattern, &elem_ty);
+        self.retain_body_ir_iteration_binding(&for_stmt.pattern, &for_stmt.iter);
         self.remember_for_pattern_bindings(&for_stmt.pattern.node, owns_items);
         self.push_loop_context(LoopContextKind::Statement, None, span.start);
         let loop_body = self.enter_for_loop_body(&for_stmt.pattern.node, loop_view_param, derived_views);
