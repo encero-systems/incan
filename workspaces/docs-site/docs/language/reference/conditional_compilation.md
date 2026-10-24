@@ -12,7 +12,7 @@ when feature("json"):
 
 ## Grammar
 
-The v0.5 form is:
+The syntax is:
 
 ```text
 feature-condition  ::= "when" feature-predicate ("and" feature-predicate)* ":" NEWLINE INDENT declaration+ DEDENT
@@ -33,7 +33,7 @@ Nested feature blocks are equivalent to a conjunction. The formatter sorts and d
 
 A feature block may contain compilation-unit declarations, including imports, public reexports, functions, models, classes, traits, enums, constants, static storage, aliases, registry declarations, and nested feature blocks. A condition applies to every checked fact derived from declarations in its body, including documentation and provider implementation requirements.
 
-Inactive declarations remain parseable syntax for formatting and editor navigation, but they do not enter the active typechecking, lowering, generated-Rust, documentation, or codegraph projection. Tooling that needs another projection must select the corresponding package features rather than interpreting the source independently.
+Inactive declarations provide no active API, runtime behavior or graph facts.
 
 ## Restrictions
 
@@ -43,4 +43,4 @@ Inactive declarations remain parseable syntax for formatting and editor navigati
 - A feature condition is valid only at compilation-unit scope. It is not an `if` expression and cannot inspect runtime state.
 - Features are additive. Enabling a feature may contribute API or dependencies but must not subtract or reinterpret an unconditional API.
 
-Declare package features and dependency edges in [`loaf.toml`](../../tooling/reference/project_configuration.md#projectfeatures), select them through manifest dependencies or Incan CLI feature flags, and inspect the resolved projection with `incan inspect features --format json`. See [SDK components and package features](../../tooling/reference/sdk_components_and_package_features.md) for the full resolution model.
+Package features and dependency edges are declared in [`loaf.toml`](../../tooling/reference/project_configuration.md#projectfeatures) and selected through manifest dependencies or Incan CLI feature flags. `incan describe-unit PATH` reports declared and active root features. [Package features](../../tooling/reference/sdk_components_and_package_features.md) specifies selection.

@@ -20,7 +20,7 @@ The language `assert` statement is always available and does not require importi
 
 ## Assertion functions
 
-All assertion helpers fail the current test when the assertion does not hold. The helper named `assert` is available as `testing.assert(condition, msg?)`; prefer the language statement for ordinary boolean assertions.
+All assertion helpers fail the current test when the assertion does not hold. The helper named `assert` is available as `testing.assert(condition, msg?)`.
 
 | Function                                                                                         | Default message                               | Fails when              | Returns |
 | ------------------------------------------------------------------------------------------------ | --------------------------------------------- | ----------------------- | ------- |
@@ -69,15 +69,15 @@ Returns the stable platform string used by `skipif` / `xfailif` collection probe
 
 ### `feature(name: str) -> bool`
 
-Returns true during collection when `incan test --feature <name>` was passed.
+Returns whether the named test collection probe is enabled. Dev.8's CLI exposes no switch to enable a named probe.
 
 ### `@slow`
 
-Marks a test as slow (excluded by default unless enabled via tooling flags).
+Marks a test as slow. Slow tests are excluded by default; dev.8's CLI exposes no slow-test selection flag.
 
 ### `@mark(name: str)`
 
-Attaches a user-defined marker for `incan test -m` selection.
+Attaches a user-defined marker. Dev.8's CLI exposes no marker-selection flag.
 
 ### `@resource(name: str)`
 
@@ -97,7 +97,7 @@ Overrides the timeout for the generated test batch that contains this test. Dura
 
 `std.testing.assert_raises[E](block, msg = "")` asserts that a zero-argument callable raises or panics with the runtime error kind `E`.
 
-The compiler also lowers `assert call() raises ErrorType[, msg]` to the same runtime check. Panic payloads match either the exact error kind name (for example `ValueError`) or the standard `Kind: message` prefix.
+`assert call() raises ErrorType[, msg]` performs the same runtime check. Panic payloads match either the exact error kind name or the standard `Kind: message` prefix.
 
 ## Fixtures and parametrization
 
@@ -121,7 +121,7 @@ Fixture scopes:
 
 - `@fixture` / `@fixture(scope="function")`: created for each test that uses it.
 - `@fixture(scope="module")`: cached once per source file inside a generated worker-batch harness.
-- `@fixture(scope="session")`: cached once per worker batch. With `--jobs 1`, one session fixture instance can be shared across compatible collected files; with `--jobs N`, each worker gets its own instance.
+- `@fixture(scope="session")`: cached once per worker batch. Dev.8's CLI accepts one test source per invocation and exposes no job-count flag.
 
 Fixtures may use one top-level `yield` statement. Statements before `yield` are setup, the yielded value is injected, and statements after `yield` run as teardown at the fixture scope boundary. Teardown can reference setup locals and fixture parameters, runs after failing tests when the worker remains alive, and fails the run if teardown itself fails. Timeout-enforced worker termination can bypass teardown.
 

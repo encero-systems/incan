@@ -1,42 +1,10 @@
-The supported release channels install the same Incan toolchain payload. Choose the command manager that already fits your environment:
+Use an installed `0.6.0-dev.8` Oven executable and its matching toolchain archive. Installing an archive requires local Rust 1.98.0 with `rustc-dev` and a compatible host. The archive contains the compiler and its dependency closure; it does not contain the machine's Rust sysroot.
 
-=== "Direct installer"
+```bash
+incan --version
+incan toolchain install incan-0.6.0-dev.8.tar.zst
+```
 
-    ```bash
-    --8<-- "_snippets/commands/direct_install.sh"
-    export PATH="$HOME/.local/bin:$PATH"
-    incan --version
-    incan-lsp --version
-    ```
+Set `INCAN_HOME` before installation to select a separate home. Set `INCAN_STDLIB` to the matching standard-library source directory containing the package directories with `loaf.toml`. The selected toolchain must contain their compiled artifacts for the profile you use.
 
-    This path verifies the release manifest and checksum and can provision the pinned Rust 1.98.0 backend through `rustup`.
-
-=== "Homebrew"
-
-    ```bash
-    brew tap encero-systems/tap
-    brew install incan
-    incan --version
-    ```
-
-    Homebrew installs the prebuilt command binaries. Manage Rust separately.
-
-=== "npm"
-
-    ```bash
-    npm install -g @incan/toolchain
-    incan --version
-    ```
-
-    npm installs command shims without a lifecycle script; the first `incan` run provisions the checksum-verified toolchain for your host. Manage Rust and the `wasm32-wasip1` target separately.
-
-=== "pipx"
-
-    ```bash
-    pipx install incan
-    incan --version
-    ```
-
-    `pipx` keeps the command package isolated and routes installation through the shared release installer.
-
-Native Windows and Linux arm64 are not supported by the current binary installer. Use WSL2 or a source build on those hosts.
+The archive does not install Oven's executable itself. Keep the matching `incan` on `PATH`. The 0.5 direct installer and package-manager channels install a different CLI; they are not a dev.8 archive installer.

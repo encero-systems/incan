@@ -1,14 +1,14 @@
 # Build an asynchronous worker pipeline
 
-This tutorial runs several independent jobs, preserves their typed results, and places an explicit deadline around slow work. It uses the task APIs `spawn`, `JoinHandle`, and `timeout` from the full standard-library Loaf shipped with Incan 0.5.
+This tutorial runs several independent jobs, preserves their typed results, and places an explicit deadline around slow work. It requires the compiled dev.8 async standard package.
 
 <aside class="inc-tutorial-meta" aria-label="Tutorial details">
   <dl>
     <div><dt>Reader</dt><dd>Application or workflow developer</dd></div>
     <div><dt>Prerequisites</dt><dd>Functions, Result, match, and async basics</dd></div>
     <div><dt>Time</dt><dd>20–30 minutes</dd></div>
-    <div><dt>Verified</dt><dd>Incan <code>&gt;=0.5.0-0,&lt;0.6.0</code>; native build and execution exercised with the full-standard-library Loaf</dd></div>
-    <div><dt>Status</dt><dd>Release-envelope executable</dd></div>
+    <div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.8</code></dd></div>
+    <div><dt>Status</dt><dd>Requires the compiled async package</dd></div>
     <div><dt>Outcome</dt><dd>A running worker pipeline with typed joins and deadlines</dd></div>
     <div><dt>Artifacts</dt><dd>Worker-pipeline source and native executable</dd></div>
   </dl>
@@ -94,7 +94,7 @@ incan run examples/advanced/async_worker_pipeline.incn
 
 <section class="inc-learning-panel inc-learning-panel--complete inc-incus-slot" data-label="Complete" data-incus-category="success" markdown="1">
 
-You ran independent work, preserved task failures as typed results, and bounded slow work with an explicit deadline. The normal command reused the toolchain's checked async closure; it did not invoke Cargo on the consumer path.
+The program runs independent work, preserves task failures as typed results and bounds slow work with an explicit deadline. Its async APIs come from the installed standard package.
 
 </section>
 

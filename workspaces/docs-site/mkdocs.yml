@@ -284,16 +284,17 @@ nav:
           - Managing dependencies: tooling/how-to/dependencies.md
           - CI & automation: tooling/how-to/ci_and_automation.md
           - Troubleshooting: tooling/how-to/troubleshooting.md
+          - macOS first-launch delays: tooling/how-to/macos_first_launch.md
           - Editor setup: tooling/how-to/editor_setup.md
           - LSP: tooling/how-to/lsp.md
           - Formatting with incan fmt: tooling/how-to/formatting.md
-          - SDK components and package features: tooling/how-to/sdk_components_and_package_features.md
+          - Package features: tooling/how-to/sdk_components_and_package_features.md
           - Inspect checked C bindings: tooling/how-to/inspect_checked_c_bindings.md
           - Testing: tooling/how-to/testing.md
       - Explanation:
-          - The Oven ecosystem: tooling/explanation/oven_ecosystem.md
+          - Oven and Loaves: tooling/explanation/oven_ecosystem.md
           - Projects today: tooling/explanation/projects_today.md
-          - Compiled SDK provider flow: tooling/explanation/compiled_sdk_provider_flow.md
+          - Standard-package flow: tooling/explanation/compiled_sdk_provider_flow.md
           - Generated-build storage model: tooling/explanation/generated_build_storage.md
           - LSP architecture: tooling/explanation/lsp_architecture.md
           - Backend selection & execution receipts: tooling/explanation/backend_selection_receipts.md
@@ -307,7 +308,7 @@ nav:
           - Checked API metadata: tooling/reference/checked_api_metadata.md
           - Package executable representation: tooling/reference/package_executable_representation.md
           - Project configuration: tooling/reference/project_configuration.md
-          - SDK components and package features: tooling/reference/sdk_components_and_package_features.md
+          - Standard packages and features: tooling/reference/sdk_components_and_package_features.md
           - Oven interop deployment plans: tooling/reference/interop_deployment_plans.md
           - LSP protocol support: tooling/reference/lsp_protocol_support.md
   - Contributing:
