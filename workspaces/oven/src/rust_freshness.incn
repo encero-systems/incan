@@ -1,0 +1,177 @@
+"""Validate Rust library reuse against rustc's recorded file and environment dependencies."""
+
+from rust::std::env import VarError, var as env_var
+from std.fs import Path
+from observation import load_ledger, observe, SETTLE_SECONDS
+from toolchain import Toolchain
+from unit_freshness import Key, artifact_identity, compiler_fingerprint, fingerprint
+
+
+pub def library_key(
+    project: Path,
+    directory: Path,
+    dependencies: Path,
+    arguments: list[str],
+    environment: Dict[str, str],
+    linked: list[str],
+    toolchain: Toolchain,
+) -> Result[Key, str]:
+    """Key the actual compiler inputs; unavailable dependency evidence prevents reuse.
+
+    1. Read the files and environment keys rustc recorded.
+    2. Reconcile their current contents and the exact linked libraries.
+    3. Bind them to the compiler, arguments and package environment.
+    """
+    # 1. Read the files and environment keys rustc recorded.
+    text = dependencies.read_text("utf-8", "strict").map_err((error) => error.message())?
+    paths, variables = dependency_inputs(text)?
+    mut ledger = load_ledger(directory.joinpath("observations.json"), SETTLE_SECONDS)
+    mut sources: list[str] = []
+    # 2. Reconcile their current contents and the exact linked libraries.
+    for path in sorted(paths + [project.joinpath("loaf.toml").0]):
+        sources.extend([path, ledger.digest(Path(path))?])
+    mut artifacts: list[str] = []
+    for path in sorted(linked + extern_paths(arguments)):
+        artifacts.extend([path, artifact_identity(Path(path))?])
+    ledger.save()?
+    # 3. Bind them to the compiler, arguments and package environment.
+    compiler = compiler_fingerprint(toolchain)?
+    command = fingerprint(arguments)?
+    authored = fingerprint(sources)?
+    native = fingerprint(artifacts)?
+    ambient = fingerprint(environment_inputs(variables, environment)?)?
+    digest = fingerprint(["incan.oven.rust-library/2", compiler, command, authored, native, ambient])?
+    return Ok(Key(digest=digest, parts=[
+        f"compiler {compiler}", f"command {command}", f"sources {authored}",
+        f"artifacts {native}", f"environment {ambient}",
+    ]))
+
+
+pub def compilation_observations(
+    project: Path, dependencies: Path, arguments: list[str], linked: list[str], toolchain: Toolchain,
+) -> Result[Dict[str, str], str]:
+    """Capture inputs before compiling so later file changes cannot be vouched for by a completed build.
+
+    1. Collect authored files, known external dependencies and installed native inputs.
+    2. Retain their metadata before the compiler can read them.
+    """
+    # 1. Collect authored files, known external dependencies and installed native inputs.
+    mut paths = authored_files(project, set())?
+    paths.extend([toolchain.driver] + toolchain.rust_abi + [native.path for native in toolchain.externs])
+    paths.extend(linked + extern_paths(arguments))
+    if dependencies.is_file():
+        match dependencies.read_text("utf-8", "strict"):
+            Err(_) => pass
+            Ok(text) =>
+                match dependency_inputs(text):
+                    Err(_) => pass
+                    Ok(inputs) =>
+                        external, _ = inputs
+                        paths.extend(external)
+    # 2. Retain their metadata before the compiler can read them.
+    mut observations: Dict[str, str] = {}
+    for path in paths:
+        observations[path] = observe(Path(path))?.stamp
+    return Ok(observations)
+
+
+pub def inputs_unchanged(dependencies: Path, observations: Dict[str, str]) -> Result[bool, str]:
+    """Allow publication only for files captured before compilation and still unchanged afterward.
+
+    1. Read the compiler's complete dependency list.
+    2. Require every recorded dependency to have been observed before compilation.
+    3. Refuse proof for any changed source, compiler or linked artifact.
+    """
+    # 1. Read the compiler's complete dependency list.
+    text = dependencies.read_text("utf-8", "strict").map_err((error) => error.message())?
+    paths, _ = dependency_inputs(text)?
+    # 2. Require every recorded dependency to have been observed before compilation.
+    for path in paths:
+        if path not in observations:
+            return Ok(false)
+    # 3. Refuse proof for any changed source, compiler or linked artifact.
+    for path in observations.keys():
+        if observe(Path(path))?.stamp != observations[path]:
+            return Ok(false)
+    return Ok(true)
+
+
+def authored_files(root: Path, mut visited: set[str]) -> Result[list[str], str]:
+    """Observe project files without entering outputs, hidden directories or symbolic-link cycles."""
+    if root.is_file():
+        return Ok([root.0])
+    canonical = root.resolve().map_err((error) => error.message())?.0
+    if canonical in visited:
+        return Ok([])
+    visited.add(canonical)
+    mut paths: list[str] = []
+    for entry in root.iterdir().map_err((error) => error.message())?:
+        name = entry.name()
+        if name.startswith(".") or name in ["target", "node_modules"]:
+            continue
+        paths.extend(authored_files(entry, visited)?)
+    return Ok(paths)
+
+
+def dependency_inputs(text: str) -> Result[tuple[list[str], list[str]], str]:
+    """Read rustc's first dependency rule and tracked environment names, never its recorded values."""
+    mut paths: list[str] = []
+    mut variables: list[str] = []
+    for line in text.replace("\\\n", "").split("\n"):
+        if len(paths) == 0 and ": " in line and not line.startswith("#"):
+            paths = dependency_paths(": ".join(line.split(": ")[1:]))?
+        if line.startswith("# env-dep:"):
+            variables.append(line[10:].split("=")[0])
+    if len(paths) == 0:
+        return Err("Rust dependency evidence contains no source files")
+    return Ok((paths, variables))
+
+
+def dependency_paths(text: str) -> Result[list[str], str]:
+    """Decode make-style escaped spaces and backslashes; malformed evidence triggers compilation."""
+    mut paths: list[str] = []
+    mut path = ""
+    mut escaped = false
+    for character in text:
+        if escaped:
+            path += character
+            escaped = false
+        elif character == "\\":
+            escaped = true
+        elif character in " \t":
+            if path != "":
+                paths.append(path)
+                path = ""
+        else:
+            path += character
+    if escaped:
+        return Err("Rust dependency evidence ends with an escape")
+    if path != "":
+        paths.append(path)
+    return Ok(paths)
+
+
+def extern_paths(arguments: list[str]) -> list[str]:
+    """Extract named native libraries; rustc's built-in `proc_macro` has no artifact argument."""
+    mut paths: list[str] = []
+    for index in range(1, len(arguments)):
+        if arguments[index - 1] == "--extern" and "=" in arguments[index]:
+            paths.append("=".join(arguments[index].split("=")[1:]))
+    return paths
+
+
+def environment_inputs(names: list[str], environment: Dict[str, str]) -> Result[list[str], str]:
+    """Observe tracked variables with package overrides, distinguishing unset from empty Unicode values."""
+    mut inputs: list[str] = []
+    for name in sorted(names + [key for key in environment.keys()]):
+        inputs.append(name)
+        if name in environment:
+            inputs.extend(["set", environment[name]])
+            continue
+        match env_var(name):
+            Ok(value) => inputs.extend(["set", str(value)])
+            Err(error) =>
+                match error:
+                    VarError.NotPresent => inputs.append("unset")
+                    _ => return Err("Rust environment dependency is not Unicode")
+    return Ok(inputs)

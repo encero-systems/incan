@@ -7,7 +7,7 @@ under the root project's target directory, named by the unit's identity: its pro
 Registry units come compiled: their rlibs by root name and the directories their dependencies live in.
 """
 
-from rust::std::process import Command
+from rust::std::process import Command, id
 from rust::std::string import String as RustString
 from std.toml import TomlValue
 from std.fs import Path
@@ -26,8 +26,9 @@ from semver_req import compare_version_order, parse_version
 from toml_fields import optional_string, optional_strings, read_manifest, required_string
 from toolchain import Toolchain, load_toolchain, located
 from unit_freshness import (
-    Key, artifact_identity, compiler_fingerprint, fingerprint, install_all, reusable, rust_key, staleness,
+    Key, artifact_identity, compiler_fingerprint, fingerprint, install_all, record, reusable, rust_key, staleness,
 )
+from rust_freshness import compilation_observations, inputs_unchanged, library_key
 
 
 # The schema of the receipt a build leaves of the libraries it built.
@@ -673,66 +674,76 @@ pub def compile_library(
     built: Dict[str, BuiltUnit],
     search: list[str],
 ) -> Result[BuiltUnit, str]:
-    """
-    Compile one library unit into its own directory and return its artifact, unless the stored one is current.
+    """Reuse one library only with complete current input and output evidence, otherwise compile it.
 
-    A unit's outputs are its library and its code graph, stored under a stamp of the key they were built for (see
-    `unit_freshness`): its crate and manifest, how it is compiled, the compiler, and the identity of each library it
-    links. An unchanged unit starts no compiler; a changed one rebuilds, and so does every unit that links it. One
-    build of a unit runs at a time, and its outputs are installed only when complete.
-
-    1. Name the unit and key it from how it is compiled and what it links.
-    2. A stored unit whose stamp vouches for the key is kept.
-    3. Otherwise take the unit's lock: one build of a unit at a time.
-    4. A build that finished while this one waited is kept.
-    5. Compile the unit beside its place and install what it wrote.
+    1. Describe the compiler command and validate a previous library and graph.
+    2. Withdraw the old proof and compile with rustc's dependency evidence.
+    3. Publish the graph and stamp the complete successful output set.
     """
-    # 1. The unit is keyed by how it is compiled and by every library it links, so a rebuilt library rebuilds it.
+    # 1. Describe the compiler command and validate a previous library and graph.
     unit = identity(facet, request.profile)
-    name = f"{declared.crate_name}-{unit}"
-    directory = output.joinpath(name)
-    toolchain = load_toolchain()?
-    crate_arguments = library_arguments(declared) + ["-C", f"metadata={unit}", "-C", f"extra-filename=-{unit}"]
-    shared = crate_arguments + linking(facet, request, built, search)?
-    key = unit_key_of(facet, declared, request, unit, toolchain, shared)?
-    stamp = output.joinpath(f"{name}.oven-inputs")
-    label = f"unit {declared.crate_name} rust"
-    # 2. A stored unit whose stamp vouches for the key starts no compiler.
-    why = staleness(stored_outputs(directory, declared, unit), stamp, key)?
-    if why == "":
-        trace(f"{label}: reused")
-        return stored_unit(directory, declared, unit, true)
-    # 3. A concurrent build waits here, and then finds the outputs it needs. The lock is held until this returns.
-    output.mkdir(true, true).map_err((error) => error.message())?
+    directory = output.joinpath(f"{declared.crate_name}-{unit}")
+    directory.mkdir(true, true).map_err((error) => error.message())?
     building = directory.lock_exclusive().map_err((error) => error.message())?
-    # 4. A build another command finished while this one waited is used, not repeated.
-    if reusable(stored_outputs(directory, declared, unit), stamp, key)?:
-        trace(f"{label}: reused (built meanwhile by another command)")
-        return stored_unit(directory, declared, unit, true)
-    # 5. The unit is compiled beside its place and installed whole, so an interrupted build leaves the old unit.
-    trace(f"{label}: compiled ({why})")
-    return compiled_unit(facet, declared, output, name, toolchain, shared, stamp, key, unit)
+    dependencies = directory.joinpath("library.d")
+    graph = directory.joinpath(f"{declared.package}.incngraph")
+    stamp = directory.joinpath("library.oven-inputs")
+    mut arguments = library_arguments(declared)
+    arguments = arguments + ["--out-dir", directory.0, "-C", f"metadata={unit}", "-C", f"extra-filename=-{unit}"]
+    arguments = arguments + ["--emit", f"link,dep-info={dependencies.0}"]
+    arguments = arguments + linking(facet, request, built, search)?
+    toolchain = load_toolchain()?
+    environment = package_environment(facet.project, declared, declared.crate_name)
+    linked = [built[key].artifact for key in sorted([key for key in built.keys()])]
+    match library_artifact(directory, declared.crate_name, unit, declared.kind)?:
+        None => pass
+        Some(artifact) =>
+            match library_key(Path(facet.project), directory, dependencies, arguments, environment, linked, toolchain):
+                Err(_) => pass
+                Ok(key) =>
+                    if reusable([artifact, graph, dependencies], stamp, key)?:
+                        trace(f"unit {declared.crate_name} rust: reused")
+                        return Ok(BuiltUnit(
+                            crate_name=declared.crate_name, artifact=artifact.0, directory=directory.0, reused=true,
+                        ))
+    # 2. Withdraw the old proof and compile with rustc's dependency evidence.
+    if stamp.is_file():
+        stamp.unlink().map_err((error) => error.message())?
+    mut observations: Dict[str, str] = {}
+    match compilation_observations(Path(facet.project), dependencies, arguments, linked, toolchain):
+        Err(_) => pass
+        Ok(captured) => observations = captured
+    trace(f"unit {declared.crate_name} rust: compiled (no current library proof)")
+    pending = directory.joinpath(f"{declared.package}.incngraph.{id()}.pending")
+    graph_arguments = ["--rust-compile-codegraph", pending.0, facet.project, "--sysroot", toolchain.sysroot] + arguments
+    invoke_rustc(toolchain.driver, graph_arguments, environment, false, declared.crate_name)?
+    # 3. Publish the graph and stamp the complete successful output set.
+    place(pending, graph)?
+    match library_artifact(directory, declared.crate_name, unit, declared.kind)?:
+        None => return Err(f"rustc wrote no library for {declared.crate_name} into {directory.0}")
+        Some(artifact) =>
+            match library_key(Path(facet.project), directory, dependencies, arguments, environment, linked, toolchain):
+                Err(_) => pass
+                Ok(key) =>
+                    match inputs_unchanged(dependencies, observations):
+                        Err(_) => pass
+                        Ok(unchanged) =>
+                            if unchanged:
+                                record(stamp, key, [artifact, graph, dependencies])?
+            return Ok(BuiltUnit(crate_name=declared.crate_name, artifact=artifact.0, directory=directory.0))
 
 
-def unit_key_of(
-    facet: LocalFacet,
-    declared: RustFacet,
-    request: RustBuild,
-    unit: str,
-    toolchain: Toolchain,
-    shared: list[str],
-) -> Result[Key, str]:
-    """Reconcile a Rust unit's inputs against what earlier builds observed, and key them."""
-    ledger = unit_ledger(request.project, f"rust-{request.profile}-{declared.crate_name}-{unit}")
-    mut crates = load_ledger(ledger, SETTLE_SECONDS, "")
-    crate_line = f"crate {declared.crate_name} {declared.kind} {declared.edition} {declared.package} {declared.version}"
-    described = [crate_line, f"profile {request.profile}"] + shared
-    manifest = Path(facet.project).joinpath("loaf.toml")
-    crate_sources = Path(declared.library).parent()
-    compiler = compiler_fingerprint(toolchain)?
-    key = rust_key(compiler, described, manifest, crate_sources, extern_artifacts(shared), crates)?
-    crates.save()?
-    return Ok(key)
+def library_artifact(directory: Path, crate_name: str, unit: str, kind: str) -> Result[Option[Path], str]:
+    """Find the selected library kind before and after compilation, ignoring artifacts from a previous kind."""
+    for candidate in directory.iterdir().map_err((error) => error.message())?:
+        name = candidate.name()
+        if not name.startswith(f"lib{crate_name}-{unit}."):
+            continue
+        if kind in ["lib", "rlib"] and name.endswith(".rlib"):
+            return Ok(Some(candidate))
+        if kind not in ["lib", "rlib"] and (name.endswith(".dylib") or name.endswith(".so")):
+            return Ok(Some(candidate))
+    return Ok(None)
 
 
 def extern_artifacts(arguments: list[str]) -> list[str]:
@@ -742,84 +753,6 @@ def extern_artifacts(arguments: list[str]) -> list[str]:
         if arguments[index] == "--extern" and "=" in arguments[index + 1]:
             artifacts.append(arguments[index + 1].split("=")[1])
     return artifacts
-
-
-def stored_outputs(directory: Path, declared: RustFacet, unit: str) -> list[Path]:
-    """The library and the code graph of a stored unit: just the graph's place when no library is stored."""
-    graph = directory.joinpath(f"{declared.package}.incngraph")
-    match found_library(directory, declared.crate_name, unit):
-        Some(library) => return [library, graph]
-        None => return [graph]
-
-
-def found_library(directory: Path, crate_name: str, unit: str) -> Option[Path]:
-    """The library rustc wrote into `directory` for a unit, if there is one."""
-    if not directory.is_dir():
-        return None
-    match directory.iterdir():
-        Err(_) => return None
-        Ok(candidates) =>
-            for candidate in candidates:
-                name = candidate.name()
-                if name.startswith(f"lib{crate_name}-{unit}.") and is_rust_library(name):
-                    return Some(candidate)
-    return None
-
-
-def stored_unit(directory: Path, declared: RustFacet, unit: str, reused: bool) -> Result[BuiltUnit, str]:
-    """The unit whose library is stored in `directory`."""
-    match found_library(directory, declared.crate_name, unit):
-        Some(library) =>
-            return Ok(
-                BuiltUnit(crate_name=declared.crate_name, artifact=library.0, directory=directory.0, reused=reused),
-            )
-        None => return Err(f"rustc wrote no library for {declared.crate_name} into {directory.0}")
-
-
-def compiled_unit(
-    facet: LocalFacet,
-    declared: RustFacet,
-    output: Path,
-    name: str,
-    toolchain: Toolchain,
-    shared: list[str],
-    stamp: Path,
-    key: Key,
-    unit: str,
-) -> Result[BuiltUnit, str]:
-    """
-    Compile a unit beside its place and install what it wrote, library and graph together.
-
-    1. Start from an empty staging directory.
-    2. Have the driver compile the library and write the code graph into it.
-    3. Install the library and the graph under the stamp of the key.
-    4. Remove the staging directory.
-    """
-    # 1. Nothing a failed build left behind can be mistaken for this build's output.
-    staging = output.joinpath(f"{name}.staging")
-    if staging.is_dir():
-        staging.remove_tree().map_err((error) => error.message())?
-    staging.mkdir(true, true).map_err((error) => error.message())?
-    # 2. The library and its code graph come from one run of the driver, under the unit's own package environment.
-    pending =staging.joinpath(f"{declared.package}.incngraph.pending")
-    graph_arguments = ["--rust-compile-codegraph", pending.0, facet.project, "--sysroot", toolchain.sysroot]
-    arguments = graph_arguments + ["--out-dir", staging.0] + shared
-    environment = package_environment(facet.project, declared, declared.crate_name)
-    invoke_rustc(toolchain.driver, arguments, environment, false, declared.crate_name)?
-    staged_graph = staging.joinpath(f"{declared.package}.incngraph")
-    place(pending, staged_graph)?
-    # 3. The library and the graph replace the stored pair together, under the stamp of this build's key.
-    match found_library(staging, declared.crate_name, unit):
-        None => return Err(f"rustc wrote no library for {declared.crate_name} into {staging.0}")
-        Some(library) =>
-            directory = output.joinpath(name)
-            directory.mkdir(true, true).map_err((error) => error.message())?
-            staged = [library, staged_graph]
-            finals = [directory.joinpath(library.name()), directory.joinpath(f"{declared.package}.incngraph")]
-            install_all(staged, finals, stamp, key)?
-            # 4. The staging directory has served, and the unit now lives only in its own directory.
-            staging.remove_tree().map_err((error) => error.message())?
-            return stored_unit(directory, declared, unit, false)
 
 
 pub def library_arguments(declared: RustFacet) -> list[str]:

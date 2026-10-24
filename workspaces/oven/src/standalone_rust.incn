@@ -45,8 +45,9 @@ def source_requests(unit: UnitDescription, toolchain: Toolchain) -> Result[list[
     make_directory(directory)?
     path = directory.joinpath(f"{unit.package}.imports.unit.json")
     write(path, unit.to_json().to_pretty_json().map_err((error) => error.message())?)?
-    mut command = Command.new(toolchain.driver)
-    command.args(["--rust-imports", path.0])
+    mut command: Command = Command.new(toolchain.driver)
+    command.arg("--rust-imports")
+    command.arg(path.0)
     output = command.output().map_err((error) => error.to_string())?
     if not output.status.success():
         return Err(decoded(output.stderr))
