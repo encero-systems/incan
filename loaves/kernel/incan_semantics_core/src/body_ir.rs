@@ -543,6 +543,10 @@ pub struct TraitImplementation {
     /// Implementing method identity: the adopter's own method, the slot's default, or the default a directly adopted
     /// subtrait declares for the slot.
     pub implementation: CanonicalSymbolId,
+    /// Checked arguments of the selected slot's declaring trait, independent of a default body's parameter scope.
+    /// Distinct adoptions of one trait retain distinct dispatch records even when their slot identities agree.
+    #[serde(default)]
+    pub slot_arguments: Vec<IncanType>,
     /// Checked type arguments of the trait whose default `implementation` is, one per type parameter of that trait.
     ///
     /// Empty for the adopter's own method and for a default of a trait without type parameters.
@@ -4041,6 +4045,10 @@ pub struct MethodTarget {
     /// Calls without checked trait dispatch into a Loaf retain None.
     #[serde(default)]
     pub loaf_trait: Option<LoafTraitCall>,
+    /// Source trait arguments selected by checking, distinct from method binders and native delegation metadata.
+    /// An absent fact cannot distinguish multiple adoptions of the same slot.
+    #[serde(default)]
+    pub trait_arguments: Option<Vec<IncanType>>,
     /// Canonical method declaration or compiler-owned member selected by typechecking.
     ///
     /// Compiler-synthesized calls without a source resolution site carry `None`; consumers must keep those on an
@@ -4087,6 +4095,7 @@ impl MethodTarget {
             intrinsic_carrier: None,
             reflection: None,
             loaf_trait: None,
+            trait_arguments: None,
             canonical: None,
             type_args: Vec::new(),
             native_trait_delegation: None,

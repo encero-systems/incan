@@ -1,6 +1,11 @@
 """Owned native future construction, suspension and canonical executor entry."""
 
-from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive, SemanticSourceTargetKind
+from rust::incan_semantics_core import (
+    IncanType as RustType,
+    IncanPrimitiveType as Primitive,
+    IncanCallableParamKind,
+    SemanticSourceTargetKind,
+)
 from rust::incan_semantics_core::body_ir import BodyIrModule, Body
 from pub::incan_mir_plan import (
     PlanType,
@@ -79,19 +84,17 @@ pub def evaluator_name(module: &BodyIrModule, body: &Body) -> str:
 
 
 def capture_types(module: &BodyIrModule, body: &Body, mut intrinsics: list[EnumDeclaration]) -> Result[list[PlanType], str]:
-    """Retain owned captures and at most one nominal loan, whose lifetime the native boxing constructor preserves."""
+    """Retain owned captures, including declaration-owned rest packs, and at most one nominal loan."""
     mut fields: list[PlanType] = []
     mut loans = 0
     mut nominals = module.nominal_declarations
     mut enums = module.enum_declarations
     for parameter in body.params:
         ty = frame_type(nominals, enums, body.locals[int(parameter.local.index())], intrinsics)?
+        validate_collection_capture(parameter.kind, ty)?
         match ty:
             PlanType.ModelRef(_owner, _name) => loans += 1
             PlanType.ModelMutRef(_owner, _name) => loans += 1
-            PlanType.List(_leaf, _depth) => return Err("unsupported Body IR async borrowed list capture")
-            PlanType.Set(_leaf) => return Err("unsupported Body IR async borrowed set capture")
-            PlanType.Dict(_key, _value) => return Err("unsupported Body IR async borrowed dictionary capture")
             _ => pass
         if parameter.mutable and ty == PlanType.String:
             return Err("unsupported Body IR async mutable string capture")
@@ -99,6 +102,20 @@ def capture_types(module: &BodyIrModule, body: &Body, mut intrinsics: list[EnumD
     if loans > 1:
         return Err("unsupported Body IR async future with multiple borrowed captures")
     return Ok(fields)
+
+
+def validate_collection_capture(kind: IncanCallableParamKind, ty: PlanType) -> Result[None, str]:
+    """Rest parameters own their checked packs; ordinary collection parameters retain caller-owned borrows."""
+    match ty:
+        PlanType.List(_leaf, _depth) =>
+            if kind != IncanCallableParamKind.RestPositional:
+                return Err("unsupported Body IR async borrowed list capture")
+        PlanType.Dict(_key, _value) =>
+            if kind != IncanCallableParamKind.RestKeyword:
+                return Err("unsupported Body IR async borrowed dictionary capture")
+        PlanType.Set(_leaf) => return Err("unsupported Body IR async borrowed set capture")
+        _ => pass
+    return Ok(None)
 
 
 pub def validate_futures(module: &BodyIrModule, mut intrinsics: list[EnumDeclaration]) -> Result[None, str]:

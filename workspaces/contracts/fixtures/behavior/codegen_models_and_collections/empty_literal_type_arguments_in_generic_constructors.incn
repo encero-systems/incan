@@ -1,4 +1,4 @@
-# behavior: generic constructors keep empty literal types and bind checked owner hooks once (#1507, #2256)
+# behavior: generic constructors retain empty literals, checked owner hooks and associated frames (#1507, #2256)
 # expect-stdout:
 #   0
 #   0
@@ -20,8 +20,9 @@ model Holder[Elem with Clone]:
 
     @staticmethod
     def from_result(items: list[Elem]) -> Result[Self, str]:
-        """Return the same owner through an ordinary Result carrier."""
-        return Ok(Holder(items=items, names=[]))
+        """Retain an internal nominal layout under the factory's owner before returning a Result carrier."""
+        wrapped = Bag[Elem](items=items)
+        return Ok(Holder(items=wrapped.items, names=[]))
 
     @staticmethod
     def relay(items: list[Elem]) -> Result[Self, str]:

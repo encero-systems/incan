@@ -24,6 +24,7 @@ use crate::typechecker::{
 };
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::magic_methods::{self, MagicMethodId};
+use incan_lang::lang::traits as builtin_traits;
 use incan_lang::{NumericTy, result_numeric_type};
 
 use super::TypeChecker;
@@ -1132,6 +1133,36 @@ impl TypeChecker {
         Some(item_ty)
     }
 
+    /// Retain polling for an owned source `Iterator[T]` returned by its checked protocol call. This value already
+    /// owns its iteration state, so no nonexistent `__iter__` slot or additional clone is introduced. Synthetic
+    /// lookup preserves the written call's facts and retains the actual source trait's mutable `__next__` contract.
+    pub(in crate::typechecker) fn retain_owned_source_iterator_protocol(
+        &mut self,
+        receiver_ty: &ResolvedType,
+        span: Span,
+    ) -> Option<ResolvedType> {
+        let dispatch = self.type_info.resolved_method_call(span)?.dispatch.clone();
+        let written_call = self.type_info.take_call_site_facts(span);
+        let next_method = magic_methods::as_str(MagicMethodId::Next);
+        let returned = self.resolve_protocol_operator_dunder(receiver_ty, next_method, &[], &[], span, Some(&dispatch));
+        let selected = returned
+            .as_ref()
+            .map(|returned| self.body_ir_protocol_call(receiver_ty, next_method, returned, span));
+        self.type_info.restore_call_site_facts(span, written_call);
+        let Some(returned) = returned else {
+            self.errors
+                .push(errors::missing_method(&receiver_ty.to_string(), next_method, span));
+            return None;
+        };
+        let item = returned.option_inner_type()?.clone();
+        let next = selected.filter(|next| next.canonical.is_some() && next.receiver_is_mutable == Some(true))?;
+        self.type_info
+            .protocols
+            .body_ir_iterations
+            .insert((span.start, span.end), BodyIrIterationHooksInfo { iter: None, next });
+        Some(item)
+    }
+
     /// Resolve `for item in iterable?` through `__iter__(self)` and a fallible `__next__() -> Result[Option[T], E]`
     /// protocol.
     pub(in crate::typechecker) fn resolve_fallible_iteration_protocol(
@@ -1383,7 +1414,7 @@ impl TypeChecker {
             next_type: next_ret,
             iter_dispatch,
             next_dispatch,
-            body_ir: BodyIrIterationHooksInfo { iter, next },
+            body_ir: BodyIrIterationHooksInfo { iter: Some(iter), next },
         })
     }
 
@@ -1418,7 +1449,9 @@ impl TypeChecker {
         else {
             return None;
         };
-        if receiver_name != trait_name {
+        let same_builtin_trait = builtin_traits::from_qualified_str(receiver_name)
+            .is_some_and(|id| builtin_traits::from_qualified_str(trait_name) == Some(id));
+        if receiver_name != trait_name && !same_builtin_trait {
             return None;
         }
 

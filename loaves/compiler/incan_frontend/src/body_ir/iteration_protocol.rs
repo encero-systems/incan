@@ -49,7 +49,20 @@ impl BodyBuilder<'_, '_> {
                 .get(&(protocol_span.start, protocol_span.end))
                 .ok_or("iteration without retained checked hooks")?
                 .clone();
-            let result = self.checked_protocol_call(&hooks.iter, iterable, scope, span, out)?;
+            let result = match &hooks.iter {
+                Some(hook) => self.checked_protocol_call(hook, iterable, scope, span, out)?,
+                None => {
+                    let iterator = self.new_temp(self.retained_expression_type(expression), scope, span);
+                    out.push(bir::Statement {
+                        kind: bir::StatementKind::Assign {
+                            place: bir::Place::from_local(iterator),
+                            rvalue: bir::Rvalue::Use(bir::Operand::place(iterable, bir::OwnershipFact::Move, true)),
+                        },
+                        span,
+                    });
+                    bir::Operand::place(bir::Place::from_local(iterator), bir::OwnershipFact::Move, true)
+                }
+            };
             return match result {
                 bir::Operand::Place(read) => read
                     .place
@@ -156,6 +169,7 @@ impl BodyBuilder<'_, '_> {
             intrinsic_carrier: None,
             reflection: None,
             loaf_trait: None,
+            trait_arguments: self.checked_trait_arguments(hook.dispatch.as_ref()),
             type_args: hook.type_args.iter().map(|ty| self.checked_type(ty)).collect(),
             binding,
         };

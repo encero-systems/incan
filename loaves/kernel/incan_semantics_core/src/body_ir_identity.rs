@@ -428,7 +428,7 @@ impl BodyIrModule {
                 owner.origin == value.implementation.origin && declares_member(owner, &value.implementation)
             });
         let arguments_close = if owned {
-            value.type_arguments.is_empty()
+            value.type_arguments.is_empty() && self.trait_arguments_are_owner_bound(value)
         } else {
             self.trait_arguments_are_owner_bound(value)
         };
@@ -471,10 +471,11 @@ impl BodyIrModule {
             })
     }
 
-    /// Validate default arguments against the exact retained owner's parameter scope. A nominal template may refer
-    /// to its declared parameters recursively; an enum has no parameter scope here. Missing or malformed owners,
-    /// foreign variables, `Self`, and uninferred placeholders never authorize a template. This validates existing
-    /// facts only; consumers must still instantiate every admitted owner parameter before constructing native MIR.
+    /// Validate slot and default arguments against the exact retained owner's parameter scope. A nominal template may
+    /// refer to its declared parameters recursively; an enum has no parameter scope here. Missing or malformed
+    /// owners, foreign variables, `Self`, and uninferred placeholders never authorize a template. This validates
+    /// existing facts only; consumers must still instantiate every admitted owner parameter before constructing
+    /// native MIR.
     pub fn trait_arguments_are_owner_bound(&self, value: &crate::body_ir::TraitImplementation) -> bool {
         if let Some(owner) = self
             .nominal_declarations
@@ -484,7 +485,9 @@ impl BodyIrModule {
             return value
                 .type_arguments
                 .iter()
-                .all(|binding| is_owner_bound_type(&binding.argument, &owner.type_parameters));
+                .map(|binding| &binding.argument)
+                .chain(&value.slot_arguments)
+                .all(|argument| is_owner_bound_type(argument, &owner.type_parameters));
         }
         self.enum_declarations
             .iter()
@@ -492,7 +495,9 @@ impl BodyIrModule {
             && value
                 .type_arguments
                 .iter()
-                .all(|binding| is_closed_type(&binding.argument))
+                .map(|binding| &binding.argument)
+                .chain(&value.slot_arguments)
+                .all(is_closed_type)
     }
 
     /// Whether a retained layout agrees with its canonical identities and physical declaration scope. Native layouts

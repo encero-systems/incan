@@ -8,7 +8,7 @@ from rust::incan_semantics_core import (
     generic,
     native_array_type,
 )
-from rust::incan_semantics_core::body_ir import Body, LocalId as RustLocalId
+from rust::incan_semantics_core::body_ir import Body, BodyIrModule, NamedCallableTarget, LocalId as RustLocalId
 from symbols import type_component
 
 
@@ -20,6 +20,46 @@ pub model Instance:
     pub owned_callable_slots: list[int]
     # Ordinary recursive calls still request the visible wrapper, even from a retained original.
     pub original_callable: bool
+
+
+pub def static_type_arguments(
+    module: &BodyIrModule,
+    target: &NamedCallableTarget,
+) -> Result[list[RustType], str]:
+    """Return an associated call's checked owner arguments followed by its method arguments.
+
+    1. Validate and retain the receiver's owner arguments.
+    2. Append the method's checked arguments in declaration order.
+    """
+    # 1. Validate and retain the receiver's owner arguments.
+    mut arguments = static_owner_arguments(module, target)?
+    # 2. Append the method's checked arguments in declaration order.
+    for argument in target.type_args:
+        arguments.append(argument.clone())
+    return Ok(arguments)
+
+
+def static_owner_arguments(
+    module: &BodyIrModule,
+    target: &NamedCallableTarget,
+) -> Result[list[RustType], str]:
+    """Read an applied receiver only when its retained canonical template confirms the owner and arity."""
+    match target.receiver_type:
+        Some(ty) =>
+            match ty:
+                RustType.Generic(base=base, args=owner_arguments) =>
+                    for declaration in module.nominal_declarations:
+                        if declaration.template_carrier_name() != str(base):
+                            continue
+                        if len(declaration.type_parameters) != len(owner_arguments):
+                            return Err(f"unsupported Body IR static owner type argument arity on {base}")
+                        mut arguments: list[RustType] = []
+                        for argument in owner_arguments:
+                            arguments.append(argument.clone())
+                        return Ok(arguments)
+                    return Err(f"unsupported Body IR static receiver {base}")
+                _ => return Ok([])
+        None => return Ok([])
 
 
 pub def substitute(ty: &RustType, names: list[str], arguments: list[RustType]) -> Result[RustType, str]:

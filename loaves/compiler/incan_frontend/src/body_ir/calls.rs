@@ -95,6 +95,16 @@ fn nominal_argument_expressions<'args>(
 }
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
+    /// Keep the source trait instantiation independently of the method's own generic header. Synthetic calls with
+    /// no retained dispatch stay unspecified and may select only an otherwise unambiguous implementation.
+    pub(super) fn checked_trait_arguments(
+        &self,
+        dispatch: Option<&crate::typechecker::ResolvedMethodDispatch>,
+    ) -> Option<Vec<IncanType>> {
+        let crate::typechecker::ResolvedMethodDispatch::Trait { type_args, .. } = dispatch?;
+        Some(type_args.iter().map(|argument| self.checked_type(argument)).collect())
+    }
+
     /// Project only the checked core ValueError function into its existing runtime operation. A foreign or shadowed
     /// spelling grants nothing; metadata-checked imports instead require the private validated diverging-call path
     /// because their legacy reference identity is absent. Unsupported arguments retain the ordinary refusal path. No
@@ -1718,6 +1728,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     intrinsic_carrier: None,
                     reflection: None,
                     loaf_trait: None,
+                    trait_arguments: self
+                        .checked_trait_arguments(self.type_info.resolved_method_call(span).map(|call| &call.dispatch)),
                     canonical: self.type_info.resolved_identity(span).cloned(),
                     type_args: resolved_type_args,
                     binding,
@@ -2532,6 +2544,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             name: name.to_string(),
             intrinsic_carrier,
             loaf_trait: None,
+            trait_arguments: self
+                .checked_trait_arguments(self.type_info.resolved_method_call(span).map(|call| &call.dispatch)),
             // Checked provider and inferred targets precede retained source aliases and registry numeric helpers.
             canonical,
             type_args: resolved_type_args,

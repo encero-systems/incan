@@ -2346,6 +2346,21 @@ impl TypeChecker {
             self.consumed_iterator_bindings.insert(name.clone(), iter_expr.span);
         }
         let elem_ty = self.infer_iterator_element_type(iter_ty);
+        // A source protocol default can return its opaque Iterator contract while retaining a concrete source
+        // adopter. Keep its checked hooks rather than routing that value through builtin collection polling.
+        if iter_ty.iterator_item_type().is_some()
+            && self.type_info.resolved_method_call(iter_expr.span).is_some_and(|call| {
+                let super::ResolvedMethodDispatch::Trait { trait_name, .. } = &call.dispatch;
+                matches!(iter_ty, ResolvedType::Generic(name, _) if name == trait_name
+                || builtin_traits::from_qualified_str(name).is_some_and(|id| {
+                    builtin_traits::from_qualified_str(trait_name) == Some(id)
+                }))
+            })
+        {
+            return self
+                .retain_owned_source_iterator_protocol(iter_ty, iter_expr.span)
+                .unwrap_or(ResolvedType::Unknown);
+        }
         if !matches!(elem_ty, ResolvedType::Unknown) || matches!(iter_ty, ResolvedType::Unknown) {
             return elem_ty;
         }

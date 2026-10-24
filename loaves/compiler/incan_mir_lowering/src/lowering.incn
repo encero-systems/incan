@@ -215,6 +215,7 @@ from decorator_caches import (
 )
 from traits import (
     is_default_body,
+    append_default_type_bindings,
     is_lazy_method_body,
     method_index,
     owner_method_index,
@@ -546,7 +547,7 @@ pub def scalar_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) 
         None => pass
     # Materialize the suffix before borrowing it; direct mutable slice arguments still refuse (#2256).
     mut frame_locals = builder.locals[builder.local_offset:]
-    mut target = model_place(
+    mut target = match model_place(
         builder.nominals,
         frame_locals,
         value,
@@ -554,7 +555,9 @@ pub def scalar_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) 
         builder.enums,
         builder.unions,
         builder.intrinsics,
-    )?
+    ):
+        Ok(place) => place
+        Err(error) => return Err(f"{error} in {builder.name} at {span.file}:{span.line}")
     target.local += builder.local_offset
     return Ok(target)
 
@@ -3482,6 +3485,25 @@ def lower_method_call(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
+    """Close retained source trait arguments in the caller's checked frame before choosing an implementation."""
+    mut selected = target.clone()
+    match selected.trait_arguments.clone():
+        Some(trait_arguments) =>
+            retained: list[RustType] = trait_arguments
+            closed: list[RustType] = checked_type_arguments(builder, retained)?
+            selected.trait_arguments = Some(closed)
+        None => pass
+    return lower_checked_method_call(module, builder, selected, arguments, destination, span)
+
+
+def lower_checked_method_call(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    target: &MethodTarget,
+    arguments: &list[RustArgumentElement],
+    destination: &Option[RustPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
     """Borrow the proven receiver and call its canonical method body with bound ordinary arguments."""
     match target.intrinsic_carrier:
         Some(_carrier) => return lower_carrier_method(builder, target, arguments, destination, span)
@@ -3921,9 +3943,9 @@ def sdk_forwarded_type_arguments(
     never compared, and every remaining argument still passes normal instantiated signature validation.
     """
     closed = checked_type_arguments(builder, target.type_args)?
-    if len(closed) != 0 or len(body.type_parameters) != 1 or len(builder.type_arguments) != 1 or len(body.params) < 2 or len(
-        arguments,
-    ) != len(body.params):
+    if len(closed) != 0 or len(body.type_parameters) != 1 or len(builder.callable_type_arguments) != 1:
+        return Ok(closed)
+    if len(body.params) < 2 or len(arguments) != len(body.params):
         return Ok(closed)
     if body.canonical != target.canonical:
         return Ok(closed)
@@ -3946,7 +3968,7 @@ def sdk_forwarded_type_arguments(
             if str(name) != str(body.type_parameters[0]) or body.return_type != body.params[1].ty:
                 return Ok(closed)
         _ => return Ok(closed)
-    candidate: RustType = builder.type_arguments[0].clone()
+    candidate: RustType = builder.callable_type_arguments[0].clone()
     match candidate:
         RustType.Primitive(_primitive) => pass
         _ => return Ok(closed)
@@ -8254,7 +8276,12 @@ def lower_function(
     if body.is_async and is_program_entry(module, body) and len(body.params) != 0:
         return Err("unsupported Body IR async entry signature")
     parameters = frame_parameters(module, body, source, file, intrinsics)?
-    names, bindings = body_type_bindings(module, body, type_arguments)?
+    callable_arguments: list[RustType] = [argument.clone() for argument in type_arguments]
+    method_names, method_bindings = body_type_bindings(module, body, type_arguments)?
+    mut names = method_names
+    mut bindings = method_bindings
+    if len(parameters) != 0:
+        append_default_type_bindings(module, body, parameters[0].ty, names, bindings)?
     mut selected_unions = unions
     retain_body_unions(selected_unions, program.union_types.as_ref(), body)
     scoped_locals, scope_parents = frame_scopes(body)
@@ -8291,6 +8318,7 @@ def lower_function(
         instances=[],
         type_parameters=names,
         type_arguments=bindings,
+        callable_type_arguments=callable_arguments,
         function_pointer_locals=function_pointer_storage(body),
         reference_values=reference_value_storage(body, names, bindings)?,
         name=selected_name,
@@ -9264,11 +9292,12 @@ def shared_receiver_place(
 
 
 pub def materialized_receiver(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Place, str]:
-    """Copy a list or dictionary element into an owned temporary that a shared receiver borrow can read."""
+    """Read a collection element once into temporary storage, retaining scalar copies and owned receiver values."""
     match element_read(builder, source, span)?:
         Some(item) =>
             match item.kind:
                 OperandKind.Move(place) => return Ok(place)
+                OperandKind.Copy(place) => return Ok(place)
                 _ => pass
         None => pass
     return Err("unsupported Body IR projected non-list receiver")
@@ -11677,6 +11706,8 @@ def enum_payload_read(
     if place_type(builder.locals, place) == PlanType.FrozenStr:
         return Ok(read_place(place, false, span))
     payload_type = place_type(builder.locals, place)
+    if callable_copy_type(payload_type):
+        return Ok(read_place(place, false, span))
     match payload_type:
         PlanType.ModelRef(_owner, _name) => return Ok(read_place(place, false, span))
         PlanType.EnumRef(_owner, _name) => return Ok(read_place(place, false, span))

@@ -73,6 +73,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         intrinsic_carrier: None,
                         reflection: None,
                         loaf_trait: None,
+                        trait_arguments: None,
                         canonical: Some(canonical.clone()),
                         type_args: Vec::new(),
                         binding: bir::ArgumentBinding::resolved_positional(params.len()),

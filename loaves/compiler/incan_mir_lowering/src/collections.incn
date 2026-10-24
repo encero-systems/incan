@@ -26,7 +26,7 @@ from tuples import tuple_type, generic_tuple_type
 
 
 pub def primitive_leaf(ty: &RustType, hashed: bool) -> Result[ListLeaf, str]:
-    """Admit primitive leaves and flat scalar tuple keys; floating point keys lack Eq and Hash."""
+    """Admit primitive leaves, owned byte buffers and flat scalar tuple keys; floating point keys lack Eq and Hash."""
     match ty:
         RustType.Decimal(precision=_precision, scale=_scale) => return Ok(ListLeaf.Decimal)
         RustType.Primitive(primitive) =>
@@ -35,6 +35,7 @@ pub def primitive_leaf(ty: &RustType, hashed: bool) -> Result[ListLeaf, str]:
                 Primitive.Bool => return Ok(ListLeaf.Bool)
                 Primitive.Str => return Ok(ListLeaf.Str)
                 Primitive.FrozenStr => return Ok(ListLeaf.FrozenStr)
+                Primitive.Bytes => return Ok(ListLeaf.List([ListLeaf.U8], 1))
                 Primitive.Unit => return Ok(ListLeaf.Unit)
                 Primitive.Float =>
                     if not hashed:

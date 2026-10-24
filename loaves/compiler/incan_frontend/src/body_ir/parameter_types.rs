@@ -256,11 +256,29 @@ fn retain_checked_nominal_names(ty: IncanType, facts: &TypeCheckInfo) -> IncanTy
     }
 }
 
-/// Copy the checker's complete carrier binding proof; Body IR neither mints carrier keys nor adds aliases.
+/// Copy checked carrier bindings and preserve unambiguous short names selected by standard storage projection.
+/// A projected name carries its original canonical owner; conflicting owners never grant a short binding.
 pub(super) fn retained_type_identities(
     facts: &TypeCheckInfo,
 ) -> std::collections::BTreeMap<String, super::CanonicalSymbolId> {
     let mut identities = facts.declarations.named_type_identities.clone();
+    // Standard carrier projection uses the declaration's short native name. Preserve the checked binding of that
+    // projected name too, including signature-only imports; two different owners never authorize a short alias.
+    let mut projected = std::collections::BTreeMap::<String, Option<super::CanonicalSymbolId>>::new();
+    for identity in identities.values() {
+        let name = &identity.declaration_name;
+        let candidate = projected.entry(name.clone()).or_insert_with(|| Some(identity.clone()));
+        if candidate.as_ref() != Some(identity) {
+            *candidate = None;
+        }
+    }
+    for (name, identity) in projected {
+        if let Some(identity) = identity
+            && matches!(&identity.origin, incan_semantics_core::SymbolOrigin::Package { library, .. } if library.starts_with("incan_stdlib_"))
+        {
+            identities.entry(name).or_insert(identity);
+        }
+    }
     for call in facts.rust.checked_calls.values().chain(
         facts
             .rust

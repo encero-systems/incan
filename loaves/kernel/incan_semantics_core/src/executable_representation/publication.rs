@@ -1002,6 +1002,11 @@ impl<'a> PublicationAudit<'a> {
                     Callee::Function(CallableTarget::Local(target)) => self.place(&mut target.operand.place)?,
                     Callee::Method(target) => {
                         self.native_trait_selection(target)?;
+                        if let Some(arguments) = &target.trait_arguments {
+                            for ty in arguments {
+                                self.ty(ty)?;
+                            }
+                        }
                         for ty in &target.type_args {
                             self.ty(ty)?;
                         }

@@ -802,10 +802,15 @@ impl TypeChecker {
             .chain(module_path.iter().cloned())
             .chain(std::iter::once(member.to_string()))
             .collect::<Vec<_>>();
+        let source_path = resolved_source_module_path
+            .iter()
+            .cloned()
+            .chain(std::iter::once(resolved_source_name.clone()))
+            .collect::<Vec<_>>();
         let overload_identities = manifest
             .contract_metadata
             .identity_graph
-            .function_identities_for_public_path(&public_path);
+            .identities_for_public_source_path(&public_path, &source_path);
         let mut kind = match kinds.as_mut_slice() {
             [kind] => kind.clone(),
             kinds if kinds.iter().all(|kind| matches!(kind, SymbolKind::Function(_))) => SymbolKind::FunctionOverloads(
@@ -824,10 +829,11 @@ impl TypeChecker {
             ),
             _ => return Err(source_modules),
         };
-        let canonical = manifest
-            .contract_metadata
-            .identity_graph
-            .canonical_for_public_path(&public_path);
+        let canonical = overload_identities.first().cloned().flatten().filter(|first| {
+            overload_identities
+                .iter()
+                .all(|identity| identity.as_ref() == Some(first))
+        });
         let remapping = self.public_module_type_remapping(library, manifest, &resolved_source_module_path);
         self.remap_symbol_kind_through_declaring_module(library, manifest, canonical.as_ref(), &mut kind);
         self.remap_symbol_kind_with_import_aliases(&mut kind, &remapping);

@@ -218,6 +218,7 @@ pub(super) fn append_registrations(
                     intrinsic_carrier: None,
                     reflection: None,
                     loaf_trait: None,
+                    trait_arguments: None,
                     native_trait_delegation: None,
                     type_args: Vec::new(),
                     binding: bir::ArgumentBinding::Resolved {
