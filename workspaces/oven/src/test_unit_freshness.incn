@@ -1,15 +1,26 @@
 """Reuse contracts: an unchanged unit is keyed from metadata alone, and any relevant change is a different key."""
 
 from rust::std::fs import OpenOptions, metadata
+from rust::std::process import Command
 from std.fs import Path
 from files import make_directory, read, remove, write as write_file
+from compiler_refusals import compile_or_replay
 from incan_units import executable_outputs, install_executable, test_report
 from observation import load_ledger
 from scratch import scratch_directory
 from rust_freshness import compilation_observations, inputs_unchanged, library_key
 from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription, UnitLoaf
-from unit_freshness import Key, artifact_files, compiler_fingerprint, reusable, rust_key, source_fingerprint, staleness
+from unit_freshness import (
+    Key,
+    artifact_files,
+    compiler_fingerprint,
+    reusable,
+    rust_key,
+    source_fingerprint,
+    staleness,
+    unit_key,
+)
 
 
 model Fixture:
@@ -83,10 +94,12 @@ def fixture(scratch: Path) -> Result[Fixture, str]:
         profile="debug",
         declared_features=[],
         active_features=[],
-        loaves=[
-            UnitLoaf(key="dep", name="dep", dir=dependency.0, standard=false),
-            UnitLoaf(key="std", name="std", dir=standard.0, standard=true),
-        ],
+        loaves=[UnitLoaf(key="dep", name="dep", dir=dependency.0, standard=false), UnitLoaf(
+            key="std",
+            name="std",
+            dir=standard.0,
+            standard=true,
+        )],
         rust_crates=[],
         contract_models=[],
         c_headers=[],
@@ -149,6 +162,80 @@ pub def test_source_edit_rekeys_and_hashes_only_what_changed() -> Result[None, s
     write(setup.root.joinpath("tests").joinpath("helpers.incn"), "pub def helper() -> int:\n    return 2\n")?
     helper = reconcile(scratch.path(), testing)?
     assert helper.key != before.key
+    verify_refusal_replay(scratch.path().joinpath("refusals"))?
+    return Ok(None)
+
+
+def verify_refusal_replay(scratch: Path) -> Result[None, str]:
+    """
+    Exercise certified replay, edited input, malformed storage and abnormal failures with a counted compiler.
+
+    1. Replay an unchanged refusal with exact binary streams.
+    2. Recompile edited sources and malformed records.
+    3. Retry crashes, signals, I/O failures and success without artifacts.
+    """
+    setup = fixture(scratch)?
+    driver = Path(setup.toolchain.driver)
+    attempts = scratch.joinpath("attempts")
+    source = Path(setup.unit.source)
+    cache = scratch.joinpath("refusal.json")
+    mut script = "#!/bin/sh\n" + f"printf x >> '{attempts.0}'\nmode=$(cat '{source.0}')\n"
+    script += "case \"$mode\" in\nio) printf 'I/O failure' >&2; exit 1;;\nmissing) exit 0;;\nesac\n"
+    script += "printf 'incan.compiler-refusal/1\\n' > \"$INCAN_COMPILER_REFUSAL\"\n"
+    script += "printf '\\377out'; printf 'named refusal\\000tail' >&2\n"
+    script += "case \"$mode\" in\ncrash) exit 101;;\nsignal) kill -TERM $$;;\nesac\nexit 1\n"
+    write(driver, script)?
+    mut chmod = Command.new("/bin/chmod")
+    assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
+    # 1. Replay an unchanged refusal with exact binary streams.
+    write(source, "refuse")?
+    key = unit_key(setup.unit, setup.toolchain)?
+    assert compile_or_replay(setup.unit, setup.toolchain, [], cache, key, "test")? == 1
+    assert compile_or_replay(setup.unit, setup.toolchain, [], cache, key, "test")? == 1
+    retained = cache.read_bytes().map_err((error) => error.message())?
+    expected = b"\xffoutnamed refusal\x00tail"
+    assert retained[len(retained) - len(expected):] == expected
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "x"
+    mut capturing = setup.toolchain
+    capturing.console = scratch.joinpath("console").0
+    assert compile_or_replay(setup.unit, capturing, [], cache, key, "test")? == 1
+    assert compile_or_replay(setup.unit, capturing, [], cache, key, "test")? == 1
+    output = Path(f"{capturing.console}.out").read_bytes().map_err((error) => error.message())?
+    error = Path(f"{capturing.console}.err").read_bytes().map_err((error) => error.message())?
+    assert output == b"\xffout\xffout"
+    assert error == b"named refusal\x00tailnamed refusal\x00tail"
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "x"
+    # 2. Recompile edited sources and malformed records.
+    write(source, "refuse edited")?
+    edited = unit_key(setup.unit, setup.toolchain)?
+    assert compile_or_replay(setup.unit, setup.toolchain, [], cache, edited, "test")? == 1
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xx"
+    write(cache, "incomplete document")?
+    assert compile_or_replay(setup.unit, setup.toolchain, [], cache, edited, "test")? == 1
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xxx"
+    framed = cache.read_bytes().map_err((error) => error.message())?
+    cache.write_bytes(framed[:len(framed) - 1]).map_err((error) => error.message())?
+    assert compile_or_replay(setup.unit, setup.toolchain, [], cache, edited, "test")? == 1
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xxxx"
+    # 3. Retry crashes, signals, I/O failures and success without artifacts.
+    for mode in ["crash", "signal", "io", "missing"]:
+        write(source, mode)?
+        changed = unit_key(setup.unit, setup.toolchain)?
+        before = attempts.read_text("utf-8", "strict").map_err((error) => error.message())?
+        first_status = compile_or_replay(setup.unit, setup.toolchain, [], cache, changed, "test")?
+        second_status = compile_or_replay(setup.unit, setup.toolchain, [], cache, changed, "test")?
+        assert first_status == second_status
+        after = attempts.read_text("utf-8", "strict").map_err((error) => error.message())?
+        assert after == before + "xx", mode
+    write(source, "refuse with missing artifact")?
+    linked = artifact_files(Path(setup.unit.loaves[0].dir), "dep")
+    linked[0].unlink().map_err((error) => error.message())?
+    incomplete = unit_key(setup.unit, setup.toolchain)?
+    before_missing = attempts.read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert compile_or_replay(setup.unit, setup.toolchain, [], cache, incomplete, "test")? == 1
+    assert compile_or_replay(setup.unit, setup.toolchain, [], cache, incomplete, "test")? == 1
+    after_missing = attempts.read_text("utf-8", "strict").map_err((error) => error.message())?
+    assert after_missing == before_missing + "xx"
     return Ok(None)
 
 
@@ -221,7 +308,8 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
     # An installation that fails after the old stamp is withdrawn leaves no stamp to vouch for the old outputs.
     remove(staged)?
     match install_executable(staged, output, "program", stamp, two):
-        Ok(_) => assert false, "installing a missing build succeeded"
+        Ok(_) =>
+            assert false, "installing a missing build succeeded"
         Err(_) => pass
     assert not reusable([output], stamp, one)?
     assert not reusable([output], stamp, two)?
@@ -262,7 +350,13 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
     assert not inputs_unchanged(dependencies, observations)?
     write(included, "first included value")?
     changed_environment = library_key(
-        setup.root, native, dependencies, arguments, {"CARGO_PKG_NAME": "other"}, [], setup.toolchain,
+        setup.root,
+        native,
+        dependencies,
+        arguments,
+        {"CARGO_PKG_NAME": "other"},
+        [],
+        setup.toolchain,
     )?
     assert changed_environment.digest != first.digest
     # A late source or native-artifact write invalidates publication even after a key was computed.
@@ -273,13 +367,16 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
     Path(setup.toolchain.externs[0].path).unlink().map_err((error) => error.message())?
     match compilation_observations(setup.root, dependencies, arguments, [], setup.toolchain):
         Err(_) => pass
-        Ok(_) => assert false, "missing linked artifacts cannot supply compilation observations"
+        Ok(_) =>
+            assert false, "missing linked artifacts cannot supply compilation observations"
     return Ok(None)
 
 
 pub def test_rust_unit_key_follows_its_crate_manifest_how_it_is_built_and_what_it_links() -> Result[None, str]:
-    """A Rust unit is keyed like an Incan one: every file of its crate, its manifest, its arguments, the compiler and
-    the libraries it links; unchanged, it is keyed from metadata alone."""
+    """
+    A Rust unit is keyed like an Incan one: every file of its crate, its manifest, its arguments, the compiler and
+    the libraries it links; unchanged, it is keyed from metadata alone.
+    """
     scratch = scratch_directory()?
     setup = rust_crate(scratch.path())?
     sources = setup.facet.joinpath("rust").joinpath("src")
