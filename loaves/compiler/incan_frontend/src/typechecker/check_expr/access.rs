@@ -2836,7 +2836,8 @@ impl TypeChecker {
     /// Resolve a declared field on a nominal user-defined type, applying generic substitutions when available.
     ///
     /// This keeps field access on `Named(Type)` and `Generic(Type[...])` owners on the same path instead of letting
-    /// generic owners fall through to "missing field" diagnostics despite having declared fields.
+    /// generic owners fall through to "missing field" diagnostics despite having declared fields. The selected field's
+    /// declaring scope supplies Body IR nominal owners before its source spellings leave this boundary.
     pub(in crate::typechecker) fn resolve_nominal_field_type(
         &mut self,
         type_name: &str,
@@ -2869,11 +2870,9 @@ impl TypeChecker {
                     self.errors.push(errors::private_field(type_name, field, span));
                     return Some(ResolvedType::Unknown);
                 }
-                if let Some(args) = type_args {
-                    let subst = type_param_subst_map(&model.type_params, args);
-                    return Some(substitute_resolved_type(&info.ty, &subst));
-                }
-                info.ty.clone()
+                let subst = type_param_subst_map(&model.type_params, type_args.unwrap_or_default());
+                self.retain_declared_nominal_field(span, &info.ty, &subst, info.identity.as_ref());
+                substitute_resolved_type(&info.ty, &subst)
             }
             TypeInfo::Class(class) => {
                 // RFC 021: No alias-aware resolution for classes (models only)
@@ -2886,11 +2885,9 @@ impl TypeChecker {
                     self.errors.push(errors::private_field(type_name, field, span));
                     return Some(ResolvedType::Unknown);
                 }
-                if let Some(args) = type_args {
-                    let subst = type_param_subst_map(&class.type_params, args);
-                    return Some(substitute_resolved_type(&info.ty, &subst));
-                }
-                info.ty.clone()
+                let subst = type_param_subst_map(&class.type_params, type_args.unwrap_or_default());
+                self.retain_declared_nominal_field(span, &info.ty, &subst, info.identity.as_ref());
+                substitute_resolved_type(&info.ty, &subst)
             }
             TypeInfo::Enum(enum_info) => {
                 let canonical_variant = enum_info

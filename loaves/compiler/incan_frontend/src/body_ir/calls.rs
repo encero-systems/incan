@@ -802,7 +802,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ///
     /// A selected static factory returning its own generic nominal carries that owner's arguments on the associated
     /// call. A wrapper result, ordinary function, absent factory selection or mismatched nominal cannot supply them.
-    /// This consumes existing checked facts only; the legacy inference tables remain unchanged.
+    /// This consumes existing checked facts only, comparing retained declaration identities after carrier projection;
+    /// the legacy inference tables remain unchanged.
     fn checked_nominal_factory_owner(&self, callee_span: ast::Span, call_span: ast::Span) -> Option<IncanType> {
         self.checked_nominal_factory_declaration(callee_span, call_span)?;
         let owner = self.type_info.resolved_identity(callee_span)?;
@@ -815,6 +816,19 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
             _ => None,
         }
+    }
+
+    /// Read a constructor method's own checked binders; owner arguments stay on the retained receiver.
+    /// An absent method instantiation supplies no method arguments and never substitutes written owner arguments.
+    fn checked_factory_method_type_arguments(&self, span: ast::Span) -> Vec<IncanType> {
+        self.type_info
+            .calls
+            .call_site_monomorph_type_args
+            .get(&(span.start, span.end))
+            .into_iter()
+            .flatten()
+            .map(|ty| self.checked_type(ty))
+            .collect()
     }
 
     /// Retain checked explicit or inferred call-site type arguments, refusing unresolved explicit arguments.
@@ -1762,12 +1776,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return self.push_call_temp(callee, operands, ty, scope, hir_span_value, false, out);
         }
 
-        // A name that resolves to a nominal type but has no recorded field binding is a construction the checker
-        // declined to bind (a duplicate or unknown field). Refusing it as a call to an unknown function would name
-        // the wrong construct entirely.
-        if (self.type_info.declarations.class_layouts.contains_key(&name)
-            || self.type_info.declarations.model_field_visibilities.contains_key(&name))
-            && self.checked_nominal_factory_declaration(callee.span, span).is_none()
+        // A selected static constructor executes its checked method. Only an ordinary nominal construction without
+        // a field binding was declined by the checker and must refuse before generic call lowering.
+        let factory = self.checked_nominal_factory_declaration(callee.span, span).is_some();
+        if !factory
+            && (self.type_info.declarations.class_layouts.contains_key(&name)
+                || self.type_info.declarations.model_field_visibilities.contains_key(&name))
         {
             return self.unsupported_operand(
                 format!("construction of `{name}` with an unresolved field layout"),
@@ -1810,7 +1824,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         });
         let legacy_enumerate_argument = legacy_enumerate_argument(declaration.builtin, args);
         let args = legacy_enumerate_argument.as_deref().unwrap_or(args);
-        let factory = self.checked_nominal_factory_declaration(callee.span, span).is_some();
+        // Constructor syntax writes owner arguments; only the checker's method binders belong on the callee.
+        let resolved_type_args = if factory {
+            self.checked_factory_method_type_arguments(span)
+        } else {
+            resolved_type_args
+        };
         let sdk_factory = factory
             && self
                 .type_info

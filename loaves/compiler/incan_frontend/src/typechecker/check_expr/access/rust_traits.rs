@@ -4,6 +4,7 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use super::super::ops::{integer_literal_fits, is_unsuffixed_integer_literal};
 use super::{RustPathMethodCall, RustTraitQualifiedCall, TypeChecker};
 use crate::ast::{Expr, Spanned};
 use crate::resolved_type_subst::{map_resolved_type_leaves, substitute_resolved_type};
@@ -1047,7 +1048,9 @@ impl TypeChecker {
 
     /// Match a closed native input signature using exact carriers and the already admitted borrowed views. The cost
     /// ranks receiver-compatible candidates; it grants no new conversion or trait implementation. An already borrowed
-    /// argument matches its complete target before considering an automatic borrow of an owned value.
+    /// argument matches its complete target before considering an automatic borrow of an owned value. An unsuffixed
+    /// integer literal may take an exact-width integer parameter's type only when the existing literal bounds allow
+    /// it; final argument validation still records that contextual destination before native call retention.
     fn rust_trait_input_borrow_cost(
         &self,
         signature: &RustFunctionSig,
@@ -1067,6 +1070,11 @@ impl TypeChecker {
             let argument = native.as_ref().unwrap_or(argument);
             let target = self.native_rust_signature_type(&parameter.type_display, call.rust_path);
             if self.rust_trait_carriers_match(&target, argument) {
+                continue;
+            }
+            let source = Self::call_arg_expr(expression);
+            if is_unsuffixed_integer_literal(source) && integer_literal_fits(source, &target) {
+                cost += 1;
                 continue;
             }
             let target = match &target {

@@ -172,6 +172,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// A checked provider method can return a source newtype the consumer never imports. Its own return binding and
     /// exact retained declaration authorize slot zero; missing layout or conflicting checked bindings deny it. The
     /// caller has already selected this record by the call's canonical method identity, never by source spelling.
+    /// Standard-package owners intentionally have no encoded carrier key; their checked identity and layout provide
+    /// the same authority without requiring one.
     fn published_newtype_field_owner<'declaration>(
         &'declaration self,
         owner: &str,
@@ -182,23 +184,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let IncanType::Named(returned_name) = &returned.ty else {
             return None;
         };
-        let carrier = bir::nominal_carrier_key(canonical)?;
+        let carrier = bir::nominal_carrier_key(canonical);
         if owner != returned_name
             && owner != canonical.declaration_name
-            && owner != carrier
+            && carrier.as_deref() != Some(owner)
             && parameter_types::retained_nominal_identity(owner, self.type_info) != Some(canonical)
         {
             return None;
         }
-        for name in [owner, returned_name.as_str(), carrier.as_str()] {
-            if self
-                .type_info
-                .declarations
-                .named_type_identities
-                .get(name)
+        for name in [owner, returned_name.as_str()].into_iter().chain(carrier.as_deref()) {
+            if parameter_types::retained_nominal_identity(name, self.type_info)
                 .is_some_and(|binding| binding != canonical)
-                || parameter_types::retained_nominal_identity(name, self.type_info)
-                    .is_some_and(|binding| binding != canonical)
             {
                 return None;
             }

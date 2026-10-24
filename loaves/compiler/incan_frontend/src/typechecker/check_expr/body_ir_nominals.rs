@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use crate::ast::{CallArg, Expr, Span, Spanned};
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::symbols::{MethodInfo, ResolvedType, TypeInfo};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
 use super::TypeChecker;
 
@@ -128,13 +129,23 @@ impl TypeChecker {
         Self::is_settled_type_argument(&returned).then_some(returned)
     }
 
-    /// Carry a constant tuple element from the already checked tuple value, including a checked negative index.
-    pub(super) fn body_ir_tuple_element_type(
+    /// Carry a list or dictionary element, or constant tuple element, from its already checked collection value.
+    pub(super) fn body_ir_indexed_value_type(
         &self,
         receiver: &Spanned<Expr>,
         index: &Spanned<Expr>,
     ) -> Option<ResolvedType> {
-        let ResolvedType::Tuple(elements) = self.body_ir_checked_value_type(receiver.span)? else {
+        let actual = self.body_ir_checked_value_type(receiver.span)?;
+        if let Some(element) = Self::body_ir_list_element_type(actual) {
+            return Some(element.clone());
+        }
+        if let ResolvedType::Generic(name, parts) = actual
+            && collections::from_str(name) == Some(CollectionTypeId::Dict)
+            && let [_, value] = parts.as_slice()
+        {
+            return Some(value.clone());
+        }
+        let ResolvedType::Tuple(elements) = actual else {
             return None;
         };
         let mut index = Self::constant_tuple_index(index)?;

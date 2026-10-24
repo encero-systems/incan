@@ -3,21 +3,34 @@
 #   std.fs import codegen
 #   config/app.toml
 #   app.toml .toml app config
+#   config/log.txt
 
 from std.fs import Path, File
 
 
 def consume_path(path: Path) -> None:
+    """Accept a path value alongside its lexical observations."""
     pass
 
 
 def consume_file(file: File) -> None:
+    """Keep the filesystem handle type independently importable."""
     pass
 
 
 def main() -> None:
+    """Observe lexical paths and wrapped slots returned by selected methods.
+
+    1. Construct and pass a stored path.
+    2. Read its wrapped text and lexical components.
+    3. Read a selected join's wrapped slot directly.
+    """
+    # 1. Construct a path with a lexical join.
     println("std.fs import codegen")
     config = Path("config").joinpath("app.toml")
     consume_path(config)
+    # 2. Read the stored path and the parent returned by a method.
     println(config.0)
     println(f"{config.name()} {config.suffix()} {config.stem()} {config.parent().0}")
+    # 3. Keep the exact published owner through a method result.
+    println(Path("config").joinpath("log.txt").0)

@@ -1,16 +1,29 @@
-# behavior: a test acquires an uncontended exclusive std.fs.locking lock
+# behavior: a test acquires a lock and retains a named non-Clone guard through its match arm
 # expect-stdout-contains:
 #   test_file_lock.incn::test_exclusive_lock_is_acquired PASSED
 
 """A std.fs.locking lock under `incan test`."""
 
 from std.fs.locking import try_exclusive
+from std.fs import Path
 from std.testing import assert_true
 
 
-def test_exclusive_lock_is_acquired() -> None:
-    """An exclusive lock nobody else holds is acquired."""
+def test_exclusive_lock_is_acquired() -> Result[None, str]:
+    """Acquire an uncontended lock, then prove a named guard excludes a second acquisition until its arm ends."""
     match try_exclusive("contracts-file-lock"):
         Ok(Some(_)) => assert_true(true)
         Ok(None) => assert_true(false, "the lock must not be contended")
         Err(error) => assert_true(false, error)
+    first = Path("contracts-named-file-lock").try_lock_exclusive().map_err((error) => error.message())?
+    match first:
+        Some(held) =>
+            second = try_exclusive("contracts-named-file-lock")?
+            match second:
+                Some(_) => assert_true(false, "the named guard must retain the lock")
+                None => assert_true(true)
+        None => assert_true(false, "the first named guard must acquire the lock")
+    match try_exclusive("contracts-named-file-lock")?:
+        Some(_) => assert_true(true)
+        None => assert_true(false, "the arm must release its named guard")
+    return Ok(None)

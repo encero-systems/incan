@@ -925,7 +925,7 @@ def bit_operation(
     return Ok(RvalueKind.Binary(binary_operator(operator)?, left, right))
 
 
-def scalar_operator_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
+pub def scalar_operator_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
     """Materialize indexed scalar operands and refuse collection operators before native validation."""
     operand = value_operand(builder, value, span)?
     if is_list(operand_type(builder, operand)?) or is_collection(operand_type(builder, operand)?):
@@ -1166,6 +1166,9 @@ def scalar_rvalue(
                 match collection_equality(builder, operator, left, right, span)?:
                     Some(result) => return Ok(RvalueKind.Use(result))
                     None => pass
+                match tuple_equality(builder, operator, left, right, span)?:
+                    Some(result) => return Ok(RvalueKind.Use(result))
+                    None => pass
                 match newtype_equality(builder, operator, left, right, span)?:
                     Some(result) => return Ok(RvalueKind.Use(result))
                     None => pass
@@ -1289,6 +1292,58 @@ def collection_equality(
         None => return Ok(None)
 
 
+def tuple_equality(
+    mut builder: Builder,
+    operator: &BinOp,
+    left: &RustOperand,
+    right: &RustOperand,
+    span: SourceSpan,
+) -> Result[Option[Operand], str]:
+    """Compare matching structural tuples through their native PartialEq implementation without consuming fields.
+
+    1. Require the same checked tuple layout on both sides.
+    2. Borrow each operand once, retaining model-field and parameter storage.
+    3. Call native equality and negate its result for inequality.
+    """
+    # 1. Scalars and other aggregate kinds keep their own comparison paths.
+    if not local_comparison_operand(left) or not local_comparison_operand(right):
+        return Ok(None)
+    mut owned = PlanType.Unit
+    mut reference = PlanType.Unit
+    match tuple_comparison_layout(source_operand_type(builder, left, span)?):
+        Some((layout, borrowed)) =>
+            owned = layout
+            reference = borrowed
+        None => return Ok(None)
+    if tuple_comparison_layout(source_operand_type(builder, right, span)?) != Some((owned, reference)):
+        return Err("unsupported Body IR tuple equality across different layouts")
+    # 2. The shared argument boundary preserves existing references and borrows owned tuple fields.
+    operands = [shared_nominal_argument(builder, left, reference, span)?,
+                shared_nominal_argument(builder, right, reference, span)?]
+    # 3. Aggregate equality is a trait call, never a primitive MIR binary operation.
+    output = temporary(builder, PlanType.Bool, span)
+    instantiated_external_call(
+        builder, "core::cmp::PartialEq::eq", [owned, owned], [reference, reference], PlanType.Bool,
+        operands, output, span,
+    )?
+    if operator == BinOp.Ne:
+        negated = temporary(builder, PlanType.Bool, span)
+        builder.emit(plan_assign(negated, RvalueKind.Unary(UnaryOp.Not, read_place(output, false, span)), span))
+        return Ok(Some(read_place(negated, false, span)))
+    return Ok(Some(read_place(output, false, span)))
+
+
+def tuple_comparison_layout(ty: PlanType) -> Option[tuple[PlanType, PlanType]]:
+    """Normalize tuple storage and its shared view while preserving every structural field carrier."""
+    mut fields: list[TupleElement] = []
+    match ty:
+        PlanType.Tuple(elements) => fields = elements
+        PlanType.TupleRef(elements) => fields = elements
+        PlanType.TupleMutRef(elements) => fields = elements
+        _ => return None
+    return Some((PlanType.Tuple(fields), PlanType.TupleRef(fields)))
+
+
 def local_comparison_operand(value: &RustOperand) -> bool:
     """Recognize checked local and byte-literal comparison operands without collecting borrowed values into owned storage."""
     match value:
@@ -1375,31 +1430,9 @@ def newtype_comparison_operand(
 
 
 def text_comparison_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[bool, str]:
-    """Recognize a concrete text carrier without cloning a value to inspect its type."""
-    match value:
-        RustOperand.Constant(RustConstant.Str(_text)) => return Ok(true)
-        RustOperand.Constant(RustConstant.FrozenStr(_text)) => return Ok(true)
-        RustOperand.Place(read) =>
-            for projection in read.place.projection:
-                match projection:
-                    PlaceElem.Index(_index) => return Ok(false)
-                    PlaceElem.Slice(start=_start, end=_end, step=_step) => return Ok(false)
-                    _ => pass
-            mut ty = PlanType.Unit
-            match read.place.global():
-                Some(global) =>
-                    ty = native_source_type(
-                        builder.nominals,
-                        builder.enums,
-                        builder.unions,
-                        global.ty,
-                        builder.intrinsics,
-                    )?
-                None =>
-                    place = scalar_place(builder, read.place, span)?
-                    ty = place_type(builder.locals, place)
-            return Ok(ty == PlanType.String or ty == PlanType.FrozenStr)
-        _ => return Ok(false)
+    """Classify text from retained storage, including indexed elements, before materializing either comparison value."""
+    ty = source_operand_type(builder, value, span)?
+    return Ok(ty in [PlanType.String, PlanType.StringRef, PlanType.StrRef, PlanType.FrozenStr])
 
 
 def text_comparison(
@@ -5131,7 +5164,7 @@ def library_function_arguments(
     target: &RustNamedCallableTarget,
     names: list[str],
 ) -> Result[list[RustType], str]:
-    """Close an SDK associated Self from its checked type receiver; free functions and nominal owners retain their binders."""
+    """Close SDK associated Self and nominal owner arguments through the enclosing checked frame's binders."""
     if len(names) == 0:
         return Ok([])
     mut closed: list[RustType] = []
@@ -5150,15 +5183,14 @@ def library_function_arguments(
         return Ok(closed)
     match target.receiver_type:
         Some(RustType.Generic(base=_base, args=arguments)) =>
+            owner_arguments = checked_type_arguments(builder, arguments)?
             if len(target.type_args) != 0:
                 # Older checked nominal calls also retain their owner arguments on the associated call. Exact
                 # agreement across both views and all declared binders preserves that proven representation.
                 retained = checked_type_arguments(builder, target.type_args)?
-                if len(arguments) != len(names) or retained != arguments:
+                if len(owner_arguments) != len(names) or retained != owner_arguments:
                     return Err("unsupported Body IR SDK owner and method type arguments")
-            for argument in arguments:
-                closed.append(argument.clone())
-            return Ok(closed)
+            return Ok(owner_arguments)
         _ => return checked_type_arguments(builder, target.type_args)
 
 
@@ -5782,11 +5814,11 @@ def lower_extrema_builtin(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Borrow one homogeneous scalar list and call legacy's copy or clone minimum/maximum implementation."""
+    """Classify a homogeneous scalar list before borrowing its value for the minimum or maximum implementation."""
     if len(arguments) != 1:
         return Err("unsupported Body IR extrema builtin arity")
-    receiver = argument_place(builder, arguments, 0, span)?
-    leaf, depth = require_list_shape(place_type(builder.locals, receiver), "unsupported Body IR extrema builtin type")?
+    source_type = argument_type(builder, arguments, 0, span)?
+    leaf, depth = require_list_shape(source_type, "unsupported Body IR extrema builtin type")?
     if depth != 1:
         return Err("unsupported Body IR nested extrema list")
     mut suffix = "int"
@@ -5952,7 +5984,7 @@ def lower_enumerate_builtin(
             external_call(builder, "incan_native_runtime::enumerate_bytes", [PlanType.ListRef(ListLeaf.U8, 1)], result, [reference], output, span)
             builder.owned.append(output.local)
             return Ok(None)
-        receiver = argument_place(builder, arguments, 0, span)?
+        receiver = shared_receiver_place(builder, arguments, 0, span)?
         leaf, depth = require_list_shape(source_type, "unsupported Body IR enumerate source layout")?
         reference = list_borrow(builder, receiver, false, span)?
         list_call(
@@ -7400,7 +7432,7 @@ def lowered_plan(
         templates = generic_models(source_context, nominal_instances, files[entry])?
         exports = loaf_exports(context, emitted_frames.bodies, source_context, templates)
         publish_unions(context, intrinsics, published)?
-    test_entries = collected_test_entries(context, checked[entry], tests, functions)?
+    test_entries = collected_test_entries(context, checked[entry], tests, functions, enums)?
     if kind == "program" and not has_main:
         if declares_main:
             return Err("unsupported Body IR selected main representation")
@@ -7499,8 +7531,14 @@ def append_async_entry(
     return Ok(None)
 
 
-def collected_test_entries(context: &BodyIrModule, entry: &BodyIrModule, tests: list[str], functions: list[Function]) -> Result[list[str], str]:
-    """Resolve collected zero-argument tests to the native functions that run them and refuse unsupported signatures."""
+def collected_test_entries(
+    context: &BodyIrModule,
+    entry: &BodyIrModule,
+    tests: list[str],
+    functions: list[Function],
+    enums: list[EnumDeclaration],
+) -> Result[list[str], str]:
+    """Resolve zero-argument tests returning None or Result[None, E]; rustc's test harness reports Err as failure."""
     mut entries: list[str] = []
     for name in tests:
         mut found = false
@@ -7511,8 +7549,8 @@ def collected_test_entries(context: &BodyIrModule, entry: &BodyIrModule, tests: 
             for function in functions:
                 if function.name != evaluator_name(context, body):
                     continue
-                if len(function.parameters) != 0 or function.return_type != PlanType.Unit:
-                    return Err(f"unsupported test signature for {name}: requires () -> None")
+                if len(function.parameters) != 0 or not test_return_type(function.return_type, enums):
+                    return Err(f"unsupported test signature for {name}: requires () -> None or Result[None, E]")
                 if function.is_async:
                     entries.append(async_test_name(native))
                 else:
@@ -7521,6 +7559,17 @@ def collected_test_entries(context: &BodyIrModule, entry: &BodyIrModule, tests: 
         if not found:
             return Err(f"unsupported collected test body {name}")
     return Ok(entries)
+
+
+def test_return_type(ty: PlanType, enums: list[EnumDeclaration]) -> bool:
+    """Admit only unit success values, preserving a standard Result's native failure and Debug contract."""
+    if ty == PlanType.Unit:
+        return true
+    match ty:
+        PlanType.Enum(owner, _name) =>
+            declaration = enums[owner]
+            return declaration.carrier == "Result" and declaration.variants[0].fields == [PlanType.Unit]
+        _ => return false
 
 
 def loaf_exports(
@@ -8956,8 +9005,12 @@ def read_element_field(
             span,
         )
         return Ok(output)
+    if is_owned_collection(ty):
+        match cloned_collection(builder, field, span)?.kind:
+            OperandKind.Move(cloned) => return Ok(cloned)
+            _ => return Err("invalid Body IR cloned collection element field")
     if not numeric_carrier(ty) and ty != PlanType.Bool and not callable_copy_type(ty):
-        return Err("unsupported Body IR list element field type")
+        return Err(f"unsupported Body IR list element field type {ty:?} in {builder.name}")
     output = temporary(builder, ty, span)
     builder.emit(plan_assign(output, RvalueKind.Use(read_place(field, false, span)), span))
     return Ok(output)
@@ -10549,8 +10602,8 @@ pub def list_root_place(mut builder: Builder, value: &RustPlace, span: SourceSpa
                         PlaceElem.UnionMember(ty=_member) => pass
                         PlaceElem.Index(_index) =>
                             if not is_tuple_type(ty):
-                                return Err("unsupported Body IR list root projection")
-                        _ => return Err("unsupported Body IR list root projection")
+                                return Err(list_projection_refusal(builder.name, ty, projection))
+                        _ => return Err(list_projection_refusal(builder.name, ty, projection))
                     ty = field_projection(
                         builder.nominals,
                         ty,
@@ -10561,6 +10614,11 @@ pub def list_root_place(mut builder: Builder, value: &RustPlace, span: SourceSpa
                     )?.ty
         return scalar_place(builder, value, span)
     return list_base_place(builder, value, span)
+
+
+def list_projection_refusal(name: str, ty: PlanType, projection: &PlaceElem) -> str:
+    """Name the retained carrier and projection that cannot provide structural collection storage."""
+    return f"unsupported Body IR list root projection in {name}: {ty:?}; {projection:?}"
 
 
 def collection_value(mut builder: Builder, read: &RustPlaceOperand, span: SourceSpan) -> Result[Operand, str]:
@@ -10691,7 +10749,7 @@ def collection_contains(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Preserve canonical haystack-first membership and explicit negation."""
+    """Preserve haystack-first membership, copying an indexed collection receiver before its shared read."""
     if len(arguments) != 2:
         return Err("unsupported Body IR collection membership arity")
     match argument_type(builder, arguments, 0, span)?:
@@ -10700,7 +10758,7 @@ def collection_contains(
                 return frozen_dictionary_contains(builder, arguments, destination, negated, span)
             return lower_list_helper(builder, negated, arguments, destination, span)
         _ => pass
-    receiver = argument_place(builder, arguments, 0, span)?
+    receiver = shared_receiver_place(builder, arguments, 0, span)?
     ty = place_type(builder.locals, receiver)
     types = collection_arguments(ty)
     if len(types) == 0:
@@ -10823,12 +10881,12 @@ def collection_method(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Admit canonical set and dictionary methods with the legacy signatures."""
+    """Admit canonical collection methods, materializing indexed read-only receivers before borrowing them."""
     if member == "Set.contains" or member == "Dict.contains_key":
         return collection_contains(builder, false, arguments, destination, span)
     if member == "Set.add" or member == "Dict.insert":
         return collection_insert_method(builder, member, arguments, span)
-    receiver = argument_place(builder, arguments, 0, span)?
+    receiver = shared_receiver_place(builder, arguments, 0, span)?
     ty = place_type(builder.locals, receiver)
     if member == "Dict.get" and len(arguments) == 2:
         return optional_dictionary_get(builder, receiver, arguments, destination, span)
@@ -12703,11 +12761,11 @@ def lower_sequence_builtin(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Admit homogeneous list sorting and the legacy integer sum domain."""
+    """Classify homogeneous list sorting and integer summation without projecting an indexed input as storage."""
     if len(arguments) != 1:
         return Err("unsupported Body IR sequence builtin arity")
-    receiver = argument_place(builder, arguments, 0, span)?
-    leaf, depth = require_list_shape(place_type(builder.locals, receiver), "unsupported Body IR sequence builtin type")?
+    source_type = argument_type(builder, arguments, 0, span)?
+    leaf, depth = require_list_shape(source_type, "unsupported Body IR sequence builtin type")?
     if depth != 1 and builtin == RustBuiltin.Sum:
         return Err("unsupported Body IR nested sequence builtin")
     if builtin == RustBuiltin.Sorted:
@@ -12828,14 +12886,14 @@ def lower_list_concat(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Borrow both concatenation inputs and retain one new list owner."""
+    """Classify both input carriers without reading them, then borrow each value once for concatenation."""
     if len(arguments) != 2:
         return Err("unsupported Body IR list_concat arity")
-    receiver = argument_place(builder, arguments, 0, span)?
-    leaf, depth = require_list_shape(place_type(builder.locals, receiver), "unsupported Body IR list_concat type")?
-    other = argument_place(builder, arguments, 1, span)?
+    source_type = argument_type(builder, arguments, 0, span)?
+    leaf, depth = require_list_shape(source_type, "unsupported Body IR list_concat type")?
+    other_type = argument_type(builder, arguments, 1, span)?
     other_leaf, other_depth = require_list_shape(
-        place_type(builder.locals, other),
+        other_type,
         "unsupported Body IR list_concat type",
     )?
     if leaf != other_leaf or depth != other_depth:
@@ -12905,7 +12963,7 @@ def lower_truth_builtin(
                 return Ok(None)
             None => return Err("unsupported Body IR Bool spread")
     if is_collection(ty):
-        receiver = argument_place(builder, arguments, 0, span)?
+        receiver = shared_receiver_place(builder, arguments, 0, span)?
         reference = borrow_collection(builder, receiver, false, span)?
         length = temporary(builder, PlanType.Int, span)
         collection_call(
@@ -13038,11 +13096,11 @@ def lower_join_helper(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Join only an admitted flat string list through the canonical runtime helper."""
+    """Classify a flat string list before borrowing its value, including an indexed or sliced input."""
     if len(arguments) != 2:
         return Err("invalid Body IR str_join arity")
-    values = argument_place(builder, arguments, 1, span)?
-    leaf, depth = require_list_shape(place_type(builder.locals, values), "unsupported Body IR str_join input")?
+    source_type = argument_type(builder, arguments, 1, span)?
+    leaf, depth = require_list_shape(source_type, "unsupported Body IR str_join input")?
     if leaf != ListLeaf.Str or depth != 1:
         return Err("unsupported Body IR str_join element")
     operands = [text_argument(builder, arguments, 0, span)?, borrowed_list_argument(builder, arguments, 1, false, span)?]
@@ -13073,7 +13131,7 @@ pub def argument_type(
         None => return Err("unsupported Body IR argument type spread")
 
 
-def source_operand_type(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[PlanType, str]:
+pub def source_operand_type(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[PlanType, str]:
     """Read a retained place's carrier without materialization; constants retain the existing value conversion path."""
     match value:
         RustOperand.Place(read) =>

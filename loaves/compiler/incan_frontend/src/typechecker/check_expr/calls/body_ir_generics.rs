@@ -124,6 +124,7 @@ impl TypeChecker {
         {
             return;
         }
+        let logical_result = substitute_resolved_type(&normalized(&info.return_type, &names, self), legacy_bindings);
         let mut bindings: HashMap<_, _> = legacy_bindings
             .iter()
             .filter(|(_, ty)| concrete(&normalized(ty, &names, self)))
@@ -182,7 +183,7 @@ impl TypeChecker {
                     bindings.remove(name);
                 }
             }
-            self.infer_type_param_bindings(&expected, &actual, &mut bindings);
+            self.retain_body_ir_argument_bindings(&expected, &actual, &mut bindings);
         }
         self.retain_body_ir_runtime_outputs(info, &names, &mut bindings);
         let arguments: Option<Vec<_>> = names
@@ -204,6 +205,12 @@ impl TypeChecker {
                     .insert((span.start, span.end), result.clone());
             }
             if concrete(&result) {
+                // Keep a settled source spelling in the semantic checker; canonical owner keys belong to Body IR.
+                let result = if concrete(&logical_result) {
+                    logical_result
+                } else {
+                    result
+                };
                 self.type_info
                     .calls
                     .inferred_call_result_types
@@ -212,6 +219,24 @@ impl TypeChecker {
         } else {
             self.retain_open_source_call(info, &names, &bindings, span, identity);
         }
+    }
+
+    /// Enrich legacy seeds only with the actual argument's already checked nominal owners before unification.
+    /// An incompatible owner stays incompatible; the ordinary unifier still refuses conflicting bindings.
+    fn retain_body_ir_argument_bindings(
+        &self,
+        expected: &ResolvedType,
+        actual: &ResolvedType,
+        bindings: &mut HashMap<String, ResolvedType>,
+    ) {
+        let mut observed = HashMap::new();
+        self.infer_type_param_bindings(expected, actual, &mut observed);
+        for (name, value) in observed {
+            if let Some(existing) = bindings.get_mut(&name) {
+                *existing = self.body_ir_close_value_parts(existing, &value);
+            }
+        }
+        self.infer_type_param_bindings(expected, actual, bindings);
     }
 
     /// Record the already checked instance's parameter storage, so argument binding cannot reopen its closed leaves.

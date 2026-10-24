@@ -1,8 +1,9 @@
 //! Preserve checked executable value contracts without changing legacy inference or lexical symbol types.
 
-use crate::ast::{AssignmentStmt, CallArg, DictEntry, Expr, ListEntry, Literal, Span, Spanned};
+use crate::ast::{AssignmentStmt, CallArg, DictEntry, Expr, ListEntry, Literal, Pattern, Span, Spanned};
 use crate::symbols::{CallableParam, ResolvedType, canonical_builtin_member_identity};
 use incan_lang::lang::surface::result_methods::{self, ResultMethodId};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::{CanonicalSymbolId, body_ir::nominal_carrier_key};
 
 use super::{TypeChecker, fill_open_result_parts};
@@ -18,9 +19,41 @@ impl TypeChecker {
         bindings: &std::collections::HashMap<String, ResolvedType>,
         declaration: Option<&CanonicalSymbolId>,
     ) {
-        if declaration.is_none() {
+        let Some(qualified) = self.declared_nominal_value(declared, bindings, declaration) else {
             return;
-        }
+        };
+        self.type_info
+            .calls
+            .body_ir_call_result_types
+            .entry((span.start, span.end))
+            .or_insert(qualified);
+    }
+
+    /// Preserve a selected stored field's declaring nominal leaves before the consumer's type table is projected.
+    pub(in crate::typechecker::check_expr) fn retain_declared_nominal_field(
+        &mut self,
+        span: Span,
+        declared: &ResolvedType,
+        bindings: &std::collections::HashMap<String, ResolvedType>,
+        declaration: Option<&CanonicalSymbolId>,
+    ) {
+        let Some(qualified) = self.declared_nominal_value(declared, bindings, declaration) else {
+            return;
+        };
+        self.type_info
+            .expressions
+            .body_ir_expr_types
+            .insert((span.start, span.end), qualified);
+    }
+
+    /// Apply only declaration-owned nominal positions, leaving caller binder substitutions under their own owners.
+    fn declared_nominal_value(
+        &self,
+        declared: &ResolvedType,
+        bindings: &std::collections::HashMap<String, ResolvedType>,
+        declaration: Option<&CanonicalSymbolId>,
+    ) -> Option<ResolvedType> {
+        declaration?;
         let unbound = std::collections::BTreeMap::new();
         let scope = declaration
             .and_then(|identity| self.declaration_nominal_scopes.get(identity))
@@ -32,16 +65,10 @@ impl TypeChecker {
             .unwrap_or(declared);
         qualify_contextual_nominals(&mut qualified, template, scope);
         if qualified == *declared {
-            return;
+            return None;
         }
         let qualified = crate::resolved_type_subst::substitute_resolved_type(&qualified, bindings);
-        if Self::is_settled_type_argument(&qualified) {
-            self.type_info
-                .calls
-                .body_ir_call_result_types
-                .entry((span.start, span.end))
-                .or_insert(qualified);
-        }
+        Self::is_settled_type_argument(&qualified).then_some(qualified)
     }
 
     /// Keep the accepted parameter binding metadata while reading each type template from the canonical declaration.
@@ -261,9 +288,9 @@ impl TypeChecker {
             .insert(identity, actual);
     }
 
-    /// Propagate exact lexical reads, checked nominal members, Result success payloads and comprehension elements.
+    /// Propagate exact lexical reads, checked nominal members, canonical Result contracts and comprehension elements.
     /// Incompatible constraints and members without a checked declaration publish no fact.
-    pub(in crate::typechecker::check_expr) fn retain_body_ir_result_value(
+    pub(in crate::typechecker) fn retain_body_ir_result_value(
         &mut self,
         expression: &Spanned<Expr>,
         recorded: &ResolvedType,
@@ -287,6 +314,13 @@ impl TypeChecker {
         {
             return;
         }
+        if let Expr::MethodCall(receiver, method, _, arguments) = &expression.node
+            && let Some(method_id) = result_methods::from_str(method)
+            && self.type_info.resolved_identity(expression.span)
+                == Some(&canonical_builtin_member_identity("Result", method))
+        {
+            self.retain_body_ir_result_callback(receiver, method_id, arguments);
+        }
         if matches!(expression.node, Expr::Call(_, _, _) | Expr::MethodCall(_, _, _, _))
             && let Some(actual) = self
                 .type_info
@@ -308,6 +342,7 @@ impl TypeChecker {
                 .and_then(|identity| self.type_info.expressions.body_ir_binding_types.get(identity))
                 .cloned(),
             Expr::Paren(inner) => self.body_ir_checked_value_type(inner.span).cloned(),
+            Expr::List(entries) => self.body_ir_list_value_type(entries, recorded),
             Expr::Try(inner) => self
                 .body_ir_checked_value_type(inner.span)
                 .and_then(ResolvedType::result_ok_type)
@@ -346,39 +381,82 @@ impl TypeChecker {
                 })
                 .cloned(),
             Expr::Field(receiver, field) => self.body_ir_newtype_field_type(receiver, field),
-            Expr::Index(receiver, index) => self.body_ir_tuple_element_type(receiver, index),
+            Expr::Index(receiver, index) => self.body_ir_indexed_value_type(receiver, index),
             _ => None,
         };
         let Some(actual) = actual else {
             return;
         };
-        if !self.types_compatible(recorded, &actual) {
+        let closed = self.body_ir_close_value_parts(recorded, &actual);
+        if !self.types_compatible(&closed, &actual) {
             return;
         }
-        let closed = self.body_ir_close_value_parts(recorded, &actual);
         self.type_info
             .expressions
             .body_ir_expr_types
             .insert((expression.span.start, expression.span.end), closed);
     }
 
-    /// Fill compatible holes from a checked value contract while preserving concrete leaves and caller-owned binders.
-    /// Nominal aliases meet only when their retained provider identities agree.
+    /// Keep a builtin Some payload's already checked owner without changing contextual or still-open storage.
+    pub(in crate::typechecker::check_expr) fn retain_body_ir_some_payload(
+        &mut self,
+        span: Span,
+        args: &[CallArg],
+        inner: &ResolvedType,
+    ) {
+        let [CallArg::Positional(value)] = args else { return };
+        let Some(actual) = self.body_ir_checked_value_type(value.span) else {
+            return;
+        };
+        let closed = self.body_ir_close_value_parts(inner, actual);
+        if closed == *inner || !Self::is_settled_type_argument(&closed) || !self.types_compatible(&closed, actual) {
+            return;
+        }
+        self.type_info.calls.body_ir_call_result_types.insert(
+            (span.start, span.end),
+            ResolvedType::Generic("Option".to_owned(), vec![closed]),
+        );
+    }
+
+    /// Pass only a registry-selected Result channel's checked owner into its inline closure parameter facts.
+    fn retain_body_ir_result_callback(&mut self, receiver: &Spanned<Expr>, method: ResultMethodId, args: &[CallArg]) {
+        let Some(receiver) = self.body_ir_checked_value_type(receiver.span) else {
+            return;
+        };
+        let input = match method {
+            ResultMethodId::Map | ResultMethodId::AndThen | ResultMethodId::Inspect => receiver.result_ok_type(),
+            ResultMethodId::MapErr | ResultMethodId::OrElse | ResultMethodId::InspectErr => receiver.result_err_type(),
+            _ => None,
+        }
+        .cloned();
+        if let (Some(input), [CallArg::Positional(callback)]) = (input, args) {
+            self.retain_body_ir_callback_parameter(callback, &input);
+        }
+    }
+
+    /// Fill compatible holes and retain proven nominal owners from a checked value contract. Concrete scalar leaves
+    /// and caller-owned binders keep their contextual storage; nominal leaves keep their selected declaration.
     pub(in crate::typechecker::check_expr) fn body_ir_close_value_parts(
         &self,
         recorded: &ResolvedType,
         actual: &ResolvedType,
     ) -> ResolvedType {
         match (recorded, actual) {
+            (ResolvedType::Named(name), ResolvedType::Named(other)) => self
+                .body_ir_composed_nominal_name(name, other)
+                .map(ResolvedType::Named)
+                .unwrap_or_else(|| recorded.clone()),
             (ResolvedType::Unknown | ResolvedType::CallSiteInfer, _) => actual.clone(),
             (ResolvedType::TypeVar(_), _) if self.active_type_param_name(recorded).is_none() => actual.clone(),
             (ResolvedType::Generic(name, parts), ResolvedType::Generic(other, values))
                 if parts.len() == values.len()
                     && (name == other
-                        || self.public_library_type_identities_compatible(recorded, actual) == Some(true)) =>
+                        || self.public_library_type_identities_compatible(recorded, actual) == Some(true)
+                        || self.body_ir_composed_nominal_name(name, other).is_some()) =>
             {
                 ResolvedType::Generic(
-                    name.clone(),
+                    self.body_ir_composed_nominal_name(name, other)
+                        .unwrap_or_else(|| name.clone()),
                     parts
                         .iter()
                         .zip(values)
@@ -409,6 +487,109 @@ impl TypeChecker {
                 ResolvedType::Function(params, Box::new(self.body_ir_close_value_parts(result, output)))
             }
             _ => recorded.clone(),
+        }
+    }
+
+    /// Keep an already proven carrier key when the contextual leaf names that same declaration. An active different
+    /// binding is a conflict; an unbound source spelling grants no authority beyond the value's selected owner.
+    fn body_ir_composed_nominal_name(&self, contextual: &str, actual: &str) -> Option<String> {
+        if contextual == actual {
+            return Some(actual.to_owned());
+        }
+        let identities = self.checked_nominal_type_identities();
+        let owner = identities.get(actual)?;
+        if nominal_carrier_key(owner).as_deref() != Some(actual) {
+            return None;
+        }
+        let compatible = identities
+            .get(contextual)
+            .map_or(contextual == owner.declaration_name, |identity| identity == owner);
+        compatible.then(|| actual.to_owned())
+    }
+
+    /// Read one builtin list's already checked element without inferring a new collection or nominal owner.
+    pub(in crate::typechecker) fn body_ir_list_element_type(value: &ResolvedType) -> Option<&ResolvedType> {
+        match value {
+            ResolvedType::Generic(name, parts)
+                if collections::from_str(name) == Some(CollectionTypeId::List) && parts.len() == 1 =>
+            {
+                parts.first()
+            }
+            _ => None,
+        }
+    }
+
+    /// Merge already checked element owners into a literal's storage without selecting between conflicting owners.
+    fn body_ir_list_value_type(&self, entries: &[ListEntry], recorded: &ResolvedType) -> Option<ResolvedType> {
+        let ResolvedType::Generic(name, _) = recorded else {
+            return None;
+        };
+        let mut element = Self::body_ir_list_element_type(recorded)?.clone();
+        for entry in entries {
+            let actual = match entry {
+                ListEntry::Element(value) => self.body_ir_checked_value_type(value.span)?,
+                ListEntry::Spread(value) => {
+                    Self::body_ir_list_element_type(self.body_ir_checked_value_type(value.span)?)?
+                }
+            };
+            element = self.body_ir_close_value_parts(&element, actual);
+            if !self.types_compatible(&element, actual) {
+                return None;
+            }
+        }
+        Self::is_settled_type_argument(&element).then(|| ResolvedType::Generic(name.clone(), vec![element]))
+    }
+
+    /// Refine a loop or comprehension binding only from its iterable's already checked list element owner.
+    /// Equal lexical types need no override, so open contextual storage remains available to later checking.
+    pub(in crate::typechecker) fn retain_body_ir_iteration_binding(
+        &mut self,
+        pattern: &Spanned<Pattern>,
+        iterable: &Spanned<Expr>,
+    ) {
+        let Some(actual) = self
+            .body_ir_checked_value_type(iterable.span)
+            .and_then(Self::body_ir_list_element_type)
+        else {
+            return;
+        };
+        let Some(recorded) = self.type_info.expr_type(pattern.span) else {
+            return;
+        };
+        let closed = self.body_ir_close_value_parts(recorded, actual);
+        if closed != *recorded && self.types_compatible(&closed, actual) {
+            self.retain_body_ir_for_value(pattern, &closed);
+        }
+    }
+
+    /// Retain list iteration's checked element under each loop binding before its body reads those bindings.
+    /// The lexical symbol types stay unchanged; Body IR receives the collection value's already selected owners.
+    pub(in crate::typechecker) fn retain_body_ir_for_value(
+        &mut self,
+        pattern: &Spanned<Pattern>,
+        value: &ResolvedType,
+    ) {
+        self.type_info
+            .expressions
+            .body_ir_expr_types
+            .insert((pattern.span.start, pattern.span.end), value.clone());
+        match &pattern.node {
+            Pattern::Binding(name) => {
+                if let Some(identity) = self.type_info.resolved_write_identity(pattern.span, name).cloned() {
+                    self.type_info
+                        .expressions
+                        .body_ir_binding_types
+                        .insert(identity, value.clone());
+                }
+            }
+            Pattern::Tuple(items) => {
+                if let ResolvedType::Tuple(values) = value {
+                    for (item, value) in items.iter().zip(values) {
+                        self.retain_body_ir_for_value(item, value);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 

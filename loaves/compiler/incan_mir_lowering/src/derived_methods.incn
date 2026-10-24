@@ -13,7 +13,10 @@ from rust::incan_semantics_core::body_ir import (
 from pub::incan_mir_plan import CalleeKind, Operand, OperandKind, Place, PlanType, Projection, RvalueKind, SourceSpan
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, place_type, read_place, temporary, drop_owned, forget_owned, track_rvalue_moves
-from lowering import scalar_place, lower_callable_result, lower_assignment, binary_operator, materialized_receiver
+from lowering import (
+    scalar_place, lower_callable_result, lower_assignment, binary_operator, materialized_receiver,
+    source_operand_type, scalar_operator_operand,
+)
 from element_places import is_element_place, element_place_type
 from numerics import numeric_carrier
 from trait_links import contains
@@ -327,25 +330,26 @@ def compare_scalars(
     span: SourceSpan,
 ) -> Result[bool, str]:
     """
-    Compare two places of one numeric or boolean carrier by value, as a closed type-parameter instance reaches them.
+    Compare two values of one numeric or boolean carrier, as a closed type-parameter instance reaches them.
 
     The receiver is borrowed for the method call the checker selected, but a number or a bool is copied freely, so the
-    comparison reads both values; any other carrier is left to the operator's own lowering.
+    comparison materializes each checked read once. Type inspection never projects collection elements, and other
+    carriers are left to the operator's own lowering.
     """
     match left:
-        RustOperand.Place(left_read) =>
+        RustOperand.Place(_left_read) =>
             match right:
-                RustOperand.Place(right_read) =>
-                    first = scalar_place(builder, left_read.place, span)?
-                    second = scalar_place(builder, right_read.place, span)?
-                    ty = place_type(builder.locals, first)
-                    if ty != place_type(builder.locals, second) or not (numeric_carrier(ty) or ty == PlanType.Bool):
+                RustOperand.Place(_right_read) =>
+                    ty = source_operand_type(builder, left, span)?
+                    if not (numeric_carrier(ty) or ty == PlanType.Bool):
+                        return Ok(false)
+                    if ty != source_operand_type(builder, right, span)?:
                         return Ok(false)
                     match destination:
                         Some(place) =>
                             output = scalar_place(builder, place, span)?
-                            left_value = Operand(kind=OperandKind.Copy(first), span=span)
-                            right_value = Operand(kind=OperandKind.Copy(second), span=span)
+                            left_value = scalar_operator_operand(builder, left, span)?
+                            right_value = scalar_operator_operand(builder, right, span)?
                             comparison = RvalueKind.Binary(binary_operator(operator)?, left_value, right_value)
                             builder.emit(plan_assign(output, comparison, span))
                             return Ok(true)

@@ -121,13 +121,13 @@ pub def catalog(document: TomlValue, include_incan: bool = false) -> Result[Rust
        `include_incan` asks for them.
     2. Express each declared feature as the entries the activation policy reads.
     """
-    root = document.as_table().map_err((error) => error.message())?
+    root = catalog_table(document)?
     # 1. Each edge is decoded where it is written; an edge to an Incan Loaf is left to the Incan graph unless asked.
     mut dependencies: list[RustDependencyDeclaration] = []
     for group in ["dependencies", "rust-dependencies"]:
         if group not in root:
             continue
-        table = root[group].as_table().map_err((error) => error.message())?
+        table = catalog_table(root[group])?
         for alias in sorted([key for key in table.keys()]):
             value = table[alias]
             if is_incan_path_edge(group, value)? and not include_incan:
@@ -138,16 +138,30 @@ pub def catalog(document: TomlValue, include_incan: bool = false) -> Result[Rust
             else:
                 dependencies.append(declaration(alias, value, len(dependencies), group)?)
     # 2. Each feature is spelled the way the activation policy reads it, whichever way the manifest wrote it.
-    mut features: Dict[str, list[str]] = {}
-    project = root["project"].as_table().map_err((error) => error.message())?
-    if "features" in project:
-        selected = project["features"].as_table().map_err((error) => error.message())?
-        for name in sorted([key for key in selected.keys()]):
-            declared = feature_declaration(selected[name], "loaf.toml", ["project", "features", name]).map_err(
-                (error) => error.message(),
-            )?
-            features[name] = feature_entries(declared)
+    features = catalog_features(root)?
     return Ok(RustDependencyCatalog(document=document, dependencies=dependencies, features=features, library_name=None))
+
+
+def catalog_table(value: TomlValue) -> Result[Dict[str, TomlValue], str]:
+    """Read a catalog table through the graph's string error channel."""
+    return value.as_table().map_err((error) => error.message())
+
+
+def catalog_features(root: Dict[str, TomlValue]) -> Result[Dict[str, list[str]], str]:
+    """Dependency-only overlays declare no project features; present tables still require valid shapes."""
+    mut features: Dict[str, list[str]] = {}
+    if "project" not in root:
+        return Ok(features)
+    project = catalog_table(root["project"])?
+    if "features" not in project:
+        return Ok(features)
+    selected = catalog_table(project["features"])?
+    for name in sorted([key for key in selected.keys()]):
+        declared = feature_declaration(selected[name], "loaf.toml", ["project", "features", name]).map_err(
+            (error) => error.message(),
+        )?
+        features[name] = feature_entries(declared)
+    return Ok(features)
 
 
 def is_incan_path_edge(group: str, value: TomlValue) -> Result[bool, str]:
