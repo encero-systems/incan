@@ -22,25 +22,46 @@ from toolchain import (
 )
 from rust_units import decoded, read_registry_units
 from observation import file_digest
-
+from cli_help import render, unknown_option
 
 # The file extensions of the native libraries an archive keeps in a Loaf's profile directory.
 const NATIVE_LIBRARY_SUFFIXES: FrozenList[str] = [".rlib", ".dylib", ".so", ".a", ".lib"]
 # What a packed Loaf's native document is relative to: its profile directory, three levels below the archive root.
 const FROM_PROFILE: str = "../../../"
+pub const PACK_USAGE: str = "incan toolchain pack OUT"
+pub const INSTALL_USAGE: str = "incan toolchain install ARCHIVE"
 
 
-pub def toolchain_command(arguments: list[str]) -> Result[i32, str]:
-    """Dispatch the toolchain archive commands, refusing missing operands."""
+pub def help_text(command: str) -> str:
+    """Describe the selected archive operation without loading or changing an installation."""
+    if command == "pack":
+        return render(PACK_USAGE, [], "incan toolchain pack toolchain.tar.zst")
+    return render(INSTALL_USAGE, [], "incan toolchain install toolchain.tar.zst")
+
+
+pub def parse_arguments(arguments: list[str]) -> Result[tuple[str, str], str]:
+    """Require an archive command and one operand, rejecting unknown commands and options before I/O."""
+    if len(arguments) == 0:
+        return Err("expected `pack OUT` or `install ARCHIVE`")
+    command = arguments[0]
+    if command not in ["pack", "install"] and not command.startswith("-"):
+        return Err(f"unknown command `{command}`")
+    match unknown_option(arguments):
+        Some(reason) => return Err(reason)
+        None => pass
     if len(arguments) != 2:
-        return Err("usage: incan toolchain pack OUT | install ARCHIVE")
-    if arguments[0] == "pack":
-        pack_toolchain(Path(arguments[1]))?
+        return Err("expected `pack OUT` or `install ARCHIVE`")
+    return Ok((command, arguments[1]))
+
+
+pub def toolchain_command(request: tuple[str, str]) -> Result[i32, str]:
+    """Execute a parsed archive request; syntax has already been validated without side effects."""
+    command, operand = request
+    if command == "pack":
+        pack_toolchain(Path(operand))?
         return Ok(0)
-    if arguments[0] == "install":
-        install_toolchain(Path(arguments[1]))?
-        return Ok(0)
-    return Err(f"unknown toolchain command `{arguments[0]}`")
+    install_toolchain(Path(operand))?
+    return Ok(0)
 
 
 pub def pack_toolchain(output: Path) -> Result[None, str]:
@@ -109,12 +130,7 @@ def stage_externs(externs: list[NativeCrate], stage: Path) -> Result[list[JsonVa
     return Ok(staged)
 
 
-def portable_description(
-    driver: str,
-    abi: list[str],
-    externs: list[JsonValue],
-    search: list[str],
-) -> JsonValue:
+def portable_description(driver: str, abi: list[str], externs: list[JsonValue], search: list[str]) -> JsonValue:
     """The toolchain description of a packed toolchain: every path relative to the toolchain directory."""
     return JsonValue.object(
         {
@@ -495,7 +511,7 @@ def publish_install(stage: Path, target: Path) -> Result[None, str]:
         rename(stage.0, target.0).map_err((error) => str(error))?
         return Ok(None)
     # 2. The previous installation is moved aside, not deleted, until the new one is in place.
-    previous =target.parent().joinpath(f".previous-{TOOLCHAIN}-{id()}")
+    previous = target.parent().joinpath(f".previous-{TOOLCHAIN}-{id()}")
     if previous.exists():
         return Err(f"previous installation backup already exists: {previous.0}")
     rename(f"{target.0}", f"{previous.0}").map_err((error) => str(error))?

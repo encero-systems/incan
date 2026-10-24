@@ -6,47 +6,23 @@ are `#` and at least two spaces, a bare `#` is an empty block line or a separato
 which directives a family admits is the family's rule (`families.incn`).
 """
 
-
 # The directives the header accepts.
 const DIRECTIVES: FrozenList[str] = [
-    "graph-commands",
-    "behavior",
-    "retires",
-    "expect-stdout",
-    "expect-stdout-contains",
-    "expect-stderr-contains",
-    "expect-exit",
-    "expect-diagnostic",
-    "expect-accepted",
-    "expect-dependencies",
-    "expect-std-packages",
-    "expect-active-features",
-    "expect-formatted",
-    "pending",
+    "cli-commands", "graph-commands", "behavior", "retires", "expect-stdout", "expect-stdout-contains",
+    "expect-stderr-contains", "expect-exit", "expect-diagnostic", "expect-accepted", "expect-dependencies",
+    "expect-std-packages", "expect-active-features", "expect-formatted", "pending",
 ]
-
 # The directives whose lines follow them as an indented block.
 const BLOCKS: FrozenList[str] = [
-    "graph-commands",
-    "expect-formatted",
-    "expect-stdout",
-    "expect-stdout-contains",
-    "expect-stderr-contains",
-    "expect-dependencies",
-    "expect-std-packages",
-    "expect-active-features",
+    "cli-commands", "graph-commands", "expect-formatted", "expect-stdout", "expect-stdout-contains",
+    "expect-stderr-contains", "expect-dependencies", "expect-std-packages", "expect-active-features",
 ]
-
 # Blocks every item of which must be present, so an empty one checks nothing. `expect-dependencies:` and
 # `expect-active-features:` are exact: an empty block means none.
 const SUBSET_BLOCKS: FrozenList[str] = ["expect-stdout-contains", "expect-stderr-contains", "expect-std-packages"]
-
 # Blocks whose items are compared as a set, so an item listed twice checks nothing.
 const SET_BLOCKS: FrozenList[str] = [
-    "expect-stdout-contains",
-    "expect-stderr-contains",
-    "expect-dependencies",
-    "expect-std-packages",
+    "expect-stdout-contains", "expect-stderr-contains", "expect-dependencies", "expect-std-packages",
     "expect-active-features",
 ]
 
@@ -133,7 +109,9 @@ pub def parse_header(text: str) -> Result[Header, str]:
         if rest.strip() == "":
             if open_block != "":
                 if rest != "":
-                    return Err(f"line {number}: inside the `{open_block}:` block, a line of only whitespace ends with whitespace, which a report cannot show; a bare `#` is the empty line")
+                    return Err(
+                        f"line {number}: inside the `{open_block}:` block, a line of only whitespace ends with whitespace, which a report cannot show; a bare `#` is the empty line",
+                    )
                 header = push_item(header, open_block, number, "")?
             continue
         # ---- Block item: `#` and two or more spaces ----
@@ -156,10 +134,14 @@ pub def parse_header(text: str) -> Result[Header, str]:
             return Err(f"line {number}: a directive is spelled `# key: value`, with one space between `#` and the key")
         parts = directive.split(":")
         if len(parts) < 2:
-            return Err(f"line {number}: `#{rest}` is neither a directive (`# key: value`) nor an indented block item; put prose in `behavior:`")
+            return Err(
+                f"line {number}: `#{rest}` is neither a directive (`# key: value`) nor an indented block item; put prose in `behavior:`",
+            )
         key = parts[0]
         if key.strip() != key:
-            return Err(f"line {number}: `{key.strip()}:` has whitespace before the colon; a directive is spelled `# key: value`")
+            return Err(
+                f"line {number}: `{key.strip()}:` has whitespace before the colon; a directive is spelled `# key: value`",
+            )
         value = ":".join(parts[1:]).strip()
         open_block = ""
         width = 0
@@ -173,7 +155,7 @@ def directive_into(header: Header, number: int, key: str, value: str) -> Result[
     """Admit one directive, refusing a repeat or a malformed value."""
     mut next = header
     if key not in DIRECTIVES:
-        return Err(f"line {number}: unknown directive `{key}`; the header accepts {', '.join(list(DIRECTIVES))}")
+        return Err(f"line {number}: unknown directive `{key}`; the header accepts {", ".join(list(DIRECTIVES))}")
     if key == "behavior":
         if next.behavior != "":
             return Err(f"line {number}: `behavior:` is declared twice")
@@ -183,7 +165,9 @@ def directive_into(header: Header, number: int, key: str, value: str) -> Result[
         return Ok(next)
     if key == "retires":
         if value == "" or " " in value or "::" not in value:
-            return Err(f"line {number}: `retires:` must name a test as `<path>.rs::<fn>` with no whitespace, got `{value}`")
+            return Err(
+                f"line {number}: `retires:` must name a test as `<path>.rs::<fn>` with no whitespace, got `{value}`",
+            )
         if value in next.retires:
             return Err(f"line {number}: `retires: {value}` is declared twice")
         next.retires.append(value)
@@ -236,7 +220,9 @@ def scalar_directive(header: Header, number: int, key: str, value: str) -> Resul
 def push_item(header: Header, key: str, number: int, item: str) -> Result[Header, str]:
     """Append one item to the open block, refusing an item that ends with whitespace or a repeated set item."""
     if item.endswith(" ") or item.endswith("\t"):
-        return Err(f"line {number}: the expected line `{item}` ends with whitespace, which a report cannot show; remove it")
+        return Err(
+            f"line {number}: the expected line `{item}` ends with whitespace, which a report cannot show; remove it",
+        )
     mut items = header.items(key)
     if key in SET_BLOCKS and item in items:
         return Err(f"line {number}: `{key}:` lists `{item}` twice; one occurrence satisfies both")
@@ -260,17 +246,24 @@ def finish(header: Header) -> Result[Header, str]:
     if header.declares("expect-stdout") and header.declares("expect-stdout-contains"):
         return Err("`expect-stdout:` and `expect-stdout-contains:` cannot both be declared; pick one")
     refused = len(header.diagnostics) > 0
-    run = header.declares("expect-stdout") or header.declares("expect-stdout-contains") or header.declares("expect-stderr-contains") or header.declares("expect-exit")
+    run = header.declares("expect-stdout") or header.declares("expect-stdout-contains") or header.declares(
+        "expect-stderr-contains",
+    ) or header.declares("expect-exit")
     if refused and (run or header.accepted):
-        return Err("`expect-diagnostic:` means the program is refused at check time and never run; it cannot be declared beside a run expectation or `expect-accepted:`")
+        return Err(
+            "`expect-diagnostic:` means the program is refused at check time and never run; it cannot be declared beside a run expectation or `expect-accepted:`",
+        )
     if header.accepted and run:
-        return Err("`expect-accepted:` means the program is only checked; it cannot be declared beside a run expectation")
+        return Err(
+            "`expect-accepted:` means the program is only checked; it cannot be declared beside a run expectation",
+        )
     return Ok(header)
 
 
 pub def lines_of(text: str) -> list[str]:
-    """Split text into lines the way the comparison reads output: `\\n` ends a line, a trailing `\\r` is dropped, and a
-    final newline adds no empty line."""
+    """
+    Split output at line feeds, remove a trailing carriage return from each line and add no empty final line.
+    """
     mut lines: list[str] = []
     for line in text.split("\n"):
         if line.endswith("\r"):
@@ -303,8 +296,10 @@ def is_exit_code(value: str) -> bool:
 
 
 def late_directive(line: str) -> str:
-    """The directive a line past the header spells, or `""`: `#`, optional whitespace, a known key or any `expect-`
-    key, and a colon."""
+    """
+    The directive a line past the header spells, or `""`: `#`, optional whitespace, a known key or any `expect-`
+    key, and a colon.
+    """
     if not line.startswith("#"):
         return ""
     rest = line[1:].strip()

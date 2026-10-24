@@ -25,6 +25,7 @@ from fixture import Fixture, discover_family, materialize
 from run import Outcome, clear_trace, invoke, set_timeout, trace_file, unit_notes
 from formatting import compare_format
 from graph import compare_graph
+from cli import compare_cli
 from batch import run_batches, run_separate
 from group_hints import hint_path
 from timing import report as report_time
@@ -525,7 +526,11 @@ def case_failures(
     """The reasons a case's expectations are not met, or none when they are."""
     header = program.header
     mut failures: list[str] = []
-    if fixture.family == "format":
+    if fixture.family == "project" and header.declares("cli-commands"):
+        match compare_cli(incan, project, header):
+            Err(reason) => failures.append(reason)
+            Ok(found) => failures = found
+    elif fixture.family == "format":
         match compare_format(incan, project, header, program.source):
             Err(reason) => failures.append(reason)
             Ok(found) => failures = found

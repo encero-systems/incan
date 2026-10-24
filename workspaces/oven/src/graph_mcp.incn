@@ -8,14 +8,30 @@ from graph_inspection import graph_response
 from graph_queries import display, nested, text
 from graph_memory import TaskMemory
 from home import TOOLCHAIN
+from cli_help import render, unknown_option
+
+pub const USAGE: str = "incan mcp PATH"
 
 
-pub def serve_graph(arguments: list[str]) -> Result[i32, str]:
+pub def help_text() -> str:
+    """Describe the stdio graph server before opening its project or transport."""
+    return render(USAGE, [], "incan mcp .")
+
+
+pub def parse_path(arguments: list[str]) -> Result[Path, str]:
+    """Require one path and refuse every option before reading the project."""
+    match unknown_option(arguments):
+        Some(reason) => return Err(reason)
+        None => pass
+    if len(arguments) != 1:
+        return Err("one PATH is required")
+    return Ok(Path(arguments[0]))
+
+
+pub def serve_graph(selected: Path) -> Result[i32, str]:
     """Serve one project: 1. Validate selection. 2. Read requests. 3. Flush protocol-only replies."""
     # 1. Validate the fixed project selection.
-    if len(arguments) != 1:
-        return Err("usage: incan mcp PATH")
-    root = Path(arguments[0]).resolve().map_err((error) => error.message())?
+    root = selected.resolve().map_err((error) => error.message())?
     if not root.is_file() and not root.is_dir():
         return Err("MCP PATH does not exist")
     mut server = GraphServer(root=root.0)
@@ -170,10 +186,12 @@ model GraphServer:
                 count = counts[kind].expect_int().map_err((error) => error.message())?
             counts[kind] = JsonValue.int(count + 1)
         summary = JsonValue.object(
-            {"snapshot_id": nested(records[0], "snapshot_id"), "degraded": nested(records[0], "degraded"), "languages": nested(
-                records[0],
-                "languages",
-            ), "semantic_contexts": nested(records[0], "semantic_contexts"), "counts": JsonValue.object(counts)},
+            {
+                "snapshot_id": nested(records[0], "snapshot_id"), "degraded": nested(records[0], "degraded"),
+                "languages": nested(records[0], "languages"),
+                "semantic_contexts": nested(records[0], "semantic_contexts"),
+                "counts": JsonValue.object(counts),
+            },
         )
         return summary.to_json().map_err((error) => error.message())
 
@@ -187,7 +205,10 @@ model GraphServer:
                 Ok(value) => content = value
                 Err(reason) => return failure(identifier, -32603, reason)
         item = JsonValue.object(
-            {"uri": JsonValue.string(uri), "mimeType": JsonValue.string("text/plain"), "text": JsonValue.string(content)},
+            {
+                "uri": JsonValue.string(uri), "mimeType": JsonValue.string("text/plain"),
+                "text": JsonValue.string(content),
+            },
         )
         return success(identifier, JsonValue.object({"contents": JsonValue.array([item])}))
 
@@ -236,13 +257,18 @@ def catalog() -> Result[JsonValue, str]:
         fields = properties(name)
         tools.append(
             JsonValue.object(
-                {"name": JsonValue.string(name), "description": JsonValue.string(description(name)), "inputSchema": JsonValue.object(
-                    {"type": JsonValue.string("object"), "properties": JsonValue.object(fields), "required": JsonValue.array(
-                        [JsonValue.string(key) for key in fields.keys()],
-                    ), "additionalProperties": JsonValue.bool(false)},
-                ), "annotations": JsonValue.object(
-                    {"readOnlyHint": JsonValue.bool(name != "record_feedback"), "openWorldHint": JsonValue.bool(false)},
-                )},
+                {
+                    "name": JsonValue.string(name), "description": JsonValue.string(description(name)),
+                    "inputSchema": JsonValue.object({
+                        "type": JsonValue.string("object"), "properties": JsonValue.object(fields),
+                        "required": JsonValue.array([JsonValue.string(key) for key in fields.keys()]),
+                        "additionalProperties": JsonValue.bool(false),
+                    }),
+                    "annotations": JsonValue.object({
+                        "readOnlyHint": JsonValue.bool(name != "record_feedback"),
+                        "openWorldHint": JsonValue.bool(false),
+                    }),
+                },
             ),
         )
     return Ok(JsonValue.array(tools))
@@ -252,9 +278,10 @@ def resources() -> JsonValue:
     """List local read-only orientation resources; graph input refresh stays inside ordinary inspection."""
     return JsonValue.array(
         [JsonValue.object(
-            {"uri": JsonValue.string(f"incan://graph/{name}"), "name": JsonValue.string(name), "mimeType": JsonValue.string(
-                "text/plain",
-            )},
+            {
+                "uri": JsonValue.string(f"incan://graph/{name}"), "name": JsonValue.string(name),
+                "mimeType": JsonValue.string("text/plain"),
+            },
         ) for name in ["summary", "snapshot", "schema"]],
     )
 
@@ -266,12 +293,24 @@ def parse_records(document: str) -> Result[list[JsonValue], str]:
 
 def tool_names() -> list[str]:
     """Share the offered tool set between discovery and dispatch."""
-    return ["context_for_task", "context_for_declaration", "graph_query", "graph_summary", "snapshot_status", "process_risk", "task_memory", "record_feedback"]
+    return [
+        "context_for_task", "context_for_declaration", "graph_query", "graph_summary",
+        "snapshot_status", "process_risk", "task_memory", "record_feedback",
+    ]
 
 
 def description(name: str) -> str:
     """Describe each public tool without exposing implementation details."""
-    descriptions = {"context_for_task": "Pack task-ranked current graph context within a token budget", "context_for_declaration": "Pack a declaration and its graph neighborhood", "graph_query": "Explore checked definitions, references, callers, callees or imports", "graph_summary": "Read current snapshot, provenance and record counts", "snapshot_status": "Compare a retained snapshot with current graph inputs", "process_risk": "Read optional local git churn, ownership and co-change observations", "task_memory": "Read unexpired feedback for this exact task and current snapshot", "record_feedback": "Record explicit session-only usefulness feedback with snapshot and TTL expiry"}
+    descriptions = {
+        "context_for_task": "Pack task-ranked current graph context within a token budget",
+        "context_for_declaration": "Pack a declaration and its graph neighborhood",
+        "graph_query": "Explore checked definitions, references, callers, callees or imports",
+        "graph_summary": "Read current snapshot, provenance and record counts",
+        "snapshot_status": "Compare a retained snapshot with current graph inputs",
+        "process_risk": "Read optional local git churn, ownership and co-change observations",
+        "task_memory": "Read unexpired feedback for this exact task and current snapshot",
+        "record_feedback": "Record explicit session-only usefulness feedback with snapshot and TTL expiry",
+    }
     return descriptions[name]
 
 

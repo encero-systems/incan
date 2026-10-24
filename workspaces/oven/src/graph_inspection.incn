@@ -34,9 +34,13 @@ from rust_units import rust_facet
 from toolchain import Toolchain, load_toolchain
 from unit import project_root_of
 from unit_freshness import artifact_identity, fingerprint
-
+from cli_help import render as render_help
 
 const QUERY_KINDS: FrozenList[str] = ["defs", "refs", "callers", "callees", "imports"]
+pub const USAGE: str = "incan inspect codegraph PATH [GRAPH OPTIONS]"
+pub const VALUE_OPTIONS: FrozenList[str] = [
+    "--query", "--format", "--limit", "--substitute", "--stale", "--task", "--budget",
+]
 # The version of the key an answer is cached under; changing it discards every cached answer.
 const PRESENTATION_DOMAIN: str = "incan.codegraph.presentation/16"
 
@@ -57,7 +61,7 @@ pub model GraphOptions:
     pub risk: bool = false
 
 
-def options(arguments: list[str]) -> Result[GraphOptions, str]:
+pub def options(arguments: list[str]) -> Result[GraphOptions, str]:
     """
     Validate the full invocation before any build or cache operation.
 
@@ -66,8 +70,12 @@ def options(arguments: list[str]) -> Result[GraphOptions, str]:
     3. A path is required, and the format and query kind must be known.
     """
     # 1. Only the `codegraph` inspection exists, and anything else is answered with the usage.
-    if len(arguments) == 0 or arguments[0] != "codegraph":
-        return Err(usage())
+    if len(arguments) == 0:
+        return Err("expected `codegraph`")
+    if arguments[0] != "codegraph":
+        if arguments[0].startswith("-"):
+            return Err(f"unknown option `{arguments[0]}`")
+        return Err(f"unknown command `{arguments[0]}`")
     # 2. A flag takes the arguments it needs, nothing else starts with `-`, and the first plain argument is the path.
     mut result = GraphOptions()
     mut index = 1
@@ -83,12 +91,14 @@ def options(arguments: list[str]) -> Result[GraphOptions, str]:
         elif value == "--query":
             read_query(result, arguments, index)?
             index += 3
-        elif value in ["--format", "--limit", "--substitute", "--stale", "--task", "--budget"]:
+        elif value in VALUE_OPTIONS:
             if index + 1 >= len(arguments):
                 return Err(f"{value} needs a value")
             apply_flag(result, value, arguments[index + 1])?
             index += 2
-        elif value.startswith("-") or result.path != "":
+        elif value.startswith("-"):
+            return Err(f"unknown option `{value}`")
+        elif result.path != "":
             return Err(f"unexpected argument `{value}`")
         else:
             result.path = value
@@ -107,13 +117,23 @@ def options(arguments: list[str]) -> Result[GraphOptions, str]:
     return Ok(result)
 
 
-def usage() -> str:
-    """The inspection command's usage."""
-    return "\n".join([
-        "usage: incan inspect codegraph PATH [--format json|jsonl] [--query KIND TERM] [--limit N] [--strict]",
-        "       incan inspect codegraph PATH --task TASK [--budget N] [--format compact|json|jsonl] [--risk]",
-        "       incan inspect codegraph PATH --stale SNAPSHOT [--strict]",
-    ])
+pub def help_text() -> str:
+    """Describe graph selection and presentation options from the inspection parser's public contract."""
+    return render_help(
+        USAGE,
+        [
+            "  --format json|jsonl|compact  Output format (default jsonl); compact requires --task.",
+            "  --query KIND TERM           Query defs, refs, callers, callees or imports.",
+            "  --limit N                   Maximum query hits (default 20; minimum 0).",
+            "  --task TASK                 Select a context pack; excludes --query and --stale.",
+            "  --budget N                  Context byte bound (default 8000; 128..1000000).",
+            "  --stale SNAPSHOT            Check an exported snapshot: identity.",
+            "  --strict                    Refuse unchecked units.",
+            "  --risk                      Include optional local git observations.",
+            "  --substitute NAME=DIR       Select a local dependency source; repeatable.",
+        ],
+        "incan inspect codegraph . --query defs main",
+    )
 
 
 def read_query(mut result: GraphOptions, arguments: list[str], index: int) -> Result[None, str]:
@@ -173,24 +193,28 @@ def budget_of(item: str) -> Result[int, str]:
     return Ok(budget)
 
 
-pub def inspect_codegraph(arguments: list[str]) -> Result[i32, str]:
+pub def inspect_codegraph(selected: GraphOptions) -> Result[i32, str]:
     """Print a public export or query, leaving an empty query answer silent."""
-    rendered = graph_response(arguments)?
+    rendered = selected_response(selected)?
     if rendered != "":
         println(rendered)
     return Ok(0)
 
 
 pub def graph_response(arguments: list[str], preferences: Dict[str, int] = {}) -> Result[str, str]:
-    """
-    Export JSON/JSONL or answer a compact query, reusing content-addressed unit exports.
+    """Validate a graph service invocation before preparing its current, content-addressed answer."""
+    return selected_response(options(arguments)?, preferences)
 
-    1. Read the options and the toolchain.
+
+def selected_response(selected: GraphOptions, preferences: Dict[str, int] = {}) -> Result[str, str]:
+    """
+    Prepare and render a validated graph request; CLI syntax failures never enter this boundary.
+
+    1. Resolve the path and read the installed toolchain.
     2. Select the units to inspect: an Incan source through its checked interfaces, anything else as a Rust project.
     3. Return the rendered answer through the shared inspection boundary.
     """
-    # 1. A bad invocation is refused before the toolchain is read or anything is built.
-    selected = options(arguments)?
+    # 1. Path and installation failures are execution errors after syntax has been admitted.
     started = Instant.now()
     path = Path(selected.path).resolve().map_err((error) => error.message())?
     toolchain = load_toolchain()?
@@ -233,7 +257,11 @@ def owning_project(path: Path, given: str) -> Result[Path, str]:
 
 
 def response(
-    paths: list[GraphUnit], root: str, selected: GraphOptions, toolchain: Toolchain, preferences: Dict[str, int],
+    paths: list[GraphUnit],
+    root: str,
+    selected: GraphOptions,
+    toolchain: Toolchain,
+    preferences: Dict[str, int],
 ) -> Result[str, str]:
     """
     Cache presentation by immutable unit graph paths and query arguments; a warm repeat decodes no graph records.
@@ -290,15 +318,19 @@ def needs_snapshot(selected: GraphOptions) -> bool:
 
 
 def presentation_inputs(
-    paths: list[GraphUnit], root: str, selected: GraphOptions, snapshot: str, preferences: Dict[str, int],
+    paths: list[GraphUnit],
+    root: str,
+    selected: GraphOptions,
+    snapshot: str,
+    preferences: Dict[str, int],
 ) -> Result[list[str], str]:
     """Everything an answer depends on: the options, and each unit's graph with the identity of its file."""
     mut inputs = [PRESENTATION_DOMAIN, snapshot, root, selected.format, selected.query, selected.term]
     inputs = inputs + [str(selected.limit), str(selected.strict)]
     inputs = inputs + [selected.task, str(selected.budget)]
-    boost_values = JsonValue.object({
-        key: JsonValue.int(preferences[key]) for key in sorted([key for key in preferences.keys()])
-    })
+    boost_values = JsonValue.object(
+        {key: JsonValue.int(preferences[key]) for key in sorted([key for key in preferences.keys()])},
+    )
     inputs = inputs + [str(selected.risk), json_text(boost_values)?]
     if selected.query == "imports":
         inputs.append("nonempty-import-labels/1")
@@ -479,8 +511,7 @@ def read_records(
                     if name not in languages:
                         languages.append(name)
                 match record.get("semantic_contexts"):
-                    Some(value) =>
-                        contexts = contexts + value.expect_array().map_err((error) => error.message())?
+                    Some(value) => contexts = contexts + value.expect_array().map_err((error) => error.message())?
                     None => pass
                 continue
             # 3. A fact several units report is kept once, under the first that reported it.

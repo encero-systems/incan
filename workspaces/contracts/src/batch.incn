@@ -236,7 +236,8 @@ pub def run_separate(
             continue
         match isolated_request(incan, scratch, fixture):
             Err(_) => pass
-            Ok(request) =>
+            Ok(None) => pass
+            Ok(Some(request)) =>
                 requests.append(request)
                 names.append(fixture.case_name())
     results = invoke_many(requests, jobs)
@@ -244,19 +245,21 @@ pub def run_separate(
         outcomes[names[index]] = results[index]
 
 
-def isolated_request(incan: str, scratch: Path, fixture: Fixture, duration_hint: int = 0) -> Result[Invocation, str]:
-    """Prepare the original command without changing its manifest, entry point or expectations."""
+def isolated_request(incan: str, scratch: Path, fixture: Fixture, duration_hint: int = 0) -> Result[Option[Invocation], str]:
+    """Prepare an original command; CLI command lists instead execute each invocation during comparison."""
     program = read_program(fixture)?
+    if program.header.declares("cli-commands"):
+        return Ok(None)
     project = materialize(fixture, scratch)?
     clear_trace(project)?
     return Ok(
-        Invocation(
+        Some(Invocation(
             program=incan,
             arguments=command(fixture, program.header),
             project=project,
             selector=None,
             duration_hint=duration_hint,
-        ),
+        )),
     )
 
 
@@ -319,7 +322,8 @@ def compile_groups(
             duration = costs.duration(fixture.project_path(scratch))
             match isolated_request(incan, scratch, fixture, duration):
                 Err(_) => pass
-                Ok(request) =>
+                Ok(None) => pass
+                Ok(Some(request)) =>
                     requests.append(request)
                     names.append(fixture.case_name())
                     projects.append(request.project)

@@ -8,40 +8,22 @@ The contract families: what each one runs and which expectations it admits.
 - `testing`: `incan test` runs one test file and reports each test by outcome.
 - `format`: `incan fmt` preserves the expected text and is stable; `--check` reports changes without writing.
 - `project`: what `incan describe-unit` reports for a project: its dependencies, its standard packages and its
-  active features, or the refusal of a project Oven cannot describe.
+  active features, or a refusal; explicit CLI invocation lists instead compare each command's output and status.
 """
 
 from files import read
 from fixture import Fixture
 from header import Header, parse_header
 
-
 pub const FAMILIES: FrozenList[str] = [
-    "behavior",
-    "check",
-    "library",
-    "interop",
-    "testing",
-    "project",
-    "format",
-    "graph",
+    "behavior", "check", "library", "interop", "testing", "project", "format", "graph",
 ]
-
 # The expectations a run compares.
 const RUN: FrozenList[str] = ["expect-stdout", "expect-stdout-contains", "expect-stderr-contains", "expect-exit"]
-
 # Every expectation a header can declare; `behavior:`, `retires:` and `pending:` belong to every family.
 const EXPECTATIONS: FrozenList[str] = [
-    "expect-formatted",
-    "expect-stdout",
-    "expect-stdout-contains",
-    "expect-stderr-contains",
-    "expect-exit",
-    "expect-diagnostic",
-    "expect-accepted",
-    "expect-dependencies",
-    "expect-std-packages",
-    "expect-active-features",
+    "expect-formatted", "expect-stdout", "expect-stdout-contains", "expect-stderr-contains", "expect-exit",
+    "expect-diagnostic", "expect-accepted", "expect-dependencies", "expect-std-packages", "expect-active-features",
 ]
 
 
@@ -70,8 +52,8 @@ pub def read_program(fixture: Fixture) -> Result[AdmittedProgram, str]:
     return Ok(AdmittedProgram(source=source, header=header))
 
 
-def admitted(family: str) -> list[str]:
-    """The expectations `family` admits."""
+def admitted(family: str, cli: bool = false) -> list[str]:
+    """The expectations the family compares for its default command or an explicit CLI command list."""
     if family == "format":
         return ["expect-formatted", "expect-exit"]
     if family == "graph":
@@ -81,12 +63,11 @@ def admitted(family: str) -> list[str]:
     if family == "testing":
         return ["expect-stdout-contains", "expect-stderr-contains", "expect-exit"]
     if family == "project":
+        if cli:
+            return list(RUN)
         return [
-            "expect-dependencies",
-            "expect-std-packages",
-            "expect-active-features",
-            "expect-stderr-contains",
-            "expect-exit",
+            "expect-dependencies", "expect-std-packages", "expect-active-features",
+            "expect-stderr-contains", "expect-exit",
         ]
     mut run = list(RUN)
     run.append("expect-diagnostic")
@@ -98,15 +79,21 @@ pub def admit(fixture: Fixture, header: Header) -> Result[None, str]:
     Refuse a header that declares an expectation its family does not compare, or no expectation at all, and a fixture
     whose shape its family cannot run.
 
-    1. `graph-commands:` belong to graph fixtures, and each graph fixture declares them.
+    1. Command-list directives belong to their named family; graph fixtures require their inspection commands.
     2. A header declares at least one expectation, and only those its family compares.
     3. The fixture has the shape its family runs.
     """
-    # 1. Only graph fixtures declare `graph-commands:`, and every graph fixture declares them.
+    # 1. Each command list belongs to its family; graph fixtures always declare their inspection invocations.
     if fixture.family == "graph" and len(header.items("graph-commands")) == 0:
         return Err("a graph fixture declares its inspection invocations in `graph-commands:`")
     if fixture.family != "graph" and header.declares("graph-commands"):
         return Err("only graph fixtures declare `graph-commands:`")
+    if header.declares("cli-commands"):
+        if fixture.family != "project":
+            return Err("only project fixtures declare `cli-commands:`")
+        commands = header.items("cli-commands")
+        if len(commands) == 0 or "" in commands:
+            return Err("`cli-commands:` requires nonempty command lines")
     # 2. The header declares at least one expectation, and only ones its family compares.
     check_expectations(fixture, header)?
     # 3. The fixture has the shape its family runs.
@@ -115,15 +102,15 @@ pub def admit(fixture: Fixture, header: Header) -> Result[None, str]:
 
 def check_expectations(fixture: Fixture, header: Header) -> Result[None, str]:
     """Refuse a header that declares nothing to compare, or an expectation the fixture's family does not compare."""
-    allowed = admitted(fixture.family)
+    allowed = admitted(fixture.family, header.declares("cli-commands"))
     mut declared = 0
     for key in EXPECTATIONS:
         if header.declares(key):
             if key not in allowed:
-                return Err(f"the {fixture.family} family does not compare `{key}:`; it compares {', '.join(allowed)}")
+                return Err(f"the {fixture.family} family does not compare `{key}:`; it compares {", ".join(allowed)}")
             declared += 1
     if declared == 0:
-        return Err(f"the header declares nothing to compare; the {fixture.family} family compares {', '.join(allowed)}")
+        return Err(f"the header declares nothing to compare; the {fixture.family} family compares {", ".join(allowed)}")
     return Ok(None)
 
 
@@ -139,7 +126,7 @@ def check_shape(fixture: Fixture, header: Header) -> Result[None, str]:
 
 
 pub def command(fixture: Fixture, header: Header) -> list[str]:
-    """The `incan` command line the case runs in its project."""
+    """The family's default single invocation; command lists, formatting and graph comparison select their own."""
     if fixture.family == "project":
         return ["describe-unit", "src/main.incn"]
     if fixture.family == "testing":

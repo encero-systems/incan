@@ -5,35 +5,54 @@ from features import FeatureRequest
 from incan_units import format_unit
 from toolchain import Toolchain, load_toolchain
 from unit import describe
+from cli_help import render
 
-const USAGE: str = "usage: incan fmt [--check] PATH..."
+pub const USAGE: str = "incan fmt [--check] PATH..."
 
 
-model FormatRequest:
+pub model FormatRequest:
     """What `incan fmt` was asked to do: the paths to format, and whether to only check them."""
 
     pub check: bool
     pub paths: list[str]
 
 
-pub def format_paths(arguments: list[str]) -> Result[i32, str]:
+pub def help_text() -> str:
+    """Describe the formatting options without discovering or reading source files."""
+    return render(
+        USAGE,
+        [
+            "  --check  Report changes without writing; exit 1 when a file would change.",
+            "  --       End option parsing.",
+        ],
+        "incan fmt --check src",
+    )
+
+
+pub def format_paths(request: FormatRequest) -> Result[i32, str]:
     """
     Format every `.incn` file in the given files and trees, or with `--check` report the files that would change.
 
     A file that cannot be described or formatted is reported and the others still run. The exit code is 1 when any
     file failed or, with `--check`, would change.
+
+    1. Discover the source files selected by the parsed request.
+    2. Load the installed toolchain once for the invocation.
+    3. Format every selected file, retaining a failure even when a later file succeeds.
     """
-    request = parse_arguments(arguments)?
+    # 1. Syntax was validated before any source discovery.
     files = discover(request.paths)?
+    # 2. Every file uses the same selected installation.
     toolchain = load_toolchain()?
     mut code: i32 = 0
+    # 3. One failed file does not prevent the remaining files from being processed.
     for file in files:
         if format_file(file, toolchain, request.check)? != 0:
             code = 1
     return Ok(code)
 
 
-def parse_arguments(arguments: list[str]) -> Result[FormatRequest, str]:
+pub def parse_arguments(arguments: list[str]) -> Result[FormatRequest, str]:
     """Read `--check` and the paths; `--` ends the options, so a path after it may start with `-`."""
     mut check = false
     mut paths: list[str] = []
@@ -44,11 +63,11 @@ def parse_arguments(arguments: list[str]) -> Result[FormatRequest, str]:
         elif options and argument == "--check":
             check = true
         elif options and argument.startswith("-"):
-            return Err(f"unknown option `{argument}`; {USAGE}")
+            return Err(f"unknown option `{argument}`")
         else:
             paths.append(argument)
     if len(paths) == 0:
-        return Err(f"a PATH is required; {USAGE}")
+        return Err("a PATH is required")
     return Ok(FormatRequest(check=check, paths=paths))
 
 

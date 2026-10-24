@@ -1,0 +1,24 @@
+# behavior: All overview spellings list every public command and the CLI reference without loading a project.
+# cli-commands:
+#   --help
+#   -h
+#   help
+# expect-stdout-contains:
+#   incan --version
+#   incan run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
+#   incan check PATH [--format text|json] [UNIT OPTIONS]
+#   incan test PATH [UNIT OPTIONS]
+#   incan describe-unit PATH [UNIT OPTIONS]
+#   incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
+#   incan fmt [--check] PATH...
+#   incan owner stop
+#   incan inspect codegraph PATH [GRAPH OPTIONS]
+#   incan mcp PATH
+#   incan toolchain pack OUT
+#   incan toolchain install ARCHIVE
+#   Reference: https://incan.io/latest/tooling/reference/cli_reference/
+# expect-exit: 0
+
+def main() -> None:
+    """Provide the project case's source; CLI invocations require no program execution."""
+    pass

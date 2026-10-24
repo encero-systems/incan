@@ -1,0 +1,24 @@
+"""Compare each public CLI invocation in a project case with the case's output and status contract."""
+
+from std.fs import Path
+from compare import compare
+from header import Header
+from run import invoke
+
+
+pub def compare_cli(incan: str, project: Path, header: Header) -> Result[list[str], str]:
+    """
+    Return the expectations broken by each command, identifying the invocation beside every failure.
+
+    1. Run each whitespace-separated command in the fixture project.
+    2. Compare each command's streams and status independently.
+    """
+    mut failures: list[str] = []
+    for command in header.items("cli-commands"):
+        # 1. Each command runs afresh with its own streams and status.
+        arguments = [item for item in command.split(" ") if item != ""]
+        outcome = invoke(incan, arguments, project)?
+        # 2. A successful sibling cannot hide another command's failure.
+        for failure in compare("cli", header, outcome):
+            failures.append(f"incan {command}: {failure}")
+    return Ok(failures)

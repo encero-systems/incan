@@ -1,0 +1,24 @@
+# behavior: Every public command refuses unknown options before accessing operands and points to help.
+# cli-commands:
+#   --nonexistent
+#   run --nonexistent
+#   check --nonexistent
+#   test --nonexistent
+#   describe-unit --nonexistent
+#   build --nonexistent
+#   fmt --nonexistent
+#   owner stop --nonexistent
+#   inspect codegraph --nonexistent
+#   mcp --nonexistent
+#   toolchain pack --nonexistent
+#   toolchain install --nonexistent
+#   --version --nonexistent
+# expect-stdout:
+# expect-stderr-contains:
+#   unknown option
+#   Run `incan --help` for usage.
+# expect-exit: 2
+
+def main() -> None:
+    """Provide a source that invalid option invocations never compile."""
+    pass

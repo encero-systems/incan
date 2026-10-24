@@ -5,6 +5,7 @@
 ## Usage
 
 ```text
+incan --help | -h | help
 incan --version
 incan run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]
 incan check PATH [--format text|json] [UNIT OPTIONS]
@@ -19,7 +20,13 @@ incan toolchain pack OUT
 incan toolchain install ARCHIVE
 ```
 
-There is no implicit command or implicit source path. `--help`, `new`, `init`, `lock`, `env`, `explain`, `tools`, `cache`, `workspace`, `oven`, `--release`, `--locked`, `--offline`, `--frozen`, `--sdk-profile` and `--emit-rust` are not CLI interfaces in this release.
+There is no implicit command or implicit source path. `new`, `init`, `lock`, `env`, `explain`, `tools`, `cache`, `workspace`, `oven`, `--release`, `--locked`, `--offline`, `--frozen`, `--sdk-profile` and `--emit-rust` are not CLI interfaces in this release.
+
+## Help and version
+
+`incan --help`, `incan -h` and `incan help` print the command synopses above and the CLI reference location, then exit `0`. `incan COMMAND --help` or `incan COMMAND -h` prints that command's usage, options and one example, then exits `0`. Nested commands include the subcommand: `incan owner stop --help`, `incan inspect codegraph --help`, `incan toolchain pack --help` and `incan toolchain install --help`. Help does not require a project or installed toolchain. Arguments after `--` and option values are not interpreted as help flags.
+
+`incan --version` prints `incan 0.6.0-dev.8` and exits `0`. `incan --version --help` prints its usage and example.
 
 ## Unit options
 
@@ -92,4 +99,4 @@ Serves the selected project's graph through newline-delimited JSON-RPC on stdin/
 
 ## Exit codes
 
-`0` indicates success. Invalid unit-command syntax exits `2`; preparation and compilation failures return nonzero. `run` returns the program's status. `test` returns nonzero when any collected test fails.
+`0` indicates success, including help. Unknown commands and unknown options exit `2`; the error is followed by ``Run `incan --help` for usage.`` Invalid unit-command syntax also exits `2`. Other argument-value refusals, preparation and compilation failures return nonzero. `run` returns the program's status. `test` returns nonzero when any collected test fails.
