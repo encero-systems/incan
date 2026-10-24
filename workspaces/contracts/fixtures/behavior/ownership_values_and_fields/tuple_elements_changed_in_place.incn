@@ -1,10 +1,12 @@
-# behavior: tuple places retain mutations and compare borrowed field and parameter layouts without consumption (#1530)
+# behavior: tuple places retain mutation, borrowed equality and dictionary/set Result payload owners (#1530, #2256)
 # expect-stdout:
 #   2 3 4 5 6
 #   2 8
 #   6 19
 
 """Mutate tuple locations and compare shared tuple fields containing owned data."""
+
+from std.fs import Path
 
 class Holder:
     pub pair: tuple[list[int], int]
@@ -26,6 +28,7 @@ def main() -> None:
     1. Mutate list elements through tuple and loop places.
     2. Mutate tuple fields, nested lists and model elements.
     3. Compare shared tuple fields without consuming their data.
+    4. Unpack dictionary and set fields from a Result payload without losing their owned values.
     """
     # 1. Reach mutable list elements through local, nested and iterated tuples.
     mut pair: tuple[list[int], int] = ([], 0)
@@ -59,8 +62,27 @@ def main() -> None:
     assert not same_pair(holder, ([9], 0))
     assert holder.pair != ([0], 0)
     assert holder.pair[0] == [7, 8]
+    # 4. Preserve nominal collection elements and both hash collection owners through tuple extraction.
+    match observe_collections():
+        Ok(_) => pass
+        Err(_) => assert false
 
 
 def same_pair(holder: Holder, expected: tuple[list[int], int]) -> bool:
     """Compare an owned tuple field with a tuple parameter through their shared structural layout."""
     return holder.pair == expected
+
+
+def observe_collections() -> Result[None, str]:
+    """Unpack a successful tuple payload and read every retained collection more than once."""
+    ordered, keyed, labels = collection_payload()?
+    assert ordered[0].0 == "first"
+    assert keyed["root"].0 == "second"
+    assert "first" in labels
+    assert len(ordered) == 1 and len(keyed) == 1 and len(labels) == 2
+    return Ok(None)
+
+
+def collection_payload() -> Result[tuple[list[Path], dict[str, Path], set[str]], str]:
+    """Return exact nominal list/dictionary leaves and an independently owned set in one tuple."""
+    return Ok(([Path("first")], {"root": Path("second")}, {"first", "second"}))

@@ -1,4 +1,4 @@
-# behavior: native receivers retain owners, bounds, items, borrows, CommandExt and collection length calls (#2256)
+# behavior: native receivers retain owners, trait projections, opaque children, borrows, CommandExt and lengths (#2256)
 # expect-stdout:
 #   allocated
 #   1
@@ -16,9 +16,10 @@ from rust::std::collections import VecDeque
 from rust::std::env import args, args_os
 from rust::std::hash import Hash as NativeHash, Hasher, DefaultHasher
 from rust::std::os::raw import c_int
-from rust::std::ops import Range
+from rust::std::ops import Index, Range
 from rust::std::os::unix::process import CommandExt as UnixCommandExt
-from rust::std::process import Command
+from rust::std::primitive import usize
+from rust::std::process import Command, Output
 from rust::std::rc import Rc
 from rust::std::string import String as RustString
 from rust::std import time as native_time
@@ -74,9 +75,17 @@ def show_receiver_methods() -> None:
     assert construct(4u64).as_secs() == 4u64
     qualified = native_time.Duration.from_secs
     assert qualified(5u64).as_secs() == 5u64
+    samples = [Duration.from_secs(7u64)]
+    assert first_duration_seconds(samples) == 7u64
     match BytesIO(b"abc").read():
         Ok(data) => assert data == b"abc"
         Err(_) => assert false
+
+
+def first_duration_seconds(values: &list[Duration]) -> u64:
+    """Resolve Index's Output from both its native list owner and its concrete usize trait argument."""
+    slot: usize = 0
+    return Index.index(values, slot).as_secs()
 
 
 def show_trait_methods() -> None:
@@ -112,14 +121,40 @@ def show_mutable_tuple_fields() -> None:
         None => println("missing")
 
 
+def show_native_constructor() -> None:
+    """Keep record construction and opaque child ownership native, using Rust's status and Clone implementations."""
+    match Command.new("rustc").arg("--version").output():
+        Ok(report) =>
+            snapshot = Output(status=report.status, stdout=report.stdout, stderr=report.stderr)
+            copied = snapshot.clone()
+            assert copied.status.success()
+        Err(_) => assert false
+    match Command.new("true").spawn():
+        Ok(child) =>
+            mut running = child
+            assert running.id() > 0
+            match running.wait():
+                Ok(status) => assert status.success()
+                Err(_) => assert false
+        Err(_) => assert false
+
+
 def main() -> None:
-    """Run each receiver observation in the order of the cases it carries."""
+    """Observe native receivers.
+
+    1. Exercise associated functions and argument iteration.
+    2. Exercise inherent methods, trait methods and constructed records.
+    """
+    # 1. Observe associated functions and argument iteration.
     show_associated_functions()
     show_argument_iteration()
+
+    # 2. Observe methods and constructed records.
     show_receiver_methods()
     show_trait_methods()
     show_mutable_tuple_fields()
     configure_process_group()
+    show_native_constructor()
 
 
 def configure_process_group() -> None:

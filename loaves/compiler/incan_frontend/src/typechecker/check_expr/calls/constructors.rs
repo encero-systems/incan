@@ -605,7 +605,7 @@ impl TypeChecker {
                 ));
             }
         }
-        self.record_compiler_generated_member_identity(enum_name, "from_value", span);
+        self.record_compiler_generated_member_identity(enum_name, "from_value", None, span);
         option_ty(ResolvedType::Named(enum_name.to_string()))
     }
 
@@ -632,7 +632,7 @@ impl TypeChecker {
             ));
             return ResolvedType::Unknown;
         }
-        self.record_compiler_generated_member_identity(enum_name, "value", span);
+        self.record_compiler_generated_member_identity(enum_name, "value", None, span);
         value_enum.value_type.resolved_type()
     }
     /// Return the result type produced by a constructor call.

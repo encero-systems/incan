@@ -58,6 +58,7 @@ jobs:
             ${{ runner.temp }}/dev8/run.*/*.txt
             ${{ runner.temp }}/dev8/run.*/*.log
             ${{ runner.temp }}/dev8/run.*/*.sha256
+            ${{ runner.temp }}/dev8/run.*/*.json
           if-no-files-found: warn
 
   docs:

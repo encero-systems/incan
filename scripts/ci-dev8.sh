@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install one host's dev.8 release bundle and verify the checkout's contracts.
-# Usage: ci-dev8.sh ARCHIVE OVEN | ci-dev8.sh GHCR_TAG@sha256:DIGEST
+# Usage: ci-dev8.sh ARCHIVE OVEN LSP | ci-dev8.sh GHCR_TAG@sha256:DIGEST
 # CI_DEV8_OUT selects the evidence directory; CI_DEV8_JOBS defaults to two.
 set -euo pipefail
 
@@ -39,16 +39,17 @@ install_rust() {
     grep -qx "host: $target" "$run/rust.txt" || fail "Rust must match $target"
 }
 
-# Resolve only immutable GHCR references; the companion Oven shares the archive's digest pin.
+# Resolve only immutable GHCR references; both tools share the archive's digest pin.
 resolve_bundle() {
     local input=$1
     if [[ -f "$input" ]]; then
-        [[ $# == 2 && -x "$2" ]] || fail 'a local archive requires its matching Oven executable'
+        [[ $# == 3 && -x "$2" && -x "$3" ]] || fail 'a local archive requires matching Oven and LSP executables'
         archive=$(cd "$(dirname "$input")" && pwd)/$(basename "$input")
         oven=$(cd "$(dirname "$2")" && pwd)/$(basename "$2")
+        lsp=$(cd "$(dirname "$3")" && pwd)/$(basename "$3")
         return
     fi
-    [[ $# == 1 ]] || fail 'an OCI bundle supplies its own Oven'
+    [[ $# == 1 ]] || fail 'an OCI bundle supplies its own Oven and LSP'
     local pin="^ghcr[.]io/encero-systems/incan[.]pub/toolchain/incan:[a-zA-Z0-9_.-]+-$target@sha256:[a-f0-9]{64}$"
     [[ "$input" =~ $pin ]] || fail "expected a GHCR tag for $target with a sha256 digest pin"
     command -v oras >/dev/null || fail 'oras 1.3 is required for a registry reference'
@@ -56,8 +57,9 @@ resolve_bundle() {
     logged_step pull 'bundle pull' oras pull "$input" --output "$run/download"
     archive=$run/download/toolchain.tar.zst
     oven=$run/download/incan
-    [[ -f "$archive" && -f "$oven" ]] || fail 'bundle must contain toolchain.tar.zst and incan'
-    chmod +x "$oven"
+    lsp=$run/download/incan-lsp
+    [[ -f "$archive" && -f "$oven" && -f "$lsp" ]] || fail 'bundle must contain toolchain.tar.zst, incan and incan-lsp'
+    chmod +x "$oven" "$lsp"
     printf '%s\n' "$input" > "$run/reference.txt"
 }
 
@@ -88,6 +90,29 @@ build_runner() {
     [[ -x "$runner" ]] || fail "runner build produced no executable at $runner"
 }
 
+# Test every Oven unit through the installed toolchain; dev.8 test takes one source file per invocation.
+run_oven_tests() {
+    local file status=0 passed failed
+    for file in "$ROOT"/workspaces/oven/src/test_*.incn; do
+        [[ -f "$file" ]] || fail 'Oven test sources are absent'
+        (cd "$ROOT/workspaces/oven" && "$oven" test "$file") >> "$run/oven-tests.log" 2>&1 || status=1
+    done
+    passed=$(awk '/^test_[[:alnum:]_]+[.]incn::test_[[:alnum:]_]+ PASSED$/ {n++} END {print n+0}' "$run/oven-tests.log")
+    failed=$(awk '/^test_[[:alnum:]_]+[.]incn::test_[[:alnum:]_]+ (FAILED|XPASS)( |$)/ {n++} END {print n+0}' "$run/oven-tests.log")
+    jq -n --argjson passed "$passed" --argjson failed "$failed" \
+        '{passed:$passed, failed:$failed, expected:133}' > "$run/oven-tests.json"
+    [[ $status == 0 && $passed == 133 && $failed == 0 ]] || fail "Oven tests: $passed PASS, $failed FAIL; expected 133 PASS"
+    echo "Oven tests: $passed PASS, $failed FAIL"
+}
+
+# Require the installed server's initialize, navigation and stale-buffer contract, never an optional skipped session.
+verify_lsp() {
+    export INCAN_LSP=$lsp
+    logged_step lsp-contract 'installed LSP contract' "$runner" "$oven" "$ROOT/workspaces/contracts/fixtures" \
+        --scratch "$run/lsp-scratch" --jobs 1 --timeout "${CI_DEV8_TIMEOUT:-120}" graph/incan/relationships
+    grep -qx 'PASS graph/incan/relationships' "$run/lsp-contract.log" || fail 'installed LSP contract did not pass'
+}
+
 # Run all families under one worker budget. Existing failures are allowed; lost PASS keys are not.
 run_contracts() {
     local status=0
@@ -99,7 +124,8 @@ run_contracts() {
         "$run/contracts.log" | tee "$run/summary.txt"
 }
 
-[[ $# -ge 1 && $# -le 2 ]] || fail 'usage: ci-dev8.sh ARCHIVE OVEN | GHCR_TAG@sha256:DIGEST'
+[[ $# == 1 || $# == 3 ]] || fail 'usage: ci-dev8.sh ARCHIVE OVEN LSP | GHCR_TAG@sha256:DIGEST'
+command -v jq >/dev/null || fail 'jq is required'
 case "$(uname -s)/$(uname -m)" in
     Darwin/arm64) target=aarch64-apple-darwin ;;
     Linux/x86_64) target=x86_64-unknown-linux-gnu ;;
@@ -116,7 +142,16 @@ install_rust
 resolve_bundle "$@"
 shasum -a 256 "$archive" > "$run/archive.sha256"
 shasum -a 256 "$oven" > "$run/oven.sha256"
+shasum -a 256 "$lsp" > "$run/lsp.sha256"
+mkdir -p "$INCAN_HOME/bin"
+cp "$oven" "$INCAN_HOME/bin/incan"
+cp "$lsp" "$INCAN_HOME/bin/incan-lsp"
+oven=$INCAN_HOME/bin/incan
+lsp=$INCAN_HOME/bin/incan-lsp
+export PATH=$INCAN_HOME/bin:$PATH
 logged_step install 'toolchain installation' "$oven" toolchain install "$archive"
 select_standard_packages
 build_runner
+run_oven_tests
+verify_lsp
 run_contracts

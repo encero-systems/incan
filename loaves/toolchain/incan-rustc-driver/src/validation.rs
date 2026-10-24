@@ -1463,6 +1463,8 @@ fn source_signature_type(ty: &Scalar) -> bool {
                     | Scalar::String
                     | Scalar::FrozenStr
                     | Scalar::List(_, _)
+                    | Scalar::Dict(_, _)
+                    | Scalar::Set(_)
                     | Scalar::Model(_)
                     | Scalar::Enum(_)
             ) || (matches!(

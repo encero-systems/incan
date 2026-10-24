@@ -2172,16 +2172,24 @@ impl TypeChecker {
 
     /// Record one compiler-generated member under its checked lexical or provider-owned type identity. Returned
     /// submodule types retain their admitted identity even when no lexical binding uses their internal spelling.
+    /// A selected field or result uses its declaration's nominal scope before any same-named consumer binding.
     pub(in crate::typechecker::check_expr) fn record_compiler_generated_member_identity(
         &mut self,
         owner_name: &str,
         member: &str,
+        receiver: Option<Span>,
         span: Span,
     ) {
-        let Some(owner) = self
-            .symbols
-            .lookup(owner_name)
-            .and_then(|symbol| self.symbols.identity_of(symbol))
+        let declared_owner = receiver
+            .and_then(|receiver| self.type_info.resolved_identity(receiver))
+            .and_then(|declaration| self.declaration_nominal_scopes.get(declaration))
+            .and_then(|scope| scope.get(owner_name));
+        let Some(owner) = declared_owner
+            .or_else(|| {
+                self.symbols
+                    .lookup(owner_name)
+                    .and_then(|symbol| self.symbols.identity_of(symbol))
+            })
             .or_else(|| self.public_library_type_identities.get(owner_name)?.canonical.as_ref())
             .cloned()
         else {
@@ -6965,7 +6973,12 @@ impl TypeChecker {
                 _ => None,
             } && let Some(id) = magic_methods::from_str(method)
             {
-                self.record_compiler_generated_member_identity(owner_name, magic_methods::as_str(id), span);
+                self.record_compiler_generated_member_identity(
+                    owner_name,
+                    magic_methods::as_str(id),
+                    Some(base.span),
+                    span,
+                );
             }
             self.validate_reflection_magic_call(method, type_args, args, span);
             return ret;
@@ -6986,7 +6999,7 @@ impl TypeChecker {
                 span,
             })
         {
-            self.record_compiler_generated_member_identity(enum_name, method, span);
+            self.record_compiler_generated_member_identity(enum_name, method, Some(base.span), span);
             return ret;
         }
 
@@ -7657,7 +7670,12 @@ impl TypeChecker {
                     }
                     TypeInfo::Enum(en) => {
                         if let Some(id @ enum_helpers::EnumHelperId::Message) = enum_helpers::from_str(method) {
-                            self.record_compiler_generated_member_identity(type_name, enum_helpers::as_str(id), span);
+                            self.record_compiler_generated_member_identity(
+                                type_name,
+                                enum_helpers::as_str(id),
+                                Some(base.span),
+                                span,
+                            );
                             return ResolvedType::Str;
                         }
                         let trait_adoptions = self.trait_adoptions_for_type_methods(&en.trait_adoptions, &en.derives);
@@ -7780,6 +7798,7 @@ impl TypeChecker {
                     self.record_compiler_generated_member_identity(
                         self.generic_placeholder_name(&base_ty).unwrap_or_default(),
                         magic_methods::as_str(id),
+                        Some(base.span),
                         span,
                     );
                 }

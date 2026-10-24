@@ -10967,7 +10967,7 @@ def collection_place_value(
     """Materialize whole or structurally projected dictionary/set storage using the same checked read policy; projected moves gain no authority over their containing owner."""
     ty = place_type(builder.locals, place)
     owned = collection_owned(ty)
-    if fact == OwnershipFact.Move and ty == owned and place.projection == Projection.Whole:
+    if fact == OwnershipFact.Move and ty == owned:
         return Ok(read_place(place, true, span))
     shared_move = fact == OwnershipFact.Move and ty != owned
     if fact != OwnershipFact.Clone and fact != OwnershipFact.Borrow and not shared_move:

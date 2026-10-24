@@ -1,4 +1,4 @@
-# behavior: imported models preserve defaults, factories and nominal owners across collections and carriers (#1530)
+# behavior: imported models retain defaults, factories, collection owners and generated enum-field methods (#1530, #2256)
 # expect-stdout:
 #   7 none 0
 #   0 named 1
@@ -67,6 +67,7 @@ def main() -> None:
         Err(error) => println(error)
     println(make_factory().value)
     show_composed_replies()
+    assert packet().domain.value() == "target"
 
 
 def show_replies() -> Result[None, str]:

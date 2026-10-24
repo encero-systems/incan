@@ -2,21 +2,23 @@
 
 The dev.8 workflow installs a packed release toolchain, builds this checkout's contract runner with that compiler, and runs all eight contract families with two workers. It compares case keys against `dev8-pass-baseline.txt`: a formerly passing case must still pass, including cases that disappear or become pending. Existing failures are reported without failing this regression gate. A runner build failure, incomplete report, duplicate result, missing family, or inconsistent total fails the job.
 
+CI also runs Oven's 15 test source files through the installed `incan test`, which currently accepts one source file per invocation, and requires all 133 tests to pass. `oven-tests.json` records the observed count. The installed LSP is mandatory: the graph family's existing `graph_lsp_contract.incn` starts it through `INCAN_LSP`, checks initialization, definitions, references and call hierarchy, then changes the buffer and requires rejection of the stale hierarchy item. CI first requires that case to pass independently and keeps its log, then runs the complete census with the same LSP selected.
+
 This verifies the installed release against the checkout's contracts. It does not rebuild the PR's compiler or prove self-hosting. DD-0010 requires that additional compiler build after self-hosting is proven. Release publication remains the maintainer's operation.
 
 ## Local archive
 
-Install rustup first, then supply the archive and its matching Oven executable. The script installs Rust 1.98.0 with `rustc-dev` when absent, creates a fresh Incan home, and retains installation, build, and contract logs. It exposes only standard packages present in the archive; their source declarations come from this checkout. An older archive may consequently refuse a newer runner.
+Install rustup first, then supply the archive and its matching Oven and LSP executables. The script installs Rust 1.98.0 with `rustc-dev` when absent, creates a fresh Incan home, installs both tools in its `bin` directory, and retains installation, build, and contract logs. It exposes only standard packages present in the archive; their source declarations come from this checkout. An older archive may consequently refuse a newer runner.
 
 ```sh
-CI_DEV8_OUT="$PWD/target/dev8-evidence" scripts/ci-dev8.sh /path/toolchain.tar.zst /path/incan
+CI_DEV8_OUT="$PWD/target/dev8-evidence" scripts/ci-dev8.sh /path/toolchain.tar.zst /path/incan /path/incan-lsp
 ```
 
 The supported hosts are macOS arm64 and Linux x86_64. `CI_DEV8_JOBS` sets the worker budget, and `CI_DEV8_TIMEOUT` sets the per-command timeout in seconds (default 120). Every invocation creates a new evidence directory, prints its location, and leaves it available after failure. The local archive and supplied Oven are trusted local inputs; the archive checksum is recorded in that directory.
 
 ## CI release bundle
 
-`incan toolchain pack` contains the compiler closure, but omits Oven, which is needed for `incan toolchain install`. Each host's OCI bundle therefore contains two files, `toolchain.tar.zst` and its matching `incan`. Both files are covered by the same manifest digest. The workflow pulls that pinned bundle with oras 1.3, then invokes the same script. The script refuses a reference without both its host's tag suffix and a SHA-256 digest.
+`incan toolchain pack` contains the compiler closure, but omits the command-line tools. Each host's OCI bundle therefore contains three files built from one source SHA: `toolchain.tar.zst`, `incan` (Oven), and `incan-lsp`. Build the LSP with the same installed driver using `incan build loaves/toolchain/incan-lsp --profile release`. All three files are covered by the same manifest digest. The workflow pulls that pinned bundle with oras 1.3, then invokes the same script. The script refuses a reference without both its host's tag suffix and a SHA-256 digest.
 
 The repository variable `DEV8_TOOLCHAINS` is a JSON object with keys `aarch64-apple-darwin` and `x86_64-unknown-linux-gnu`. Each value has this shape, using a real commit and manifest digest:
 
@@ -32,11 +34,26 @@ The macOS candidate measured on October 24, 2026 (Europe/Berlin), contains the c
 
 The stored-current macOS archive checked for that measurement still names source `e5b69517d970dbab64b77e0ff8eb742b20b01219`, archive SHA-256 `702958a45b2da4c400d3b82b45e59b5db28f07b8cd60fb5e054ee31a9b142e7f`. Its fresh installation succeeds, but the runner build refuses `CommandExt.process_group`. That immutable archive does not contain the fixes above. The verified candidate is local evidence; it has not replaced the stored archive or been published.
 
-Integrate the compiler fixes and select the full merged source SHA. Build both the `aarch64-apple-darwin` and `x86_64-unknown-linux-gnu` archives and their matching Oven executables from that same SHA. On each native host, verify a fresh installed runner build, a complete eight-family report, and equality with that host's direct PASS keys, preserving the committed baseline. Finish the separate compiler self-build verification before publication.
+Integrate the compiler fixes and select the full merged source SHA. Build both the `aarch64-apple-darwin` and `x86_64-unknown-linux-gnu` archives and their matching Oven and LSP executables from that same SHA. On each native host, verify a fresh installed runner build, a complete eight-family report, and equality with that host's direct PASS keys, preserving the committed baseline. Finish the separate compiler self-build verification before publication.
 
-After self-hosting and release verification, the maintainer authenticates oras to GHCR and GitHub CLI to the repository, then runs `scripts/publish-dev8-toolchain.sh` with six operands: the full source commit, macOS archive, matching macOS Oven, Linux archive, matching Linux Oven, and a new JSON output path. Both bundles must come from that commit. The script pushes each annotated bundle once and reads its digest directly from the [oras push descriptor](https://oras.land/docs/how_to_guides/format_output/#oras-push). Only after both succeed does it write the receipt and set the single `DEV8_TOOLCHAINS` repository variable to that complete pair. OCI pushes are separate operations; a failed second push can leave the first bundle published without a completed pins file. If the variable update fails, the JSON receipt remains available and the prior variable value is preserved.
+After self-hosting and release verification, the maintainer authenticates oras to GHCR and GitHub CLI to the repository, then runs `scripts/publish-dev8-toolchain.sh` with eight operands: the full source commit, macOS archive, matching macOS Oven and LSP, Linux archive, matching Linux Oven and LSP, and a new JSON output path. Both bundles must come from that commit. The script pushes each annotated bundle once and reads its digest directly from the [oras push descriptor](https://oras.land/docs/how_to_guides/format_output/#oras-push). Only after both succeed does it write the receipt and set the single `DEV8_TOOLCHAINS` repository variable to that complete pair. OCI pushes are separate operations; a failed second push can leave the first bundle published without a completed pins file. If the variable update fails, the JSON receipt remains available and the prior variable value is preserved.
 
 On Linux, use the Linux archive and Linux Oven on an x86_64 host, or set the variable and run the `ubuntu-latest` job. A macOS run does not establish Linux outcomes. Store records and release inputs must identify the same merged source SHA for both hosts before they can establish one verified release pair.
+
+## Host release rehearsal
+
+`scripts/release-dev8.sh SHA NEW_OUT` creates a clean detached checkout of a full source SHA and builds a candidate without publishing it. Select an installed dev.8 seed with `INCAN_HOME` and set `RELEASE_DEV8_OVEN` to its Oven executable. Until native compiler self-hosting is available, set `DEV8_LANE` to the configured frozen dev.7 bootstrap lane: the script emits the clean checkout's lowering and runtime through that builder, records the frozen support inputs, and binds every Rust dependency to the clean checkout. Host-specific helpers can be selected with `RELEASE_DEV8_LOWERING_EMITTER` and `RELEASE_DEV8_RUNTIME_EMITTER`; each receives the isolated build lane through `DEV8_LANE`. Without a bootstrap lane the script attempts a native compiler build.
+
+The script builds the source driver, runtime, standard packages, Oven, LSP and runner, then packs the toolchain. Oven records each Rust library's exact selected externs and search directories in `native.json`; the rehearsal uses the runtime's receipt to assemble its closure. Standard packages are compiled once and exposed to both profiles with identical Rust carrier identities. It runs all eight families directly, invokes `ci-dev8.sh` against the local three-file bundle in a fresh home, and requires every case's outcome to agree with the direct census as well as preserving the committed PASS baseline.
+
+Use the integration head's installed toolchain as the seed. Before candidate assembly, the script measures its reference census on the clean checkout's cases. To reuse an already complete integration census for that SHA, set `RELEASE_DEV8_BASELINE_LOG` to its log; a companion file named `<log>.source-sha` must contain exactly the selected full SHA. Both the directly built candidate and fresh installation must match every reference outcome, including existing failures and pending cases. The receipt retains the reference log digest and both parity comparisons.
+
+```sh
+DEV8_LANE=/path/bootstrap-lane INCAN_HOME=/path/seed-home RELEASE_DEV8_OVEN=/path/incan \
+  scripts/release-dev8.sh "$(git rev-parse HEAD)" /path/new-rehearsal
+```
+
+`receipt.json` records the SHA, host, three file digests, counts, Oven test count, outcome parity, compiler build mode and elapsed time. `timings.tsv` and per-step logs retain build and verification evidence. A failed prerequisite writes a refused receipt; absent counts remain null. A bootstrap rehearsal does not establish native compiler self-hosting, and a refused build never relabels the seed as a candidate. Remove disposable build and verification homes after reviewing the receipt when they are no longer needed. Linux must run the same command on its native host with matching seed artifacts and configured host bootstrap helpers; macOS evidence does not establish Linux results.
 
 ## Baseline maintenance
 

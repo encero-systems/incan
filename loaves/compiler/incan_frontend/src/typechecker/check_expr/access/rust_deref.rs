@@ -423,7 +423,7 @@ impl TypeChecker {
 
     /// Recover an already selected native dereference or trait owner, including source collection and Option
     /// carriers. Source list storage is admitted only at this native boundary, never as ordinary method priority.
-    fn rust_adjusted_owner_path(&self, owner: &ResolvedType) -> Option<String> {
+    pub(super) fn rust_adjusted_owner_path(&self, owner: &ResolvedType) -> Option<String> {
         if let Some(path) = self.rust_canonical_path_for_receiver_type(owner) {
             return Some(path);
         }

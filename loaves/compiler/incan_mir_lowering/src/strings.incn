@@ -1,6 +1,7 @@
 """Admission table for Body IR's canonical text operations."""
 
 from rust::incan_semantics_core::body_ir import HelperOp
+from rust::incan_lang::lang::types::stringlike import StringLikeId, as_str as stringlike_name
 from pub::incan_mir_plan import PlanType, ListLeaf, Operand, Place, SourceSpan
 from frame import Builder, temporary, external_call
 from lists import is_list
@@ -41,7 +42,7 @@ pub def text_method(member: str, receiver: PlanType) -> Option[tuple[str, PlanTy
     """Select canonical string methods without admitting a same-named user declaration."""
     if receiver not in [PlanType.String, PlanType.StringRef, PlanType.FrozenStr]:
         return None
-    for owner in ["str", "FrozenStr"]:
+    for owner in [stringlike_name(StringLikeId.Str), stringlike_name(StringLikeId.FrozenStr)]:
         if member == f"{owner}.to_string":
             return Some(("clone_text", PlanType.String))
         if member == f"{owner}.startswith":

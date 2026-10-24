@@ -1,11 +1,11 @@
-# behavior: std.fs Path retains wrapped fields through lexical method chains and beside File imports (#2256)
+# behavior: std.fs retains Path method chains beside File imports and its declared IoError result type (#2256)
 # expect-stdout:
 #   std.fs import codegen
 #   config/app.toml
 #   app.toml .toml app config
 #   config/log.txt
 
-from std.fs import Path, File
+from std.fs import Path, File, IoError
 
 
 def consume_path(path: Path) -> None:
@@ -24,6 +24,7 @@ def main() -> None:
     1. Construct and pass a stored path.
     2. Read its wrapped text and lexical components.
     3. Read a selected join's wrapped slot directly.
+    4. Use the facade's error type in a fallible filesystem signature.
     """
     # 1. Construct a path with a lexical join.
     println("std.fs import codegen")
@@ -35,3 +36,12 @@ def main() -> None:
     # 3. Keep the exact published owner through a method result.
     println(Path("config").joinpath("log.txt").0)
     assert Path("project").joinpath("src").joinpath("main.incn").0 == "project/src/main.incn"
+    # 4. Keep the documented error type available through the filesystem facade.
+    match create_directory(Path("created")):
+        Ok(_) => pass
+        Err(_) => assert false
+
+
+def create_directory(path: Path) -> Result[None, IoError]:
+    """Return the filesystem operation through the error type imported from the same facade."""
+    return path.mkdir(parents=true, exist_ok=true)

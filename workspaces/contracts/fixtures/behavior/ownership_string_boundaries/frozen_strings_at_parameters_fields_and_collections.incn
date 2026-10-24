@@ -1,4 +1,4 @@
-# behavior: a FrozenStr const is printed, passed to a str parameter, kept frozen through a FrozenStr parameter, assigned into a str local that is then extended, stored in a model field and collected into a list
+# behavior: frozen text retains parameter, field and collection values and shares checked text methods (#2256)
 # expect-stdout:
 #   strict
 #   [strict]
@@ -6,6 +6,8 @@
 #   strict!
 #   strict
 #   2 strict
+
+"""Observe frozen text across parameters, fields, collections and shared text operations."""
 
 const POLICY: FrozenStr = "strict"
 
@@ -27,13 +29,41 @@ def pick() -> FrozenStr:
 
 
 def main() -> None:
+    """Observe frozen values across authoring boundaries.
+
+    1. Pass frozen values through text and frozen parameters, then extend an owned value.
+    2. Retain frozen values through model fields and collection elements.
+    3. Validate the shared text methods on frozen receivers.
+    """
+    # 1. Preserve frozen arguments and turn one value into an extensible owned string.
     println(POLICY)
     println(label(POLICY))
     println(pick())
     mut name: str = POLICY
     name += "!"
     println(name)
+
+    # 2. Read the same immutable text through ordinary fields and collection storage.
     config = Config(name=POLICY)
     println(config.name)
     names = [POLICY, POLICY]
     println(f"{len(names)} {names[0]}")
+
+    # 3. Use checked text operations without treating their frozen receiver as a list.
+    observe_frozen_methods()
+
+
+def observe_frozen_methods() -> None:
+    """Apply the shared positional text contracts and registry-owned observations to frozen values."""
+    assert POLICY.upper() == "STRICT"
+    assert keep("STRICT").lower() == "strict"
+    assert keep(" strict ").strip() == "strict"
+    assert POLICY.replace("s", "S") == "Strict"
+    assert POLICY.split("r") == ["st", "ict"]
+    assert keep(":").join(["a", "b"]) == "a:b"
+    assert POLICY.contains("ri")
+    assert POLICY.len() == 6
+    assert POLICY.startswith("st")
+    assert POLICY.endswith("ct")
+    assert keep(" strict ").split_whitespace() == ["strict"]
+    assert POLICY.to_string() == "strict"

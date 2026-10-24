@@ -19,14 +19,14 @@ fi
 packages=("$@")
 (( ${#packages} > 0 )) || packages=(core testing interop async system codecs compression web data observability)
 
-# Only generated provider directories below this lane's installation can be removed.
+# Rebuild this profile without withdrawing another profile's compiled provider closure.
 remove_provider() {
     local provider=$1
     [[ $provider == incan_stdlib_[a-z]## ]] || {
         print -u2 "invalid standard package name: $provider"
         return 2
     }
-    [[ ! -e $toolchain/loaves/$provider ]] || rm -r -- "$toolchain/loaves/$provider"
+    [[ ! -e $toolchain/loaves/$provider/debug ]] || rm -r -- "$toolchain/loaves/$provider/debug"
 }
 
 # Reject invalid package names before changing an installed provider.

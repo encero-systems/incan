@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-export type BinaryResolutionSource = 'setting' | 'workspace' | 'path';
+export type BinaryResolutionSource = 'setting' | 'workspace' | 'companion' | 'path';
 
 export interface BinaryResolution {
     name: string;
@@ -158,7 +158,28 @@ export function resolveBinary(options: ResolveBinaryOptions): BinaryResolution {
         }, options.pathEnv);
     }
 
-    const workspaceBinary = findWorkspaceBinary(options.binaryName, options.workspaceFolders);
+    if (options.binaryName === 'incan-lsp') {
+        const compiler = findOnPath('incan', options.pathEnv);
+        if (compiler) {
+            // A PATH entry may be a symlink into a release's bin directory.
+            const directories = [path.dirname(compiler), path.dirname(fs.realpathSync(compiler))];
+            for (const directory of directories) {
+                const companion = commandCandidates(directory, 'incan-lsp').find(isExecutableFile);
+                if (companion) {
+                    return enrichPathStatus({
+                        name: options.binaryName,
+                        command: companion,
+                        source: 'companion',
+                        warnings: [],
+                    }, options.pathEnv);
+                }
+            }
+        }
+    }
+
+    const workspaceBinary = options.binaryName === 'incan-lsp'
+        ? undefined
+        : findWorkspaceBinary(options.binaryName, options.workspaceFolders);
     if (workspaceBinary) {
         return enrichPathStatus({
             name: options.binaryName,
@@ -175,22 +196,6 @@ export function resolveBinary(options: ResolveBinaryOptions): BinaryResolution {
         source: 'path',
         warnings: [],
     }, options.pathEnv);
-}
-
-export function cargoBinReport(binaryName: string, home = process.env.HOME ?? process.env.USERPROFILE): string[] {
-    if (!home) {
-        return [`~/.cargo/bin/${binaryName}: home directory unavailable`];
-    }
-    const cargoBinPath = path.join(home, '.cargo', 'bin', binaryName);
-    const exists = fs.existsSync(cargoBinPath);
-    const executable = exists && isExecutableFile(cargoBinPath);
-    const symlinkTarget = exists ? readSymlinkTarget(cargoBinPath) : undefined;
-    return [
-        `${cargoBinPath}`,
-        `  exists: ${exists}`,
-        `  executable: ${executable}`,
-        `  symlink target: ${symlinkTarget ?? '(not a symlink or unavailable)'}`,
-    ];
 }
 
 export function formatResolution(resolution: BinaryResolution): string[] {
@@ -224,16 +229,9 @@ export function formatDoctorReport(compiler: BinaryResolution, lsp: BinaryResolu
         ...formatResolution(compiler),
         ...formatResolution(lsp),
         '',
-        'Cargo bin links:',
-        ...cargoBinReport('incan'),
-        ...cargoBinReport('incan-lsp'),
-        '',
-        'CLI counterpart:',
-        '  incan tools doctor',
-        '  incan tools doctor --format json',
-        '',
         'Recovery:',
-        '  - Run `make build` from the checkout you want to use.',
+        '  - Install incan and incan-lsp from the same release beside each other on PATH.',
+        '  - To build from source: incan build loaves/toolchain/incan-lsp --profile release.',
         '  - Leave incan.lsp.path and incan.compiler.path empty unless you need fixed binaries.',
         '  - Use literal executable paths; $HOME and ~ are not expanded in settings.',
         '  - Reload VS Code/Cursor after rebuilding or changing paths.',

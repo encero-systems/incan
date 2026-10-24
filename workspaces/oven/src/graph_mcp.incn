@@ -1,6 +1,7 @@
 """A local stdio MCP consumer of Oven's graph service, using the 2025-11-25 protocol revision."""
 
-from rust::std::io import BufRead, Write, stdin, stdout
+from rust::std::io import Write, stdin, stdout
+from rust::std::string import String as RustString
 from std.fs import Path
 from std.json import JsonValue, parse
 from graph_inspection import graph_response
@@ -19,11 +20,16 @@ pub def serve_graph(arguments: list[str]) -> Result[i32, str]:
         return Err("MCP PATH does not exist")
     mut server = GraphServer(root=root.0)
     # 2. Read requests serially.
-    for incoming in stdin().lock().lines():
-        mut line = ""
-        match incoming:
-            Ok(value) => line = str(value)
+    # Explicit reads avoid the native Lines iterator's ownership refusal tracked under #2256.
+    input = stdin()
+    while true:
+        mut incoming = RustString.new()
+        match input.read_line(incoming):
+            Ok(count) =>
+                if count == 0:
+                    return Ok(0)
             Err(error) => return Err(f"cannot read MCP input: {error}")
+        line = str(incoming)
         if line.strip() == "":
             continue
         mut reply = JsonValue.null()
@@ -36,7 +42,6 @@ pub def serve_graph(arguments: list[str]) -> Result[i32, str]:
             match stdout().flush():
                 Ok(_) => pass
                 Err(error) => return Err(f"cannot flush MCP output: {error}")
-    return Ok(0)
 
 
 model GraphServer:
@@ -63,13 +68,13 @@ model GraphServer:
             return success(identifier, JsonValue.object({}))
         if method == "initialize":
             self.initialized = true
-            result = JsonValue.object({
-                "protocolVersion": JsonValue.string("2025-11-25"),
-                "capabilities": JsonValue.object({"tools": JsonValue.object({}), "resources": JsonValue.object({})}),
-                "serverInfo": JsonValue.object({
-                    "name": JsonValue.string("incan-graph"), "version": JsonValue.string(TOOLCHAIN)
-                })
-            })
+            result = JsonValue.object(
+                {"protocolVersion": JsonValue.string("2025-11-25"), "capabilities": JsonValue.object(
+                    {"tools": JsonValue.object({}), "resources": JsonValue.object({})},
+                ), "serverInfo": JsonValue.object(
+                    {"name": JsonValue.string("incan-graph"), "version": JsonValue.string(TOOLCHAIN)},
+                )},
+            )
             return success(identifier, result)
         if not self.ready:
             return failure(identifier, -32002, "Send initialize and notifications/initialized first")
@@ -105,7 +110,7 @@ model GraphServer:
             snapshot = self.current_snapshot()?
             return graph_response(
                 command + ["--task", task, "--budget", str(budget), "--format", "compact"],
-                self.memory.preferences(task, snapshot)
+                self.memory.preferences(task, snapshot),
             )
         if name == "record_feedback":
             return self.record_feedback(arguments)
@@ -164,11 +169,12 @@ model GraphServer:
             if kind in counts:
                 count = counts[kind].expect_int().map_err((error) => error.message())?
             counts[kind] = JsonValue.int(count + 1)
-        summary = JsonValue.object({
-            "snapshot_id": nested(records[0], "snapshot_id"), "degraded": nested(records[0], "degraded"),
-            "languages": nested(records[0], "languages"), "semantic_contexts": nested(records[0], "semantic_contexts"),
-            "counts": JsonValue.object(counts)
-        })
+        summary = JsonValue.object(
+            {"snapshot_id": nested(records[0], "snapshot_id"), "degraded": nested(records[0], "degraded"), "languages": nested(
+                records[0],
+                "languages",
+            ), "semantic_contexts": nested(records[0], "semantic_contexts"), "counts": JsonValue.object(counts)},
+        )
         return summary.to_json().map_err((error) => error.message())
 
     def read_resource(self, identifier: JsonValue, uri: str) -> JsonValue:
@@ -180,9 +186,9 @@ model GraphServer:
             match self.summary():
                 Ok(value) => content = value
                 Err(reason) => return failure(identifier, -32603, reason)
-        item = JsonValue.object({
-            "uri": JsonValue.string(uri), "mimeType": JsonValue.string("text/plain"), "text": JsonValue.string(content)
-        })
+        item = JsonValue.object(
+            {"uri": JsonValue.string(uri), "mimeType": JsonValue.string("text/plain"), "text": JsonValue.string(content)},
+        )
         return success(identifier, JsonValue.object({"contents": JsonValue.array([item])}))
 
 
@@ -193,10 +199,11 @@ def success(identifier: JsonValue, result: JsonValue) -> JsonValue:
 
 def failure(identifier: JsonValue, code: int, message: str) -> JsonValue:
     """Protocol errors remain distinct from tool execution failures."""
-    return JsonValue.object({
-        "jsonrpc": JsonValue.string("2.0"), "id": identifier,
-        "error": JsonValue.object({"code": JsonValue.int(code), "message": JsonValue.string(message)})
-    })
+    return JsonValue.object(
+        {"jsonrpc": JsonValue.string("2.0"), "id": identifier, "error": JsonValue.object(
+            {"code": JsonValue.int(code), "message": JsonValue.string(message)},
+        )},
+    )
 
 
 def tool_content(content: str, error: bool) -> JsonValue:
@@ -227,28 +234,29 @@ def catalog() -> Result[JsonValue, str]:
     mut tools: list[JsonValue] = []
     for name in tool_names():
         fields = properties(name)
-        tools.append(JsonValue.object({
-            "name": JsonValue.string(name), "description": JsonValue.string(description(name)),
-            "inputSchema": JsonValue.object({
-                "type": JsonValue.string("object"), "properties": JsonValue.object(fields),
-                "required": JsonValue.array([JsonValue.string(key) for key in fields.keys()]),
-                "additionalProperties": JsonValue.bool(false)
-            }),
-            "annotations": JsonValue.object({
-                "readOnlyHint": JsonValue.bool(name != "record_feedback"), "openWorldHint": JsonValue.bool(false)
-            })
-        }))
+        tools.append(
+            JsonValue.object(
+                {"name": JsonValue.string(name), "description": JsonValue.string(description(name)), "inputSchema": JsonValue.object(
+                    {"type": JsonValue.string("object"), "properties": JsonValue.object(fields), "required": JsonValue.array(
+                        [JsonValue.string(key) for key in fields.keys()],
+                    ), "additionalProperties": JsonValue.bool(false)},
+                ), "annotations": JsonValue.object(
+                    {"readOnlyHint": JsonValue.bool(name != "record_feedback"), "openWorldHint": JsonValue.bool(false)},
+                )},
+            ),
+        )
     return Ok(JsonValue.array(tools))
 
 
 def resources() -> JsonValue:
     """List local read-only orientation resources; graph input refresh stays inside ordinary inspection."""
-    return JsonValue.array([
-        JsonValue.object({
-            "uri": JsonValue.string(f"incan://graph/{name}"), "name": JsonValue.string(name),
-            "mimeType": JsonValue.string("text/plain")
-        }) for name in ["summary", "snapshot", "schema"]
-    ])
+    return JsonValue.array(
+        [JsonValue.object(
+            {"uri": JsonValue.string(f"incan://graph/{name}"), "name": JsonValue.string(name), "mimeType": JsonValue.string(
+                "text/plain",
+            )},
+        ) for name in ["summary", "snapshot", "schema"]],
+    )
 
 
 def parse_records(document: str) -> Result[list[JsonValue], str]:
@@ -258,24 +266,12 @@ def parse_records(document: str) -> Result[list[JsonValue], str]:
 
 def tool_names() -> list[str]:
     """Share the offered tool set between discovery and dispatch."""
-    return [
-        "context_for_task", "context_for_declaration", "graph_query", "graph_summary",
-        "snapshot_status", "process_risk", "task_memory", "record_feedback"
-    ]
+    return ["context_for_task", "context_for_declaration", "graph_query", "graph_summary", "snapshot_status", "process_risk", "task_memory", "record_feedback"]
 
 
 def description(name: str) -> str:
     """Describe each public tool without exposing implementation details."""
-    descriptions = {
-        "context_for_task": "Pack task-ranked current graph context within a token budget",
-        "context_for_declaration": "Pack a declaration and its graph neighborhood",
-        "graph_query": "Explore checked definitions, references, callers, callees or imports",
-        "graph_summary": "Read current snapshot, provenance and record counts",
-        "snapshot_status": "Compare a retained snapshot with current graph inputs",
-        "process_risk": "Read optional local git churn, ownership and co-change observations",
-        "task_memory": "Read unexpired feedback for this exact task and current snapshot",
-        "record_feedback": "Record explicit session-only usefulness feedback with snapshot and TTL expiry"
-    }
+    descriptions = {"context_for_task": "Pack task-ranked current graph context within a token budget", "context_for_declaration": "Pack a declaration and its graph neighborhood", "graph_query": "Explore checked definitions, references, callers, callees or imports", "graph_summary": "Read current snapshot, provenance and record counts", "snapshot_status": "Compare a retained snapshot with current graph inputs", "process_risk": "Read optional local git churn, ownership and co-change observations", "task_memory": "Read unexpired feedback for this exact task and current snapshot", "record_feedback": "Record explicit session-only usefulness feedback with snapshot and TTL expiry"}
     return descriptions[name]
 
 
@@ -289,10 +285,9 @@ def properties(name: str) -> Dict[str, JsonValue]:
         return {"declaration": string, "budget": budget}
     if name == "graph_query":
         kinds = ["defs", "refs", "callers", "callees", "imports"]
-        kind = JsonValue.object({
-            "type": JsonValue.string("string"),
-            "enum": JsonValue.array([JsonValue.string(item) for item in kinds])
-        })
+        kind = JsonValue.object(
+            {"type": JsonValue.string("string"), "enum": JsonValue.array([JsonValue.string(item) for item in kinds])},
+        )
         return {"kind": kind, "term": string}
     if name == "snapshot_status":
         return {"snapshot": string}
@@ -305,6 +300,6 @@ def properties(name: str) -> Dict[str, JsonValue]:
 
 def integer_schema(minimum: int, maximum: int) -> JsonValue:
     """Express the same bounded integer contract accepted by the tool implementation."""
-    return JsonValue.object({
-        "type": JsonValue.string("integer"), "minimum": JsonValue.int(minimum), "maximum": JsonValue.int(maximum)
-    })
+    return JsonValue.object(
+        {"type": JsonValue.string("integer"), "minimum": JsonValue.int(minimum), "maximum": JsonValue.int(maximum)},
+    )
