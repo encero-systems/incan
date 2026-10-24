@@ -2,7 +2,7 @@
 
 from std.fs import Path
 from std.json import JsonValue
-from rust::std::fs import metadata
+from rust::std::fs import OpenOptions, metadata
 from rust::std::os::unix::fs import MetadataExt
 from compare import compare
 from files import (
@@ -199,14 +199,14 @@ def library_artifacts(project: Path) -> Result[list[str], str]:
 
 
 def check_comment_freshness(incan: str, project: Path, source: Path, before: str) -> Result[None, str]:
-    """Equal-size comment edits leave graph facts unchanged but must still expire the retained source snapshot."""
+    """Equal-size comment edits with a restored modification time must expire the retained source snapshot."""
     mut prefix = "#"
     if source.name().endswith(".rs"):
         prefix = "//"
     write(source, f"{before}\n{prefix} snapshot a\n")?
     records = items(parse_json(document(incan, project, "json")?)?)?
     snapshot = string_field(records[0], "snapshot_id")
-    write(source, f"{before}\n{prefix} snapshot b\n")?
+    replace_with_time_preserved(source, f"{before}\n{prefix} snapshot b\n")?
     status = invoke(incan, ["inspect", "codegraph", ".", "--stale", snapshot], project)?
     write(source, before)?
     if status.code != Some(0) or not snapshot_stale(status.stdout)?:
@@ -217,6 +217,17 @@ def check_comment_freshness(incan: str, project: Path, source: Path, before: str
 def snapshot_stale(document: str) -> Result[bool, str]:
     """Read the public snapshot-status flag without accepting absent or malformed responses."""
     return required(parse_json(document)?, "stale")?.expect_bool().map_err((error) => error.message())
+
+
+def replace_with_time_preserved(path: Path, content: str) -> Result[None, str]:
+    """Replace source bytes in place and restore mtime, leaving ctime as the evidence of an equal-size edit."""
+    modified = metadata(f"{path.0}").map_err((error) => str(error))?.modified().map_err((error) => str(error))?
+    write(path, content)?
+    mut options = OpenOptions.new()
+    options.write(true)
+    file = options.open(f"{path.0}").map_err((error) => str(error))?
+    file.set_modified(modified).map_err((error) => str(error))?
+    return Ok(None)
 
 
 def check_tolerant_export(incan: str, project: Path) -> Result[None, str]:

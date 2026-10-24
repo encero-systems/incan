@@ -1,5 +1,6 @@
 """Prepare the native metadata Rust checking needs and check authored Incan units separately."""
 
+from rust::std::time import Instant
 from std.fs import Path
 from std.json import JsonValue
 from std.toml import TomlValue
@@ -11,6 +12,7 @@ from graph_queries import nested, text
 from home import dependency_artifact_dir
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
 from publication import publish
+from observation import trace
 from rust_activation import DependencyDomain
 from rust_units import (
     BuiltUnit,
@@ -139,6 +141,7 @@ pub def prepare_graph(
         return Err(f"cyclic codegraph source selection: {root.0}")
     # 2. The facets are the Rust graph the manifest activates, each coming after the facets it links.
     rustc = rust_compiler(toolchain)
+    started = Instant.now()
     demand = LocalDemand(
         project=root.0,
         domain=DependencyDomain.Target,
@@ -146,6 +149,8 @@ pub def prepare_graph(
         defaults=features.default_features,
     )
     facets = ordered(local_facets(demand, target_configuration(rustc)?, None, substitutes, true)?)?
+    trace(f"graph unit discovery {root.0}: {started.elapsed().as_millis()} ms")
+    prepared = Instant.now()
     request = RustBuild(
         project=root.0,
         profile=profile,
@@ -157,9 +162,12 @@ pub def prepare_graph(
     )
     # 3. Native libraries exist before the Incan units are checked, and each unit is checked after its dependencies.
     built = native_units(root, facets, request, toolchain)?
+    trace(f"graph native lookup {root.0}: {prepared.elapsed().as_millis()} ms")
+    checked = Instant.now()
     checked_paths, interfaces = checked_units(facets, built, request, toolchain, len(ancestors) == 0)?
+    trace(f"graph checked exports {root.0}: {checked.elapsed().as_millis()} ms")
     # 4. Further projects the manifest names are inspected on their own, and their graphs join this one's.
-    paths =checked_paths + source_graphs(root, profile, toolchain, ancestors)?
+    paths = checked_paths + source_graphs(root, profile, toolchain, ancestors)?
     closure = native_closure(root, request)?
     return Ok(
         GraphDependencies(

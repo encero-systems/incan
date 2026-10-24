@@ -1,10 +1,9 @@
 """Content-addressed graph snapshots, independent of query and presentation options."""
 
-from std.json import JsonValue
 from files import json_text
-from graph_cache import GraphUnit, stamp_file, tree_inputs
 from std.fs import Path
-from observation import file_digest
+from std.json import JsonValue
+from graph_cache import GraphUnit, graph_digest, stamp_file, tree_inputs
 from unit_freshness import fingerprint
 
 
@@ -23,7 +22,7 @@ pub def snapshot_identity(units: list[GraphUnit], root: str, strict: bool) -> Re
     mut parts: list[str] = []
     mut sources: list[str] = []
     for unit in units:
-        coordinates = [unit.root.0, unit.package, unit.version, file_digest(stamp_file(unit))?]
+        coordinates = [unit.root.0, unit.package, unit.version, graph_digest(stamp_file(unit))?]
         parts.append(json_text(JsonValue.array([JsonValue.string(item) for item in coordinates]))?)
         if unit.source_root != "" and unit.source_root not in sources:
             sources.append(unit.source_root)
