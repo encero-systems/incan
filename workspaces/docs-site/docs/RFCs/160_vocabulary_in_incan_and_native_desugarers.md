@@ -21,7 +21,7 @@
 
 ## Summary
 
-This RFC defines how package-owned vocabulary enters Incan's canonical semantic pipeline. A Loaf names one Incan module as its **vocabulary entry**. That module registers the Loaf's DSL surfaces through `std.vocab` and, when a surface needs custom lowering, defines the desugarer that lowers parsed vocabulary syntax into Incan's **canonical surface representation**. That representation is a versioned, structured contract; it is not the compiler's private syntax tree. Oven compiles the entry for the host through the native compilation route, like any other unit, and records the registered descriptors in the Loaf's published metadata. When a consumer's source uses a surface that needs desugaring, the compiler runs the compiled desugarer as a separate worker process, once the build's provider policy admits it. The worker receives the module's vocabulary nodes and returns canonical surface representation with a source map back to the original spans. Generated source text is never the interchange. Desugarers are no longer packaged as WebAssembly, and the compiler no longer embeds a WebAssembly runtime. This replaces the Rust companion crate of RFC 027 and the WebAssembly artifact contract that RFC 081 kept for Incan-authored desugarers. This RFC is the provider substrate: execution, trust, evidence, workers and structured output. RFC 162 builds file-scoped surfaces, alternate grammars and foreign-language frontends on top of it. Both exist for RFC 161's single-authority rule: every surface normalizes into one semantic representation, and the backend never re-derives surface meaning.
+This RFC defines how package-owned vocabulary enters Incan's canonical semantic pipeline. A Loaf names one Incan module as its **vocabulary entry**. That module registers the Loaf's DSL surfaces through `std.vocab` and, when a surface needs custom lowering, defines the desugarer that lowers parsed vocabulary syntax into Incan's **canonical surface representation**. That representation is a versioned, structured contract; it is not the compiler's private syntax tree. Oven compiles the entry for the host through the native compilation route, like any other unit, and records the registered descriptors in the Loaf's published metadata. When a consumer's source uses a surface that needs desugaring, the compiler runs the compiled desugarer as a separate worker process, once the build's provider policy admits it. The worker receives the module's vocabulary nodes and returns canonical surface representation with a source map back to the original spans. Generated source text is never the interchange. Desugarers are no longer packaged as WebAssembly, and the compiler no longer embeds a WebAssembly runtime. This replaces the Rust companion crate of RFC 027, and RFC 081's desugarer authoring and WebAssembly execution-artifact contract. RFC 081 remains authoritative for descriptor-gated embedded syntax, lexical submodes, expression holes, formatter behavior and LSP ownership. This RFC is the provider substrate: execution, trust, evidence, workers and structured output. RFC 162 builds file-scoped surfaces, alternate grammars and foreign-language frontends on top of it. Both exist for RFC 161's single-authority rule: every surface normalizes into one semantic representation, and the backend never re-derives surface meaning.
 
 ## Core model
 
@@ -218,7 +218,13 @@ The language server desugars blocks as the consumer edits them. Workers stay run
 
 - The compiler must not load WebAssembly desugarer artifacts.
 - A Loaf whose published metadata names one must be refused with a diagnostic stating that the Loaf must be rebuilt under this RFC.
-- This supersedes RFC 081's requirement that published WebAssembly desugarer artifacts continue to load.
+- This supersedes RFC 081's requirement that published WebAssembly desugarer artifacts continue to load. It supersedes nothing else in RFC 081.
+
+### Embedded fragments (RFC 081)
+
+- An embedded language-shaped fragment in an eligible DSL position remains an owned, structured artifact under RFC 081. That covers its lexical submode, expression holes, ownership boundary, and formatter and LSP behavior.
+- When the owning surface provides a lowering hook, the hook is a desugarer under this RFC. It receives the fragment artifact in its request and may lower it into canonical surface representation.
+- When no lowering hook exists, RFC 081's behavior is unchanged: the fragment checks and reaches the checked body representation, and emission refuses it explicitly.
 
 ### Schema versions
 
@@ -254,12 +260,21 @@ This RFC is the provider substrate: the vocabulary unit, admission, out-of-proce
 
 Import-activated vocabulary keeps the surface model of RFC 027, RFC 040, RFC 045 and RFC 081.
 
-Both RFCs exist for RFC 161's single-authority rule. Every surface normalizes into one semantic representation, and the backend never re-derives surface meaning. Generated source text is not an interchange at any point.
+The four RFCs divide the work:
+
+```text
+RFC 081   embedded language-shaped fragments inside DSL positions
+RFC 160   package-owned provider registration, execution, provenance and lowering
+RFC 162   whole-file and project surface selection; the vocabulary, dialect and frontend taxonomy
+RFC 161   the common semantic destination for every lowered surface
+```
+
+RFC 160 and RFC 162 exist for RFC 161's single-authority rule. Every surface normalizes into one semantic representation, and the backend never re-derives surface meaning. Generated source text is not an interchange at any point.
 
 ### Interaction with existing features
 
 - RFC 040 and RFC 045 surfaces register exactly as before; only the authoring language and the execution artifact change.
-- RFC 081 embedded fragments reach desugarers through the same request.
+- RFC 081 embedded fragments keep their RFC 081 contract; only their lowering hook runs under this RFC, as "Embedded fragments (RFC 081)" states.
 - RFC 108 extension properties are unaffected.
 - Formatter and syntax highlighting continue to use the published descriptors and do not run desugarers.
 

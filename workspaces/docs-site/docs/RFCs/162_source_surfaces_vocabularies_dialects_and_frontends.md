@@ -78,6 +78,7 @@ Native workers are what make real frontends practical, because a provider can us
 - Promising compatibility with any external language. A frontend states its own compatibility level; Incan guarantees only the contract.
 - Letting ordinary imports change how a file parses.
 - Mixing surfaces within one file. Block vocabulary under RFC 027 and RFC 040 continues to work inside a file of any surface whose grammar admits it.
+- Replacing RFC 081. Embedded fragments inside DSL positions keep RFC 081's contract in files of every surface.
 - Foreign runtime semantics. A frontend lowers to Incan semantics; source-language behavior Incan does not have must be refused or provided explicitly by the provider's library.
 
 ## Guide-level explanation
@@ -215,6 +216,16 @@ RFC 161 is the common destination: once the semantic core exists, every surface'
 
 Block vocabulary activated by import, under RFC 027 and RFC 040, continues to work. A file-scoped vocabulary and a block vocabulary may share one provider; the difference is activation scope, not the authoring API.
 
+### Relationship to RFC 081 embedded fragments
+
+This RFC's whole-file provider model is distinct from RFC 081's block-local lexical modes, and does not replace them. RFC 081 remains the contract for embedded language-shaped fragments in eligible DSL positions:
+- descriptor-gated submodes;
+- expression holes;
+- ownership boundaries;
+- formatter and LSP behavior.
+
+A file selected with `#!dialect`, or a file in any surface whose grammar admits DSL positions, may contain such fragments, and they follow RFC 081 there exactly as in canonical Incan. A whole-file provider lowers the file around its fragments. It does not re-parse or reinterpret a fragment.
+
 ### Packaging a frontend's sources
 
 A Loaf may contain sources in a frontend's language with their native extension, mapped to a surface in `loaf.toml`. Its published metadata records the surface identity and version alongside the lowered Incan API, so consumers see an ordinary Incan library.
@@ -247,7 +258,6 @@ A Loaf may contain sources in a frontend's language with their native extension,
 - How is canonical Incan selected explicitly in a project whose default is another surface: `#!surface incan`, `#!vocab incan`, or another spelling?
 - Should a frontend's files keep their native extension, use `.incn`, or allow both?
 - What is the minimum source-map granularity a dialect or frontend must meet before its diagnostics are user-facing?
-- How much of RFC 081's embedded-fragment model must a dialect reuse when it embeds other languages?
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved.
      An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
