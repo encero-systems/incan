@@ -6,6 +6,7 @@ from files import make_directory, read, remove, write as write_file
 from incan_units import executable_outputs, install_executable, test_report
 from observation import load_ledger
 from scratch import scratch_directory
+from rust_freshness import compilation_observations, inputs_unchanged, library_key
 from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription, UnitLoaf
 from unit_freshness import Key, artifact_files, compiler_fingerprint, reusable, rust_key, source_fingerprint, staleness
@@ -240,6 +241,39 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
     assert reusable(outputs, tests.joinpath("app.oven-inputs"), one)?
     remove(test_report(tests.joinpath("app")))?
     assert not reusable(outputs, tests.joinpath("app.oven-inputs"), one)?
+    # Rust libraries retain rustc's file dependencies, including escaped paths outside the source directory.
+    setup = fixture(scratch.path())?
+    native = scratch.path().joinpath("native")
+    dependencies = native.joinpath("library.d")
+    included = scratch.path().joinpath("included value.txt")
+    write(included, "first included value")?
+    escaped = included.0.replace(" ", "\\ ")
+    write(dependencies, f"library: {escaped}\n\n# env-dep:CARGO_PKG_NAME=old\n")?
+    arguments = ["--extern", f"runtime={setup.toolchain.externs[0].path}"]
+    environment = {"CARGO_PKG_NAME": "app"}
+    first = library_key(setup.root, native, dependencies, arguments, environment, [], setup.toolchain)?
+    retained = library_key(setup.root, native, dependencies, arguments, environment, [], setup.toolchain)?
+    assert retained.digest == first.digest
+    observations = compilation_observations(setup.root, dependencies, arguments, [], setup.toolchain)?
+    assert inputs_unchanged(dependencies, observations)?
+    write(included, "changed included value")?
+    changed = library_key(setup.root, native, dependencies, arguments, environment, [], setup.toolchain)?
+    assert changed.digest != first.digest
+    assert not inputs_unchanged(dependencies, observations)?
+    write(included, "first included value")?
+    changed_environment = library_key(
+        setup.root, native, dependencies, arguments, {"CARGO_PKG_NAME": "other"}, [], setup.toolchain,
+    )?
+    assert changed_environment.digest != first.digest
+    # A late source or native-artifact write invalidates publication even after a key was computed.
+    stable = compilation_observations(setup.root, dependencies, arguments, [], setup.toolchain)?
+    _ = library_key(setup.root, native, dependencies, arguments, environment, [], setup.toolchain)?
+    write(Path(setup.toolchain.externs[0].path), "changed while compiling")?
+    assert not inputs_unchanged(dependencies, stable)?
+    Path(setup.toolchain.externs[0].path).unlink().map_err((error) => error.message())?
+    match compilation_observations(setup.root, dependencies, arguments, [], setup.toolchain):
+        Err(_) => pass
+        Ok(_) => assert false, "missing linked artifacts cannot supply compilation observations"
     return Ok(None)
 
 

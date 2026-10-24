@@ -50,8 +50,8 @@ pub def run_batches(
     1. Admit the cases whose entry can be compiled together with others; the rest keep their own command.
     2. Partition them into groups: this scratch's previous partition, or a full-family hint, or one group to discover
        the partition from.
-    3. Compile the groups, using diagnostic ownership to refine refusals before splitting them.
-    4. Run every compiled group's cases fresh, and retain the partition for the next run.
+    3. Compile groups and run their verified entries in one pool, refining refusals before splitting them.
+    4. Retain the partition for the next run.
     """
     # 1. Only the cases whose entry can be compiled together with others are shared; the rest keep their own command.
     entries, refusals = admitted_entries(fixtures)
@@ -67,16 +67,15 @@ pub def run_batches(
         if not reused:
             groups = initial_groups(entries, jobs)
         overlapping = isolated_fixtures(fixtures, groups)
-    # 3. Every group is compiled, and refusals refine the next compilation wave.
+    # 3. Compile groups and run verified entries while refusals refine the next compilation wave.
     mut notes: list[str] = []
     mut partition: list[str] = []
     mut built: list[GroupProject] = []
     mut outcomes: dict[str, Result[Outcome, str]] = {}
     compile_groups(incan, scratch, groups, built, notes, partition, overlapping, outcomes, jobs)
-    # 4. Each compiled group's cases run fresh, and the partition they came from is kept for the next run.
+    # 4. Retain the partition whose entries ran fresh in the owning pool.
     for group in built:
         partition.append("\t".join([candidate.fixture.case_name() for candidate in group.entries]))
-    execute_groups(incan, scratch, built, outcomes, jobs)
     if len(entries) > 0:
         match write(plan, "\n".join(partition) + "\n"):
             Err(error) => println(f"batch plan: {error}")
@@ -260,7 +259,7 @@ def compile_groups(
 
     1. Retain singleton names and prepare each shared compilation.
     2. Queue original commands alongside shared compilation waves, including newly isolated cases.
-    3. Run the wave under one child budget and record original command results once.
+    3. Run builds and their verified entries under one child budget, recording original results once.
     4. Retain successful builds and refine refused groups for the next wave.
     """
     mut pending = groups
@@ -300,7 +299,12 @@ def compile_groups(
                     requests.append(request)
                     names.append(fixture.case_name())
         isolated = []
-        # 3. Completed originals are recorded now so later execution cannot run them twice.
+        # 3. Queue gated entries alongside builds and record original commands once.
+        mut executions: list[tuple[int, list[str]]] = []
+        for parent in range(len(attempts)):
+            first = len(requests)
+            selected = queue_entries(incan, scratch, attempts[parent], parent, requests)
+            executions.append((first, selected))
         results = invoke_many(requests, jobs)
         for index in range(len(names)):
             outcomes[names[index]] = results[len(attempts) + index]
@@ -312,6 +316,9 @@ def compile_groups(
             refusal, evidence = compilation_refusal(results[index])
             if refusal == "":
                 built.append(group)
+                first, selected = executions[index]
+                for offset in range(len(selected)):
+                    outcomes[selected[offset]] = results[first + offset]
             else:
                 refine_group(group, retry, refusal, evidence)
         pending = retry
@@ -372,36 +379,29 @@ def split_group(entries: list[Entry], mut retry: list[list[Entry]], refusal: str
     retry.append(entries[middle:])
 
 
-def execute_groups(
-    incan: str,
-    scratch: Path,
-    groups: list[GroupProject],
-    mut outcomes: dict[str, Result[Outcome, str]],
-    jobs: int,
-) -> None:
-    """Run every compiled group's cases through one bounded queue; Oven owns canonical process status."""
-    mut requests: list[Invocation] = []
+def queue_entries(
+    incan: str, scratch: Path, group: GroupProject, parent: int, mut requests: list[Invocation],
+) -> list[str]:
+    """Prepare fresh selected executions gated on their group's successful build in the owning worker pool."""
     mut names: list[str] = []
-    for group in groups:
-        executable = built_program(group.project, "contract_batch")
-        for index in range(len(group.entries)):
-            fixture = group.entries[index].fixture
-            match materialize(fixture, scratch):
-                Err(_) => pass
-                Ok(case_project) =>
-                    match clear_trace(case_project):
-                        Err(_) =>
-                            continue
-                        Ok(_) => pass
-                    original = built_program(case_project, fixture.name)
-                    arguments = ["_run-built", executable.0, "--argv0", original.0]
-                    requests.append(
-                        Invocation(program=incan, arguments=arguments, project=case_project, selector=Some(str(index))),
-                    )
-                    names.append(fixture.case_name())
-    results = invoke_many(requests, jobs)
-    for index in range(len(requests)):
-        outcomes[names[index]] = results[index]
+    executable = built_program(group.project, "contract_batch")
+    for index in range(len(group.entries)):
+        fixture = group.entries[index].fixture
+        match materialize(fixture, scratch):
+            Err(_) => pass
+            Ok(case_project) =>
+                match clear_trace(case_project):
+                    Err(_) =>
+                        continue
+                    Ok(_) => pass
+                original = built_program(case_project, fixture.name)
+                arguments = ["_run-built", executable.0, "--argv0", original.0]
+                requests.append(Invocation(
+                    program=incan, arguments=arguments, project=case_project,
+                    selector=Some(str(index)), after=Some(parent),
+                ))
+                names.append(fixture.case_name())
+    return names
 
 
 def built_program(project: Path, name: str) -> Path:

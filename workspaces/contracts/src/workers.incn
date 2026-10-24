@@ -22,6 +22,8 @@ pub model Invocation:
     pub selector: Option[str]
     # A speculative attempt may shorten the user deadline; zero leaves an ordinary command's policy intact.
     pub deadline_seconds: int = 0
+    # A selected entry starts only after this request compiled quietly and successfully in the same pool.
+    pub after: Option[int] = None
 
 
 model Started:
@@ -37,34 +39,36 @@ model Started:
 # The runner enters one pool at a time. The native callback borrows Child; only its metadata is copied.
 static pool_started: dict[int, Started] = {}
 static pool_outcomes: list[Result[Outcome, str]] = []
+static pool_ready: list[int] = []
+static pool_followups: dict[int, list[int]] = {}
 
 
 pub def invoke_many(requests: list[Invocation], jobs: int) -> list[Result[Outcome, str]]:
-    """
-    Own at most `jobs` children and return results in request order.
+    """Own at most `jobs` children, preserving each request's deadline and result position.
 
-    1. Initialize one result slot per request.
-    2. Refill completed slots immediately while owning every active child.
-    3. Return the ordered results and clear the pool metadata.
+    1. Allocate one result slot per request.
+    2. Launch, poll and refill the bounded child queue, releasing verified follow-ups.
+    3. Return ordered outcomes and release the pool's callback state.
     """
     # 1. Every request has a result slot even when launching its child fails.
     pool_started = {}
     pool_outcomes = []
+    pool_ready = []
+    pool_followups = {}
     for request in requests:
         waiting: Result[Outcome, str] = Err("invocation not started")
         pool_outcomes.append(waiting)
-    # 2. A completed child releases capacity immediately for the next request.
-    order = invocation_order(requests)
+    prepare_order(requests)
     mut active: Children = Children.new()
     mut next = 0
     limit = max([1, jobs])
     # 2. Launch, poll and refill the bounded child queue.
-    while next < len(requests) or not active.is_empty():
-        while next < len(requests):
+    while next < len(pool_ready) or not active.is_empty():
+        while next < len(pool_ready):
             count = int(active.len())
             if count >= limit:
                 break
-            index = order[next]
+            index = pool_ready[next]
             request = requests[index]
             clock = Instant.now()
             match launch(request.program, request.arguments, request.project, request.selector):
@@ -88,7 +92,48 @@ pub def invoke_many(requests: list[Invocation], jobs: int) -> list[Result[Outcom
     outcomes = pool_outcomes.clone()
     pool_outcomes = []
     pool_started = {}
+    pool_ready = []
+    pool_followups = {}
     return outcomes
+
+
+def prepare_order(requests: list[Invocation]) -> None:
+    """Queue independent commands by duration and retain follow-up indices under their prerequisite."""
+    for index in invocation_order(requests):
+        match requests[index].after:
+            None => pool_ready.append(index)
+            Some(parent) =>
+                if parent < 0 or parent >= len(requests) or parent == index:
+                    record_failure(index, "invalid invocation prerequisite")
+                    continue
+                retain_followup(parent, index)
+
+
+def retain_followup(parent: int, index: int) -> None:
+    """Append through a local owner and publish the complete child list back into the prerequisite table."""
+    mut children: list[int] = []
+    if parent in pool_followups:
+        children = pool_followups[parent]
+    children.append(index)
+    pool_followups[parent] = children
+
+
+def release_followups(index: int) -> None:
+    """Admit selected entries only after a quiet successful compilation; failures never execute dependents."""
+    if index not in pool_followups:
+        return
+    for child in pool_followups[index]:
+        if quiet_success(pool_outcomes[index]):
+            pool_ready.append(child)
+        else:
+            record_failure(child, "prerequisite compilation did not succeed quietly")
+
+
+def quiet_success(result: Result[Outcome, str]) -> bool:
+    """Use the shared-build acceptance rule before any selected program can execute."""
+    match result:
+        Err(_) => return false
+        Ok(outcome) => return outcome.code == Some(0) and outcome.stdout == "" and outcome.stderr == ""
 
 
 def invocation_order(requests: list[Invocation]) -> list[int]:
@@ -157,3 +202,4 @@ def record_outcome(index: int, outcome: Result[Outcome, str]) -> None:
     mut outcomes = pool_outcomes.clone()
     outcomes[index] = outcome
     pool_outcomes = outcomes
+    release_followups(index)
