@@ -37,24 +37,33 @@ model CacheRegistry:
         return cell
 
 
+model NameEntry:
+    """One callable pointer and its registered name in a declaring module."""
+
+    module: str
+    address: usize
+    name: str
+
+
 model NameRegistry:
     """Retain dynamic pointer names within the same module scope as legacy's callable-name helpers."""
 
-    entries: list[tuple[str, usize, str]]
+    # Exact native scalar widths in tuples remain tracked under #2256.
+    entries: list[NameEntry]
 
     def record(mut self, module: str, address: usize, name: str) -> None:
         """Replace an equal pointer's dynamic name only inside its declaring source module."""
         for index in range(len(self.entries)):
-            if self.entries[index][0] == module and self.entries[index][1] == address:
-                self.entries[index] = (module, address, name)
+            if self.entries[index].module == module and self.entries[index].address == address:
+                self.entries[index] = NameEntry(module=module, address=address, name=name)
                 return
-        self.entries.append((module, address, name))
+        self.entries.append(NameEntry(module=module, address=address, name=name))
 
     def describe(self, module: str, address: usize) -> str:
         """Return the module's registered name or the legacy fallback for an unregistered pointer."""
         for entry in self.entries:
-            if entry[0] == module and entry[1] == address:
-                return entry[2]
+            if entry.module == module and entry.address == address:
+                return entry.name
         return "<callable>"
 
 

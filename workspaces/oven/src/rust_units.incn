@@ -5,6 +5,9 @@ compiled registry units (DD-0008).
 The graph is `loaf_local_graph.local_facets`. Each unit compiles after the local units it links. A unit's output lives
 under the root project's target directory, named by the unit's identity: its project, domain, features and profile.
 Registry units come compiled: their rlibs by root name and the directories their dependencies live in.
+
+Each Rust library also records its graph-selected externs and search directories in `native.json`. Release assembly
+uses those bindings instead of inferring a dependency's identity from an artifact directory.
 """
 
 from rust::std::process import Command, id
@@ -24,7 +27,7 @@ from publication import place, publish
 from rust_activation import CfgSnapshot, DependencyDomain, TargetConfiguration, version_matches
 from semver_req import compare_version_order, parse_version
 from toml_fields import optional_string, optional_strings, read_manifest, required_string
-from toolchain import Toolchain, load_toolchain, located
+from toolchain import NativeCrate, Toolchain, load_toolchain, located
 from unit_freshness import (
     Key, artifact_identity, compiler_fingerprint, fingerprint, install_all, record, reusable, rust_key, staleness,
 )
@@ -600,6 +603,7 @@ def unit_outputs(
             println(f"compiled {declared.crate_name} ({facet.domain.value()})")
         local_built[facet.key()] = unit
         library = Some(unit)
+        publish_native_inputs(facet, request, built, search, unit)?
     mut programs: list[str] = []
     if facet.project == root.0 and facet.domain == DependencyDomain.Target:
         for name, source in declared.binaries:
@@ -643,27 +647,64 @@ pub def linking(
 
 def local_externs(facet: LocalFacet, built: Dict[str, BuiltUnit]) -> Result[list[str], str]:
     """One `--extern alias=library` per local edge; an edge whose unit is not built is an error."""
-    mut arguments: list[str] = []
+    return Ok(extern_arguments(local_bindings(facet, built)?))
+
+
+def local_bindings(facet: LocalFacet, built: Dict[str, BuiltUnit]) -> Result[list[NativeCrate], str]:
+    """Retain each local graph edge's exact alias and built artifact for compilation and its native receipt."""
+    mut bindings: list[NativeCrate] = []
     for edge in facet.local:
         if edge.key() not in built:
             return Err(f"{facet.project} links {edge.alias}, which has no compiled library")
-        arguments.append("--extern")
-        arguments.append(f"{edge.alias.replace('-', '_')}={built[edge.key()].artifact}")
-    return Ok(arguments)
+        bindings.append(NativeCrate(name=edge.alias.replace("-", "_"), path=built[edge.key()].artifact))
+    return Ok(bindings)
 
 
 def registry_externs(facet: LocalFacet, request: RustBuild) -> Result[list[str], str]:
     """One `--extern alias=library` per registry edge, naming the edge when no compiled library serves it."""
-    mut arguments: list[str] = []
+    return Ok(extern_arguments(registry_bindings(facet, request)?))
+
+
+def registry_bindings(facet: LocalFacet, request: RustBuild) -> Result[list[NativeCrate], str]:
+    """Select registry graph edges through the same version, feature and domain rules used to link the unit."""
+    mut bindings: list[NativeCrate] = []
     for index in range(len(facet.registry)):
         alias = facet.registry_aliases[index]
         selection = registry_selection(facet.registry[index])?
         artifact = request.registry.artifact_for(selection, facet.domain.value()).map_err(
             (reason) => f"{facet.project} links `{alias}`: {reason}",
         )?
+        bindings.append(NativeCrate(name=alias.replace("-", "_"), path=artifact))
+    return Ok(bindings)
+
+
+def extern_arguments(bindings: list[NativeCrate]) -> list[str]:
+    """Render selected structured bindings once at rustc's argument boundary."""
+    mut arguments: list[str] = []
+    for binding in bindings:
         arguments.append("--extern")
-        arguments.append(f"{alias.replace('-', '_')}={artifact}")
-    return Ok(arguments)
+        arguments.append(f"{binding.name}={binding.path}")
+    return arguments
+
+
+def publish_native_inputs(
+    facet: LocalFacet,
+    request: RustBuild,
+    built: Dict[str, BuiltUnit],
+    search: list[str],
+    unit: BuiltUnit,
+) -> Result[None, str]:
+    """Record selected dependencies and search directories, adding the library's own directory for consumers."""
+    bindings = local_bindings(facet, built)? + registry_bindings(facet, request)?
+    mut externs: list[JsonValue] = []
+    for binding in bindings:
+        externs.append(JsonValue.array([JsonValue.string(binding.name), JsonValue.string(binding.path)]))
+    document = JsonValue.object({
+        "schema": JsonValue.string("incan.rust-native/1"),
+        "externs": JsonValue.array(externs),
+        "search": JsonValue.array([JsonValue.string(directory) for directory in search + [unit.directory]]),
+    })
+    return publish(Path(unit.directory).joinpath("native.json"), json_text(document)?)
 
 
 pub def compile_library(

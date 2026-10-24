@@ -100,6 +100,8 @@ pub def tuple_element(ty: PlanType, source: &RustType) -> Result[TupleElement, s
         PlanType.StaticBytes => return Ok(TupleElement.StaticBytes)
         PlanType.FrozenCollection(name, elements) => return Ok(TupleElement.FrozenCollection(name, elements))
         PlanType.List(leaf, depth) => return Ok(TupleElement.List(leaf, depth))
+        PlanType.Dict(key, value) => return Ok(TupleElement.Dict(key, value))
+        PlanType.Set(leaf) => return Ok(TupleElement.Set(leaf))
         PlanType.Model(owner, name) => return Ok(TupleElement.Model(owner, name))
         PlanType.Enum(owner, name) => return Ok(TupleElement.Enum(owner, name))
         PlanType.Tuple(elements) => return Ok(TupleElement.Tuple(elements))
@@ -172,6 +174,8 @@ pub def carrier_element(element: TupleElement) -> bool:
     """Report whether a tuple element carries a list, nominal value or nested tuple requiring its retained layout."""
     match element:
         TupleElement.List(_leaf, _depth) => return true
+        TupleElement.Dict(_key, _value) => return true
+        TupleElement.Set(_leaf) => return true
         TupleElement.Model(_owner, _name) => return true
         TupleElement.Enum(_owner, _name) => return true
         TupleElement.Tuple(_elements) => return true
@@ -183,6 +187,8 @@ pub def owned_carrier(ty: PlanType) -> bool:
     match ty:
         PlanType.ValidationError => return true
         PlanType.List(_leaf, _depth) => return true
+        PlanType.Dict(_key, _value) => return true
+        PlanType.Set(_leaf) => return true
         PlanType.Model(_owner, _name) => return true
         PlanType.Enum(_owner, _name) => return true
         _ => return false
@@ -193,6 +199,8 @@ pub def element_has_owner(element: TupleElement) -> bool:
     match element:
         TupleElement.String => return true
         TupleElement.List(_leaf, _depth) => return true
+        TupleElement.Dict(_key, _value) => return true
+        TupleElement.Set(_leaf) => return true
         TupleElement.Model(_owner, _name) => return true
         TupleElement.Enum(_owner, _name) => return true
         TupleElement.Tuple(elements) =>

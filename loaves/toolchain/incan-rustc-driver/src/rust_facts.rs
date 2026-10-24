@@ -634,14 +634,14 @@ fn describe(tcx: TyCtxt<'_>, def: DefId, path: &str, named: &mut HashSet<DefId>)
 }
 
 /// A struct, enum or union: type parameters and defaults, inherent methods with native impl binders and self types,
-/// public fields and variants. Method binders remain distinct from the owner's potentially defaulted parameters.
+/// complete public field layouts and variants. Structs with hidden fields stay opaque under DD-0006: a public
+/// subset is not a complete native layout. Method binders remain distinct from the owner's defaulted parameters.
 fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTypeInfo {
     let (type_params, type_param_defaults) = type_parameters(tcx, def);
     let methods = inherent_methods(tcx, &crate::callees::owner_inherent_impls(tcx, def), named);
     let adt = tcx.adt_def(def);
-    let fields = if adt.is_struct() {
+    let fields = if adt.is_struct() && adt.all_fields().all(|field| field.vis.is_public()) {
         adt.all_fields()
-            .filter(|field| field.vis.is_public())
             .map(|field| {
                 let ty = tcx.type_of(field.did).instantiate_identity().skip_normalization();
                 note_named(ty, named);

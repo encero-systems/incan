@@ -218,6 +218,8 @@ fn generation_identity(
 }
 
 /// Find the installed toolchain that owns one of the ABI caches Oven supplied, without selecting another toolchain.
+/// Resolve its paths relative to the descriptor, as required for relocated release archives; absolute bootstrap paths
+/// remain absolute. The owning cache must match after resolution, before any extraction can run.
 fn installed_toolchain(unit: &UnitDescription) -> CliResult<(PathBuf, Toolchain)> {
     for cache in &unit.rust_abi {
         let Some(directory) = cache.parent().and_then(Path::parent) else {
@@ -227,7 +229,13 @@ fn installed_toolchain(unit: &UnitDescription) -> CliResult<(PathBuf, Toolchain)
         if !descriptor.is_file() {
             continue;
         }
-        let toolchain: Toolchain = serde_json::from_slice(&fs::read(&descriptor).map_err(failure)?).map_err(failure)?;
+        let mut toolchain: Toolchain =
+            serde_json::from_slice(&fs::read(&descriptor).map_err(failure)?).map_err(failure)?;
+        toolchain.driver = directory.join(toolchain.driver);
+        toolchain.sysroot = directory.join(toolchain.sysroot);
+        for path in &mut toolchain.rust_abi {
+            *path = directory.join(&*path);
+        }
         if toolchain.schema != "incan.toolchain/1" || !toolchain.rust_abi.contains(cache) {
             return Err(CliError::failure(format!(
                 "{} does not own the unit's ABI cache",

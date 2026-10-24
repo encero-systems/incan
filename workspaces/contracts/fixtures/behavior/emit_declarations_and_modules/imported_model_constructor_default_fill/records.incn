@@ -63,12 +63,20 @@ pub def make_factory() -> Factory:
     return Factory()
 
 
+pub enum Domain(str):
+    """Retain a generated text observation through an unimported enum field."""
+
+    Target = "target"
+    Host = "host"
+
+
 pub model Packet:
     """Carry a collection of nominal payloads owned by this module."""
 
     pub entries: list[Reply]
     pub labels: Dict[str, str]
     pub tags: set[int]
+    pub domain: Domain = Domain.Target
 
 
 pub def packet() -> Packet:

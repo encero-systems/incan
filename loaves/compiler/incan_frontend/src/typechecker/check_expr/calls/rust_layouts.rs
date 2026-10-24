@@ -239,7 +239,8 @@ impl TypeChecker {
     }
 
     /// Close the native owner from the already checked field arguments and retain the ordinary constructor slots.
-    /// A missing/default-filled field or unresolved type binder grants no executable construction.
+    /// A missing/default-filled field or unresolved type binder grants no executable construction. A nongeneric
+    /// declaration retains its bare owner identity rather than acquiring an empty generic application.
     pub(super) fn retain_rust_construction(
         &mut self,
         path: &str,

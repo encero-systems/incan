@@ -782,35 +782,28 @@ impl TypeChecker {
             .filter_map(|declaration| match declaration {
                 ApiDeclaration::Alias(alias) => self
                     .symbol_kind_from_nominal_projection(alias.projected_type.as_ref())
-                    .or_else(|| self.symbol_kind_from_api_target_path(manifest, &alias.target_path)),
+                    .or_else(|| {
+                        self.symbol_kind_from_api_target_path(
+                            manifest,
+                            Self::api_alias_target_path(manifest, source_module_path, &alias.name, &alias.target_path),
+                        )
+                    }),
                 _ => self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration),
             })
             .collect::<Vec<_>>();
-        let mut type_alias = declarations.iter().find_map(|declaration| {
-            if let ApiDeclaration::Alias(alias) = declaration
-                && let Some(target) = alias.projected_type.as_ref().filter(|ty| ty.has_native_union())
-            {
-                return Some((Vec::new(), resolved_type_from_manifest_type_ref(target)));
-            }
-            let declaration = match declaration {
-                ApiDeclaration::Alias(alias) => Self::api_declaration_for_target_path(manifest, &alias.target_path)?,
-                declaration => declaration,
-            };
-            match declaration {
-                ApiDeclaration::TypeAlias(item) => Some((
-                    item.type_alias.type_params.clone(),
-                    resolved_type_from_manifest_type_ref(&item.type_alias.target),
-                )),
-                _ => None,
-            }
-        });
-        let (resolved_source_module_path, resolved_source_name) = declarations
+        let mut type_alias = declarations
             .iter()
-            .find_map(|declaration| match declaration {
-                ApiDeclaration::Alias(alias) => Self::normalized_api_declaration_target(&alias.target_path),
-                _ => None,
-            })
-            .unwrap_or_else(|| (source_module_path.clone(), member.to_string()));
+            .find_map(|declaration| Self::public_member_type_alias(manifest, source_module_path, declaration));
+        let (resolved_source_module_path, resolved_source_name) =
+            declarations
+                .iter()
+                .find_map(|declaration| match declaration {
+                    ApiDeclaration::Alias(alias) => Self::normalized_api_declaration_target(
+                        Self::api_alias_target_path(manifest, source_module_path, &alias.name, &alias.target_path),
+                    ),
+                    _ => None,
+                })
+                .unwrap_or_else(|| (source_module_path.clone(), member.to_string()));
         let public_path = std::iter::once(manifest.name.clone())
             .chain(module_path.iter().cloned())
             .chain(std::iter::once(member.to_string()))
@@ -854,18 +847,14 @@ impl TypeChecker {
             Self::remap_resolved_type_with_import_aliases(target, &remapping);
         }
         let partial_projection = declarations.iter().find_map(|declaration| {
-            let partial = match declaration {
-                ApiDeclaration::Partial(partial) => Some(partial),
-                ApiDeclaration::Alias(alias) => {
-                    match Self::api_declaration_for_target_path(manifest, &alias.target_path) {
-                        Some(ApiDeclaration::Partial(partial)) => Some(partial),
-                        _ => None,
-                    }
-                }
-                _ => None,
-            }?;
-            let export = partial_export_from_api(partial);
-            Self::partial_projection_from_manifest_partial(&export, member, &remapping, Span::default(), library)
+            Self::public_member_partial_projection(
+                library,
+                manifest,
+                source_module_path,
+                member,
+                declaration,
+                &remapping,
+            )
         });
         Self::mark_compiled_class_field_provider(&mut kind, library);
         Ok(Some(PublicModuleMember {
@@ -876,6 +865,57 @@ impl TypeChecker {
             type_alias,
             partial_projection,
         }))
+    }
+
+    /// Read a public alias's type parameters and target through the retained declaration. Native union projections
+    /// already carry their closed target and need no second declaration lookup.
+    fn public_member_type_alias(
+        manifest: &LibraryManifest,
+        source_module_path: &[String],
+        declaration: &ApiDeclaration,
+    ) -> Option<(Vec<TypeParamExport>, ResolvedType)> {
+        if let ApiDeclaration::Alias(alias) = declaration
+            && let Some(target) = alias.projected_type.as_ref().filter(|ty| ty.has_native_union())
+        {
+            return Some((Vec::new(), resolved_type_from_manifest_type_ref(target)));
+        }
+        let declaration = match declaration {
+            ApiDeclaration::Alias(alias) => Self::api_declaration_for_target_path(
+                manifest,
+                Self::api_alias_target_path(manifest, source_module_path, &alias.name, &alias.target_path),
+            )?,
+            declaration => declaration,
+        };
+        match declaration {
+            ApiDeclaration::TypeAlias(item) => Some((
+                item.type_alias.type_params.clone(),
+                resolved_type_from_manifest_type_ref(&item.type_alias.target),
+            )),
+            _ => None,
+        }
+    }
+
+    /// Preserve partial application metadata when a public namespace reaches it through a declaration alias.
+    fn public_member_partial_projection(
+        library: &str,
+        manifest: &LibraryManifest,
+        source_module_path: &[String],
+        member: &str,
+        declaration: &ApiDeclaration,
+        remapping: &HashMap<String, String>,
+    ) -> Option<PartialProjectionInfo> {
+        let declaration = match declaration {
+            ApiDeclaration::Alias(alias) => Self::api_declaration_for_target_path(
+                manifest,
+                Self::api_alias_target_path(manifest, source_module_path, &alias.name, &alias.target_path),
+            )?,
+            declaration => declaration,
+        };
+        let ApiDeclaration::Partial(partial) = declaration else {
+            return None;
+        };
+        let export = partial_export_from_api(partial);
+        Self::partial_projection_from_manifest_partial(&export, member, remapping, Span::default(), library)
     }
 
     /// Choose one of several source modules that each publish `member` into the same derived namespace, when the
@@ -2031,6 +2071,26 @@ impl TypeChecker {
             })),
             ManifestExportRef::Alias(_) => None,
         }
+    }
+
+    /// Follow a published alias's retained declaration identity before its written target. Standard-library facades
+    /// may spell a same-package target as `std.io.IoError`, while the package API stores its declaration at
+    /// `io.IoError`. Foreign projections without a declaration in this package retain their admitted target path.
+    pub(super) fn api_alias_target_path<'a>(
+        manifest: &'a LibraryManifest,
+        module_path: &[String],
+        name: &str,
+        target_path: &'a [String],
+    ) -> &'a [String] {
+        let public_path = std::iter::once(manifest.name.clone())
+            .chain(module_path.iter().cloned())
+            .chain(std::iter::once(name.to_string()))
+            .collect::<Vec<_>>();
+        let identities = &manifest.contract_metadata.identity_graph;
+        identities
+            .canonical_for_public_path(&public_path)
+            .and_then(|canonical| identities.declaration_source_path(&canonical))
+            .unwrap_or(target_path)
     }
 
     /// Resolve an alias target path against the checked API metadata embedded in the manifest.

@@ -1,17 +1,14 @@
 """A bounded pool for fresh child invocations, independent of compilation groups."""
 
-from rust::std::collections import VecDeque
+from rust::std::cell import RefCell
 from rust::std::process import Child, ExitStatus
+from rust::std::rc import Rc
 from rust::std::thread import sleep
 from rust::std::time import Duration, Instant
 from std.fs import Path
 from processes import Outcome, expired, finish, launch, terminate_group
 from timing import elapsed_hint, record_elapsed
 from timing import report as report_time
-
-
-type Children = rusttype VecDeque[Child]:
-    """The native queue's exact child-handle instantiation."""
 
 
 pub model Invocation:
@@ -30,8 +27,9 @@ pub model Invocation:
 
 
 model Started:
-    """One child's input position, capture directory and individual deadline origin."""
+    """One owned child with its request position, capture directory and individual deadline origin."""
 
+    child: Rc[RefCell[Child]]
     index: int
     project: Path
     clock: Instant
@@ -39,9 +37,8 @@ model Started:
     measure: bool
 
 
-# The runner enters one pool at a time. The native callback borrows Child; only its metadata is copied.
-static pool_started: dict[int, Started] = {}
-static pool_outcomes: list[Result[Outcome, str]] = []
+# The runner enters one pool at a time; active records own child handles and their request metadata together.
+static pool_outcomes: dict[int, Result[Outcome, str]] = {}
 static pool_ready: list[int] = []
 static pool_followups: dict[int, list[int]] = {}
 
@@ -55,21 +52,20 @@ pub def invoke_many(requests: list[Invocation], jobs: int) -> list[Result[Outcom
     3. Return ordered outcomes and release the pool's callback state.
     """
     # 1. Every request has a result slot even when launching its child fails.
-    pool_started = {}
-    pool_outcomes = []
+    pool_outcomes = {}
     pool_ready = []
     pool_followups = {}
-    for request in requests:
+    for index in range(len(requests)):
         waiting: Result[Outcome, str] = Err("invocation not started")
-        pool_outcomes.append(waiting)
+        pool_outcomes[index] = waiting
     prepare_order(requests)
-    mut active: Children = Children.new()
+    mut active: list[Started] = []
     mut next = 0
     limit = max([1, jobs])
     # 2. Launch, poll and refill the bounded child queue.
-    while next < len(pool_ready) or not active.is_empty():
+    while next < len(pool_ready) or len(active) > 0:
         while next < len(pool_ready):
-            count = int(active.len())
+            count = len(active)
             if count >= limit:
                 break
             index = pool_ready[next]
@@ -78,24 +74,30 @@ pub def invoke_many(requests: list[Invocation], jobs: int) -> list[Result[Outcom
             match launch(request.program, request.arguments, request.project, request.selector):
                 Err(error) => record_failure(index, error)
                 Ok(child) =>
-                    pid = int(child.id())
-                    pool_started[pid] = Started(
-                        index=index,
-                        project=request.project,
-                        clock=clock,
-                        deadline_seconds=request.deadline_seconds,
-                        measure=measured_command(request),
+                    handle = Rc.new(RefCell.new(child))
+                    active.append(
+                        Started(
+                            child=handle,
+                            index=index,
+                            project=request.project,
+                            clock=clock,
+                            deadline_seconds=request.deadline_seconds,
+                            measure=measured_command(request),
+                        ),
                     )
-                    active.push_back(child)
             next += 1
-        previous = int(active.len())
-        active.retain_mut(keep_child)
-        if previous == int(active.len()) and not active.is_empty():
+        previous = len(active)
+        mut running: list[Started] = []
+        for child in active:
+            match pending_child(child):
+                Some(pending) => running.append(pending)
+                None => pass
+        active = running
+        if previous == len(active) and len(active) > 0:
             sleep(Duration.from_millis(2))
     # 3. No child remains active when the pool metadata is released.
-    outcomes = pool_outcomes.clone()
-    pool_outcomes = []
-    pool_started = {}
+    outcomes = [pool_outcomes[index] for index in range(len(requests))]
+    pool_outcomes = {}
     pool_ready = []
     pool_followups = {}
     return outcomes
@@ -160,28 +162,28 @@ def measured_command(request: Invocation) -> bool:
     return request.selector == None
 
 
-def keep_child(child: &mut Child) -> bool:
-    """Reap each completed child or enforce its deadline, retaining only a still-running handle."""
-    mut handle = child
-    pid = int(handle.id())
-    info = pool_started[pid]
-    match handle.try_wait():
+def pending_child(info: Started) -> Option[Started]:
+    """Return a still-running handle; reap a completed child or enforce its deadline before releasing it."""
+    pid = int(info.child.borrow().id())
+    completed = info.child.borrow_mut().try_wait()
+    match completed:
         Err(error) => record_failure(info.index, str(error))
         Ok(status) =>
             match status:
                 Some(status) => settle(info, status, false)
                 None =>
                     if not expired(info.clock, info.deadline_seconds):
-                        return true
+                        return Some(info)
                     match terminate_group(pid):
                         Err(error) =>
                             record_failure(info.index, error)
-                            return false
+                            return None
                         Ok(_) => pass
-                    match handle.wait():
+                    waited = info.child.borrow_mut().wait()
+                    match waited:
                         Err(error) => record_failure(info.index, str(error))
                         Ok(status) => settle(info, status, true)
-    return false
+    return None
 
 
 def settle(info: Started, status: ExitStatus, timed_out: bool) -> None:
@@ -203,8 +205,6 @@ def record_failure(index: int, error: str) -> None:
 
 
 def record_outcome(index: int, outcome: Result[Outcome, str]) -> None:
-    """Update one ordered result through a local binding and retain the complete pool result list."""
-    mut outcomes = pool_outcomes.clone()
-    outcomes[index] = outcome
-    pool_outcomes = outcomes
+    """Store one outcome by its request position before releasing verified follow-ups."""
+    pool_outcomes[index] = outcome
     release_followups(index)

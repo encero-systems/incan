@@ -2,44 +2,44 @@
 
 from rust::std::cell import RefCell
 from rust::std::fs import File
-from rust::std::io import BufRead, BufReader, Read, Write
+from rust::std::io import Read, Write
 from rust::std::mem import drop as close_pipe, take
-from rust::std::process import Child, ChildStdin, ChildStdout, Command, Stdio
+from rust::std::os::fd import OwnedFd
+from rust::std::os::unix::net import UnixStream
+from rust::std::process import Child, Command, Stdio
 from rust::std::rc import Rc
 from rust::std::string import String as RustString
 from std.fs import Path
+from std.io import BytesIO
 from std.json import JsonValue, parse
 
 
 pub def start(binary: str, project: Path, arguments: list[str] = [], framing: str = "lsp") -> Result[Peer, str]:
-    """Start the real stdio server: 1. Configure pipes. 2. Record ownership. 3. Retain shared handles."""
-    # 1. Configure pipes and diagnostic output.
+    """Start the real stdio server: 1. Configure streams. 2. Record ownership. 3. Retain shared handles."""
+    # 1. Configure streams and diagnostic output.
     pid_file = project.joinpath(f".{framing}-pid")
+    input, child_input = UnixStream.pair().map_err((error) => str(error))?
+    output, child_output = UnixStream.pair().map_err((error) => str(error))?
     mut command = Command.new(binary)
     command.stderr(File.create(project.joinpath("target").joinpath(f"{framing}.log").0).map_err((error) => str(error))?)
-    command.current_dir(project.0).stdin(Stdio.piped()).stdout(Stdio.piped())
+    command.current_dir(project.0)
+    command.stdin(Stdio.from(OwnedFd.from(child_input))).stdout(Stdio.from(OwnedFd.from(child_output)))
     for argument in arguments:
         command.arg(argument)
-    mut child = command.spawn().map_err((error) => str(error))?
+    child = Rc.new(RefCell.new(command.spawn().map_err((error) => str(error))?))
     # 2. Record process ownership.
-    pid_file.write_text(str(child.id()), "utf-8", "strict", None).map_err((error) => error.message())?
-    input: Option[ChildStdin] = take(child.stdin)
-    output: Option[ChildStdout] = take(child.stdout)
+    pid_file.write_text(str(child.borrow().id()), "utf-8", "strict", None).map_err((error) => error.message())?
     # 3. Retain shared handles without copying foreign resources.
-    match (input, output):
-        (Some(writer), Some(reader)) =>
-            return Ok(Peer(
-                input=Some(Rc.new(RefCell.new(writer))), output=Rc.new(RefCell.new(reader)),
-                child=Rc.new(RefCell.new(child)), framing=framing
-            ))
-        _ => return Err("protocol child has no input pipe")
+    return Ok(
+        Peer(input=Some(Rc.new(RefCell.new(input))), output=Rc.new(RefCell.new(output)), child=child, framing=framing),
+    )
 
 
 pub class Peer:
     """Share foreign handles and the capture cursor; close stdin before reaping the server's transport."""
 
-    input: Option[Rc[RefCell[ChildStdin]]]
-    output: Rc[RefCell[ChildStdout]]
+    input: Option[Rc[RefCell[UnixStream]]]
+    output: Rc[RefCell[UnixStream]]
     child: Rc[RefCell[Child]]
     framing: str = "lsp"
 
@@ -70,9 +70,9 @@ pub class Peer:
 
     def request(mut self, identifier: int, method: str, params: JsonValue) -> Result[JsonValue, str]:
         """Read the matching result while allowing intervening server notifications."""
-        mut envelope = {
-            "jsonrpc": JsonValue.string("2.0"), "id": JsonValue.int(identifier), "method": JsonValue.string(method)
-        }
+        mut envelope = {"jsonrpc": JsonValue.string("2.0"), "id": JsonValue.int(identifier), "method": JsonValue.string(
+            method,
+        )}
         if not params.is_null():
             envelope["params"] = params
         self.send(JsonValue.object(envelope))?
@@ -81,7 +81,7 @@ pub class Peer:
             match reply.get("id"):
                 Some(value) =>
                     if value.as_int() == Some(identifier):
-                        reason = f"protocol request failed: {reply.to_json().unwrap_or('')}"
+                        reason = f"protocol request failed: {reply.to_json().unwrap_or("")}"
                         return reply.require("result").map_err((_) => reason)
                 None => pass
         return Err("protocol response did not arrive within 128 messages")
@@ -99,7 +99,7 @@ pub class Peer:
             diagnostics = params.require("diagnostics").map_err((error) => error.message())?
             for diagnostic in diagnostics.expect_array().map_err((error) => error.message())?:
                 if diagnostic.require("severity").map_err((error) => error.message())?.as_int() == Some(1):
-                    return Err(f"LSP analysis refused the fixture: {diagnostic.to_json().unwrap_or('')}")
+                    return Err(f"LSP analysis refused the fixture: {diagnostic.to_json().unwrap_or("")}")
             return Ok(None)
         return Err("LSP did not publish this live snapshot's diagnostics")
 
@@ -129,16 +129,20 @@ pub class Peer:
             Err(error) => return Err(f"cannot read LSP payload: {error}")
 
     def receive_line(mut self) -> Result[JsonValue, str]:
-        """A one-byte buffer avoids consuming bytes from the next message when the temporary reader is dropped."""
-        for incoming in BufReader.with_capacity(1, self.output.borrow_mut().by_ref()).lines():
-            match incoming:
-                Ok(value) => return parse(str(value)).map_err((error) => error.message())
+        """Read exactly one JSONL frame, retaining complete UTF-8 bytes without consuming the next response."""
+        line = BytesIO()
+        mut byte = b" "
+        while true:
+            match self.output.borrow_mut().read_exact(byte):
+                Ok(_) => pass
                 Err(error) => return Err(f"cannot read MCP message: {error}")
-        return Err("MCP child closed its output before a response")
+            if byte == b"\x0a":
+                return parse(decode(line.getvalue())?).map_err((error) => error.message())
+            line.write_bytes(byte).map_err((error) => error.message())?
 
     def finish(mut self) -> Result[None, str]:
         """Close stdin before waiting so a pending transport read observes EOF, including after LSP exit."""
-        closed: Option[Rc[RefCell[ChildStdin]]] = take(self.input)
+        closed: Option[Rc[RefCell[UnixStream]]] = take(self.input)
         close_pipe(closed)
         match self.child.borrow_mut().wait():
             Ok(status) =>

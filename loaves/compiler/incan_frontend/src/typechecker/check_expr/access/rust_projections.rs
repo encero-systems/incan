@@ -1,6 +1,7 @@
 //! Resolve associated types from retained impl templates; native consumers never infer them from argument position.
 
 use std::cell::Cell;
+use std::collections::HashMap;
 
 use super::TypeChecker;
 use crate::resolved_type_subst::map_resolved_type_leaves;
@@ -38,7 +39,7 @@ impl TypeChecker {
         trait_path: &str,
         member: &str,
     ) -> Option<ResolvedType> {
-        self.rust_associated_type_at_depth(ty, trait_path, member, 0)
+        self.rust_associated_type_at_depth(ty, trait_path, &[], member, 0)
     }
 
     /// Bound recursive projection normalization and refuse competing equally specific associated values.
@@ -54,6 +55,7 @@ impl TypeChecker {
         &self,
         ty: &ResolvedType,
         trait_path: &str,
+        trait_arguments: &[ResolvedType],
         member: &str,
         depth: usize,
     ) -> Option<ResolvedType> {
@@ -61,6 +63,9 @@ impl TypeChecker {
             return None;
         }
         if let Some(name) = self.generic_placeholder_name(ty) {
+            if !trait_arguments.is_empty() {
+                return None;
+            }
             return self.rust_bound_associated_type(name, trait_path, member, depth + 1);
         }
         if let ResolvedType::RustPath(name) = ty
@@ -69,6 +74,9 @@ impl TypeChecker {
                 .iter()
                 .any(|frame| frame.contains_key(name))
         {
+            if !trait_arguments.is_empty() {
+                return None;
+            }
             return self.rust_bound_associated_type(name, trait_path, member, depth + 1);
         }
         let path = self.rust_bound_owner_item_path(ty)?;
@@ -120,7 +128,7 @@ impl TypeChecker {
             else {
                 continue;
             };
-            let Some(bindings) = self.rust_impl_self_bindings(implementation, &owner) else {
+            let Some(bindings) = self.rust_projection_impl_bindings(implementation, &owner, trait_arguments) else {
                 continue;
             };
             if implementation
@@ -213,6 +221,33 @@ impl TypeChecker {
         native_template_specificity(&template)
     }
 
+    /// Bind both Self and the requested trait arguments before reading an impl's associated value. An argument that
+    /// conflicts with the closed Self template or a different trait arity grants no projection.
+    fn rust_projection_impl_bindings(
+        &self,
+        implementation: &RustImplementedTrait,
+        owner: &ResolvedType,
+        arguments: &[ResolvedType],
+    ) -> Option<HashMap<String, ResolvedType>> {
+        if implementation.type_arguments.len() != arguments.len() {
+            return None;
+        }
+        let mut bindings = self.rust_impl_self_bindings(implementation, owner)?;
+        for (display, argument) in implementation.type_arguments.iter().zip(arguments) {
+            let template = self.native_rust_signature_type(display, "");
+            self.infer_type_param_bindings(
+                &self.rust_inference_type(&template, &implementation.type_params),
+                &self.rust_inference_type(argument, &[]),
+                &mut bindings,
+            );
+            let closed = self.instantiate_rust_signature_type(&template, &implementation.type_params, &bindings);
+            if !self.rust_trait_carriers_match(&closed, argument) {
+                return None;
+            }
+        }
+        Some(bindings)
+    }
+
     /// Read generic projection equalities from active bounds and their metadata-defined supertraits. A Future also
     /// has the standard blanket IntoFuture implementation with the same Self and Output.
     fn rust_bound_associated_type(
@@ -299,7 +334,11 @@ impl TypeChecker {
                     .collect::<Vec<_>>()
                     .join("::");
                 let member = path.path.segments.last()?.ident.to_string();
-                return self.rust_associated_type_at_depth(&owner, &trait_path, &member, depth + 1);
+                let arguments = self.rust_projection_trait_arguments(
+                    &path.path.segments.iter().nth(qualified.position - 1)?.arguments,
+                    depth + 1,
+                )?;
+                return self.rust_associated_type_at_depth(&owner, &trait_path, &arguments, &member, depth + 1);
             }
             // Normalize nested projections before display compaction can erase the `as` token boundary.
             for segment in &mut path.path.segments {
@@ -336,6 +375,30 @@ impl TypeChecker {
             value
         });
         (!failed.get()).then_some(resolved)
+    }
+
+    /// Retain type arguments on a qualified trait projection; lifetimes carry no native layout, and const or
+    /// associated-binding arguments remain refused until their own projection contract is retained.
+    fn rust_projection_trait_arguments(
+        &self,
+        arguments: &syn::PathArguments,
+        depth: usize,
+    ) -> Option<Vec<ResolvedType>> {
+        match arguments {
+            syn::PathArguments::None => Some(Vec::new()),
+            syn::PathArguments::AngleBracketed(arguments) => arguments
+                .args
+                .iter()
+                .filter_map(|argument| match argument {
+                    syn::GenericArgument::Lifetime(_) => None,
+                    syn::GenericArgument::Type(ty) => {
+                        Some(self.rust_projected_type(&ty.to_token_stream().to_string(), depth + 1))
+                    }
+                    _ => Some(None),
+                })
+                .collect(),
+            _ => None,
+        }
     }
 
     /// Select an associated impl through its retained native item before source collection projection erases that

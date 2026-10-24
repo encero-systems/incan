@@ -10,10 +10,11 @@ location, including operands and places, so native diagnostics retain provenance
 @derive(Clone, PartialEq)
 pub enum TupleElement:
     """
-    One tuple element's layout: a scalar, owned or frozen text, an owned list, a model or enum carrier, a Copy function
-    pointer, an exact scalar, nominal or slice reference, or a nested tuple.
+    One tuple element's layout: a scalar, owned or frozen text, an owned collection, or a model or enum carrier.
+    A Copy function pointer, exact scalar, nominal or slice reference, or nested tuple retains its full layout.
 
-    A list keeps its leaf and depth, an enum carrier (an `Option`, a `Result` or a source enum) keeps its retained
+    A list keeps its leaf and depth, a dictionary its key/value leaves, and a set its element leaf.
+    An enum carrier (an `Option`, a `Result` or a source enum) keeps its retained
     declaration index and name, and a nested tuple keeps its own element layout, exactly as the matching `PlanType`
     does. A model retains its declaration identity, and a function pointer retains its exact signature.
     """
@@ -24,6 +25,8 @@ pub enum TupleElement:
     Unit
     String
     List(ListLeaf, int)
+    Dict(ListLeaf, ListLeaf)
+    Set(ListLeaf)
     Model(int, str)
     Enum(int, str)
     Tuple(list[TupleElement])
@@ -280,6 +283,8 @@ pub def tuple_element_type(element: TupleElement) -> PlanType:
         TupleElement.Unit => return PlanType.Unit
         TupleElement.String => return PlanType.String
         TupleElement.List(leaf, depth) => return PlanType.List(leaf, depth)
+        TupleElement.Dict(key, value) => return PlanType.Dict(key, value)
+        TupleElement.Set(leaf) => return PlanType.Set(leaf)
         TupleElement.Model(owner, name) => return PlanType.Model(owner, name)
         TupleElement.Enum(owner, name) => return PlanType.Enum(owner, name)
         TupleElement.Tuple(elements) => return PlanType.Tuple(elements)

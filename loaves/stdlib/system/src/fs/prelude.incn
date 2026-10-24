@@ -24,4 +24,4 @@ from std.fs.path import Path
 from std.fs.file import File, OpenFileMode, OpenOptions
 from std.fs.locking import FileLock
 from std.fs.metadata import DirEntry, PathStat, DiskUsage
-from std.io import IoError
+pub from std.io import IoError
