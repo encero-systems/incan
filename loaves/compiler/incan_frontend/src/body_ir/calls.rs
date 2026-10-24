@@ -2369,10 +2369,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let Some(lowered) = self.lower_module_qualified_call(recv, name, type_args, args, span, scope, out) {
             return lowered;
         }
+        if let Some(value) = self.lower_type_class_name(recv, type_args, args, span, scope, out) {
+            return value;
+        }
         if self.static_receiver_type(recv, span).is_some() {
-            if let Some(value) = self.lower_type_class_name(recv, type_args, args, span, scope, out) {
-                return value;
-            }
             return self.lower_static_method_call(recv, name, type_args, args, span, scope, out);
         }
         if let Some(sum) = self.lower_newtype_sum(recv, name, type_args, args, span, scope, out) {

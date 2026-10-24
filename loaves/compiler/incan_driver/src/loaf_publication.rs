@@ -304,13 +304,35 @@ pub fn write_loaf(
     write_rust_abi_cache(dir, &mut manifest)?;
 
     // ---- Native closure and manifest ----
-    let closure = serde_json::to_vec_pretty(closure)
+    let closure = serde_json::to_vec_pretty(&sibling_relative_closure(dir, closure))
         .map_err(|error| CliError::failure(format!("cannot encode the native closure of {name}: {error}")))?;
     write(format!("{name}.native.json"), &closure)?;
     let manifest = manifest
         .to_json_string()
         .map_err(|error| CliError::failure(format!("invalid library manifest for {name}: {error}")))?;
     write(format!("{name}.incnlib"), manifest.as_bytes())
+}
+
+/// Publish sibling artifacts relative to their common artifact root so moving an otherwise identical build to a new
+/// home does not change its closure bytes. Native inputs outside that root retain their exact selected paths.
+/// Readers resolve relative paths against the publishing Loaf's directory before comparing or linking artifacts.
+fn sibling_relative_closure(directory: &Path, closure: &LoafNativeClosure) -> LoafNativeClosure {
+    let mut published = closure.clone();
+    let Some(root) = directory.parent().and_then(Path::parent) else {
+        return published;
+    };
+    let paths = published
+        .externs
+        .iter_mut()
+        .chain(&mut published.macro_externs)
+        .map(|(_, path)| path)
+        .chain(&mut published.search);
+    for path in paths {
+        if let Ok(relative) = path.strip_prefix(root) {
+            *path = Path::new("../..").join(relative);
+        }
+    }
+    published
 }
 
 /// Keep explicit Rust reexports embedded for their source binding contract, and publish other checked native facts

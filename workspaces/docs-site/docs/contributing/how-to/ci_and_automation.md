@@ -41,7 +41,7 @@ make examples
 ```
 
 !!! tip "Timeouts"
-    You can tune timeouts via `INCAN_EXAMPLES_TIMEOUT` (default is 5 seconds).
+    Use an installed dev.8 toolchain; Oven prepares dependencies automatically. Tune the per-command deadline with `INCAN_EXAMPLES_TIMEOUT` (default 120 seconds). The runner needs GNU `timeout` or `gtimeout` from coreutils and writes `target/examples/examples.tsv`. Entries in `examples/check-only.txt` are checked; other entry points run. Every failure, including a timeout, fails the target.
 
 ### Full smoke test
 
