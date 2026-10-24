@@ -1612,6 +1612,7 @@ impl TypeChecker {
             let contextual_arg_ty = if (matches!(arg_expr.node, Expr::Closure(_, _))
                 && matches!(&target_ty, ResolvedType::Function(_, _)))
                 || matches!(arg_expr.node, Expr::Literal(_) | Expr::Unary(_, _))
+                || super::super::ops::is_unsuffixed_integer_literal(arg_expr)
                 || (matches!(arg_expr.node, Expr::Call(..) | Expr::MethodCall(..))
                     && Self::rust_call_arg_wants_owner_expectation(binding.arg_ty, &target_ty))
             {

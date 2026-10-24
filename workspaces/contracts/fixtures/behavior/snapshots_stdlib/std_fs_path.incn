@@ -1,4 +1,4 @@
-# behavior: std.fs Path is the filesystem path type: lexical joins, name, suffix and stem work, and a File handle type is importable beside it
+# behavior: std.fs Path retains wrapped fields through lexical method chains and beside File imports (#2256)
 # expect-stdout:
 #   std.fs import codegen
 #   config/app.toml
@@ -34,3 +34,4 @@ def main() -> None:
     println(f"{config.name()} {config.suffix()} {config.stem()} {config.parent().0}")
     # 3. Keep the exact published owner through a method result.
     println(Path("config").joinpath("log.txt").0)
+    assert Path("project").joinpath("src").joinpath("main.incn").0 == "project/src/main.incn"

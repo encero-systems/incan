@@ -1,4 +1,4 @@
-# behavior: native calls the checker cannot admit are refused with their own reasons: a native variant pattern must belong to the scrutinee's checked Rust owner, an unknown Rust associated method is refused by its requested public item name, a source method cannot mutate a value through a native shared Option view, a native usize variable needs an explicit conversion at an Incan int return boundary, and types without constructors fail checking rather than entering native compilation with Unknown (#2256)
+# behavior: Unadmitted native calls and out-of-range CommandExt integers are refused before execution (#2256)
 # expect-stderr-contains:
 #   does not resolve for this match
 #   Rust method `rust::std::path::Path::missing_contract` has no admitted callable signature
@@ -7,6 +7,7 @@
 #   Type 'u64' has no constructor
 #   Type 'i32' has no constructor
 #   Type 'bytes' has no constructor
+#   Integer literal 2147483648 does not fit in i32
 # expect-exit: 1
 
 """A known native owner does not authorize a guessed associated method signature, and no refused call executes."""
@@ -15,7 +16,9 @@ from rust::std::cell import RefCell
 from rust::std::cmp import Ordering
 from rust::std::env import VarError
 from rust::std::mem import size_of_val
+from rust::std::os::unix::process import CommandExt
 from rust::std::path import Path
+from rust::std::process import Command
 
 
 model Value:
@@ -70,3 +73,10 @@ def main() -> None:
     shared_mutation()
     println(size())
     unavailable_constructors()
+    oversized_process_group()
+
+
+def oversized_process_group() -> None:
+    """Refuse an unsuffixed literal outside the native extension method's integer parameter range."""
+    mut command = Command.new("true")
+    command.process_group(2147483648)

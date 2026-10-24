@@ -6,17 +6,56 @@ use super::*;
 use incan_semantics_core::SymbolNamespace;
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
-    /// Keep a source call's producer-owned closed return carrier at inferred bindings and projected reads.
+    /// Keep a source call or stored field's producer-owned closed carrier at inferred bindings and projected reads.
     /// A bare call's selected identity belongs to its callee span, while a module-qualified call records it on the
     /// whole call. Function references do not enter this boundary and keep their callable types.
     pub(super) fn published_expression_type(&self, expr: &ast::Spanned<ast::Expr>) -> Option<IncanType> {
         let span = match &expr.node {
             ast::Expr::Call(callee, _, _) => callee.span,
             ast::Expr::MethodCall(_, _, _, _) => expr.span,
+            ast::Expr::Field(base, _) => return self.published_field_type(base, expr.span),
             _ => return None,
         };
         let identity = self.type_info.resolved_identity(span)?;
         self.published_callable_returns.get(identity).cloned()
+    }
+
+    /// Copy an already selected field's closed type from its exact retained owner layout. Provider-owned nominal
+    /// leaves keep that declaration's bindings; a consumer need not import them. Missing identities, generic owners
+    /// and unselected fields provide no type, so this never resolves an owner or field from its spelling.
+    fn published_field_type(&self, base: &ast::Spanned<ast::Expr>, span: ast::Span) -> Option<IncanType> {
+        let selected = self.type_info.resolved_identity(span).filter(|identity| {
+            identity.namespace == SymbolNamespace::Member && identity.kind == SemanticSourceTargetKind::Field
+        })?;
+        let receiver = self
+            .published_expression_type(base)
+            .or_else(|| {
+                let name = match &base.node {
+                    ast::Expr::Ident(name) => name.as_str(),
+                    ast::Expr::SelfExpr => "self",
+                    _ => return None,
+                };
+                self.bindings
+                    .get(name)
+                    .and_then(|local| self.locals.get(local.index()))
+                    .map(|local| local.ty.clone())
+            })
+            .unwrap_or_else(|| self.resolve_ty(base.span));
+        let mut receiver = &receiver;
+        while let IncanType::Ref(inner) | IncanType::RefMut(inner) = receiver {
+            receiver = inner;
+        }
+        let IncanType::Named(owner) = receiver else { return None };
+        let owner = parameter_types::retained_nominal_identity(owner, self.type_info)?;
+        let declaration = self.local_nominal_declarations.get(&owner.render_compact())?;
+        if !declaration.type_parameters.is_empty() || declaration.type_parameter_count != 0 {
+            return None;
+        }
+        let slot = declaration
+            .field_identities
+            .iter()
+            .position(|identity| identity == selected)?;
+        declaration.field_types.get(slot).cloned()
     }
 
     /// Retain the checker's constant tuple index, including negative literals, before flattening ordinary expressions.

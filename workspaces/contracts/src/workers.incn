@@ -9,6 +9,10 @@ from processes import Outcome, expired, finish, launch, terminate_group
 from timing import elapsed_hint, record_elapsed
 
 
+type Children = rusttype VecDeque[Child]:
+    """The native queue's exact child-handle instantiation."""
+
+
 pub model Invocation:
     """One executable, its arguments, and the case's working directory."""
 
@@ -51,7 +55,7 @@ pub def invoke_many(requests: list[Invocation], jobs: int) -> list[Result[Outcom
         pool_outcomes.append(waiting)
     # 2. A completed child releases capacity immediately for the next request.
     order = invocation_order(requests)
-    mut active = VecDeque.new()
+    mut active: Children = Children.new()
     mut next = 0
     limit = max([1, jobs])
     # 2. Launch, poll and refill the bounded child queue.
@@ -109,9 +113,10 @@ def measured_command(request: Invocation) -> bool:
 
 def keep_child(child: &mut Child) -> bool:
     """Reap each completed child or enforce its deadline, retaining only a still-running handle."""
-    pid = int(child.id())
+    mut handle = child
+    pid = int(handle.id())
     info = pool_started[pid]
-    match child.try_wait():
+    match handle.try_wait():
         Err(error) => record_failure(info.index, str(error))
         Ok(status) =>
             match status:
@@ -124,7 +129,7 @@ def keep_child(child: &mut Child) -> bool:
                             record_failure(info.index, error)
                             return false
                         Ok(_) => pass
-                    match child.wait():
+                    match handle.wait():
                         Err(error) => record_failure(info.index, str(error))
                         Ok(status) => settle(info, status, true)
     return false
@@ -138,10 +143,17 @@ def settle(info: Started, status: ExitStatus, timed_out: bool) -> None:
         None => pass
     if info.measure:
         record_elapsed(info.project, info.clock)
-    pool_outcomes[info.index] = finish(info.project, code, timed_out, info.deadline_seconds)
+    record_outcome(info.index, finish(info.project, code, timed_out, info.deadline_seconds))
 
 
 def record_failure(index: int, error: str) -> None:
     """Retain one typed failure at the original request position, including children that never started."""
     failure: Result[Outcome, str] = Err(error)
-    pool_outcomes[index] = failure
+    record_outcome(index, failure)
+
+
+def record_outcome(index: int, outcome: Result[Outcome, str]) -> None:
+    """Update one ordered result through a local binding and retain the complete pool result list."""
+    mut outcomes = pool_outcomes.clone()
+    outcomes[index] = outcome
+    pool_outcomes = outcomes

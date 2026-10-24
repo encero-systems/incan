@@ -1,14 +1,30 @@
-from db.schema import Account
+"""Publish aliased account factories and a model with a separately declared nominal payload."""
+
+from db.schema import Account, Profile
 from db.schema import Account as A
 
 
 pub def get_type(a: Account) -> str:
+    """Read the account's stored field through its public alias."""
     return a.type
 
 
 pub def make() -> Account:
+    """Construct an account through its field alias."""
     return Account(type="x")
 
 
 pub def make_aliased() -> A:
+    """Construct the same declaration through an imported type alias."""
     return A(type="y")
+
+
+pub model Envelope:
+    """Expose an imported nominal payload through a field alias."""
+
+    pub profile [alias="payload"]: Profile
+
+
+pub def make_envelope() -> Envelope:
+    """Construct the payload in its provider's own nominal scope."""
+    return Envelope(profile=Profile(value=7))
