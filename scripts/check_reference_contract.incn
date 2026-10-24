@@ -1,0 +1,284 @@
+"""Fail when a docs-site reference page states more than its public contract."""
+
+from rust::std::env import args, var
+from rust::std::process import exit
+from std.fs import Path
+from std.regex import Regex
+from check_support import git, read, repository_root, source_lines, write_stderr
+
+const HELP: str = """usage: check_reference_contract.py [-h] [--base BASE] [--all] [paths ...]
+
+Fail when a docs-site reference page states more than its contract.
+
+positional arguments:
+  paths        docs-site pages to check (repository-relative or docs-relative)
+
+options:
+  -h, --help   show this help message and exit
+  --base BASE
+  --all        check every reference page"""
+
+
+pub model Finding:
+    """A source location and lexical rule violated by one reference line."""
+    pub page: str
+    pub line: int
+    pub rule: str
+    pub text: str
+
+
+model Rule:
+    """A named prose pattern compiled once for a page."""
+    name: str
+    pattern: Regex
+
+
+model Options:
+    """The base comparison, full-inventory flag and explicit page arguments."""
+    base: str = ""
+    all: bool = False
+    paths: list[str] = []
+
+
+def main() -> Result[None, str]:
+    """
+    Check selected reference pages and return the original gate's result.
+
+    1. Select explicit, changed or all reference pages.
+    2. Evaluate each complete page against the rules and exceptions.
+    3. Print findings or the checked-page count.
+    """
+    # 1. Select the input pages.
+    arguments: list[str] = [argument for argument in args()]
+    options = command_options(arguments[1:])
+    root = repository_root()?
+    docs = root.joinpath("workspaces/docs-site/docs")
+    pages = selected_pages(root, docs, options)?
+
+    # 2. Check whole pages with explicit exceptions.
+    allowed = load_allow(root.joinpath("scripts/check_reference_contract.allow"))?
+    mut findings: list[Finding] = []
+    mut affected: list[str] = []
+    for page in pages:
+        for finding in page_findings(read(docs.joinpath(page))?, page, allowed)?:
+            findings.append(finding)
+            if finding.page not in affected:
+                affected.append(finding.page)
+
+    # 3. Print the original gate's diagnostics.
+    if len(findings) == 0:
+        println(f"reference contract check passed: {len(pages)} reference page(s) checked")
+        return Ok(None)
+    println(f"reference contract check failed: {len(findings)} finding(s) in {len(affected)} page(s)")
+    for finding in findings:
+        println(f"  {finding.page}:{finding.line}: {finding.rule}: {finding.text[:160]}")
+    println(
+        "A reference page states the contract only; see *Reference pages state the contract only* in"
+        + " .agents/skills/review-docs-claims/SKILL.md. Move removed true sentences to the matching how-to or"
+        + " explanation page. Record a justified exception in scripts/check_reference_contract.allow."
+    )
+    exit(1)
+
+
+def command_options(arguments: list[str]) -> Options:
+    """Preserve argparse's diagnostic stream and status on an invalid command line."""
+    match parse_options(arguments):
+        Ok(options) => return options
+        Err(message) =>
+            usage = "usage: check_reference_contract.py [-h] [--base BASE] [--all] [paths ...]"
+            write_stderr(f"{usage}\ncheck_reference_contract.py: error: {message}\n")
+            exit(2)
+
+
+def parse_options(arguments: list[str]) -> Result[Options, str]:
+    """Read the existing --base, --all and explicit page selection arguments."""
+    mut options = Options(base=var("INCAN_REFERENCE_CHECK_BASE").unwrap_or(""))
+    mut index = 0
+    mut positional = False
+    while index < len(arguments):
+        argument = arguments[index]
+        if not positional and (argument == "--help" or argument == "-h"):
+            println(HELP)
+            exit(0)
+        elif not positional and argument == "--":
+            positional = True
+        elif not positional and argument == "--all":
+            options.all = True
+        elif not positional and argument == "--base":
+            index += 1
+            if index >= len(arguments):
+                return Err("argument --base: expected one argument")
+            options.base = arguments[index]
+        elif not positional and argument.startswith("--base="):
+            options.base = argument[len("--base="):]
+        elif not positional and argument.startswith("-"):
+            return Err(f"unrecognized arguments: {argument}")
+        else:
+            options.paths.append(argument)
+        index += 1
+    return Ok(options)
+
+
+def selected_pages(root: Path, docs: Path, options: Options) -> Result[list[str], str]:
+    """Preserve explicit argument order and deterministic discovery for full and changed inventories."""
+    if len(options.paths) > 0:
+        return Ok([docs_relative(path) for path in options.paths])
+    if not options.all:
+        return changed_pages(root, options.base)
+    mut pages: list[str] = []
+    for path in docs.rglob("*.md").map_err((error) => error.message())?:
+        relative = path.0[len(docs.0) + 1:]
+        if is_reference_page(relative):
+            pages.append(relative)
+    return Ok(sorted(pages))
+
+
+pub def changed_pages(root: Path, base: str) -> Result[list[str], str]:
+    """Include tracked changes and untracked reference pages using the original comparison commands."""
+    mut names: list[str] = []
+    mut commands: list[list[str]] = []
+    if base != "":
+        commands = [["diff", "--name-only", f"{base}...HEAD"], ["diff", "--name-only", "HEAD"]]
+    else:
+        commands = [["diff", "--name-only"], ["diff", "--cached", "--name-only"],
+            ["ls-files", "--others", "--exclude-standard"]]
+    for command in commands:
+        for line in source_lines(git(root, command)?)?:
+            name = line.strip()
+            if name != "" and name not in names:
+                names.append(name)
+    return Ok(select_changed_pages(names, root))
+
+
+pub def select_changed_pages(names: list[str], root: Path) -> list[str]:
+    """Filter the changed-path inventory to existing, nongenerated reference pages."""
+    prefix = "workspaces/docs-site/docs/"
+    mut pages: list[str] = []
+    for name in names:
+        if name.startswith(prefix) and root.joinpath(name).exists():
+            relative = name[len(prefix):]
+            if is_reference_page(relative):
+                pages.append(relative)
+    return sorted(pages)
+
+
+def docs_relative(path: str) -> str:
+    """Strip only the documented repository-relative docs prefix."""
+    prefix = "workspaces/docs-site/docs/"
+    if path.startswith(prefix):
+        return path[len(prefix):]
+    return path
+
+
+def is_reference_page(path: str) -> bool:
+    """Exclude generated pages while selecting Markdown below a reference directory."""
+    if path in ["contributing/reference/test_corpus_inventory.md", "language/reference/feature_inventory.md",
+        "language/reference/language.md"]:
+        return False
+    return "/reference/" in f"/{path}" and path.endswith(".md")
+
+
+def load_allow(path: Path) -> Result[list[tuple[str, str]], str]:
+    """Read the original gate's permissive page-and-phrase exception format."""
+    if not path.exists():
+        return Ok([])
+    mut allowed: list[tuple[str, str]] = []
+    for line in source_lines(read(path)?)?:
+        if line.strip() == "" or line.startswith("#"):
+            continue
+        fields = line.split("\t")
+        if len(fields) >= 2:
+            allowed.append((fields[0].strip(), fields[1]))
+    return Ok(allowed)
+
+
+pub def page_findings(source: str, page: str, allowed: list[tuple[str, str]]) -> Result[list[Finding], str]:
+    """Check prose, headings, diagnostics and example comments while respecting code and See also boundaries."""
+    if not is_reference_page(page):
+        return Ok([])
+    rules = prose_rules(page.startswith("language/"))?
+    inline = regex("`[^`]*`")?
+    links = regex("\\]\\([^)]*\\)|^\\[[^\\]]+\\]:\\s*\\S+.*$")?
+    strings = regex("\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*'")?
+    diagnostic = regex("(?i)^\\s*(?:type error|error|warning)(?:\\[[\\w-]+\\])?:\\s")?
+    expected = regex("(?i)^\\s*Expected:\\s")?
+    heading = regex("(?i)^#{1,6}\\s+(?:Examples?\\s*:|Quick start|Walkthrough|Tutorial|Use cases?)")?
+    see_also = regex("(?i)^#{1,6}\\s+See also\\b")?
+    comment = regex("(?i)^(?:accepted|refused)\\b|^[\\w./-]+\\.(?:incn|toml)$")?
+    mut findings: list[Finding] = []
+    mut fenced = False
+    mut language = ""
+    mut in_see_also = False
+    lines = source_lines(source)?
+    for index in range(len(lines)):
+        line = lines[index]
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            fenced = not fenced
+            language = fence_language(stripped)
+            continue
+        if fenced:
+            if language in ["", "bash", "text", "console", "shell", "sh", "txt", "output"]:
+                if diagnostic.is_match(line):
+                    findings.append(Finding(page=page, line=index + 1, rule="quoted diagnostic output", text=stripped))
+            if language == "incan":
+                code = strings.replace_all(line, "\"\"")
+                if "#" in code and not comment.is_match("#".join(code.split("#")[1:]).strip()):
+                    findings.append(Finding(page=page, line=index + 1, rule="example comment", text=stripped))
+            continue
+        if line.startswith("#"):
+            in_see_also = see_also.is_match(line)
+            if heading.is_match(line):
+                findings.append(Finding(page=page, line=index + 1, rule="walkthrough heading", text=stripped))
+        if in_see_also or stripped.startswith("<!--"):
+            continue
+        if expected.is_match(line):
+            findings.append(Finding(page=page, line=index + 1, rule="quoted diagnostic output", text=stripped))
+        prose = links.replace_all(inline.replace_all(line, ""), "")
+        for rule in rules:
+            if rule.pattern.is_match(prose):
+                findings.append(Finding(page=page, line=index + 1, rule=rule.name, text=stripped))
+    return Ok([finding for finding in findings if not exempt(finding, allowed)])
+
+
+def prose_rules(internal: bool) -> Result[list[Rule], str]:
+    """Compile the original lexical rules, expressing the issue-prefix boundary without lookbehind."""
+    mut rules = [
+        Rule(name="comparison with another language", pattern=regex(
+            "\\bPython\\b|\\bRust's\\b|\\blike Rust\\b|\\bas in Rust\\b"
+        )?),
+        Rule(name="time-bound wording", pattern=regex(
+            "(?i)\\bcurrently\\b|\\btoday\\b|\\byet\\b|\\bfor now\\b|\\bno longer\\b|"
+            + "\\bat present\\b|\\bat the moment\\b")?),
+        Rule(name="issue or RFC number", pattern=regex("(?:^|[^\\w`/\\[#&-])#\\d{3,5}\\b|\\bRFC[ -]?\\d{2,3}\\b")?),
+        Rule(name="advice", pattern=regex(
+            "(?i)\\byou should\\b|\\bprefer\\b|\\brecommend(?:ed|s)?\\b|\\bconsider\\b|\\bmake sure\\b"
+            + "|\\bkeep in mind\\b|\\bbest practice\\b|\\bwe suggest\\b|\\btip:")?),
+        Rule(name="rationale", pattern=regex("(?i)\\bbecause\\b|\\bso that\\b")?),
+    ]
+    if internal:
+        rules.append(Rule(name="compiler-internal vocabulary", pattern=regex(
+            "(?i)\\blowering\\b|\\blowers? to\\b|\\bemitter\\b|\\bcodegen\\b|\\bthe checker\\b"
+            + "|\\btype ?checker\\b|\\bgenerated Rust\\b")?))
+    return Ok(rules)
+
+
+def regex(pattern: str) -> Result[Regex, str]:
+    """Compile a contract pattern while retaining the standard regex diagnostic."""
+    return Regex(pattern).map_err((error) => error.message())
+
+
+def fence_language(line: str) -> str:
+    """Read the first lowercase info-string word after the three-character fence marker."""
+    words = line[3:].strip().split_whitespace()
+    if len(words) == 0:
+        return ""
+    return words[0].lower()
+
+
+def exempt(finding: Finding, allowed: list[tuple[str, str]]) -> bool:
+    """Require both the selected page scope and an enclosing exact phrase."""
+    for page, phrase in allowed:
+        if (page == "*" or page == finding.page) and phrase in finding.text:
+            return True
+    return False

@@ -46,6 +46,8 @@ The JSON report has `schema_version: 2`, Boolean `ok`, and a `diagnostics` array
 
 `PATH` names a source file containing test functions. The command compiles the collected tests and executes them on every invocation. Successful results print `FILE::TEST PASSED`. A compilation error or failing test returns nonzero. Directory collection, `-k`, `--jobs`, `--list`, JSON and JUnit output flags are not accepted by this command.
 
+Collected test functions take no arguments and return `None` or `Result[None, E]`. A result-returning test passes with `Ok(None)` and fails with `Err(error)`; `E` must satisfy the `Debug` trait bound.
+
 ## `incan build`
 
 An explicit source file selects that unit. For a directory, `src/lib.incn` selects a library; otherwise `src/main.incn` selects a program. Other project directories select the Rust facet build.

@@ -1,4 +1,4 @@
-# behavior: sorting returns a fresh ordered integer list, evaluates its operand once and handles empty inputs and ordinary calls
+# behavior: sorting and sum preserve frozen and owned lists, handle empty lists, and evaluate operands once (#2256)
 # expect-stdout:
 #   sorted int list
 #   29320233
@@ -8,8 +8,15 @@
 #   29320233
 #   0
 #   2
+#   [1, 2, 3]
+#   6
+#   a b
+#   b
 
 """Exercise integer-list sorting while proving that the input list remains reusable."""
+
+const NUMBERS: FrozenList[int] = [3, 1, 2]
+const NAMES: FrozenList[str] = ["b", "a"]
 
 
 def sorted_int_list() -> int:
@@ -64,3 +71,8 @@ def main() -> None:
     println(program_result())
     println(empty_sorted())
     println(ordinary_sorted())
+    println(sorted(NUMBERS))
+    println(sum(NUMBERS))
+    names = sorted(NAMES)
+    println(f"{names[0]} {names[1]}")
+    println(NAMES[0])

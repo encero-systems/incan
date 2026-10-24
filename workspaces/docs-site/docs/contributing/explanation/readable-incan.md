@@ -24,43 +24,6 @@ Incan code in this repository reads top-down, like a description of what it does
 
 ## Example
 
-The public entry point states its contract, and its body reads as the numbered steps:
+Read `compare_format` in `workspaces/contracts/src/formatting.incn`. Its public docstring numbers four checks: the original check, formatting, the formatted check and repeated formatting. The body follows those steps with one numbered comment per step.
 
-```incan
-pub def compare_format(incan: str, project: Path, header: Header, source: str) -> Result[list[str], str]:
-    """
-    Run a format case's four checks through `incan fmt` and return one message per broken check.
-
-    1. `--check` on the original exits with the expected code and writes nothing.
-    2. Formatting writes exactly the expected text.
-    3. `--check` accepts the formatted text.
-    4. Formatting the formatted text again changes nothing.
-    """
-    original = without_header(source)
-    expected = "\n".join(header.items("expect-formatted")) + "\n"
-    path = project.joinpath("src").joinpath("main.incn")
-    write(path, original)?
-    mut failures: list[str] = []
-
-    # 1. Check mode reports whether formatting would change the input, and never writes.
-    check_code = initial_check_code(header, original, expected)
-    before = invoke(incan, ["fmt", "--check", "src/main.incn"], project)?
-    if before.code != Some(check_code):
-        failures.append(f"initial --check: expected {check_code}, got {before.exit_text()}: {before.stderr}")
-    if read(path)? != original:
-        failures.append("--check changed the input")
-    ...
-    return Ok(failures)
-```
-
-The rule the first step depends on has its own name, below the entry point:
-
-```incan
-def initial_check_code(header: Header, original: str, expected: str) -> int:
-    """The initial check's exit code: `expect-exit:` when stated, otherwise 1 when formatting changes the input."""
-    if header.declares("expect-exit"):
-        return header.expected_exit()
-    if original != expected:
-        return 1
-    return 0
-```
+The decision about the original check's exit code belongs to `initial_check_code`, below the entry point. File reading and writing are wrapped once, while `without_header` names the case-source transformation. The example's project entry is created in contract scratch; it is not a source file at the repository root.

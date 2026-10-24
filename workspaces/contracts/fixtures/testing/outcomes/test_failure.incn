@@ -1,4 +1,4 @@
-# behavior: an Err test reports FAILED, later tests still run, and the command exits unsuccessfully (#1530)
+# behavior: an Err test reports failure while later Result tests complete and the command fails (#1530, #2256)
 # expect-stdout-contains:
 #   test_failure.incn::test_fails FAILED
 #   test_failure.incn::test_later PASSED

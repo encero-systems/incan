@@ -1,0 +1,257 @@
+"""Fail when changed Rust source files contain undocumented non-test functions or methods."""
+
+from rust::std::env import args, var
+from rust::std::process import exit
+from std.fs import Path
+from std.regex import Regex
+from check_support import git, read, repository_root, source_lines, write_stderr
+
+const HELP: str = """usage: check_changed_rustdocs.py [-h] [--base BASE]
+
+Fail when changed Rust source files contain undocumented non-test functions or
+methods. By default, this checks both staged and unstaged `.rs` changes. Pass
+`--base <ref>` or set `INCAN_RUSTDOC_GATE_BASE` when a release or review
+branch needs to be checked against a comparison base such as
+`origin/release/v0.2`. Eventually, we can replace this script with the
+following clippy rules: #![warn(missing_docs)]
+#![warn(clippy::missing_docs_in_private_items)]
+
+options:
+  -h, --help   show this help message and exit
+  --base BASE  optional git ref to diff against instead of staged plus
+               unstaged changes"""
+
+
+model ChangedFile:
+    """A repository-relative file and its changed current-file line numbers."""
+    path: str
+    lines: list[int] = []
+
+
+def main() -> Result[None, str]:
+    """
+    Report undocumented functions whose source intersects a changed line.
+
+    1. Read the comparison base and changed files.
+    2. Collect missing documentation outside test, quote and trait implementation blocks.
+    3. Print findings and exit with the gate result.
+    """
+    # 1. Read the selected comparison.
+    arguments: list[str] = [argument for argument in args()]
+    root = repository_root()?
+    base = command_base(arguments[1:])
+    files = changed_files(root, base)?
+
+    # 2. Collect documentation findings in Git's file order.
+    mut findings: list[str] = []
+    for file in files:
+        lines = source_lines(read(root.joinpath(file.path))?)?
+        for finding in missing_docs(lines, file.lines)?:
+            findings.append(f"{file.path}:{finding}")
+
+    # 3. Report the gate result.
+    if len(findings) == 0:
+        println("rustdoc gate passed")
+        return Ok(None)
+    println("missing rustdoc for changed Rust functions/methods:")
+    for finding in findings:
+        println(finding)
+    exit(1)
+
+
+def command_base(arguments: list[str]) -> str:
+    """Preserve argparse's diagnostic stream and exit status for malformed options."""
+    match comparison_base(arguments):
+        Ok(base) => return base
+        Err(message) =>
+            usage = "usage: check_changed_rustdocs.py [-h] [--base BASE]"
+            write_stderr(f"{usage}\ncheck_changed_rustdocs.py: error: {message}\n")
+            exit(2)
+
+
+def comparison_base(arguments: list[str]) -> Result[str, str]:
+    """Select --base or the existing comparison environment variable."""
+    mut base: str = var("INCAN_RUSTDOC_GATE_BASE").unwrap_or("")
+    mut index = 0
+    while index < len(arguments):
+        if arguments[index] == "--help" or arguments[index] == "-h":
+            println(HELP)
+            exit(0)
+        elif arguments[index] == "--base":
+            index += 1
+            if index >= len(arguments):
+                return Err("argument --base: expected one argument")
+            base = arguments[index]
+        elif arguments[index].startswith("--base="):
+            base = arguments[index][len("--base="):]
+        else:
+            return Err(f"unrecognized arguments: {arguments[index]}")
+        index += 1
+    return Ok(base)
+
+
+def changed_files(root: Path, base: str) -> Result[list[ChangedFile], str]:
+    """Merge staged and unstaged changed lines, or compare the selected base, preserving first-seen file order."""
+    if base != "":
+        return diff_files(root, ["diff", "--unified=0", base, "--", "*.rs"])
+    mut files = diff_files(root, ["diff", "--unified=0", "--", "*.rs"])?
+    for staged in diff_files(root, ["diff", "--cached", "--unified=0", "--", "*.rs"])?:
+        mut found = False
+        for index in range(len(files)):
+            if files[index].path == staged.path:
+                files[index].lines.extend(staged.lines)
+                found = True
+                break
+        if not found:
+            files.append(staged)
+    return Ok(files)
+
+
+def diff_files(root: Path, arguments: list[str]) -> Result[list[ChangedFile], str]:
+    """Read current-file hunk lines, retaining only existing production Rust sources."""
+    hunk = Regex("^@@ -\\d+(?:,\\d+)? \\+(?P<start>\\d+)(?:,(?P<count>\\d+))? @@")
+        .map_err((error) => error.message())?
+    mut files: list[ChangedFile] = []
+    mut current = -1
+    for text in source_lines(git(root, arguments)?)?:
+        line = text.strip()
+        if line.startswith("+++ b/"):
+            path = line[len("+++ b/"):]
+            current = -1
+            if production_source(path) and root.joinpath(path).is_file():
+                current = len(files)
+                files.append(ChangedFile(path=path))
+            continue
+        if current < 0:
+            continue
+        if let Some(capture) = hunk.captures(line):
+            start = int(capture.group("start").unwrap_or("0"))
+            count = int(capture.group("count").unwrap_or("1"))
+            for number in range(start, start + count):
+                files[current].lines.append(number)
+    return Ok(files)
+
+
+def production_source(path: str) -> bool:
+    """Exclude tests, examples and vendored Rust from the production documentation contract."""
+    return not (
+        "/tests/" in path or path.startswith("tests/") or path.endswith("/tests.rs")
+        or "/examples/" in path or path.startswith("examples/") or path.startswith("loaves/third_party/")
+    )
+
+
+pub def missing_docs(lines: list[str], changed: list[int]) -> Result[list[str], str]:
+    """Return line and function-name findings for changed undocumented production functions."""
+    functions = Regex(
+        "^\\s*(?:(?:pub(?:\\([^)]*\\))?\\s+)?(?:async\\s+)?(?:const\\s+)?"
+        + "(?:unsafe\\s+)?(?:extern\\s+\"[^\"]+\"\\s+)?)fn\\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\\b"
+    ).map_err((error) => error.message())?
+    excluded = excluded_lines(lines)
+    mut findings: list[str] = []
+    for index in range(len(lines)):
+        if index + 1 in excluded:
+            continue
+        if let Some(capture) = functions.captures(lines[index]):
+            name = capture.group("name").unwrap_or("")
+            if name != "main" and intersects(changed, index + 1, function_end_line(lines, index)):
+                if not has_doc_comment(lines, index):
+                    findings.append(f"{index + 1}: fn `{name}`")
+    return Ok(findings)
+
+
+pub def has_doc_comment(lines: list[str], function: int) -> bool:
+    """Find a preceding rustdoc block across blank lines and single- or multiline attributes."""
+    mut index = function - 1
+    while index >= 0:
+        line = lines[index].strip()
+        if line == "" or attribute(line):
+            index -= 1
+            continue
+        if line.endswith("]") and not doc_comment(line):
+            while index >= 0 and not attribute(lines[index].strip()):
+                index -= 1
+            if index < 0:
+                return False
+            index -= 1
+            continue
+        return doc_comment(line)
+    return False
+
+
+def attribute(line: str) -> bool:
+    """Recognize a Rust attribute opener with whitespace after its hash."""
+    return line.startswith("#") and line[1:].strip().startswith("[")
+
+
+def doc_comment(line: str) -> bool:
+    """Recognize the line and block rustdoc forms the gate accepts."""
+    return line.startswith("///") or line.startswith("/**")
+
+
+def excluded_lines(lines: list[str]) -> list[int]:
+    """Identify test modules, quote blocks and explicit trait implementations by their original brace rules."""
+    mut excluded: list[int] = []
+    mut depth = 0
+    mut test_depth = -1
+    mut impl_depth = -1
+    mut quote_depth = 0
+    mut quoted = False
+    mut test_cfg = False
+    for index in range(len(lines)):
+        line = lines[index]
+        stripped = line.strip()
+        opened = occurrences(line, "{")
+        closed = occurrences(line, "}")
+        if stripped == "#[cfg(test)]":
+            test_cfg = True
+        elif test_cfg and stripped.startswith("mod ") and stripped.endswith("{"):
+            test_depth = depth + opened
+            test_cfg = False
+        elif stripped != "" and not stripped.startswith("#["):
+            test_cfg = False
+        if impl_depth < 0 and stripped.startswith("impl ") and " for " in stripped and "{" in stripped:
+            impl_depth = depth + opened
+        mut in_quote = quoted
+        if not quoted and "quote!" in line and "{" in line:
+            tail = "quote!".join(line.split("quote!")[1:])
+            quote_depth = occurrences(tail, "{") - occurrences(tail, "}")
+            in_quote = True
+            quoted = quote_depth > 0
+        elif quoted:
+            quote_depth += opened - closed
+            quoted = quote_depth > 0
+        if test_depth >= 0 or impl_depth >= 0 or in_quote:
+            excluded.append(index + 1)
+        depth += opened - closed
+        if test_depth >= 0 and depth < test_depth:
+            test_depth = -1
+        if impl_depth >= 0 and depth < impl_depth:
+            impl_depth = -1
+    return excluded
+
+
+def occurrences(text: str, token: str) -> int:
+    """Count nonoverlapping brace or quote markers with the original textual semantics."""
+    return len(text.split(token)) - 1
+
+
+def function_end_line(lines: list[str], function: int) -> int:
+    """Find the inclusive end of a function by braces or its bodyless declaration terminator."""
+    mut depth = 0
+    mut body = False
+    for index in range(function, len(lines)):
+        line = lines[index]
+        depth += occurrences(line, "{") - occurrences(line, "}")
+        if "{" in line:
+            body = True
+        if (body and depth <= 0) or (not body and line.strip().endswith(";")):
+            return index + 1
+    return len(lines)
+
+
+def intersects(changed: list[int], start: int, end: int) -> bool:
+    """Decide whether a function contains a changed current-file line."""
+    for line in changed:
+        if start <= line and line <= end:
+            return True
+    return False

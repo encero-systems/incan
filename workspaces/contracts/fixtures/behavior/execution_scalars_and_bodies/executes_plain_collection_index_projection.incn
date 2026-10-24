@@ -1,4 +1,4 @@
-# behavior: tuple and nested list projections read their elements, local or model-field list slices return fresh lists, and text indexing preserves Unicode scalar positions, negative indices and nested text owners (#2256)
+# behavior: projections, fresh slices and direct joins preserve owners and Unicode scalar indexing (#2256)
 # expect-stdout:
 #   1
 #   1
@@ -10,6 +10,7 @@
 #   猫
 #   猫
 #   aé猫
+#   two|three
 
 
 """Executes plain collection index projection."""
@@ -73,3 +74,4 @@ def main() -> None:
     println(text_at(text, -1))
     println([text][0][2])
     println(text)
+    println("|".join("one|two|three".split("|")[1:]))

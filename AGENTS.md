@@ -77,7 +77,7 @@ These budgets hold for every contributor and every automated workflow.
 3. **Prove changes with the contract families**: `workspaces/contracts/README.md` defines the families and how to run them. During development, run the smallest selector that proves a change (one case, or one area). Run whole families at commit points. The repository has no Cargo project: never run `cargo`.
 4. **Respect the test and record budgets**: see [Tests and design records](#tests-and-design-records).
 5. **Boy Scout Rule**: Leave every file you touch in better shape than you found it — fix stale TODOs, missing doc comments, unused imports, misleading names.
-6. **Documentation gate (mandatory)**: Before finalizing any change, audit every touched Rust module and ensure rustdocs are present and accurate for all new/changed functions and methods in changed Rust source files. This is enforced mechanically by `scripts/check_changed_rustdocs.py` through `make pre-commit-fast`.
+6. **Documentation gate (mandatory)**: Before finalizing any change, audit every touched Rust module and ensure rustdocs are present and accurate for all new/changed functions and methods in changed Rust source files. This is enforced mechanically by `scripts/check_changed_rustdocs.incn` through `make pre-commit-fast`.
 
 ### Pattern intake before edits
 
@@ -124,7 +124,7 @@ When making changes under `workspaces/docs-site/`:
 - **Apply Divio intent before writing**: choose the reader's task and the matching page type. Tutorials teach through a guided learning exercise; how-to guides solve a concrete task; references provide factual lookup; explanations develop understanding and rationale. Content must match its type, not merely live in the matching directory.
 - **References document the public contract**: inventory the relevant public surface and include exact signatures, parameter and return types, defaults, errors, constraints, and observable behavior. Organize by API or concept so a reader can look up one item independently. Small syntax examples are welcome, but a walkthrough, feature overview, or implementation narrative is not a substitute for a reference. A reference also states nothing beyond that contract; the checklist reviewers apply is *Reference pages state the contract only* in `.agents/skills/review-docs-claims/SKILL.md`, and the separate `make reference-contract-check` target enforces its lexical part. Touching a reference page means bringing the whole page to contract, and a true sentence taken off it moves to its how-to or explanation page in the same change.
 - **Separate mixed intents with links**: move task procedures to how-to guides and design rationale to explanations when those need their own treatment. Do not create all four page types mechanically for every feature. Check the actual source and same-kind precedents; an existing page is not proof that its organization is correct.
-- **Build docs locally**: run `mkdocs build --strict` from `workspaces/docs-site` to catch broken links/anchors early.
+- **Build docs locally**: run `make docs-build` from `workspaces/docs-site` to generate RFC snippets, check docs contracts and build MkDocs strictly.
 - **Review intent separately from the build**: a successful MkDocs build checks rendering and links, not Divio placement or reference completeness. Verify both before checking off documentation in a PR.
 - **Line length: no hard wrap** for docs-site `.md` files. Write prose as natural paragraphs — let the renderer handle wrapping. This applies to all markdown under `workspaces/docs-site/` and other non-code markdown files.
 
@@ -255,24 +255,25 @@ The repository has no Cargo project, so `cargo clippy`, `cargo test` and `cargo 
 ## Compiler Pipeline
 
 ```text
-Source → Lexer → Parser/AST → Typechecker → Lowering (AST→IR) → Emission (IR→Rust)
+Source → Lexer → Parser/AST → Typechecker → Body IR → Incan lowering → Native plan → rustc MIR
 ```
 
 Key directories:
 
 - `loaves/kernel/incan_syntax/src/parser/` — Parsing; syntax definitions are in `loaves/kernel/incan_syntax/src/ast/`
 - `loaves/compiler/incan_frontend/src/typechecker/` — Type checking and semantic analysis
-- `loaves/compiler/incan_ir/src/lower/` — AST to IR lowering
-- `loaves/compiler/incan_emit/src/emit/` — IR to Rust code emission
+- `loaves/compiler/incan_frontend/src/body_ir/` — checked AST to Body IR
+- `loaves/compiler/incan_mir_lowering/src/` — Body IR to native plan
+- `loaves/toolchain/incan-rustc-driver/src/` — native plan to rustc MIR
 
 ## Code Locations Reference
 
-The parser column is relative to `loaves/kernel/incan_syntax/src/`; typechecker entries are relative to `loaves/compiler/incan_frontend/src/typechecker/`; lowering entries are relative to `loaves/compiler/incan_ir/src/`; emission entries are relative to `loaves/compiler/incan_emit/src/`. Fully qualified paths override those bases.
+The parser column is relative to `loaves/kernel/incan_syntax/src/`; typechecker entries are relative to `loaves/compiler/incan_frontend/src/typechecker/`; lowering entries are relative to `loaves/compiler/incan_mir_lowering/src/`; adapter entries are relative to `loaves/toolchain/incan-rustc-driver/src/`. Fully qualified paths override those bases.
 
-| Feature          | Parser                                                 | Typechecker                                                         | Lowering        | Emission        |
+| Feature          | Parser                                                 | Typechecker                                                         | Lowering        | Adapter        |
 | ---------------- | ------------------------------------------------------ | ------------------------------------------------------------------- | --------------- | --------------- |
-| Field metadata   | `parser/decl/`                                       | `check_decl.rs`                                                     | `lower/decl/` | `emit/decls/` |
-| Alias resolution | -                                                      | `check_expr/access.rs`, `check_expr/calls.rs`, `check_expr/match_.rs`                     | `lower/expr/` | -               |
+| Field metadata   | `parser/decl/`                                       | `check_decl.rs`                                                     | `models.incn` | `field_metadata.rs` |
+| Alias resolution | -                                                      | `check_expr/access.rs`, `check_expr/calls.rs`, `check_expr/match_.rs`                     | `unions.incn` | -               |
 | Soft keywords    | `parser/core.rs`, `parser/helpers.rs`, `parser/decl/*` | `collect/stdlib_imports.rs`                                         | -               | -               |
 | Stdlib registry  | -                                                      | `incan_lang::lang::stdlib` (`loaves/kernel/incan_lang/src/lang/stdlib.rs`) | -               | -               |
 | Diagnostics      | -                                                      | `diagnostics/catalog/errors/*` in `loaves/kernel/incan_syntax/src/`        | -               | -               |

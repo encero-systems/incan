@@ -33,7 +33,7 @@ The report must use this exact top-level shape:
 ## Activity
 - [21:54] review started
 - [21:55] scope derived from issue 73 / RFC 015 / dirty worktree
-- [21:57] found 2 warnings in loaves/oven/oven_model/src/project_lifecycle/version.rs
+- [21:57] found 2 warnings in workspaces/oven/src/semver_req.incn
 - [22:01] running make fmt
 - [22:04] make pre-commit-fast passed
 

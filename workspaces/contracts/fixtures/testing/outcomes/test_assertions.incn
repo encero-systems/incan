@@ -10,6 +10,7 @@ from std.testing import assert, assert_eq, assert_ne, assert_true, assert_false,
 
 
 def test_assertions_work() -> None:
+    """Exercise every assertion on a value that satisfies its condition."""
     # Boolean assertions
     assert(True)
     assert True, "assert statement with message should compile"

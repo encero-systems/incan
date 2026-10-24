@@ -2,7 +2,7 @@
 
 The Incan standard library as SDK components, one directory per component, each a Loaf holding its Incan source and its Rust runtime bridge side by side.
 
-**Versioning:** release-train cadence per component set; every facet and both derive crates carry the ring's version line, checked by `scripts/check_ring_versions.py`. `sdk-components.toml` keeps `compiler-requirement` as a range, and `incan_std_core::__incan_stdlib_version_check!` accepts any stdlib the compiler's line is compatible with under the semver rule (a prerelease demands equality). A check against the stable `incan-v1` symbol ABI is the destination.
+**Versioning:** each standard package declares its version and dependencies in its `loaf.toml`. Oven selects compiled packages for the installed toolchain and requested profile. The former ring-version Python gate was removed.
 
 | Component | Namespace roots | Rust facet | Runtime crates |
 | --- | --- | --- | --- |

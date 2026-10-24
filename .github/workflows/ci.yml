@@ -1,7 +1,7 @@
 name: CI
 
-# dev.8 builds and tests the compiler through the Oven with a stage-zero compiler and never runs Cargo. Until a
-# stage-zero compiler artifact is published for CI, this workflow runs the checks that read only the checkout.
+# Native checks require the published dev.8 Oven/toolchain and Rust 1.98.0 with rustc-dev (DD-0010).
+# Publication and its CI installation recipe are prerequisites; these checks remain enabled while they are pending.
 
 on:
   push:
@@ -43,7 +43,7 @@ jobs:
           else
             base_ref="HEAD^"
           fi
-          python3 scripts/check_changed_rustdocs.py --base "$base_ref"
+          incan run scripts/check_changed_rustdocs.incn -- --base "$base_ref"
       - name: Check US English
         run: make us-english-check
       - name: Check the AGENTS.md skill table

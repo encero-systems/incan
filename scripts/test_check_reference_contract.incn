@@ -1,0 +1,68 @@
+"""Verify reference prose rules, their exclusions and untracked-page discovery."""
+
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from check_reference_contract import page_findings, changed_pages
+from check_support import git
+
+
+def test_flags_each_rule_in_prose() -> Result[None, str]:
+    """Every lexical rule reports a violating source line."""
+    for rule, text in [
+        ("comparison with another language", "Renders as Python spells it.\n"),
+        ("time-bound wording", "This is currently refused.\n"),
+        ("issue or RFC number", "Refused (#1767).\n"),
+        ("advice", "Prefer `@derive(Eq, Hash)`.\n"),
+        ("rationale", "It is refused because the type has no fields.\n"),
+        ("walkthrough heading", "## Example: chaining errors\n"),
+        ("compiler-internal vocabulary", "The call lowers to a method.\n"),
+        ("quoted diagnostic output", "```bash\ntype error: Unknown derive 'Debg'\n```\n"),
+        ("example comment", "```incan\nx = f(1)   # the first alternative binds x\n```\n"),
+    ]:
+        assert rule in findings(text)?
+    return Ok(None)
+
+
+def test_example_comments_say_accepted_or_refused() -> Result[None, str]:
+    """Accepted and refused annotations, file labels and hashes inside strings pass."""
+    text = (
+        "```incan\n# accounts.incn\nx = f(1)          # accepted\n"
+        + "y = g(\"#tag\")    # refused: g takes an int\n```\n"
+    )
+    assert findings(text)? == []
+    return Ok(None)
+
+
+def test_ignores_code_links_and_see_also() -> Result[None, str]:
+    """Code, inline code, link targets and See also sections are outside prose rules."""
+    text = (
+        "Refused with `INCAN-T0001` (see [RFC notes](../x/rfc-123.md)).\n"
+        + "| Alternation | <code>p1 &#124; p2</code> |\n"
+        + "```incan\n# refused: currently refused, because\n```\n"
+        + "## See also\n\n- [Rust types for Python developers](../how-to/rust.md)\n"
+    )
+    assert findings(text)? == []
+    return Ok(None)
+
+
+def test_internal_vocabulary_applies_to_language_pages_only() -> Result[None, str]:
+    """Tooling reference pages may document compiler internals."""
+    assert findings("Shows the generated Rust.\n", "tooling/reference/cli.md")? == []
+    return Ok(None)
+
+
+def test_changed_pages_include_untracked_reference_pages() -> Result[None, str]:
+    """Working-tree discovery includes a real untracked reference page in an isolated repository."""
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    _ = git(root, ["init", "-q"])?
+    path = root.joinpath("workspaces/docs-site/docs/tooling/reference/new_contract.md")
+    path.parent().mkdir(True, True).map_err((error) => error.message())?
+    path.write_text("Contract.\n", "utf-8", "strict", None).map_err((error) => error.message())?
+    assert changed_pages(root, "")? == ["tooling/reference/new_contract.md"]
+    return Ok(None)
+
+
+def findings(text: str, page: str = "language/reference/sample.md") -> Result[list[str], str]:
+    """Read the rule names reported for one in-memory reference page."""
+    return Ok([finding.rule for finding in page_findings(text, page, [])?])

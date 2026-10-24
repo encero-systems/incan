@@ -4,12 +4,12 @@ Use the same installed dev.8 compiler, source, package features and artifact pro
 
 ## Establish and measure reuse
 
-From a small project:
+From the repository root:
 
 ```bash
-incan build src/main.incn
-time incan build src/main.incn
-OVEN_TRACE=- incan build src/main.incn
+incan build examples/simple/hello.incn
+time incan build examples/simple/hello.incn
+OVEN_TRACE=- incan build examples/simple/hello.incn
 ```
 
 Measure with tracing disabled; use the separate traced invocation to explain the decision. `reused` means the executable was retained. `compiled (...)` explains an invalidation. Record the compiler version and whether the project owner was already running.
@@ -17,7 +17,7 @@ Measure with tracing disabled; use the separate traced invocation to explain the
 ## Separate execution from compilation
 
 ```bash
-time incan run src/main.incn
+time incan run examples/simple/hello.incn
 ```
 
 A run includes program execution. Tests always execute even when their compilation is reused. Changing the source or replacing the executable establishes a different measurement condition.

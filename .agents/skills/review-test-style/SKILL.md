@@ -57,7 +57,7 @@ Keep slice reports findings-first. Only list clean surfaces when they are materi
 
 ## Scope
 - assigned files:
-  - loaves/toolchain/incan-cli/tests/integration_tests.rs
+  - workspaces/oven/src/test_unit_codegen.incn
 
 ## Findings
 
@@ -66,7 +66,7 @@ Keep slice reports findings-first. Only list clean surfaces when they are materi
 
 ## Reviewed Clean Surfaces
 
-- loaves/toolchain/incan-cli/tests/integration_tests.rs — touched lifecycle coverage reviewed; no additional findings
+- workspaces/oven/src/test_unit_codegen.incn — touched unit coverage reviewed; no additional findings
 ```
 
 If there are no findings, say so explicitly.

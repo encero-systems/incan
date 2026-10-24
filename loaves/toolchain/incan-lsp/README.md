@@ -12,7 +12,7 @@ The Incan language server: the `incan-lsp` binary editors launch over stdio, and
 - `loaves/toolchain/incan-lsp/src/diagnostics.rs` — compiler diagnostics to LSP diagnostics.
 - `loaves/toolchain/incan-lsp/src/semantic_tokens.rs` — token classification, including which bytes a DSL owns.
 - `loaves/toolchain/incan-lsp/src/call_site_type_args.rs` — completion and hover helpers for call-site generic arguments.
-- `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conformance.rs` — the six embedded-fragment submodes carried from parse to emission, through both formatter modes and semantic highlighting.
+- Embedded-fragment behavior is covered by contract cases; the former standalone conformance test was removed.
 
 ## Depends on
 

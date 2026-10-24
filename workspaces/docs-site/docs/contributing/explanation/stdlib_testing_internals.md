@@ -24,7 +24,7 @@ This page documents the internal integration model, runtime boundary design, and
 - **Surface semantics routing**:
     - Pack contracts live in `loaves/kernel/incan_semantics_core` (`SurfaceFeatureKey`, pack trait, registry).
     - Stdlib handlers live in `loaves/compiler/incan_semantics_stdlib` and are feature-gated by `std_testing`.
-    - Frontend/back adapters call into the registry (`loaves/compiler/incan_frontend/src/surface_semantics.rs` and `loaves/compiler/incan_ir/src/surface_semantics.rs`).
+    - The frontend calls into the registry through `loaves/compiler/incan_frontend/src/surface_semantics.rs`; the former IR adapter was removed.
     - `assert` statement syntax is lowered through registry-provided canonical call target metadata.
     - Lowered assert calls carry canonical callee paths (`std.testing.assert_*`) in IR.
     - Emission uses canonical paths for stdlib dispatch, so `import std.testing` and `from std.testing import assert_*` behave consistently.

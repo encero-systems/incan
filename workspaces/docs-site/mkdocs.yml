@@ -35,9 +35,6 @@ theme:
     - content.tabs.link
 
 plugins:
-  - gen-files:
-      scripts:
-        - utils/gen_rfc_index_snippet.py
   - search
   - tags
 hooks:
@@ -343,8 +340,7 @@ nav:
           - Readable Incan: contributing/explanation/readable-incan.md
           - Readable, maintainable Rust: contributing/explanation/readable-maintainable-rust.md
           - "std.testing internals": contributing/explanation/stdlib_testing_internals.md
-      - Reference:
-          - Hees.ai v0.5 dependency inventory: contributing/reference/hees_ai_v05_dependency_inventory.md
+          - Hees.ai v0.5 dependency inventory: contributing/explanation/hees_ai_v05_dependency_inventory.md
   - Release notes:
       - Overview: release_notes/index.md
       - Release 0.6 (development): release_notes/0_6.md
