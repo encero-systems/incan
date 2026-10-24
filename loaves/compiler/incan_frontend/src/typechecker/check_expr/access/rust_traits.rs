@@ -164,7 +164,15 @@ impl TypeChecker {
         if arguments.len() != info.type_params.len() + associated_count || !call.type_args.is_empty() {
             return None;
         }
-        let signature = self.specialize_rust_owner_signature(original, call.rust_path, &info.type_params, &arguments);
+        // Trait parameters belong to the declaration, but Self belongs to the selected receiver. Keep it open
+        // until that receiver is applied below; substituting the trait path here loses the actual result carrier.
+        let substitutions = info
+            .type_params
+            .iter()
+            .zip(&arguments)
+            .map(|(name, argument)| (name.as_str(), render_resolved_type_as_rust_arg(argument)))
+            .collect();
+        let signature = Self::specialize_rust_signature(original, &substitutions, "Self");
         let bindings = self.infer_rust_signature_bindings(
             &signature,
             call.rust_path,

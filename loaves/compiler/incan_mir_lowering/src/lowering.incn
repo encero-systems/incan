@@ -204,7 +204,7 @@ from string_conversion_contracts import validate_conversion_placement
 from enum_instances import specialize_enums
 from display_methods import display_functions
 from comparison_methods import comparison_functions, source_equality_value, attach_enum_comparisons
-from frozen_equality import compare_frozen, borrow_frozen_argument, frozen_reference_type
+from frozen_equality import compare_frozen, borrow_frozen_argument, frozen_reference_type, frozen_place, borrow_frozen
 from decorator_caches import (
     DecoratorFrame,
     frame_name,
@@ -1526,11 +1526,15 @@ def loop_local_owner(mut builder: Builder, local: int) -> bool:
 
 
 def lower_block(module: &BodyIrModule, mut builder: Builder, block: &RustBlock) -> Result[None, str]:
-    """Validate source acknowledgment receipts, lower the retained block, and stop after a terminating statement."""
+    """Validate source acknowledgments, retain refusal locations, and stop after termination."""
     if not block.unsafe_acknowledgments_valid(module.module_id):
         return Err("unsupported Body IR invalid unsafe acknowledgment receipt or enclosing scope")
     for statement in block.stmts:
-        lower_statement(module, builder, statement)?
+        match lower_statement(module, builder, statement):
+            Err(reason) =>
+                site = location(statement.span, builder.source, builder.file)
+                return Err(f"{reason} at {site.file}:{site.line}:{site.column}")
+            Ok(_) => pass
         if builder.closed[builder.current]:
             return Ok(None)
     return Ok(None)
@@ -4298,9 +4302,8 @@ def lower_library_method(
     for index in range(1, len(delegation.parameters)):
         parameter: RustType = substitute(delegation.parameters[index], names, closed)?
         _ = require_native_union_signature(parameter, builder.intrinsics)?
-        match delegation.declaration_frame.as_ref():
-            Some(boxed) =>
-                frame = boxed.as_ref()
+        match delegation.declaration_frame():
+            Some(frame) =>
                 ordinary_types.append(call_parameter_type(builder, frame, frame.params[index])?)
             None =>
                 ordinary_types.append(
@@ -5085,9 +5088,8 @@ def lower_delegated_call(
         parameters.append(
             native_source_type(builder.nominals, builder.enums, builder.unions, instantiated, builder.intrinsics)?,
         )
-    match delegation.declaration_frame.as_ref():
-        Some(boxed) =>
-            frame = boxed.as_ref()
+    match delegation.declaration_frame():
+        Some(frame) =>
             parameters = []
             for index in range(len(frame.params)):
                 parameters.append(call_parameter_type(builder, frame, frame.params[index])?)
@@ -5095,8 +5097,8 @@ def lower_delegated_call(
     returned: RustType = substitute(delegation.return_type, signature_names, signature_arguments)?
     _ = require_native_union_signature(returned, builder.intrinsics)?
     mut result = native_source_type(builder.nominals, builder.enums, builder.unions, returned, builder.intrinsics)?
-    match delegation.declaration_frame.as_ref():
-        Some(boxed) => result = return_representation(boxed.as_ref(), result)?
+    match delegation.declaration_frame():
+        Some(frame) => result = return_representation(frame, result)?
         None => pass
     mut type_arguments: list[PlanType] = []
     mut native_arguments = closed
@@ -5378,6 +5380,13 @@ pub def call_argument_operand(
         PlanType.SliceMutRef(elements) => return borrow_slice_operand(builder, value, elements, true, span)
         PlanType.ScalarRef(elements) => return borrow_scalar_operand(builder, value, elements, false, span)
         PlanType.ScalarMutRef(elements) => return borrow_scalar_operand(builder, value, elements, true, span)
+        PlanType.FrozenCollectionRef(_name, _elements) =>
+            match frozen_place(builder, value, span)?:
+                Some(storage) =>
+                    if frozen_reference_type(place_type(builder.locals, storage))? != ty:
+                        return Err("unsupported Body IR frozen argument owner mismatch")
+                    return borrow_frozen(builder, storage, span)
+                None => return Err("unsupported Body IR frozen argument without storage")
         _ => pass
     if owned_collection(ty):
         return value_operand(builder, value, span)
@@ -8000,6 +8009,7 @@ def lower_instances(
             externals,
             instances,
         )?
+        context = f"{body.name} at {files[source_index]}"
         function, runtime, pending, synthesized = lower_function(
             module,
             program,
@@ -8010,7 +8020,7 @@ def lower_instances(
             intrinsics,
             instance.arguments,
             role,
-        )?
+        ).map_err((reason) => f"{reason} in {context}")?
         retain_instance(functions, function)?
         append_synthesized(functions, synthesized)?
         append_generator_constructor(functions, module, body, sources[source_index], files[source_index], intrinsics)?
@@ -8265,7 +8275,7 @@ def lower_function(
         blocks=builder.blocks,
         span=span,
         is_async=body.is_async,
-        attributes=native_attributes(body.native_attributes),
+        attributes=native_attributes(body),
     )
     if body.is_generator():
         match generator_shape(declared_type):
@@ -8384,7 +8394,7 @@ def frame_locals(
             Some(carrier) =>
                 ty = carrier
             None =>
-                ty = body_frame_type(nominals, enums, body, local, intrinsics)?
+                ty = body_frame_type(nominals, enums, body, local, intrinsics, file)?
         index = int(local.id.index()) + 1
         ty = local_representation(body, index - 1, ty)
         if index in pairs:
@@ -8425,11 +8435,14 @@ def body_frame_type(
     body: &RustBody,
     local: &RustLocalDecl,
     mut intrinsics: list[EnumDeclaration],
+    file: str,
 ) -> Result[PlanType, str]:
-    """Resolve a local against the frame's borrowed declaration tables, retaining its declaration and slot in every refusal."""
+    """Resolve a frame local against borrowed tables, retaining its source file, declaration and slot in refusals."""
     match frame_type(nominals, enums, local, intrinsics):
         Ok(ty) => return Ok(ty)
-        Err(reason) => return Err(f"{reason} in {body.name} frame local {int(local.id.index())} at source bytes {local.span.start}..{local.span.end}")
+        Err(reason) =>
+            context = f"{reason} in {body.name} frame local {int(local.id.index())} in {file}"
+            return Err(f"{context} at source bytes {local.span.start}..{local.span.end}")
 
 
 pub def frame_parameter_type(
@@ -8438,12 +8451,13 @@ pub def frame_parameter_type(
     body: &RustBody,
     parameter: &RustCallableParam,
     mut intrinsics: list[EnumDeclaration],
+    file: str,
 ) -> Result[PlanType, str]:
     """Read a declared frame slot's checked representation for its definition and generated runtime forwarders."""
     ty = parameter_representation(
         body,
         int(parameter.local.index()),
-        body_frame_type(nominals, enums, body, body.locals[int(parameter.local.index())], intrinsics)?,
+        body_frame_type(nominals, enums, body, body.locals[int(parameter.local.index())], intrinsics, file)?,
     )?
     if parameter.mutable and lacks_exclusive_parameter(ty):
         return Err("unsupported Body IR mutable tuple or iterator parameter")
@@ -8464,14 +8478,14 @@ def frame_parameters(
     mut nominals = module.nominal_declarations
     mut enums = module.enum_declarations
     for parameter in body.params:
-        ty = frame_parameter_type(nominals, enums, body, parameter, intrinsics)?
+        ty = frame_parameter_type(nominals, enums, body, parameter, intrinsics, file)?
         if int(parameter.local.index()) != len(parameters):
             return Err("Body IR parameter order disagrees with scalar frame")
         match parameter.default:
             CallableParamDefault.Required => pass
             _ =>
                 local = body.locals[int(parameter.local.index())]
-                declared = body_frame_type(nominals, enums, body, local, intrinsics)?
+                declared = body_frame_type(nominals, enums, body, local, intrinsics, file)?
                 _ = default_type(parameter_representation(body, int(parameter.local.index()), declared)?)?
         mut name = str(parameter.name)
         if name == "self":

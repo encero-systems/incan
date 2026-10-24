@@ -289,6 +289,11 @@ impl TypeChecker {
             if rust_display_is_owned_string(display) {
                 return Some(ResolvedType::Str);
             }
+            // Unsized text already has structural native storage. A public primitive re-export names the same
+            // referent; its import identity must not turn `&str` into a reference to an opaque nominal.
+            if display == "str" {
+                return Some(leaf.clone());
+            }
             // An admitted definition path has a native owner even when its final segment also names a source type.
             // Apply its public import identity before the display parser can consult that source declaration.
             let public = self.rust_public_type_path(display);

@@ -3495,13 +3495,19 @@ impl TypeChecker {
         let result_item_path = self
             .rust_result_item_path(&render_resolved_type_as_rust_arg(&native_result), path)
             .or_else(|| self.rust_result_item_path(&method.signature.return_type, path));
+        // Primitive re-exports have no nominal owner. Retain their admitted definition identity so native
+        // resolution uses the primitive impl bucket, rather than walking a public alias as though it were an ADT.
+        let callee_owner = self
+            .rust_definition_for_path(path)
+            .filter(|definition| definition == "str")
+            .unwrap_or_else(|| path.to_owned());
         self.type_info.rust.checked_calls.insert(
             (span.start, span.end),
             crate::typechecker::type_info::RustCheckedCall {
                 storage: None,
                 source_type_parameters: self.native_call_type_parameters(),
                 receiver_adjustments: Vec::new(),
-                path: format!("{path}::{}", method.name),
+                path: format!("{callee_owner}::{}", method.name),
                 type_arguments,
                 parameters,
                 return_type: native_result,

@@ -47,32 +47,33 @@ pub def run_batches(
     1. Admit the cases whose entry can be compiled together with others; the rest keep their own command.
     2. Partition them into groups: this scratch's previous partition, or a full-family hint, or one group to discover
        the partition from.
-    3. Compile the groups. A discovery that compiled several groups packs the successful cases into one more.
+    3. Compile the groups, using diagnostic ownership to refine refusals before splitting them.
     4. Run every compiled group's cases fresh, and retain the partition for the next run.
     """
     # 1. Only the cases whose entry can be compiled together with others are shared; the rest keep their own command.
     entries, refusals = admitted_entries(fixtures)
     # 2. The groups come from this scratch's previous partition or a family hint, else one group to learn them from.
     mut groups: list[list[Entry]] = [entries]
-    mut regroup = true
+    mut overlapping: list[Fixture] = []
     mut plan = scratch.joinpath("batch-empty-groups.tsv")
     if len(fixtures) > 0:
         family = fixtures[0].family
         report_refusals(scratch, family, refusals)
         plan = scratch.joinpath(f"batch-{family}-groups.tsv")
         groups, reused = load_groups(plan, hint, entries)
-        regroup = not reused
-    # 3. Every group is compiled, and a discovery that compiled several groups packs their successful cases into one.
+        if not reused:
+            groups = initial_groups(entries, jobs)
+        else:
+            overlapping = isolated_fixtures(fixtures, groups)
+    # 3. Every group is compiled, and refusals refine the next compilation wave.
     mut notes: list[str] = []
     mut partition: list[str] = []
     mut built: list[GroupProject] = []
-    compile_groups(incan, scratch, groups, built, notes, partition, jobs)
-    if regroup and len(built) > 1:
-        built = packed_groups(incan, scratch, entries, built, notes, partition, jobs)
+    mut outcomes: dict[str, Result[Outcome, str]] = {}
+    compile_groups(incan, scratch, groups, built, notes, partition, overlapping, outcomes, jobs)
     # 4. Each compiled group's cases run fresh, and the partition they came from is kept for the next run.
     for group in built:
         partition.append("\t".join([candidate.fixture.case_name() for candidate in group.entries]))
-    mut outcomes: dict[str, Result[Outcome, str]] = {}
     execute_groups(incan, scratch, built, outcomes, jobs)
     if len(entries) > 0:
         match write(plan, "\n".join(partition) + "\n"):
@@ -102,25 +103,14 @@ def report_refusals(scratch: Path, family: str, refusals: list[str]) -> None:
         Ok(_) => pass
 
 
-def packed_groups(
-    incan: str,
-    scratch: Path,
-    entries: list[Entry],
-    compiled: list[GroupProject],
-    mut notes: list[str],
-    mut partition: list[str],
-    jobs: int,
-) -> list[GroupProject]:
-    """Compile every case of the compiled groups again as one group, which is what a stable partition is."""
-    mut successful: set[str] = set()
-    for group in compiled:
-        for candidate in group.entries:
-            successful.add(candidate.fixture.case_name())
-    joined = [candidate for candidate in entries if candidate.fixture.case_name() in successful]
-    println(f"BATCH-PACK {len(joined)} cases from {len(compiled)} compiled groups")
-    mut packed: list[GroupProject] = []
-    compile_groups(incan, scratch, [joined], packed, notes, partition, jobs)
-    return packed
+def isolated_fixtures(fixtures: list[Fixture], groups: list[list[Entry]]) -> list[Fixture]:
+    """Select original commands outside retained shared groups; hinted singletons still execute afresh."""
+    mut shared: set[str] = set()
+    for group in groups:
+        if len(group) > 1:
+            for candidate in group:
+                shared.add(candidate.fixture.case_name())
+    return [fixture for fixture in fixtures if fixture.case_name() not in shared]
 
 
 def load_groups(plan: Path, hint: Option[Path], entries: list[Entry]) -> tuple[list[list[Entry]], bool]:
@@ -136,6 +126,17 @@ def load_groups(plan: Path, hint: Option[Path], entries: list[Entry]) -> tuple[l
                 println(f"BATCH-HINT candidates={len(entries)} partitions={len(hinted)}")
                 return (hinted, true)
     return (groups, false)
+
+
+def initial_groups(entries: list[Entry], jobs: int) -> list[list[Entry]]:
+    """Start discovery with balanced optimistic groups so one refused giant compilation cannot serialize workers."""
+    mut groups: list[list[Entry]] = []
+    width = max([1, (len(entries) + max([1, jobs]) - 1) // max([1, jobs])])
+    mut offset = 0
+    while offset < len(entries):
+        groups.append(entries[offset:min([offset + width, len(entries)])])
+        offset += width
+    return groups
 
 
 def planned_groups(plan: Path, entries: list[Entry]) -> tuple[list[list[Entry]], bool]:
@@ -245,27 +246,30 @@ def compile_groups(
     mut built: list[GroupProject],
     mut notes: list[str],
     mut partition: list[str],
+    separate: list[Fixture],
+    mut outcomes: dict[str, Result[Outcome, str]],
     jobs: int,
 ) -> None:
     """
     Compile each partition wave through the same child budget used for fresh execution and isolated commands.
 
-    1. A group of one case is not shared: it keeps its own command, and its name is retained as a partition of one.
-    2. Every other group is prepared and compiled in one wave of children.
-    3. A group that compiled cleanly is built. One that did not is split in two for the next wave.
+    1. Retain singleton names and prepare each shared compilation.
+    2. Queue retained original commands with the first shared compilation wave.
+    3. Run the wave under one child budget and record original command results once.
+    4. Retain successful builds and refine refused groups for the next wave.
     """
     mut pending = groups
-    while len(pending) > 0:
+    mut isolated = separate
+    while len(pending) > 0 or len(isolated) > 0:
         mut requests: list[Invocation] = []
         mut attempts: list[GroupProject] = []
         mut retry: list[list[Entry]] = []
+        # 1. Singletons keep their own command; every shared group contributes one compilation request.
         for entries in pending:
-            # 1. A group of one case is not shared: it keeps its own command, and its name is a partition of one.
             if len(entries) < 2:
                 if len(entries) == 1:
                     partition.append(entries[0].fixture.case_name())
                 continue
-            # 2. Every other group is prepared, and its build is queued into the one wave of children.
             match prepare_group(scratch, entries):
                 Err(_) => split_group(entries, retry, "combined preparation failed")
                 Ok(group) =>
@@ -273,30 +277,64 @@ def compile_groups(
                     build = Invocation(program=incan, arguments=arguments, project=group.project, selector=None)
                     requests.append(build)
                     attempts.append(group)
-        # 3. A group that compiled cleanly is built, and one that did not is split in two for the next wave.
+        # 2. Retained original commands join the first wave under the same budget.
+        mut names: list[str] = []
+        for fixture in isolated:
+            match isolated_request(incan, scratch, fixture):
+                Err(_) => pass
+                Ok(request) =>
+                    requests.append(request)
+                    names.append(fixture.case_name())
+        isolated = []
+        # 3. Completed originals are recorded now so later execution cannot run them twice.
         results = invoke_many(requests, jobs)
+        for index in range(len(names)):
+            outcomes[names[index]] = results[len(attempts) + index]
+        # 4. Only clean compilations are shared; refusal diagnostics guide another attempt.
         for index in range(len(attempts)):
             group = attempts[index]
             for note in unit_notes(trace_file(group.project)):
                 notes.append(note)
-            refusal = compilation_refusal(results[index])
+            refusal, evidence = compilation_refusal(results[index])
             if refusal == "":
                 built.append(group)
             else:
-                split_group(group.entries, retry, refusal)
+                refine_group(group, retry, refusal, evidence)
         pending = retry
 
 
-def compilation_refusal(result: Result[Outcome, str]) -> str:
-    """Why a combined compilation cannot be shared; empty when it compiled and printed nothing."""
+def compilation_refusal(result: Result[Outcome, str]) -> tuple[str, str]:
+    """The refusal and its diagnostic evidence; an empty refusal means compilation succeeded without output."""
     match result:
-        Err(_) => return "combined compilation refused"
+        Err(_) => return ("combined compilation refused", "")
         Ok(outcome) =>
+            evidence = outcome.stdout + outcome.stderr
             if outcome.code != Some(0):
-                return "combined compilation refused"
+                return ("combined compilation refused", evidence)
             if outcome.stdout != "" or outcome.stderr != "":
-                return "compiler output requires isolated attribution"
-            return ""
+                return ("compiler output requires isolated attribution", evidence)
+            return ("", "")
+
+
+def refine_group(group: GroupProject, mut retry: list[list[Entry]], refusal: str, evidence: str) -> None:
+    """Use diagnostic paths only as partition advice; recompile the remainder and run named cases in isolation."""
+    mut named: list[Entry] = []
+    mut remaining: list[Entry] = []
+    for index in range(len(group.entries)):
+        path = group.project.joinpath("src").joinpath(f"case_{index}").0
+        if path + ".incn" in evidence or path + "/" in evidence:
+            named.append(group.entries[index])
+        else:
+            remaining.append(group.entries[index])
+    if len(named) == 0 or len(remaining) == 0:
+        split_group(group.entries, retry, refusal)
+        return
+    println(
+        f"BATCH-REFINE {len(group.entries)} cases: {len(named)} diagnostic owners isolated; {len(remaining)} retried",
+    )
+    for candidate in named:
+        retry.append([candidate])
+    retry.append(remaining)
 
 
 def prepare_group(scratch: Path, entries: list[Entry]) -> Result[GroupProject, str]:

@@ -61,7 +61,9 @@ pub def retain_runtime_instances(
                 symbol = function_name(module, closed)
                 mut parameters: list[PlanType] = []
                 for parameter in closed.params:
-                    parameters.append(frame_parameter_type(nominals, enums, closed, parameter, intrinsics)?)
+                    parameters.append(frame_parameter_type(
+                        nominals, enums, closed, parameter, intrinsics, external.span.file,
+                    )?)
                 mut called = symbol
                 match runtime_frame_adapter(external, parameters, symbol)?:
                     Some(adapter) =>

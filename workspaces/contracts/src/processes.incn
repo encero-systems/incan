@@ -1,0 +1,116 @@
+"""
+One `incan` invocation: the command line a family's case runs, in the case's project, with what it showed.
+"""
+
+from rust::std::fs import File
+from rust::std::os::unix::process import CommandExt
+from rust::std::process import Child, Command, Stdio
+from rust::std::time import Instant
+from std.fs import Path
+
+
+# A deadline is explicit; zero preserves the original runner's unrestricted invocation duration.
+static timeout_seconds: int = 0
+
+
+pub def set_timeout(seconds: int) -> None:
+    """Set the nonnegative invocation deadline for this runner; zero disables it."""
+    timeout_seconds = seconds
+
+
+pub model Outcome:
+    """What one invocation showed."""
+
+    pub stdout: str
+    pub stderr: str
+    # The exit code; `None` when the process ended without one (a signal).
+    pub code: Option[int]
+
+    def exit_text(self) -> str:
+        """The exit code as a report shows it."""
+        match self.code:
+            Some(code) => return str(code)
+            None => return "none (ended by a signal)"
+
+
+pub def trace_file(project: Path) -> Path:
+    """Where Oven records this project's compiled and reused units and their reasons."""
+    return project.joinpath("target").joinpath("incan").joinpath("oven.trace")
+
+
+pub def clear_trace(project: Path) -> Result[None, str]:
+    """Start one case or shared compilation's trace without erasing notes between its commands."""
+    trace = trace_file(project)
+    if trace.is_file():
+        trace.unlink().map_err((error) => error.message())?
+    return Ok(None)
+
+
+pub def unit_notes(trace: Path) -> list[str]:
+    """The units Oven prepared for this invocation, preserving their reported order and reasons."""
+    if not trace.is_file():
+        return []
+    match trace.read_text("utf-8", "strict"):
+        Err(_) => return []
+        Ok(text) => return [line for line in text.split("\n") if line.startswith("oven: unit ")]
+
+
+pub def launch(incan: str, arguments: list[str], project: Path, selector: Option[str]) -> Result[Child, str]:
+    """Start one child with separate captured streams; the caller owns waiting and collection."""
+    mut command = Command.new(incan)
+    trace = trace_file(project)
+    command.env("OVEN_TRACE", trace.0)
+    command.process_group(0)
+    command.stdin(Stdio.null())
+    command.stdout(File.create(stream_path(project, "stdout").0).map_err((error) => str(error))?)
+    command.stderr(File.create(stream_path(project, "stderr").0).map_err((error) => str(error))?)
+    match selector:
+        Some(value) =>
+            command.env("INCAN_CONTRACT_CASE", value)
+            name = project.name().split("-")[-1]
+            binary = project.joinpath("target").joinpath("incan").joinpath("debug").joinpath("bin").joinpath(name)
+            command.arg0(binary.0)
+        None => pass
+    for argument in arguments:
+        command.arg(argument)
+    command.current_dir(project.0)
+    match command.spawn():
+        Err(error) => return Err(f"cannot start `{incan}`: {error}")
+        Ok(child) => return Ok(child)
+
+
+pub def expired(clock: Instant) -> bool:
+    """Whether one child's configured deadline has elapsed; zero disables deadlines."""
+    return timeout_seconds > 0 and int(clock.elapsed().as_secs()) >= timeout_seconds
+
+
+pub def terminate_group(pid: int) -> Result[None, str]:
+    """Kill only the process group created for this invocation, including its descendants."""
+    mut kill = Command.new("/bin/kill")
+    kill.arg("-KILL").arg("--").arg(f"-{pid}")
+    kill.status().map_err((error) => str(error))?
+    return Ok(None)
+
+
+pub def finish(project: Path, code: Option[int], timed_out: bool) -> Result[Outcome, str]:
+    """Collect strict UTF-8 streams after reaping, preserving a signal and the deadline's partial output."""
+    stdout_result = read_stream(project, "stdout")
+    stderr_result = read_stream(project, "stderr")
+    stdout = stdout_result?
+    mut stderr = stderr_result?
+    if timed_out:
+        stderr += f"\ncontract invocation timed out after {timeout_seconds} seconds\n"
+    return Ok(Outcome(stdout=stdout, stderr=stderr, code=code))
+
+
+def stream_path(project: Path, stream: str) -> Path:
+    """Keep captured bytes outside the fixture's working directory and out of its data namespace."""
+    return project.parent().joinpath(f".{project.name()}-{stream}")
+
+
+def read_stream(project: Path, stream: str) -> Result[str, str]:
+    """Read strict UTF-8 and remove the runner-owned capture file after collection."""
+    path = stream_path(project, stream)
+    value = path.read_text("utf-8", "strict").map_err((error) => error.message())
+    path.unlink().map_err((error) => error.message())?
+    return value

@@ -1,4 +1,4 @@
-# behavior: generic native receivers retain owners, iterator outputs, views and captured callbacks (#2256)
+# behavior: generic native receivers retain owners, iterator outputs, primitive views and callbacks (#2256)
 # expect-stdout:
 #   1
 #   770
@@ -24,6 +24,7 @@ from rust::rand import Rng, thread_rng
 from rust::sha2 import Digest, Sha224
 from rust::sha3 import Shake128
 from rust::sha3::digest import ExtendableOutputReset, Update, XofReader
+from rust::incan_std_core::frozen import FrozenList as RuntimeFrozenList
 from rust::std::cell import Cell
 from rust::std::clone import Clone as NativeClone
 from rust::std::collections import HashSet
@@ -33,6 +34,7 @@ from rust::std::io import Cursor
 from rust::std::mem import size_of_val
 from rust::std::net import Ipv4Addr
 from rust::std::ops import Range
+from rust::std::primitive import str as RustStr
 from rust::std::time import Duration
 from rust::std::vec import Vec
 from rust::xxhash_rust::xxh32 import Xxh32, xxh32
@@ -43,6 +45,7 @@ from rust::incan_std_core::errors import raise_index_error
 from std.derives.copying import Clone
 from std.derives.comparison import Ord
 from std.traits.callable import Callable1
+from std.rust import Static
 
 
 model DecodedValue[T with Clone]:
@@ -241,6 +244,28 @@ def first_set_item(values: &HashSet[int]) -> int:
         None => return 0
 
 
+def clone_parameter[T with NativeClone](value: &T) -> T:
+    """Keep the receiver's type parameter as the explicit native Clone call's result."""
+    return NativeClone.clone(value)
+
+
+def copy_frozen[T with (NativeClone, Static)](value: RuntimeFrozenList[T]) -> list[T]:
+    """Keep a generic borrowed slice's structural element carrier through its inherent copy method."""
+    return value.as_slice().to_vec()
+
+
+def check_primitive_and_parameter_receivers() -> None:
+    """Exercise primitive re-export methods and bound native receivers without changing the observations above."""
+    value = 17
+    assert clone_parameter(value) == 17
+    frozen: RuntimeFrozenList[int] = RuntimeFrozenList.leak([2, 3])
+    assert copy_frozen[int](frozen) == [2, 3]
+    mut pieces: list[str] = []
+    for piece in RustStr.split_whitespace(" one\t two\n"):
+        pieces.append(str(piece))
+    assert pieces == ["one", "two"]
+
+
 def main() -> None:
     """Run each registry-crate observation in the order of the cases it carries."""
     show_extension_traits()
@@ -253,3 +278,4 @@ def main() -> None:
     println(f"{values:?}")
     words = ["z", "a"]
     println(f"{sorted_snapshot[str](words):?}")
+    check_primitive_and_parameter_receivers()

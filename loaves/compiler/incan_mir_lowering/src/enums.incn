@@ -28,14 +28,14 @@ pub def enum_type(mut declarations: list[RustEnumDeclaration], ty: &RustType) ->
             retained_name = str(name)
             mut index = 0
             for declaration in declarations:
-                if declaration.name == retained_name:
+                if declaration.carrier_name() == retained_name:
                     return Some(PlanType.Enum(index, model_symbol(retained_name)))
                 index += 1
         RustType.Generic(base=base, args=arguments) =>
             name = nominal_symbol(str(base), arguments.clone())
             mut index = 0
             for declaration in declarations:
-                if declaration.name == name:
+                if declaration.carrier_name() == name:
                     return Some(PlanType.Enum(index, model_symbol(name)))
                 index += 1
         _ => pass
@@ -80,7 +80,7 @@ pub def unit_variant(
             if variant.canonical == target.variant_canonical and variant.direct_declaration_id == target.variant_declaration_id and len(
                 variant.fields,
             ) == 0:
-                if declaration.name != target.enum_name or variant.name != target.variant_name:
+                if declaration.canonical.declaration_name != target.enum_name or variant.name != target.variant_name:
                     return Err("invalid Body IR fieldless enum spelling")
                 return Ok((owner, slot))
     return Err("unsupported Body IR unretained fieldless enum variant")
@@ -224,7 +224,7 @@ pub def lower_enum_declarations(
         raw_kind, raw_values = value_enum_raw_values(module, declaration)?
         declarations.append(
             EnumDeclaration(
-                name=model_symbol(str(declaration.name)),
+                name=model_symbol(declaration.carrier_name()),
                 public=declaration.public or item != "",
                 variants=variants,
                 derives=derives,

@@ -41,7 +41,7 @@ dev.8 removes generated Rust crates and Cargo artifact coordinates. The library-
 
 One index per compilation records each reachable Loaf's key, artifact directory, manifest, and namespace: `pub::<key>` for ordinary dependencies and compiler-pinned `std.*` roots for standard packages. Every module path selects exactly one entry; types come from its manifest, governed bodies from `.incnbody`, and linkage from its rlib and native closure.
 
-An unchanged native source unit may reuse its canonical dependency footprint under complete source, artifact, and compiler file-generation guards; invalid or unsupported observations require the full index, and checking still runs anew.
+Validated manifest inventories and facts may be retained privately for an exact file generation and compiler; public artifact admission remains authoritative. Canonical lookups load complete manifests on first demand, including every global vocabulary, provider-operation, and native-union contributor; failed demands refuse analysis, and previous source footprints supply no negative lookup facts.
 
 ### Calling into a Loaf
 
@@ -52,6 +52,8 @@ The checked, unambiguous nongeneric callable and nominal names at a package root
 Every public callable's `.incnbody` declaration supplies parameters, default computations, and type parameters for consumer call checking and omitted arguments; the driver verifies calls against rlib metadata. Compiled callables publish declarations only: their implementation dependencies stay in the rlib, while functions with type parameters and open trait defaults retain governed bodies.
 
 Published unions retain checked semantic carriers, public native owners, canonical nominal payload identities, and physical variant order; consumers use that representation for construction, narrowing, and tests, refusing conflicting owners instead of inventing wrappers or import-dependent order.
+
+Source enum carriers retain their checked owner across module and artifact boundaries; equal source names do not merge owners.
 
 Each public model/class with type parameters has one native ADT preserving binders and authored field order; provider and consumer layouts alias its instantiations, with otherwise unused parameters retained by a private, validated zero-sized marker excluded from Debug output, which shows authored fields under the source name.
 

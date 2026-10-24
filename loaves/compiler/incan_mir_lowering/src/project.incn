@@ -1,6 +1,6 @@
 """Shared declaration context for a project whose individual owning modules have been validated."""
 
-from rust::incan_semantics_core::body_ir import BodyIrModule, NominalDeclaration
+from rust::incan_semantics_core::body_ir import BodyIrModule, EnumDeclaration, NominalDeclaration
 from traits import specialize_project_traits
 
 
@@ -40,11 +40,10 @@ pub def project_context(
             if not retains_nominal(context, declaration)?:
                 context.nominal_declarations.push(declaration.clone())
         for index in range(len(module.enum_declarations)):
-            declaration = module.enum_declarations[index].clone()
-            for retained in range(len(context.enum_declarations)):
-                if context.enum_declarations[retained].name == declaration.name:
-                    return Err(f"unsupported Body IR ambiguous project enum carrier {declaration.name}")
-            context.enum_declarations.push(declaration.clone())
+            mut declaration = module.enum_declarations[index].clone()
+            declaration.name = declaration.carrier_name()
+            if not retains_enum(context, declaration)?:
+                context.enum_declarations.push(declaration.clone())
         for index in range(len(module.fieldless_enum_declarations)):
             declaration = module.fieldless_enum_declarations[index].clone()
             context.fieldless_enum_declarations.push(declaration.clone())
@@ -80,4 +79,16 @@ def retains_nominal(context: &BodyIrModule, candidate: &NominalDeclaration) -> R
             return Ok(true)
         if declaration.name == candidate.name:
             return Err(f"unsupported Body IR ambiguous project nominal carrier {candidate.name}")
+    return Ok(false)
+
+
+def retains_enum(context: &BodyIrModule, candidate: &EnumDeclaration) -> Result[bool, str]:
+    """Keep distinct checked enum owners while refusing conflicting records or unqualified carrier collisions."""
+    for declaration in context.enum_declarations:
+        if declaration.canonical == candidate.canonical:
+            if declaration != candidate:
+                return Err(f"unsupported Body IR conflicting project enum records {candidate.name}")
+            return Ok(true)
+        if declaration.carrier_name() == candidate.carrier_name():
+            return Err(f"unsupported Body IR ambiguous project enum carrier {candidate.name}")
     return Ok(false)

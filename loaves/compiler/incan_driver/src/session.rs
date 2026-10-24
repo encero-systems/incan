@@ -26,9 +26,6 @@ use incan_frontend::testing_markers::{TestingMarkerSemantics, testing_marker_sem
 use incan_frontend::typechecker::{TypeCheckInfo, TypeChecker};
 use incan_frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
 
-mod loaf_reach;
-use loaf_reach::NativeLoafReach;
-
 /// The build profile a command reads Loaf artifacts for unless it names another.
 pub const DEFAULT_PROFILE: &str = "debug";
 
@@ -130,8 +127,6 @@ pub struct CompilationSession {
     pub library_imported_vocab: parser::ImportedLibraryVocab,
     pub library_imported_dsl_surfaces: parser::ImportedLibraryDslSurfaces,
     pub contract_model_bundles: Vec<CanonicalModelBundle>,
-    /// An unchanged native unit may reuse its previous canonical lookup footprint, never its checking result.
-    native_loaf_reach: Option<NativeLoafReach>,
 }
 
 impl CompilationSession {
@@ -139,30 +134,13 @@ impl CompilationSession {
     ///
     /// Every Loaf is compiled before its consumer is checked (DD-0005), so a Loaf without an artifact refuses here.
     pub fn new(unit: &UnitDescription) -> CliResult<Self> {
-        Self::open(unit, false, None)
+        Self::open(unit, false)
     }
 
-    /// Open a native program session using prior canonical reachability only while every observed input generation
-    /// and the compiler are unchanged. Source analysis, declaration closure and lowering still run anew.
+    /// Open a native program session with admitted inventories and first-use manifest demand. Source analysis,
+    /// declaration closure and lowering run anew; no previous source footprint supplies negative lookup facts.
     pub fn for_native_program(unit: &UnitDescription) -> CliResult<Self> {
-        Self::open(unit, false, NativeLoafReach::capture(unit))
-    }
-
-    /// Retain dependency demand after native declaration closure, without storing acceptance or execution outcomes.
-    /// Guest desugarers and unsupported input domains keep the full index on every invocation.
-    pub fn retain_native_loaf_reachability(&self) {
-        let Some(reach) = &self.native_loaf_reach else {
-            return;
-        };
-        if !self
-            .vocab_runtime
-            .lock()
-            .map(|runtime| runtime.as_ref().is_none_or(|runtime| !runtime.has_compiled_guests()))
-            .unwrap_or(false)
-        {
-            return;
-        }
-        let _ = reach.retain(&self.unit, self.loaves.requested_keys());
+        Self::open(unit, false)
     }
 
     /// Open a parsing-only session for formatting without preparing native dependencies or checked model bundles.
@@ -171,22 +149,18 @@ impl CompilationSession {
     /// vocabulary; syntax that needs them must refuse at parsing rather than inventing a source-based replacement.
     /// Checking and compilation must use [`Self::new`], which requires every reached artifact.
     pub fn for_formatting(unit: &UnitDescription) -> CliResult<Self> {
-        Self::open(unit, true, None)
+        Self::open(unit, true)
     }
 
     /// Initialize the shared parser context from Loaf artifacts; only formatting may omit absent manifests.
-    fn open(
-        unit: &UnitDescription,
-        formatting: bool,
-        mut native_loaf_reach: Option<NativeLoafReach>,
-    ) -> CliResult<Self> {
+    fn open(unit: &UnitDescription, formatting: bool) -> CliResult<Self> {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::open_session", input = %unit.source.display()).entered();
         let mut entries = Vec::new();
-        let selected = native_loaf_reach.as_mut().and_then(|reach| reach.selected(unit));
-        tracing::debug!(target: "incan::invocation", retained = selected.is_some(), loaves = ?selected, "canonical Loaf reachability");
+        let mut deferred = Vec::new();
         for loaf in &unit.loaves {
             let key = if loaf.standard { &loaf.name } else { &loaf.key };
-            if selected.as_ref().is_some_and(|keys| !keys.contains(key)) {
+            if !formatting {
+                deferred.push((key.clone(), loaf.name.clone(), loaf.dir.clone(), loaf.standard));
                 continue;
             }
             let manifest = loaf.dir.join(format!("{}.{LIBRARY_MANIFEST_EXTENSION}", loaf.name));
@@ -205,13 +179,20 @@ impl CompilationSession {
             .map_err(|error| CliError::failure(error.to_string()))?;
             entries.push(entry);
         }
-        let mut loaves = LoafIndex::new(entries).map_err(|error| CliError::failure(error.to_string()))?;
-        if native_loaf_reach.is_some() {
-            loaves.enable_request_tracking();
+        let loaves = if formatting {
+            LoafIndex::new(entries)
+        } else {
+            LoafIndex::deferred(deferred)
         }
+        .map_err(|error| CliError::failure(error.to_string()))?;
         let loaves = Arc::new(loaves);
         // The implicit prelude also owns the linked string-conversion and entry-initialization contracts.
         let _ = loaves.owner_of(&[stdlib::STDLIB_ROOT.to_owned(), "prelude".to_owned()]);
+        let library_imported_vocab = loaves.imported_vocab();
+        let library_imported_dsl_surfaces = loaves.imported_dsl_surfaces();
+        loaves
+            .validate_demands()
+            .map_err(|error| CliError::failure(error.to_string()))?;
         let contract_model_bundles = if formatting {
             Vec::new()
         } else {
@@ -222,8 +203,8 @@ impl CompilationSession {
             rust_facts_source: None,
             vocab_runtime: Arc::default(),
             source_root: unit.source_root.clone(),
-            library_imported_vocab: loaves.imported_vocab(),
-            library_imported_dsl_surfaces: loaves.imported_dsl_surfaces(),
+            library_imported_vocab,
+            library_imported_dsl_surfaces,
             loaves,
             own_standard_package: standard_package_namespace_policy(&unit.package),
             profile: unit.profile.clone(),
@@ -231,7 +212,6 @@ impl CompilationSession {
             declared_features: unit.declared_features.clone(),
             contract_model_bundles,
             unit: unit.clone(),
-            native_loaf_reach,
         })
     }
 
@@ -263,8 +243,7 @@ impl CompilationSession {
 
     /// Before checking: the facts of the Rust paths `modules` import that neither a Loaf nor an ABI cache holds, from
     /// the session's source. Without a source, an uncovered path keeps no facts and its uses refuse where checked.
-    /// Dynamic extraction opts out of retained Loaf demand: a generic facts source has no complete file-generation
-    /// observation. Explicit ABI caches and manifest facts remain covered by the unit's native observations.
+    /// Manifest inventory determines coverage before the caches and source are consulted.
     pub fn resolve_rust_facts(&mut self, modules: &[ParsedModule]) -> CliResult<()> {
         let Some(source) = self.rust_facts_source.clone() else {
             return Ok(());
@@ -273,10 +252,12 @@ impl CompilationSession {
             .into_iter()
             .filter(|path| self.loaves.rust_abi_item(path).is_none())
             .collect::<BTreeSet<_>>();
+        self.loaves
+            .validate_demands()
+            .map_err(|error| CliError::failure(error.to_string()))?;
         if uncovered.is_empty() {
             return Ok(());
         }
-        self.native_loaf_reach = None;
         let facts = source.facts(&uncovered).map_err(CliError::failure)?;
         Arc::make_mut(&mut self.loaves).add_rust_facts(facts);
         Ok(())

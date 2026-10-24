@@ -1,1 +1,13 @@
 pub from facade import facade_calculate as exported_calculate
+
+
+pub enum Shape:
+    """A facade-owned text payload, distinct from the provider's integer payload."""
+
+    Item(str)
+
+
+pub def label(text: str) -> str:
+    """Construct and match the facade's distinct owner before returning its text."""
+    match Shape.Item(text):
+        Shape.Item(value) => return value

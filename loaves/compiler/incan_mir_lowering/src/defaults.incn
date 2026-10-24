@@ -129,9 +129,8 @@ pub def library_default_arguments(
     it, as for a source method. A retained declaration frame supplies the same passing policy as a source call;
     synthetic native records use their owned ABI contract.
     """
-    match declaration.declaration_frame.as_ref():
-        Some(boxed) =>
-            frame = boxed.as_ref()
+    match declaration.declaration_frame():
+        Some(frame) =>
             if frame.canonical != Some(declaration.canonical.clone()):
                 return Err("invalid Body IR Loaf default frame identity")
             return default_arguments(module, builder, binding, elements, frame, types, span, parameter_offset, false)

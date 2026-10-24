@@ -42,9 +42,12 @@ pub def value_variant(
 
 pub def validate_layout(layout: &EnumDeclaration, declaration: &ValueEnumDeclaration) -> Result[None, str]:
     """Cross-check source order and unit carriers before using native tags to select raw values."""
-    if layout.direct_declaration_id != declaration.direct_declaration_id or layout.name != declaration.name or len(
-        layout.variants,
-    ) != len(declaration.variants):
+    if (
+        layout.canonical != declaration.canonical
+        or layout.direct_declaration_id != declaration.direct_declaration_id
+        or layout.canonical.declaration_name != declaration.name
+        or len(layout.variants) != len(declaration.variants)
+    ):
         return Err("invalid Body IR value enum native layout")
     for slot in range(len(layout.variants)):
         native = layout.variants[slot]

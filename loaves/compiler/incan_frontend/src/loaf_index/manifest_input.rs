@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 
 /// The generation guards used for a digest, including ctime so restored-mtime edits invalidate it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct Generation {
+pub(super) struct Generation {
     device: u64,
     inode: u64,
     size: u64,
@@ -68,7 +68,7 @@ pub(super) fn read(path: &Path) -> io::Result<(String, String)> {
 
 /// Observe the same Unix file-generation fields used by the toolchain's identity proofs.
 #[cfg(unix)]
-fn generation(metadata: &Metadata) -> Option<Generation> {
+pub(super) fn generation(metadata: &Metadata) -> Option<Generation> {
     if !metadata.is_file() {
         return None;
     }
@@ -85,12 +85,12 @@ fn generation(metadata: &Metadata) -> Option<Generation> {
 
 /// Platforms without these generation guards keep the original content-hashing behavior.
 #[cfg(not(unix))]
-fn generation(_metadata: &Metadata) -> Option<Generation> {
+pub(super) fn generation(_metadata: &Metadata) -> Option<Generation> {
     None
 }
 
 /// Use an explicit absolute home, or an installed executable's toolchain home; never write into a build directory.
-fn cache_path(key: &str) -> Option<PathBuf> {
+pub(super) fn cache_path(key: &str) -> Option<PathBuf> {
     let explicit = std::env::var_os("INCAN_HOME")
         .map(PathBuf::from)
         .filter(|path| path.is_absolute());

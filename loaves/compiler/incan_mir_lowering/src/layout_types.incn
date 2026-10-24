@@ -128,6 +128,7 @@ pub def shared_receiver_type(ty: PlanType) -> Result[PlanType, str]:
     match ty:
         PlanType.Tuple(elements) => return Ok(PlanType.TupleRef(elements))
         PlanType.StrRef => return Ok(PlanType.ScalarRef([ty]))
+        PlanType.FrozenCollection(name, elements) => return Ok(PlanType.FrozenCollectionRef(name, elements))
         PlanType.NativeArray(elements, length) => return Ok(PlanType.NativeArrayRef(elements, length))
         PlanType.NativeSlice(elements) => return Ok(PlanType.SliceRef(elements))
         PlanType.FunctionPointer(_signature) => return Ok(PlanType.ScalarRef([ty]))
@@ -141,7 +142,7 @@ pub def shared_receiver_type(ty: PlanType) -> Result[PlanType, str]:
         return Ok(collection)
     if ty in [PlanType.Int, PlanType.Float, PlanType.I8, PlanType.I16, PlanType.I32, PlanType.I128, PlanType.ISize, PlanType.USize, PlanType.U8, PlanType.U16, PlanType.U32, PlanType.U64, PlanType.U128, PlanType.F32, PlanType.F64, PlanType.Bool, PlanType.Decimal, PlanType.FrozenStr, PlanType.FrozenBytes]:
         return Ok(PlanType.ScalarRef([ty]))
-    return Err("unsupported Body IR shared SDK receiver carrier")
+    return Err(f"unsupported Body IR shared SDK receiver carrier {ty:?}")
 
 
 pub def mutable_receiver_type(ty: PlanType) -> Result[PlanType, str]:
