@@ -15,6 +15,8 @@ pub model GraphUnit:
     pub root: Path
     pub package: str = ""
     pub version: str = ""
+    # Only source-backed exports observe current authored bytes; published Loaves remain bound to their artifact.
+    pub source_root: str = ""
 
 
 pub def unchecked_marker(graph: Path) -> Path:
@@ -86,7 +88,7 @@ pub def read_graph(unit: GraphUnit, driver: str, group: str) -> Result[str, str]
     return output_text(result.stdout)
 
 
-def output_text(content: bytes) -> Result[str, str]:
+pub def output_text(content: bytes) -> Result[str, str]:
     """Graph query output is a UTF-8 protocol; invalid bytes refuse instead of silently replacing characters."""
     match RustString.from_utf8(content):
         Ok(value) => return Ok(str(value))

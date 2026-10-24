@@ -1,0 +1,127 @@
+"""MCP protocol and graph parity expectations carried by the graph relationship cases."""
+
+from rust::std::fs import File
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from std.fs import Path
+from std.json import JsonValue, parse
+
+
+pub def check_mcp(incan: str, project: Path) -> Result[None, str]:
+    """
+    Require MCP graph parity and continued serving after malformed or refused requests.
+
+    1. Send initialization, tool and resource requests to the real server.
+    2. Collect replies by request identity.
+    3. Compare graph results, resources and protocol errors.
+    """
+    # 1. The real server receives both valid requests and explicit protocol refusals.
+    messages = [
+        request(1, "initialize", JsonValue.object({
+            "protocolVersion": JsonValue.string("2025-11-25"), "capabilities": JsonValue.object({}),
+            "clientInfo": JsonValue.object({
+                "name": JsonValue.string("graph-contract"), "version": JsonValue.string("1"),
+            }),
+        })),
+        JsonValue.object({"jsonrpc": JsonValue.string("2.0"), "method": JsonValue.string("notifications/initialized")}),
+        request(2, "tools/list", JsonValue.object({})),
+        call(3, "graph_summary", JsonValue.object({})),
+        call(4, "context_for_task", JsonValue.object({
+            "task": JsonValue.string("helper"), "budget": JsonValue.int(4096),
+        })),
+        call(5, "graph_query", JsonValue.object({
+            "kind": JsonValue.string("defs"), "term": JsonValue.string("helper"),
+        })),
+        request(6, "missing/method", JsonValue.object({})),
+        call(7, "missing_tool", JsonValue.object({})),
+        call(8, "context_for_task", JsonValue.object({
+            "task": JsonValue.string("helper"), "budget": JsonValue.string("invalid"),
+        })),
+        request(9, "resources/list", JsonValue.object({})),
+        request(10, "resources/read", JsonValue.object({"uri": JsonValue.string("incan://graph/summary")}))
+    ]
+    protocol = project.joinpath(".mcp-requests")
+    data = "\n".join([item.to_json().map_err((error) => error.message())? for item in messages]) + "\n{\n"
+    protocol.write_text(data, "utf-8", "strict", None).map_err((error) => error.message())?
+    mut command = Command.new(incan)
+    command.arg("mcp").arg(".").current_dir(project.0)
+    command.stdin(File.open(protocol.0).map_err((error) => str(error))?)
+    output = command.output().map_err((error) => str(error))?
+    protocol.unlink().map_err((error) => error.message())?
+    if not output.status.success():
+        return Err("MCP server failed instead of serving graph requests")
+    mut stdout = ""
+    match RustString.from_utf8(output.stdout):
+        Ok(value) => stdout = str(value)
+        Err(_) => return Err("MCP output is not UTF-8")
+    # 2. Reply identities distinguish parse errors from requests and notifications.
+    mut replies: Dict[int, JsonValue] = {}
+    mut parse_errors = 0
+    for line in stdout.split("\n"):
+        if line == "":
+            continue
+        reply = parse(line).map_err((error) => error.message())?
+        identifier = reply.require("id").map_err((error) => error.message())?
+        if identifier.is_null():
+            parse_errors += 1
+            continue
+        replies[identifier.expect_int().map_err((error) => error.message())?] = reply
+    # 3. Graph facts, resources and refusals match their public contracts.
+    if len(replies) != 10 or parse_errors != 1:
+        return Err("MCP dropped requests, replied to a notification, or contaminated stdout")
+    if text(result(replies[1])?, "protocolVersion") != "2025-11-25":
+        return Err("MCP did not negotiate its documented protocol revision")
+    if "context_for_task" not in result(replies[2])?.to_json().map_err((error) => error.message())?:
+        return Err("MCP did not publish its context tool schema")
+    if (
+        "snapshot_id" not in content(replies[3])?
+        or "helper" not in content(replies[4])?
+        or "helper" not in content(replies[5])?
+    ):
+        return Err("MCP graph tools differ from the public graph facts")
+    for identifier, code in [(6, -32601), (7, -32602)]:
+        error = replies[identifier].require("error").map_err((error) => error.message())?
+        value = error.require("code").map_err((error) => error.message())?
+        if value.expect_int().map_err((error) => error.message())? != code:
+            return Err("MCP used the wrong protocol error code")
+    refused = result(replies[8])?.require("isError").map_err((error) => error.message())?
+    if not refused.expect_bool().map_err((error) => error.message())?:
+        return Err("MCP accepted an invalid context budget")
+    resources = result(replies[9])?.to_json().map_err((error) => error.message())?
+    summary = result(replies[10])?.to_json().map_err((error) => error.message())?
+    if "incan://graph/snapshot" not in resources or "snapshot_id" not in summary:
+        return Err("MCP orientation resources are missing current snapshot facts")
+    return Ok(None)
+
+
+def request(identifier: int, method: str, params: JsonValue) -> JsonValue:
+    """Construct a JSON-RPC request without textual escaping conventions in fixture programs."""
+    return JsonValue.object({
+        "jsonrpc": JsonValue.string("2.0"), "id": JsonValue.int(identifier),
+        "method": JsonValue.string(method), "params": params,
+    })
+
+
+def call(identifier: int, name: str, arguments: JsonValue) -> JsonValue:
+    """Construct a standard MCP tool invocation."""
+    return request(identifier, "tools/call", JsonValue.object({"name": JsonValue.string(name), "arguments": arguments}))
+
+
+def result(reply: JsonValue) -> Result[JsonValue, str]:
+    """Require a successful protocol result; execution failures remain inside that result."""
+    return reply.require("result").map_err((error) => error.message())
+
+
+def content(reply: JsonValue) -> Result[str, str]:
+    """Read one text tool result, preserving the graph/context format as returned by the server."""
+    value = result(reply)?.require("content").map_err((error) => error.message())?
+    items = value.expect_array().map_err((error) => error.message())?
+    payload = items[0].require("text").map_err((error) => error.message())?
+    return payload.expect_str().map_err((error) => error.message())
+
+
+def text(value: JsonValue, key: str) -> str:
+    """Read an optional protocol string for a focused contract comparison."""
+    match value.get(key):
+        Some(item) => return item.as_str().unwrap_or("")
+        None => return ""

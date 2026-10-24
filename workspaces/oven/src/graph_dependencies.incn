@@ -425,5 +425,8 @@ def checked_units(
         path = inspect_incan(source, toolchain, natives, interfaces, facet.features, false, loaves)?
         if not is_unchecked(path):
             interfaces[package] = interface_directory(path)
-        paths.append(GraphUnit(path=path, root=Path(facet.project), package=package, version=declared.version))
+        paths.append(GraphUnit(
+            path=path, root=Path(facet.project), package=package,
+            version=declared.version, source_root=facet.project,
+        ))
     return Ok((paths, interfaces))

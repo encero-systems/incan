@@ -59,6 +59,7 @@ use incan_lang::lang::types::collections;
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SymbolOrigin};
 
 mod analysis;
+mod graph_navigation;
 mod loaves;
 mod rust_hover;
 
@@ -70,6 +71,8 @@ pub struct DocumentState {
     pub source: String,
     pub ast: Option<Program>,
     pub version: i32,
+    /// Exporter-owned graph records for this live analysis; invalidated before dependent buffers change.
+    graph_navigation: Option<graph_navigation::GraphSnapshot>,
     /// Canonical source identities produced by the same typecheck as this document state.
     ///
     /// Navigation consumers fail closed when a reference has no recorded identity; they never recover a target from
@@ -2149,129 +2152,6 @@ fn checked_identity_hover(source: &str, occurrence: &CheckedIdentityOccurrence) 
     }
 }
 
-/// Borrowed document inputs used by identity-based reference collection.
-struct CheckedIdentityDocument<'a> {
-    uri: &'a Url,
-    source: &'a str,
-    ast: &'a Program,
-    snapshot: &'a CheckedIdentitySnapshot,
-}
-
-/// Collect all open-document occurrences of one canonical identity.
-fn checked_reference_locations<'a>(
-    identity: &CanonicalSymbolId,
-    include_declaration: bool,
-    documents: impl IntoIterator<Item = CheckedIdentityDocument<'a>>,
-    declaration_sources: &RelatedDeclarationSources,
-) -> Vec<Location> {
-    let mut locations = Vec::new();
-    let mut seen = HashSet::new();
-
-    if include_declaration && let Some(location) = definition_location_for_identity(identity, declaration_sources) {
-        push_unique_location(&mut locations, &mut seen, location);
-    }
-
-    for document in documents {
-        for ((start, end), candidate) in &document.snapshot.type_info.references.resolved_identities {
-            if candidate == identity
-                && let Some(span) = checked_reference_token_span(document.source, Span::new(*start, *end), candidate)
-                && let Some(location) = checked_source_location(document.uri, document.source, span)
-            {
-                push_unique_location(&mut locations, &mut seen, location);
-            }
-        }
-
-        for ((start, end), bindings) in &document.snapshot.type_info.declarations.hir_bindings_by_span {
-            let declaration_span = Span::new(*start, *end);
-            for binding in bindings {
-                if binding.canonical.as_ref() != Some(identity)
-                    || canonical_declaration_is_in_document(identity, document.uri, declaration_span, document.snapshot)
-                {
-                    continue;
-                }
-                if let Some(span) = checked_declaration_binding_span(
-                    document.ast,
-                    document.source,
-                    declaration_span,
-                    &binding.local_name,
-                ) && let Some(location) = checked_source_location(document.uri, document.source, span)
-                {
-                    push_unique_location(&mut locations, &mut seen, location);
-                }
-            }
-        }
-
-        for ((start, end, name), candidate) in &document.snapshot.type_info.references.resolved_write_identities {
-            if candidate != identity {
-                continue;
-            }
-            let statement_span = Span::new(*start, *end);
-            if canonical_declaration_is_in_document(identity, document.uri, statement_span, document.snapshot) {
-                continue;
-            }
-            if let Some(span) = first_identifier_span_named(document.source, statement_span, name)
-                && let Some(location) = checked_source_location(document.uri, document.source, span)
-            {
-                push_unique_location(&mut locations, &mut seen, location);
-            }
-        }
-    }
-
-    locations.sort_by(|left, right| {
-        left.uri
-            .as_str()
-            .cmp(right.uri.as_str())
-            .then(left.range.start.line.cmp(&right.range.start.line))
-            .then(left.range.start.character.cmp(&right.range.start.character))
-            .then(left.range.end.line.cmp(&right.range.end.line))
-            .then(left.range.end.character.cmp(&right.range.end.character))
-    });
-    locations
-}
-
-/// Return whether this document contains the exact declaration named by a canonical identity.
-fn canonical_declaration_is_in_document(
-    identity: &CanonicalSymbolId,
-    document_uri: &Url,
-    enclosing_span: Span,
-    snapshot: &CheckedIdentitySnapshot,
-) -> bool {
-    snapshot
-        .declaration_sources
-        .get(&identity.origin)
-        .is_some_and(|source| &source.uri == document_uri)
-        && source_span(identity.declaration_span) == enclosing_span
-}
-
-/// Build an LSP location only when the checked source span is nonempty and in bounds.
-fn checked_source_location(uri: &Url, source: &str, span: Span) -> Option<Location> {
-    if span.start >= span.end || source.get(span.start..span.end).is_none() {
-        return None;
-    }
-    Some(Location {
-        uri: uri.clone(),
-        range: span_to_range(source, span.start, span.end),
-    })
-}
-
-/// Append an LSP location once, keyed by URI and exact range.
-fn push_unique_location(
-    locations: &mut Vec<Location>,
-    seen: &mut HashSet<(String, u32, u32, u32, u32)>,
-    location: Location,
-) {
-    let key = (
-        location.uri.to_string(),
-        location.range.start.line,
-        location.range.start.character,
-        location.range.end.line,
-        location.range.end.character,
-    );
-    if seen.insert(key) {
-        locations.push(location);
-    }
-}
-
 /// Format the LSP detail string for the contextual `cls` receiver binding.
 fn classmethod_cls_detail(context: &ClassmethodContext) -> String {
     format!(
@@ -4042,6 +3922,7 @@ impl LanguageServer for IncanLanguageServer {
                 definition_provider: Some(OneOf::Left(true)),
                 // Canonical-identity references across open checked documents
                 references_provider: Some(OneOf::Left(true)),
+                call_hierarchy_provider: Some(CallHierarchyServerCapability::Simple(true)),
                 // Document symbols (outline)
                 document_symbol_provider: Some(OneOf::Left(true)),
                 // Completions (basic)
@@ -4150,6 +4031,7 @@ impl LanguageServer for IncanLanguageServer {
 
         // Remove document from cache
         let mut docs = self.documents.write().await;
+        graph_navigation::invalidate(&uri, &mut docs);
         docs.remove(&uri);
 
         // Clear diagnostics
@@ -4551,11 +4433,22 @@ impl LanguageServer for IncanLanguageServer {
             })));
         }
 
-        if let Some(occurrence) = checked_identity_at_offset(uri, ast, &doc.source, &doc.checked_identities, offset)
-            && let Some(location) =
+        if let Some(occurrence) = checked_identity_at_offset(uri, ast, &doc.source, &doc.checked_identities, offset) {
+            let Some(graph) = doc.graph_navigation.as_ref() else {
+                return Ok(None);
+            };
+            if !graph.is_current(&docs) {
+                return Ok(None);
+            }
+            if let Some(location) = graph_navigation::definition(doc, &docs, &occurrence.identity) {
+                return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+            }
+            // Published dependencies without a live declaration record retain their checked manifest locations.
+            if let Some(location) =
                 definition_location_for_identity(&occurrence.identity, &doc.checked_identities.declaration_sources)
-        {
-            return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+            {
+                return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+            }
         }
 
         Ok(None)
@@ -4579,21 +4472,43 @@ impl LanguageServer for IncanLanguageServer {
         else {
             return Ok(None);
         };
-        let document_views = docs.iter().filter_map(|(document_uri, document)| {
-            document.ast.as_ref().map(|document_ast| CheckedIdentityDocument {
-                uri: document_uri,
-                source: &document.source,
-                ast: document_ast,
-                snapshot: &document.checked_identities,
-            })
-        });
-        let locations = checked_reference_locations(
+        Ok(graph_navigation::references(
+            doc,
+            &docs,
             &occurrence.identity,
             params.context.include_declaration,
-            document_views,
-            &doc.checked_identities.declaration_sources,
-        );
-        Ok(Some(locations))
+        ))
+    }
+
+    /// Prepare a checked declaration for graph-backed incoming and outgoing call navigation.
+    async fn prepare_call_hierarchy(
+        &self,
+        params: CallHierarchyPrepareParams,
+    ) -> Result<Option<Vec<CallHierarchyItem>>> {
+        let docs = self.documents.read().await;
+        Ok(graph_navigation::prepare(
+            &params.text_document_position_params.text_document.uri,
+            params.text_document_position_params.position,
+            &docs,
+        ))
+    }
+
+    /// Traverse only incoming calls recorded by the current shared graph export.
+    async fn incoming_calls(
+        &self,
+        params: CallHierarchyIncomingCallsParams,
+    ) -> Result<Option<Vec<CallHierarchyIncomingCall>>> {
+        let docs = self.documents.read().await;
+        Ok(graph_navigation::incoming(&params.item, &docs))
+    }
+
+    /// Traverse only outgoing calls recorded by the current shared graph export.
+    async fn outgoing_calls(
+        &self,
+        params: CallHierarchyOutgoingCallsParams,
+    ) -> Result<Option<Vec<CallHierarchyOutgoingCall>>> {
+        let docs = self.documents.read().await;
+        Ok(graph_navigation::outgoing(&params.item, &docs))
     }
 
     /// Provide context-aware completions for decorators, imports, type arguments, symbols, and receiver bindings.

@@ -1,0 +1,86 @@
+"""Consumer keys project compiler-proven identities; content and compilation provenance remain separate."""
+
+from std.json import JsonValue
+from graph_queries import nested, text
+from unit_freshness import fingerprint
+
+
+pub def keyed(record: JsonValue, package: str) -> Result[JsonValue, str]:
+    """Key a proved declaration within its logical package; dependency keys are joined after all units are read."""
+    mut fields = record.expect_object().map_err((error) => error.message())?
+    stable = nested(record, "stable_identity")
+    proved = not stable.is_null() and not nested(stable, "signature").is_null()
+    if text(record, "record") == "declaration" and package != "" and proved:
+        logical = stable.to_json().map_err((error) => error.message())?
+        fields["stable_key"] = JsonValue.string(f"symbol:{fingerprint([package, logical])?}")
+    return Ok(JsonValue.object(fields))
+
+
+pub def link_keys(records: list[JsonValue]) -> Result[list[JsonValue], str]:
+    """Join compiler-recorded targets to package-scoped keys; an ambiguous or absent identity never acquires a key."""
+    mut index = KeyIndex()
+    for record in records:
+        index.add(record)?
+    mut result: list[JsonValue] = []
+    for record in records:
+        result.append(index.linked(record)?)
+    return Ok(result)
+
+
+class KeyIndex:
+    """Borrow one completed join index across records instead of copying its tables for each reference."""
+
+    by_id: Dict[str, str] = {}
+    by_identity: Dict[str, str] = {}
+
+    def add(mut self, record: JsonValue) -> Result[None, str]:
+        """Index only signature-bearing declaration keys; repeated logical identities become explicitly ambiguous."""
+        if text(record, "record") != "declaration" or text(record, "stable_key") == "":
+            return Ok(None)
+        key = text(record, "stable_key")
+        self.by_id[text(record, "id")] = key
+        logical = nested(record, "stable_identity").to_json().map_err((error) => error.message())?
+        if logical in self.by_identity and self.by_identity[logical] != key:
+            self.by_identity[logical] = ""
+        else:
+            self.by_identity[logical] = key
+        return Ok(None)
+
+    def linked(self, record: JsonValue) -> Result[JsonValue, str]:
+        """Propagate keys through exact links or unique identities, preserving malformed records as a refusal."""
+        mut fields = record.expect_object().map_err((error) => error.message())?
+        if text(record, "record") != "declaration":
+            mut key = ""
+            for field in ["target_id", "declaration_id"]:
+                if text(record, field) in self.by_id:
+                    key = self.by_id[text(record, field)]
+            if text(record, "record") == "export" and text(record, "source_id") in self.by_id:
+                key = self.by_id[text(record, "source_id")]
+            if key == "":
+                logical = nested(record, "stable_identity").to_json().map_err((error) => error.message())?
+                key = self.by_identity.get(logical).unwrap_or("")
+            if key != "":
+                fields["stable_key"] = JsonValue.string(key)
+        if let Some(bindings) = record.get("bindings"):
+            mut items: list[JsonValue] = []
+            for binding in bindings.expect_array().map_err((error) => error.message())?:
+                items.append(self.linked(binding)?)
+            fields["bindings"] = JsonValue.array(items)
+        return Ok(JsonValue.object(fields))
+
+
+pub def declaration_digests(records: list[JsonValue]) -> Result[JsonValue, str]:
+    """Index meanings by durable declaration key. Missing digests remain null and never authorize reuse."""
+    mut digests: Dict[str, JsonValue] = {}
+    for record in records:
+        key = text(record, "stable_key")
+        if text(record, "record") != "declaration" or key == "":
+            continue
+        value = nested(record, "semantic_digest")
+        if key in digests:
+            before = digests[key].to_json().map_err((error) => error.message())?
+            after = value.to_json().map_err((error) => error.message())?
+            if before != after:
+                return Err(f"conflicting declaration meanings for {key}")
+        digests[key] = value
+    return Ok(JsonValue.object(digests))

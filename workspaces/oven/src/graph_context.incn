@@ -1,0 +1,229 @@
+"""Deterministic task retrieval over exported records, with conservative token accounting."""
+
+from std.json import JsonValue
+from graph_queries import display, identity, nested, text
+from unit_freshness import fingerprint
+
+
+pub def tokens(value: str) -> int:
+    """Bound tokens by UTF-8 bytes, avoiding an unversioned or model-specific tokenizer."""
+    return len(value.encode("utf-8"))
+
+
+def keywords(task: str) -> list[str]:
+    """Keep identifier components and task words without assigning language semantics to source text."""
+    mut result: list[str] = []
+    mut word = ""
+    for character in task.lower():
+        if character in "abcdefghijklmnopqrstuvwxyz0123456789_":
+            word += character
+        elif word != "":
+            if word not in result:
+                result.append(word)
+            word = ""
+    if word != "" and word not in result:
+        result.append(word)
+    return result
+
+
+def anchor(record: JsonValue, root: str) -> str:
+    """Retain source location separately from logical identity and use repository-relative display where possible."""
+    mut span = nested(record, "span")
+    if span.is_null():
+        span = nested(record, "primary_span")
+    mut file = text(span, "file")
+    if file.startswith(f"{root}/"):
+        file = file[len(root) + 1:]
+    if file == "":
+        return "<unknown>:0"
+    return f"{file}:{nested(span, 'start_line').to_json().unwrap_or('0')}"
+
+
+def endpoints(record: JsonValue) -> tuple[str, str, str]:
+    """Read relationship endpoints verbatim; unresolved targets never become guessed edges."""
+    kind = text(record, "record")
+    if kind == "containment":
+        return (text(record, "parent_id"), text(record, "child_id"), "contains")
+    if kind in ["call", "reference"]:
+        return (text(record, "owner_id"), text(record, "target_id"), kind + "s")
+    if kind == "export":
+        return (text(record, "module_id"), text(record, "source_id"), "exports")
+    if kind == "import":
+        return (text(record, "module_id"), text(record, "id"), "imports")
+    return ("", "", "")
+
+
+def candidates(
+    records: list[JsonValue], task: str, preferences: Dict[str, int]
+) -> tuple[Dict[str, JsonValue], Dict[str, int], Dict[str, str]]:
+    """Seed by task terms, then propagate two bounded waves over proved graph links with edge-aware weights."""
+    words = keywords(task)
+    mut nodes: Dict[str, JsonValue] = {}
+    mut scores: Dict[str, int] = {}
+    mut reasons: Dict[str, str] = {}
+    for record in records:
+        identifier = text(record, "id")
+        if not eligible(record):
+            continue
+        nodes[identifier] = record
+        label = display(record)
+        haystack = searchable(record, label)
+        mut score = 0
+        if task in [identifier, identity(record), label, text(record, "name")]:
+            score = 4000
+        for word in words:
+            if word in haystack:
+                score += 100
+        feedback = preferences.get(identity(record)).unwrap_or(0)
+        score += feedback
+        if score == 0:
+            continue
+        if text(record, "provenance") == "checked":
+            score += 20
+        if text(record, "visibility") == "public":
+            score += 10
+        scores[identifier] = min([score, 100000])
+        reasons[identifier] = "task match"
+        if feedback > 0:
+            reasons[identifier] = "session feedback for this task and snapshot"
+    for wave in range(2):
+        before = scores
+        mut next_scores: Dict[str, int] = {key: scores[key] for key in scores.keys()}
+        for record in records:
+            source, target, kind = endpoints(record)
+            if source not in nodes or target not in nodes:
+                continue
+            mut divisor = 4
+            if kind in ["calls", "references"]:
+                divisor = 2
+            for left, right in [(source, target), (target, source)]:
+                if left not in before:
+                    continue
+                score = before[left] // divisor
+                if score > next_scores.get(right).unwrap_or(0):
+                    next_scores[right] = score
+                    reasons[right] = f"{kind} neighbor of {display(nodes[left])}"
+        scores = next_scores
+    return (nodes, scores, reasons)
+
+
+def node_details(record: JsonValue) -> JsonValue:
+    """Keep diagnostic messages and raw process evidence when their records fit the selected context budget."""
+    kind = text(record, "record")
+    if kind == "diagnostic":
+        return JsonValue.object({key: nested(record, key) for key in ["code", "message"]})
+    if kind == "risk_signal":
+        keys = ["source", "head", "churn", "ownership", "co_changes", "evidence", "controls"]
+        return JsonValue.object({key: nested(record, key) for key in keys})
+    return JsonValue.null()
+
+
+pub def pack(
+    records: list[JsonValue], task: str, budget: int, root: str, format: str, preferences: Dict[str, int] = {}
+) -> Result[str, str]:
+    """Fit a UTF-8 token upper bound: 1. Rank current facts. 2. Select whole nodes. 3. Fit directed edges."""
+    # 1. Rank facts from the selected snapshot.
+    snapshot = text(records[0], "snapshot_id")
+    context = fingerprint(["incan.context/1", snapshot, task, str(budget)])?
+    degraded = nested(records[0], "degraded")
+    unresolved = len([
+        record for record in records if text(record, "record") == "call" and text(record, "target_id") == ""
+    ])
+    nodes, scores, reasons = candidates(records, task, preferences)
+    mut ranked: Dict[str, str] = {}
+    for identifier in scores.keys():
+        score = scores[identifier]
+        if score > 0:
+            ranked[f"{10000000 - score} {identity(nodes[identifier])} {identifier}"] = identifier
+    mut chosen: list[JsonValue] = []
+    mut local: Dict[str, str] = {}
+    # 2. Select whole nodes, reserving room for relationships that explain their inclusion.
+    node_budget = budget * 3 // 4
+    if tokens(render(chosen, snapshot, context, degraded, unresolved, budget, format)?) + 1 > budget:
+        return Err("--budget is too small for the context header")
+    for key in sorted([item for item in ranked.keys()]):
+        identifier = ranked[key]
+        node = nodes[identifier]
+        name = f"n{len(local)}"
+        item = JsonValue.object({
+            "record": JsonValue.string("node"), "local_id": JsonValue.string(name),
+            "id": JsonValue.string(identifier), "stable_key": JsonValue.string(identity(node)),
+            "kind": JsonValue.string(text(node, "record")), "label": JsonValue.string(display(node)),
+            "anchor": JsonValue.string(anchor(node, root)), "signature": nested(node, "signature"),
+            "provenance": nested(node, "provenance"), "degraded": nested(node, "degraded"),
+            "score": JsonValue.int(scores[identifier]), "reason": JsonValue.string(reasons[identifier]),
+            "details": node_details(node)
+        })
+        if tokens(render(chosen + [item], snapshot, context, degraded, unresolved, budget, format)?) + 1 <= node_budget:
+            chosen.append(item)
+            local[identifier] = name
+    mut edges: Dict[str, JsonValue] = {}
+    # 3. Fit directed edges between selected nodes.
+    for record in records:
+        source, target, kind = endpoints(record)
+        if source not in local or target not in local:
+            continue
+        edge = JsonValue.object({
+            "record": JsonValue.string("edge"), "source": JsonValue.string(local[source]),
+            "target": JsonValue.string(local[target]), "kind": JsonValue.string(kind),
+            "provenance": nested(record, "provenance"), "degraded": nested(record, "degraded"),
+            "anchor": JsonValue.string(anchor(record, root))
+        })
+        edges[edge.to_json().map_err((error) => error.message())?] = edge
+    for key in sorted([item for item in edges.keys()]):
+        size = tokens(render(chosen + [edges[key]], snapshot, context, degraded, unresolved, budget, format)?) + 1
+        if size <= budget:
+            chosen.append(edges[key])
+    return render(chosen, snapshot, context, degraded, unresolved, budget, format)
+
+
+def render(
+    items: list[JsonValue], snapshot: str, context: str, degraded: JsonValue,
+    unresolved: int, budget: int, format: str
+) -> Result[str, str]:
+    """Serialize one context contract in compact, JSON or JSONL without repeating fully qualified edge endpoints."""
+    selected = JsonValue.array(items).to_json().map_err((error) => error.message())?
+    identifier = f"context:{fingerprint([context, selected])?}"
+    header = JsonValue.object({
+        "record": JsonValue.string("context"), "schema": JsonValue.string("incan.context/1"),
+        "snapshot_id": JsonValue.string(snapshot), "context_id": JsonValue.string(identifier),
+        "degraded": degraded, "unresolved_calls": JsonValue.int(unresolved), "budget": JsonValue.int(budget),
+        "token_accounting": JsonValue.string("utf8_bytes_upper_bound")
+    })
+    if format == "json":
+        return JsonValue.array([header] + items).to_json().map_err((error) => error.message())
+    if format == "jsonl":
+        return Ok("\n".join([item.to_json().map_err((error) => error.message())? for item in [header] + items]))
+    status = degraded.to_json().unwrap_or("null")
+    mut lines = [
+        f"incan.context/1 {snapshot} {identifier} degraded={status} "
+        + f"unresolved_calls={unresolved} budget={budget} tokens<=utf8_bytes"
+    ]
+    for item in items:
+        trust = f"{text(item, 'provenance')} degraded={nested(item, 'degraded').to_json().unwrap_or('null')}"
+        where = nested(item, "anchor").to_json().map_err((error) => error.message())?
+        if text(item, "record") == "edge":
+            lines.append(f"{text(item, 'source')} -{text(item, 'kind')}-> {text(item, 'target')} [{trust}] {where}")
+        else:
+            label = nested(item, "label").to_json().map_err((error) => error.message())?
+            signature = nested(item, "signature").to_json().map_err((error) => error.message())?
+            reason = nested(item, "reason").to_json().map_err((error) => error.message())?
+            mut detail = ""
+            if not nested(item, "details").is_null():
+                detail = f" details={nested(item, 'details').to_json().map_err((error) => error.message())?}"
+            local_name = text(item, "local_id")
+            kind = text(item, "kind")
+            lines.append(f"{local_name} {kind} {label} [{trust}] {where} {signature} why={reason}{detail}")
+    return Ok("\n".join(lines))
+
+
+def eligible(record: JsonValue) -> bool:
+    """Only meaningful graph nodes participate; source locations and relationships are separate records."""
+    kinds = ["declaration", "module", "import", "diagnostic", "namespace", "risk_signal"]
+    return text(record, "id") != "" and text(record, "record") in kinds
+
+
+def searchable(record: JsonValue, label: str) -> str:
+    """Rank consumer-visible labels and text without parsing or inventing source relationships."""
+    fields = [label] + [text(record, key) for key in ["path", "signature", "message", "documentation"]]
+    return " ".join(fields).lower()

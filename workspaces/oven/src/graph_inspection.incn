@@ -19,6 +19,10 @@ from graph_dependencies import GraphDependencies, prepare_graph, unit_natives, u
 from graph_incan import inspect_incan
 from graph_loaves import registry_artifacts, registry_graphs, standard_graphs
 from graph_queries import query, query_group, text
+from graph_identity import keyed, link_keys, declaration_digests
+from graph_snapshot import snapshot_identity, snapshot_status
+from graph_context import pack
+from graph_process import process_facts
 from graph_rust import inspect_rust
 from json_fields import required_items, string_value
 from publication import publish
@@ -30,7 +34,7 @@ from unit_freshness import artifact_identity, fingerprint
 
 const QUERY_KINDS: FrozenList[str] = ["defs", "refs", "callers", "callees", "imports"]
 # The version of the key an answer is cached under; changing it discards every cached answer.
-const PRESENTATION_DOMAIN: str = "incan.codegraph.presentation/7"
+const PRESENTATION_DOMAIN: str = "incan.codegraph.presentation/16"
 
 
 pub model GraphOptions:
@@ -43,6 +47,10 @@ pub model GraphOptions:
     pub limit: int = 20
     pub strict: bool = false
     pub substitutes: Dict[str, str] = {}
+    pub stale: str = ""
+    pub task: str = ""
+    pub budget: int = 8000
+    pub risk: bool = false
 
 
 def options(arguments: list[str]) -> Result[GraphOptions, str]:
@@ -61,13 +69,17 @@ def options(arguments: list[str]) -> Result[GraphOptions, str]:
     mut index = 1
     while index < len(arguments):
         value = arguments[index]
+        if value == "--risk":
+            result.risk = true
+            index += 1
+            continue
         if value == "--strict":
             result.strict = true
             index += 1
         elif value == "--query":
             read_query(result, arguments, index)?
             index += 3
-        elif value in ["--format", "--limit", "--substitute"]:
+        elif value in ["--format", "--limit", "--substitute", "--stale", "--task", "--budget"]:
             if index + 1 >= len(arguments):
                 return Err(f"{value} needs a value")
             apply_flag(result, value, arguments[index + 1])?
@@ -80,8 +92,12 @@ def options(arguments: list[str]) -> Result[GraphOptions, str]:
     # 3. Nothing is built or cached before the path, the format and the query kind are known to be valid.
     if result.path == "":
         return Err("a PATH is required")
-    if result.format not in ["json", "jsonl"]:
-        return Err("--format is json or jsonl")
+    if result.format not in ["json", "jsonl", "compact"]:
+        return Err("--format is json, jsonl or compact")
+    if result.format == "compact" and result.task == "":
+        return Err("--format compact requires --task")
+    if result.task != "" and (result.query != "" or result.stale != ""):
+        return Err("--task cannot be combined with --query or --stale")
     if result.query != "" and result.query not in QUERY_KINDS:
         return Err(f"unknown graph query `{result.query}`")
     return Ok(result)
@@ -89,8 +105,11 @@ def options(arguments: list[str]) -> Result[GraphOptions, str]:
 
 def usage() -> str:
     """The inspection command's usage."""
-    options_text = "[--format json|jsonl] [--query defs|refs|callers|callees|imports TERM] [--limit N] [--strict]"
-    return f"usage: incan inspect codegraph PATH {options_text}"
+    return "\n".join([
+        "usage: incan inspect codegraph PATH [--format json|jsonl] [--query KIND TERM] [--limit N] [--strict]",
+        "       incan inspect codegraph PATH --task TASK [--budget N] [--format compact|json|jsonl] [--risk]",
+        "       incan inspect codegraph PATH --stale SNAPSHOT [--strict]",
+    ])
 
 
 def read_query(mut result: GraphOptions, arguments: list[str], index: int) -> Result[None, str]:
@@ -105,11 +124,21 @@ def read_query(mut result: GraphOptions, arguments: list[str], index: int) -> Re
 
 
 def apply_flag(mut result: GraphOptions, flag: str, item: str) -> Result[None, str]:
-    """Apply `--format`, `--limit` or `--substitute` with the value that follows it."""
+    """Apply one value flag, retaining its format, limit, budget, task or snapshot constraints."""
     if flag == "--format":
         result.format = item
     elif flag == "--limit":
         result.limit = limit_of(item)?
+    elif flag == "--task":
+        if item.strip() == "":
+            return Err("--task needs a nonempty task or declaration")
+        result.task = item
+    elif flag == "--budget":
+        result.budget = budget_of(item)?
+    elif flag == "--stale":
+        if not item.startswith("snapshot:"):
+            return Err("--stale needs an exported snapshot: identity")
+        result.stale = item
     else:
         parts = item.split("=")
         if len(parts) != 2 or parts[0] == "" or parts[1] == "":
@@ -131,13 +160,30 @@ def limit_refusal() -> str:
     return "--limit needs a nonnegative integer"
 
 
+def budget_of(item: str) -> Result[int, str]:
+    """Accept the context byte bound only within the public token-budget range."""
+    refusal = "--budget needs an integer"
+    budget = parse(item).map_err((_) => refusal)?.expect_int().map_err((_) => refusal)?
+    if budget < 128 or budget > 1000000:
+        return Err("--budget must be between 128 and 1000000")
+    return Ok(budget)
+
+
 pub def inspect_codegraph(arguments: list[str]) -> Result[i32, str]:
+    """Print a public export or query, leaving an empty query answer silent."""
+    rendered = graph_response(arguments)?
+    if rendered != "":
+        println(rendered)
+    return Ok(0)
+
+
+pub def graph_response(arguments: list[str], preferences: Dict[str, int] = {}) -> Result[str, str]:
     """
     Export JSON/JSONL or answer a compact query, reusing content-addressed unit exports.
 
     1. Read the options and the toolchain.
     2. Select the units to inspect: an Incan source through its checked interfaces, anything else as a Rust project.
-    3. Render the answer for the options and print it.
+    3. Return the rendered answer through the shared inspection boundary.
     """
     # 1. A bad invocation is refused before the toolchain is read or anything is built.
     selected = options(arguments)?
@@ -151,11 +197,8 @@ pub def inspect_codegraph(arguments: list[str]) -> Result[i32, str]:
     else:
         root = owning_project(path, selected.path)?
         paths = inspect_rust(root, "debug", FeatureRequest(), selected.substitutes, toolchain)?
-    # 3. The answer is on standard output, and a query that selects nothing prints nothing.
-    rendered = response(paths, path.0, selected, toolchain)?
-    if rendered != "":
-        println(rendered)
-    return Ok(0)
+    # 3. CLI and service consumers share the same rendered facts and freshness checks.
+    return response(paths, path.0, selected, toolchain, preferences)
 
 
 def entry_source(path: Path) -> Path:
@@ -181,7 +224,9 @@ def owning_project(path: Path, given: str) -> Result[Path, str]:
     return Ok(root)
 
 
-def response(paths: list[GraphUnit], root: str, selected: GraphOptions, toolchain: Toolchain) -> Result[str, str]:
+def response(
+    paths: list[GraphUnit], root: str, selected: GraphOptions, toolchain: Toolchain, preferences: Dict[str, int],
+) -> Result[str, str]:
     """
     Cache presentation by immutable unit graph paths and query arguments; a warm repeat decodes no graph records.
 
@@ -200,22 +245,40 @@ def response(paths: list[GraphUnit], root: str, selected: GraphOptions, toolchai
     for note in notes:
         warn(unchecked_warning(note))
     # 2. The same selection over the same graphs gets its answer from the cache without decoding a record.
+    mut snapshot = snapshot_identity(paths, root, selected.strict)?
+    mut process: list[JsonValue] = []
+    if selected.risk:
+        files = read_records(paths, root, toolchain, "file", selected.strict, len(notes) > 0, snapshot)?
+        process = process_facts(anchor_root(Path(root)), files)?
+        if len(process) > 0:
+            observed = JsonValue.array(process).to_json().map_err((error) => error.message())?
+            snapshot = f"snapshot:{fingerprint([snapshot, observed])?}"
+    if selected.stale != "":
+        return json_text(snapshot_status(selected.stale, snapshot))
     mut owner = Path(root)
     if owner.is_file():
         owner = owner.parent()
-    cached = Path(f"{cache_file(owner, fingerprint(presentation_inputs(paths, root, selected)?)?)?.0}.answer")
+    inputs = presentation_inputs(paths, root, selected, snapshot, preferences)?
+    cached = Path(f"{cache_file(owner, fingerprint(inputs)?)?.0}.answer")
     if cached.is_file():
         return read(cached)
     # 3. Any other answer is rendered once and cached for the next time.
-    rendered = render(paths, root, selected, toolchain, len(notes) > 0)?
+    rendered = render(paths, root, selected, toolchain, len(notes) > 0, snapshot, process, preferences)?
     publish(cached, rendered)?
     return Ok(rendered)
 
 
-def presentation_inputs(paths: list[GraphUnit], root: str, selected: GraphOptions) -> Result[list[str], str]:
+def presentation_inputs(
+    paths: list[GraphUnit], root: str, selected: GraphOptions, snapshot: str, preferences: Dict[str, int],
+) -> Result[list[str], str]:
     """Everything an answer depends on: the options, and each unit's graph with the identity of its file."""
-    mut inputs = [PRESENTATION_DOMAIN, root, selected.format, selected.query, selected.term]
+    mut inputs = [PRESENTATION_DOMAIN, snapshot, root, selected.format, selected.query, selected.term]
     inputs = inputs + [str(selected.limit), str(selected.strict)]
+    inputs = inputs + [selected.task, str(selected.budget)]
+    boost_values = JsonValue.object({
+        key: JsonValue.int(preferences[key]) for key in sorted([key for key in preferences.keys()])
+    })
+    inputs = inputs + [str(selected.risk), json_text(boost_values)?]
     if selected.query == "imports":
         inputs.append("nonempty-import-labels/1")
     for unit in paths:
@@ -229,17 +292,25 @@ def render(
     selected: GraphOptions,
     toolchain: Toolchain,
     degraded: bool,
+    snapshot: str,
+    process: list[JsonValue],
+    preferences: Dict[str, int],
 ) -> Result[str, str]:
     """The answer to a query, at most `limit` hits, or the merged records as one JSON array or one record per line."""
+    if selected.task != "":
+        records = read_records(paths, root, toolchain, "", selected.strict, degraded, snapshot)?
+        return pack(
+            records + process, selected.task, selected.budget, anchor_root(Path(root)).0, selected.format, preferences,
+        )
     if selected.query != "":
         group = query_group(selected.query)
-        records = read_records(paths, root, toolchain, group, selected.strict, degraded)?
+        records = read_records(paths, root, toolchain, group, selected.strict, degraded, snapshot)?
         hits = query(records, selected.query, selected.term, anchor_root(Path(root)).0)
         mut lines = hits[:selected.limit]
         if len(hits) > selected.limit:
             lines.append(f"… {len(hits) - selected.limit} more")
         return Ok("\n".join(lines))
-    records = read_records(paths, root, toolchain, "", selected.strict, degraded)?
+    records = read_records(paths, root, toolchain, "", selected.strict, degraded, snapshot)? + process
     if selected.format == "json":
         return json_text(JsonValue.array(records))
     return Ok("\n".join([json_text(record)? for record in records]))
@@ -292,7 +363,10 @@ def inspect_source(source: Path, toolchain: Toolchain, substitutes: Dict[str, st
     """
     # 1. A source outside any project stands alone, with no dependencies to prepare.
     match project_root_of(source):
-        None => return Ok([GraphUnit(path=inspect_incan(source, toolchain)?, root=source.parent())])
+        None =>
+            parent = source.parent()
+            graph = inspect_incan(source, toolchain)?
+            return Ok([GraphUnit(path=graph, root=parent, source_root=parent.0)])
         Some(root) =>
             # 2. A project's dependencies contribute the graphs they published, and registry Loaves theirs.
             prepared = prepare_graph(root, "debug", FeatureRequest(), substitutes, toolchain)?
@@ -318,7 +392,7 @@ def own_unit_graph(
             natives = unit_natives(facet, prepared.built, prepared.request)?
             loaves = unit_loaves(facet, prepared.interfaces)?
             graph = inspect_incan(source, toolchain, natives, prepared.interfaces, facet.features, false, loaves)?
-            return Ok(GraphUnit(path=graph, root=root))
+            return Ok(GraphUnit(path=graph, root=root, source_root=root.0))
     return Err("inspection selected no source unit")
 
 
@@ -329,6 +403,7 @@ def read_records(
     group: str,
     strict: bool,
     degraded: bool,
+    snapshot: str,
 ) -> Result[list[JsonValue], str]:
     """
     Merge unit documents deterministically, retaining one header and one instance of each identified fact.
@@ -349,12 +424,14 @@ def read_records(
     for unit in paths:
         # 1. Each unit's records are read for the group the query needs, one JSON document to a line.
         document = read_graph(unit, toolchain.driver, group)?
+        mut package_name = unit.package
         for line in document.split("\n"):
             if line.strip() == "":
                 continue
-            record = parse(line).map_err((error) => f"{unit.path.0}: {error.message()}")?
+            mut record = parse(line).map_err((error) => f"{unit.path.0}: {error.message()}")?
             # 2. A header must belong to the unit it was read for; the one kept is the first, or the root unit's.
             if text(record, "record") == "header":
+                package_name = text(record.get("package").unwrap_or(JsonValue.null()), "name")
                 check_identity(unit, record)?
                 if len(header) == 0 or unit.root.0 == root or root.startswith(f"{unit.root.0}/"):
                     header = record.expect_object().map_err((error) => error.message())?
@@ -367,6 +444,7 @@ def read_records(
                     None => pass
                 continue
             # 3. A fact several units report is kept once, under the first that reported it.
+            record = keyed(record, package_name)?
             key = text(record, "id")
             if key != "" and key in seen:
                 continue
@@ -380,6 +458,10 @@ def read_records(
     header["degraded"] = JsonValue.bool(degraded)
     header["languages"] = JsonValue.array([JsonValue.string(name) for name in sorted(languages)])
     header["semantic_contexts"] = JsonValue.array(contexts)
+    header["identity_schema"] = JsonValue.string("incan.graph.identity/1")
+    records = link_keys(records)?
+    header["declaration_digests"] = declaration_digests(records)?
+    header["snapshot_id"] = JsonValue.string(snapshot)
     return Ok([JsonValue.object(header)] + records)
 
 

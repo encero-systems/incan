@@ -138,23 +138,75 @@ pub fn collect_checked_unit_codegraph(
     bodies: &mut [incan_semantics_core::body_ir::BodyIrModule],
 ) -> Vec<CodegraphRecord> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::checked_unit_codegraph", modules = modules.len()).entered();
-    let package = CodegraphPackage {
-        name: Some(unit.package.clone()),
-        version: Some(unit.version.clone()),
-        root_path: Some(path_string(&unit.project_root)),
-    };
-    let mut builder = CodegraphBuilder::new(&unit.source, Some(package), false);
-    builder.semantic_contexts = vec![codegraph_semantic_context(&unit.project_root, session)];
-    builder.set_semantic_snapshots(Cow::Borrowed(analysis.semantic_snapshots()));
+    let mut builder = checked_unit_builder(unit, session, modules, analysis);
     builder.set_lowered_declaration_facts(bodies.iter_mut().flat_map(body_declaration_facts).collect());
-    builder.set_registry_metadata(checked_registry_metadata_by_path(analysis, modules, &unit.package));
-    builder.set_capabilities(checked_capabilities_by_path(analysis, modules));
-    builder.set_c_abi_artifacts(checked_c_abi_by_path(analysis, modules));
-    builder.seed_canonical_target_ids(modules);
     for module in modules {
         builder.collect_parsed_module(module, Vec::new());
     }
     builder.finish()
+}
+
+/// Project editor buffers from their existing checking pass into the same records as persisted inspection. A failed
+/// pass contributes only marked parseable facts and diagnostics; it never retains checked call or reference edges.
+pub fn collect_live_unit_codegraph(
+    session: &CompilationSession,
+    modules: &[ParsedModule],
+    analysis: Result<&CompilationAnalysis, &CliDiagnosticFailure>,
+) -> Vec<CodegraphRecord> {
+    let unit = session.unit();
+    let mut builder = match analysis {
+        Ok(analysis) => {
+            let mut builder = checked_unit_builder(unit, session, modules, analysis);
+            builder.set_lowered_declaration_facts(
+                modules
+                    .iter()
+                    .flat_map(|module| {
+                        analysis
+                            .type_info_for_path(&module.file_path)
+                            .into_iter()
+                            .flat_map(|info| lowered_declaration_facts(module, info, session))
+                    })
+                    .collect(),
+            );
+            builder
+        }
+        Err(failure) => {
+            let mut builder = CodegraphBuilder::new(&unit.source, Some(unit_package(unit)), true);
+            builder.semantic_contexts = vec![codegraph_semantic_context(&unit.project_root, session)];
+            builder.collect_diagnostics(stable_diagnostics(failure));
+            builder
+        }
+    };
+    for module in modules {
+        builder.collect_parsed_module_with_degraded(module, Vec::new(), analysis.is_err());
+    }
+    builder.finish()
+}
+
+/// Configure one graph projection from session-owned checked facts, shared by compilation and live navigation.
+fn checked_unit_builder<'analysis>(
+    unit: &UnitDescription,
+    session: &CompilationSession,
+    modules: &[ParsedModule],
+    analysis: &'analysis CompilationAnalysis,
+) -> CodegraphBuilder<'analysis> {
+    let mut builder = CodegraphBuilder::new(&unit.source, Some(unit_package(unit)), false);
+    builder.semantic_contexts = vec![codegraph_semantic_context(&unit.project_root, session)];
+    builder.set_semantic_snapshots(Cow::Borrowed(analysis.semantic_snapshots()));
+    builder.set_registry_metadata(checked_registry_metadata_by_path(analysis, modules, &unit.package));
+    builder.set_capabilities(checked_capabilities_by_path(analysis, modules));
+    builder.set_c_abi_artifacts(checked_c_abi_by_path(analysis, modules));
+    builder.seed_canonical_target_ids(modules);
+    builder
+}
+
+/// Preserve the unit's declared package identity for every consumer of its graph.
+fn unit_package(unit: &UnitDescription) -> CodegraphPackage {
+    CodegraphPackage {
+        name: Some(unit.package.clone()),
+        version: Some(unit.version.clone()),
+        root_path: Some(path_string(&unit.project_root)),
+    }
 }
 
 /// Export checked facts and, for a library entry, its checked interface from one analysis pass. The interface has
@@ -331,12 +383,12 @@ fn directory_modules_diagnostics_and_info(
                         }
                     }
                     Err(failure) => {
-                        dedup_diagnostics(&mut diagnostics, stable_diagnostics(failure));
+                        dedup_diagnostics(&mut diagnostics, stable_diagnostics(&failure));
                     }
                 }
             }
             Err(failure) => {
-                dedup_diagnostics(&mut diagnostics, stable_diagnostics(failure));
+                dedup_diagnostics(&mut diagnostics, stable_diagnostics(&failure));
             }
         }
     }
@@ -440,7 +492,7 @@ fn typecheck_diagnostics_and_info(
         }),
         Err(failure) => Ok(CheckedCodegraphAnalysis {
             interface: None,
-            diagnostics: stable_diagnostics(failure),
+            diagnostics: stable_diagnostics(&failure),
             semantic_snapshots_by_path: BTreeMap::new(),
             signatures_by_identity: BTreeMap::new(),
             registry_metadata_by_path: BTreeMap::new(),
@@ -511,7 +563,7 @@ fn checked_c_abi_by_path(
 
 /// Convert shared CLI diagnostic failures into the public diagnostic projection used by both `incan check` and
 /// codegraph records.
-fn stable_diagnostics(failure: CliDiagnosticFailure) -> Vec<StableDiagnostic> {
+fn stable_diagnostics(failure: &CliDiagnosticFailure) -> Vec<StableDiagnostic> {
     failure
         .diagnostics
         .iter()
@@ -897,7 +949,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
             self.collect_tolerant_file_with_session(path, session)?;
         }
         if self.diagnostics.len() == before {
-            self.collect_diagnostics(stable_diagnostics(failure));
+            self.collect_diagnostics(stable_diagnostics(&failure));
         }
         Ok(())
     }
@@ -2656,7 +2708,7 @@ fn codegraph_stable_identity_from_semantic(stable: &StableDeclarationId) -> Code
 /// This keeps the span, deliberately. It is the record's provenance — where the declaration sat in the compilation
 /// that produced it — and a consumer reporting a location needs it. What a consumer must not do is key on it across
 /// compilations; [`codegraph_stable_identity`] is what it keys on instead.
-fn codegraph_canonical_identity(identity: &CanonicalSymbolId) -> CodegraphCanonicalSymbolId {
+pub fn codegraph_canonical_identity(identity: &CanonicalSymbolId) -> CodegraphCanonicalSymbolId {
     let origin = match &identity.origin {
         SymbolOrigin::Module(path) => CodegraphSymbolOrigin::Module { path: path.clone() },
         SymbolOrigin::Package { library, module_path } => CodegraphSymbolOrigin::Package {

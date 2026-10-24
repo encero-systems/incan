@@ -1,0 +1,42 @@
+"""Content-addressed graph snapshots, independent of query and presentation options."""
+
+from std.json import JsonValue
+from files import json_text
+from graph_cache import GraphUnit, stamp_file, tree_inputs
+from std.fs import Path
+from observation import file_digest
+from unit_freshness import fingerprint
+
+
+pub def snapshot_identity(units: list[GraphUnit], root: str, strict: bool) -> Result[str, str]:
+    """
+    Hash exact exports and anchor roots, including unchecked notes, in deterministic order.
+
+    Published Loaves identify their published facts; an unbuilt edit to their source does not change that artifact.
+    Source-backed units have already been refreshed against current inputs by the ordinary inspection preparation.
+
+    1. Retain each unit's exported digest and source root.
+    2. Include current source observations for every distinct source root.
+    3. Hash the sorted observations under the snapshot schema.
+    """
+    # 1. Exported artifacts and their anchors identify the represented graph facts.
+    mut parts: list[str] = []
+    mut sources: list[str] = []
+    for unit in units:
+        coordinates = [unit.root.0, unit.package, unit.version, file_digest(stamp_file(unit))?]
+        parts.append(json_text(JsonValue.array([JsonValue.string(item) for item in coordinates]))?)
+        if unit.source_root != "" and unit.source_root not in sources:
+            sources.append(unit.source_root)
+    # 2. Source edits expire a source-backed snapshot even when its graph facts do not change.
+    for source in sorted(sources):
+        parts.append(fingerprint(tree_inputs(Path(source))?)?)
+    # 3. Presentation options never enter the snapshot identity.
+    return Ok(f"snapshot:{fingerprint(['incan.graph.snapshot/1', root, str(strict)] + sorted(parts))?}")
+
+
+pub def snapshot_status(expected: str, current: str) -> JsonValue:
+    """Compare a retained export with current facts without interpreting an unavailable input as fresh."""
+    return JsonValue.object({
+        "record": JsonValue.string("snapshot_status"), "expected": JsonValue.string(expected),
+        "snapshot_id": JsonValue.string(current), "stale": JsonValue.bool(expected != current),
+    })

@@ -13,6 +13,7 @@ std_async = ["incan_frontend/std_async", "incan_driver/std_async"]
 std_decorators = ["incan_frontend/std_decorators", "incan_driver/std_decorators"]
 
 [dependencies]
+incan_codegraph = { loaf = "incan_codegraph", path = "../../kernel/incan_codegraph" }
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
 incan_driver = { default-features = false, loaf = "incan_driver", path = "../../compiler/incan_driver" }
 incan_frontend = { default-features = false, loaf = "incan_frontend", path = "../../compiler/incan_frontend" }

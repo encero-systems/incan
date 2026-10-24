@@ -1,0 +1,151 @@
+"""Optional process observations over local git history; absence never becomes a zero-risk claim."""
+
+from rust::std::process import Command
+from std.fs import Path
+from std.json import JsonValue, parse
+from graph_cache import output_text
+from graph_queries import nested, text
+from unit_freshness import fingerprint
+
+
+model Commit:
+    """Raw numstat observations from one non-merge commit, with author and commit provenance."""
+
+    oid: str
+    author: str
+    changes: Dict[str, list[int]] = {}
+
+
+def git(root: Path, arguments: list[str]) -> str:
+    """Read local history with optional git locks disabled; unavailable history contributes no observations."""
+    mut command = Command.new("git")
+    command.env("GIT_OPTIONAL_LOCKS", "0").arg("-C").arg(root.0).arg("-c").arg("core.quotepath=false")
+    command.arg("-c").arg("color.ui=false").arg("-c").arg("log.showSignature=false")
+    for argument in arguments:
+        command.arg(argument)
+    match command.output():
+        Err(_) => return ""
+        Ok(output) =>
+            if not output.status.success():
+                return ""
+            return output_text(output.stdout).unwrap_or("")
+
+
+def history(document: str) -> Result[list[Commit], str]:
+    """Decode numstat paths conservatively; quoted paths and nonnumeric binary line counts are not invented."""
+    mut commits: list[Commit] = []
+    mut current = Commit(oid="", author="")
+    for line in document.split("\n"):
+        if line.startswith("@"):
+            if current.oid != "":
+                commits.append(current)
+            fields = line[1:].split("\t")
+            current = Commit(oid=fields[0], author="\t".join(fields[1:]))
+            continue
+        fields = line.split("\t")
+        if current.oid == "" or len(fields) != 3 or fields[2].startswith('"'):
+            continue
+        mut added = -1
+        mut removed = -1
+        if fields[0] != "-" and fields[1] != "-":
+            added = line_count(fields[0])?
+            removed = line_count(fields[1])?
+        current.changes[fields[2]] = [added, removed]
+    if current.oid != "":
+        commits.append(current)
+    return Ok(commits)
+
+
+pub def process_facts(root: Path, records: list[JsonValue]) -> Result[list[JsonValue], str]:
+    """Observe at most 100 non-merge commits for represented files, with raw churn, author touches and co-change.
+
+    1. Read local history without optional locks. 2. Select represented repository files. 3. Attach raw evidence.
+    Co-change excludes commits touching more than 256 paths, an explicit bulk-change control. These observations
+    make no defect predictions, and unavailable coverage or git inputs produce no corresponding records.
+    """
+    # 1. Read bounded local history.
+    repository = git(root, ["rev-parse", "--show-toplevel"]).strip()
+    if repository == "":
+        return Ok([])
+    arguments = ["log", "-101", "--no-merges", "--no-renames", "--format=@%H%x09%an <%ae>", "--numstat"]
+    commits = history(git(Path(repository), arguments))?
+    if len(commits) == 0:
+        return Ok([])
+    head = git(Path(repository), ["rev-parse", "HEAD"]).strip()
+    # 2. Select represented repository files.
+    mut files: Dict[str, JsonValue] = {}
+    for record in records:
+        path = text(record, "path")
+        if text(record, "record") == "file" and path.startswith(f"{repository}/"):
+            files[path[len(repository) + 1:]] = record
+    mut facts: list[JsonValue] = []
+    # 3. Attach raw, reproducible evidence.
+    for path in sorted([key for key in files.keys()]):
+        fact = file_observation(path, files[path], commits[:100], len(commits) > 100, head)?
+        if not fact.is_null():
+            facts.append(fact)
+    return Ok(facts)
+
+
+def file_observation(
+    path: str, file: JsonValue, commits: list[Commit], truncated: bool, head: str
+) -> Result[JsonValue, str]:
+    """Attach reproducible measures to a file record, citing every contributing commit and excluded bulk commit."""
+    mut authors: Dict[str, int] = {}
+    mut neighbors: Dict[str, int] = {}
+    mut evidence: list[str] = []
+    mut excluded: list[str] = []
+    mut added = 0
+    mut removed = 0
+    mut binary = 0
+    for commit in commits:
+        if path not in commit.changes:
+            continue
+        evidence.append(commit.oid)
+        authors[commit.author] = authors.get(commit.author).unwrap_or(0) + 1
+        delta = commit.changes[path]
+        if delta[0] < 0:
+            binary += 1
+        else:
+            added += delta[0]
+            removed += delta[1]
+        if len(commit.changes) > 256:
+            excluded.append(commit.oid)
+            continue
+        for other in commit.changes.keys():
+            if other != path:
+                neighbors[other] = neighbors.get(other).unwrap_or(0) + 1
+    if len(evidence) == 0:
+        return Ok(JsonValue.null())
+    identifier = f"risk:{fingerprint([path, head] + evidence)?}"
+    return Ok(JsonValue.object({
+        "record": JsonValue.string("risk_signal"), "schema": JsonValue.string("incan.process-risk/1"),
+        "id": JsonValue.string(identifier),
+        "language": nested(file, "language"),
+        "target_id": JsonValue.string(text(file, "id")), "path": JsonValue.string(path), "name": JsonValue.string(path),
+        "provenance": JsonValue.string("process_observed"), "degraded": JsonValue.bool(false),
+        "source": JsonValue.string("git"), "head": JsonValue.string(head),
+        "sample_commits": JsonValue.int(len(commits)), "history_truncated": JsonValue.bool(truncated),
+        "churn": JsonValue.object({
+            "commit_touches": JsonValue.int(len(evidence)), "lines_added": JsonValue.int(added),
+            "lines_removed": JsonValue.int(removed), "binary_changes": JsonValue.int(binary)
+        }),
+        "ownership": JsonValue.object({
+            key: JsonValue.int(authors[key]) for key in sorted([key for key in authors.keys()])
+        }),
+        "co_changes": JsonValue.object({
+            key: JsonValue.int(neighbors[key]) for key in sorted([key for key in neighbors.keys()])
+        }),
+        "evidence": JsonValue.array([JsonValue.string(oid) for oid in evidence]),
+        "co_change_excluded_commits": JsonValue.array([JsonValue.string(oid) for oid in excluded]),
+        "controls": JsonValue.string(str(
+            "100 non-merge commits; co-change excludes commits touching >256 paths; "
+            + "binary changes have no line totals; quoted paths omitted; no predictive score"
+        )),
+        "span": JsonValue.object({"file": JsonValue.string(text(file, "path")), "start_line": JsonValue.int(1)})
+    }))
+
+
+def line_count(value: str) -> Result[int, str]:
+    """Require git's numeric line count; binary counts are handled before this conversion."""
+    return parse(value).map_err((error) => error.message())?.expect_int().map_err((error) => error.message())

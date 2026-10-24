@@ -1,0 +1,56 @@
+"""Session feedback belongs to MCP, expires with its snapshot or TTL, and never enters compiler records."""
+
+from std.json import JsonValue
+from graph_queries import nested, text
+from observation import now_seconds
+from unit_freshness import fingerprint
+
+
+pub class TaskMemory:
+    """At most 128 local usefulness observations; restarting the MCP process discards all task memory."""
+
+    entries: Dict[str, JsonValue] = {}
+
+    def expire(mut self, snapshot: str) -> None:
+        """Discard observations automatically before every read/write when their source snapshot or TTL is stale."""
+        now = now_seconds()
+        self.entries = {
+            key: self.entries[key] for key in self.entries.keys() if current(self.entries[key], snapshot, now)
+        }
+
+    def record(mut self, task: str, node: str, snapshot: str, ttl: int) -> Result[JsonValue, str]:
+        """Retain explicit positive feedback for an exact task and proved declaration in the current snapshot."""
+        self.expire(snapshot)
+        if task.strip() == "" or ttl < 1 or ttl > 86400:
+            return Err("task must be nonempty and ttl_seconds must be between 1 and 86400")
+        key = fingerprint([task, node])?
+        if key not in self.entries and len(self.entries) >= 128:
+            return Err("session task memory has reached its 128-observation bound")
+        value = JsonValue.object({
+            "task": JsonValue.string(task), "stable_key": JsonValue.string(node),
+            "snapshot_id": JsonValue.string(snapshot), "expires_at": JsonValue.int(now_seconds() + ttl),
+            "provenance": JsonValue.string("session_feedback")
+        })
+        self.entries[key] = value
+        return Ok(value)
+
+    def read(mut self, task: str, snapshot: str) -> JsonValue:
+        """Read only current observations for this exact task; missing observations are an empty array."""
+        self.expire(snapshot)
+        return JsonValue.array([
+            self.entries[key] for key in sorted([key for key in self.entries.keys()])
+            if text(self.entries[key], "task") == task
+        ])
+
+    def preferences(mut self, task: str, snapshot: str) -> Dict[str, int]:
+        """Expose a bounded ranking boost separately from graph facts and compiler provenance."""
+        self.expire(snapshot)
+        return {
+            text(self.entries[key], "stable_key"): 200 for key in self.entries.keys()
+            if text(self.entries[key], "task") == task
+        }
+
+
+def current(entry: JsonValue, snapshot: str, now: int) -> bool:
+    """Require both the original snapshot and a live TTL; a missing timestamp never retains feedback."""
+    return text(entry, "snapshot_id") == snapshot and nested(entry, "expires_at").as_int().unwrap_or(0) > now
