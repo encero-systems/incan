@@ -79,13 +79,14 @@ model Settings:
 
 
 model Units:
-    """The units Oven reported compiling or reusing while the cases ran."""
+    """The compiler work, executable reuse and certified refusal replays Oven reported while the cases ran."""
 
     compiled: int = 0
     reused: int = 0
+    replayed: int = 0
 
     def count(mut self, notes: list[str]) -> None:
-        """Print each note under its case, and count the units it says were compiled or reused."""
+        """Print notes under their case and count compiler work, executable reuse and certified refusal replay."""
         for note in notes:
             println(f"  {note}")
             self.observe(note)
@@ -96,6 +97,8 @@ model Units:
             self.compiled += 1
         elif ": reused" in note:
             self.reused += 1
+        elif ": replayed refusal" in note:
+            self.replayed += 1
 
 
 def main() -> None:
@@ -239,6 +242,7 @@ def run_all(settings: Settings, scratch: Path) -> bool:
         clock = Instant.now()
         compiled = units.compiled
         reused = units.reused
+        replayed = units.replayed
         # 1. A family a selector reaches is discovered, and one that cannot be read is refused and counted.
         match discover_family(settings.root, family):
             Err(reason) =>
@@ -249,12 +253,12 @@ def run_all(settings: Settings, scratch: Path) -> bool:
                 selected = [fixture for fixture in fixtures if selected_case(fixture.case_name(), settings.selectors)]
                 outcomes = family_outcomes(settings, scratch, family, fixtures, selected, units)
                 report_family(settings.incan, scratch, family, selected, outcomes, total, units)
-        detail = f" compiled={units.compiled - compiled} reused={units.reused - reused}"
+        detail = f" compiled={units.compiled - compiled} reused={units.reused - reused} replayed={units.replayed - replayed}"
         report_time(f"family {family}", clock, detail)
     # 3. The total, the units Oven compiled and reused, and the families that could not be read close the report.
     println(total.line("total"))
-    if units.compiled + units.reused > 0:
-        println(f"oven: {units.compiled} units compiled, {units.reused} reused")
+    if units.compiled + units.reused + units.replayed > 0:
+        println(f"oven: {units.compiled} units compiled, {units.reused} reused, {units.replayed} refusals replayed")
     if refused > 0:
         println(f"{refused} families could not be read")
     if settings.family_worker:
@@ -293,8 +297,10 @@ def run_family_workers(settings: Settings, scratch: Path, families: list[str]) -
                     if order[index] == family:
                         refused += forward_family(family, results[index], total, units)
             println(total.line("total"))
-            if units.compiled + units.reused > 0:
-                println(f"oven: {units.compiled} units compiled, {units.reused} reused")
+            if units.compiled + units.reused + units.replayed > 0:
+                println(
+                    f"oven: {units.compiled} units compiled, {units.reused} reused, {units.replayed} refusals replayed",
+                )
             if refused > 0:
                 println(f"{refused} families could not be read")
             return total.failed == 0 and refused == 0

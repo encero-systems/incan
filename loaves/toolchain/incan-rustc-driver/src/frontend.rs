@@ -5,11 +5,13 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
+use incan_driver::diagnostics::CliDiagnosticFailure;
 use incan_driver::loaf_publication::{PublicationFacts, publish_native_unions, write_loaf};
 use incan_driver::modules::{collect_library_modules_detailed_with_session, collect_modules_detailed_with_session};
 use incan_driver::session::{CompilationAnalysis, CompilationSession, RustFactsSetup};
 use incan_driver::unit::{UnitDescription, UnitKind};
 use incan_frontend::ast::{DecoratorArg, DecoratorArgValue, Expr, Literal};
+use incan_frontend::diagnostics::DiagnosticPhase;
 use incan_frontend::library_manifest::LibraryManifest;
 use incan_frontend::loaf_index::{LoafIndex, LoafNativeClosure};
 use incan_frontend::parsed_module::ParsedModule;
@@ -25,6 +27,28 @@ const REFUSAL_REPORT: &str = "INCAN_DIRECT_REFUSAL_REPORT";
 
 /// An optional side channel for semantic CLI failures, distinct from unsupported lowering or malformed plans.
 const SEMANTIC_REPORT: &str = "INCAN_DIRECT_SEMANTIC_REPORT";
+
+/// A compiler-owned receipt permits Oven to retain only a known deterministic refusal, never an arbitrary failure.
+fn deterministic_refusal() {
+    if let Some(path) = std::env::var_os("INCAN_COMPILER_REFUSAL") {
+        let _ = std::fs::write(path, "incan.compiler-refusal/1\n");
+    }
+}
+
+/// Keep resource and source-reading failures retryable; only source diagnostics authorize replay.
+fn diagnostic_refusal(failure: CliDiagnosticFailure) -> String {
+    if !failure.diagnostics.is_empty()
+        && failure.diagnostics.iter().all(|diagnostic| {
+            matches!(
+                diagnostic.phase,
+                DiagnosticPhase::Lex | DiagnosticPhase::Parse | DiagnosticPhase::Typecheck | DiagnosticPhase::Import
+            )
+        })
+    {
+        deterministic_refusal();
+    }
+    failure.render_human()
+}
 
 /// A checked program failure that occurs before an executable can exist.
 #[derive(Debug, thiserror::Error)]
@@ -166,7 +190,7 @@ fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup, resident: bool
     } else {
         collect_modules_detailed_with_session(path.clone(), &session)
     }
-    .map_err(|failure| failure.render_human())?;
+    .map_err(diagnostic_refusal)?;
     session
         .resolve_rust_facts(&modules)
         .map_err(|error| error.to_string())?;
@@ -181,13 +205,13 @@ fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup, resident: bool
                     publication.visit(module, checker, module.file_path == path);
                 }
             })
-            .map_err(|failure| failure.render_human())?
+            .map_err(diagnostic_refusal)?
     };
     let entry = modules
         .iter()
         .position(|module| module.file_path == path)
         .ok_or("entry module is missing")?;
-    validate_module_declarations(&modules, &analysis)?;
+    validate_module_declarations(&modules, &analysis).inspect_err(|_| deterministic_refusal())?;
     let manifest = match publication {
         Some(publication) => {
             let manifest = publication
@@ -1194,10 +1218,12 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
             entry,
             kind.as_str().to_owned(),
             &mut published_unions,
-        )?
+        )
+        .inspect_err(|_| deterministic_refusal())?
     };
     let Some(plan) = plan else {
         report_missing_entrypoint(&source_path)?;
+        deterministic_refusal();
         return Err(SourceFailure::MissingEntrypoint.into());
     };
     let tests = crate::test_unit::report(&program.tests, &plan.tests)?;
@@ -1215,7 +1241,12 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         kind,
         program.manifest.as_ref(),
     )
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| {
+        if matches!(error, crate::adapter::DriverError::Plan(_)) {
+            deterministic_refusal();
+        }
+        error.to_string()
+    })?;
     if kind == UnitKind::Test {
         std::fs::write(output.with_extension("tests.json"), serde_json::to_vec(&tests)?)?;
     }

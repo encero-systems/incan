@@ -1,0 +1,173 @@
+"""Replay compiler-certified deterministic refusals under the same complete identity as compiled outputs."""
+
+from rust::std::io import Write, stderr, stdout
+from rust::std::process import Command, Stdio, id
+from rust::std::string import String as RustString
+from std.environ import get_or
+from std.fs import Path
+from std.io import BytesIO
+from files import open_stream
+from observation import trace
+from publication import publish_binary
+from toolchain import Toolchain
+from unit import UnitDescription
+from unit_freshness import Key, artifact_files, unit_key
+
+
+model Refusal:
+    """The exact streams and normal failure status of a compiler-certified refusal."""
+
+    code: i32
+    output: bytes
+    error: bytes
+
+
+pub def compile_or_replay(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    arguments: list[str],
+    path: Path,
+    key: Key,
+    reason: str,
+) -> Result[i32, str]:
+    """
+    Preserve compiler outcomes and retain only certified, normally exited refusals of unchanged inputs.
+
+    1. Replay a complete matching refusal unless a caller requested compiler side effects.
+    2. Run the compiler with a fresh, private certification path and capture its exact streams.
+    3. Publish a certified refusal only if the complete input identity is still unchanged.
+    """
+    # 1. Replay a complete matching refusal unless a caller requested compiler side effects.
+    cacheable = ordinary_compilation() and complete_artifacts(unit)
+    if cacheable:
+        saved = load_refusal(path, key.digest)
+        if let Some(refusal) = saved:
+            trace(f"unit {unit.package} {unit.kind}: replayed refusal")
+            return show(refusal, toolchain.console)
+    # 2. Run the compiler with a fresh, private certification path and capture its exact streams.
+    trace(f"unit {unit.package} {unit.kind}: compiled ({reason})")
+    certificate = Path(f"{path.0}.{id()}.certificate")
+    if certificate.is_file():
+        certificate.unlink().map_err((error) => error.message())?
+    mut command = Command.new(toolchain.driver)
+    command.env_remove("RUSTC_BOOTSTRAP")
+    command.env("INCAN_COMPILER_REFUSAL", f"{certificate.0}")
+    command.stdin(Stdio.inherit())
+    for argument in arguments:
+        command.arg(argument)
+    result = command.output().map_err((error) => f"cannot run {toolchain.driver}: {error}")?
+    mut code: i32 = 1
+    if let Some(status) = result.status.code():
+        code = status
+    refusal = Refusal(code=code, output=result.stdout, error=result.stderr)
+    # 3. Publish a certified refusal only if the complete input identity is still unchanged.
+    if cacheable and result.status.code() == Some(1) and certified(certificate):
+        match unit_key(unit, toolchain):
+            Ok(current) =>
+                if current.digest == key.digest:
+                    saved = save_refusal(path, key.digest, refusal)
+            Err(_) => pass
+    if certificate.is_file():
+        removed = certificate.unlink()
+    return show(refusal, toolchain.console)
+
+
+def ordinary_compilation() -> bool:
+    """Explicit diagnostic side channels require a real compiler invocation on every request."""
+    return get_or("INCAN_DIRECT_REFUSAL_REPORT", "") == "" and get_or("INCAN_DIRECT_SEMANTIC_REPORT", "") == ""
+
+
+def complete_artifacts(unit: UnitDescription) -> bool:
+    """A missing linked artifact is a preparation failure and must be retried even beside a source diagnostic."""
+    for loaf in unit.loaves:
+        for artifact in artifact_files(Path(loaf.dir), loaf.name):
+            if not artifact.is_file():
+                return false
+    return true
+
+
+def certified(path: Path) -> bool:
+    """An absent, unreadable or unrecognized certificate never authorizes retention."""
+    if not path.is_file():
+        return false
+    match path.read_text("utf-8", "strict"):
+        Err(_) => return false
+        Ok(text) => return text == "incan.compiler-refusal/1\n"
+
+
+def show(refusal: Refusal, console: str) -> Result[i32, str]:
+    """Forward exact bytes to the foreground streams or the project owner's request-local console sinks."""
+    if console != "":
+        mut out = open_stream(f"{console}.out")?
+        match out.write_all(refusal.output):
+            Err(error) => return Err(str(error))
+            Ok(_) => pass
+        mut err = open_stream(f"{console}.err")?
+        match err.write_all(refusal.error):
+            Err(error) => return Err(str(error))
+            Ok(_) => pass
+        return Ok(refusal.code)
+    mut out = stdout()
+    match out.write_all(refusal.output):
+        Err(error) => return Err(str(error))
+        Ok(_) => pass
+    mut err = stderr()
+    match err.write_all(refusal.error):
+        Err(error) => return Err(str(error))
+        Ok(_) => pass
+    return Ok(refusal.code)
+
+
+def save_refusal(path: Path, digest: str, refusal: Refusal) -> Result[None, str]:
+    """Publish framed raw streams in one atomic file; replay never decodes or re-encodes diagnostic bytes."""
+    header = f"incan.oven.refusal/2\n{digest}\n{len(refusal.output)}:{len(refusal.error)}\n"
+    content = BytesIO(header.encode("utf-8"))
+    content.seek(0, 2).map_err((error) => error.message())?
+    content.write_bytes(refusal.output).map_err((error) => error.message())?
+    content.write_bytes(refusal.error).map_err((error) => error.message())?
+    return publish_binary(path, content.getvalue())
+
+
+def load_refusal(path: Path, digest: str) -> Option[Refusal]:
+    """Missing, obsolete and malformed records are cache misses, never compiler outcomes."""
+    if not path.is_file():
+        return None
+    match read_refusal(path, digest):
+        Err(_) => return None
+        Ok(refusal) => return refusal
+
+
+def read_refusal(path: Path, digest: str) -> Result[Option[Refusal], str]:
+    """Validate the bounded header and both byte lengths before releasing either stream to the caller."""
+    content = path.read_bytes().map_err((error) => error.message())?
+    prefix = f"incan.oven.refusal/2\n{digest}\n".encode("utf-8")
+    if content[:len(prefix)] != prefix:
+        return Ok(None)
+    mut end = len(prefix)
+    while end < len(content) and end - len(prefix) < 20 and content[end:end + 1] != b"\x0a":
+        end += 1
+    if end >= len(content) or content[end:end + 1] != b"\x0a":
+        return Ok(None)
+    mut header = ""
+    match RustString.from_utf8(content[len(prefix):end]):
+        Err(_) => return Ok(None)
+        Ok(text) => header = str(text)
+    sizes = header.split(":")
+    if len(sizes) != 2:
+        return Ok(None)
+    output = stream_size(sizes[0])?
+    error = stream_size(sizes[1])?
+    first = end + 1
+    if len(content) != first + output + error:
+        return Ok(None)
+    return Ok(Some(Refusal(code=1, output=content[first:first + output], error=content[first + output:])))
+
+
+def stream_size(text: str) -> Result[int, str]:
+    """Accept only bounded decimal lengths before converting an untrusted cache header."""
+    if len(text) == 0 or len(text) > 9:
+        return Err("invalid refusal stream length")
+    for character in text:
+        if character not in "0123456789":
+            return Err("invalid refusal stream length")
+    return Ok(int(text))

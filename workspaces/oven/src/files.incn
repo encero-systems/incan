@@ -1,5 +1,6 @@
 """Reading, writing and removing the files Oven keeps, reporting every failure as the system's message in plain text."""
 
+from rust::std::fs import File, OpenOptions
 from std.fs import Path
 from std.json import JsonValue, parse
 
@@ -12,6 +13,14 @@ pub def read(path: Path) -> Result[str, str]:
 pub def write(path: Path, text: str) -> Result[None, str]:
     """Create or replace a file with strict UTF-8 text; its directory must exist."""
     return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())
+
+
+pub def open_stream(path: str) -> Result[File, str]:
+    """Append a request's console bytes, creating the sink without truncating earlier dependency diagnostics."""
+    mut options = OpenOptions.new()
+    options.append(true)
+    options.create(true)
+    return options.open(path).map_err((error) => f"cannot open {path}: {error}")
 
 
 pub def remove(path: Path) -> Result[None, str]:

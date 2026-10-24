@@ -25,6 +25,8 @@ pub model Invocation:
     pub deadline_seconds: int = 0
     # A selected entry starts only after this request compiled quietly and successfully in the same pool.
     pub after: Option[int] = None
+    # Optional scheduling evidence from another scratch directory; it never authorizes compilation reuse.
+    pub duration_hint: int = 0
 
 
 model Started:
@@ -145,7 +147,7 @@ def invocation_order(requests: list[Invocation]) -> list[int]:
         request = requests[index]
         mut duration = 0
         if measured_command(request):
-            duration = elapsed_hint(request.project)
+            duration = max([elapsed_hint(request.project), request.duration_hint])
         priorities.append((-duration, index))
     mut order: list[int] = []
     for _duration, index in sorted(priorities):
@@ -154,8 +156,8 @@ def invocation_order(requests: list[Invocation]) -> list[int]:
 
 
 def measured_command(request: Invocation) -> bool:
-    """Measure original commands; shared builds change from cold compilation to reuse between invocations."""
-    return request.selector == None and request.deadline_seconds == 0
+    """Measure original commands and shared builds; selected executions never determine compilation priority."""
+    return request.selector == None
 
 
 def keep_child(child: &mut Child) -> bool:

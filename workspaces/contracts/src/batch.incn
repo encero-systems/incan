@@ -6,6 +6,7 @@ from files import make_directory, read, write
 from fixture import Fixture, fixture_files, materialize, materialize_files
 from group_hints import retain_hint
 from run import Outcome, clear_trace, trace_file, unit_notes
+from timing_hints import Costs, load_costs, retain_costs
 from workers import Invocation, invoke_many
 
 # The largest partition file read back; a bigger one is discarded and discovered again.
@@ -70,7 +71,10 @@ pub def run_batches(
     mut partition: list[str] = []
     mut built: list[GroupProject] = []
     mut outcomes: dict[str, Result[Outcome, str]] = {}
-    compile_groups(incan, scratch, groups, built, notes, partition, overlapping, outcomes, jobs)
+    mut costs = load_costs(hint)
+    mut projects: list[Path] = []
+    compile_groups(incan, scratch, groups, built, notes, partition, overlapping, outcomes, jobs, costs, projects)
+    retain_costs(hint, projects, costs)
     # 4. Retain the partition whose entries ran fresh in the owning pool.
     for group in built:
         partition.append("\t".join([candidate.fixture.case_name() for candidate in group.entries]))
@@ -148,15 +152,19 @@ def planned_groups(plan: Path, entries: list[Entry]) -> tuple[list[list[Entry]],
     """
     mut groups: list[list[Entry]] = []
     mut assigned: set[str] = set()
+    mut positions: dict[str, int] = {}
+    for index in range(len(entries)):
+        positions[entries[index].fixture.case_name()] = index
     # 1. Each row of the plan is one group, and a case belongs to the first row that names it.
     for line in plan_rows(plan):
         mut group: list[Entry] = []
-        names = line.split("\t")
-        for candidate in entries:
-            name = candidate.fixture.case_name()
-            if name in names and name not in assigned:
-                group.append(candidate)
+        mut indices: set[int] = set()
+        for name in line.split("\t"):
+            if name in positions and name not in assigned:
+                indices.add(positions[name])
                 assigned.add(name)
+        for index in sorted([index for index in indices]):
+            group.append(entries[index])
         if len(group) > 0:
             groups.append(group)
     # 2. The cases no row names form one group more, so none is left out.
@@ -236,12 +244,20 @@ pub def run_separate(
         outcomes[names[index]] = results[index]
 
 
-def isolated_request(incan: str, scratch: Path, fixture: Fixture) -> Result[Invocation, str]:
+def isolated_request(incan: str, scratch: Path, fixture: Fixture, duration_hint: int = 0) -> Result[Invocation, str]:
     """Prepare the original command without changing its manifest, entry point or expectations."""
     program = read_program(fixture)?
     project = materialize(fixture, scratch)?
     clear_trace(project)?
-    return Ok(Invocation(program=incan, arguments=command(fixture, program.header), project=project, selector=None))
+    return Ok(
+        Invocation(
+            program=incan,
+            arguments=command(fixture, program.header),
+            project=project,
+            selector=None,
+            duration_hint=duration_hint,
+        ),
+    )
 
 
 def compile_groups(
@@ -254,6 +270,8 @@ def compile_groups(
     separate: list[Fixture],
     mut outcomes: dict[str, Result[Outcome, str]],
     jobs: int,
+    costs: Costs,
+    mut projects: list[Path],
 ) -> None:
     """
     Compile each partition wave through the same child budget used for fresh execution and isolated commands.
@@ -290,17 +308,21 @@ def compile_groups(
                             project=group.project,
                             selector=None,
                             deadline_seconds=GROUP_COMPILATION_SECONDS,
+                            duration_hint=costs.duration(group.project),
                         ),
                     )
                     attempts.append(group)
+                    projects.append(group.project)
         # 2. Retained original commands join the first wave under the same budget.
         mut names: list[str] = []
         for fixture in isolated:
-            match isolated_request(incan, scratch, fixture):
+            duration = costs.duration(fixture.project_path(scratch))
+            match isolated_request(incan, scratch, fixture, duration):
                 Err(_) => pass
                 Ok(request) =>
                     requests.append(request)
                     names.append(fixture.case_name())
+                    projects.append(request.project)
         isolated = []
         # 3. Queue gated entries alongside builds and record original commands once.
         mut executions: list[tuple[int, list[str]]] = []

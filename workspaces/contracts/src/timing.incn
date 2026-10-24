@@ -27,11 +27,11 @@ pub def record_elapsed(project: Path, clock: Instant) -> None:
     """
     Retain a command's elapsed time without making hint storage part of its result.
 
-    1. Bound the observed duration to one day.
+    1. Retain the largest observed duration, bounded to one day, so a warm run cannot erase compilation cost.
     2. Save it under retained build outputs when storage is available.
     """
-    # 1. Bound the observed duration to one day.
-    milliseconds = min([86_400_000, int(clock.elapsed().as_millis())])
+    # 1. Retain the bounded compilation cost across cheaper repeats.
+    milliseconds = max([elapsed_hint(project), min([86_400_000, int(clock.elapsed().as_millis())])])
     # 2. Save it under retained build outputs when storage is available.
     save_hint(project, milliseconds)
 
@@ -50,7 +50,7 @@ def hint_path(project: Path) -> Path:
     return project.joinpath("target").joinpath("incan").joinpath("contract-elapsed-ms")
 
 
-def parse_hint(text: str) -> int:
+pub def parse_hint(text: str) -> int:
     """Admit bounded decimal durations without granting any compilation or execution authority."""
     value = text.strip()
     if len(value) == 0 or len(value) > 8:

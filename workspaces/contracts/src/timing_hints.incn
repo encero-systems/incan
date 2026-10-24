@@ -1,0 +1,92 @@
+"""Share bounded command durations across scratch directories without retaining case or compiler outcomes."""
+
+from std.fs import Path
+from group_hints import write_hint
+from timing import elapsed_hint, parse_hint
+
+
+pub model Costs:
+    """One owned duration table whose read-only lookups borrow the receiver instead of copying its rows."""
+
+    values: dict[str, int] = {}
+
+    def load(mut self, table: Path) -> None:
+        """Replace scheduling evidence with the bounded optional table; absent storage means no hints."""
+        self.values = read_costs(table)
+
+    def duration(self, project: Path) -> int:
+        """Use a project's corpus-local name solely as a scheduling hint, never as an artifact identity."""
+        if project.name() in self.values:
+            return self.values[project.name()]
+        return 0
+
+    def include(mut self, project: Path) -> None:
+        """Merge a project's bounded elapsed observation while retaining the larger known cost."""
+        self.values[project.name()] = max([self.duration(project), elapsed_hint(project)])
+
+    def rows(self) -> list[str]:
+        """Render the optional duration table in stable project-name order."""
+        return [f"{name}\t{self.values[name]}" for name in sorted([name for name in self.values.keys()])]
+
+
+pub def load_costs(hint: Option[Path]) -> Costs:
+    """
+    Load optional duration hints scoped to the family's canonical fixture root and toolchain home.
+
+    1. Locate the table beside the existing case-name partition hint.
+    2. Admit bounded durations; unusable storage has no scheduling weight.
+    """
+    mut costs = Costs()
+    # 1. Locate the table beside the existing case-name partition hint.
+    match hint:
+        None => return costs
+        Some(path) =>
+            # 2. Admit bounded durations; unusable storage has no scheduling weight.
+            costs.load(timing_path(path))
+    return costs
+
+
+def read_costs(table: Path) -> dict[str, int]:
+    """Treat missing and unreadable scheduling evidence as an empty table."""
+    if not table.is_file():
+        return {}
+    match table.read_text("utf-8", "strict"):
+        Err(_) => return {}
+        Ok(text) => return parse_costs(text)
+
+
+def parse_costs(text: str) -> dict[str, int]:
+    """Bound optional hint storage before accepting project names and decimal durations."""
+    mut costs: dict[str, int] = {}
+    if len(text) > 2_000_000:
+        return costs
+    for line in text.split("\n"):
+        fields = line.split("\t")
+        if len(fields) == 2:
+            costs[fields[0]] = parse_hint(fields[1])
+    return costs
+
+
+pub def retain_costs(hint: Option[Path], projects: list[Path], mut costs: Costs) -> None:
+    """
+    Retain observed command costs without replacing them with the cheaper cost of reuse.
+
+    1. Merge local elapsed observations with the family's retained high-water marks.
+    2. Publish one complete optional table; storage errors never change case outcomes.
+    """
+    match hint:
+        None => return
+        Some(_) => pass
+    # 1. Merge local elapsed observations with the family's retained high-water marks.
+    for project in projects:
+        costs.include(project)
+    rows = costs.rows()
+    # 2. Publish one complete optional table; storage errors never change case outcomes.
+    match hint:
+        None => pass
+        Some(path) => saved = write_hint(timing_path(path), "\n".join(rows) + "\n")
+
+
+def timing_path(partition: Path) -> Path:
+    """Keep timing hints separate from compilation boundaries and obsolete timing experiments."""
+    return Path(f"{partition.0}.durations-v1")

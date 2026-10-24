@@ -39,7 +39,7 @@ pub def retain_hint(hint: Option[Path], partition: list[str]) -> None:
             _ = write_hint(path, "\n".join(partition) + "\n")
 
 
-def write_hint(path: Path, text: str) -> Result[None, str]:
+pub def write_hint(path: Path, text: str) -> Result[None, str]:
     """Keep concurrent readers on a complete old or new partition, without storing compilation or case results."""
     make_directory(path.parent())?
     temporary = path.parent().joinpath(f".{path.name()}.{id()}.pending")
