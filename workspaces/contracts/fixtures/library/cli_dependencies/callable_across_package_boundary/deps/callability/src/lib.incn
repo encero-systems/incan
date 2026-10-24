@@ -1,3 +1,6 @@
+"""Publish callable values, partial defaults, mutable inputs, and a decorated native reference container."""
+
+from rust::std::vec import Vec as ProviderHandle
 pub from transforms import Payload, plus_one, map_owned, inspect_payload
 pub from counting import Counter, grow, new_counter
 
@@ -7,3 +10,14 @@ pub def build(size: int, label: str = "flat") -> str:
 
 
 pub default_build = partial build(size=3)
+
+
+def preserve[F]() -> (F) -> F:
+    """Keep the complete checked callable signature through decoration."""
+    return (function) => function
+
+
+@preserve()
+pub def keep_refs(mut items: ProviderHandle[tuple[&mut int, &mut int]]) -> None:
+    """Accept an owned native vector whose elements keep their exclusive reference ABI."""
+    pass

@@ -1,0 +1,11 @@
+"""Register a descriptor without requesting custom expansion during production."""
+
+from std.vocab import ClauseSurface, DeclarationSurface, DslSurface, VocabRegistration
+
+
+pub def library_vocab() -> VocabRegistration:
+    """Publish the import-activated note declaration."""
+    mut note = DeclarationSurface.named("note").with_header_args().with_clause_body()
+    clause = ClauseSurface.expr("VALUE OF").required()
+    note = note.with_clause(clause)
+    return VocabRegistration.new().with_surface(DslSurface.on_import("words").with_declaration(note))

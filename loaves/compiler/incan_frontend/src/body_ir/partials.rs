@@ -4,7 +4,7 @@ use super::args::fixed_elements;
 use super::{
     AbiV0RuntimeRequirement, BodyBuilder, BodyIrLoweringFacts, CanonicalSymbolId, CompilerNodeId,
     FunctionDefaultSource, HirSourceSpan, IncanType, SemanticSourceTargetKind, TypeCheckInfo, ast, bir, hir_span,
-    semantic_type_from_resolved,
+    parameter_types, semantic_type_from_resolved,
 };
 use crate::typechecker::PartialProjectionTargetKind;
 
@@ -176,10 +176,13 @@ fn partial_parameters(
                 .name
                 .clone()
                 .unwrap_or_else(|| format!("__partial_arg_{index}"));
-            let ty = semantic_type_from_resolved(&parameter.ty);
+            let ty = builder.checked_type(&parameter.ty);
+            let native_owned = parameter_types::native_collection_parameter(&parameter.ty, builder.type_info);
             let local = builder.declare_new_local_with_reads(name.clone(), ty.clone(), scope, span, 1);
             builder.locals[local.index()].origin = bir::LocalOrigin::Parameter;
-            if parameter.is_mut {
+            if native_owned {
+                builder.owned_parameters.insert(local);
+            } else if parameter.is_mut {
                 builder.borrowed_parameters.insert(local);
             }
             bir::CallableParam {
@@ -190,6 +193,7 @@ fn partial_parameters(
                 span,
                 default: bir::CallableParamDefault::Required,
                 mutable: parameter.is_mut,
+                native_owned,
             }
         })
         .collect::<Vec<_>>();

@@ -1201,12 +1201,16 @@ pub struct SoftKeywordExports {
     pub activations: Vec<SoftKeywordActivation>,
 }
 
-/// Optional vocab companion metadata packaged with the library manifest.
+/// Published producer vocabulary descriptors packaged with the ordinary library manifest.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VocabExports {
-    /// Relative crate path to the vocab companion source inside the producer workspace.
+    /// The schema of the Incan registration that produced these descriptors.
+    pub metadata_version: u32,
+    /// Identity of the native producer registration unit, including its imports and compiled inputs.
+    pub unit_identity: String,
+    /// Project-relative Incan entry path, retained under the historical descriptor field spelling.
     pub crate_path: String,
-    /// Cargo package name of the vocab companion crate.
+    /// The Loaf that registered these descriptors.
     pub package_name: String,
     /// Keywords registered by the vocab provider.
     pub keyword_registrations: Vec<VocabKeywordRegistration>,

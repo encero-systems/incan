@@ -1,0 +1,987 @@
+"""Build versioned vocabulary descriptors in Incan for producer-side publication."""
+
+from std.json import JsonValue
+
+pub const VOCAB_METADATA_VERSION: int = 1
+
+
+pub enum KeywordActivation:
+    """Where descriptors become available to the parser."""
+
+    Always
+    OnImport(str)
+
+    def on_import(namespace: str) -> Self:
+        """Activate when the module imports the specified namespace."""
+        return KeywordActivation.OnImport(namespace)
+
+    def to_json(self) -> JsonValue:
+        """Encode the existing externally tagged activation contract."""
+        match self:
+            KeywordActivation.Always => return JsonValue.string("Always")
+            KeywordActivation.OnImport(namespace) =>
+                return tagged("OnImport", JsonValue.object({"namespace": JsonValue.string(namespace)}))
+
+
+pub enum KeywordPlacement:
+    """The declaration positions accepting a registered keyword."""
+
+    TopLevel
+    InBlock(list[str])
+
+    def in_block(parents: list[str]) -> Self:
+        """Limit a keyword to the named parent declarations."""
+        return KeywordPlacement.InBlock(parents)
+
+    def to_json(self) -> JsonValue:
+        """Encode the descriptor reader's placement representation."""
+        match self:
+            KeywordPlacement.TopLevel => return JsonValue.string("TopLevel")
+            KeywordPlacement.InBlock(parents) => return tagged("InBlock", texts(parents))
+
+
+pub enum KeywordSurfaceKind(str):
+    """Parser constructs selected by low-level keyword registrations."""
+
+    FunctionDecl = "FunctionDecl"
+    TypeDecl = "TypeDecl"
+    ConditionalChain = "ConditionalChain"
+    ForLoop = "ForLoop"
+    WhileLoop = "WhileLoop"
+    MatchBlock = "MatchBlock"
+    TryBlock = "TryBlock"
+    ImportStatement = "ImportStatement"
+    ControlFlow = "ControlFlow"
+    BindingDecl = "BindingDecl"
+    BlockDeclaration = "BlockDeclaration"
+    BlockContextKeyword = "BlockContextKeyword"
+    SubBlock = "SubBlock"
+
+
+pub enum DeclarationHeadKind(str):
+    """Structured payload following a declaration keyword."""
+
+    NoHead = "None"
+    HeaderArguments = "HeaderArguments"
+    Signature = "Signature"
+    Mixed = "Mixed"
+
+
+pub enum DeclarationBodyKind(str):
+    """The host and DSL forms accepted inside a declaration."""
+
+    Clauses = "Clauses"
+    Statements = "Statements"
+    Mixed = "Mixed"
+
+
+pub enum ClauseBodyKind(str):
+    """The payload parser used by a clause."""
+
+    Expression = "Expression"
+    ExpressionList = "ExpressionList"
+    Type = "Type"
+    FieldSet = "FieldSet"
+    NestedItems = "NestedItems"
+
+
+pub enum ClauseCardinality(str):
+    """The permitted number of occurrences in one declaration."""
+
+    Required = "Required"
+    Optional = "Optional"
+    Repeating = "Repeating"
+
+
+pub enum ClausePlacement:
+    """Relative clause ordering recorded for parser validation."""
+
+    Anywhere
+    Before(str)
+    After(str)
+
+    def to_json(self) -> JsonValue:
+        """Encode relative ordering through the existing descriptor tags."""
+        match self:
+            ClausePlacement.Anywhere => return JsonValue.string("Anywhere")
+            ClausePlacement.Before(other) => return tagged("Before", JsonValue.string(other))
+            ClausePlacement.After(other) => return tagged("After", JsonValue.string(other))
+
+
+pub enum DesugarTarget(str):
+    """The host syntax position occupied by an expanded declaration."""
+
+    Declarations = "Declarations"
+    Statements = "Statements"
+    Expression = "Expression"
+
+
+pub model KeywordSpec:
+    """One keyword and its parser surface and placement."""
+
+    pub name: str
+    pub surface_kind: KeywordSurfaceKind = KeywordSurfaceKind.BlockDeclaration
+    pub compound_tokens: list[str] = []
+    pub placement: KeywordPlacement = KeywordPlacement.TopLevel
+
+    def new(name: str, surface_kind: KeywordSurfaceKind) -> Self:
+        """Construct a top-level keyword of the requested kind."""
+        return KeywordSpec(name=name, surface_kind=surface_kind)
+
+    def block(name: str) -> Self:
+        """Construct a top-level declaration keyword."""
+        return KeywordSpec(name=name)
+
+    def block_context(name: str, parent: str) -> Self:
+        """Construct a clause keyword owned by a declaration."""
+        return KeywordSpec.new(name, KeywordSurfaceKind.BlockContextKeyword).in_block(parent)
+
+    def sub_block(name: str, parent: str) -> Self:
+        """Construct a nested block keyword owned by a declaration."""
+        return KeywordSpec.new(name, KeywordSurfaceKind.SubBlock).in_block(parent)
+
+    def in_block(self, parent: str) -> Self:
+        """Return this keyword restricted to one parent."""
+        return self.with_placement(KeywordPlacement.InBlock([parent]))
+
+    def in_blocks(self, parents: list[str]) -> Self:
+        """Return this keyword restricted to any of the named parents."""
+        return self.with_placement(KeywordPlacement.InBlock(parents))
+
+    def with_placement(self, placement: KeywordPlacement) -> Self:
+        """Return this keyword with the supplied placement."""
+        mut result = self
+        result.placement = placement
+        return result
+
+    def with_compound_tokens(self, tokens: list[str]) -> Self:
+        """Return this keyword with its compound spelling tail."""
+        mut result = self
+        result.compound_tokens = tokens
+        return result
+
+    def to_json(self) -> JsonValue:
+        """Encode one low-level keyword using the compiler's descriptor shape."""
+        return JsonValue.object(
+            {"name": JsonValue.string(self.name), "surface_kind": JsonValue.string(self.surface_kind.value()), "compound_tokens": texts(
+                self.compound_tokens,
+            ), "placement": self.placement.to_json()},
+        )
+
+
+pub model KeywordRegistration:
+    """A group of keywords with one activation rule."""
+
+    pub activation: KeywordActivation = KeywordActivation.Always
+    pub keywords: list[KeywordSpec] = []
+    pub valid_decorators: list[str] = []
+
+    def new(activation: KeywordActivation) -> Self:
+        """Construct an empty keyword group."""
+        return KeywordRegistration(activation=activation)
+
+    def on_import(namespace: str) -> Self:
+        """Construct a keyword group activated by an import."""
+        return KeywordRegistration.new(KeywordActivation.on_import(namespace))
+
+    def always_on() -> Self:
+        """Construct a keyword group active in every module."""
+        return KeywordRegistration()
+
+    def with_keyword(self, keyword: KeywordSpec) -> Self:
+        """Append one keyword to this group."""
+        mut result = self
+        result.keywords.append(keyword)
+        return result
+
+    def with_keywords(self, keywords: list[KeywordSpec]) -> Self:
+        """Append keywords in declaration order."""
+        mut result = self
+        result.keywords = result.keywords + keywords
+        return result
+
+    def with_valid_decorator(self, decorator: str) -> Self:
+        """Admit one decorator on this group's declarations."""
+        mut result = self
+        result.valid_decorators.append(decorator)
+        return result
+
+    def with_valid_decorators(self, decorators: list[str]) -> Self:
+        """Append decorators valid on this group's declarations."""
+        mut result = self
+        result.valid_decorators = result.valid_decorators + decorators
+        return result
+
+    def to_json(self) -> JsonValue:
+        """Encode the existing keyword group transport."""
+        return JsonValue.object(
+            {"activation": self.activation.to_json(), "keywords": JsonValue.array(
+                [keyword.to_json() for keyword in self.keywords],
+            ), "valid_decorators": texts(self.valid_decorators)},
+        )
+
+
+pub enum ExpressionItemModifierKind(str):
+    """The trailing payload accepted after an expression-list item."""
+
+    Alias = "Alias"
+    Expression = "Expression"
+
+
+pub model ExpressionItemModifierSurface:
+    """A trailing clause-item keyword and its payload parser."""
+
+    pub keyword: str
+    pub kind: ExpressionItemModifierKind = ExpressionItemModifierKind.Alias
+
+    def alias(keyword: str) -> Self:
+        """Construct an identifier alias modifier."""
+        return ExpressionItemModifierSurface(keyword=keyword)
+
+    def expr(keyword: str) -> Self:
+        """Construct a modifier whose payload is an expression."""
+        return ExpressionItemModifierSurface(keyword=keyword, kind=ExpressionItemModifierKind.Expression)
+
+    def to_json(self) -> JsonValue:
+        """Encode the modifier expected by the descriptor reader."""
+        return JsonValue.object({"keyword": JsonValue.string(self.keyword), "kind": JsonValue.string(self.kind.value())})
+
+
+pub model ClauseSurface:
+    """A clause's spelling, payload, cardinality and ordering."""
+
+    pub keyword: str
+    pub compound_tokens: list[str] = []
+    pub body_kind: ClauseBodyKind = ClauseBodyKind.Expression
+    pub expression_item_modifiers: list[ExpressionItemModifierSurface] = []
+    pub cardinality: ClauseCardinality = ClauseCardinality.Optional
+    pub placement: ClausePlacement = ClausePlacement.Anywhere
+
+    def new(keyword: str, body_kind: ClauseBodyKind) -> Self:
+        """Construct a clause with the payload's standard modifiers."""
+        mut result = ClauseSurface(keyword=keyword, body_kind=body_kind)
+        if body_kind == ClauseBodyKind.ExpressionList:
+            result.expression_item_modifiers = [ExpressionItemModifierSurface.alias("as")]
+        return result
+
+    def from_spelling(spelling: str, body_kind: ClauseBodyKind) -> Self:
+        """Split a compound spelling into the leading keyword and tail."""
+        words = spelling.split_whitespace()
+        mut result = ClauseSurface.new(words[0], body_kind)
+        result.compound_tokens = words[1:]
+        return result
+
+    def expr(spelling: str) -> Self:
+        """Construct a single-expression clause."""
+        return ClauseSurface.from_spelling(spelling, ClauseBodyKind.Expression)
+
+    def expr_list(spelling: str) -> Self:
+        """Construct an expression-list clause with the standard alias modifier."""
+        return ClauseSurface.from_spelling(spelling, ClauseBodyKind.ExpressionList)
+
+    def fields(spelling: str) -> Self:
+        """Construct a field-set clause."""
+        return ClauseSurface.from_spelling(spelling, ClauseBodyKind.FieldSet)
+
+    def type_ref(spelling: str) -> Self:
+        """Construct a type-position clause."""
+        return ClauseSurface.from_spelling(spelling, ClauseBodyKind.Type)
+
+    def nested_items(spelling: str) -> Self:
+        """Construct a clause containing nested items."""
+        return ClauseSurface.from_spelling(spelling, ClauseBodyKind.NestedItems)
+
+    def required(self) -> Self:
+        """Require exactly one occurrence."""
+        mut result = self
+        result.cardinality = ClauseCardinality.Required
+        return result
+
+    def optional(self) -> Self:
+        """Permit at most one occurrence."""
+        mut result = self
+        result.cardinality = ClauseCardinality.Optional
+        return result
+
+    def repeating(self) -> Self:
+        """Permit multiple occurrences."""
+        mut result = self
+        result.cardinality = ClauseCardinality.Repeating
+        return result
+
+    def before(self, other: str) -> Self:
+        """Record that this clause precedes another."""
+        mut result = self
+        result.placement = ClausePlacement.Before(other)
+        return result
+
+    def after(self, other: str) -> Self:
+        """Record that this clause follows another."""
+        mut result = self
+        result.placement = ClausePlacement.After(other)
+        return result
+
+    def with_compound_tokens(self, tokens: list[str]) -> Self:
+        """Replace this clause's compound spelling tail."""
+        mut result = self
+        result.compound_tokens = tokens
+        return result
+
+    def with_expression_item_modifier(self, modifier: ExpressionItemModifierSurface) -> Self:
+        """Append a modifier unless its keyword is already registered."""
+        mut result = self
+        for existing in result.expression_item_modifiers:
+            if existing.keyword == modifier.keyword:
+                return result
+        result.expression_item_modifiers.append(modifier)
+        return result
+
+    def with_expression_item_modifiers(self, modifiers: list[ExpressionItemModifierSurface]) -> Self:
+        """Append modifiers, keeping the first descriptor for each keyword."""
+        mut result = self
+        for modifier in modifiers:
+            result = result.with_expression_item_modifier(modifier)
+        return result
+
+    def to_json(self) -> JsonValue:
+        """Encode the compiler's clause descriptor without changing its format."""
+        return JsonValue.object(
+            {"keyword": JsonValue.string(self.keyword), "compound_tokens": texts(self.compound_tokens), "body_kind": JsonValue.string(
+                self.body_kind.value(),
+            ), "expression_item_modifiers": JsonValue.array([item.to_json() for item in self.expression_item_modifiers]), "cardinality": JsonValue.string(
+                self.cardinality.value(),
+            ), "placement": self.placement.to_json()},
+        )
+
+
+pub model DeclarationSurface:
+    """A declaration's head, body, clauses and nested declarations."""
+
+    pub keyword: str
+    pub compound_tokens: list[str] = []
+    pub placement: KeywordPlacement = KeywordPlacement.TopLevel
+    pub head_kind: DeclarationHeadKind = DeclarationHeadKind.NoHead
+    pub body_kind: DeclarationBodyKind = DeclarationBodyKind.Mixed
+    pub desugars_to: DesugarTarget = DesugarTarget.Statements
+    pub clauses: list[ClauseSurface] = []
+    pub declarations: list[DeclarationSurface] = []
+
+    def named(spelling: str) -> Self:
+        """Construct a declaration from its complete keyword spelling."""
+        words = spelling.split_whitespace()
+        return DeclarationSurface(keyword=words[0], compound_tokens=words[1:])
+
+    def new(keyword: str) -> Self:
+        """Construct a declaration without splitting its keyword."""
+        return DeclarationSurface(keyword=keyword)
+
+    def with_header_args(self) -> Self:
+        """Accept header arguments after the declaration name."""
+        return self.with_head_kind(DeclarationHeadKind.HeaderArguments)
+
+    def with_signature_head(self) -> Self:
+        """Accept a function-like declaration signature."""
+        return self.with_head_kind(DeclarationHeadKind.Signature)
+
+    def with_head_kind(self, kind: DeclarationHeadKind) -> Self:
+        """Select the declaration's head parser."""
+        mut result = self
+        result.head_kind = kind
+        return result
+
+    def with_clause_body(self) -> Self:
+        """Accept a clause-oriented body."""
+        return self.with_body_kind(DeclarationBodyKind.Clauses)
+
+    def with_statement_body(self) -> Self:
+        """Accept ordinary host statements."""
+        return self.with_body_kind(DeclarationBodyKind.Statements)
+
+    def with_mixed_body(self) -> Self:
+        """Accept clauses and host statements."""
+        return self.with_body_kind(DeclarationBodyKind.Mixed)
+
+    def with_body_kind(self, kind: DeclarationBodyKind) -> Self:
+        """Select the declaration's body parser."""
+        mut result = self
+        result.body_kind = kind
+        return result
+
+    def desugars_to_expression(self) -> Self:
+        """Record expression output position."""
+        return self.with_target(DesugarTarget.Expression)
+
+    def desugars_to_statements(self) -> Self:
+        """Record statement output position."""
+        return self.with_target(DesugarTarget.Statements)
+
+    def desugars_to_declarations(self) -> Self:
+        """Record compilation-unit declaration output position."""
+        return self.with_target(DesugarTarget.Declarations)
+
+    def with_target(self, target: DesugarTarget) -> Self:
+        """Select the expanded declaration's host position."""
+        mut result = self
+        result.desugars_to = target
+        return result
+
+    def in_block(self, parent: str) -> Self:
+        """Restrict this declaration to a named parent."""
+        return self.with_placement(KeywordPlacement.InBlock([parent]))
+
+    def with_placement(self, placement: KeywordPlacement) -> Self:
+        """Replace this declaration's placement."""
+        mut result = self
+        result.placement = placement
+        return result
+
+    def with_compound_tokens(self, tokens: list[str]) -> Self:
+        """Replace this declaration's compound spelling tail."""
+        mut result = self
+        result.compound_tokens = tokens
+        return result
+
+    def with_clause(self, clause: ClauseSurface) -> Self:
+        """Append one clause to this declaration."""
+        return self.with_clauses([clause])
+
+    def with_clauses(self, clauses: list[ClauseSurface]) -> Self:
+        """Append clauses in their authored order."""
+        mut result = self
+        result.clauses = result.clauses + clauses
+        return result
+
+    def with_declaration(self, declaration: DeclarationSurface) -> Self:
+        """Append one declaration restricted to this parent."""
+        mut result = self
+        result.declarations.append(declaration.in_block(self.keyword))
+        return result
+
+    def with_declarations(self, declarations: list[DeclarationSurface]) -> Self:
+        """Append declarations restricted to this parent."""
+        mut result = self
+        for declaration in declarations:
+            result = result.with_declaration(declaration)
+        return result
+
+    def to_json(self) -> JsonValue:
+        """Encode the existing recursive declaration descriptor."""
+        return JsonValue.object(
+            {"keyword": JsonValue.string(self.keyword), "compound_tokens": texts(self.compound_tokens), "placement": self.placement.to_json(), "head_kind": JsonValue.string(
+                self.head_kind.value(),
+            ), "body_kind": JsonValue.string(self.body_kind.value()), "desugars_to": JsonValue.string(
+                self.desugars_to.value(),
+            ), "clauses": JsonValue.array([clause.to_json() for clause in self.clauses]), "declarations": JsonValue.array(
+                [declaration.to_json() for declaration in self.declarations],
+            )},
+        )
+
+    def keywords(self) -> list[KeywordSpec]:
+        """Derive parser keywords once from this declaration and its children."""
+        declaration = KeywordSpec.block(self.keyword).with_compound_tokens(self.compound_tokens)
+        mut keywords = [declaration.with_placement(self.placement)]
+        for clause in self.clauses:
+            keyword = clause_keyword(clause, self.keyword)
+            keywords.append(keyword)
+        for child in self.declarations:
+            keywords = keywords + child.keywords()
+        return keywords
+
+
+pub model DslSurface:
+    """Declarations sharing one activation rule."""
+
+    pub activation: KeywordActivation = KeywordActivation.Always
+    pub declarations: list[DeclarationSurface] = []
+
+    def new(activation: KeywordActivation) -> Self:
+        """Construct an empty surface with an explicit activation rule."""
+        return DslSurface(activation=activation)
+
+    def on_import(namespace: str) -> Self:
+        """Activate this surface when its namespace is imported."""
+        return DslSurface.new(KeywordActivation.on_import(namespace))
+
+    def always_on() -> Self:
+        """Activate this surface in every consumer module."""
+        return DslSurface()
+
+    def with_declaration(self, declaration: DeclarationSurface) -> Self:
+        """Append one declaration."""
+        return self.with_declarations([declaration])
+
+    def with_declarations(self, declarations: list[DeclarationSurface]) -> Self:
+        """Append declarations in their authored order."""
+        mut result = self
+        result.declarations = result.declarations + declarations
+        return result
+
+    def to_json(self) -> JsonValue:
+        """Encode a surface in the descriptor reader's format."""
+        return JsonValue.object(
+            {"activation": self.activation.to_json(), "declarations": JsonValue.array(
+                [declaration.to_json() for declaration in self.declarations],
+            )},
+        )
+
+    def keyword_registration(self) -> KeywordRegistration:
+        """Derive the parser keyword group from the authored declarations."""
+        mut result = KeywordRegistration.new(self.activation)
+        for declaration in self.declarations:
+            result = result.with_keywords(declaration.keywords())
+        return result
+
+
+pub model LibraryManifest:
+    """Additional library metadata in the existing RFC 027 descriptor format."""
+
+    pub modules: list[ModuleExport] = []
+    pub helper_bindings: list[HelperBinding] = []
+    pub required_dependencies: list[CargoDependency] = []
+    pub required_stdlib_features: list[str] = []
+
+    def new() -> Self:
+        """Construct an empty version-one library metadata value."""
+        return LibraryManifest()
+
+    def to_json(self) -> JsonValue:
+        """Encode the compiler's library metadata without a second wire format."""
+        return JsonValue.object(
+            {"format_version": JsonValue.string("V1"), "modules": JsonValue.array(
+                [module.to_json() for module in self.modules],
+            ), "helper_bindings": JsonValue.array([binding.to_json() for binding in self.helper_bindings]), "required_dependencies": JsonValue.array(
+                [dependency.to_json() for dependency in self.required_dependencies],
+            ), "required_stdlib_features": texts(self.required_stdlib_features)},
+        )
+
+
+pub model HelperBinding:
+    """A symbolic helper key and its public library export."""
+
+    pub key: str
+    pub exported_name: str
+
+    def to_json(self) -> JsonValue:
+        """Encode a helper binding for publication."""
+        return JsonValue.object(
+            {"key": JsonValue.string(self.key), "exported_name": JsonValue.string(self.exported_name)},
+        )
+
+
+pub enum TypeRef:
+    """Structured type references in library metadata."""
+
+    Named(str)
+    Generic(str, list[TypeRef])
+    Optional(list[TypeRef])
+    Union(list[TypeRef])
+
+    def named(name: str) -> Self:
+        """Construct a named metadata type reference."""
+        return TypeRef.Named(name)
+
+    def to_json(self) -> JsonValue:
+        """Encode the existing externally tagged library type reference."""
+        match self:
+            TypeRef.Named(name) => return tagged("Named", JsonValue.string(name))
+            TypeRef.Generic(name, arguments) =>
+                return tagged(
+                    "Generic",
+                    JsonValue.array(
+                        [JsonValue.string(name), JsonValue.array([argument.to_json() for argument in arguments])],
+                    ),
+                )
+            TypeRef.Optional(inner) => return tagged("Optional", inner[0].to_json())
+            TypeRef.Union(members) => return tagged("Union", JsonValue.array([member.to_json() for member in members]))
+
+
+pub model FunctionExport:
+    """An exported function's parameters, result and asynchronous contract."""
+
+    pub name: str
+    pub params: list[Tuple[str, TypeRef]] = []
+    pub return_type: Option[TypeRef] = None
+    pub is_async: bool = false
+
+    def to_json(self) -> JsonValue:
+        """Encode the existing library function metadata."""
+        mut returned = JsonValue.null()
+        if let Some(ty) = self.return_type:
+            returned = ty.to_json()
+        return JsonValue.object(
+            {"name": JsonValue.string(self.name), "params": JsonValue.array(
+                [JsonValue.array([JsonValue.string(name), ty.to_json()]) for name, ty in self.params],
+            ), "return_type": returned, "is_async": JsonValue.bool(self.is_async)},
+        )
+
+
+pub enum TypeExportKind(str):
+    """The high-level kind of a library's exported type."""
+
+    Model = "Model"
+    Class = "Class"
+    Enum = "Enum"
+    Trait = "Trait"
+    Newtype = "Newtype"
+
+
+pub model FieldExport:
+    """A library field's name, type and default availability."""
+
+    pub name: str
+    pub field_type: TypeRef
+    pub has_default: bool = false
+
+    def to_json(self) -> JsonValue:
+        """Encode the existing field metadata."""
+        return JsonValue.object(
+            {"name": JsonValue.string(self.name), "field_type": self.field_type.to_json(), "has_default": JsonValue.bool(
+                self.has_default,
+            )},
+        )
+
+
+pub model TypeExport:
+    """An exported library type and its declared public members."""
+
+    pub name: str
+    pub kind: TypeExportKind = TypeExportKind.Model
+    pub type_params: list[str] = []
+    pub fields: list[FieldExport] = []
+    pub methods: list[FunctionExport] = []
+
+    def to_json(self) -> JsonValue:
+        """Encode the existing public type metadata."""
+        return JsonValue.object(
+            {"name": JsonValue.string(self.name), "kind": JsonValue.string(self.kind.value()), "type_params": texts(
+                self.type_params,
+            ), "fields": JsonValue.array([field.to_json() for field in self.fields]), "methods": JsonValue.array(
+                [method.to_json() for method in self.methods],
+            )},
+        )
+
+
+pub model ModuleExport:
+    """A module path and its exported functions and types."""
+
+    pub path: str
+    pub functions: list[FunctionExport] = []
+    pub types: list[TypeExport] = []
+
+    def to_json(self) -> JsonValue:
+        """Encode the existing public module metadata."""
+        return JsonValue.object(
+            {"path": JsonValue.string(self.path), "functions": JsonValue.array(
+                [function.to_json() for function in self.functions],
+            ), "types": JsonValue.array([ty.to_json() for ty in self.types])},
+        )
+
+
+pub enum CargoDependencySource:
+    """Legacy descriptor source tags retained for metadata compatibility."""
+
+    Version(str)
+    Path(str)
+
+    def to_json(self) -> JsonValue:
+        """Preserve the reader's dependency source representation."""
+        match self:
+            CargoDependencySource.Version(value) => return tagged("Version", JsonValue.string(value))
+            CargoDependencySource.Path(value) => return tagged("Path", JsonValue.string(value))
+
+
+pub model CargoDependency:
+    """A dependency descriptor under the existing metadata field spellings."""
+
+    pub crate_name: str
+    pub source: CargoDependencySource
+
+    def to_json(self) -> JsonValue:
+        """Encode library dependency metadata without invoking a build tool."""
+        return JsonValue.object({"crate_name": JsonValue.string(self.crate_name), "source": self.source.to_json()})
+
+
+pub model VocabRegistration:
+    """The producer's versioned registration, serialized once into published metadata."""
+
+    pub metadata_version: int = VOCAB_METADATA_VERSION
+    pub keyword_registrations: list[KeywordRegistration] = []
+    pub dsl_surfaces: list[DslSurface] = []
+    pub library_manifest: LibraryManifest = LibraryManifest()
+
+    def new() -> Self:
+        """Construct an empty registration under the current schema."""
+        return VocabRegistration()
+
+    def with_surface(self, surface: DslSurface) -> Self:
+        """Append one activated DSL surface."""
+        return self.with_surfaces([surface])
+
+    def with_surfaces(self, surfaces: list[DslSurface]) -> Self:
+        """Append activated surfaces in their authored order."""
+        mut result = self
+        result.dsl_surfaces = result.dsl_surfaces + surfaces
+        return result
+
+    def with_keyword_registration(self, registration: KeywordRegistration) -> Self:
+        """Append one low-level keyword group."""
+        mut result = self
+        result.keyword_registrations.append(registration)
+        return result
+
+    def with_keyword_registrations(self, registrations: list[KeywordRegistration]) -> Self:
+        """Append low-level keyword groups in their authored order."""
+        mut result = self
+        result.keyword_registrations = result.keyword_registrations + registrations
+        return result
+
+    def with_library_manifest(self, manifest: LibraryManifest) -> Self:
+        """Replace the additional library metadata."""
+        mut result = self
+        result.library_manifest = manifest
+        return result
+
+    def metadata(self) -> JsonValue:
+        """
+        Return the compiler's existing versioned VocabMetadata payload.
+
+        1. Derive parser keyword groups from the registered surfaces.
+        2. Encode the registration using the descriptor reader's schema.
+        """
+        # 1. Parser keywords come from the same declaration descriptors.
+        mut registrations = self.keyword_registrations
+        for surface in self.dsl_surfaces:
+            registrations.append(surface.keyword_registration())
+        # 2. Preserve the existing descriptor transport, including its schema version.
+        return JsonValue.object(
+            {"metadata_version": JsonValue.int(self.metadata_version), "keyword_registrations": JsonValue.array(
+                [registration.to_json() for registration in registrations],
+            ), "dsl_surfaces": JsonValue.array([surface.to_json() for surface in self.dsl_surfaces]), "library_manifest": self.library_manifest.to_json(), "desugarer": JsonValue.null()},
+        )
+
+
+pub model Span:
+    """A half-open byte range in the requesting module's original source."""
+
+    pub start: int
+    pub end: int
+
+
+pub model IncanExpr:
+    """Structured host expression syntax with an explicit original-source span."""
+
+    pub span: Span
+    pub kind: IncanExprKind
+
+    def path(name: str, span: Span) -> Self:
+        """Construct a path at an explicit source location."""
+        return IncanExpr(span=span, kind=IncanExprKind.Path(name.split(".")))
+
+    def call(callee: IncanExpr, arguments: list[IncanExpr]) -> Self:
+        """Construct a call inheriting the callee's source location."""
+        return IncanExpr(span=callee.span, kind=IncanExprKind.Call([callee] + arguments))
+
+    def list(items: list[IncanExpr], span: Span) -> Self:
+        """Construct a list with its enclosing original-source span, including for an empty list."""
+        return IncanExpr(span=span, kind=IncanExprKind.List(items))
+
+
+pub enum IncanExprKind:
+    """Expression payloads; each recursive expression is independently spanned."""
+
+    NoneLiteral
+    Bool(bool)
+    Int(int)
+    Float(float)
+    Str(str)
+    Path(list[str])
+    List(list[IncanExpr])
+    Tuple(list[IncanExpr])
+    Dict(list[Tuple[IncanExpr, IncanExpr]])
+    Call(list[IncanExpr])
+    Attribute(list[IncanExpr], str)
+    Index(list[IncanExpr])
+    Binary(str, list[IncanExpr])
+    Unary(str, list[IncanExpr])
+
+
+pub model IncanStatement:
+    """Structured host statement syntax carrying its original-source span."""
+
+    pub span: Span
+    pub kind: IncanStatementKind
+
+
+pub enum IncanStatementKind:
+    """Statement payloads with spanned expression and statement children."""
+
+    Pass
+    Expr(IncanExpr)
+    Return(Option[IncanExpr])
+    Assign(str, IncanExpr)
+    Let(str, bool, IncanExpr)
+    TypedLet(str, bool, VocabTypeExpr, IncanExpr)
+    If(IncanExpr, list[IncanStatement], list[IncanStatement])
+    While(IncanExpr, list[IncanStatement])
+    For(str, IncanExpr, list[IncanStatement])
+    Unsafe(list[IncanStatement])
+
+
+pub model VocabTypeExpr:
+    """A structured type position with the source range it came from."""
+
+    pub span: Span
+    pub name: str
+    pub arguments: list[VocabTypeExpr] = []
+
+
+pub model VocabParameter:
+    """A declaration parameter with its own source location."""
+
+    pub span: Span
+    pub name: str
+    pub param_type: Option[VocabTypeExpr] = None
+    pub default_value: Option[IncanExpr] = None
+
+
+pub model VocabDeclarationHead:
+    """The structured head of a vocabulary declaration and its source location."""
+
+    pub span: Span
+    pub name: Option[str] = None
+    pub header_args: list[IncanExpr] = []
+    pub parameters: list[VocabParameter] = []
+    pub return_type: Option[VocabTypeExpr] = None
+
+
+pub model VocabFieldSpec:
+    """A field-set entry preserving the field's source span."""
+
+    pub span: Span
+    pub name: str
+    pub field_type: Option[VocabTypeExpr] = None
+    pub default_value: Option[IncanExpr] = None
+
+
+pub model VocabExpressionItemModifier:
+    """A trailing expression-item modifier with its original-source location."""
+
+    pub span: Span
+    pub keyword: str
+    pub value: IncanExpr
+
+
+pub model VocabExpressionItem:
+    """An expression-list item with its alias, modifiers and source location."""
+
+    pub span: Span
+    pub expr: IncanExpr
+    pub alias: Option[str] = None
+    pub modifiers: list[VocabExpressionItemModifier] = []
+
+
+pub model VocabClause:
+    """A parsed vocabulary clause whose head and body retain their source spans."""
+
+    pub span: Span
+    pub keyword: str
+    pub body: VocabClauseBody
+    pub compound_tokens: list[str] = []
+    pub head: list[IncanExpr] = []
+
+
+pub enum VocabClauseBody:
+    """Structured clause payloads; enclosing clauses also carry their own spans."""
+
+    Empty
+    Expression(IncanExpr)
+    ExpressionList(list[VocabExpressionItem])
+    Type(VocabTypeExpr)
+    FieldSet(list[VocabFieldSpec])
+    Items(list[VocabBodyItem])
+
+
+pub model VocabDeclaration:
+    """A parsed vocabulary declaration retaining its head, children and original-source span."""
+
+    pub span: Span
+    pub keyword: str
+    pub head: VocabDeclarationHead
+    pub compound_tokens: list[str] = []
+    pub body: list[VocabBodyItem] = []
+
+
+pub enum VocabBodyItem:
+    """A body item whose contained node always has an original-source span."""
+
+    Clause(VocabClause)
+    Declaration(VocabDeclaration)
+    Statement(IncanStatement)
+
+
+pub enum VocabSyntaxNode:
+    """A parsed syntax node; every alternative carries a spanned structured value."""
+
+    Declaration(VocabDeclaration)
+    Clause(VocabClause)
+    Statement(IncanStatement)
+    Expression(IncanExpr)
+
+    def span(self) -> Span:
+        """Return the original-source location of this syntax node."""
+        match self:
+            VocabSyntaxNode.Declaration(node) => return node.span
+            VocabSyntaxNode.Clause(node) => return node.span
+            VocabSyntaxNode.Statement(node) => return node.span
+            VocabSyntaxNode.Expression(node) => return node.span
+
+
+pub model DesugarRequest:
+    """A requesting module and its structured vocabulary syntax node."""
+
+    pub node: VocabSyntaxNode
+    pub module_path: str
+    pub schema_version: int = VOCAB_METADATA_VERSION
+
+
+pub model DesugarResponse:
+    """Canonical structured syntax output retaining every node's source location."""
+
+    pub output: DesugarOutput
+    pub schema_version: int = VOCAB_METADATA_VERSION
+
+
+pub enum DesugarOutput:
+    """The structured output position selected by a registered surface."""
+
+    Statements(list[IncanStatement])
+    Expression(IncanExpr)
+
+
+pub model DesugarError:
+    """A provider diagnostic anchored within its requesting vocabulary node."""
+
+    pub span: Span
+    pub message: str
+
+    def at(span: Span, message: str) -> Self:
+        """Construct a diagnostic at an original-source location."""
+        return DesugarError(span=span, message=message)
+
+
+def clause_keyword(clause: ClauseSurface, parent: str) -> KeywordSpec:
+    """Select the parser surface kind from a clause's authored payload kind."""
+    mut kind = KeywordSurfaceKind.BlockContextKeyword
+    if clause.body_kind == ClauseBodyKind.NestedItems:
+        kind = KeywordSurfaceKind.SubBlock
+    return KeywordSpec.new(clause.keyword, kind).with_compound_tokens(clause.compound_tokens).in_block(parent)
+
+
+def texts(values: list[str]) -> JsonValue:
+    """Encode a string list without repeating descriptor plumbing."""
+    return JsonValue.array([JsonValue.string(value) for value in values])
+
+
+def tagged(name: str, payload: JsonValue) -> JsonValue:
+    """Encode one externally tagged descriptor variant."""
+    return JsonValue.object({name: payload})

@@ -141,6 +141,12 @@ fn desugar_vocab_declaration(
             span,
         )
     })?;
+    if is_standard_c_binding(&bridged, loaves) {
+        let declarations =
+            super::checked_c::binding(&bridged).map_err(|message| CompileError::syntax(message, span))?;
+        return public_declarations_to_internal_with_anchor(&declarations, span)
+            .map_err(|error| CompileError::syntax(format!("invalid checked C binding: {error}"), span));
+    }
     let keyword = bridged.keyword.clone();
     let desugared = runtime
         .desugar_node(loaves, &incan_vocab::VocabSyntaxNode::Declaration(bridged), module_path)
@@ -160,6 +166,20 @@ fn desugar_vocab_declaration(
             },
             span,
         )
+    })
+}
+
+/// Select compiler-owned C binding semantics only for the pinned standard namespace issuer.
+fn is_standard_c_binding(declaration: &incan_vocab::VocabDeclaration, loaves: &LoafIndex) -> bool {
+    if declaration.keyword != "binding" {
+        return false;
+    }
+    let Some(metadata) = &declaration.keyword_metadata else {
+        return false;
+    };
+    loaves.entry(&metadata.dependency_key).is_some_and(|entry| {
+        matches!(&entry.namespace, crate::loaf_index::LoafNamespace::Standard { policy }
+            if policy.namespace_roots.contains(&"interop"))
     })
 }
 

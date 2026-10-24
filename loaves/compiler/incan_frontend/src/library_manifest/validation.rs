@@ -1778,6 +1778,14 @@ fn validate_vocab_payload(raw: &RawLibraryManifest) -> Result<(), LibraryManifes
         return Ok(());
     };
 
+    if vocab.metadata_version != incan_vocab::VOCAB_METADATA_VERSION {
+        return Err(LibraryManifestError::Invalid(format!(
+            "vocabulary schema version {}; supported version {}",
+            vocab.metadata_version,
+            incan_vocab::VOCAB_METADATA_VERSION,
+        )));
+    }
+
     if vocab.crate_path.trim().is_empty() {
         return Err(LibraryManifestError::Invalid(
             "vocab crate_path cannot be empty".to_string(),

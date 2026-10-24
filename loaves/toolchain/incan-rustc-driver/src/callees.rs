@@ -39,6 +39,7 @@ pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
     match &callee.kind {
         CalleeKind::Planned(name) => planned(tcx, name),
         CalleeKind::InstallPanicHook(signature) => planned(tcx, &crate::panic_hooks::name(signature)),
+        CalleeKind::Foreign(declaration) => crate::foreign::resolve(tcx, &declaration.name),
         CalleeKind::FormatValue(_, debug) => planned(tcx, crate::formatting::name(*debug)),
         CalleeKind::Value(_) => Err(PlanError::UnknownCallee(
             "local callable has no declaration callee".into(),

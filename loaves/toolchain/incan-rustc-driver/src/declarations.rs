@@ -84,6 +84,33 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
     if let Some(ty) = static_reference_ty(kind, span) {
         return ty;
     }
+    if let PlanType::CChar = kind {
+        return Box::new(ast::Ty {
+            id: ast::DUMMY_NODE_ID,
+            kind: ast::TyKind::Path(None, standard_path(&["ffi", "c_char"], span)),
+            span,
+            tokens: None,
+        });
+    }
+    if let PlanType::RawPointer(mutable, elements) = kind {
+        let pointee = elements
+            .first()
+            .map(|pointee| ty(pointee, span))
+            .unwrap_or_else(|| ty(&PlanType::Unit, span));
+        return Box::new(ast::Ty {
+            id: ast::DUMMY_NODE_ID,
+            kind: ast::TyKind::Ptr(ast::MutTy {
+                ty: pointee,
+                mutbl: if *mutable {
+                    ast::Mutability::Mut
+                } else {
+                    ast::Mutability::Not
+                },
+            }),
+            span,
+            tokens: None,
+        });
+    }
     if let PlanType::TypeToken(elements) = kind {
         return type_token_ty(elements, span);
     }

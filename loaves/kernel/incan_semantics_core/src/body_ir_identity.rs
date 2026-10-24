@@ -26,7 +26,7 @@ fn decorated_parameter_matches(
     left: &crate::IncanCallableParam,
     right: &crate::body_ir::CallableParam,
 ) -> bool {
-    if left.kind != right.kind {
+    if left.kind != right.kind || left.native_owned != right.native_owned {
         return false;
     }
     match body.locals.get(right.local.index()).map(|local| &local.origin) {
@@ -56,11 +56,21 @@ impl BodyIrModule {
     /// another declaration's body to it. A `const` that is not a retained constant is read-only storage of the same
     /// shape.
     pub fn is_well_formed_static_declaration(&self, declaration: &crate::body_ir::StaticDeclaration) -> bool {
+        self.is_well_formed_static_declaration_in_project(declaration, std::slice::from_ref(self))
+    }
+
+    /// Validate storage against its owning module and the project's single authenticated callable inventory.
+    /// A compiled decorator wrapper may retain its declaration frame on the entry module rather than this owner.
+    pub fn is_well_formed_static_declaration_in_project(
+        &self,
+        declaration: &crate::body_ir::StaticDeclaration,
+        modules: &[BodyIrModule],
+    ) -> bool {
         let kind = match declaration.canonical.kind {
             SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Method => {
                 return self.decorated_bindings.iter().any(|binding| {
                     binding.original_body.canonical.as_ref() == Some(&declaration.canonical)
-                        && self.is_well_formed_decorated_binding(binding)
+                        && self.is_well_formed_decorated_binding_in_project(binding, modules)
                 });
             }
             SemanticSourceTargetKind::Const => SemanticSourceTargetKind::Const,
@@ -80,9 +90,19 @@ impl BodyIrModule {
     }
 
     /// Prove an RFC 036 original and wrapper belong to the same source declaration and obey the checked replacement
-    /// lifetime. Linked wrappers contribute their authenticated declaration frame for signature validation only.
-    /// Only module replacements acquire initialized storage; originals never replace ordinary lookup.
+    /// lifetime. Only module replacements acquire initialized storage; originals never replace ordinary lookup.
+    /// An authenticated compiled wrapper contributes its declaration frame; its implementation remains in its Loaf.
     pub fn is_well_formed_decorated_binding(&self, binding: &crate::body_ir::DecoratedBinding) -> bool {
+        self.is_well_formed_decorated_binding_in_project(binding, std::slice::from_ref(self))
+    }
+
+    /// Validate a replacement against its module's storage and the retained project-wide callable declarations.
+    /// Context contributes authenticated signatures only; it grants no additional original implementation body.
+    pub fn is_well_formed_decorated_binding_in_project(
+        &self,
+        binding: &crate::body_ir::DecoratedBinding,
+        modules: &[BodyIrModule],
+    ) -> bool {
         if binding.initialization == crate::body_ir::DecoratedInitialization::PerInvocation {
             return binding.initializer.is_none() && self.is_well_formed_invocation_binding(binding);
         }
@@ -114,7 +134,7 @@ impl BodyIrModule {
             && self.body_has_canonical_direct_call_id(original)
             && initializer.canonical == original.canonical
             && initializer.decl_id == original.decl_id
-            && self.callable_declaration_frames().any(|body| {
+            && modules.iter().flat_map(Self::callable_declaration_frames).any(|body| {
                 body.canonical == original.canonical
                     && matches!(&replacement.ty, IncanType::Function { params, return_type }
                         if params.len() == body.params.len()
@@ -1255,6 +1275,8 @@ fn is_owner_bound_type(ty: &IncanType, parameters: &[String]) -> bool {
         | IncanType::Decimal { .. }
         | IncanType::RustInteropPath(_)
         | IncanType::NativeTraitObject { .. }
-        | IncanType::NativeBuiltin(_) => true,
+        | IncanType::NativeBuiltin(_)
+        | IncanType::NativeCChar => true,
+        IncanType::NativePointer { pointee, .. } => is_owner_bound_type(pointee, parameters),
     }
 }

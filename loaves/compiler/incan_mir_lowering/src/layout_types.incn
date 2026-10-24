@@ -36,6 +36,11 @@ pub def native_source_type(
         Some(result) => return Ok(result)
         None => pass
     match ty:
+        RustType.NativeCChar => return Ok(PlanType.CChar)
+        RustType.NativePointer(mutable=mutable, pointee=pointee) =>
+            return Ok(
+                PlanType.RawPointer(mutable.clone(), [native_source_type(nominals, enums, unions, pointee, intrinsics)?]),
+            )
         RustType.NativeTraitObject(path=path, send=send, sync=sync) =>
             return Ok(PlanType.NativeTraitObject(str(path), send.clone(), sync.clone()))
         RustType.NativeArray(element=element, length=length) =>
@@ -61,7 +66,7 @@ pub def native_source_type(
             mut signature: list[PlanType] = []
             for parameter in parameters:
                 input = native_source_type(nominals, enums, unions, parameter.ty, intrinsics)?
-                signature.append(semantic_input(input, parameter.kind, parameter.is_mut)?)
+                signature.append(semantic_input(input, parameter.kind, parameter.is_mut, parameter.native_owned)?)
             signature.append(native_source_type(nominals, enums, unions, result, intrinsics)?)
             return Ok(PlanType.FunctionPointer(signature))
         RustType.Generic(base=base, args=arguments) =>

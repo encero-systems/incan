@@ -86,6 +86,8 @@ pub(super) struct RawSoftKeywordExports {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct RawVocabExports {
+    pub(super) metadata_version: u32,
+    pub(super) unit_identity: String,
     pub(super) crate_path: String,
     pub(super) package_name: String,
     #[serde(default)]
@@ -102,6 +104,8 @@ impl RawVocabExports {
     /// Preserve the single vocabulary wire shape for library publication and producer identity encoding.
     pub(super) fn from_semantic(vocab: &VocabExports) -> Self {
         Self {
+            metadata_version: vocab.metadata_version,
+            unit_identity: vocab.unit_identity.clone(),
             crate_path: vocab.crate_path.clone(),
             package_name: vocab.package_name.clone(),
             keyword_registrations: vocab.keyword_registrations.clone(),
@@ -163,6 +167,8 @@ impl RawLibraryManifest {
                 statics: self.exports.statics,
             },
             vocab: self.vocab.map(|vocab| VocabExports {
+                metadata_version: vocab.metadata_version,
+                unit_identity: vocab.unit_identity,
                 crate_path: vocab.crate_path,
                 package_name: vocab.package_name,
                 keyword_registrations: vocab.keyword_registrations,

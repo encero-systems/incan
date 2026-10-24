@@ -1,0 +1,67 @@
+"""Preserve verified foreign declarations and checked arguments through the native call boundary."""
+
+from rust::incan_semantics_core import encode_incan_symbol_identity
+from rust::incan_semantics_core::body_ir import CheckedForeignCall, ArgumentElement, Place as BodyPlace
+from pub::incan_mir_plan import ForeignFunction, CalleeKind, PlanType, Operand, SourceSpan
+from frame import Builder, temporary
+from layout_types import native_source_type
+from lowering import scalar_operand, scalar_place, lower_callable_result, coerce_numeric_operand
+
+
+pub def lower_foreign_call(
+    mut builder: Builder,
+    target: &CheckedForeignCall,
+    arguments: &list[ArgumentElement],
+    destination: &Option[BodyPlace],
+    span: SourceSpan,
+) -> Result[None, str]:
+    """
+    Call one verified C declaration without reconstructing a native contract.
+
+    1. Retain the exact native carriers and source-selected symbol.
+    2. Read checked arguments and select the result place.
+    3. Use the ordinary call-result ownership boundary.
+    """
+    # 1. Physical names and carriers come only from the accepting frontend.
+    mut parameters: list[PlanType] = []
+    for parameter in target.parameters:
+        parameters.append(
+            native_source_type(builder.nominals, builder.enums, builder.unions, parameter, builder.intrinsics)?,
+        )
+    output = native_source_type(builder.nominals, builder.enums, builder.unions, target.return_type, builder.intrinsics)?
+    declared = ForeignFunction(
+        name=encode_incan_symbol_identity(target.binding) + "__c_" + str(target.member),
+        symbol=str(target.symbol),
+        library=str(target.library),
+        parameters=parameters,
+        return_type=output,
+    )
+    # 2. Source evaluation order was retained in Body IR; no foreign argument is reclassified here.
+    operands = foreign_arguments(builder, arguments, parameters, span)?
+    mut result = temporary(builder, output, span)
+    match destination:
+        Some(place) => result = scalar_place(builder, place, span)?
+        None => pass
+    # 3. Return replacement and cleanup use the same rule as other native calls.
+    return lower_callable_result(builder, CalleeKind.Foreign(declared), operands, result, output, span)
+
+
+def foreign_arguments(
+    mut builder: Builder,
+    arguments: &list[ArgumentElement],
+    parameters: list[PlanType],
+    span: SourceSpan,
+) -> Result[list[Operand], str]:
+    """Read checked arguments and materialize the descriptor's already accepted exact numeric carriers."""
+    mut operands: list[Operand] = []
+    for argument in arguments:
+        match argument:
+            ArgumentElement.One(value) =>
+                if len(operands) >= len(parameters):
+                    return Err("invalid Body IR foreign call arity")
+                operand = scalar_operand(builder, value, span)?
+                operands.append(coerce_numeric_operand(builder, operand, parameters[len(operands)], span)?)
+            _ => return Err("invalid Body IR spread at a checked foreign call")
+    if len(operands) != len(parameters):
+        return Err("invalid Body IR foreign call arity")
+    return Ok(operands)

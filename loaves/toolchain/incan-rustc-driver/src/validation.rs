@@ -49,6 +49,8 @@ fn numeric(kind: &SizedNumeric) -> Numeric {
 /// A local comparison vocabulary; the public types remain the Incan Loaf's own types.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Scalar {
+    CChar,
+    RawPointer(bool, Vec<Scalar>),
     NativeStr,
     NativeSlice(Vec<Scalar>),
     NativeArray(Vec<Scalar>, i64),
@@ -206,6 +208,8 @@ fn tuple_leaf(element: &crate::plan::TupleElement) -> Leaf {
 /// Compare source-authored types without requiring a Rust derive on Incan types.
 fn scalar(ty: &PlanType) -> Scalar {
     match ty {
+        PlanType::CChar => Scalar::CChar,
+        PlanType::RawPointer(mutable, elements) => Scalar::RawPointer(*mutable, elements.iter().map(scalar).collect()),
         PlanType::NativeStr => Scalar::NativeStr,
         PlanType::NativeSlice(elements) => Scalar::NativeSlice(elements.iter().map(scalar).collect()),
         PlanType::NativeArray(elements, length) => Scalar::NativeArray(elements.iter().map(scalar).collect(), *length),
@@ -806,7 +810,7 @@ fn place(plan: &Plan, function: &Function, value: &Place) -> Result<Scalar, Plan
                 Scalar::NativeArrayRef(elements, length) | Scalar::NativeArrayMutRef(elements, length) => {
                     Scalar::NativeArray(elements, length)
                 }
-                Scalar::ScalarRef(elements) | Scalar::ScalarMutRef(elements) => {
+                Scalar::ScalarRef(elements) | Scalar::ScalarMutRef(elements) | Scalar::RawPointer(_, elements) => {
                     let [inner] = elements.as_slice() else {
                         return Err(invalid(function, "unsupported scalar reference arity"));
                     };
@@ -1260,6 +1264,48 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
                 )?;
             }
             Ok(Scalar::Model(*index))
+        }
+        RvalueKind::RawAddressOf(value, mutable) => {
+            Ok(Scalar::RawPointer(*mutable, vec![place(plan, function, value)?]))
+        }
+        RvalueKind::PointerCast(value, target) => {
+            let source = operand(plan, function, value)?;
+            let Scalar::RawPointer(mutable, pointee) = scalar(target) else {
+                return Err(invalid(function, "pointer cast requires a raw pointer destination"));
+            };
+            if pointee.len() != 1
+                || !match source {
+                    Scalar::RawPointer(source_mutable, _) => !mutable || source_mutable,
+                    _ => false,
+                }
+            {
+                return Err(invalid(function, "pointer cast requires a compatible raw pointer"));
+            }
+            Ok(scalar(target))
+        }
+        RvalueKind::PointerOffset(pointer, offset) => {
+            let pointer = operand(plan, function, pointer)?;
+            if !matches!(pointer, Scalar::RawPointer(_, _)) || operand(plan, function, offset)? != Scalar::ISize {
+                return Err(invalid(
+                    function,
+                    "pointer offset requires a pointer and native signed offset",
+                ));
+            }
+            Ok(pointer)
+        }
+        RvalueKind::PointerAddress(pointer) => {
+            let Scalar::RawPointer(_, elements) = operand(plan, function, pointer)? else {
+                return Err(invalid(function, "address observation requires a raw pointer"));
+            };
+            if elements.len() != 1
+                || matches!(
+                    elements.first(),
+                    Some(Scalar::NativeStr | Scalar::NativeSlice(_) | Scalar::NativeTraitObject(..))
+                )
+            {
+                return Err(invalid(function, "address observation requires a thin raw pointer"));
+            }
+            Ok(Scalar::USize)
         }
         RvalueKind::MutBorrow(value) => borrow_result(plan, function, value, true),
         RvalueKind::Borrow(value) => borrow_result(plan, function, value, false),
@@ -2097,6 +2143,20 @@ fn signature(plan: &Plan, function: &Function, callee: &Callee) -> Result<(Vec<S
             function,
             "unsupported SDK method future outside its boxing shim",
         )),
+        CalleeKind::Foreign(declaration) => {
+            if !identifier(&declaration.name)
+                || declaration.symbol.is_empty()
+                || declaration.library.is_empty()
+                || declaration.symbol.contains('\0')
+                || declaration.library.contains('\0')
+            {
+                return Err(invalid(function, "invalid verified foreign declaration"));
+            }
+            Ok((
+                declaration.parameters.iter().map(scalar).collect(),
+                scalar(&declaration.return_type),
+            ))
+        }
         CalleeKind::External(path) | CalleeKind::Instantiated(path, _) => {
             let external = plan
                 .externals
@@ -2367,6 +2427,15 @@ fn native_sequence_element(element: &Scalar) -> bool {
 /// Validate retained nominal identities and the exact shape of nested and borrowed native carriers before MIR
 /// construction.
 fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
+    if let PlanType::RawPointer(_, elements) = ty {
+        let [pointee] = elements.as_slice() else {
+            return Err(PlanError::Invalid {
+                function: "raw pointer".into(),
+                reason: "pointer requires one exact pointee".into(),
+            });
+        };
+        return validate_model_type(plan, pointee);
+    }
     if let PlanType::NativeTraitObject(path, _, _) = ty
         && (path.is_empty() || !valid_library_item(path))
     {

@@ -2,7 +2,6 @@
 
 # Explicit payload import until foreign None type qualification is fixed (#2010).
 from std.toml import TomlLocation
-
 from std import toml
 from std.toml import TomlValue, TomlKind
 from std.fs import Path
@@ -11,24 +10,10 @@ from std.graph import Dag, NodeId
 from rust::std::str import from_utf8
 from manifest_errors import IntakeError, IntakeErrorKind
 
-
 # The manifest's tables.
 const ROOT_TABLES: FrozenList[str] = ["project", "dependencies", "rust-dependencies", "build", "rust", "vocab", "tool", "interop"]
-
 # The keys of `[project]`.
-const PROJECT_KEYS: FrozenList[str] = [
-    "name",
-    "version",
-    "scripts",
-    "features",
-    "description",
-    "authors",
-    "license",
-    "license-files",
-    "readme",
-    "requires-incan",
-    "private",
-]
+const PROJECT_KEYS: FrozenList[str] = ["name", "version", "scripts", "features", "description", "authors", "license", "license-files", "readme", "requires-incan", "private"]
 
 
 pub model ManifestEvidence:
@@ -103,6 +88,8 @@ pub model ProjectIntent:
     pub contract_models: list[str] = []
     # The C headers the `[interop.c]` targets declare, project-relative.
     pub c_headers: list[str] = []
+    # The Incan module registering this Loaf's vocabulary, project-relative.
+    pub vocab_entry: Option[str] = None
 
 
 pub model LocalProject:
@@ -216,7 +203,14 @@ def parse_raw_intent(source: str, manifest: str) -> Result[ProjectIntent, Intake
     parsed = toml.parse(source).map_err((error) => refusal(manifest, [], IntakeErrorKind.Invalid, error.message()))?
     root = table(parsed, manifest, [])?
     if "sdk" in root:
-        return Err(refusal(manifest, ["sdk"], IntakeErrorKind.Unsupported, "there is no SDK selection: standard packages are ambient, and a unit reaches every one it uses"))
+        return Err(
+            refusal(
+                manifest,
+                ["sdk"],
+                IntakeErrorKind.Unsupported,
+                "there is no SDK selection: standard packages are ambient, and a unit reaches every one it uses",
+            ),
+        )
     allowed(root, list(ROOT_TABLES), manifest, [])?
     if "project" not in root:
         return Err(refusal(manifest, ["project"], IntakeErrorKind.Missing, "project identity is required"))
@@ -265,6 +259,7 @@ def parse_raw_intent(source: str, manifest: str) -> Result[ProjectIntent, Intake
             source_root=source_root,
             contract_models=parse_contract_models(root, manifest)?,
             c_headers=parse_c_headers(root, manifest)?,
+            vocab_entry=parse_vocab_entry(root, manifest)?,
         ),
     )
 
@@ -278,11 +273,19 @@ def string_list(value: TomlValue, manifest: str, field: list[str]) -> Result[lis
     return Ok(items)
 
 
-def flag(values: Dict[str, TomlValue], key: str, fallback: bool, manifest: str, field: list[str]) -> Result[bool, IntakeError]:
+def flag(
+    values: Dict[str, TomlValue],
+    key: str,
+    fallback: bool,
+    manifest: str,
+    field: list[str],
+) -> Result[bool, IntakeError]:
     """An optional boolean field, `fallback` when absent."""
     if key not in values:
         return Ok(fallback)
-    return values[key].as_bool().map_err((error) => refusal(manifest, field + [key], IntakeErrorKind.Invalid, error.message()))
+    return values[key]
+        .as_bool()
+        .map_err((error) => refusal(manifest, field + [key], IntakeErrorKind.Invalid, error.message()))
 
 
 def parse_features(
@@ -338,8 +341,10 @@ def check_feature_names(
     manifest: str,
     field: list[str],
 ) -> Result[None, IntakeError]:
-    """Refuse a feature that includes an undeclared feature, activates a dependency that is not optional, or requests
-    features of something that is not a dependency."""
+    """
+    Refuse a feature that includes an undeclared feature, activates a dependency that is not optional, or requests
+    features of something that is not a dependency.
+    """
     for included in declaration.includes:
         if included not in features:
             detail = f"includes `{included}`, which the package does not declare"
@@ -394,7 +399,9 @@ def compact_feature(value: TomlValue, manifest: str, field: list[str]) -> Result
         elif "/" in entry:
             parts = entry.split("/")
             if len(parts) != 2 or parts[0] == "" or parts[1] == "":
-                return Err(refusal(manifest, field, IntakeErrorKind.Invalid, f"`{entry}` is not `<dependency>/<feature>`"))
+                return Err(
+                    refusal(manifest, field, IntakeErrorKind.Invalid, f"`{entry}` is not `<dependency>/<feature>`"),
+                )
             mut requested: list[str] = []
             if parts[0] in declaration.dependency_features:
                 requested = declaration.dependency_features[parts[0]]
@@ -413,11 +420,19 @@ def expanded_feature(value: TomlValue, manifest: str, field: list[str]) -> Resul
     if "includes" in entries:
         declaration.includes = string_list(entries["includes"], manifest, field + ["includes"])?
     if "optional-dependencies" in entries:
-        declaration.optional_dependencies = string_list(entries["optional-dependencies"], manifest, field + ["optional-dependencies"])?
+        declaration.optional_dependencies = string_list(
+            entries["optional-dependencies"],
+            manifest,
+            field + ["optional-dependencies"],
+        )?
     if "dependency-features" in entries:
         requests = table(entries["dependency-features"], manifest, field + ["dependency-features"])?
         for alias in sorted([key for key in requests.keys()]):
-            declaration.dependency_features[alias] = string_list(requests[alias], manifest, field + ["dependency-features", alias])?
+            declaration.dependency_features[alias] = string_list(
+                requests[alias],
+                manifest,
+                field + ["dependency-features", alias],
+            )?
     return Ok(declaration)
 
 
@@ -463,7 +478,9 @@ def parse_c_headers(root: Dict[str, TomlValue], manifest: str) -> Result[list[st
     c = table(interop["c"], manifest, ["interop", "c"])?
     if "targets" not in c:
         return Ok([])
-    targets = c["targets"].as_array().map_err((error) => refusal(manifest, ["interop", "c", "targets"], IntakeErrorKind.Invalid, error.message()))?
+    targets = c["targets"]
+        .as_array()
+        .map_err((error) => refusal(manifest, ["interop", "c", "targets"], IntakeErrorKind.Invalid, error.message()))?
     mut headers: list[str] = []
     for index in range(len(targets)):
         field = ["interop", "c", "targets", str(index)]
@@ -518,10 +535,22 @@ def parse_dependencies(
             else:
                 entry = table(value, manifest, [group, alias])?
                 if "standard" in entry:
-                    return Err(refusal(manifest, [group, alias, "standard"], IntakeErrorKind.Unsupported, "standard packages are ambient: a unit reaches every standard package it uses, and none is declared"))
+                    return Err(
+                        refusal(
+                            manifest,
+                            [group, alias, "standard"],
+                            IntakeErrorKind.Unsupported,
+                            "standard packages are ambient: a unit reaches every standard package it uses, and none is declared",
+                        ),
+                    )
                 if "path" in entry:
                     field = [group, alias]
-                    allowed(entry, ["loaf", "path", "version", "optional", "default-features", "features"], manifest, field)?
+                    allowed(
+                        entry,
+                        ["loaf", "path", "version", "optional", "default-features", "features"],
+                        manifest,
+                        field,
+                    )?
                     path = required(entry, "path", manifest, field + ["path"])?
                     mut features: list[str] = []
                     if "features" in entry:
@@ -559,8 +588,26 @@ def validate_facets(root: Dict[str, TomlValue], manifest: str) -> Result[None, I
             required(source, "root", manifest, ["rust", "source", "root"])?
     if "vocab" in root:
         vocab = table(root["vocab"], manifest, ["vocab"])?
-        allowed(vocab, ["crate"], manifest, ["vocab"])?
+        if "crate" in vocab:
+            return Err(
+                refusal(
+                    manifest,
+                    ["vocab", "crate"],
+                    IntakeErrorKind.Unsupported,
+                    "[vocab] crate is no longer supported; use entry",
+                ),
+            )
+        allowed(vocab, ["entry"], manifest, ["vocab"])?
+        required(vocab, "entry", manifest, ["vocab", "entry"])?
     return Ok(None)
+
+
+def parse_vocab_entry(root: Dict[str, TomlValue], manifest: str) -> Result[Option[str], IntakeError]:
+    """Read the validated vocabulary entry without resolving its filesystem path."""
+    if "vocab" not in root:
+        return Ok(None)
+    vocab = table(root["vocab"], manifest, ["vocab"])?
+    return Ok(Some(required(vocab, "entry", manifest, ["vocab", "entry"])?))
 
 
 def validate_target(value: str) -> Result[None, str]:

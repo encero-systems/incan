@@ -244,6 +244,10 @@ pub enum PlanType:
     NativeArray(list[PlanType], int)
     NativeArrayRef(list[PlanType], int)
     NativeArrayMutRef(list[PlanType], int)
+    # Exact target C character category, used by verified foreign pointer signatures.
+    CChar
+    # A compiler-managed raw pointer with exactly one pointee carrier; source arithmetic never creates one.
+    RawPointer(bool, list[PlanType])
 
 
 pub def list_leaf_type(leaf: ListLeaf) -> PlanType:
@@ -498,6 +502,12 @@ pub enum RvalueKind:
     ClosureObject(Place)
     # Test the selected variant using Rust's actual discriminant type and value, including explicit repr values.
     IsVariant(Place, int)
+    # Addresses and offsets are emitted only from checked bridge facts, never from source pointer arithmetic.
+    RawAddressOf(Place, bool)
+    PointerCast(Operand, PlanType)
+    PointerOffset(Operand, Operand)
+    # Observe an address for a null guard without permitting integer-to-pointer construction.
+    PointerAddress(Operand)
 
 
 @derive(Clone, PartialEq)
@@ -579,6 +589,19 @@ pub enum CalleeKind:
     FormatValue(PlanType, bool)
     # Box a checked noncapturing native callback and install it through Rust's standard panic API.
     InstallPanicHook(list[PlanType])
+    # A target-verified foreign declaration; the physical symbol and link capability are never reconstructed.
+    Foreign(ForeignFunction)
+
+
+@derive(Clone, PartialEq)
+pub model ForeignFunction:
+    """One target-verified C function with its exact symbol, explicit system library, and native signature."""
+
+    pub name: str
+    pub symbol: str
+    pub library: str
+    pub parameters: list[PlanType]
+    pub return_type: PlanType
 
 
 @derive(Clone, PartialEq)

@@ -348,6 +348,14 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
                 krate.items.push(crate::checked_json::forwarding_impl(model, span));
             }
         }
+        match crate::foreign::items(
+            &self.plan,
+            &compiler.sess.psess.attr_id_generator,
+            krate.spans.inner_span,
+        ) {
+            Ok(items) => krate.items.extend(items),
+            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+        }
 
         // ---- Callable declarations and canonical entries ----
         for function in &self.plan.functions {

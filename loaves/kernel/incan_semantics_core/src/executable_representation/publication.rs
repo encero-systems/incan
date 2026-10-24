@@ -597,6 +597,7 @@ impl<'a> PublicationAudit<'a> {
     /// owned frame storage.
     fn ty(&mut self, ty: &IncanType) -> Result<(), CoverageReason> {
         match ty {
+            IncanType::NativePointer { .. } | IncanType::NativeCChar => Err(CoverageReason::UnsupportedConstruct),
             IncanType::SelfType if self.trait_self => Ok(()),
             IncanType::TypeVar(name) if self.type_parameters.contains(name) => Ok(()),
             IncanType::Primitive(_) | IncanType::Never | IncanType::Decimal { .. } | IncanType::NativeBuiltin(_) => {
@@ -1052,6 +1053,8 @@ impl<'a> PublicationAudit<'a> {
                         return Err(CoverageReason::UnsupportedConstruct);
                     }
                     Callee::TypeMetadata(_) => return Err(CoverageReason::UnsupportedConstruct),
+                    Callee::CheckedForeign(_) => return Err(CoverageReason::UnsupportedConstruct),
+                    Callee::CheckedBridge(_) => return Err(CoverageReason::UnsupportedConstruct),
                 }
             }
             StatementKind::If {

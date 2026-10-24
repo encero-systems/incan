@@ -202,8 +202,18 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 span: hir_span(param.span),
                 default: self.lower_callable_default(param.node.default.as_ref(), closure_scope),
                 mutable: param.node.is_mut,
+                native_owned: self
+                    .type_info
+                    .expr_type(param.span)
+                    .is_some_and(|ty| parameter_types::native_collection_parameter(ty, self.type_info)),
             });
         }
+        self.owned_parameters.extend(
+            closure_params
+                .iter()
+                .filter(|parameter| parameter.native_owned)
+                .map(|parameter| parameter.local),
+        );
 
         // ---- Lower the body under the closure's own bindings, then restore the enclosing scope's ----
         // The closure body is deferred. Its assignments must not update the enclosing body's proof that a local

@@ -30,7 +30,11 @@ pub(crate) fn attributes(
 }
 
 /// One `#[path(arguments)]` attribute, with the tokens a procedural macro invocation reads.
-fn attribute_item(generator: &ast::attr::AttrIdGenerator, attribute: &NativeAttribute, span: Span) -> ast::Attribute {
+pub(crate) fn attribute_item(
+    generator: &ast::attr::AttrIdGenerator,
+    attribute: &NativeAttribute,
+    span: Span,
+) -> ast::Attribute {
     let segments: Vec<&str> = attribute.path.split("::").collect();
     let mut inside = Vec::new();
     for (index, segment) in segments.iter().enumerate() {

@@ -32,6 +32,7 @@ from layout_types import native_source_type
 from unions import collect_unions
 from async_ import evaluator_name
 from nominal_instances import NominalInstance, retain_frame_nominals
+from collections import is_owned_collection
 
 
 pub def retain_runtime_instances(
@@ -366,6 +367,14 @@ pub def runtime_body(module: &BodyIrModule, path: str) -> Result[Option[Body], s
     return Ok(found)
 
 
+def belongs_to_runtime(body: &Body) -> bool:
+    """Require the authenticated runtime package identity before a governed body can replace a native call."""
+    if let Some(identity) = body.canonical:
+        if let SymbolOrigin.Package(library=library, module_path=_owner) = identity.origin:
+            return str(library) == "incan_native_runtime"
+    return false
+
+
 def redirect_runtime_calls(
     mut functions: list[Function],
     external: ExternalFunction,
@@ -497,6 +506,7 @@ def runtime_callable_argument(
     mut parameters: list[RustCallableParam] = []
     for index in range(len(signature) - 1):
         parameter = RustCallableParam(
+            native_owned=is_owned_collection(signature[index]),
             name=None,
             ty=runtime_argument(module, signature[index], intrinsics)?,
             kind=RustCallableParamKind.Normal,

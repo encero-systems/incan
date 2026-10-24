@@ -22,6 +22,7 @@ from pub::incan_mir_plan import (
 pub def type_name(ty: &RustType) -> str:
     """Name every canonical type kind even when its legacy Display implementation is empty."""
     match ty:
+        RustType.NativeCChar | RustType.NativePointer(mutable=_, pointee=_) => return str(ty)
         RustType.Tuple(elements) =>
             mut names: list[str] = []
             for element in elements:

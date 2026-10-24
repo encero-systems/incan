@@ -462,7 +462,6 @@ impl<'a> Parser<'a> {
             .library_imported_vocab
             .keys()
             .chain(self.library_imported_dsl_surfaces.keys())
-            .filter(|key| import_path_activates_namespace(import_path, key))
             .cloned()
             .collect::<Vec<_>>();
         provider_keys.sort();

@@ -224,7 +224,7 @@ pub def evaluate(expression: Expression, snapshot: CfgSnapshot) -> Option[bool]:
 
 
 def main() -> None:
-    kinds = build([3])
+    kinds = build([3, 4])
     println(f"{kinds[0].payload()} {kinds[1].payload()} {kinds[2].payload()} {kinds[3].payload()}")
     println(retain(File(number=7)).number)
     pair = build_pair()

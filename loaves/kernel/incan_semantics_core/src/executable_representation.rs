@@ -45,7 +45,10 @@ use crate::body_ir::{
 /// Version 29 retains checked owned callback storage and native Send/Sync capture obligations.
 /// Version 30 carries checked required-field witnesses in nominal fragment trailers.
 /// Version 31 appends the pure generated field-table operation for closed type parameters.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 31;
+/// Version 32 retains owned native collection parameter ABIs independently of source callable mutability markers.
+/// Version 33 retains verified foreign call descriptors independently of source class layouts.
+/// Version 34 retains checked private pointer carriers and foreign bridge operations.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 34;
 
 /// Combined positional changes require regenerated providers; no older payload is compatible with this reader.
 const OLDEST_SUPPORTED_VERSION: u32 = EXECUTABLE_REPRESENTATION_VERSION;
@@ -1655,6 +1658,7 @@ mod tests {
         let mut exported = body("exported", 1);
         exported.params.push(CallableParam {
             mutable: false,
+            native_owned: false,
             kind: crate::IncanCallableParamKind::Normal,
             local: crate::body_ir::LocalId(0),
             name: "x".into(),
@@ -2141,6 +2145,7 @@ mod tests {
         ]);
         exported.params.push(CallableParam {
             mutable: false,
+            native_owned: false,
             kind: crate::IncanCallableParamKind::Normal,
             local: crate::body_ir::LocalId(0),
             name: "product".into(),

@@ -57,7 +57,7 @@ pub def function_pointer_type(parameters: &list[IncanCallableParam], result: &Ru
             input = callable_input(parameter.ty)?
         else:
             input = callable_parameter_type([], [], [], parameter, [])?
-        signature.append(packed_input(input, parameter.kind, parameter.is_mut)?)
+        signature.append(packed_input(input, parameter.kind, parameter.is_mut, parameter.native_owned)?)
     # 2. Append the owned return contract.
     signature.append(callable_result(result)?)
     return Ok(PlanType.FunctionPointer(signature))
@@ -81,17 +81,28 @@ def callable_result(ty: &RustType) -> Result[PlanType, str]:
     return callable_component(ty)
 
 
-pub def signature_input(ty: PlanType, mutable: bool) -> PlanType:
+pub def signature_input(ty: PlanType, mutable: bool, native_owned: bool = false) -> Result[PlanType, str]:
     """
     A callable's input as its declaration's frame receives it: a list or collection by the caller-owned reference, and
     for a `mut` parameter the exclusive borrow of the caller's value.
+
+    A checked native collection consumes its outer value; references inside its elements keep their own ABI.
     """
     # Every function frame stores its parameters this way, so a function item, a lifted closure and an annotated
     # callable type all agree on this one input representation.
-    return parameter_storage_type(ty, mutable)
+    if native_owned:
+        if not is_owned_collection(ty):
+            return Err("invalid Body IR owned native collection parameter")
+        return Ok(ty)
+    return Ok(parameter_storage_type(ty, mutable))
 
 
-pub def semantic_input(ty: PlanType, kind: IncanCallableParamKind, mutable: bool) -> Result[PlanType, str]:
+pub def semantic_input(
+    ty: PlanType,
+    kind: IncanCallableParamKind,
+    mutable: bool,
+    native_owned: bool = false,
+) -> Result[PlanType, str]:
     """
     Project a checked callable element onto its parameter ABI.
 
@@ -101,7 +112,7 @@ pub def semantic_input(ty: PlanType, kind: IncanCallableParamKind, mutable: bool
     """
     # 1. Preserve ordinary input borrowing.
     if kind == IncanCallableParamKind.Normal:
-        return Ok(signature_input(ty, mutable))
+        return signature_input(ty, mutable, native_owned)
     # 2. Refuse mutable rest parameters.
     if mutable:
         return Err("unsupported Body IR mutable rest parameter")
@@ -116,7 +127,12 @@ pub def semantic_input(ty: PlanType, kind: IncanCallableParamKind, mutable: bool
     return Err("unsupported Body IR callable parameter role")
 
 
-pub def packed_input(ty: PlanType, kind: IncanCallableParamKind, mutable: bool) -> Result[PlanType, str]:
+pub def packed_input(
+    ty: PlanType,
+    kind: IncanCallableParamKind,
+    mutable: bool,
+    native_owned: bool = false,
+) -> Result[PlanType, str]:
     """
     Consume a checked frame pack as owned storage.
 
@@ -126,7 +142,7 @@ pub def packed_input(ty: PlanType, kind: IncanCallableParamKind, mutable: bool) 
     """
     # 1. Preserve ordinary input borrowing.
     if kind == IncanCallableParamKind.Normal:
-        return Ok(signature_input(ty, mutable))
+        return signature_input(ty, mutable, native_owned)
     # 2. Refuse mutable rest parameters.
     if mutable:
         return Err("unsupported Body IR mutable rest parameter")
@@ -627,7 +643,7 @@ def loaf_item_signature(
         if parameter.ty != declaration.parameters[index]:
             return Err("invalid Body IR Loaf function-item parameter contract")
         component = item_input(builder, declaration.parameters[index])?
-        mut input = packed_input(component, parameter.kind, parameter.mutable)?
+        mut input = packed_input(component, parameter.kind, parameter.mutable, parameter.native_owned)?
         match declaration.declaration_frame():
             Some(frame) => input = call_parameter_type(builder, frame, frame.params[index])?
             None => pass
@@ -705,7 +721,12 @@ def item_signature(
                 if parameters[index].ty != body.params[index].ty:
                     return Err("unsupported Body IR function-item parameter contract")
         component = item_input(builder, parameters[index].ty)?
-        input = packed_input(component, parameters[index].kind, parameters[index].mutable)?
+        input = packed_input(
+            component,
+            parameters[index].kind,
+            parameters[index].mutable,
+            parameters[index].native_owned,
+        )?
         if body.is_generator() and input != component:
             return Err("unsupported Body IR generator function item with borrowed parameters")
         signature.append(input)

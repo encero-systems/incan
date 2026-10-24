@@ -369,7 +369,7 @@ pub(super) fn lower_function_body(
     }
 
     let mut params = Vec::with_capacity(function.params.len());
-    for (param, local) in function.params.iter().zip(param_locals.iter().copied()) {
+    for (index, (param, local)) in function.params.iter().zip(param_locals.iter().copied()).enumerate() {
         let ty = builder.locals[local.index()].ty.clone();
         params.push(bir::CallableParam {
             local,
@@ -379,16 +379,24 @@ pub(super) fn lower_function_body(
             span: hir_span(param.span),
             default: builder.lower_callable_default(param.node.default.as_ref(), root_scope),
             mutable: param.node.is_mut,
+            native_owned: binding
+                .and_then(|binding| binding.params.get(index))
+                .is_some_and(|parameter| {
+                    parameter_types::native_collection_parameter(&parameter.ty, lowering_facts.type_info)
+                }),
         });
     }
 
-    builder
-        .borrowed_parameters
-        .extend(params.iter().filter(|param| param.mutable).map(|param| param.local));
-    builder.owned_rest_parameters.extend(
+    builder.borrowed_parameters.extend(
         params
             .iter()
-            .filter(|param| param.kind != IncanCallableParamKind::Normal)
+            .filter(|param| param.mutable && !param.native_owned)
+            .map(|param| param.local),
+    );
+    builder.owned_parameters.extend(
+        params
+            .iter()
+            .filter(|param| param.native_owned || param.kind != IncanCallableParamKind::Normal)
             .map(|param| param.local),
     );
     let rebound = lowering_facts
@@ -555,6 +563,7 @@ pub(super) fn lower_method_body(
             span: hir_span(decl_span),
             default: bir::CallableParamDefault::Required,
             mutable,
+            native_owned: false,
         });
     }
 
@@ -581,7 +590,7 @@ pub(super) fn lower_method_body(
         ordinary_param_locals.push(local);
     }
 
-    for (param, local) in method.params.iter().zip(ordinary_param_locals) {
+    for (index, (param, local)) in method.params.iter().zip(ordinary_param_locals).enumerate() {
         let ty = builder.locals[local.index()].ty.clone();
         params.push(bir::CallableParam {
             local,
@@ -591,19 +600,24 @@ pub(super) fn lower_method_body(
             span: hir_span(param.span),
             default: builder.lower_callable_default(param.node.default.as_ref(), root_scope),
             mutable: param.node.is_mut,
+            native_owned: binding
+                .and_then(|binding| binding.params.get(index))
+                .is_some_and(|parameter| {
+                    parameter_types::native_collection_parameter(&parameter.ty, lowering_facts.type_info)
+                }),
         });
     }
 
     builder.borrowed_parameters.extend(
         params
             .iter()
-            .filter(|param| param.mutable && param.name != "self")
+            .filter(|param| param.mutable && !param.native_owned && param.name != "self")
             .map(|param| param.local),
     );
-    builder.owned_rest_parameters.extend(
+    builder.owned_parameters.extend(
         params
             .iter()
-            .filter(|param| param.kind != IncanCallableParamKind::Normal)
+            .filter(|param| param.native_owned || param.kind != IncanCallableParamKind::Normal)
             .map(|param| param.local),
     );
     let rebound = lowering_facts

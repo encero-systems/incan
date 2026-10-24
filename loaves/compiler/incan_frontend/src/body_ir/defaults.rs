@@ -102,6 +102,7 @@ pub(super) fn attach_nominal_field_defaults(
                 span: hir_span(field.span),
                 default: builder.lower_callable_default(field.node.default.as_ref(), scope),
                 mutable: false,
+                native_owned: false,
             });
         }
 

@@ -5,6 +5,7 @@
 //! [`crate::session::CompilationSession::analyze_unit`] visits it; nothing here checks again.
 
 mod exports;
+pub(crate) mod vocab;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
@@ -148,8 +149,8 @@ impl PublicationFacts {
     }
 
     /// Build the Loaf's library manifest: the entry module's public names, its checked API and identity graph, its
-    /// public registries and its publishable contract models. `modules` are the unit's checked modules, for
-    /// diagnostics.
+    /// public registries, prepared vocabulary and publishable contract models. `modules` are the unit's checked
+    /// modules, for diagnostics.
     pub fn library_manifest(
         mut self,
         modules: &[ParsedModule],
@@ -191,6 +192,7 @@ impl PublicationFacts {
                 CliError::failure(rendered.trim_end())
             })?;
         let mut manifest = LibraryManifest::from_checked_exports(&self.package, &unit.version, &selected);
+        manifest.vocab = vocab::prepared_registration(unit)?;
         manifest.rust_abi = LibraryRustAbi::from_items(self.rust_items);
         retain_feature_requirements(&mut manifest, modules, unit);
         manifest.contract_metadata.models = ContractMetadataPackage::new(

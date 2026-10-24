@@ -1,0 +1,14 @@
+# behavior: a dependency's Incan descriptors parse its block before requesting custom expansion
+# expect-exit: 1
+# expect-stderr-contains:
+#   dependency `words` has no desugarer artifact
+
+from pub::words import marker
+
+note Example:
+    VALUE OF 7
+
+
+def main() -> None:
+    """The descriptor is parsed before semantic expansion is requested."""
+    println(marker())

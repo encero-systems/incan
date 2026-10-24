@@ -2718,7 +2718,13 @@ pub struct CallableParam {
     /// and its changes are visible to the caller: callers pass the argument as
     /// [`OwnershipFact::MutBorrow`], and the callee neither owns nor drops the parameter, as the emitted route's
     /// `&mut T` parameter does. For a `Copy` type it is a mutable local copy, so callers still pass a copy.
+    /// An owned native collection keeps its by-value boundary through `native_owned`; mutability then applies to the
+    /// owned local.
     pub mutable: bool,
+    /// The checker selected an owned native collection boundary rather than implicit source collection borrowing.
+    /// The local may still be mutable; that does not turn this by-value ABI into an exclusive caller loan.
+    #[serde(default)]
+    pub native_owned: bool,
 }
 
 /// Preserve the ordinary passing convention when reading a Body IR parameter published before source roles.
@@ -3780,6 +3786,58 @@ pub enum Callee {
     ProviderOperation(Box<ProviderOperationPlan>),
     /// A pure compiler-generated operation on a checked type, preserving its binder until instantiation.
     TypeMetadata(TypeMetadataTarget),
+    /// One source-selected C symbol whose exact descriptor passed target verification.
+    CheckedForeign(Box<CheckedForeignCall>),
+    /// A checked compiler-managed bridge operation, with its declaration authority and result storage retained.
+    CheckedBridge(Box<CheckedBridgeCall>),
+}
+
+/// The checked bridge operation selected before lowering; none is inferred from a method spelling downstream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CheckedBridgeOperation {
+    /// Validate input text and create owned NUL-terminated storage.
+    MakeCString,
+    /// Borrow a validated input buffer's pointer for one raw call.
+    CStringPointer,
+    /// Copy a foreign view within an explicit byte bound and validate UTF-8.
+    CopyUtf8,
+    /// Allocate a fresh output position whose semantic initialized state remains unavailable.
+    NewOutputSlot,
+    /// Allocate an output position initialized from the caller's exact scalar value.
+    NewInOutSlot,
+    /// Read one output position after the checker proved its declared initialization condition.
+    TakeOutputSlot,
+}
+
+/// A checked foreign bridge operation, independent of source class layouts or backend helper names.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CheckedBridgeCall {
+    /// The actual standard namespace or verified binding declaration authorizing this operation.
+    pub authority: CanonicalSymbolId,
+    /// Exact operation selected by checking and slot-state analysis.
+    pub operation: CheckedBridgeOperation,
+    /// The already selected native result storage, including private pointer and buffer carriers.
+    pub return_type: IncanType,
+}
+
+/// An unsafe C call selected by the checker and verified against the declared target header.
+/// This is a foreign ABI boundary, independent of the source declaration's class-shaped projection.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CheckedForeignCall {
+    /// Canonical source binding declaration that owns the symbol.
+    pub binding: CanonicalSymbolId,
+    /// Exact source member selected within the verified binding.
+    pub member: String,
+    /// Physical linker symbol, without casing or namespace reconstruction.
+    pub symbol: String,
+    /// Explicit system library accepted by declaration checking.
+    pub library: String,
+    /// Verified header retained as declaration provenance.
+    pub header: String,
+    /// Exact native parameter carriers in declaration order.
+    pub parameters: Vec<IncanType>,
+    /// Exact native result carrier, without semantic widening.
+    pub return_type: IncanType,
 }
 
 /// A generated type member selected by the checker, never a same-spelled source method.
@@ -3823,6 +3881,8 @@ impl Callee {
                 },
                 target.receiver_type
             ),
+            Self::CheckedForeign(target) => format!("checked-c:{}::{}", target.binding.declaration_name, target.member),
+            Self::CheckedBridge(target) => format!("checked-c-bridge:{:?}", target.operation),
         }
     }
 }
@@ -5332,6 +5392,7 @@ mod tests {
             params: vec![
                 CallableParam {
                     mutable: false,
+                    native_owned: false,
                     kind: IncanCallableParamKind::Normal,
                     local: local_x,
                     name: "x".to_string(),
@@ -5341,6 +5402,7 @@ mod tests {
                 },
                 CallableParam {
                     mutable: false,
+                    native_owned: false,
                     kind: IncanCallableParamKind::Normal,
                     local: local_y,
                     name: "y".to_string(),
@@ -5595,6 +5657,7 @@ mod tests {
         assert_eq!(
             CallableParam {
                 mutable: false,
+                native_owned: false,
                 kind: IncanCallableParamKind::Normal,
                 local: LocalId(7),
                 name: "suffix".to_string(),
@@ -5615,6 +5678,7 @@ mod tests {
     fn callable_parameter_default_origins_are_distinct_and_deterministic() {
         let source = CallableParam {
             mutable: false,
+            native_owned: false,
             kind: IncanCallableParamKind::Normal,
             local: LocalId(1),
             name: "limit".to_string(),
@@ -5634,6 +5698,7 @@ mod tests {
         };
         let preset = CallableParam {
             mutable: false,
+            native_owned: false,
             kind: IncanCallableParamKind::Normal,
             local: LocalId(2),
             name: "method".to_string(),
@@ -5643,6 +5708,7 @@ mod tests {
         };
         let unsupported = CallableParam {
             mutable: false,
+            native_owned: false,
             kind: IncanCallableParamKind::Normal,
             local: LocalId(4),
             name: "payload".to_string(),
@@ -5883,6 +5949,7 @@ mod tests {
                     rvalue: Rvalue::Closure {
                         params: vec![CallableParam {
                             mutable: false,
+                            native_owned: false,
                             kind: IncanCallableParamKind::Normal,
                             local: param_local,
                             name: "z".to_string(),

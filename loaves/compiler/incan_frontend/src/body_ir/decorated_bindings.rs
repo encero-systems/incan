@@ -347,6 +347,7 @@ fn initializer(
         }
         parameter.kind = ty.kind;
         parameter.mutable = ty.is_mut;
+        parameter.native_owned = ty.native_owned;
         parameter.local = builder.new_temp(parameter.ty.clone(), scope, hir_span(span));
     }
     let mut value = builder.push_assign_temp(
@@ -608,6 +609,7 @@ fn wrapper(original: &bir::Body, replacement: &bir::StaticDeclaration) -> Option
         }
         parameter.kind = ty.kind;
         parameter.mutable = ty.is_mut;
+        parameter.native_owned = ty.native_owned;
         body.locals[parameter.local.index()].ty = parameter.ty.clone();
     }
     let scope = body.block.scope;

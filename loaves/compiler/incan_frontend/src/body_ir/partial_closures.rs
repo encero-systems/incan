@@ -249,8 +249,11 @@ impl BodyBuilder<'_, '_> {
                 span: source.map_or(span, |source| hir_span(source.param_span)),
                 default,
                 mutable: parameter.is_mut,
+                native_owned: super::parameter_types::native_collection_parameter(&parameter.ty, self.type_info),
             });
-            if parameter.is_mut {
+            if frame.parameters.last().is_some_and(|parameter| parameter.native_owned) {
+                self.owned_parameters.insert(local);
+            } else if parameter.is_mut {
                 self.borrowed_parameters.insert(local);
             }
             frame.argument_locals.push(local);

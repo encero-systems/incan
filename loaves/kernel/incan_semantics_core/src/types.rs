@@ -104,6 +104,13 @@ pub enum IncanType {
         send: bool,
         sync: bool,
     },
+    /// Exact compiler-managed foreign pointer storage; source code receives it only through a checked bridge.
+    NativePointer {
+        mutable: bool,
+        pointee: Box<IncanType>,
+    },
+    /// The target's C char category, whose signedness comes from the selected native toolchain.
+    NativeCChar,
 }
 
 /// Builtin runtime storage admitted by the direct route without impersonating a same-spelled source declaration.
@@ -194,7 +201,9 @@ impl IncanType {
         match self {
             Self::Primitive(IncanPrimitiveType::Int | IncanPrimitiveType::Float | IncanPrimitiveType::Numeric(_))
             | Self::Primitive(IncanPrimitiveType::Bool | IncanPrimitiveType::Unit)
-            | Self::Decimal { .. } => AbiV0Ownership::CopyOrTrivial,
+            | Self::Decimal { .. }
+            | Self::NativePointer { .. }
+            | Self::NativeCChar => AbiV0Ownership::CopyOrTrivial,
             Self::Ref(_) => AbiV0Ownership::Borrowed,
             Self::RefMut(_) => AbiV0Ownership::MutBorrowed,
             Self::Never | Self::TypeVar(_) | Self::SelfType | Self::Infer | Self::Unknown | Self::Unsupported(_) => {
@@ -220,7 +229,9 @@ impl IncanType {
             Self::RustInteropPath(_)
             | Self::NativeBuiltin(_)
             | Self::NativeArray { .. }
-            | Self::NativeTraitObject { .. } => AbiV0Representation::RustInterop,
+            | Self::NativeTraitObject { .. }
+            | Self::NativePointer { .. }
+            | Self::NativeCChar => AbiV0Representation::RustInterop,
             Self::Never | Self::Infer | Self::Unknown | Self::Unsupported(_) => AbiV0Representation::Unknown,
         }
     }
@@ -268,6 +279,12 @@ impl fmt::Display for IncanType {
                 if *sync { " + Sync" } else { "" }
             ),
             Self::NativeBuiltin(builtin) => write!(f, "runtime::{}", builtin.binding_name()),
+            Self::NativePointer { mutable, pointee } => write!(
+                f,
+                "native {} pointer[{pointee}]",
+                if *mutable { "mutable" } else { "const" }
+            ),
+            Self::NativeCChar => write!(f, "c.c_char"),
             Self::Unsupported(description) => write!(f, "unsupported[{description}]"),
             Self::Infer => write!(f, "_"),
             Self::Unknown => write!(f, "?"),
@@ -337,6 +354,10 @@ pub struct IncanCallableParam {
     /// field existed decodes it as `false`.
     #[serde(default)]
     pub is_mut: bool,
+    /// A checked native collection parameter consumes its outer value even when its carrier is an inline builtin
+    /// collection. This passing fact is separate from the source callable's `mut` marker and preserves nested loans.
+    #[serde(default)]
+    pub native_owned: bool,
 }
 
 impl fmt::Display for IncanCallableParam {
@@ -461,6 +482,7 @@ mod tests {
                     has_default: false,
                     is_partial_preset: false,
                     is_mut: false,
+                    native_owned: false,
                 },
                 IncanCallableParam {
                     name: Some("rest".to_string()),
@@ -469,6 +491,7 @@ mod tests {
                     has_default: false,
                     is_partial_preset: false,
                     is_mut: false,
+                    native_owned: false,
                 },
             ],
             return_type: Box::new(IncanType::Tuple(vec![

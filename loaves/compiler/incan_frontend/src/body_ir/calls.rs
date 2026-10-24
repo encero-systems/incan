@@ -2489,6 +2489,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
         let hir_span_value = hir_span(span);
+        if let Some(value) = self.lower_checked_foreign_call(args, span, scope, out) {
+            return value;
+        }
+        if let Some(value) = self.lower_checked_bridge_call(recv, args, span, scope, out) {
+            return value;
+        }
         if let Some(value) = self.lower_checked_rust_call(Some(recv), args, span, scope, out) {
             return value;
         }

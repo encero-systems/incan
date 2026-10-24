@@ -123,6 +123,10 @@ impl CheckedImportBindings {
 /// Checked source-level C ABI binding contracts.
 #[derive(Debug, Default, Clone)]
 pub struct CAbiInteropArtifacts {
+    /// Descriptors accepted by the selected target's Clang verifier before executable projection.
+    pub verified_bindings: BTreeSet<String>,
+    /// Span-specific operations accepted by the C bridge's constructor, lifetime and output-state checks.
+    pub bridge_calls: Vec<CAbiBridgeCall>,
     /// Binding descriptor keyed by the ordinary lowered class name.
     pub bindings: HashMap<String, CBindingDescriptor>,
     /// Direct binding calls admitted through an explicit `unsafe:` acknowledgment.
@@ -150,6 +154,17 @@ pub struct CAbiInteropArtifacts {
     pub spans: Vec<CAbiSpan>,
     /// Checked bridge operations admitted on those opaque typed carriers.
     pub span_accesses: Vec<CAbiSpanAccess>,
+}
+
+/// One checked C bridge call, retained before its source method spelling is erased.
+#[derive(Debug, Clone)]
+pub struct CAbiBridgeCall {
+    /// Exact compiler-managed slot selected by state checking, when this operation consumes one.
+    pub slot_identity: Option<String>,
+    /// Full source call expression range.
+    pub span: Span,
+    /// The bridge operation selected by checking.
+    pub operation: incan_semantics_core::body_ir::CheckedBridgeOperation,
 }
 
 /// Exact scalar representation and mutability of one compiler-owned checked span carrier.
@@ -248,6 +263,8 @@ pub struct CBindingFacade {
 /// only after a checked raw call proves which binding symbol and exact C carrier own the storage contract.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CAbiOutputSlot {
+    /// Closure frame that owns the compiler-managed allocation.
+    pub closure_depth: usize,
     /// Full source range of the slot constructor call.
     pub constructor_span: Span,
     /// Compiler-internal nominal identity for this particular source slot instance.
@@ -4084,5 +4101,6 @@ fn semantic_callable_param_from_resolved(param: &CallableParam) -> IncanCallable
         has_default: param.has_default,
         is_partial_preset: param.is_partial_preset,
         is_mut: param.is_mut,
+        native_owned: false,
     }
 }

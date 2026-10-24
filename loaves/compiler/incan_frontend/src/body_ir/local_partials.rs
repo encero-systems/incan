@@ -378,8 +378,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 span: source.map_or(span, |source| hir_span(source.param_span)),
                 default,
                 mutable: param.is_mut,
+                native_owned: parameter_types::native_collection_parameter(&param.ty, self.type_info),
             });
-            if param.is_mut {
+            if params.last().is_some_and(|parameter| parameter.native_owned) {
+                self.owned_parameters.insert(local);
+            } else if param.is_mut {
                 self.borrowed_parameters.insert(local);
             }
             frame.saved.push((name.clone(), previous));

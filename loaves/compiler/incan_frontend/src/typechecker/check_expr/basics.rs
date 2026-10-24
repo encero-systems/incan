@@ -128,6 +128,37 @@ impl TypeChecker {
             }
         }
         let source_target = self.source_target_for_symbol(name, &sym.kind);
+        let slot_depth = self
+            .pending_c_abi_output_slots
+            .get(name)
+            .filter(|_| {
+                matches!(&sym.kind, SymbolKind::Variable(info)
+                if info.ty == ResolvedType::Unknown || matches!(&info.ty, ResolvedType::Named(identity)
+                    if incan_lang::lang::c_abi::parse_output_slot_type_identity(identity).is_some()))
+            })
+            .map(|slot| slot.closure_depth)
+            .or_else(|| {
+                let SymbolKind::Variable(info) = &sym.kind else {
+                    return None;
+                };
+                let ResolvedType::Named(identity) = &info.ty else {
+                    return None;
+                };
+                self.type_info
+                    .c_abi
+                    .output_slots
+                    .iter()
+                    .find(|slot| &slot.identity == identity)
+                    .map(|slot| slot.closure_depth)
+            });
+        if let Some(depth) = slot_depth
+            && (!self.c_abi_raw_argument_spans.contains(&(span.start, span.end)) || self.closure_depth > depth)
+        {
+            self.errors.push(CompileError::type_error(
+                "C output slots have no ordinary value surface and cannot be captured; use the checked raw call and take()".to_string(), span,
+            ));
+            return ResolvedType::Unknown;
+        }
         let mut native_function_value = None;
 
         let (kind, ty) = match &sym.kind {

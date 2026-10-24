@@ -1,0 +1,9 @@
+[project]
+name = "self_vocab"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[vocab]
+entry = "src/vocab.incn"

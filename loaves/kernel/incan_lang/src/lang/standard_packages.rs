@@ -22,6 +22,13 @@ pub struct StandardPackageNamespacePolicy {
 /// Compiler-pinned ordinary ownership registry; changing ownership requires a compiler source change.
 pub const STANDARD_PACKAGE_NAMESPACE_POLICIES: &[StandardPackageNamespacePolicy] = &[
     StandardPackageNamespacePolicy {
+        package_name: "incan_stdlib_vocab",
+        version: "0.6.0-dev.8",
+        source_directory: "vocab",
+        declaration: include_str!("../../../../stdlib/vocab/loaf.toml"),
+        namespace_roots: &["vocab"],
+    },
+    StandardPackageNamespacePolicy {
         package_name: "incan_stdlib_core",
         version: "0.6.0-dev.6",
         source_directory: "core",

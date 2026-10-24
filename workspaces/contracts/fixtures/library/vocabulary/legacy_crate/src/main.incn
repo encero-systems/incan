@@ -1,0 +1,8 @@
+# behavior: a Rust companion declaration is refused with the Incan entry replacement
+# expect-exit: 1
+# expect-stderr-contains:
+#   [vocab] crate is no longer supported; use entry
+
+def main() -> None:
+    """Manifest validation precedes program execution."""
+    pass

@@ -373,6 +373,9 @@ impl CompilationSession {
     ) -> Result<Program, Vec<diagnostics::CompileError>> {
         let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::parse_desugar_source", input = %file_path.display()).entered();
         let mut ast = self.parse_source_for_collection(file_path, source)?;
+        if self.unit.vocabulary {
+            crate::vocabulary::validate_source(&ast, &self.unit, file_path)?;
+        }
         let file_path_display = file_path.to_string_lossy();
         {
             let mut runtime = self.vocab_runtime.lock().map_err(|_| {

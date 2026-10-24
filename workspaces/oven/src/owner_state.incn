@@ -7,8 +7,8 @@ derived from still has the identity it had (`Watched`); otherwise it is derived 
 line uses. Sources, artifacts and outputs are reconciled on every request, exactly as they are without an owner: the
 owner saves the startup and the preparation, never the check that an input changed.
 
-The owner serves a unit only when its Loaves are all standard packages and its manifest declares no Rust crate; anything
-else is answered `fallback`, and the command prepares it in its own process.
+The owner serves a unit only when its Loaves are all standard packages and its manifest declares neither a Rust facet
+nor vocabulary. Other units are answered `fallback`, and the command prepares them in its own process.
 """
 
 from std.fs import Path
@@ -30,8 +30,7 @@ from unit_freshness import Key, artifact_identity, compiler_fingerprint, descrip
 from apple_sdk import sdk_paths
 from unit_rust import prepare_native
 
-
-const FALLBACK_REASON: str = "the owner serves only projects whose Loaves are standard packages"
+const FALLBACK_REASON: str = "the owner serves standard-only projects without Rust facets or vocabulary entries"
 
 
 pub model Watched:
@@ -247,7 +246,9 @@ def entry_id(request: Request) -> str:
 
 
 def supported(unit: UnitDescription) -> Result[bool, str]:
-    """Whether the owner serves this unit: standard Loaves only, and no Rust crate of its own."""
+    """Whether retained preparation can serve this unit without producer registration or a Rust facet."""
+    if unit.vocab_entry != None:
+        return Ok(false)
     if len(unit.rust_crates) > 0:
         return Ok(false)
     for loaf in unit.loaves:
@@ -292,7 +293,7 @@ def guard_paths(unit: UnitDescription) -> Result[list[str], str]:
         paths.append(Path(package.root).joinpath("loaf.toml").0)
     # 4. So does a rebuilt library of a standard package the unit links.
     for loaf in unit.loaves:
-        paths.append(Path(loaf.dir).joinpath(f"lib{loaf.name.replace('-', '_')}.rlib").0)
+        paths.append(Path(loaf.dir).joinpath(f"lib{loaf.name.replace("-", "_")}.rlib").0)
     return Ok(unique(paths))
 
 

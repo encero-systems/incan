@@ -359,6 +359,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ) -> bir::Operand {
         self.retain_result_scalar_context(expr);
         let span = hir_span(expr.span);
+        if let Some(value) = self.type_info.c_abi.enum_value_for_access(expr.span) {
+            return bir::Operand::Constant(bir::Constant::Int(value));
+        }
         if let Some(value) = self.lower_checked_rust_function_value(expr, scope, out) {
             return value;
         }

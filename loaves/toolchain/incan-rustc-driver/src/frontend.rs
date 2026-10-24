@@ -807,6 +807,9 @@ fn validate_declarations(
                 continue;
             }
             Declaration::Class(class) => {
+                if type_info.c_abi.verified_bindings.contains(&class.name) {
+                    continue;
+                }
                 if !incan_frontend::body_ir::is_direct_replacement_checked_class(class, type_info) {
                     return Err(format!(
                         "unsupported source Class {} on {} on the native route",

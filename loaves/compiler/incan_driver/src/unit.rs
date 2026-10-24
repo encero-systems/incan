@@ -74,6 +74,15 @@ pub struct UnitDescription {
     pub contract_models: Vec<String>,
     /// The C headers the package declares, package-relative, which checked C bindings may name.
     pub c_headers: Vec<String>,
+    /// Producer registration prepared by Oven, in the existing versioned vocabulary descriptor format.
+    #[serde(default)]
+    pub vocab: Option<PathBuf>,
+    /// Project-relative authored entry, used to check the registration export in a vocabulary unit.
+    #[serde(default)]
+    pub vocab_entry: Option<PathBuf>,
+    /// This native unit registers vocabulary and must not activate its own surfaces through its imports.
+    #[serde(default)]
+    pub vocabulary: bool,
     /// The exact Rust libraries this unit links, including its toolchain and reached Loaves.
     pub externs: Vec<UnitNativeCrate>,
     /// Directories containing the transitive dependencies of the named libraries.
@@ -121,6 +130,7 @@ impl UnitDescription {
                 unit.schema
             )));
         }
+        crate::loaf_publication::vocab::prepared_registration(&unit)?;
         Ok(unit)
     }
 }

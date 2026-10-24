@@ -6190,6 +6190,13 @@ impl TypeChecker {
             }
             return None;
         };
+        if self.closure_depth > slot.closure_depth {
+            self.errors.push(CompileError::type_error(
+                "C output slots cannot be captured outside their creating frame".to_string(),
+                span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
         if !type_args.is_empty() || !args.is_empty() {
             self.errors.push(CompileError::type_error(
                 "C output slot take() accepts no type or value arguments".to_string(),
@@ -6218,8 +6225,23 @@ impl TypeChecker {
             ));
             return Some(ResolvedType::Unknown);
         }
+        // The closed receiver is a permitted slot read; retain its ordinary canonical binding facts too.
+        let receiver_span = (base.span.start, base.span.end);
+        let inserted = self.c_abi_raw_argument_spans.insert(receiver_span);
+        self.check_expr(base);
+        if inserted {
+            self.c_abi_raw_argument_spans.remove(&receiver_span);
+        }
         self.available_c_abi_output_slots.remove(&slot_identity);
         self.consumed_c_abi_output_slots.insert(slot_identity, span);
+        self.type_info
+            .c_abi
+            .bridge_calls
+            .push(crate::typechecker::type_info::CAbiBridgeCall {
+                span,
+                operation: incan_semantics_core::body_ir::CheckedBridgeOperation::TakeOutputSlot,
+                slot_identity: Some(slot.identity.clone()),
+            });
         Some(Self::c_raw_call_type(&slot.binding, &slot.value))
     }
 

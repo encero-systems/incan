@@ -89,6 +89,7 @@ pub(super) fn lower_getter_body(
             span,
             default: bir::CallableParamDefault::Required,
             mutable: false,
+            native_owned: false,
         }],
         param_locals: vec![receiver],
         locals: builder.locals,

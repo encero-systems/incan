@@ -30,6 +30,12 @@ pub(super) fn checked_semantic_type(ty: &crate::symbols::ResolvedType, facts: &T
     )
 }
 
+/// Preserve the checked owned ABI of an imported native collection before storage projection erases its provenance.
+pub(super) fn native_collection_parameter(ty: &ResolvedType, facts: &TypeCheckInfo) -> bool {
+    let ty = expand_rusttype_aliases(ty, facts);
+    super::runtime_nominals::native_collection_parameter(&semantic_type_from_resolved(&ty), facts)
+}
+
 /// Classify declaration binders before SDK and builtin storage projection so a same-spelled parameter keeps its own
 /// category. Classify leaves exposed by structural Rust projection too, so a `Node<T>` display cannot close `T`
 /// as a nominal before the declaration's own binders are applied.

@@ -7,10 +7,7 @@ from defaults import default_arguments, default_type
 from numerics import numeric_carrier as checked_numeric_carrier
 pub from closures import owned_capture
 pub from lowering import BodyIrModule
-from lowering import (
-    unit_plan as checked_unit_plan,
-    program_refusals as checked_program_refusals,
-)
+from lowering import unit_plan as checked_unit_plan, program_refusals as checked_program_refusals
 pub from pub::incan_mir_plan import (
     AttributeArgument,
     AttributeValue,
@@ -19,6 +16,7 @@ pub from pub::incan_mir_plan import (
     Callee,
     CalleeKind,
     ExternalFunction,
+    ForeignFunction,
     FieldProjection,
     FieldMetadata,
     FallibleIteratorMethods,
@@ -71,7 +69,10 @@ pub model SourceInputs:
 
 
 pub def unit_plan(
-    modules: &list[BodyIrModule], inputs: SourceInputs, entry: int, kind: str,
+    modules: &list[BodyIrModule],
+    inputs: SourceInputs,
+    entry: int,
+    kind: str,
     mut published: list[NativeUnionDeclaration],
 ) -> Result[Option[Plan], str]:
     """Borrow checked modules and consume their source inputs to lower a program, library or collected test unit."""
@@ -79,7 +80,11 @@ pub def unit_plan(
 
 
 pub def program_refusals(
-    modules: &list[BodyIrModule], inputs: SourceInputs, entry: int, progress: bool, selection: str,
+    modules: &list[BodyIrModule],
+    inputs: SourceInputs,
+    entry: int,
+    progress: bool,
+    selection: str,
 ) -> list[str]:
     """Consume source inputs for complete or exact-body refusal collection, optionally reporting its current body."""
     return checked_program_refusals(modules, inputs.sources, inputs.files, entry, progress, selection)

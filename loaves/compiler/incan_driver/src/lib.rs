@@ -19,3 +19,4 @@ pub mod sources;
 pub mod testing;
 pub mod typecheck;
 pub mod unit;
+mod vocabulary;

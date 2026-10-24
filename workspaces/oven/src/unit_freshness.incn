@@ -28,7 +28,6 @@ from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription
 from apple_sdk import sdk_identity
 
-
 const UNIT_DOMAIN: str = "incan.oven.unit/1"
 
 
@@ -45,7 +44,8 @@ pub def artifact_files(directory: Path, package: str) -> list[Path]:
 
 
 pub def artifact_identity(path: Path) -> Result[str, str]:
-    """Identify a published artifact by its filesystem identity, without reading its bytes.
+    """
+    Identify a published artifact by its filesystem identity, without reading its bytes.
 
     That is its device and inode, size and mode, and the nanosecond times of its last modification and last status
     change: replacing the file changes the inode, and rewriting it in place changes the status change time even when
@@ -243,6 +243,8 @@ def unit_files(unit: UnitDescription, mut project: Ledger) -> Result[list[str], 
         paths = paths + project.sources(entry_directory, entry_directory.0 != unit.project_root)?
     for extra in unit.contract_models + unit.c_headers:
         paths.append(root.joinpath(extra).0)
+    if let Some(vocab) = unit.vocab:
+        paths.append(vocab)
     return Ok(unique(paths))
 
 

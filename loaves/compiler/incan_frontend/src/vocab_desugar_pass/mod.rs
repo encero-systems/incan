@@ -16,6 +16,7 @@
 //! The runtime still communicates only through explicit request/response buffers in guest memory, and the host does not
 //! inherit stdio or open ambient filesystem/network access for desugarers.
 
+mod checked_c;
 mod errors;
 mod helper_bindings;
 mod rewrite;

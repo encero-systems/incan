@@ -178,6 +178,10 @@ fn verify_checked_c_bindings(
         let verification_binding = resolve_package_owned_c_binding_header(unit, &binding);
         match verify_checked_c_binding(&toolchain, &plan, &verification_binding) {
             Ok(receipt) => {
+                type_infos[module_index]
+                    .c_abi
+                    .verified_bindings
+                    .insert(binding.class_name.clone());
                 let enum_values = &mut type_infos[module_index].c_abi.enum_values;
                 for ((enumeration, variant), value) in receipt.enum_values() {
                     enum_values.insert(

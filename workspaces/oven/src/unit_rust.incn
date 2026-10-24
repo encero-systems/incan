@@ -25,6 +25,7 @@ from unit import UnitDescription, UnitLoaf, describe
 from observation import trace
 from unit_compiler import compile_prepared_unit
 from unit_freshness import artifact_files, record, staleness, unit_key
+from vocabulary import prepare_vocabulary
 
 
 pub def describe_native(source: Path, profile: str, request: FeatureRequest) -> Result[UnitDescription, str]:
@@ -129,16 +130,25 @@ pub def prepare_native(described: UnitDescription, toolchain: Toolchain) -> Resu
 
 
 def prepare_linked(described: UnitDescription, toolchain: Toolchain) -> Result[UnitDescription, str]:
-    """Bind toolchain inputs and published Loaf closures after all dependency selection and compilation is complete."""
+    """Bind exact native inputs and register a producer vocabulary after shared dependency preparation is complete."""
     mut unit = described
     unit.search = toolchain.search + unit.search
     unit.rust_abi = toolchain.rust_abi
     unit = with_toolchain_crates(unit, toolchain)
+    unit.loaves = [loaf for loaf in unit.loaves if standard_available(loaf)]
     loaves = unit.loaves
     for loaf in loaves:
         unit = link_loaf(unit, loaf, toolchain)?
     unit.search = unique(unit.search)
-    return Ok(unit)
+    return prepare_vocabulary(unit, toolchain)
+
+
+def standard_available(loaf: UnitLoaf) -> bool:
+    """Keep source dependencies and published standard providers; an unbuilt standard package grants no interface."""
+    if not loaf.standard:
+        return true
+    directory = Path(loaf.dir)
+    return directory.joinpath(f"lib{loaf.name}.rlib").is_file() and directory.joinpath(f"{loaf.name}.incnlib").is_file()
 
 
 def with_toolchain_crates(described: UnitDescription, toolchain: Toolchain) -> UnitDescription:

@@ -446,6 +446,28 @@ pub fn rvalue<'tcx>(
             nominal_aggregate(tcx, sources, value, destination_type, elements)?
         }
         RvalueKind::Array(elements) => formatting_array(tcx, sources, destination_type, elements)?,
+        RvalueKind::RawAddressOf(value, mutable) => mir::Rvalue::RawPtr(
+            if *mutable {
+                mir::RawPtrKind::Mut
+            } else {
+                mir::RawPtrKind::Const
+            },
+            place(tcx, value)?,
+        ),
+        RvalueKind::PointerCast(value, target) => mir::Rvalue::Cast(
+            mir::CastKind::PtrToPtr,
+            operand(tcx, sources, value)?,
+            native_type(tcx, target)?,
+        ),
+        RvalueKind::PointerOffset(pointer, offset) => mir::Rvalue::BinaryOp(
+            mir::BinOp::Offset,
+            Box::new((operand(tcx, sources, pointer)?, operand(tcx, sources, offset)?)),
+        ),
+        RvalueKind::PointerAddress(pointer) => mir::Rvalue::Cast(
+            mir::CastKind::PointerExposeProvenance,
+            operand(tcx, sources, pointer)?,
+            tcx.types.usize,
+        ),
         RvalueKind::MutBorrow(value) => mir::Rvalue::Ref(
             tcx.lifetimes.re_erased,
             mir::BorrowKind::Mut {

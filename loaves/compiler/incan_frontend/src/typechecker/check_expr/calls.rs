@@ -908,7 +908,18 @@ impl TypeChecker {
                 )
             })
             .collect::<Vec<_>>();
+        let raw_argument_spans = args
+            .iter()
+            .filter_map(|argument| match argument {
+                CallArg::Positional(value) | CallArg::Named(_, value) => Some((value.span.start, value.span.end)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        self.c_abi_raw_argument_spans.extend(raw_argument_spans.iter().copied());
         let arg_types = self.check_call_arg_types_for_params(args, &parameters);
+        for argument in raw_argument_spans {
+            self.c_abi_raw_argument_spans.remove(&argument);
+        }
         let mut type_bindings = std::collections::HashMap::new();
         self.validate_checked_c_callable_arg_bindings(
             &callable,
@@ -1266,6 +1277,14 @@ impl TypeChecker {
             return Some(ResolvedType::Unknown);
         }
         self.type_info.c_abi.uses_checked_c_strings = true;
+        self.type_info
+            .c_abi
+            .bridge_calls
+            .push(crate::typechecker::type_info::CAbiBridgeCall {
+                span,
+                operation: incan_semantics_core::body_ir::CheckedBridgeOperation::MakeCString,
+                slot_identity: None,
+            });
         Some(ResolvedType::Generic(
             "Result".to_string(),
             vec![
@@ -1570,6 +1589,21 @@ impl TypeChecker {
             ));
             return Some(ResolvedType::Unknown);
         }
+        if !self.c_abi_raw_argument_spans.contains(&(span.start, span.end)) {
+            self.errors.push(CompileError::type_error(
+                "a checked C string pointer may only be extracted as a direct checked raw-call argument".to_string(),
+                span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
+        self.type_info
+            .c_abi
+            .bridge_calls
+            .push(crate::typechecker::type_info::CAbiBridgeCall {
+                span,
+                operation: incan_semantics_core::body_ir::CheckedBridgeOperation::CStringPointer,
+                slot_identity: None,
+            });
         Some(ResolvedType::Named(c_abi::pointer_type_identity(false, "c.c_char")))
     }
 
@@ -1638,6 +1672,14 @@ impl TypeChecker {
             return Some(ResolvedType::Unknown);
         }
         self.type_info.c_abi.uses_scoped_c_string_views = true;
+        self.type_info
+            .c_abi
+            .bridge_calls
+            .push(crate::typechecker::type_info::CAbiBridgeCall {
+                span,
+                operation: incan_semantics_core::body_ir::CheckedBridgeOperation::CopyUtf8,
+                slot_identity: None,
+            });
         Some(ResolvedType::Generic(
             "Result".to_string(),
             vec![ResolvedType::Str, ResolvedType::Str],
@@ -1677,6 +1719,7 @@ impl TypeChecker {
                     return Some(ResolvedType::Unknown);
                 }
                 PendingCAbiOutputSlot {
+                    closure_depth: self.closure_depth,
                     constructor_span: span,
                     mode: COutputMode::Out,
                     declared_type: Some(type_args[0].node.to_string()),
@@ -1702,6 +1745,7 @@ impl TypeChecker {
                     return Some(ResolvedType::Unknown);
                 };
                 PendingCAbiOutputSlot {
+                    closure_depth: self.closure_depth,
                     constructor_span: span,
                     mode: COutputMode::InOut,
                     declared_type: None,
@@ -1839,6 +1883,8 @@ impl TypeChecker {
                 slot.constructor_span.start,
                 slot.constructor_span.end,
             );
+            self.record_expr_type(slot.constructor_span, ResolvedType::Named(slot_identity.clone()));
+            self.record_expr_type(expr.span, ResolvedType::Named(slot_identity.clone()));
             if let Some(symbol_id) = self.symbols.lookup(local_name)
                 && let Some(symbol) = self.symbols.get_mut(symbol_id)
                 && let SymbolKind::Variable(variable) = &mut symbol.kind
@@ -1857,6 +1903,7 @@ impl TypeChecker {
                 self.available_c_abi_output_slots.insert(slot_identity.clone());
             }
             self.type_info.c_abi.output_slots.push(CAbiOutputSlot {
+                closure_depth: slot.closure_depth,
                 constructor_span: slot.constructor_span,
                 identity: slot_identity.clone(),
                 local_name: local_name.clone(),

@@ -80,6 +80,24 @@ pub(crate) fn native_trait_object<'tcx>(
 /// List references preserve source parameter borrowing; checked pairs and other shared references are body-internal.
 pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, PlanError> {
     Ok(match ty {
+        PlanType::CChar => {
+            let alias = crate::callees::native_type_item(tcx, "core::ffi::c_char")?;
+            tcx.type_of(alias).instantiate_identity().skip_normalization()
+        }
+        PlanType::RawPointer(mutable, elements) => {
+            let [pointee] = elements.as_slice() else {
+                return Err(PlanError::UnknownCallee("invalid raw pointer carrier".into()));
+            };
+            Ty::new_ptr(
+                tcx,
+                native_type(tcx, pointee)?,
+                if *mutable {
+                    rustc_hir::Mutability::Mut
+                } else {
+                    rustc_hir::Mutability::Not
+                },
+            )
+        }
         PlanType::NativeTraitObject(path, send, sync) => {
             let principal = crate::callees::library_item(tcx, path, rustc_hir::def::DefKind::Trait)?;
             let object = native_trait_object(tcx, principal, &[])?;
@@ -401,8 +419,9 @@ fn function_pointer_type<'tcx>(tcx: TyCtxt<'tcx>, signature: &[PlanType]) -> Res
 
 /// Bind each borrowed input independently so a callable accepts a fresh caller loan on every invocation.
 ///
-/// Body-local references use erased regions, but signature references must agree with rustc's higher-ranked AST
-/// declarations. Nested callable signatures retain their own binders through `native_type`.
+/// Body-local references use erased regions, but every input reference, including those nested in collection
+/// elements, must agree with rustc's higher-ranked AST declarations. Nested callable signatures keep their own
+/// binders and are not traversed.
 fn bound_callable_inputs<'tcx>(
     tcx: TyCtxt<'tcx>,
     parameters: &[PlanType],

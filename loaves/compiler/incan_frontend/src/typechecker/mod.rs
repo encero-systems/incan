@@ -388,6 +388,8 @@ struct TypeCompatibilityDepthGuard<'a> {
 /// in [`TypeCheckInfo`].
 #[derive(Debug, Clone)]
 pub struct PendingCAbiOutputSlot {
+    /// Closure frame that owns the slot's storage; captures require an unimplemented lifetime contract.
+    pub closure_depth: usize,
     pub constructor_span: Span,
     pub mode: COutputMode,
     pub declared_type: Option<String>,
@@ -518,6 +520,8 @@ pub struct TypeChecker {
     /// Spans of the expressions being checked as the receiver of `copy_utf8(max_bytes=...)`, the one position a scoped
     /// C text view may be read in (RFC 116).
     scoped_c_string_view_receivers: HashSet<(usize, usize)>,
+    /// Direct argument expressions of the checked raw call currently being validated.
+    c_abi_raw_argument_spans: HashSet<(usize, usize)>,
     /// Calls that returned a scoped C text view in the statement being checked and are neither bound to a local nor
     /// the receiver of `copy_utf8`; each one left at the end of the statement escapes (RFC 116).
     unbound_scoped_c_string_views: HashSet<(usize, usize)>,
@@ -906,6 +910,7 @@ impl TypeChecker {
             read_only_binding_spans: HashSet::new(),
             closure_depth: 0,
             scoped_c_string_view_receivers: HashSet::new(),
+            c_abi_raw_argument_spans: HashSet::new(),
             unbound_scoped_c_string_views: HashSet::new(),
             scoped_c_string_view_bindings: HashMap::new(),
             transferred_c_resource_bindings: HashMap::new(),
