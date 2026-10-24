@@ -171,16 +171,6 @@ pub from statics import (
     begin_module_initialization,
     end_module_initialization,
 )
-pub from static_lists import (
-    read_static_int_list,
-    write_static_int_list,
-    read_static_float_list,
-    write_static_float_list,
-    read_static_bool_list,
-    write_static_bool_list,
-    read_static_text_list,
-    write_static_text_list,
-)
 pub from static_collections import (
     read_static_text_int_dict,
     write_static_text_int_dict,

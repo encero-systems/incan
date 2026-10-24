@@ -999,6 +999,16 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             Ok(Scalar::UnitFunction)
         }
         RvalueKind::Use(value) => operand(plan, function, value),
+        RvalueKind::NativeAlias(value, source, target) => {
+            require(
+                function,
+                operand(plan, function, value)?,
+                scalar(source),
+                "native alias input",
+            )?;
+            require(function, scalar(target), expected.clone(), "native alias destination")?;
+            Ok(expected)
+        }
         RvalueKind::FrozenText(value) => {
             if !matches!(value.kind, OperandKind::Literal(Constant::Text(_))) {
                 return Err(invalid(function, "FrozenStr construction requires static literal text"));
@@ -1362,11 +1372,12 @@ fn source_parameter_type(ty: &Scalar) -> bool {
         )
 }
 
-/// Source signatures expose scalars, owned text, explicit shared text and validation-error references, and the
-/// exclusive text reference a `mut str` parameter receives, models, callables, and tuples of admitted types; formatting
-/// views stay internal. Exact native slice references can cross a closed source type parameter without becoming owned
-/// lists. Metadata-validated native references retain their exact carrier. A function pointer's inputs follow the
-/// same checked reference-parameter contract as source receiver frames. Uninhabited results preserve divergence.
+/// Admit source storage, owned data, retained nominal values and callable signatures.
+///
+/// Exact native slice references may cross closed source parameters without becoming owned vectors. Function pointer
+/// inputs retain the native-call borrowing contract, including scalar, text, collection and model references; results
+/// keep the source contract for returned storage. Formatting-only views remain internal.
+/// Metadata-validated native references retain their exact carrier, and uninhabited results preserve divergence.
 fn source_signature_type(ty: &Scalar) -> bool {
     if let Scalar::NativeArray(elements, length) = ty {
         return *length >= 0 && matches!(elements.as_slice(), [element] if source_signature_type(element));
@@ -1391,7 +1402,7 @@ fn source_signature_type(ty: &Scalar) -> bool {
         let Some((result, inputs)) = signature.split_last() else {
             return false;
         };
-        return source_signature_type(result) && inputs.iter().all(source_parameter_type);
+        return source_signature_type(result) && inputs.iter().all(external_signature_type);
     }
     if let Scalar::Closure(signature) | Scalar::ClosureOnce(signature) | Scalar::ClosureRef(signature) = ty {
         return callable_object_signature(signature);
@@ -1437,6 +1448,7 @@ fn source_signature_type(ty: &Scalar) -> bool {
                 | Scalar::UnitFunction
                 | Scalar::Never
                 | Scalar::ZipIterator(_, _)
+                | Scalar::ZipIteratorRef(_, _)
                 | Scalar::ZipIteratorMutRef(_, _)
                 | Scalar::Generator(_, _)
                 | Scalar::GeneratorMutRef(_, _)

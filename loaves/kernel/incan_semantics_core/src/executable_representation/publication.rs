@@ -569,7 +569,10 @@ impl<'a> PublicationAudit<'a> {
     }
 
     /// Admit concrete types and declared binders, retaining the canonical declaration behind each named type.
-    /// Native unsized text and slice referents remain structural types; this grants no owned frame for either.
+    ///
+    /// Native unsized `str` and slice referents, and checked awaitable outputs, retain structural identity rather than
+    /// a source nominal declaration. References may cross the body boundary; lowering still rejects unsized values in
+    /// owned frame storage.
     fn ty(&mut self, ty: &IncanType) -> Result<(), CoverageReason> {
         match ty {
             IncanType::SelfType if self.trait_self => Ok(()),
@@ -577,15 +580,16 @@ impl<'a> PublicationAudit<'a> {
             IncanType::Primitive(_) | IncanType::Never | IncanType::Decimal { .. } | IncanType::NativeBuiltin(_) => {
                 Ok(())
             }
-            // The native unsized text and slice carriers have no nominal declaration. Their surrounding references
-            // and type arguments retain the same storage distinction checked by executable layout planning.
             IncanType::RustInteropPath(path) if path == "str" => Ok(()),
+            IncanType::Generic { base, args } if base == "[]" || base == "Awaitable" => match args.as_slice() {
+                [element] => self.ty(element),
+                _ => Err(CoverageReason::UnresolvedReference),
+            },
             IncanType::Named(name) => self.named_type(name),
             IncanType::Generic { base, args } => {
                 // Compiler collections have no declaration requirement; a generic nominal retains its checked base.
                 if incan_lang::lang::types::collections::from_str(base).is_none()
                     && base != incan_lang::lang::types::UNION_TYPE_NAME
-                    && base != "[]"
                     && !(incan_lang::lang::traits::from_str(base) == Some(incan_lang::lang::traits::TraitId::Awaitable)
                         && args.len() == 1)
                 {

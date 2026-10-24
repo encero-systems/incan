@@ -4,11 +4,15 @@ from rust::incan_semantics_core import (
     IncanCallableParam as RustCallableParam,
     IncanType as RustType,
     SemanticSourceTargetKind,
+    SymbolOrigin,
+    CanonicalSymbolId,
     function_type,
     generic,
     native_array_type,
 )
-from rust::incan_semantics_core::body_ir import Body, BodyIrModule, NamedCallableTarget, LocalId as RustLocalId
+from rust::incan_semantics_core::body_ir import (
+    Body, BodyIrModule, NamedCallableTarget, LocalId as RustLocalId, nominal_carrier_key,
+)
 from symbols import type_component
 
 
@@ -118,15 +122,16 @@ pub def instantiate(body: &Body, arguments: list[RustType], owned_callable_slots
         None => return Err("unsupported Body IR unproven declaration with type parameters")
     if len(names) != len(arguments):
         return Err(f"unsupported Body IR type argument arity on {body.name}")
+    storage = callable_storage_arguments(body, arguments, owned_callable_slots)?
     mut result = retain_owned_callable_storage(body, owned_callable_slots)?
     for index in range(len(result.locals)):
-        concrete: RustType = substitute(result.locals[index].ty, names, arguments)?
-        result.locals[index].ty = concrete.clone()
+        concrete: RustType = substitute(result.locals[index].ty, names, storage)?
+        result.locals[index].ty = source_nominal_storage(body, concrete)?
     for index in range(len(result.params)):
-        concrete: RustType = substitute(result.params[index].ty, names, arguments)?
-        result.params[index].ty = concrete.clone()
-    concrete: RustType = substitute(result.return_type, names, arguments)?
-    result.return_type = concrete.clone()
+        concrete: RustType = substitute(result.params[index].ty, names, storage)?
+        result.params[index].ty = source_nominal_storage(body, concrete)?
+    concrete: RustType = substitute(result.return_type, names, storage)?
+    result.return_type = source_nominal_storage(body, concrete)?
     mut name = str(body.name)
     for argument in arguments:
         name += type_component(argument)
@@ -134,6 +139,119 @@ pub def instantiate(body: &Body, arguments: list[RustType], owned_callable_slots
         name += f"__owned_callable_{slot}"
     result.name = name
     return Ok(result)
+
+
+pub def callable_storage_arguments(
+    body: &Body, arguments: list[RustType], slots: list[int],
+) -> Result[list[RustType], str]:
+    """1. Read selected generic value slots. 2. Preserve their owned ABI throughout nested native arguments.
+
+    The private structural marker carries an existing Body IR representation selection through substitution; it
+    introduces no source type or callable inference. Unselected function types remain function pointers.
+    """
+    # 1. Read selected generic value slots.
+    names = owned_callable_parameters(body, slots)?
+    mut storage: list[RustType] = []
+    # 2. Preserve the owned ABI throughout nested native arguments.
+    for index in range(len(arguments)):
+        if body.type_parameters[index] in names:
+            owned: RustType = owned_callable_argument(arguments[index])?
+            storage.append(owned.clone())
+        else:
+            storage.append(arguments[index].clone())
+    return Ok(storage)
+
+
+def source_nominal_storage(body: &Body, ty: &RustType) -> Result[RustType, str]:
+    """Keep source nominal arguments semantic; their declared generic value fields already retain owning storage.
+
+    A bare callable or a native constructor argument keeps its representation marker. Only the direct arguments
+    of an identity-bound source nominal use the signature type; this does not guess a carrier from its spelling.
+    """
+    match ty:
+        RustType.Generic(base=base, args=arguments) =>
+            source = source_nominal_owner(body, str(base))
+            mut retained: list[RustType] = []
+            for argument in arguments:
+                value: &RustType = argument
+                match value:
+                    RustType.Generic(base=marker, args=signature) =>
+                        if source and str(marker) == "<owned-callable>" and len(signature) == 1:
+                            retained.append(source_nominal_storage(body, signature[0])?)
+                            continue
+                    _ => pass
+                retained.append(source_nominal_storage(body, argument)?)
+            return Ok(generic(str(base), retained))
+        RustType.Ref(inner) => return Ok(RustType.Ref(source_nominal_storage(body, inner)?))
+        RustType.RefMut(inner) => return Ok(RustType.RefMut(source_nominal_storage(body, inner)?))
+        RustType.TypeToken(inner) => return Ok(RustType.TypeToken(source_nominal_storage(body, inner)?))
+        RustType.Tuple(elements) =>
+            mut retained: list[RustType] = []
+            for element in elements:
+                retained.append(source_nominal_storage(body, element)?)
+            return Ok(RustType.Tuple(retained))
+        RustType.NativeArray(element=element, length=length) =>
+            return Ok(native_array_type(source_nominal_storage(body, element)?, length.clone()))
+        RustType.Function(params=parameters, return_type=result) =>
+            mut retained = parameters.clone()
+            for index in range(len(retained)):
+                concrete: RustType = source_nominal_storage(body, parameters[index].ty)?
+                retained[index].ty = concrete.clone()
+            return Ok(function_type(retained, source_nominal_storage(body, result)?))
+        _ => return Ok(ty.clone())
+
+
+def source_nominal_owner(body: &Body, name: str) -> bool:
+    """Require the checker's source declaration identity before separating nominal arguments from native storage."""
+    match body.named_type_identities.get(name):
+        Some(identity) =>
+            return source_nominal_identity(identity)
+        None => pass
+    for identity in body.named_type_identities.values():
+        match nominal_carrier_key(identity):
+            Some(key) =>
+                if str(key) == name:
+                    return source_nominal_identity(identity)
+            None => pass
+    return false
+
+
+def source_nominal_identity(identity: &CanonicalSymbolId) -> bool:
+    """Separate retained source declarations from native constructors by their canonical origin."""
+    if (
+        identity.kind != SemanticSourceTargetKind.Model and identity.kind != SemanticSourceTargetKind.Class
+        and identity.kind != SemanticSourceTargetKind.Newtype and identity.kind != SemanticSourceTargetKind.Enum
+    ):
+        return false
+    origin: SymbolOrigin = identity.origin
+    match origin:
+        SymbolOrigin.Module(_path) => return true
+        SymbolOrigin.Package(library=_library, module_path=_owner) => return true
+        _ => return false
+
+
+def owned_callable_parameters(body: &Body, slots: list[int]) -> Result[list[str], str]:
+    """Read generic binders only from the validated original value slots that own callable environments."""
+    mut names: list[str] = []
+    for slot in slots:
+        if slot < 0 or slot >= len(body.params):
+            return Err("invalid owned callable storage slot")
+        match body.params[slot].ty:
+            RustType.TypeVar(name) => names.append(str(name))
+            _ => return Err("invalid owned callable storage binder")
+    return Ok(names)
+
+
+def owned_callable_argument(argument: &RustType) -> Result[RustType, str]:
+    """Mark one function signature as owned, retaining an existing marker when a generic call forwards it."""
+    match argument:
+        RustType.Function(params=_parameters, return_type=_result) =>
+            return Ok(generic("<owned-callable>", [argument.clone()]))
+        RustType.Generic(base=base, args=elements) =>
+            if str(base) == "<owned-callable>" and len(elements) == 1:
+                return Ok(argument.clone())
+        _ => pass
+    return Err("invalid owned callable storage argument")
 
 
 def retain_owned_callable_storage(original: &Body, slots: list[int]) -> Result[Body, str]:

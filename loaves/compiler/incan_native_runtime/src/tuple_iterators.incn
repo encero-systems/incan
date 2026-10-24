@@ -1,42 +1,62 @@
 """Legacy zip snapshots, materialized builtin enumeration of lists and text, and text iteration items."""
 
-from std.derives.collection import Iterator, ListIterator, ZipIterator
 from std.derives.copying import Clone
 from rust::std::clone import Clone as RuntimeClone
 from std.rust import Static
+from rust::std::vec import Vec
+from rust::std::iter import IntoIterator, Iterator as NativeIterator
+from rust::incan_std_core::iter import Generator as NativeGenerator, nonnegative_count
+from rust::incan_std_core::collections import list_get
 
 
 @derive(Clone)
 pub model ZipLists[T with Clone, U with Clone]:
     """Retain independently clonable source cursors with the legacy zip polling order."""
 
-    pub source: ZipIterator[T, ListIterator[T], U, ListIterator[U]]
+    pub left: Vec[T]
+    pub right: Vec[U]
+    pub left_index: int
+    pub right_index: int
 
 
 pub def zip_lists[T with Clone, U with Clone](left: list[T], right: list[U]) -> ZipLists[T, U]:
-    """Take checked owned snapshots without polling either input."""
-    return ZipLists(source=ZipIterator(left=ListIterator(items=left, index=0), right=ListIterator(items=right, index=0)))
+    """Keep independent zip state: 1. Retain source snapshots with both cursors at their beginning."""
+    # 1. Retain source snapshots without polling either input.
+    return ZipLists(left=left, right=right, left_index=0, right_index=0)
 
 
 pub def clone_zip[T with Clone, U with Clone](values: &ZipLists[T, U]) -> ZipLists[T, U]:
-    """Clone both snapshots and their current cursors for a value-preserving iterator read."""
-    return RuntimeClone.clone(values)
+    """Preserve both cursors and snapshots: 1. Clone their checked native carrier without polling either source."""
+    # 1. Clone the checked native carrier without polling either source.
+    return clone_native(values)
 
 
 pub def poll_zip[T with Clone, U with Clone](mut values: ZipLists[T, U], mut output: list[tuple[T, U]]) -> bool:
-    """Poll left then right, retaining legacy exhaustion behavior and owned tuple items."""
-    match values.source.__next__():
-        Some(item) =>
-            output.append(item)
-            return true
-        None => return false
+    """Poll a pair: 1. Advance the left snapshot. 2. Advance the right snapshot. 3. Append both owned items."""
+    # 1. Advance the left snapshot before testing right exhaustion.
+    if values.left_index >= int(values.left.len()):
+        return false
+    first = owned_zip_item[T](values.left, values.left_index)
+    values.left_index += 1
+    # 2. Advance the right snapshot, retaining the left cursor even when the right is exhausted.
+    if values.right_index >= int(values.right.len()):
+        return false
+    second = owned_zip_item[U](values.right, values.right_index)
+    values.right_index += 1
+    # 3. Append both owned items only after both polls succeed.
+    output.append((first, second))
+    return true
 
 
 pub def zip_lists_generator[T with (Clone, Static), U with (Clone, Static)](
     values: ZipLists[T, U],
 ) -> Generator[tuple[T, U]]:
-    """Retain the zip's existing cursors and draw each pair only when polled, preserving left-before-right exhaustion."""
-    return (pair for pair in values.source.iter())
+    """Defer remaining pairs: 1. Snapshot both cursors. 2. Wrap native left-before-right zip polling."""
+    # 1. Snapshot each cursor and its unconsumed source.
+    left = IntoIterator.into_iter(clone_native(values.left)).skip(nonnegative_count(values.left_index))
+    right = IntoIterator.into_iter(clone_native(values.right)).skip(nonnegative_count(values.right_index))
+    # 2. Wrap native zip polling without drawing an item now.
+    return NativeGenerator.new(left.zip(right))
 
 
 pub def enumerate_list[T with Clone](values: &list[T]) -> list[tuple[int, T]]:
@@ -71,3 +91,13 @@ pub def text_items(values: &str) -> list[str]:
     for value in values:
         items.append(value)
     return items
+
+
+def owned_zip_item[T with Clone](values: &list[T], index: int) -> T:
+    """Clone one borrowed zip element through the native collection's retained element binding."""
+    return RuntimeClone.clone(list_get(values, index))
+
+
+def clone_native[T with RuntimeClone](value: &T) -> T:
+    """Select the declared native Clone bound before a concrete source carrier closes the helper's type parameter."""
+    return RuntimeClone.clone(value)

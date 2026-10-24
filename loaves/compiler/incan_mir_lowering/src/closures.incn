@@ -48,17 +48,27 @@ from lowering import call_parameter_type
 
 
 pub def function_pointer_type(parameters: &list[IncanCallableParam], result: &RustType) -> Result[PlanType, str]:
-    """Keep the checked parameter order and append the return type to the native signature vector."""
+    """Build the native signature: 1. Retain checked input order and loans. 2. Append the owned return contract."""
+    # 1. Retain checked input order and loans.
     mut signature: list[PlanType] = []
     for parameter in parameters:
         mut input = PlanType.Unit
         if parameter.kind == IncanCallableParamKind.Normal:
-            input = callable_component(parameter.ty)?
+            input = callable_input(parameter.ty)?
         else:
             input = callable_parameter_type([], [], [], parameter, [])?
         signature.append(packed_input(input, parameter.kind, parameter.is_mut)?)
+    # 2. Append the owned return contract.
     signature.append(callable_result(result)?)
     return Ok(PlanType.FunctionPointer(signature))
+
+
+def callable_input(ty: &RustType) -> Result[PlanType, str]:
+    """Retain explicit native input loans; returned values still follow the owned callable component contract."""
+    match ty:
+        RustType.Ref(_inner) => return native_source_type([], [], [], ty, [])
+        RustType.RefMut(_inner) => return native_source_type([], [], [], ty, [])
+        _ => return callable_component(ty)
 
 
 def callable_result(ty: &RustType) -> Result[PlanType, str]:
@@ -526,6 +536,16 @@ def item_component(mut builder: Builder, ty: &RustType) -> Result[PlanType, str]
                 _ => return Err(reason)
 
 
+def item_input(mut builder: Builder, ty: &RustType) -> Result[PlanType, str]:
+    """Retain an item's explicit input loan against its full nominal context; other inputs use owned components."""
+    match ty:
+        RustType.Ref(_inner) =>
+            return native_source_type(builder.nominals, builder.enums, builder.unions, ty, builder.intrinsics)
+        RustType.RefMut(_inner) =>
+            return native_source_type(builder.nominals, builder.enums, builder.unions, ty, builder.intrinsics)
+        _ => return item_component(builder, ty)
+
+
 def item_result(mut builder: Builder, ty: &RustType) -> Result[PlanType, str]:
     """A function item's result: a lazy generator, as `callable_result` admits one, or any item component."""
     match generator_type(ty):
@@ -578,7 +598,7 @@ def loaf_item_signature(
         parameter = parameters[index]
         if parameter.ty != declaration.parameters[index]:
             return Err("invalid Body IR Loaf function-item parameter contract")
-        component = item_component(builder, declaration.parameters[index])?
+        component = item_input(builder, declaration.parameters[index])?
         mut input = packed_input(component, parameter.kind, parameter.mutable)?
         match declaration.declaration_frame():
             Some(frame) =>
@@ -655,7 +675,7 @@ def item_signature(
             None =>
                 if parameters[index].ty != body.params[index].ty:
                     return Err("unsupported Body IR function-item parameter contract")
-        component = item_component(builder, parameters[index].ty)?
+        component = item_input(builder, parameters[index].ty)?
         input = packed_input(component, parameters[index].kind, parameters[index].mutable)?
         if body.is_generator() and input != component:
             return Err("unsupported Body IR generator function item with borrowed parameters")

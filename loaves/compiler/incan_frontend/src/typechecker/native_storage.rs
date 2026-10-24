@@ -50,38 +50,7 @@ impl TypeChecker {
             self.freeze_rust_call(&mut hook.next, &mut storage);
         }
         // ---- Checked values and declarations ----
-        let expressions = &self.type_info.expressions;
-        let declarations = &self.type_info.declarations;
-        for ty in expressions
-            .expr_types
-            .values()
-            .chain(expressions.body_ir_expr_types.values())
-            .chain(expressions.body_ir_binding_types.values())
-            .chain(expressions.assignment_binding_types.values())
-            .chain(expressions.value_destination_types.values())
-            .chain(self.type_info.references.resolved_write_types.values())
-            .chain(declarations.type_alias_targets.values())
-            .chain(self.type_info.rust.value_native_types.values())
-            .chain(self.type_info.calls.inferred_call_result_types.values())
-            .chain(self.type_info.calls.body_ir_constructor_types.values())
-        {
-            self.rust_storage_type(ty, &mut storage, &mut BTreeMap::new());
-        }
-        for binding in declarations
-            .function_bindings
-            .values()
-            .chain(declarations.function_bindings_by_span.values())
-            .chain(declarations.method_bindings_by_span.values())
-        {
-            for ty in binding
-                .params
-                .iter()
-                .map(|parameter| &parameter.ty)
-                .chain([&binding.return_type])
-            {
-                self.rust_storage_type(ty, &mut storage, &mut BTreeMap::new());
-            }
-        }
+        self.freeze_value_storage(program, &mut storage);
         self.freeze_source_storage(program, &mut storage);
         // ---- Native layout and default templates ----
         for layout in self.type_info.rust.checked_layouts.values() {
@@ -110,6 +79,37 @@ impl TypeChecker {
         self.type_info.rust.iteration_hooks = hooks;
     }
 
+    /// Publish accepted value types in their lexical source binder frame. Dropping the frame turns a parameter
+    /// embedded in a native display into a nominal name and can contradict the same call's checked signature.
+    fn freeze_value_storage(&self, program: &Program, storage: &mut HashMap<IncanType, IncanType>) {
+        let expressions = &self.type_info.expressions;
+        for (span, ty) in expressions
+            .expr_types
+            .iter()
+            .chain(&expressions.body_ir_expr_types)
+            .chain(&expressions.assignment_binding_types)
+            .chain(&expressions.value_destination_types)
+            .chain(&self.type_info.calls.inferred_call_result_types)
+            .chain(&self.type_info.calls.body_ir_constructor_types)
+        {
+            let parameters = source_storage_parameters(program, *span);
+            self.rust_call_storage_type(ty, &parameters, storage, &mut BTreeMap::new());
+        }
+        for ((start, end, _), ty) in &self.type_info.references.resolved_write_types {
+            let parameters = source_storage_parameters(program, (*start, *end));
+            self.rust_call_storage_type(ty, &parameters, storage, &mut BTreeMap::new());
+        }
+        for (identity, ty) in expressions
+            .body_ir_binding_types
+            .iter()
+            .chain(&self.type_info.rust.value_native_types)
+        {
+            let span = &identity.declaration_span;
+            let parameters = source_storage_parameters(program, (span.start, span.end));
+            self.rust_call_storage_type(ty, &parameters, storage, &mut BTreeMap::new());
+        }
+    }
+
     /// Freeze declared native storage in its source binder frame, including unread fields and inherited layouts.
     /// Syntax supplies only declared binder roles and spans; every retained type comes from successful checker facts.
     fn freeze_source_storage(&self, program: &Program, storage: &mut HashMap<IncanType, IncanType>) {
@@ -122,12 +122,18 @@ impl TypeChecker {
                 Declaration::Trait(owner) => (&owner.type_params, owner.methods.as_slice()),
                 Declaration::Newtype(owner) => (&owner.type_params, owner.methods.as_slice()),
                 Declaration::Function(owner) => (&owner.type_params, &[][..]),
+                Declaration::TypeAlias(owner) => (&owner.type_params, &[][..]),
                 _ => continue,
             };
             let parameters = parameters
                 .iter()
                 .map(|parameter| parameter.name.clone())
                 .collect::<Vec<_>>();
+            if let Declaration::TypeAlias(owner) = &declaration.node
+                && let Some(target) = facts.type_alias_targets.get(&owner.name)
+            {
+                self.rust_call_storage_type(target, &parameters, storage, &mut BTreeMap::new());
+            }
             if let Declaration::Newtype(owner) = &declaration.node
                 && owner.is_rusttype
             {
@@ -552,6 +558,38 @@ impl TypeChecker {
             _ => {}
         }
     }
+}
+
+/// Select the innermost declaration's source binders by its checked fact's provenance span. Syntax contributes only
+/// binder roles; native types and declaration identities still come from the accepting checker's retained facts.
+fn source_storage_parameters(program: &Program, span: (usize, usize)) -> Vec<String> {
+    for declaration in &program.declarations {
+        if span.0 < declaration.span.start || span.1 > declaration.span.end {
+            continue;
+        }
+        let (parameters, methods) = match &declaration.node {
+            Declaration::Model(owner) => (&owner.type_params, owner.methods.as_slice()),
+            Declaration::Class(owner) => (&owner.type_params, owner.methods.as_slice()),
+            Declaration::Enum(owner) => (&owner.type_params, owner.methods.as_slice()),
+            Declaration::Trait(owner) => (&owner.type_params, owner.methods.as_slice()),
+            Declaration::Newtype(owner) => (&owner.type_params, owner.methods.as_slice()),
+            Declaration::Function(owner) => (&owner.type_params, &[][..]),
+            Declaration::TypeAlias(owner) => (&owner.type_params, &[][..]),
+            _ => continue,
+        };
+        let mut names = parameters
+            .iter()
+            .map(|parameter| parameter.name.clone())
+            .collect::<Vec<_>>();
+        if let Some(method) = methods
+            .iter()
+            .find(|method| span.0 >= method.span.start && span.1 <= method.span.end)
+        {
+            names.extend(method.node.type_params.iter().map(|parameter| parameter.name.clone()));
+        }
+        return names;
+    }
+    Vec::new()
 }
 
 /// Recognize only the source frame's declared binders before any nominal or native storage projection.

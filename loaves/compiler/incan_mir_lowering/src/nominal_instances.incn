@@ -1,6 +1,6 @@
 """Concrete nominal layouts selected from checked Body IR types, retaining source declaration identities."""
 
-from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind
+from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind, SymbolOrigin
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule, Body, NominalDeclaration, LocalOrigin, TraitImplementation,
 )
@@ -95,6 +95,51 @@ pub def specialize_nominals(module: &BodyIrModule) -> Result[BodyIrModule, str]:
     """Build a derived lowering context; validate the original module before calling this boundary."""
     context, _instances = specialize_nominals_with_instances(module)?
     return Ok(context)
+
+
+pub def retain_frame_nominals(
+    context: &BodyIrModule, templates: &BodyIrModule, body: &Body,
+    mut retained_instances: list[NominalInstance],
+) -> Result[list[NominalDeclaration], str]:
+    """1. Collect closed frame carriers. 2. Append missing native layouts while preserving existing owner indices."""
+    # 1. Collect closed frame carriers.
+    mut instances: list[NominalInstance] = []
+    for local in body.locals:
+        collect_nominal_type(templates, local.ty, instances, [])?
+    collect_nominal_type(templates, body.return_type, instances, [])?
+    # 2. Append missing native layouts while preserving existing owner indices.
+    mut added: list[NominalDeclaration] = []
+    mut cursor = 0
+    while cursor < len(instances):
+        instance = instances[cursor]
+        cursor += 1
+        declaration = close_layout(instance)?
+        if retains_declaration(context.nominal_declarations, declaration) or retains_declaration(added, declaration):
+            continue
+        if library_item(declaration) == "" and not package_template(declaration):
+            return Err(f"unsupported late source nominal instance {declaration.name}")
+        lineage = instance.ancestors + [instance.declaration.canonical.render_compact()]
+        for field in declaration.field_types:
+            collect_nominal_type(templates, field, instances, lineage)?
+        added.append(declaration.clone())
+        retained_instances.append(instance)
+    return Ok(added)
+
+
+def package_template(declaration: &NominalDeclaration) -> bool:
+    """An imported source template has consumer-owned closed storage rather than a nonexistent generic Rust item."""
+    origin: SymbolOrigin = declaration.canonical.origin
+    match origin:
+        SymbolOrigin.Package(library=_library, module_path=_module) => return declaration.type_parameter_count != 0
+        _ => return false
+
+
+def retains_declaration(mut declarations: list[NominalDeclaration], declaration: &NominalDeclaration) -> bool:
+    """Reuse only an identical canonical declaration with the same closed specialization key."""
+    for retained in declarations:
+        if retained.name == declaration.name and retained.canonical == declaration.canonical:
+            return true
+    return false
 
 
 pub def specialize_nominals_with_instances(
@@ -310,8 +355,8 @@ def collect_nominal_type(
             for parameter in parameters:
                 collect_nominal_type(module, parameter.ty, instances, ancestors)?
             collect_nominal_type(module, result, instances, ancestors)?
-        RustType.Ref(inner) => collect_nominal_type(module, inner, instances, ancestors)?
-        RustType.RefMut(inner) => collect_nominal_type(module, inner, instances, ancestors)?
+        RustType.Ref(inner) => return collect_nominal_type(module, inner, instances, ancestors)
+        RustType.RefMut(inner) => return collect_nominal_type(module, inner, instances, ancestors)
         _ => pass
     return Ok(None)
 
@@ -369,10 +414,9 @@ def close_layout(instance: NominalInstance) -> Result[NominalDeclaration, str]:
                 closed: RustType = substitute(argument, instance.declaration.type_parameters, instance.arguments)?
                 result.native_type_arguments.push(closed.clone())
     result.name = nominal_symbol(str(instance.declaration.name), instance.arguments)
-    if library_item(instance.declaration) != "":
-        result.native_type_arguments.clear()
-        for argument in instance.arguments:
-            result.native_type_arguments.push(argument.clone())
+    result.native_type_arguments.clear()
+    for argument in instance.arguments:
+        result.native_type_arguments.push(argument.clone())
     result.field_types.clear()
     for ty in instance.declaration.field_types:
         concrete: RustType = substitute(ty, instance.declaration.type_parameters, instance.arguments)?

@@ -39,7 +39,7 @@ pub def library_model_arguments(
                 if previous.arguments != instance.arguments:
                     return Err("unsupported Body IR conflicting SDK model arguments")
     match selected:
-        None => return Err("unsupported Body IR SDK model without checked instance arguments")
+        None => return Err(f"unsupported Body IR SDK model without checked instance arguments for {declaration.name}")
         Some(instance) => return instance_native_arguments(module, declaration, instance, intrinsics)
 
 

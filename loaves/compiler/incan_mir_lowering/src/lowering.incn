@@ -197,7 +197,9 @@ from project import project_context
 from body_index import body_index
 from program_context import ProgramContext
 from rust::std::sync import Arc
-from nominal_instances import NominalInstance, specialize_nominals_with_instances, instance_arguments, template_base
+from nominal_instances import (
+    NominalInstance, specialize_nominals_with_instances, instance_arguments, template_base, retain_frame_nominals,
+)
 from checked_json import lower_checked_deserialize
 from string_conversion import lower_string_conversions, string_conversion_callee
 from string_conversion_contracts import validate_conversion_placement
@@ -417,8 +419,9 @@ from defaults import (
     method_default_arguments,
     model_default_arguments,
 )
-from type_parameters import Instance, instantiate, substitute
+from type_parameters import Instance, instantiate, substitute, callable_storage_arguments
 from runtime_calls import retain_runtime_instances
+from runtime_layouts import runtime_zip_carriers
 from generic_callables import owned_callable_slots
 from sdk_generic_callables import sdk_owned_callable_bindings, sdk_callable_type, sdk_callable_type_arguments
 from shared_callables import record_scalar_closure, scalar_capture, shared_sdk_operands
@@ -7441,7 +7444,15 @@ def lowered_plan(
     )?
     if trace:
         println("lowering: generic instances")
-    _ = lower_instances(context, program, instances, unions, sources, files, owners, functions, externals, intrinsics)?
+    mut retained_nominals = nominal_instances
+    instantiated_context = lower_instances(
+        context, closed_context, program, instances, unions, sources, files, owners, functions, externals, intrinsics,
+        retained_nominals,
+    )?
+    if len(instantiated_context.nominal_declarations) != len(context.nominal_declarations):
+        models = lower_model_declarations(
+            instantiated_context, files[entry], intrinsics, retained_nominals, kind == "library",
+        )?
     for declaration in intrinsics:
         enums.append(declaration)
     if kind == "library":
@@ -7451,7 +7462,7 @@ def lowered_plan(
     mut exports: list[PlanExport] = []
     mut templates: list[GenericModelDeclaration] = []
     if kind == "library":
-        templates = generic_models(source_context, nominal_instances, files[entry])?
+        templates = generic_models(source_context, retained_nominals, files[entry])?
         exports = loaf_exports(context, emitted_frames.bodies, source_context, templates)
         publish_unions(context, intrinsics, published)?
     test_entries = collected_test_entries(context, checked[entry], tests, functions, enums)?
@@ -7472,6 +7483,7 @@ def lowered_plan(
                 tests=test_entries,
                 programs=selected_program_entries(context)?,
                 generic_models=templates,
+                zip_carriers=runtime_zip_carriers(instantiated_context, intrinsics)?,
             ),
         ),
     )
@@ -7687,7 +7699,7 @@ def lower_computed_statics(
     mut instances: list[Instance],
 ) -> Result[list[StaticCell], str]:
     """
-    Plan computed statics and effect-free literal dictionaries as guarded adapter cells (RFC 052).
+    Plan computed statics and effect-free literal lists or dictionaries as guarded adapter cells (RFC 052).
 
     A computed initializer body returns the first value, and its module gets a declaration-order initializer.
     Literal dictionaries construct their checked entries without entering that module initialization protocol.
@@ -7765,14 +7777,14 @@ def lower_computed_statics(
                 append_synthesized(functions, synthesized)?
                 _ = merge_externals(externals, runtime)?
                 instances.extend(pending)
-            RustStaticInitializer.Dict(_entries) =>
+            RustStaticInitializer.List(_) | RustStaticInitializer.Dict(_) =>
                 mut file = ""
                 for index in range(len(owners)):
                     if owners[index] == static_owner(declaration):
                         file = files[index]
                 if file == "":
-                    return Err("unsupported Body IR literal dictionary without source provenance")
-                initializer, runtime = lower_literal_dictionary(module, program, slot, unions, intrinsics, file)?
+                    return Err("unsupported Body IR literal collection without source provenance")
+                initializer, runtime = lower_literal_static(module, program, slot, unions, intrinsics, file)?
                 cells.append(StaticCell(slot=slot, ty=initializer.return_type, initializer=initializer.name, span=initializer.span))
                 functions.append(initializer)
                 _ = merge_externals(externals, runtime)?
@@ -7780,7 +7792,7 @@ def lower_computed_statics(
     return Ok(cells)
 
 
-def lower_literal_dictionary(
+def lower_literal_static(
     module: &BodyIrModule,
     program: ProgramContext,
     slot: int,
@@ -7788,7 +7800,7 @@ def lower_literal_dictionary(
     mut intrinsics: list[EnumDeclaration],
     file: str,
 ) -> Result[tuple[Function, list[ExternalFunction]], str]:
-    """Initialize effect-free dictionary storage directly, without depending on runtime's own persistent cells."""
+    """Build literal list or dictionary initializers for guarded cells without runtime-managed persistent storage."""
     declaration = module.static_declarations[slot]
     ty = native_source_type(list(module.nominal_declarations), list(module.enum_declarations), list(unions), declaration.ty, intrinsics)?
     span = SourceSpan(file=file, line=1, column=1)
@@ -7948,7 +7960,11 @@ def body_refusals(
     match lower_computed_statics(context, program, unions, sources, files, owners, intrinsics, functions, externals, instances):
         Ok(_cells) => pass
         Err(error) => refusals.append(f"computed static: {error}")
-    match lower_instances(context, program, instances, unions, sources, files, owners, functions, externals, intrinsics):
+    mut retained_nominals = nominal_instances
+    match lower_instances(
+        context, closed_context, program, instances, unions, sources, files, owners, functions, externals, intrinsics,
+        retained_nominals,
+    ):
         Ok(_lowered) => pass
         Err(error) => refusals.append(f"type-parameter instance: {error}")
     return Ok(refusals)
@@ -8052,6 +8068,7 @@ def retain_generic_decorator_frames(
 
 def lower_instances(
     module: &BodyIrModule,
+    templates: &BodyIrModule,
     program: ProgramContext,
     mut instances: list[Instance],
     unions: list[RustType],
@@ -8061,15 +8078,17 @@ def lower_instances(
     mut functions: list[Function],
     mut externals: list[ExternalFunction],
     mut intrinsics: list[EnumDeclaration],
-) -> Result[None, str]:
-    """Drain checked wrapper and original instance requests under their declaring module's source provenance."""
+    mut nominal_instances: list[NominalInstance],
+) -> Result[RustBodyIrModule, str]:
+    """Drain checked instances, retaining each closed frame's native layouts before lowering its executable body."""
+    mut context = module.clone()
     mut completed: list[Instance] = []
     mut governed_runtime = false
     for index in range(len(owners)):
         if owners[index].startswith("pub::incan_native_runtime::"):
             governed_runtime = true
     if governed_runtime:
-        retain_runtime_instances(module, functions, externals, instances, intrinsics)?
+        retain_runtime_instances(context, templates, functions, externals, instances, intrinsics, nominal_instances)?
     mut cursor = 0
     while cursor < len(instances):
         mut instance = instances[cursor]
@@ -8077,6 +8096,8 @@ def lower_instances(
         if instance_is_retained(instance, completed):
             continue
         body = instantiate(instance.body, instance.arguments, instance.owned_callable_slots)?
+        for declaration in retain_frame_nominals(context, templates, body, nominal_instances)?:
+            context.nominal_declarations.push(declaration.clone())
         mut role = DecoratorFrame.Normal
         if instance.original_callable:
             role = DecoratorFrame.Original
@@ -8087,9 +8108,9 @@ def lower_instances(
                 source_index = index
         if source_index < 0:
             return Err("unsupported Body IR instance without source provenance")
-        retain_body_carriers(module, intrinsics, body, files[source_index])?
+        retain_body_carriers(context, intrinsics, body, files[source_index])?
         retain_generic_decorator_frames(
-            module,
+            context,
             program,
             instance,
             unions,
@@ -8100,27 +8121,27 @@ def lower_instances(
             externals,
             instances,
         )?
-        context = f"{body.name} at {files[source_index]}"
+        diagnostic_context = f"{body.name} at {files[source_index]}"
         function, runtime, pending, synthesized = lower_function(
-            module,
+            context,
             program,
             body,
             unions,
             sources[source_index],
             files[source_index],
             intrinsics,
-            instance.arguments,
+            callable_storage_arguments(instance.body, instance.arguments, instance.owned_callable_slots)?,
             role,
-        ).map_err((reason) => f"{reason} in {context}")?
+        ).map_err((reason) => f"{reason} in {diagnostic_context}")?
         retain_instance(functions, function)?
         append_synthesized(functions, synthesized)?
-        append_generator_constructor(functions, module, body, sources[source_index], files[source_index], intrinsics)?
+        append_generator_constructor(functions, context, body, sources[source_index], files[source_index], intrinsics)?
         completed.append(instance)
         _ = merge_externals(externals, runtime)?
         instances.extend(pending)
         if governed_runtime:
-            retain_runtime_instances(module, functions, externals, instances, intrinsics)?
-    return Ok(None)
+            retain_runtime_instances(context, templates, functions, externals, instances, intrinsics, nominal_instances)?
+    return Ok(context)
 
 
 def instance_is_retained(mut instance: Instance, mut completed: list[Instance]) -> bool:

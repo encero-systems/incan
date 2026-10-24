@@ -1,4 +1,4 @@
-# behavior: native receivers retain owners, iterator outputs, primitive views, callbacks and slice conversions (#2256)
+# behavior: native receivers retain owners, iterator outputs, primitive views, callbacks and lazy captures (#2256)
 # expect-stdout:
 #   1
 #   770
@@ -13,6 +13,8 @@
 #   [1, 2, 3]
 #   [3, 1, 2]
 #   ["a", "z"]
+#   captured chain created
+#   2
 
 """Keep generic inherent, trait and extension receiver calls of registry crates in one area case."""
 
@@ -29,7 +31,7 @@ from rust::std::cell import Cell
 from rust::std::clone import Clone as NativeClone
 from rust::std::collections import HashSet
 from rust::std::collections::hash_set import Iter as SetIter
-from rust::std::iter import Iterator
+from rust::std::iter import Iterator, FlatMap, IntoIterator
 from rust::std::convert import Into as RuntimeInto
 from rust::std::io import Cursor
 from rust::std::mem import size_of_val
@@ -38,11 +40,12 @@ from rust::std::ops import Range
 from rust::std::primitive import str as RustStr
 from rust::std::string import String as RustString
 from rust::std::time import Duration
-from rust::std::vec import Vec
+from rust::std::vec import Vec, IntoIter as VectorIterator
 from rust::xxhash_rust::xxh32 import Xxh32, xxh32
 from rust::xxhash_rust::xxh64 import Xxh64, xxh64
 from rust::xxhash_rust::xxh3 import Xxh3Default, xxh3_64, xxh3_128
 from rust::incan_std_core::iter import nonnegative_count
+from rust::incan_std_core::iter import Generator as NativeGenerator
 from rust::incan_std_core::errors import raise_index_error
 from std.derives.copying import Clone
 from std.derives.comparison import Ord
@@ -291,6 +294,31 @@ def forward_native_text(value: &RustString) -> bytes:
     return copy_native_text(value)
 
 
+def native_snapshot_length[Element with Clone](values: &list[Element]) -> int:
+    """Count a snapshot: 1. Clone an independent vector. 2. Consume its iterator without changing the source."""
+    # 1. Clone an independent vector.
+    snapshot: list[Element] = NativeClone.clone(values)
+    # 2. Consume its iterator without changing the source.
+    mut iterator: VectorIterator[Element] = IntoIterator.into_iter(snapshot)
+    return int(iterator.count())
+
+
+def singleton(value: int) -> Generator[int]:
+    """Defer one value until a native chain polls it."""
+    yield value
+
+
+def captured_chain[F with (Callable1[int, Generator[int]], Static)](
+    source: Generator[int], step: F,
+) -> Generator[int]:
+    """1. Retain the native source. 2. Return its lazy chain with the callable's owned environment."""
+    # 1. Retain the native source.
+    native: NativeGenerator[int] = source
+    # 2. Return its lazy chain with the callable's owned environment.
+    adapted: FlatMap[NativeGenerator[int], NativeGenerator[int], F] = native.flat_map(step)
+    return NativeGenerator.new(adapted)
+
+
 def main() -> None:
     """Run each registry-crate observation in the order of the cases it carries."""
     show_extension_traits()
@@ -304,3 +332,7 @@ def main() -> None:
     words = ["z", "a"]
     println(f"{sorted_snapshot[str](words):?}")
     check_primitive_and_parameter_receivers()
+    offset = 5
+    deferred = captured_chain(singleton(1), (value) => singleton(value + offset))
+    println("captured chain created")
+    println(native_snapshot_length[str](words))

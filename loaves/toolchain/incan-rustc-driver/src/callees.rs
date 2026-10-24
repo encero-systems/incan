@@ -482,7 +482,8 @@ pub fn arity_admits(tcx: TyCtxt<'_>, def: DefId, written: usize) -> bool {
 /// The borrow checker proves a callee's bounds again and reports a failure as an internal compiler error rather than
 /// a diagnostic, so an unsatisfied bound must stop here. The checker already proved the call's bounds for its source
 /// types, so a failure means the direct route emits no native impl for one of them (a newtype's `TryFrom[str]`, for
-/// one): an unsupported route gap rather than an invalid plan.
+/// one): an unsupported route gap rather than an invalid plan. Normalize concrete associated outputs before testing
+/// each obligation, so equivalent `IntoIterator::Item` and `Iterator::Item` projections satisfy equality bounds.
 pub fn verify_bounds<'tcx>(
     tcx: TyCtxt<'tcx>,
     def: DefId,
@@ -494,11 +495,17 @@ pub fn verify_bounds<'tcx>(
         .infer_ctxt()
         .build_with_typing_env(rustc_middle::ty::TypingEnv::fully_monomorphized());
     for (clause, _) in tcx.predicates_of(def).instantiate(tcx, args) {
+        let predicate = tcx
+            .try_normalize_erasing_regions(rustc_middle::ty::TypingEnv::fully_monomorphized(), clause)
+            .map_err(|error| PlanError::Unsupported {
+                function: tcx.def_path_str(def),
+                reason: format!("callee bound has no concrete native projection; arguments {args:?}; {error:?}"),
+            })?;
         let obligation = rustc_infer::traits::Obligation::new(
             tcx,
             rustc_middle::traits::ObligationCause::dummy(),
             param_env,
-            clause.skip_normalization(),
+            predicate,
         );
         if !infcx.predicate_must_hold_modulo_regions(&obligation) {
             return Err(PlanError::Unsupported {

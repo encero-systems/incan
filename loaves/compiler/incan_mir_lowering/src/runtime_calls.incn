@@ -1,7 +1,7 @@
 """Instantiate published runtime bodies through the ordinary governed-call queue."""
 
 from pub::incan_mir_plan import (
-    PlanType, Function, ExternalFunction, CalleeKind, TerminatorKind, EnumDeclaration,
+    PlanType, Function, ExternalFunction, Callee, CalleeKind, TerminatorKind, EnumDeclaration,
     tuple_element_type, list_leaf_type,
 )
 from rust::incan_semantics_core import (
@@ -10,6 +10,7 @@ from rust::incan_semantics_core import (
     IncanCallableParam as RustCallableParam,
     IncanCallableParamKind as RustCallableParamKind,
     NumericTypeId,
+    RuntimeBuiltinType,
     SymbolOrigin,
     generic,
     function_type,
@@ -19,28 +20,33 @@ from classes import function_name
 from type_parameters import Instance, instantiate
 from lowering import frame_parameter_type
 from runtime_frames import runtime_frame_adapter
+from layout_types import native_source_type
+from unions import collect_unions
+from async_ import evaluator_name
+from nominal_instances import NominalInstance, retain_frame_nominals
 
 
 pub def retain_runtime_instances(
-    module: &BodyIrModule,
+    mut module: BodyIrModule,
+    templates: &BodyIrModule,
     mut functions: list[Function],
     mut externals: list[ExternalFunction],
     mut instances: list[Instance],
     mut intrinsics: list[EnumDeclaration],
+    mut nominal_instances: list[NominalInstance],
 ) -> Result[None, str]:
-    """Replace each native runtime instantiation with its canonical governed body, including newly generated calls.
+    """Replace native runtime instances: 1. Retain coroutines. 2. Close frames and layouts. 3. Redirect their calls.
 
     A Rust runtime contributes no bodies and keeps its external ABI. A published Incan body has one implementation:
     its closed frame joins the ordinary queue, and every call with that exact runtime signature names that frame.
 
-    1. Retain the declaration tables used to close each published frame.
-    2. Redirect each published runtime call through its exact frame and enqueue that body once.
-    3. Keep only external calls whose runtime publishes no governed body.
     """
-    # 1. Every runtime frame reads the same borrowed declaration tables.
+    # 1. Retain coroutine instances before ordinary call frames.
+    retain_runtime_future_instances(module, functions, instances, intrinsics)?
     mut retained: list[ExternalFunction] = []
     mut nominals = module.nominal_declarations
     mut enums = module.enum_declarations
+    mut unions = collect_unions(module)
     # 2. Close each selected body, adapt its inputs and retain its canonical instance.
     for external in externals:
         match runtime_body(module, external.path)?:
@@ -57,15 +63,26 @@ pub def retain_runtime_instances(
                         Ok(typed) => arguments.append(typed.clone())
                         Err(reason) => return Err(f"{external.path}: {reason}")
                 owned = runtime_owned_slots(body, external)?
+                # 2. Close frame layouts before reading their parameter and result storage.
                 closed = instantiate(body, arguments, owned)?
+                declarations = retain_frame_nominals(module, templates, closed, nominal_instances)?
+                for declaration in declarations:
+                    module.nominal_declarations.append(declaration.clone())
+                if len(declarations) != 0:
+                    nominals = module.nominal_declarations
+                    unions = collect_unions(module)
                 symbol = function_name(module, closed)
                 mut parameters: list[PlanType] = []
                 for parameter in closed.params:
                     parameters.append(frame_parameter_type(
                         nominals, enums, closed, parameter, intrinsics, external.span.file,
                     )?)
+                result = native_source_type(
+                    nominals, enums, unions,
+                    closed.return_type, intrinsics,
+                )?
                 mut called = symbol
-                match runtime_frame_adapter(external, parameters, symbol)?:
+                match runtime_frame_adapter(module, external, parameters, result, symbol)?:
                     Some(adapter) =>
                         called = adapter.name
                         mut retained = false
@@ -83,24 +100,108 @@ pub def retain_runtime_instances(
                         if not retained:
                             functions.append(adapter)
                     None => pass
+                # 3. Redirect calls and queue the same closed source body.
                 redirect_runtime_calls(functions, external, called, symbol)?
-                mut present = false
-                for instance in instances:
-                    if (
-                        instance.body.canonical == body.canonical
-                        and instance.arguments == arguments
-                        and instance.owned_callable_slots == owned
-                    ):
-                        present = true
-                if not present:
-                    instances.append(Instance(
-                        body=body, arguments=arguments, owned_callable_slots=owned, original_callable=false,
-                    ))
+                enqueue_runtime_instance(instances, body, arguments, owned)
     # 3. Replacing the list preserves only the external ABI calls that still need native linkage.
     while len(externals) != 0:
         _ = externals.pop()
     externals.extend(retained)
     return Ok(None)
+
+
+def retain_runtime_future_instances(
+    module: &BodyIrModule,
+    mut functions: list[Function],
+    mut instances: list[Instance],
+    mut intrinsics: list[EnumDeclaration],
+) -> Result[None, str]:
+    """Select governed async bodies behind boxing shims.
+
+    1. Close their retained arguments. 2. Verify captures and queue the source coroutine.
+
+    Future constructors hold their callee outside ordinary terminators. Their exact capture ABI must agree with the
+    source coroutine; no ordinary return adapter may turn its deferred execution into an eager call.
+    """
+    mut nominals = module.nominal_declarations
+    mut enums = module.enum_declarations
+    mut unions = collect_unions(module)
+    for index in range(len(functions)):
+        mut path: str = ""
+        mut types: list[PlanType] = []
+        mut span = functions[index].span
+        match functions[index].future_callee:
+            Some(callee) =>
+                match callee.kind:
+                    CalleeKind.Instantiated(selected, arguments) =>
+                        if not selected.startswith("incan_native_runtime::"):
+                            continue
+                        path = selected
+                        for argument in arguments:
+                            types.append(argument)
+                        span = callee.span
+                    _ =>
+                        continue
+            None =>
+                continue
+        # 1. Close the retained source declaration's arguments.
+        body = runtime_async_body(module, path, len(types))?
+        mut arguments: list[RustType] = []
+        for argument in types:
+            typed: RustType = runtime_argument(module, argument, intrinsics)?
+            arguments.append(typed.clone())
+        mut parameters: list[PlanType] = []
+        for parameter in functions[index].parameters:
+            parameters.append(parameter.ty)
+        external = ExternalFunction(
+            path=path, type_arguments=types, parameters=parameters,
+            return_type=functions[index].return_type, span=span,
+        )
+        owned = runtime_owned_slots(body, external)?
+        closed = instantiate(body, arguments, owned)?
+        # 2. Verify the coroutine's exact captures and output before selecting its deferred evaluator.
+        for slot in range(len(closed.params)):
+            expected = frame_parameter_type(nominals, enums, closed, closed.params[slot], intrinsics, span.file)?
+            if expected != parameters[slot]:
+                return Err(f"unsupported governed runtime future capture ABI for {path}")
+        output = native_source_type(
+            nominals, enums, unions,
+            closed.return_type, intrinsics,
+        )?
+        if functions[index].return_type != PlanType.Future([output]):
+            return Err(f"unsupported governed runtime future output ABI for {path}")
+        symbol = evaluator_name(module, closed)
+        if functions[index].name.startswith(f"__incan_future_ctor_{symbol}_"):
+            return Err(f"unsupported governed runtime body reenters {path}; its primitive must use Rust interop")
+        functions[index].future_callee = Some(Callee(kind=CalleeKind.Planned(symbol), span=span))
+        enqueue_runtime_instance(instances, body, arguments, owned)
+    return Ok(None)
+
+
+def runtime_async_body(module: &BodyIrModule, path: str, arity: int) -> Result[Body, str]:
+    """Require a unique governed coroutine and its complete declared type binding before selecting its evaluator."""
+    match runtime_body(module, path)?:
+        Some(body) =>
+            if not body.is_async or len(body.type_parameters) != arity:
+                return Err(f"unsupported governed runtime future declaration for {path}")
+            return Ok(body)
+        None => return Err(f"runtime publishes no governed async body for {path}")
+
+
+def enqueue_runtime_instance(
+    mut instances: list[Instance],
+    body: &Body,
+    arguments: list[RustType],
+    owned: list[int],
+) -> None:
+    """Queue each canonical runtime binding once while preserving its selected callable storage."""
+    for instance in instances:
+        if (instance.body.canonical == body.canonical and instance.arguments == arguments
+            and instance.owned_callable_slots == owned):
+            return
+    instances.append(Instance(
+        body=body.clone(), arguments=arguments, owned_callable_slots=owned, original_callable=false,
+    ))
 
 
 def runtime_owned_slots(body: &Body, external: ExternalFunction) -> Result[list[int], str]:
@@ -121,7 +222,7 @@ def runtime_owned_slots(body: &Body, external: ExternalFunction) -> Result[list[
     return Ok(owned)
 
 
-def runtime_body(module: &BodyIrModule, path: str) -> Result[Option[Body], str]:
+pub def runtime_body(module: &BodyIrModule, path: str) -> Result[Option[Body], str]:
     """Select a unique published runtime declaration; another package's same-named body is never a candidate."""
     mut found: Option[Body] = None
     for body in module.bodies:
@@ -165,7 +266,7 @@ def redirect_runtime_calls(
 
 
 def runtime_argument(module: &BodyIrModule, ty: PlanType, intrinsics: list[EnumDeclaration]) -> Result[RustType, str]:
-    """Retain a closed runtime argument's semantic carrier without parsing Rust displays or inferring from operands."""
+    """Retain closed carriers and builtin identities without parsing displays or inferring from operands."""
     match ty:
         PlanType.Int => return Ok(RustType.Primitive(Primitive.Int))
         PlanType.Float => return Ok(RustType.Primitive(Primitive.Float))
@@ -187,6 +288,7 @@ def runtime_argument(module: &BodyIrModule, ty: PlanType, intrinsics: list[EnumD
         PlanType.String => return Ok(RustType.Primitive(Primitive.Str))
         PlanType.FrozenStr => return Ok(RustType.Primitive(Primitive.FrozenStr))
         PlanType.FrozenBytes => return Ok(RustType.Primitive(Primitive.FrozenBytes))
+        PlanType.ValidationError => return Ok(RustType.NativeBuiltin(RuntimeBuiltinType.ValidationError))
         PlanType.Future(outputs) =>
             if len(outputs) != 1:
                 return Err("invalid governed runtime future output arity")

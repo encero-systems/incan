@@ -378,6 +378,7 @@ impl TypeChecker {
     /// Source aliases expand before native inference; lowering receives their structural carrier, never an alias
     /// name embedded inside a native generic argument. Native aliases expand from retained templates; lifetime-only
     /// or defaulted owners with no effective arguments share their metadata self template's bare identity.
+    /// Structured arguments already carry checked bindings, so only a rendered owner's base enters the constructor.
     pub(in crate::typechecker) fn rust_inference_type(&self, ty: &ResolvedType, parameters: &[String]) -> ResolvedType {
         map_resolved_type_leaves(ty, &|leaf| {
             if let Some(target) = self.rusttype_native_target(leaf) {
@@ -403,6 +404,7 @@ impl TypeChecker {
                     .as_ref()
                     .map(|path| self.type_info.rust.item_public_paths.get(path).unwrap_or(path))
                     .map_or(base.as_str(), String::as_str);
+                let canonical = Self::rust_generic_base_and_args(canonical).map_or(canonical, |(base, _)| base);
                 return Some(self.rust_inference_constructor(canonical, arguments, parameters));
             }
             if *leaf == ResolvedType::Bytes {
@@ -1057,6 +1059,8 @@ impl TypeChecker {
     ///
     /// This first tries builtin coercion-matrix matches, then resolved-type compatibility, then rusttype-specific
     /// boundary adapters. Nested borrows keep their token boundaries throughout type resolution.
+    /// Exact canonical carrier equality also recognizes transparent aliases nested inside owned
+    /// containers without changing their passing mode.
     fn rust_arg_boundary_match(&self, arg_ty: &ResolvedType, rust_param_ty: &str) -> RustArgBoundaryMatch {
         let display = Self::rust_display_without_lifetimes(rust_param_ty);
         let normalized = Self::compact_rust_display(&display);
@@ -1129,7 +1133,7 @@ impl TypeChecker {
         {
             if Self::rust_display_borrow_kind(display.as_str()).is_none() {
                 let target_ty = self.resolved_type_from_rust_display(display.as_str());
-                if self.types_compatible(arg_ty, &target_ty) {
+                if self.types_compatible(arg_ty, &target_ty) || self.rust_trait_carriers_match(arg_ty, &target_ty) {
                     return RustArgBoundaryMatch::Exact;
                 }
             }
@@ -1142,7 +1146,9 @@ impl TypeChecker {
         // Keep token boundaries inside native arguments: compacting `&mut T` into `&mutT` changes its referent.
         let target_ty = self.resolved_type_from_rust_display(display.as_str());
         let should_try_exact_type_match = !borrowed_shared || Self::incan_boundary_type_display(arg_ty).is_none();
-        if should_try_exact_type_match && self.types_compatible(arg_ty, &target_ty) {
+        if should_try_exact_type_match
+            && (self.types_compatible(arg_ty, &target_ty) || self.rust_trait_carriers_match(arg_ty, &target_ty))
+        {
             return RustArgBoundaryMatch::Exact;
         }
         if let Some(kind) = self.rusttype_boundary_match(arg_ty, &target_ty) {

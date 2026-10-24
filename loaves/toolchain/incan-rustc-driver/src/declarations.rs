@@ -1246,7 +1246,7 @@ fn enum_tokens(value: &crate::plan::EnumDeclaration, span: Span) -> ast::tokenst
     LazyAttrTokenStream::new_direct(AttrTokenStream::new(tokens))
 }
 
-/// Declare the Incan runtime wrapper and its retained shared or exclusive reference without inventing its fields.
+/// Name the selected zip storage alias and preserve its checked shared or exclusive reference.
 fn zip_signature_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
     let (left, right, mutability) = match kind {
         PlanType::ZipIterator(left, right) => (left, right, None),
@@ -1254,16 +1254,7 @@ fn zip_signature_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
         PlanType::ZipIteratorMutRef(left, right) => (left, right, Some(ast::Mutability::Mut)),
         _ => return None,
     };
-    let mut path = ast::Path::from_ident(ident("incan_native_runtime", span));
-    let mut segment = ast::PathSegment::from_ident(ident("ZipLists", span));
-    segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
-        span,
-        args: thin_vec![
-            ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(&tuple_element_type(left.clone()), span))),
-            ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(&tuple_element_type(right.clone()), span))),
-        ],
-    })));
-    path.segments.push(segment);
+    let path = ast::Path::from_ident(ident(&crate::zip_carriers::alias_name(left, right), span));
     let owned = Box::new(ast::Ty {
         id: ast::DUMMY_NODE_ID,
         kind: ast::TyKind::Path(None, path),
@@ -1278,6 +1269,30 @@ fn zip_signature_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
             span,
             tokens: None,
         }),
+    })
+}
+
+/// Name the linked runtime's generic zip wrapper when no governed source result owns the closed carrier.
+pub(crate) fn linked_zip_ty(
+    left: &crate::plan::TupleElement,
+    right: &crate::plan::TupleElement,
+    span: Span,
+) -> Box<ast::Ty> {
+    let mut path = ast::Path::from_ident(ident("incan_native_runtime", span));
+    let mut segment = ast::PathSegment::from_ident(ident("ZipLists", span));
+    segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
+        span,
+        args: thin_vec![
+            ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(&tuple_element_type(left.clone()), span))),
+            ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(&tuple_element_type(right.clone()), span))),
+        ],
+    })));
+    path.segments.push(segment);
+    Box::new(ast::Ty {
+        id: ast::DUMMY_NODE_ID,
+        kind: ast::TyKind::Path(None, path),
+        span,
+        tokens: None,
     })
 }
 

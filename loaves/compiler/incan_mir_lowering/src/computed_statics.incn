@@ -39,9 +39,9 @@ pub def is_computed_static(declaration: &StaticDeclaration) -> bool:
 
 
 pub def has_native_static_cell(declaration: &StaticDeclaration) -> bool:
-    """Use guarded adapter storage for computed values and literal dictionaries, without making literals effectful."""
+    """Keep computed values and literal lists or dictionaries in guarded cells without making literals effectful."""
     match declaration.initial:
-        StaticInitializer.Dict(_entries) => return true
+        StaticInitializer.List(_) | StaticInitializer.Dict(_) => return true
         _ => return is_computed_static(declaration)
 
 

@@ -43,15 +43,11 @@ pub def static_slot(declarations: &list[StaticDeclaration], value: &GlobalPlace)
 
 pub def static_accessors(ty: PlanType) -> Result[tuple[str, str], str]:
     """
-    Name persistent primitive, flat-list and set cells after checked carrier admission.
+    Name persistent primitive and set cells after checked carrier admission.
 
-    Literal dictionaries use native guarded cells; the remaining carriers use typed runtime cells.
+    Literal lists and dictionaries use native guarded cells; the remaining carriers use typed runtime cells.
     """
     match ty:
-        PlanType.List(leaf, depth) =>
-            if depth != 1:
-                return Err("unsupported Body IR nested static list carrier")
-            return static_list_accessors(leaf)
         PlanType.Set(leaf) =>
             if leaf == ListLeaf.Int:
                 return Ok(("incan_native_runtime::read_static_int_set", "incan_native_runtime::write_static_int_set"))
@@ -64,22 +60,6 @@ pub def static_accessors(ty: PlanType) -> Result[tuple[str, str], str]:
         PlanType.Bool =>
             return Ok(("incan_native_runtime::read_static_bool", "incan_native_runtime::write_static_bool"))
         _ => return Err("unsupported Body IR static carrier")
-
-
-def static_list_accessors(leaf: ListLeaf) -> Result[tuple[str, str], str]:
-    """Choose typed runtime list cells without erasing their checked element representation."""
-    mut name = ""
-    match leaf:
-        ListLeaf.Int =>
-            name = "int"
-        ListLeaf.Float =>
-            name = "float"
-        ListLeaf.Bool =>
-            name = "bool"
-        ListLeaf.Str =>
-            name = "text"
-        _ => return Err("unsupported Body IR static list element")
-    return Ok((f"incan_native_runtime::read_static_{name}_list", f"incan_native_runtime::write_static_{name}_list"))
 
 
 pub def publish_local_layouts(mut models: list[ModelDeclaration], mut enums: list[EnumDeclaration]) -> None:
