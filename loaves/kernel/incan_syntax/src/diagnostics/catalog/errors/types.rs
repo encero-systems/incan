@@ -2374,7 +2374,7 @@ pub fn rust_item_shape_not_supported(path: &str, description: &str, span: Span) 
     .with_note("RFC 041 intentionally limits which Rust item shapes are typechecked directly")
 }
 
-/// A borrowed source signature names a lifetime-bearing Rust owner without a retained lifetime contract.
+/// A source signature names a lifetime-bearing Rust owner without a retained lifetime contract, by value or reference.
 pub fn rust_borrow_without_lifetime_contract(path: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!("Borrowed Rust type `rust::{path}` in a source signature requires a retained lifetime contract"),
@@ -2382,7 +2382,7 @@ pub fn rust_borrow_without_lifetime_contract(path: &str, span: Span) -> CompileE
     )
     .with_stable_code("INCAN-T0120")
     .with_note("DD-0006 excludes borrowed Rust signatures whose lifetime relationships are not retained")
-    .with_hint("Keep the borrowed value inside the function that creates it, or pass an owned value")
+    .with_hint("Keep the borrowed value inside the function that creates it, or pass data that owns its contents")
 }
 
 /// A Rust associated call tries to specialize a receiver whose turbofish contains const-generic slots.

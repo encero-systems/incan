@@ -2189,8 +2189,9 @@ pub(crate) struct CallSiteFacts {
 /// Exact checker-selected calls behind one structural or fallible iteration; only Body IR consumes this record.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BodyIrIterationHooksInfo {
-    /// Call that materializes the iterator before the first poll.
-    pub iter: BodyIrProtocolCallInfo,
+    /// Call that materializes the iterator before the first poll. None transfers a checked owned source iterator
+    /// directly into its polling frame; it is already its own iteration state.
+    pub iter: Option<BodyIrProtocolCallInfo>,
     /// Call that advances the materialized iterator inside the loop.
     pub next: BodyIrProtocolCallInfo,
 }
@@ -2759,7 +2760,10 @@ impl TypeCheckInfo {
     ) {
         for (&(start, end), hooks) in &self.protocols.body_ir_iterations {
             let span = incan_semantics_core::HirSourceSpan::new(start, end);
-            for (role, hook) in [("iter", &hooks.iter), ("next", &hooks.next)] {
+            for (role, hook) in [("iter", hooks.iter.as_ref()), ("next", Some(&hooks.next))] {
+                let Some(hook) = hook else {
+                    continue;
+                };
                 let Some(identity) = &hook.canonical else {
                     continue;
                 };

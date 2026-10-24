@@ -154,6 +154,7 @@ impl BodyBuilder<'_, '_> {
                 intrinsic_carrier: None,
                 reflection: None,
                 loaf_trait: None,
+                trait_arguments: None,
                 type_args: Vec::new(),
                 binding: bir::ArgumentBinding::resolved_positional(0),
             }),

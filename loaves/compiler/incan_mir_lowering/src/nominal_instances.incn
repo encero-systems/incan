@@ -1,7 +1,9 @@
 """Concrete nominal layouts selected from checked Body IR types, retaining source declaration identities."""
 
 from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind
-from rust::incan_semantics_core::body_ir import BodyIrModule, Body, NominalDeclaration, LocalOrigin
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule, Body, NominalDeclaration, LocalOrigin, TraitImplementation,
+)
 from rust::std::borrow import Borrow
 from symbols import type_component
 from type_parameters import substitute
@@ -98,7 +100,13 @@ pub def specialize_nominals(module: &BodyIrModule) -> Result[BodyIrModule, str]:
 pub def specialize_nominals_with_instances(
     module: &BodyIrModule,
 ) -> Result[tuple[BodyIrModule, list[NominalInstance]], str]:
-    """Retain checked frame and external-signature instances beside concrete layouts for native planning."""
+    """Retain checked instances beside concrete layouts and dispatch records for native planning.
+
+    1. Collect checked frame and external-signature instances.
+    2. Close their field and method dependencies.
+    3. Retain concrete layouts, trait dispatch records and method frames together.
+    """
+    # 1. Collect checked frame and external-signature instances.
     inherited = specialize_classes(module)?
     mut instances: list[NominalInstance] = []
     mut selected: list[SelectedMember] = []
@@ -130,11 +138,14 @@ pub def specialize_nominals_with_instances(
                 _ = collect_nominal_type(module, field, instances, [])?
     mut result = module.clone()
     result.nominal_declarations.clear()
+    retained: list[TraitImplementation] = nongeneric_implementations(module)
+    result.trait_implementations = retained
     for declaration in module.nominal_declarations:
         if len(declaration.type_parameters) == 0:
             result.nominal_declarations.push(declaration.clone())
             for field in declaration.field_types:
                 _ = collect_nominal_type(module, field, instances, [declaration.canonical.render_compact()])?
+    # 2. Close field and method dependencies until their checked instance inventory is complete.
     mut cursor = 0
     while cursor < len(instances):
         mut instance = instances[cursor]
@@ -147,12 +158,14 @@ pub def specialize_nominals_with_instances(
         collect_owner_body_types(module, instance, instances, lineage, selected)?
         if len(selected) != previous:
             cursor = 0
+    # 3. Retain concrete layouts, trait dispatch records and method frames together.
     for instance in instances:
         declaration = close_layout(instance)?
         for retained_index in range(len(result.nominal_declarations)):
             if result.nominal_declarations[retained_index].name == declaration.name:
                 return Err(f"unsupported Body IR nominal instance symbol collision {declaration.name}")
         result.nominal_declarations.push(declaration.clone())
+        append_closed_implementations(module, instance, result.trait_implementations)?
     result.bodies.clear()
     for body in inherited:
         result.bodies.push(body.clone())
@@ -165,6 +178,46 @@ pub def specialize_nominals_with_instances(
                         closed: Body = close_owner_body(body, instance)?
                         result.bodies.push(closed.clone())
     return Ok((result, instances))
+
+
+def nongeneric_implementations(module: &BodyIrModule) -> list[TraitImplementation]:
+    """Keep records whose owners need no nominal substitution; generic owners are retained per checked instance."""
+    mut retained: list[TraitImplementation] = []
+    for implementation in module.trait_implementations:
+        if not has_generic_implementation_owner(module, implementation):
+            retained.append(implementation.clone())
+    return retained
+
+
+def has_generic_implementation_owner(module: &BodyIrModule, implementation: &TraitImplementation) -> bool:
+    """Recognize a retained generic model owner by canonical identity, leaving enum records unchanged."""
+    for declaration in module.nominal_declarations:
+        if declaration.canonical == implementation.owner:
+            return len(declaration.type_parameters) != 0
+    return false
+
+
+def append_closed_implementations(
+    module: &BodyIrModule,
+    instance: NominalInstance,
+    mut retained: list[TraitImplementation],
+) -> Result[None, str]:
+    """Close a checked instance's trait-slot and default-body bindings with the same substitution as its fields."""
+    for implementation in module.trait_implementations:
+        if implementation.owner != instance.declaration.canonical:
+            continue
+        mut closed = implementation.clone()
+        closed.slot_arguments.clear()
+        for index in range(len(implementation.slot_arguments)):
+            original: RustType = implementation.slot_arguments[index].clone()
+            concrete: RustType = substitute(original, instance.declaration.type_parameters, instance.arguments)?
+            closed.slot_arguments.push(concrete)
+        for index in range(len(closed.type_arguments)):
+            original: RustType = implementation.type_arguments[index].argument.clone()
+            concrete: RustType = substitute(original, instance.declaration.type_parameters, instance.arguments)?
+            closed.type_arguments[index].argument = concrete
+        retained.append(closed)
+    return Ok(None)
 
 
 def collect_owner_body_types(

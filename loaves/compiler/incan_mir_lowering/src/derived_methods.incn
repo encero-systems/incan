@@ -17,7 +17,7 @@ from lowering import (
     scalar_place, lower_callable_result, lower_assignment, binary_operator, materialized_receiver,
     source_operand_type, scalar_operator_operand,
 )
-from element_places import is_element_place, element_place_type
+from element_places import is_element_place
 from numerics import numeric_carrier
 from trait_links import contains
 from options import carrier_payload_value, clone_tuple_operand
@@ -308,9 +308,9 @@ def has_native_comparison(
 ) -> Result[bool, str]:
     """Require the already validated native comparison frame before an explicit standard default forwards to an operator."""
     match value:
-        RustOperand.Place(read) =>
-            source = scalar_place(builder, read.place, span)?
-            match place_type(builder.locals, source):
+        RustOperand.Place(_read) =>
+            ty = source_operand_type(builder, value, span)?
+            match ty:
                 PlanType.Model(owner, _name) =>
                     mut count = 5
                     if operator == BinOp.Eq or operator == BinOp.Ne:
@@ -409,13 +409,8 @@ def declares_own_method(
 ) -> Result[bool, str]:
     """Whether the retained receiver type declares a method of one of `names` or fills one from a trait, without evaluating an index."""
     match receiver:
-        RustOperand.Place(read) =>
-            mut ty = PlanType.Unit
-            if is_element_place(builder, read.place)?:
-                ty = element_place_type(builder, read.place)?
-            else:
-                source = scalar_place(builder, read.place, span)?
-                ty = place_type(builder.locals, source)
+        RustOperand.Place(_read) =>
+            ty = source_operand_type(builder, receiver, span)?
             match ty:
                 PlanType.Model(index, _name) => return Ok(owns_method(module, builder.nominals[index].canonical, names))
                 PlanType.Enum(index, _name) =>

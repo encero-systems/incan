@@ -435,6 +435,11 @@ fn retain_callee(callee: &mut bir::Callee, identities: &Identities) {
             &mut target.type_args
         }
         bir::Callee::Method(target) => {
+            if let Some(arguments) = &mut target.trait_arguments {
+                for argument in arguments {
+                    qualify_type(argument, None, identities);
+                }
+            }
             if let Some(selection) = &mut target.native_trait_delegation {
                 for ty in selection
                     .parameters

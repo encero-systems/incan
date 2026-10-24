@@ -338,9 +338,19 @@ fn method_return_witness(
     for (parameter, argument) in owner.type_parameters.iter().zip(owner_arguments) {
         bindings.insert(parameter.clone(), argument.clone());
     }
-    let mut adopted = implementations
-        .iter()
-        .filter(|record| record.owner == owner.canonical && &record.method == selected);
+    let mut adopted = implementations.iter().filter(|record| {
+        record.owner == owner.canonical
+            && &record.method == selected
+            && target.trait_arguments.as_ref().is_none_or(|arguments| {
+                record
+                    .slot_arguments
+                    .iter()
+                    .map(|argument| instantiate_witness(argument, &bindings, &receiver))
+                    .collect::<Option<Vec<_>>>()
+                    .as_ref()
+                    == Some(arguments)
+            })
+    });
     let signature = if let Some(record) = adopted.next() {
         if adopted.next().is_some() {
             return None;

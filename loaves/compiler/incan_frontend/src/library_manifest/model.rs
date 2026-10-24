@@ -874,6 +874,25 @@ impl LibraryIdentityGraph {
         candidates.all(|candidate| candidate == first).then_some(first)
     }
 
+    /// Retain identities from the declaration source the checked namespace selected. A module's own member can
+    /// precede a same-named child projection at one public path; its signature and identity must select the same
+    /// source. Reexports without an exact source record retain the public path's existing ambiguity.
+    pub fn identities_for_public_source_path(
+        &self,
+        public_path: &[String],
+        source_path: &[String],
+    ) -> Vec<Option<CanonicalSymbolId>> {
+        let exact_source = self
+            .exports
+            .iter()
+            .any(|entry| entry.public_path == public_path && entry.source_path == source_path);
+        self.exports
+            .iter()
+            .filter(|entry| entry.public_path == public_path && (!exact_source || entry.source_path == source_path))
+            .map(|entry| entry.canonical.as_ref().and_then(CanonicalIdentityExport::hydrate))
+            .collect()
+    }
+
     /// Return every canonical identity published at one exact package-visible path, in graph order.
     pub fn canonicals_at_public_path(&self, public_path: &[String]) -> Vec<CanonicalSymbolId> {
         let mut canonicals = Vec::new();

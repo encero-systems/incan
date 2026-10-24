@@ -67,6 +67,82 @@ pub def is_default_body(module: &BodyIrModule, body: &Body) -> bool:
     return false
 
 
+pub def append_default_type_bindings(
+    module: &BodyIrModule,
+    body: &Body,
+    receiver: PlanType,
+    mut names: list[str],
+    mut arguments: list[RustType],
+) -> Result[None, str]:
+    """Retain a concrete default's checked declaring-trait bindings beside its class and method arguments.
+
+    1. Select the receiver's canonical owner from its validated frame.
+    2. Read only that owner's implementation of this exact default body.
+    3. Close the bindings in the adopter scope before entering the default's declaring scope.
+    """
+    # 1. A non-receiver frame has no inherited trait environment.
+    if len(body.locals) == 0 or receiver_mode(body.locals[0].origin) == None:
+        return Ok(None)
+    mut owner = receiver
+    match receiver:
+        PlanType.ModelRef(index, name) => owner = PlanType.Model(index, name)
+        PlanType.ModelMutRef(index, name) => owner = PlanType.Model(index, name)
+        PlanType.EnumRef(index, name) => owner = PlanType.Enum(index, name)
+        _ => pass
+    identity = owner_identity(module, owner)?
+    # 2. A default shared by several adopters keeps each adopter's own checked bindings.
+    mut selected: Option[TraitImplementation] = None
+    for implementation in module.trait_implementations:
+        if implementation.owner != identity or Some(implementation.implementation) != body.canonical:
+            continue
+        match owner:
+            PlanType.Model(_index, _name) =>
+                if not receiver_selects_slot_arguments(module, implementation, owner):
+                    continue
+            _ => pass
+        match selected:
+            Some(previous) =>
+                if previous.type_arguments != implementation.type_arguments:
+                    return Err("unsupported Body IR conflicting default frame instantiations")
+                continue
+            None => selected = Some(implementation.clone())
+    # 3. Statement facts keep the declaring trait's scope, independently of the adopter's binder spellings.
+    match selected:
+        Some(implementation) =>
+            return merge_default_type_bindings(body, implementation.type_arguments, names, arguments)
+        None => return Ok(None)
+
+
+def merge_default_type_bindings(
+    body: &Body,
+    bindings: list[TraitTypeArgument],
+    mut names: list[str],
+    mut arguments: list[RustType],
+) -> Result[None, str]:
+    """Close every adoption argument before a declaring-trait binder shadows an adopter binder of the same name."""
+    mut closed: list[RustType] = []
+    for binding in bindings:
+        concrete: RustType = substitute(binding.argument, names, arguments)?
+        closed.append(concrete.clone())
+    for slot in range(len(bindings)):
+        parameter = str(bindings[slot].parameter)
+        mut existing = -1
+        for index in range(len(names)):
+            if names[index] == parameter:
+                existing = index
+                break
+        if existing < 0:
+            names.append(parameter)
+            arguments.append(closed[slot].clone())
+            continue
+        if arguments[existing] != closed[slot]:
+            for method_parameter in body.type_parameters:
+                if str(method_parameter) == parameter:
+                    return Err(f"unsupported Body IR shadowed trait and method type parameter {parameter}")
+        arguments[existing] = closed[slot].clone()
+    return Ok(None)
+
+
 pub def is_lazy_method_body(module: &BodyIrModule, body: &Body) -> bool:
     """Keep dependency generic-owner methods governed until a call or native bridge selects them.
 
@@ -388,6 +464,8 @@ def owner_method_identity(
     mut selected: Option[TraitImplementation] = None
     for implementation in module.trait_implementations:
         if implementation.owner == identity and Some(implementation.method) == canonical:
+            if not selected_slot_arguments(module, target, implementation, owner):
+                continue
             match selected:
                 Some(previous) =>
                     if previous.implementation != implementation.implementation or previous.type_arguments != implementation.type_arguments:
@@ -401,6 +479,44 @@ def owner_method_identity(
     match canonical:
         Some(identity) => return Ok(identity.clone())
         None => return Err("unsupported Body IR unproven Method")
+
+
+def selected_slot_arguments(
+    module: &BodyIrModule,
+    target: &MethodTarget,
+    implementation: &TraitImplementation,
+    owner: PlanType,
+) -> bool:
+    """Match a checked trait instantiation without mixing it with a default body's independent bindings."""
+    match target.trait_arguments.clone():
+        Some(arguments) => return arguments == implementation.slot_arguments
+        None => pass
+    return receiver_selects_slot_arguments(module, implementation, owner)
+
+
+def receiver_selects_slot_arguments(
+    module: &BodyIrModule,
+    implementation: &TraitImplementation,
+    owner: PlanType,
+) -> bool:
+    """Select the checked adoption of one concrete receiver even when several instances share its declaration."""
+    if len(implementation.slot_arguments) == 0:
+        return true
+    selected_method: CanonicalSymbolId = implementation.method.clone()
+    match owner:
+        PlanType.Model(index, _name) =>
+            for adoption in module.nominal_declarations[index].trait_adoptions:
+                if adoption.arguments != implementation.slot_arguments:
+                    continue
+                match adoption.methods:
+                    Some(methods) =>
+                        for index in range(len(methods)):
+                            method: CanonicalSymbolId = methods[index].clone()
+                            if method == selected_method:
+                                return true
+                    None => pass
+        _ => pass
+    return false
 
 
 pub def owner_method_index(

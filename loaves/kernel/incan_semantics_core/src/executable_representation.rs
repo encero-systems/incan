@@ -1816,6 +1816,7 @@ mod tests {
             owner: owner.clone(),
             method: slot.clone(),
             implementation: slot.clone(),
+            slot_arguments: Vec::new(),
             type_arguments: Vec::new(),
         });
         let mut public = public;

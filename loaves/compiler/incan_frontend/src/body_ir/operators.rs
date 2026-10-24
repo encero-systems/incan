@@ -347,6 +347,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             intrinsic_carrier: None,
             reflection: None,
             loaf_trait: None,
+            trait_arguments: self
+                .checked_trait_arguments(self.type_info.resolved_method_call(span).map(|call| &call.dispatch)),
             canonical: self
                 .type_info
                 .resolved_identity(span)

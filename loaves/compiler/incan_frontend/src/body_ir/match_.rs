@@ -168,11 +168,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         )
     }
 
-    /// Transfer a single owned native payload from an unguarded match on a fresh Option/Result temporary or the last
+    /// Transfer a single owned native payload from an unguarded match on a fresh enum temporary or the last
     /// read of an owned native iterator item, local binding or owned parameter. No later read can reuse that carrier,
     /// and a successful arm has no other payload to preserve. Borrowed parameters, loop-reused carriers, nested
     /// patterns and guards retain their facts. A final owned local read authorizes transfer independently of whether
-    /// its payload's declaration is available in this consumer; reference payloads retain their existing facts.
+    /// its payload's declaration is available in this consumer. Checked non-Clone tuple newtypes retain the same
+    /// transfer boundary as their native payload; reference payloads retain their existing facts.
     fn retain_owned_carrier_payload_move(&mut self, source: &bir::Place, pattern: &mut bir::Pattern) {
         if !source.projection.is_empty() {
             return;
@@ -183,6 +184,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let Some(local) = self.locals.get(id.index()) else {
             return;
         };
+        if matches!(local.ty, IncanType::Ref(_) | IncanType::RefMut(_)) {
+            return;
+        }
         let owned_last_read = (self.native_enum_payload_bindings.contains(&id)
             || matches!(
                 local.origin,
@@ -192,14 +196,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             && !self.loop_reuses_local(id)
             && !self.pending_argument_reads.contains(&id)
             && self.remaining_reads.get(&id).is_some_and(|remaining| *remaining == 1);
-        if (local.origin != bir::LocalOrigin::Temporary && !owned_last_read)
-            || !matches!(&local.ty, IncanType::Generic { base, .. } if matches!(collections::from_str(base), Some(CollectionTypeId::Option | CollectionTypeId::Result)))
-        {
+        if local.origin != bir::LocalOrigin::Temporary && !owned_last_read {
             return;
         }
         let fields = match pattern {
-            bir::Pattern::Result { fields, .. } => fields,
-            bir::Pattern::Enum { name, fields, .. } if name == "Option" => fields,
+            bir::Pattern::Result { fields, .. } | bir::Pattern::Enum { fields, .. } => fields,
             _ => return,
         };
         let [bir::Pattern::Var(binding)] = fields.as_mut_slice() else {

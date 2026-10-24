@@ -6,8 +6,10 @@ from nominal_frames import closed_arguments
 
 
 pub def has_open_trait_arguments(implementation: &TraitImplementation) -> bool:
-    """Identify a generic owner's still-open inherited default arguments before validating concrete slot records."""
-    return not closed_arguments([binding.argument.clone() for binding in implementation.type_arguments])
+    """Identify a generic owner's open slot or inherited default arguments before validating concrete records."""
+    return not closed_arguments(implementation.slot_arguments) or not closed_arguments(
+        [binding.argument.clone() for binding in implementation.type_arguments]
+    )
 
 
 pub def validate_project_implementation(

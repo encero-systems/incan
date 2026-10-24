@@ -11,13 +11,10 @@ use incan_driver::unit::UnitLoaf;
 use incan_frontend::loaf_index::LoafArtifact;
 
 /// Select exact artifacts needed by a checked plan from direct inputs and its reached Loaves' native closures.
-/// A direct input binds its crate for the whole compilation, so a Loaf closure that recorded another build of the
-/// same crate (as every Loaf built against the bootstrap runtime does) neither overrides nor contradicts it; closures
-/// supply only the roots the unit leaves unbound. Private provider aliases enter only native compilation, after source
-/// checking; conflicting artifacts remain refused instead of choosing a crate from a search directory or exposing
-/// transitive imports to the checker.
-/// A plan whose roots are already bound by direct inputs does not need closure discovery; the checker has already
-/// admitted its Loaf manifests, and reopening them cannot contribute another binding.
+/// Every offered binding of a required root must name the same complete artifact. A direct input cannot replace a
+/// provider's native type identity: its exported fields and signatures still refer to the artifact it compiled
+/// against. Private provider aliases enter only native compilation, after source checking; transitive imports remain
+/// private, and conflicting artifacts require rebuilding and publishing a coherent dependency closure.
 pub(crate) fn link_externs(
     plan: &crate::plan::Plan,
     direct: &[(String, PathBuf)],
@@ -36,29 +33,20 @@ pub(crate) fn link_externs(
         )
         .filter(|root| !matches!(*root, "" | "std" | "core" | "alloc" | "crate"))
         .collect::<BTreeSet<_>>();
-    let closures = if roots.iter().any(|root| !direct.iter().any(|(name, _)| name == root)) {
-        loaves
-            .iter()
-            .map(|loaf| {
-                LoafArtifact::read(&loaf.dir, &loaf.name)
-                    .and_then(|artifact| artifact.native_closure())
-                    .map_err(|error| error.to_string())
-            })
-            .collect::<Result<Vec<_>, _>>()?
-    } else {
-        Vec::new()
-    };
+    let closures = loaves
+        .iter()
+        .map(|loaf| {
+            LoafArtifact::read(&loaf.dir, &loaf.name)
+                .and_then(|artifact| artifact.native_closure())
+                .map_err(|error| error.to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let mut selected = direct.to_vec();
     for root in roots {
-        let mut offered = direct.iter().filter(|(name, _)| name == root).collect::<Vec<_>>();
-        if offered.is_empty() {
-            offered = closures
-                .iter()
-                .flat_map(|closure| &closure.externs)
-                .filter(|(name, _)| name == root)
-                .collect();
-        }
-        let mut candidates = offered.into_iter();
+        let mut candidates = direct
+            .iter()
+            .chain(closures.iter().flat_map(|closure| &closure.externs))
+            .filter(|(name, _)| name == root);
         let Some((_, artifact)) = candidates.next() else {
             return Err(format!(
                 "unsupported Body IR native dependency `{root}` in the selected Loaf closure"

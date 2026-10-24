@@ -19,8 +19,8 @@ use crate::typechecker::helpers::{
 };
 use crate::typechecker::receiver_change::ReceiverChange;
 use crate::typechecker::type_info::{
-    CBindingEnumAccess, ResolvedMethodCall, ResolvedOperatorKind, RustArgCoercionKind, RustCheckedFieldValue,
-    RustMethodTraitImportUse, RustTraitImportInfo,
+    CBindingEnumAccess, ResolvedMethodCall, ResolvedOperatorKind, RustCheckedFieldValue, RustMethodTraitImportUse,
+    RustTraitImportInfo,
 };
 use crate::typechecker::{IdentKind, MemberBindingSurface, canonical_public_library_type_name};
 use incan_lang::interop::{
@@ -2802,7 +2802,8 @@ impl TypeChecker {
         self.rust_item_metadata_for_method_call(rust_path, method)
     }
 
-    /// Return the canonical Rust path for a nominal receiver.
+    /// Return the canonical Rust item path for a nominal receiver. Owner arguments remain on the receiver type;
+    /// generic rusttype templates must not put their argument display into method or variant identities.
     pub(in crate::typechecker) fn rust_canonical_path_for_nominal_receiver(
         &self,
         name: &str,
@@ -2818,6 +2819,9 @@ impl TypeChecker {
                 newtype.underlying.clone()
             };
             if let Some(path) = self.rust_path_for_rusttype_underlying(&underlying) {
+                if let Some((base, _)) = Self::rust_generic_base_and_args(&path) {
+                    return Some(base.to_owned());
+                }
                 return Some(path);
             }
         }
@@ -4111,16 +4115,18 @@ impl TypeChecker {
         }
     }
 
-    /// Substitute call-site `Self` references inside a backend trait-dispatch target.
+    /// Substitute call-site `Self` and the selected receiver owner's binders inside a backend trait-dispatch target.
     ///
     /// The selected trait instantiation is carried separately from the method signature. Both must receive the same
     /// receiver substitution so a source target such as `Index[list[str], Self]` emits `Index<Vec<String>, Box>` at
-    /// the call site rather than an illegal bare Rust `Self`.
+    /// the call site rather than an illegal bare Rust `Self`. Adoption arguments belong to the receiver declaration,
+    /// so `Shelf[T] with Sliceable[T]` called on `Shelf[str]` must retain `str`, not its owner's free `T`.
     fn method_dispatch_substituting_call_site_self(
         &self,
         dispatch: crate::typechecker::ResolvedMethodDispatch,
         receiver: &ResolvedType,
     ) -> crate::typechecker::ResolvedMethodDispatch {
+        let owner_bindings = self.receiver_owner_type_bindings(receiver);
         match dispatch {
             crate::typechecker::ResolvedMethodDispatch::Trait {
                 trait_name,
@@ -4133,7 +4139,9 @@ impl TypeChecker {
                 module_path,
                 type_args: type_args
                     .into_iter()
-                    .map(|ty| self.substitute_self_in_resolved_type(ty, receiver))
+                    .map(|ty| {
+                        substitute_resolved_type(&self.substitute_self_in_resolved_type(ty, receiver), &owner_bindings)
+                    })
                     .collect(),
                 implementation_type_params: implementation_type_params
                     .into_iter()
@@ -4162,6 +4170,25 @@ impl TypeChecker {
                 receiver_is_mutable,
             },
         }
+    }
+
+    /// Read a nominal receiver's declared parameter binding without inferring any arguments from operand carriers.
+    /// Trait receivers and incomplete owner applications supply no additional binding scope.
+    fn receiver_owner_type_bindings(&self, receiver: &ResolvedType) -> std::collections::HashMap<String, ResolvedType> {
+        let ResolvedType::Generic(name, arguments) = receiver else {
+            return std::collections::HashMap::new();
+        };
+        let parameters = match self.lookup_semantic_type_info(name) {
+            Some(TypeInfo::Model(owner)) => &owner.type_params,
+            Some(TypeInfo::Class(owner)) => &owner.type_params,
+            Some(TypeInfo::Newtype(owner)) => &owner.type_params,
+            Some(TypeInfo::Enum(owner)) => &owner.type_params,
+            _ => return std::collections::HashMap::new(),
+        };
+        if parameters.len() != arguments.len() {
+            return std::collections::HashMap::new();
+        }
+        type_param_subst_map(parameters, arguments)
     }
 
     /// Build formal parameter types and return type for a method call, replacing [`ResolvedType::SelfType`] with the

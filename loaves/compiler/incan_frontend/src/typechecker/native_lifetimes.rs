@@ -8,31 +8,31 @@ use crate::diagnostics::errors;
 use crate::symbols::ResolvedType;
 
 impl TypeChecker {
-    /// Check an authored parameter's explicitly borrowed positions. Native call temporaries keep their
-    /// metadata-selected borrowing; only source declarations introduce the unsupported cross-call lifetime boundary.
+    /// Check authored parameters, including native values whose own type carries a borrow. Native call temporaries
+    /// keep their metadata-selected borrowing; source declarations need a retained cross-call lifetime relationship.
     pub(super) fn refuse_uncontracted_rust_borrows(&mut self, ty: &ResolvedType, span: Span) {
-        if let Some(owner) = self.uncontracted_rust_borrow(ty, false) {
+        if let Some(owner) = self.uncontracted_rust_borrow(ty) {
             self.errors
                 .push(errors::rust_borrow_without_lifetime_contract(&owner, span));
         }
     }
 
-    /// Find a lifetime-bearing native referent under a source borrow, including aliases and nested type arguments.
-    /// Owner metadata supplies lifetime presence; spelling and method signatures never serve as a lifetime proof.
-    fn uncontracted_rust_borrow(&self, ty: &ResolvedType, borrowed: bool) -> Option<String> {
+    /// Find a lifetime-bearing native owner, including aliases, references and nested type arguments. A value such
+    /// as `Captures<'a>` still borrows its input when passed by value; removing an outer reference cannot erase that
+    /// relationship. Owner metadata supplies lifetime presence, independently of the source spelling.
+    fn uncontracted_rust_borrow(&self, ty: &ResolvedType) -> Option<String> {
         match ty {
             ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => {
-                return self.uncontracted_rust_borrow(inner, true);
+                return self.uncontracted_rust_borrow(inner);
             }
             ResolvedType::Tuple(elements) => {
                 return elements
                     .iter()
-                    .find_map(|element| self.uncontracted_rust_borrow(element, borrowed));
+                    .find_map(|element| self.uncontracted_rust_borrow(element));
             }
             _ => {}
         }
-        if borrowed
-            && let Some((path, _, _, _)) = self.rust_identity_for_type(ty)
+        if let Some((path, _, _, _)) = self.rust_identity_for_type(ty)
             && let Some(metadata) = self.rust_item_metadata_for_complete_type(&path)
             && let RustItemKind::Type(info) = &metadata.kind
             && info.has_lifetime_params
@@ -42,7 +42,7 @@ impl TypeChecker {
         match ty {
             ResolvedType::Generic(_, arguments) => arguments
                 .iter()
-                .find_map(|argument| self.uncontracted_rust_borrow(argument, borrowed)),
+                .find_map(|argument| self.uncontracted_rust_borrow(argument)),
             _ => None,
         }
     }

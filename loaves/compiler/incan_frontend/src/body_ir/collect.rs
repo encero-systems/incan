@@ -1350,8 +1350,8 @@ fn local_supertraits<'program>(
 /// supertraits those reach.
 ///
 /// Bare clauses consume the separate checked Body IR witness; written clauses keep their existing explicit snapshot.
-/// A generic trait adopted without recorded arguments contributes nothing. A trait reached at two different
-/// instantiations is dropped entirely, because its slot identities cannot tell the implementations apart.
+/// A generic trait adopted without recorded arguments contributes nothing. Distinct checked instantiations retain
+/// separate dispatch records; their slot arguments distinguish the same declaration's overload selections.
 fn adopted_local_traits<'program>(
     program: &'program ast::Program,
     type_info: &TypeCheckInfo,
@@ -1396,16 +1396,6 @@ fn adopted_local_traits<'program>(
             direct_ancestors: None,
         }));
     }
-    let conflicting = adopted
-        .iter()
-        .filter(|candidate| {
-            adopted.iter().any(|other| {
-                other.declaration.name == candidate.declaration.name && other.arguments != candidate.arguments
-            })
-        })
-        .map(|candidate| candidate.declaration.name.clone())
-        .collect::<HashSet<_>>();
-    adopted.retain(|candidate| !conflicting.contains(&candidate.declaration.name));
     adopted
 }
 
@@ -1427,12 +1417,15 @@ fn slot_implementation(
         .method_identities
         .get(&(slot_trait.declaration.name.clone(), slot.node.name.clone()))?;
     let selected_name = checked_slot_method_name(type_info, owner, &slot.node.name);
-    let candidates = methods
+    let mut candidates = methods
         .iter()
         .filter(|candidate| {
             candidate.node.name == selected_name && method_fills_trait_slot(type_info, &candidate.node, identity)
         })
         .collect::<Vec<_>>();
+    if candidates.len() > 1 {
+        candidates.retain(|candidate| instantiated_slot_signature_matches(type_info, slot_trait, slot, candidate));
+    }
     match candidates.as_slice() {
         [candidate] => type_info
             .declarations
@@ -1474,6 +1467,44 @@ fn slot_implementation(
         }
         _ => None,
     }
+}
+
+/// Select among checked overloads using the slot's instantiated signature contract. The checker already proved
+/// adoption compatibility; Body IR consumes its resolved signatures instead of resolving annotations again.
+fn instantiated_slot_signature_matches(
+    facts: &TypeCheckInfo,
+    adopted: &AdoptedTrait<'_>,
+    slot: &ast::Spanned<ast::MethodDecl>,
+    candidate: &ast::Spanned<ast::MethodDecl>,
+) -> bool {
+    let bindings = &facts.declarations.method_bindings_by_span;
+    let Some(expected) = bindings.get(&(slot.span.start, slot.span.end)) else {
+        return false;
+    };
+    let Some(actual) = bindings.get(&(candidate.span.start, candidate.span.end)) else {
+        return false;
+    };
+    let parameters = adopted
+        .declaration
+        .type_params
+        .iter()
+        .map(|parameter| parameter.name.clone())
+        .collect::<Vec<_>>();
+    let substitution = crate::resolved_type_subst::type_param_subst_map(&parameters, &adopted.arguments);
+    expected.params.len() == actual.params.len()
+        && instantiate_declared_slot_type(&expected.return_type, &substitution) == actual.return_type
+        && expected.params.iter().zip(&actual.params).all(|(expected, actual)| {
+            expected.kind == actual.kind && instantiate_declared_slot_type(&expected.ty, &substitution) == actual.ty
+        })
+}
+
+/// Substitute only the declaring trait's binders, including legacy Named placeholders retained by checked abstract
+/// signatures. A same-spelled nominal outside that declaration's parameter map never becomes a binder.
+fn instantiate_declared_slot_type(ty: &ResolvedType, bindings: &HashMap<String, ResolvedType>) -> ResolvedType {
+    crate::resolved_type_subst::map_resolved_type_leaves(ty, &|leaf| match leaf {
+        ResolvedType::Named(name) | ResolvedType::TypeVar(name) => bindings.get(name).cloned(),
+        _ => None,
+    })
 }
 
 /// Match an explicit method target through its checked slot identity; unqualified methods can fill any compatible
@@ -1522,6 +1553,11 @@ fn derived_trait_implementations(
                 owner: owner.clone(),
                 method: method.method.clone(),
                 implementation,
+                slot_arguments: method
+                    .type_arguments
+                    .iter()
+                    .map(|(_, argument)| semantic_type_from_resolved(argument))
+                    .collect(),
                 type_arguments: method
                     .type_arguments
                     .iter()
@@ -1651,10 +1687,16 @@ pub(super) fn collect_local_trait_implementations(
                 else {
                     continue;
                 };
-                if implementations
-                    .iter()
-                    .any(|existing: &bir::TraitImplementation| &existing.owner == owner && &existing.method == method)
-                {
+                if implementations.iter().any(|existing: &bir::TraitImplementation| {
+                    &existing.owner == owner
+                        && &existing.method == method
+                        && existing.slot_arguments
+                            == slot_trait
+                                .arguments
+                                .iter()
+                                .map(semantic_type_from_resolved)
+                                .collect::<Vec<_>>()
+                }) {
                     continue;
                 }
                 let Some((implementation, type_arguments)) =
@@ -1666,6 +1708,7 @@ pub(super) fn collect_local_trait_implementations(
                     owner: owner.clone(),
                     method: method.clone(),
                     implementation,
+                    slot_arguments: slot_trait.arguments.iter().map(semantic_type_from_resolved).collect(),
                     type_arguments,
                 });
             }
@@ -1723,6 +1766,7 @@ fn property_implementations(
                 owner: owner.clone(),
                 method: method.clone(),
                 implementation: implementation.clone(),
+                slot_arguments: trait_info.arguments.iter().map(semantic_type_from_resolved).collect(),
                 type_arguments: Vec::new(),
             });
         }
@@ -1779,6 +1823,7 @@ fn imported_trait_implementations(
                     owner: owner.clone(),
                     method: method.clone(),
                     implementation,
+                    slot_arguments: type_arguments.iter().map(|binding| binding.argument.clone()).collect(),
                     type_arguments,
                 });
             }

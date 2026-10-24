@@ -16,7 +16,7 @@ from rust::incan_semantics_core::body_ir import (
     Operand,
     Constant,
 )
-from type_parameters import substitute, instantiate
+from type_parameters import substitute, instantiate, static_type_arguments
 
 
 pub model SelectedMember:
@@ -228,15 +228,17 @@ def schedule_statement(
             match callee:
                 Callee.Function(callable) =>
                     match callable:
-                        CallableTarget.Named(target) => schedule_call(
-                            module,
-                            target.canonical,
-                            target.type_args,
-                            names,
-                            arguments,
-                            pending,
-                            ancestors,
-                        )?
+                        CallableTarget.Named(target) =>
+                            call_arguments = static_type_arguments(module, target)?
+                            schedule_call(
+                                module,
+                                target.canonical,
+                                call_arguments,
+                                names,
+                                arguments,
+                                pending,
+                                ancestors,
+                            )?
                         _ => pass
                 Callee.Method(target) => schedule_call(
                     module,
@@ -307,7 +309,7 @@ def schedule_arm(
 def schedule_call(
     module: &BodyIrModule,
     canonical: &Option[RustCanonicalSymbolId],
-    type_args: &list[RustType],
+    type_args: list[RustType],
     names: list[str],
     arguments: list[RustType],
     mut pending: list[ScheduledFrame],

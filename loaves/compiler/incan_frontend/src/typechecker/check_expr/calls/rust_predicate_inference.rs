@@ -21,6 +21,7 @@ impl TypeChecker {
         for _ in 0..parameters.len() {
             let before = bindings.len();
             for predicate in &signature.bounds {
+                self.infer_rust_associated_bindings(predicate, parameters, bindings);
                 if let Some(inferred) = self.rust_predicate_arguments(predicate, parameters, bindings) {
                     for (name, value) in inferred {
                         bindings.entry(name).or_insert(value);
@@ -30,6 +31,28 @@ impl TypeChecker {
             if bindings.len() == before {
                 return;
             }
+        }
+    }
+
+    /// Close native output binders from an already bound subject's retained associated equalities. Source generic
+    /// subjects use their active checked bounds; a caller's binder may have the same name as the callee's binder.
+    /// Metadata supplies the associated value, and rustc still verifies the specialized native predicate.
+    fn infer_rust_associated_bindings(
+        &self,
+        predicate: &RustTraitBound,
+        parameters: &[String],
+        bindings: &mut HashMap<String, ResolvedType>,
+    ) {
+        let Some(subject) = bindings.get(&predicate.self_type).cloned() else {
+            return;
+        };
+        for associated in &predicate.associated_type_bindings {
+            let Some(actual) = self.rust_associated_type(&subject, &predicate.path, &associated.name) else {
+                continue;
+            };
+            let expected =
+                self.rust_inference_type(&self.native_rust_signature_type(&associated.value_path, ""), parameters);
+            self.infer_type_param_bindings(&expected, &actual, bindings);
         }
     }
 

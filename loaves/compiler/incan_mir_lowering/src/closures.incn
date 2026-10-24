@@ -82,16 +82,23 @@ pub def signature_input(ty: PlanType, mutable: bool) -> PlanType:
 
 
 pub def semantic_input(ty: PlanType, kind: IncanCallableParamKind, mutable: bool) -> Result[PlanType, str]:
-    """Project a checked callable element and rest role onto the owned pack ABI; ordinary inputs keep their borrow."""
+    """Project a checked callable element onto its parameter ABI.
+
+    1. Preserve ordinary input borrowing.
+    2. Refuse mutable rest parameters.
+    3. Pack the checked element using the shared collection representation.
+    """
+    # 1. Preserve ordinary input borrowing.
     if kind == IncanCallableParamKind.Normal:
         return Ok(signature_input(ty, mutable))
+    # 2. Refuse mutable rest parameters.
     if mutable:
         return Err("unsupported Body IR mutable rest parameter")
-    match ty:
-        PlanType.Int => pass
-        PlanType.String => pass
-        _ => return Err("unsupported Body IR rest callable element representation")
+    # 3. Pack the checked element using the shared collection representation.
     if kind == IncanCallableParamKind.RestPositional:
+        match ty:
+            PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))
+            _ => pass
         return Ok(PlanType.List(collection_leaf(ty)?, 1))
     if kind == IncanCallableParamKind.RestKeyword:
         return Ok(PlanType.Dict(ListLeaf.Str, collection_leaf(ty)?))
@@ -99,23 +106,25 @@ pub def semantic_input(ty: PlanType, kind: IncanCallableParamKind, mutable: bool
 
 
 pub def packed_input(ty: PlanType, kind: IncanCallableParamKind, mutable: bool) -> Result[PlanType, str]:
-    """Consume a checked frame pack as owned storage, without applying ordinary collection borrowing."""
+    """Consume a checked frame pack as owned storage.
+
+    1. Preserve ordinary input borrowing.
+    2. Refuse mutable rest parameters.
+    3. Match the checked list or string-keyed dictionary to its declared rest role.
+    """
+    # 1. Preserve ordinary input borrowing.
     if kind == IncanCallableParamKind.Normal:
         return Ok(signature_input(ty, mutable))
+    # 2. Refuse mutable rest parameters.
     if mutable:
         return Err("unsupported Body IR mutable rest parameter")
+    # 3. Match the checked pack to its declared rest role.
     match ty:
-        PlanType.List(leaf, depth) =>
-            if kind == IncanCallableParamKind.RestPositional and depth == 1 and (
-                leaf == ListLeaf.Int
-                or leaf == ListLeaf.Str
-            ):
+        PlanType.List(_leaf, depth) =>
+            if kind == IncanCallableParamKind.RestPositional and depth > 0:
                 return Ok(ty)
-        PlanType.Dict(key, value) =>
-            if kind == IncanCallableParamKind.RestKeyword and key == ListLeaf.Str and (
-                value == ListLeaf.Int
-                or value == ListLeaf.Str
-            ):
+        PlanType.Dict(key, _value) =>
+            if kind == IncanCallableParamKind.RestKeyword and key == ListLeaf.Str:
                 return Ok(ty)
         _ => pass
     return Err("unsupported Body IR checked rest pack representation")

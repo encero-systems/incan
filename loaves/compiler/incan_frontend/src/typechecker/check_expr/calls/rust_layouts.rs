@@ -57,7 +57,12 @@ impl TypeChecker {
                         variant
                             .field_type_displays
                             .iter()
-                            .map(|field| self.native_rust_signature_type(field, path))
+                            .map(|field| {
+                                self.rust_inference_type(
+                                    &self.native_rust_signature_type(field, path),
+                                    &info.type_params,
+                                )
+                            })
                             .collect(),
                         variant.field_names.clone(),
                     )

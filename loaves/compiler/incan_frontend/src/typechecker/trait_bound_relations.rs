@@ -21,6 +21,7 @@ use incan_lang::lang::trait_capabilities::{
 use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_lang::lang::types::numerics;
+use incan_semantics_core::canonical_module_identity;
 
 /// Which declaration's type parameters [`TypeChecker::refuse_unsupported_callable_markers`] is reading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,7 +131,8 @@ impl TypeChecker {
             return satisfies;
         }
         if bound.type_args.is_empty() {
-            return self.type_satisfies_explicit_bound(ty, &bound.name);
+            let published = self.published_nominal_bound_name(bound);
+            return self.type_satisfies_explicit_bound(ty, published.as_deref().unwrap_or(&bound.name));
         }
         if is_rust_capability_bound(&bound.name) {
             return true;
@@ -154,6 +156,32 @@ impl TypeChecker {
             return self.type_satisfies_explicit_bound(ty, &bound.name);
         }
         self.type_satisfies_nominal_trait_bound_with_args(ty, &bound.name, &expected_args)
+    }
+
+    /// Keep a published plain trait bound in its declaring module rather than resolving its bare name in the
+    /// consumer. Registry-owned builtin and Rust capability bounds retain their existing semantic relations.
+    /// An admitted visible alias keeps its spelling when it names the same declaration; its public projection may
+    /// be usable even when the declaration's canonical source module is private.
+    fn published_nominal_bound_name(&self, bound: &TypeBoundInfo) -> Option<String> {
+        if is_rust_capability_bound(&bound.name)
+            || builtin_traits::from_str(Self::type_bound_source_name(bound))
+                .is_some_and(|id| self.bound_is_builtin_trait(bound, id))
+        {
+            return None;
+        }
+        let module_path = bound.module_path.as_deref()?;
+        let identity = self.package_trait_declaration(module_path, Self::type_bound_source_name(bound))?;
+        let visible = self
+            .resolve_bound_trait_path(&bound.name)
+            .and_then(|(path, name)| self.package_trait_declaration(&path, &name));
+        if visible.as_ref() == Some(&identity) {
+            return None;
+        }
+        Some(format!(
+            "{}::{}",
+            canonical_module_identity(&identity)?,
+            identity.declaration_name
+        ))
     }
 
     /// Match a function or closure value against the exact `std.traits.callable.CallableN` signature.

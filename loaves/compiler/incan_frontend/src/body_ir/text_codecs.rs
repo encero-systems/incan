@@ -194,6 +194,7 @@ impl BodyBuilder<'_, '_> {
                 intrinsic_carrier: None,
                 reflection: None,
                 loaf_trait: None,
+                trait_arguments: None,
                 canonical: Some(identity),
                 type_args: Vec::new(),
                 binding: bir::ArgumentBinding::resolved_positional(count),

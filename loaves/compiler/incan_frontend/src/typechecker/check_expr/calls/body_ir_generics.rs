@@ -490,9 +490,20 @@ impl TypeChecker {
 
 /// Normalize checked aliases and declared binders in the accepting checker; SDK projection keeps its lexical scope.
 pub(super) fn normalized(ty: &ResolvedType, binders: &[String], checker: &TypeChecker) -> ResolvedType {
+    if let Some(target) = checker.rusttype_native_target(ty) {
+        return normalized(&target, binders, checker);
+    }
     match ty {
         ResolvedType::Named(name) if binders.contains(name) => ResolvedType::TypeVar(name.clone()),
         ResolvedType::RustPath(name) if binders.contains(name) => ResolvedType::TypeVar(name.clone()),
+        ResolvedType::RustPath(_) => {
+            let structural = checker.rust_inference_type(ty, binders);
+            if structural == *ty {
+                structural
+            } else {
+                normalized(&structural, binders, checker)
+            }
+        }
         ResolvedType::Generic(name, elements) => {
             let elements = elements
                 .iter()

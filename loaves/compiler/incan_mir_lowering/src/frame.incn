@@ -98,6 +98,8 @@ pub model Builder:
     pub instances: list[Instance]
     pub type_parameters: list[str]
     pub type_arguments: list[RustType]
+    # The callable's own checked arguments exclude the enclosing class and declaring-trait environments.
+    pub callable_type_arguments: list[RustType] = []
     pub function_pointer_locals: list[int]
     pub name: str
     pub synthesized: list[Function]

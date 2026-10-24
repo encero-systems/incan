@@ -1,4 +1,4 @@
-# behavior: named native enum payloads require complete typed coverage; borrowed lifetime-bearing Rust signatures are refused before compilation (#2368)
+# behavior: native payloads require typed coverage; lifetime-bearing Rust parameters refuse by value or reference (#2368)
 # expect-diagnostic: INCAN-T0001
 # expect-diagnostic: INCAN-T0120
 
@@ -29,6 +29,13 @@ def incomplete(value: &Message) -> int:
 
 def observe(captures: &NativeCaptures) -> bool:
     """Refuse the erased-region source boundary before rustc outlives checking."""
+    if let Some(found) = captures.name("word"):
+        return found.as_str() == "ab"
+    return false
+
+
+def observe_value(captures: NativeCaptures) -> bool:
+    """Refuse the native value's internal borrow before rustc converts its erased region."""
     if let Some(found) = captures.name("word"):
         return found.as_str() == "ab"
     return false
