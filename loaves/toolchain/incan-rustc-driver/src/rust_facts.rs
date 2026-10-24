@@ -931,17 +931,19 @@ fn trait_bounds(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> Vec<
 
 /// Retain candidate impl templates once per nominal owner. Predicates remain explicit: a blanket impl is never
 /// unconditional trait evidence, and rustc verifies the selected closed trait reference before native emission.
+/// Primitive filtering considers the same owned and borrowed receivers used to collect candidates.
 fn trait_impls<'tcx>(tcx: TyCtxt<'tcx>, owner: Ty<'tcx>, named: &mut HashSet<DefId>) -> Vec<RustImplementedTrait> {
     let mut implementations = HashSet::new();
+    let receivers = [
+        owner,
+        Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, owner),
+        Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, owner),
+    ];
     for trait_id in tcx
         .all_traits_including_private()
         .filter(|id| tcx.visibility(*id).is_public())
     {
-        for receiver in [
-            owner,
-            Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, owner),
-            Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, owner),
-        ] {
+        for receiver in receivers {
             tcx.for_each_relevant_impl(trait_id, receiver, |implementation| {
                 implementations.insert(implementation);
             });
@@ -958,7 +960,9 @@ fn trait_impls<'tcx>(tcx: TyCtxt<'tcx>, owner: Ty<'tcx>, named: &mut HashSet<Def
             if matches!(
                 owner.kind(),
                 ty::Bool | ty::Char | ty::Int(_) | ty::Uint(_) | ty::Float(_) | ty::Str | ty::Slice(_)
-            ) && !concrete_impl_may_apply(tcx, implementation, owner)
+            ) && !receivers
+                .into_iter()
+                .any(|receiver| concrete_impl_may_apply(tcx, implementation, receiver))
             {
                 return None;
             }
@@ -1039,6 +1043,7 @@ fn trait_implementations(tcx: TyCtxt<'_>, owner: DefId, named: &mut HashSet<DefI
 
 /// Eliminate impossible blanket candidates for scalar and unsized primitives. A slice element remains unconstrained
 /// during extraction, so applicable conditional templates survive for the checker to instantiate and rustc to verify.
+/// A reference retains its Sized carrier while its slice element remains an inference variable.
 fn concrete_impl_may_apply<'tcx>(tcx: TyCtxt<'tcx>, implementation: DefId, owner: Ty<'tcx>) -> bool {
     use rustc_infer::infer::TyCtxtInferExt;
     use rustc_trait_selection::traits::{ObligationCtxt, query::evaluate_obligation::InferCtxtExt};
@@ -1047,10 +1052,15 @@ fn concrete_impl_may_apply<'tcx>(tcx: TyCtxt<'tcx>, implementation: DefId, owner
         .build_with_typing_env(ty::TypingEnv::fully_monomorphized());
     // A slice template's element is not constrained yet. Retain impls that can apply to some element while still
     // rejecting impossible Sized blanket implementations on the unsized slice itself.
-    let owner = if matches!(owner.kind(), ty::Slice(_)) {
-        Ty::new_slice(tcx, infcx.next_ty_var(rustc_span::DUMMY_SP))
-    } else {
-        owner
+    let owner = match owner.kind() {
+        ty::Slice(_) => Ty::new_slice(tcx, infcx.next_ty_var(rustc_span::DUMMY_SP)),
+        ty::Ref(region, inner, mutable) if matches!(inner.kind(), ty::Slice(_)) => Ty::new_ref(
+            tcx,
+            *region,
+            Ty::new_slice(tcx, infcx.next_ty_var(rustc_span::DUMMY_SP)),
+            *mutable,
+        ),
+        _ => owner,
     };
     let ocx = ObligationCtxt::new(&infcx);
     let arguments = infcx.fresh_args_for_item(rustc_span::DUMMY_SP, implementation);

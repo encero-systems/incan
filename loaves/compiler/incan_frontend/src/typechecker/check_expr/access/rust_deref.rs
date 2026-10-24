@@ -343,7 +343,9 @@ impl TypeChecker {
     }
 
     /// Resolve an explicit trait receiver through the same native owner selection and checked dereference calls as
-    /// value syntax. The trait's name constrains lookup; source argument zero remains the evaluated receiver.
+    /// value syntax. The trait's name constrains lookup; source argument zero remains the evaluated receiver, whose
+    /// retained native carrier takes priority over source result expectations. The destination constrains trait
+    /// binders.
     pub(super) fn retain_rust_trait_qualified_call(
         &mut self,
         call: &RustTraitQualifiedCall<'_>,
@@ -359,7 +361,14 @@ impl TypeChecker {
             self.retain_explicit_rust_receiver(call.span)?;
             return Some(result);
         }
-        let mut owner = source.clone();
+        let mut owner = self
+            .type_info
+            .rust
+            .checked_calls
+            .get(&(receiver.span.start, receiver.span.end))
+            .map(|checked| checked.return_type.clone())
+            .or_else(|| self.rust_native_value_type(receiver))
+            .unwrap_or_else(|| source.clone());
         let mut steps = Vec::new();
         for _ in 0..12 {
             let path = self.rust_adjusted_owner_path(&owner)?;
@@ -367,7 +376,7 @@ impl TypeChecker {
             let RustItemKind::Type(info) = &metadata.kind else {
                 return None;
             };
-            owner = self.rust_closed_owner(&owner, info, &path);
+            owner = self.rust_trait_owner(&owner, info, &path);
             let selected = self.resolve_retained_rust_trait_call_on_owner(
                 RustPathMethodCall {
                     rust_path: &path,
@@ -379,7 +388,7 @@ impl TypeChecker {
                     args: &call.args[1..],
                     arg_types: &call.arg_types[1..],
                     receiver_span: receiver.span,
-                    expected_return_ty: None,
+                    expected_return_ty: call.expected_return_ty,
                     span: call.span,
                 },
                 info,
@@ -445,6 +454,7 @@ impl TypeChecker {
     }
 
     /// Require the exact adjustment trait on the closed owner and preserve its shared or exclusive signature.
+    /// A reference implementing Deref is itself Self; removing that reference would select another implementation.
     fn rust_deref_adjustment(
         &self,
         owner: &ResolvedType,
@@ -456,7 +466,7 @@ impl TypeChecker {
         let RustItemKind::Type(info) = &metadata.kind else {
             return None;
         };
-        let owner = self.rust_closed_owner(owner, &info, &path);
+        let owner = self.rust_trait_owner(owner, &info, &path);
         let trait_path = if mutable { DEREF_MUT_TRAIT } else { DEREF_TRAIT };
         let implementation = self.rust_adjustment_implementation(info, &owner, trait_path)?;
         let method = if mutable { "deref_mut" } else { "deref" };

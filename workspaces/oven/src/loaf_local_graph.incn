@@ -35,11 +35,20 @@ pub model LocalDemand:
 
 
 pub def unique(values: list[str]) -> list[str]:
-    """Canonicalize feature requests without changing activation semantics."""
+    """Canonicalize feature requests and native paths into sorted distinct strings.
+
+    1. Retain each distinct input through hash membership.
+    2. Sort the retained values independently of input order.
+    """
+    # 1. Retain each distinct input through hash membership.
+    mut seen: set[str] = set()
     mut result: list[str] = []
     for value in values:
-        if value not in result:
-            result.append(value)
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    # 2. Sort the retained values independently of input order.
     return sorted(result)
 
 

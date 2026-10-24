@@ -155,7 +155,7 @@ pub enum PlanType:
     TupleRef(list[TupleElement])
     TupleMutRef(list[TupleElement])
     StringRef
-    # Exactly one numeric, Bool, Decimal or frozen scalar referent; the shared borrow owns no storage.
+    # Exactly one primitive, frozen scalar or sized shared reference; the shared borrow owns no storage.
     ScalarRef(list[PlanType])
     ScalarMutRef(list[PlanType])
     StringMutRef

@@ -21,6 +21,7 @@ from std.json import JsonValue
 from files import json_text
 from home import unit_ledger
 from loaf_local_graph import unique
+from native_codegen import native_codegen_arguments
 from observation import Ledger, SETTLE_SECONDS, load_ledger, observe, trace
 from publication import place, publish
 from toolchain import NativeCrate, Toolchain
@@ -128,8 +129,8 @@ pub def cache_identities(caches: list[str]) -> Result[list[str], str]:
 
 
 pub def description_digest(unit: UnitDescription) -> Result[str, str]:
-    """The digest of what the unit's description says: profile, features, kind and every path and crate it names."""
-    return fingerprint([json_text(unit.to_json())?])
+    """Digest the unit's description and native compiler flags, including profile, features, paths and crates."""
+    return fingerprint([json_text(unit.to_json())?] + native_codegen_arguments(unit.profile))
 
 
 pub def source_fingerprint(unit: UnitDescription, compiler: str, mut project: Ledger) -> Result[Key, str]:

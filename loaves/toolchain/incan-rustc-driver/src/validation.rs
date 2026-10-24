@@ -1506,21 +1506,19 @@ fn external_signature_type(ty: &Scalar) -> bool {
         )
 }
 
-/// The scalar reference carrier borrows exact primitive storage, a sized native text reference, or a function pointer.
+/// The scalar reference carrier borrows primitive storage, a function pointer, or a sized shared reference.
+/// Borrowing a reference preserves its referent and does not make that referent writable.
 fn scalar_referent(ty: &Scalar) -> bool {
+    if shared_reference(ty) {
+        return true;
+    }
     if matches!(ty, Scalar::FunctionPointer(_)) {
         return source_signature_type(ty);
     }
     sized_numeric(ty).is_some()
         || matches!(
             ty,
-            Scalar::Int
-                | Scalar::Float
-                | Scalar::Bool
-                | Scalar::Decimal
-                | Scalar::FrozenStr
-                | Scalar::FrozenBytes
-                | Scalar::StrRef
+            Scalar::Int | Scalar::Float | Scalar::Bool | Scalar::Decimal | Scalar::FrozenStr | Scalar::FrozenBytes
         )
 }
 

@@ -1,4 +1,4 @@
-# behavior: generic native receivers retain owners, iterator outputs, primitive views and callbacks (#2256)
+# behavior: native receivers retain owners, iterator outputs, primitive views, callbacks and slice conversions (#2256)
 # expect-stdout:
 #   1
 #   770
@@ -30,11 +30,13 @@ from rust::std::clone import Clone as NativeClone
 from rust::std::collections import HashSet
 from rust::std::collections::hash_set import Iter as SetIter
 from rust::std::iter import Iterator
+from rust::std::convert import Into as RuntimeInto
 from rust::std::io import Cursor
 from rust::std::mem import size_of_val
 from rust::std::net import Ipv4Addr
 from rust::std::ops import Range
 from rust::std::primitive import str as RustStr
+from rust::std::string import String as RustString
 from rust::std::time import Duration
 from rust::std::vec import Vec
 from rust::xxhash_rust::xxh32 import Xxh32, xxh32
@@ -264,6 +266,29 @@ def check_primitive_and_parameter_receivers() -> None:
     for piece in RustStr.split_whitespace(" one\t two\n"):
         pieces.append(str(piece))
     assert pieces == ["one", "two"]
+    source = b"ab"
+    assert copy_slice_bytes(source) == b"ab"
+    assert source == b"ab"
+    copied: str = RustString.from_utf8_lossy(source.as_slice()).into_owned()
+    assert copied == "ab"
+    text: RustString = "ab"
+    assert forward_native_text(text) == b"ab"
+
+
+def copy_slice_bytes(value: bytes) -> bytes:
+    """Keep a borrowed slice as Into's Self while the owned destination closes the trait's result binder."""
+    return RuntimeInto.into(value.as_slice())
+
+
+def copy_native_text(value: &RustString) -> bytes:
+    """Clone shared native text before consuming its owned byte buffer."""
+    copied: RustString = value.clone()
+    return copied.into_bytes()
+
+
+def forward_native_text(value: &RustString) -> bytes:
+    """Forward a shared native reference without changing the native Clone receiver's Self."""
+    return copy_native_text(value)
 
 
 def main() -> None:

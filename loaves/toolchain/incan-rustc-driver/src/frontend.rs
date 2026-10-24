@@ -167,6 +167,7 @@ fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup) -> Result<Chec
         .iter()
         .position(|module| module.file_path == path)
         .ok_or("entry module is missing")?;
+    validate_module_declarations(&modules, &analysis)?;
     let manifest = match publication {
         Some(publication) => {
             let manifest = publication
@@ -203,7 +204,6 @@ fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup) -> Result<Chec
         let type_info = analysis
             .type_info_for_path(&module.file_path)
             .ok_or("module analysis is missing")?;
-        validate_declarations(&module.ast, type_info)?;
         let body_ir = incan_frontend::body_ir::build_body_ir_module(
             &module.ast,
             &module.path_segments,
@@ -215,7 +215,8 @@ fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup) -> Result<Chec
                 library_package: library.then_some(package_identity),
             },
         );
-        validate_retained_storage(&module.ast, &body_ir)?;
+        validate_retained_storage(&module.ast, &body_ir)
+            .map_err(|error| format!("{}: {error}", module.file_path.display()))?;
         bodies.push(body_ir);
         files.push(module.file_path.to_string_lossy().into_owned());
     }
@@ -721,6 +722,24 @@ fn validate_retained_storage(program: &incan_frontend::ast::Program, module: &Bo
         return Err("unsupported source checked Newtype construction on the native route".to_owned());
     }
     Ok(())
+}
+
+/// Report each checked module's declaration refusal with its source owner, so one unsupported module does not hide
+/// independent refusals in the same unit. No Body IR is built when any declaration is refused.
+fn validate_module_declarations(modules: &[ParsedModule], analysis: &CompilationAnalysis) -> Result<(), String> {
+    let mut refusals = Vec::new();
+    for module in modules {
+        let type_info = analysis
+            .type_info_for_path(&module.file_path)
+            .ok_or("module analysis is missing")?;
+        if let Err(error) = validate_declarations(&module.ast, type_info) {
+            refusals.push(format!("{}: {error}", module.file_path.display()));
+        }
+    }
+    if refusals.is_empty() {
+        return Ok(());
+    }
+    Err(refusals.join("\n"))
 }
 
 /// Refuse declarations whose observable behavior the direct route cannot retain, independently for each module.

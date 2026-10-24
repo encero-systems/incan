@@ -31,6 +31,7 @@ from rust::std::string import String as RustString
 from std.fs import Path
 from features import FeatureRequest
 from home import TOOLCHAIN, dependency_artifact_dir
+from unit import describe
 from unit_rust import describe_native
 from incan_units import check_unit, compile_unit, crate_name, program_binary, run_program
 from rust_units import RustBuild, build_rust, read_registry_units
@@ -237,7 +238,7 @@ def ran(options: Options, passed: list[str]) -> Result[i32, str]:
             return run_program(Path(reply.binary), passed, options.argv0)
         None => pass
     # 2. Otherwise this process describes and compiles the unit, keeping the stored executable while its inputs hold.
-    mut unit = describe_native(Path(options.path), options.profile, options.request)?
+    mut unit = describe(Path(options.path), options.profile, options.request)?
     unit.program_entries = options.program_entries
     toolchain = load_toolchain()?
     binary = program_binary(unit)
@@ -272,7 +273,7 @@ def tested(options: Options) -> Result[i32, str]:
                 return Ok(status_code(reply.exit))
             return run_collected(Path(reply.binary), Path(options.path).name())
         None => pass
-    mut unit = describe_native(Path(options.path), options.profile, options.request)?
+    mut unit = describe(Path(options.path), options.profile, options.request)?
     unit.kind = "test"
     return run_tests(unit, load_toolchain()?)
 
@@ -297,9 +298,9 @@ def check(arguments: list[str]) -> None:
 
 
 def checked(options: Options, format: str) -> Result[i32, str]:
-    """Check the described unit with the toolchain's compiler."""
+    """Describe an ordinary unit, then let checking prepare its dependencies and exact native inputs once."""
     require_ordinary_unit(options)?
-    unit = describe_native(Path(options.path), options.profile, options.request)?
+    unit = describe(Path(options.path), options.profile, options.request)?
     return check_unit(unit, load_toolchain()?, format)
 
 
@@ -412,7 +413,7 @@ def built(options: Options, source: Path) -> Result[i32, str]:
             Some(reply) => return Ok(status_code(reply.exit))
             None => pass
     # 3. Anything else is described and built here: a library into its artifact directory, a program into `bin`.
-    mut unit = describe_native(source, options.profile, options.request)?
+    mut unit = describe(source, options.profile, options.request)?
     unit.program_entries = options.program_entries
     mut output = program_binary(unit)
     if library:

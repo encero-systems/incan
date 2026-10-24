@@ -69,10 +69,7 @@ pub fn cached_rust_facts(unit: &UnitDescription) -> CliResult<RustFactsSetup> {
     let shipped = unit
         .rust_abi
         .iter()
-        .map(|path| {
-            let bytes = fs::read(path).map_err(|error| CliError::failure(format!("{}: {error}", path.display())))?;
-            RustAbiCache::decode(&bytes).map_err(failure)
-        })
+        .map(|path| RustAbiCache::open(path).map_err(failure))
         .collect::<CliResult<Vec<_>>>()?;
     externs.retain(|name, _| !shipped.iter().any(|cache| cache.covers_crate(name)));
     drop(shipped);
@@ -391,7 +388,7 @@ fn extract_cache(
             String::from_utf8_lossy(&output.stderr).trim()
         )));
     }
-    incan_lang::interop::RustAbiCache::decode(&fs::read(temporary.path()).map_err(failure)?).map_err(failure)?;
+    incan_lang::interop::RustAbiCache::open(temporary.path()).map_err(failure)?;
     temporary.flush().map_err(failure)?;
     temporary.persist(cache).map_err(failure)?;
     Ok(())

@@ -6956,7 +6956,7 @@ def borrow_scalar_operand(
     mutable: bool,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Borrow checked scalar storage in place; only shared literal loans may materialize a new owner."""
+    """Borrow checked scalar or reference-value storage in place; only shared literal loans may create an owner."""
     if len(elements) != 1:
         return Err("invalid Body IR scalar reference arity")
     referent = elements[0]
@@ -6965,20 +6965,19 @@ def borrow_scalar_operand(
         RustOperand.Place(read) =>
             if mutable and read.fact != OwnershipFact.MutBorrow:
                 return Err("unsupported Body IR scalar reference without an exclusive borrow fact")
-            owner = scalar_place(builder, read.place, span)?
+            owner = scalar_borrow_owner(builder, read, referent, mutable, span)?
             actual = place_type(builder.locals, owner)
-            match actual:
-                PlanType.ScalarRef(inner) =>
-                    if mutable or inner != elements:
-                        return Err("unsupported Body IR scalar reborrow contract")
-                    return Ok(read_place(owner, false, span))
-                PlanType.ScalarMutRef(inner) =>
-                    if inner != elements:
-                        return Err("unsupported Body IR scalar reborrow referent")
-                    owner = Place(local=owner.local, projection=Projection.Deref(referent), span=span)
-                _ =>
-                    if actual != referent:
-                        return Err("unsupported Body IR scalar borrow of another type")
+            if actual != referent:
+                match actual:
+                    PlanType.ScalarRef(inner) =>
+                        if mutable or inner != elements:
+                            return Err("unsupported Body IR scalar reborrow contract")
+                        return Ok(read_place(owner, false, span))
+                    PlanType.ScalarMutRef(inner) =>
+                        if inner != elements:
+                            return Err("unsupported Body IR scalar reborrow referent")
+                        owner = Place(local=owner.local, projection=Projection.Deref(referent), span=span)
+                    _ => return Err("unsupported Body IR scalar borrow of another type")
         RustOperand.Constant(_constant) =>
             if mutable:
                 return Err("unsupported Body IR mutable scalar constant borrow")
@@ -6995,6 +6994,26 @@ def borrow_scalar_operand(
     output = temporary(builder, reference, span)
     builder.emit(plan_assign(output, operation, span))
     return Ok(read_place(output, mutable, span))
+
+
+def scalar_borrow_owner(
+    mut builder: Builder,
+    read: &RustPlaceOperand,
+    referent: PlanType,
+    mutable: bool,
+    span: SourceSpan,
+) -> Result[Place, str]:
+    """Retain a checked shared reference as the borrowed value when the native parameter expects that reference."""
+    if not mutable:
+        match reference_value_read(builder, read.place, read.fact, span)?:
+            Some(value) =>
+                match value.kind:
+                    (OperandKind.Copy(place) | OperandKind.Move(place)) =>
+                        if place_type(builder.locals, place) == referent:
+                            return Ok(place)
+                    _ => return Err("invalid Body IR reference read without a place")
+            None => pass
+    return scalar_place(builder, read.place, span)
 
 
 def borrow_str_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Operand, str]:
@@ -7317,6 +7336,7 @@ def lowered_plan(
                 continue
             if trace:
                 println(f"lowering: body {body_module_identity(body)?} {body.name} {body.span.start}")
+            diagnostic_owner = f" in {body.name} at {files[index]}"
             function, runtime, pending, synthesized = lower_function(
                 context,
                 program,
@@ -7327,7 +7347,7 @@ def lowered_plan(
                 intrinsics,
                 [],
                 DecoratorFrame.Normal,
-            )?
+            ).map_err((reason) => reason + diagnostic_owner)?
             instances.extend(pending)
             for retained in functions:
                 if retained.name == function.name:

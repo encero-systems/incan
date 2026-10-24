@@ -29,6 +29,7 @@ Until 0.6.0-dev.8 Oven had two halves. The Rust crates under `loaves/oven/` and 
 - Reading `loaf.toml`. Oven is the only reader of a project manifest.
 - Resolving Loaves and writing the lock (`oven.lock`).
 - The Rust facet of every unit: the `crates-io/*` Loaves it links, their `cfg` and feature activation, and the `rustc` invocation of each Rust unit.
+- Native Incan compilation policy: debug units use optimization level 0, preserving the existing assertion and overflow policy; other profiles retain the driver's optimization. The selected flags are part of the unit's reuse identity.
 - Unit orchestration: every Loaf a unit reaches is compiled before the unit (DD-0005), standard packages included (DD-0007).
 - The store: prepared units, their identities and their reuse, so that unchanged work is never repeated (DD-0005).
 - The toolchain and home layout.
