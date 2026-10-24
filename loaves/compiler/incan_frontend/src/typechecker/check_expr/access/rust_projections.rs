@@ -43,7 +43,8 @@ impl TypeChecker {
     }
 
     /// Bound recursive projection normalization and refuse competing associated values rather than choosing one.
-    /// Scalar carriers select their native primitive cache entry; the associated value still requires an impl fact.
+    /// Scalar carriers select their native primitive cache entry. Conflicting values require retained predicate
+    /// evidence; a unique value still leaves complete native obligations to rustc.
     /// A named Deref target retains its native owner before source collection projection so method lookup can select
     /// that owner's metadata and preserve each executable adjustment.
     /// Unanchored Self templates require bound filtering before their associated values compete with concrete owner
@@ -69,13 +70,7 @@ impl TypeChecker {
         {
             return self.rust_bound_associated_type(name, trait_path, member, depth + 1);
         }
-        let path = match ty {
-            ResolvedType::Int => "i64".to_owned(),
-            ResolvedType::Float => "f64".to_owned(),
-            ResolvedType::Bool => "bool".to_owned(),
-            ResolvedType::Numeric(id) => numerics::as_str(*id).to_owned(),
-            _ => self.rust_canonical_path_for_receiver_type(ty)?,
-        };
+        let path = self.rust_bound_owner_item_path(ty)?;
         let metadata = self.rust_item_metadata_for_path(&path)?;
         let info = match &metadata.kind {
             RustItemKind::Type(info) => info,
@@ -101,7 +96,7 @@ impl TypeChecker {
             _ => return None,
         };
         let owner = self.rust_trait_owner(ty, &info, &path);
-        let mut selected = None;
+        let mut candidates = Vec::new();
         let trait_identity = self
             .rust_definition_for_path(trait_path)
             .unwrap_or_else(|| trait_path.to_owned());
@@ -157,6 +152,27 @@ impl TypeChecker {
                         path, arguments,
                     )));
                 }
+            }
+            candidates.push((implementation, value));
+        }
+        self.select_rust_projection(candidates, &owner)
+    }
+
+    /// Preserve unambiguous associated values and use retained obligations only to distinguish competing templates.
+    /// This does not turn incomplete conditional facts into proof; rustc checks the final closed native signature.
+    fn select_rust_projection(
+        &self,
+        candidates: Vec<(&RustImplementedTrait, ResolvedType)>,
+        owner: &ResolvedType,
+    ) -> Option<ResolvedType> {
+        let first = &candidates.first()?.1;
+        if candidates.iter().all(|(_, value)| value == first) {
+            return candidates.into_iter().next().map(|(_, value)| value);
+        }
+        let mut selected = None;
+        for (implementation, value) in candidates {
+            if !self.rust_impl_may_apply(implementation, owner) {
+                continue;
             }
             if selected.as_ref().is_some_and(|previous| previous != &value) {
                 return None;

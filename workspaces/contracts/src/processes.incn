@@ -79,9 +79,25 @@ pub def launch(incan: str, arguments: list[str], project: Path, selector: Option
         Ok(child) => return Ok(child)
 
 
-pub def expired(clock: Instant) -> bool:
-    """Whether one child's configured deadline has elapsed; zero disables deadlines."""
-    return timeout_seconds > 0 and int(clock.elapsed().as_secs()) >= timeout_seconds
+pub def expired(clock: Instant, deadline_seconds: int = 0) -> bool:
+    """Whether the user deadline or a speculative attempt's shorter deadline has elapsed.
+
+    1. Select the earliest enabled deadline.
+    2. Compare it with this child's elapsed time.
+    """
+    # 1. Select the earliest enabled deadline.
+    limit = invocation_deadline(deadline_seconds)
+    # 2. Compare it with this child's elapsed time.
+    return limit > 0 and int(clock.elapsed().as_secs()) >= limit
+
+
+def invocation_deadline(attempt: int) -> int:
+    """A speculative attempt may shorten the user deadline, but never extend it or limit an ordinary command."""
+    if attempt <= 0:
+        return timeout_seconds
+    if timeout_seconds <= 0:
+        return attempt
+    return min([attempt, timeout_seconds])
 
 
 pub def terminate_group(pid: int) -> Result[None, str]:
@@ -92,14 +108,22 @@ pub def terminate_group(pid: int) -> Result[None, str]:
     return Ok(None)
 
 
-pub def finish(project: Path, code: Option[int], timed_out: bool) -> Result[Outcome, str]:
-    """Collect strict UTF-8 streams after reaping, preserving a signal and the deadline's partial output."""
+pub def finish(project: Path, code: Option[int], timed_out: bool, deadline_seconds: int = 0) -> Result[Outcome, str]:
+    """Collect strict UTF-8 streams after reaping, preserving signals and a deadline's partial output.
+
+    1. Read and remove this invocation's captured streams.
+    2. Include the effective deadline when it expired.
+    3. Retain the original exit-code or signal outcome.
+    """
+    # 1. Read and remove this invocation's captured streams.
     stdout_result = read_stream(project, "stdout")
     stderr_result = read_stream(project, "stderr")
     stdout = stdout_result?
     mut stderr = stderr_result?
+    # 2. Include the effective deadline when it expired.
     if timed_out:
-        stderr += f"\ncontract invocation timed out after {timeout_seconds} seconds\n"
+        stderr += f"\ncontract invocation timed out after {invocation_deadline(deadline_seconds)} seconds\n"
+    # 3. Retain the original exit-code or signal outcome.
     return Ok(Outcome(stdout=stdout, stderr=stderr, code=code))
 
 

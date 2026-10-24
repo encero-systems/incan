@@ -318,12 +318,12 @@ def run_case(incan: str, scratch: Path, fixture: Fixture, batched: Option[Result
 
 
 def prepare_case(fixture: Fixture, scratch: Path, batched: Option[Result[Outcome, str]]) -> Result[Path, str]:
-    """Retain a prepared invocation's trace, or start a new trace before the case's commands."""
-    project = materialize(fixture, scratch)?
+    """Reuse the project already synchronized for a prepared invocation; otherwise synchronize before running."""
     match batched:
-        None =>
-            clear_trace(project)?
-        Some(_) => pass
+        Some(_) => return Ok(fixture.project_path(scratch))
+        None => pass
+    project = materialize(fixture, scratch)?
+    clear_trace(project)?
     return Ok(project)
 
 

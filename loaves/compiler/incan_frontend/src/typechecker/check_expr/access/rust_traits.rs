@@ -13,6 +13,7 @@ use crate::typechecker::{IdentKind, RustArgCoercionKind};
 use incan_lang::interop::{
     RustFunctionSig, RustImplementedTrait, RustItemKind, RustItemMetadata, RustTraitAssoc, RustTraitInfo, RustTypeInfo,
 };
+use incan_lang::lang::types::numerics;
 
 /// A closed trait reference and the signature it contributes to one method call.
 struct TraitCandidate {
@@ -1328,7 +1329,7 @@ impl TypeChecker {
                 }
                 continue;
             }
-            let Some(path) = self.rust_canonical_path_for_receiver_type(&actual) else {
+            let Some(path) = self.rust_bound_owner_item_path(&actual) else {
                 return false;
             };
             let Some(metadata) = self.rust_item_metadata_for_path(&path) else {
@@ -1360,6 +1361,17 @@ impl TypeChecker {
             }
         }
         true
+    }
+
+    /// Locate primitive and nominal metadata for a closed trait obligation without changing ordinary method priority.
+    pub(super) fn rust_bound_owner_item_path(&self, ty: &ResolvedType) -> Option<String> {
+        match ty {
+            ResolvedType::Int => Some("i64".to_owned()),
+            ResolvedType::Float => Some("f64".to_owned()),
+            ResolvedType::Bool => Some("bool".to_owned()),
+            ResolvedType::Numeric(id) => Some(numerics::as_str(*id).to_owned()),
+            _ => self.rust_canonical_path_for_receiver_type(ty),
+        }
     }
 
     /// Fill metadata defaults inside a native reference without erasing that reference's identity as trait Self.

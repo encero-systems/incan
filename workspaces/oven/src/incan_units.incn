@@ -15,6 +15,7 @@ from rust::std::process import Command, Stdio
 from std.fs import Path
 from files import discard_file
 from home import dependency_artifact_dir
+from native_codegen import native_codegen_arguments
 from observation import trace
 from publication import place
 from toolchain import Toolchain
@@ -214,11 +215,21 @@ def discard(staged: Path, kind: str) -> None:
 
 
 def compile_prepared_unit(unit: UnitDescription, toolchain: Toolchain, output: Path) -> Result[i32, str]:
-    """Compile one unit after its dependencies are ready; preparation owns ordering and is never recursive here."""
+    """Compile one unit after dependency preparation, without recursive orchestration.
+
+    1. Write the description and prepare its output directory.
+    2. Select the same native flags that bind the unit's reuse key.
+    3. Run the compiler once and preserve its exit code.
+    """
+    # 1. Write the description and prepare its output directory.
     compiled = crate_name(unit)
     path = write_unit(unit, compiled)?
     output.parent().mkdir(true, true).map_err((error) => f"{output.parent().0}: {error.message()}")?
-    arguments = ["--unit", path.0, compiled, output.0, toolchain.sysroot]
+    mut arguments = ["--unit", path.0, compiled, output.0, toolchain.sysroot]
+    # 2. Select the same native flags that bind the unit's reuse key.
+    for flag in native_codegen_arguments(unit.profile):
+        arguments.extend(["--rustc-arg", flag])
+    # 3. Run the compiler once and preserve its exit code.
     return run_compiler(toolchain, arguments)
 
 

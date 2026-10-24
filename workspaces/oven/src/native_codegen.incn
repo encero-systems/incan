@@ -1,0 +1,14 @@
+"""Choose native compilation flags once for execution and compiled-unit identity."""
+
+
+pub def native_codegen_arguments(profile: str) -> list[str]:
+    """Select optimization without changing the native driver's assertion or overflow policy.
+
+    1. Use unoptimized code for the debug profile.
+    2. Keep the driver's existing optimization for other profiles.
+    """
+    # 1. Use unoptimized code for the debug profile.
+    if profile == "debug":
+        return ["-Copt-level=0", "-Cdebug-assertions=no"]
+    # 2. Keep the driver's existing optimization for other profiles.
+    return []

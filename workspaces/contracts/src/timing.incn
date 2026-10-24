@@ -1,0 +1,58 @@
+"""Retain optional command durations for scheduling without storing compiler or case outcomes."""
+
+from rust::std::time import Instant
+from std.fs import Path
+
+
+pub def elapsed_hint(project: Path) -> int:
+    """Read a bounded scheduling hint; unavailable or malformed data means zero.
+
+    1. Read the optional duration recorded for this project.
+    2. Admit only bounded nonnegative integer milliseconds.
+    """
+    # 1. Read the optional duration recorded for this project.
+    path = hint_path(project)
+    if not path.is_file():
+        return 0
+    match path.read_text("utf-8", "strict"):
+        Err(_) => return 0
+        Ok(text) =>
+            # 2. Admit only bounded nonnegative integer milliseconds.
+            return parse_hint(text)
+
+
+pub def record_elapsed(project: Path, clock: Instant) -> None:
+    """Retain a command's elapsed time without making hint storage part of its result.
+
+    1. Bound the observed duration to one day.
+    2. Save it under retained build outputs when storage is available.
+    """
+    # 1. Bound the observed duration to one day.
+    milliseconds = min([86_400_000, int(clock.elapsed().as_millis())])
+    # 2. Save it under retained build outputs when storage is available.
+    save_hint(project, milliseconds)
+
+
+def save_hint(project: Path, milliseconds: int) -> None:
+    """Write optional scheduling data once; unavailable storage never changes an invocation's outcome."""
+    path = hint_path(project)
+    match path.parent().mkdir(true, true):
+        Err(_) => return
+        Ok(_) => pass
+    saved = path.write_text(str(milliseconds) + "\n", "utf-8", "strict", None)
+
+
+def hint_path(project: Path) -> Path:
+    """Keep scheduling observations outside authored inputs and the fixture's data namespace."""
+    return project.joinpath("target").joinpath("incan").joinpath("contract-elapsed-ms")
+
+
+def parse_hint(text: str) -> int:
+    """Admit bounded decimal durations without granting any compilation or execution authority."""
+    value = text.strip()
+    if len(value) == 0 or len(value) > 8:
+        return 0
+    for character in value:
+        if character not in "0123456789":
+            return 0
+    return min([86_400_000, int(value)])
