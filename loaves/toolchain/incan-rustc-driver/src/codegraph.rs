@@ -1,5 +1,6 @@
 //! Graph export entry for an Oven-described Incan unit. Extraction remains in the shared compiler exporter.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use incan_codegraph::CodegraphRecord;
@@ -87,10 +88,18 @@ fn unchecked_note(records: &[CodegraphRecord], project_root: &Path) -> Option<St
     Some(note)
 }
 
-/// Decode a portable Loaf graph for a requested JSON query projection; semantic selection remains in Oven.
+/// Decode a portable Loaf graph for a requested JSON projection. An optional per-kind field map trims transport after
+/// wire validation; query semantics and the field selection remain in Oven.
 pub fn read(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    let [path, root, group] = arguments else {
-        return Err("usage: --read-codegraph GRAPH ROOT GROUP".into());
+    let [path, root, group, ..] = arguments else {
+        return Err("usage: --read-codegraph GRAPH ROOT GROUP [FIELDS_JSON]".into());
+    };
+    if arguments.len() > 4 {
+        return Err("usage: --read-codegraph GRAPH ROOT GROUP [FIELDS_JSON]".into());
+    }
+    let fields = match arguments.get(3) {
+        Some(document) => serde_json::from_str::<BTreeMap<String, Vec<String>>>(document)?,
+        None => BTreeMap::new(),
     };
     let graph =
         incan_codegraph::artifact::GraphArtifact::decode(&std::fs::read(path)?).map_err(|error| error.to_string())?;
@@ -99,7 +108,7 @@ pub fn read(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let records = if group == "origins" {
         graph.origins()
     } else {
-        graph.records(Path::new(root), group)
+        graph.projected_records(Path::new(root), group, &fields)
     }
     .map_err(|error| error.to_string())?;
     for record in records {

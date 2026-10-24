@@ -3,7 +3,8 @@
 from files import json_text
 from std.fs import Path
 from std.json import JsonValue
-from graph_cache import GraphUnit, graph_digest, stamp_file, tree_inputs
+from graph_cache import GraphUnit, save_observations, stamp_file, tree_inputs
+from observation import Ledger, SETTLE_SECONDS, load_ledger
 from unit_freshness import fingerprint
 
 
@@ -14,23 +15,36 @@ pub def snapshot_identity(units: list[GraphUnit], root: str, strict: bool) -> Re
     Published Loaves identify their published facts; an unbuilt edit to their source does not change that artifact.
     Source-backed units have already been refreshed against current inputs by the ordinary inspection preparation.
 
-    1. Retain each unit's exported digest and source root.
-    2. Include current source observations for every distinct source root.
-    3. Hash the sorted observations under the snapshot schema.
+    1. Load artifact observations owned by the requesting project, shared across consumer homes.
+    2. Retain each unit's exported digest and source root.
+    3. Include current source observations for every distinct source root.
+    4. Save artifact observations and hash the same sorted inputs under the snapshot schema.
     """
-    # 1. Exported artifacts and their anchors identify the represented graph facts.
+    # 1. Different homes can reuse artifact digests without writing into dependencies or toolchain artifacts.
+    mut ledger = artifact_observations(root)
+    # 2. Exported artifacts and their anchors identify the represented graph facts.
     mut parts: list[str] = []
     mut sources: list[str] = []
     for unit in units:
-        coordinates = [unit.root.0, unit.package, unit.version, graph_digest(stamp_file(unit))?]
+        coordinates = [unit.root.0, unit.package, unit.version, ledger.digest(stamp_file(unit))?]
         parts.append(json_text(JsonValue.array([JsonValue.string(item) for item in coordinates]))?)
         if unit.source_root != "" and unit.source_root not in sources:
             sources.append(unit.source_root)
-    # 2. Source edits expire a source-backed snapshot even when its graph facts do not change.
+    # 3. Source edits expire a source-backed snapshot even when its graph facts do not change.
     for source in sorted(sources):
         parts.append(fingerprint(tree_inputs(Path(source))?)?)
-    # 3. Presentation options never enter the snapshot identity.
+    # 4. Observations only avoid hashing unchanged bytes; their metadata never enters the identity.
+    save_observations(ledger)
     return Ok(f"snapshot:{fingerprint(['incan.graph.snapshot/1', root, str(strict)] + sorted(parts))?}")
+
+
+def artifact_observations(root: str) -> Ledger:
+    """Keep optional artifact digest observations in the caller's cache; missing storage still hashes exact bytes."""
+    mut owner = Path(root)
+    if owner.is_file():
+        owner = owner.parent()
+    cache = owner.joinpath("target").joinpath("incan").joinpath("codegraph")
+    return load_ledger(cache.joinpath("snapshot-observations.json"), SETTLE_SECONDS, "")
 
 
 pub def snapshot_status(expected: str, current: str) -> JsonValue:

@@ -124,6 +124,7 @@ pub def prepare_graph(
     substitutes: Dict[str, str],
     toolchain: Toolchain,
     ancestors: list[str] = [],
+    published_only: bool = false,
 ) -> Result[GraphDependencies, str]:
     """
     Read published dependency graphs and check remaining Incan source without compiling any Incan unit.
@@ -133,8 +134,8 @@ pub def prepare_graph(
 
     1. A project that selects itself as a codegraph source again is a cycle.
     2. Activate the graph of local facets, in an order where each follows the facets it links.
-    3. Prepare the native libraries, then check the Incan units, each after its dependencies.
-    4. Follow the manifest's `tool.incan.codegraph.sources` into further projects.
+    3. Prepare native libraries; declaration queries leave unrelated Incan source exports deferred.
+    4. Other inspections check Incan units and follow explicit additional source projects.
     """
     # 1. A project that is its own codegraph source, directly or through others, would never finish.
     if root.0 in ancestors:
@@ -163,12 +164,16 @@ pub def prepare_graph(
     # 3. Native libraries exist before the Incan units are checked, and each unit is checked after its dependencies.
     built = native_units(root, facets, request, toolchain)?
     trace(f"graph native lookup {root.0}: {prepared.elapsed().as_millis()} ms")
+    closure = native_closure(root, request)?
     checked = Instant.now()
-    checked_paths, interfaces = checked_units(facets, built, request, toolchain, len(ancestors) == 0)?
+    checked_paths, interfaces = checked_units(
+        facets, built, request, toolchain, len(ancestors) == 0, published_only,
+    )?
     trace(f"graph checked exports {root.0}: {checked.elapsed().as_millis()} ms")
     # 4. Further projects the manifest names are inspected on their own, and their graphs join this one's.
-    paths = checked_paths + source_graphs(root, profile, toolchain, ancestors)?
-    closure = native_closure(root, request)?
+    mut paths = checked_paths
+    if not published_only:
+        paths = paths + source_graphs(root, profile, toolchain, ancestors)?
     return Ok(
         GraphDependencies(
             facets=facets,
@@ -390,6 +395,7 @@ def checked_units(
     request: RustBuild,
     toolchain: Toolchain,
     inspect_root: bool,
+    published_only: bool = false,
 ) -> Result[Tuple[list[GraphUnit], Dict[str, Path]], str]:
     """
     Read dependency publications, checking legacy and own Incan units after their dependencies for usable interfaces.
@@ -397,7 +403,7 @@ def checked_units(
     A unit that fails checking publishes no interface; its dependents check without it and report their own diagnostics.
 
     1. A facet that is not the project's own is read from the published graph of its compiled Loaf, when it has one.
-    2. Any other facet with an Incan library is checked from source, against the interfaces of the units before it.
+    2. Unless only publications were requested, check other Incan libraries against earlier interfaces.
     """
     mut paths: list[GraphUnit] = []
     mut interfaces: Dict[str, Path] = {}
@@ -425,12 +431,17 @@ def checked_units(
                     continue
                 None => pass
         # 2. Any other facet with an Incan library is checked from source, against the interfaces checked before it.
+        if published_only:
+            continue
         source = Path(facet.project).joinpath("src").joinpath("lib.incn")
         if not source.is_file():
             continue
         natives = unit_natives(facet, built, request)?
         loaves = unit_loaves(facet, interfaces)?
+        trace(f"graph checking {package}")
+        started = Instant.now()
         path = inspect_incan(source, toolchain, natives, interfaces, facet.features, false, loaves)?
+        trace(f"graph checked {package}: {started.elapsed().as_millis()} ms")
         if not is_unchecked(path):
             interfaces[package] = interface_directory(path)
         paths.append(GraphUnit(

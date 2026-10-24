@@ -7,6 +7,7 @@ from rust::std::time import Duration, Instant
 from std.fs import Path
 from processes import Outcome, expired, finish, launch, terminate_group
 from timing import elapsed_hint, record_elapsed
+from timing import report as report_time
 
 
 type Children = rusttype VecDeque[Child]:
@@ -44,7 +45,8 @@ static pool_followups: dict[int, list[int]] = {}
 
 
 pub def invoke_many(requests: list[Invocation], jobs: int) -> list[Result[Outcome, str]]:
-    """Own at most `jobs` children, preserving each request's deadline and result position.
+    """
+    Own at most `jobs` children, preserving each request's deadline and result position.
 
     1. Allocate one result slot per request.
     2. Launch, poll and refill the bounded child queue, releasing verified follow-ups.
@@ -189,6 +191,7 @@ def settle(info: Started, status: ExitStatus, timed_out: bool) -> None:
     if info.measure:
         record_elapsed(info.project, info.clock)
     record_outcome(info.index, finish(info.project, code, timed_out, info.deadline_seconds))
+    report_time(f"invocation {info.project.0}", info.clock)
 
 
 def record_failure(index: int, error: str) -> None:
