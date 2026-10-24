@@ -42,7 +42,12 @@ impl TypeChecker {
         match (native, source) {
             (ResolvedType::Named(_) | ResolvedType::TypeVar(_), _) => native.clone(),
             (ResolvedType::Generic(base, _), ResolvedType::RustPath(_))
-                if base == "[]" || self.lookup_semantic_type_info(base).is_some() =>
+                if base == "[]"
+                    || self.lookup_semantic_type_info(base).is_some()
+                    || matches!(
+                        Self::rust_collection_id_from_display_base(base),
+                        Some(CollectionTypeId::FrozenList | CollectionTypeId::FrozenDict | CollectionTypeId::FrozenSet)
+                    ) =>
             {
                 native.clone()
             }
@@ -363,6 +368,17 @@ impl TypeChecker {
         &self,
         expression: &Spanned<Expr>,
     ) -> Option<ResolvedType> {
+        if let Some(conversion) = self
+            .type_info
+            .rust
+            .element_adjustments
+            .get(&(expression.span.start, expression.span.end))
+        {
+            return Some(ResolvedType::Generic(
+                "List".into(),
+                vec![conversion.return_type.clone()],
+            ));
+        }
         if let Some(coercion) = self.type_info.rust_arg_coercion(expression.span) {
             return Some(coercion.target_type.clone());
         }
@@ -501,6 +517,7 @@ impl TypeChecker {
         self.resolved_structural_rust_param_display(&display, |checker, argument| {
             checker.rust_inference_type(&checker.native_rust_signature_type(argument, ""), parameters)
         })
+        .map(|ty| self.native_frozen_owner(&display, "", ty))
         .unwrap_or_else(|| ResolvedType::Generic(base.to_owned(), arguments))
     }
 
@@ -690,14 +707,33 @@ impl TypeChecker {
         if let Some(structural) = self.resolved_structural_rust_param_display(display, |checker, argument| {
             checker.native_rust_signature_type(argument, owner)
         }) {
-            return structural;
+            return self.native_frozen_owner(display, owner, structural);
         }
         let ty = self.resolved_rust_boundary_target_from_param_display_for_owner_path(display, owner);
         let ty = map_resolved_type_leaves(&ty, &|leaf| {
             matches!(leaf, ResolvedType::Ref(inner) if **inner == ResolvedType::Str)
                 .then(|| ResolvedType::Ref(Box::new(ResolvedType::RustPath("str".into()))))
         });
-        self.native_signature_storage_owner(ty)
+        self.native_frozen_owner(display, owner, self.native_signature_storage_owner(ty))
+    }
+
+    /// Preserve a metadata-proven frozen nominal's owner alongside its inferred arguments. Source frozen views are
+    /// useful for expression checking but cannot unify with a native impl Self template after erasing its owner.
+    pub(in crate::typechecker::check_expr) fn native_frozen_owner(
+        &self,
+        display: &str,
+        owner: &str,
+        ty: ResolvedType,
+    ) -> ResolvedType {
+        let arguments = match &ty {
+            ResolvedType::FrozenList(element) | ResolvedType::FrozenSet(element) => vec![*element.clone()],
+            ResolvedType::FrozenDict(key, value) => vec![*key.clone(), *value.clone()],
+            _ => return ty,
+        };
+        match self.rust_result_item_path(display, owner) {
+            Some(path) => ResolvedType::Generic(path, arguments),
+            None => ty,
+        }
     }
 
     /// Canonicalize metadata-defaulted native storage at signature intake, as receiver selection already does. A
@@ -1226,6 +1262,9 @@ impl TypeChecker {
         }
         self.prewarm_rust_type_identity_metadata(arg_ty);
         self.prewarm_rust_boundary_type_identity_metadata(&target_ty);
+        if self.retain_native_list_conversion(arg_expr, arg_ty, &target_ty) {
+            return;
+        }
         match self.rust_arg_boundary_match(arg_ty, param_display.as_str()) {
             RustArgBoundaryMatch::Exact => {
                 if Self::rust_display_type_var_name(normalized.as_str()).is_some() {
@@ -1279,6 +1318,89 @@ impl TypeChecker {
                 ));
             }
         }
+    }
+
+    /// Retain an explicit owned-list mapping only when native From metadata proves each element conversion.
+    /// Canonically identical or open element types keep ordinary argument inference; borrowed collections are not
+    /// converted.
+    fn retain_native_list_conversion(
+        &mut self,
+        expression: &Spanned<Expr>,
+        source: &ResolvedType,
+        target: &ResolvedType,
+    ) -> bool {
+        // ---- Owned collection shape ----
+        let (ResolvedType::Generic(source_name, source_args), ResolvedType::Generic(target_name, target_args)) =
+            (source, target)
+        else {
+            return false;
+        };
+        if collection_type_id(source_name) != Some(CollectionTypeId::List)
+            || collection_type_id(target_name) != Some(CollectionTypeId::List)
+        {
+            return false;
+        }
+        let ([source], [target]) = (source_args.as_slice(), target_args.as_slice()) else {
+            return false;
+        };
+
+        // ---- Written literal elements or one checked mapping ----
+        if self.retain_native_literal_conversions(expression, target) {
+            return true;
+        }
+        if self.rust_trait_carriers_match(source, target)
+            || matches!(source, ResolvedType::Unknown | ResolvedType::CallSiteInfer)
+        {
+            return false;
+        }
+        let Some(conversion) = self.native_element_conversion(source, target) else {
+            return false;
+        };
+        self.type_info
+            .rust
+            .element_adjustments
+            .insert((expression.span.start, expression.span.end), conversion);
+        true
+    }
+
+    /// Preserve native conversions for a contextually typed list literal before its expected element type hides
+    /// the written values' types. Mixed compatible values keep their ordinary storage, and a spread stays outside
+    /// this fixed-element mapping. Aliases of the same native carrier require no conversion, and frozen text uses the
+    /// language's ordinary owned-string boundary.
+    fn retain_native_literal_conversions(&mut self, expression: &Spanned<Expr>, target: &ResolvedType) -> bool {
+        let Expr::List(entries) = &expression.node else {
+            return false;
+        };
+
+        // ---- Complete literal conversion selection ----
+        let mut conversions = Vec::new();
+        for entry in entries {
+            let crate::ast::ListEntry::Element(value) = entry else {
+                return false;
+            };
+            let Some(actual) = self.type_info.expr_type(value.span) else {
+                return false;
+            };
+            let source = if *actual == ResolvedType::FrozenStr {
+                &ResolvedType::Str
+            } else {
+                actual
+            };
+            if self.rust_trait_carriers_match(source, target) {
+                continue;
+            }
+            let Some(conversion) = self.native_element_conversion(source, target) else {
+                return false;
+            };
+            conversions.push(((value.span.start, value.span.end), vec![conversion]));
+        }
+
+        // ---- Retain only a fully selected literal ----
+        if conversions.is_empty() {
+            return false;
+        }
+        self.type_info.rust.argument_adjustments.extend(conversions);
+        true
     }
 
     /// Preserve direct Rust-return arguments when the receiving Rust callable has no inspected signature.

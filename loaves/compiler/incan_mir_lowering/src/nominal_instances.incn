@@ -3,10 +3,11 @@
 from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind, SymbolOrigin
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule, Body, NominalDeclaration, LocalOrigin, TraitImplementation,
+    TraitDefaultInstantiation, TraitTypeArgument,
 )
 from rust::std::borrow import Borrow
 from symbols import type_component
-from type_parameters import substitute
+from type_parameters import substitute, close_trait_environment
 from class_inheritance import specialize_classes
 from nominal_frames import nominal_frames, closed_arguments, declaration_storage, called_members, SelectedMember
 from decls import library_item
@@ -489,6 +490,16 @@ def close_owner_body(body: &Body, instance: NominalInstance) -> Result[Body, str
         placeholder: RustType = RustType.TypeVar(str(name))
         arguments.append(placeholder.clone())
     mut result = body.clone()
+    mut owner_bindings: list[TraitTypeArgument] = []
+    for index in range(len(instance.declaration.type_parameters)):
+        owner_bindings.append(TraitTypeArgument(
+            parameter=str(instance.declaration.type_parameters[index]), argument=instance.arguments[index].clone(),
+        ))
+    result.set_nominal_instantiation(owner_bindings)
+    environment: Option[TraitDefaultInstantiation] = close_trait_environment(
+        body.trait_default_instantiation, names, arguments,
+    )?
+    result.trait_default_instantiation = environment
     for index in range(len(result.locals)):
         concrete: RustType = substitute(result.locals[index].ty, names, arguments)?
         result.locals[index].ty = concrete.clone()

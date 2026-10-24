@@ -24,6 +24,7 @@ pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::LoafCallable> {
         .iter()
         .chain(&facts.rust.await_conversions)
         .chain(argument_calls)
+        .chain(facts.rust.element_adjustments.iter())
         .chain(field_calls)
         .chain(facts.rust.checked_function_values.iter())
         .map(|(span, call)| (*span, call))
@@ -65,6 +66,88 @@ pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::LoafCallable> {
 }
 
 impl BodyBuilder<'_, '_> {
+    /// Evaluate a source list once, convert each element through its exact checked native call, and collect owned
+    /// results in order. This uses ordinary Body IR iteration and list growth; no mapping policy reaches lowering.
+    fn lower_native_list_conversion(
+        &mut self,
+        expression: &ast::Spanned<ast::Expr>,
+        conversion: &RustCheckedCall,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> Result<bir::Operand, String> {
+        // ---- Checked input and output carriers ----
+        let storage = conversion
+            .storage
+            .as_ref()
+            .ok_or("native element conversion without checked storage")?;
+        let [element] = storage.parameters.as_slice() else {
+            return Err("native element conversion requires one input".into());
+        };
+        let ty = IncanType::Generic {
+            base: "List".into(),
+            args: vec![storage.return_type.clone()],
+        };
+        let span = hir_span(expression.span);
+
+        // ---- Owned result list ----
+        let result = self.new_temp(ty.clone(), scope, span);
+        out.push(bir::Statement {
+            kind: bir::StatementKind::Assign {
+                place: bir::Place::from_local(result),
+                rvalue: bir::Rvalue::Aggregate(bir::AggregateKind::List, Vec::new()),
+            },
+            span,
+        });
+        self.record_runtime_requirement(incan_semantics_core::AbiV0RuntimeRequirement::Allocator);
+
+        // ---- One checked conversion per source element ----
+        let loop_scope = self.new_scope(Some(scope), span);
+        let item = self.new_temp(element.clone(), loop_scope, span);
+        self.lower_general_iteration(
+            expression,
+            item,
+            scope,
+            loop_scope,
+            span,
+            out,
+            |builder, scope, body| {
+                let input = builder.temp_operand(item, element);
+                let Some(value) = builder.emit_checked_rust_call(
+                    conversion,
+                    vec![bir::ArgumentElement::One(input)],
+                    bir::ArgumentBinding::resolved_positional(1),
+                    expression.span,
+                    scope,
+                    body,
+                ) else {
+                    builder.push_unsupported_stmt(
+                        "native element conversion without checked identity".into(),
+                        span,
+                        body,
+                    );
+                    return;
+                };
+                body.push(bir::Statement {
+                    kind: bir::StatementKind::Call {
+                        destination: None,
+                        callee: bir::Callee::Method(bir::MethodTarget {
+                            native_trait_delegation: None,
+                            canonical: Some(crate::symbols::canonical_builtin_member_identity("List", "append")),
+                            ..bir::MethodTarget::synthesized("push")
+                        }),
+                        args: super::args::fixed_elements(vec![
+                            bir::Operand::place(bir::Place::from_local(result), bir::OwnershipFact::MutBorrow, false),
+                            value,
+                        ]),
+                        may_panic: false,
+                    },
+                    span,
+                });
+            },
+        );
+        Ok(self.temp_operand(result, &ty))
+    }
+
     /// Evaluate one argument and its retained native dereference steps in source order. The initial owner is borrowed
     /// according to the checked adjustment signature; each result keeps its reference carrier for the source callee.
     pub(super) fn lower_adjusted_argument(
@@ -73,6 +156,15 @@ impl BodyBuilder<'_, '_> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> Option<Result<bir::Operand, String>> {
+        if let Some(conversion) = self
+            .type_info
+            .rust
+            .element_adjustments
+            .get(&(expr.span.start, expr.span.end))
+            .cloned()
+        {
+            return Some(self.lower_native_list_conversion(expr, &conversion, scope, out));
+        }
         let steps = self
             .type_info
             .rust

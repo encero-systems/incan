@@ -284,6 +284,12 @@ pub(super) fn project_nominal(
                 audit.identity(method, false)?;
             }
         }
+        if let Some(adapter) = &mut adoption.primitive_adapter {
+            audit.ty(&adapter.receiver_type)?;
+            audit.identity(&mut adapter.payload_field, false)?;
+            audit.identity(&mut adapter.decode_slot, false)?;
+            audit.identity(&mut adapter.decoded_value, true)?;
+        }
         nominal.trait_adoptions.push(adoption);
     }
     if let Some(method) = &mut nominal.display_method {

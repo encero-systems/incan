@@ -63,6 +63,8 @@ pub(super) fn lower_getter_body(
     let named_type_identities =
         builder.finish_type_identities(facts.type_info.declarations.named_type_identities.clone());
     Some(bir::Body {
+        trait_default_instantiation: None,
+        nominal_instantiation: Vec::new(),
         decl_id: CompilerNodeId::declaration(facts.module_identity, &format!("{owner}::{}", property.node.name)),
         direct_call_id: CompilerNodeId::declaration_span(facts.module_identity, property.span.start, property.span.end),
         canonical: binding.and_then(|binding| binding.callable.identity.clone()),

@@ -407,6 +407,8 @@ impl TypeChecker {
                     let arg_ty = self.check_expr(arg_expr);
                     if self.is_user_operator_receiver(&arg_ty) {
                         let _ = self.resolve_len_dunder(&arg_ty, call_span);
+                    } else if self.retain_native_length_call(arg_expr, &arg_ty, call_span) {
+                        return Some(ResolvedType::Int);
                     } else if matches!(
                         arg_ty,
                         ResolvedType::Int

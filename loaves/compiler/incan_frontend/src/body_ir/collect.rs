@@ -980,6 +980,7 @@ fn checked_trait_adoptions(owner: &str, parameters: &[String], facts: &TypeCheck
                     .map(|argument| parameter_types::checked_parameter_type(argument, facts, parameters))
                     .collect(),
                 methods: adoption.methods.clone(),
+                primitive_adapter: None,
             }
         })
         .collect()

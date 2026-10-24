@@ -2070,7 +2070,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Preserve the checker's selected length hook as an ordinary method call, evaluating its receiver once.
     ///
     /// Builtin lists and strings have no user operator selection and retain their builtin calls. An imported model's
-    /// hook keeps the checked canonical method identity so the SDK call collector can retain its signature.
+    /// hook keeps the checked canonical method identity so the SDK call collector can retain its signature. Native
+    /// methods retain their exact return carrier before the ordinary explicit `int` conversion supplies len's result.
     fn lower_checked_length_call(
         &mut self,
         args: &[ast::CallArg],
@@ -2080,6 +2081,29 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ) -> Option<bir::Operand> {
         if self.type_info.resolved_builtin_call(span) != Some(BuiltinFnId::Len) {
             return None;
+        }
+        if self.type_info.rust.checked_calls.contains_key(&(span.start, span.end)) {
+            let [ast::CallArg::Positional(receiver) | ast::CallArg::Named(_, receiver)] = args else {
+                return None;
+            };
+            let value = self.lower_checked_rust_call(Some(receiver), &[], span, scope, out)?;
+            return Some(self.push_call_temp(
+                bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
+                    name: "int".into(),
+                    direct_call_id: None,
+                    builtin: Some(BuiltinFnId::Int),
+                    type_args: Vec::new(),
+                    binding: bir::ArgumentBinding::resolved_positional(1),
+                    canonical: crate::symbols::canonical_builtin_function_identity(BuiltinFnId::Int),
+                    receiver_type: None,
+                })),
+                vec![bir::ArgumentElement::One(value)],
+                IncanType::Primitive(IncanPrimitiveType::Int),
+                scope,
+                hir_span(span),
+                true,
+                out,
+            ));
         }
         let dispatch = self.type_info.resolved_operator_call(span)?;
         if dispatch.kind != ResolvedOperatorKind::Len {

@@ -59,6 +59,7 @@
 use std::collections::{HashMap, HashSet};
 
 pub(crate) use nominal_carriers::{retain_published_frame, retain_published_module};
+pub use primitive_adapter_requirements::required as required_primitive_adapters;
 pub use source_comparison::required_published_defaults as required_comparison_defaults;
 
 use incan_lang::lang::keywords::KeywordId;
@@ -353,6 +354,7 @@ pub fn build_body_ir_module(
     trait_returns::retain_returns(&mut module, program, type_info, context);
     opaque_returns::retain(&mut module, &opaque_carriers);
     nominal_carriers::retain(&mut module, type_info, context);
+    primitive_adapters::retain(&mut module);
     union_layouts::retain(&mut module);
     module
 }
@@ -2110,6 +2112,8 @@ mod nominal_carriers;
 
 mod calls;
 mod constructor_carriers;
+mod primitive_adapter_requirements;
+mod primitive_adapters;
 pub(crate) mod runtime_nominals;
 mod runtime_storage;
 mod rust_calls;

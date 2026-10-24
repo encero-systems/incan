@@ -142,6 +142,17 @@ pub def body_type_bindings(
     names = body.type_parameters.clone()
     if len(names) != len(arguments):
         return Err(f"unsupported Body IR active type argument arity on {body.name}")
+    if len(body.nominal_instantiation) != 0:
+        mut owner_names: list[str] = []
+        mut owner_arguments: list[RustType] = []
+        for binding in body.nominal_instantiation:
+            if str(binding.parameter) in names:
+                return Err(f"unsupported Body IR shadowed class and method type parameter {binding.parameter}")
+            owner_names.append(str(binding.parameter))
+            owner_arguments.append(binding.argument.clone())
+        for argument in arguments:
+            owner_arguments.append(argument.clone())
+        return Ok((owner_names + names, owner_arguments))
     if len(body.locals) == 0:
         return Ok((names, arguments))
     match receiver_mode(body.locals[0].origin):

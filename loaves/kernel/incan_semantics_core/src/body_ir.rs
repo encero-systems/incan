@@ -578,6 +578,23 @@ pub struct TraitAdoption {
     /// An authenticated marker protocol has `Some([])`; missing metadata cannot masquerade as an empty protocol.
     #[serde(default)]
     pub methods: Option<Vec<CanonicalSymbolId>>,
+    /// Checked source-model adapter for a compiler-provided primitive family. Ordinary source adoptions carry None;
+    /// this record changes only capability dispatch, never the primitive's storage or general type compatibility.
+    #[serde(default)]
+    pub primitive_adapter: Option<PrimitiveTraitAdapter>,
+}
+
+/// A source-owned implementation of a temporary primitive capability, authenticated by its declaring compilation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PrimitiveTraitAdapter {
+    /// Primitive type whose checked capability calls may use this adoption.
+    pub receiver_type: IncanType,
+    /// Exact sole payload field through which a receiver is wrapped without changing its meaning.
+    pub payload_field: CanonicalSymbolId,
+    /// Exact selected trait slot whose result the associated primitive decoder implements.
+    pub decode_slot: CanonicalSymbolId,
+    /// Checked associated decoder returning the primitive value rather than the adapter model.
+    pub decoded_value: CanonicalSymbolId,
 }
 
 /// Immutable presentation values of one checked reflection-visible field, in declaration order.
@@ -1255,6 +1272,12 @@ pub struct CallableRepresentation {
 /// Body IR v0 for a single function or method.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Body {
+    /// Lowering-derived owner bindings for a concrete nominal frame; method binders retain their own scope.
+    #[serde(skip)]
+    pub nominal_instantiation: Vec<TraitTypeArgument>,
+    /// Lowering-derived trait-default scope, kept separate from the method's own binders and never published.
+    #[serde(skip)]
+    pub trait_default_instantiation: Option<TraitDefaultInstantiation>,
     /// Ordered declaration type parameters, retained for checker-selected native instantiation.
     #[serde(default)]
     pub type_parameters: Vec<String>,
@@ -1339,6 +1362,15 @@ pub struct Body {
     pub native_attributes: Vec<NativeAttribute>,
 }
 
+/// The checked adoption used to specialize a default body; nominal and method instances subsequently close its types.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitDefaultInstantiation {
+    /// The adopter's retained receiver type, including its owner parameters before nominal instantiation.
+    pub receiver_type: IncanType,
+    /// Trait-scoped bindings, independent of the default method's own type parameters.
+    pub arguments: Vec<TraitTypeArgument>,
+}
+
 /// One native attribute macro application: `#[path(arguments)]` on a source declaration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NativeAttribute {
@@ -1389,6 +1421,20 @@ impl ExternDelegation {
 }
 
 impl Body {
+    /// Store the exact owner bindings used by Incan nominal specialization, independently of method binders.
+    pub fn set_nominal_instantiation(&mut self, arguments: Vec<TraitTypeArgument>) {
+        self.nominal_instantiation = arguments;
+    }
+
+    /// Retain the checked adoption scope when Incan lowering specializes a trait default, without modifying its
+    /// statements.
+    pub fn set_trait_default_instantiation(&mut self, receiver_type: IncanType, arguments: Vec<TraitTypeArgument>) {
+        self.trait_default_instantiation = Some(TraitDefaultInstantiation {
+            receiver_type,
+            arguments,
+        });
+    }
+
     /// Store this already-checked body in the recursive representation used by deferred nominal field defaults.
     ///
     /// This allocation preserves every retained fact unchanged and keeps Rust recursive-storage plumbing out of
@@ -4700,6 +4746,29 @@ pub struct Statement {
     pub span: HirSourceSpan,
 }
 
+impl Statement {
+    /// Copy a call with a selected callee and argument vector while preserving its destination, source span and
+    /// panic fact. Non-call statements return None. This record projection lets Incan normalization use ordinary
+    /// native calls without reconstructing a Rust enum's named fields through the frozen bootstrap (#2256).
+    pub fn with_call(&self, callee: Callee, args: Vec<ArgumentElement>) -> Option<Self> {
+        let StatementKind::Call {
+            destination, may_panic, ..
+        } = &self.kind
+        else {
+            return None;
+        };
+        Some(Self {
+            kind: StatementKind::Call {
+                destination: destination.clone(),
+                callee,
+                args,
+                may_panic: *may_panic,
+            },
+            span: self.span,
+        })
+    }
+}
+
 /// Canonical statement vocabulary for Body IR v0.
 ///
 /// `while`/`for` source statements desugar into `Loop` + a conditional `Break` during lowering, rather than being
@@ -5170,6 +5239,8 @@ mod tests {
         let local_y = LocalId(1);
         let local_tmp = LocalId(2);
         Body {
+            nominal_instantiation: Vec::new(),
+            trait_default_instantiation: None,
             type_parameters: Vec::new(),
             decl_id: decl_id.clone(),
             direct_call_id,

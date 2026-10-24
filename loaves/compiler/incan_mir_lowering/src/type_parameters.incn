@@ -12,6 +12,7 @@ from rust::incan_semantics_core import (
 )
 from rust::incan_semantics_core::body_ir import (
     Body, BodyIrModule, NamedCallableTarget, LocalId as RustLocalId, nominal_carrier_key,
+    TraitDefaultInstantiation,
 )
 from symbols import type_component
 
@@ -73,7 +74,7 @@ pub def substitute(ty: &RustType, names: list[str], arguments: list[RustType]) -
             for index in range(len(names)):
                 if names[index] == str(name):
                     return Ok(arguments[index].clone())
-            return Err(f"unsupported Body IR unbound type parameter {name}")
+            return Err(f"unsupported Body IR unbound type parameter {name} in binding scope {names}")
         RustType.Named(name) =>
             # A named declaration is not a placeholder, even when its spelling matches a type parameter.
             return Ok(ty.clone())
@@ -112,6 +113,34 @@ pub def substitute(ty: &RustType, names: list[str], arguments: list[RustType]) -
         _ => return Ok(ty.clone())
 
 
+pub def close_trait_environment(
+    environment: Option[TraitDefaultInstantiation],
+    names: list[str],
+    arguments: list[RustType],
+) -> Result[Option[TraitDefaultInstantiation], str]:
+    """Close a derived default scope with the same owner or method instance as its frame.
+
+    1. Preserve the absence of a default scope.
+    2. Substitute instance arguments through the receiver and trait bindings.
+    """
+    # 1. Ordinary source bodies have no derived trait scope.
+    match environment:
+        None => return Ok(None)
+        Some(retained) =>
+            # 2. Close the complete retained scope without merging its binders into method binders.
+            mut closed = retained.clone()
+            receiver: RustType = substitute(retained.receiver_type, names, arguments).map_err(
+                (reason) => f"{reason} in trait-default receiver",
+            )?
+            closed.receiver_type = receiver
+            for index in range(len(closed.arguments)):
+                argument: RustType = substitute(closed.arguments[index].argument, names, arguments).map_err(
+                    (reason) => f"{reason} in trait-default argument",
+                )?
+                closed.arguments[index].argument = argument
+            return Ok(Some(closed))
+
+
 pub def instantiate(body: &Body, arguments: list[RustType], owned_callable_slots: list[int]) -> Result[Body, str]:
     """Close checked types and preserve the value ABI of captured callables passed to original generic parameters."""
     names = body.type_parameters.clone()
@@ -124,8 +153,11 @@ pub def instantiate(body: &Body, arguments: list[RustType], owned_callable_slots
         return Err(f"unsupported Body IR type argument arity on {body.name}")
     storage = callable_storage_arguments(body, arguments, owned_callable_slots)?
     mut result = retain_owned_callable_storage(body, owned_callable_slots)?
+    result.trait_default_instantiation = close_trait_environment(body.trait_default_instantiation, names, arguments)?
     for index in range(len(result.locals)):
-        concrete: RustType = substitute(result.locals[index].ty, names, storage)?
+        concrete: RustType = substitute(result.locals[index].ty, names, storage).map_err(
+            (reason) => f"{reason} in instantiated local of {body.name}",
+        )?
         result.locals[index].ty = source_nominal_storage(body, concrete)?
     for index in range(len(result.params)):
         concrete: RustType = substitute(result.params[index].ty, names, storage)?

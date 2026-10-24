@@ -131,8 +131,12 @@ impl TypeChecker {
             return satisfies;
         }
         if bound.type_args.is_empty() {
-            let published = self.published_nominal_bound_name(bound);
-            return self.type_satisfies_explicit_bound(ty, published.as_deref().unwrap_or(&bound.name));
+            if let Some(published) = self.published_nominal_bound_name(bound) {
+                // This identity already proves a source trait. Do not require its canonical provider path to be a
+                // visible consumer binding before comparing the nominal's checked adoptions.
+                return self.type_satisfies_nominal_trait_bound(ty, &published);
+            }
+            return self.type_satisfies_explicit_bound(ty, &bound.name);
         }
         if is_rust_capability_bound(&bound.name) {
             return true;

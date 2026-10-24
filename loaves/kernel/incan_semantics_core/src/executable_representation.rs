@@ -1187,6 +1187,8 @@ mod tests {
     fn body(name: &str, ordinal: usize) -> Body {
         let identity = identity(name, ordinal);
         Body {
+            nominal_instantiation: Vec::new(),
+            trait_default_instantiation: None,
             type_parameters: vec!["Fixture".into()],
             decl_id: CompilerNodeId::declaration_span(
                 "lib",
@@ -1811,6 +1813,7 @@ mod tests {
                 trait_identity: protocol.clone(),
                 arguments: Vec::new(),
                 methods: Some(vec![slot.clone()]),
+                primitive_adapter: None,
             });
         module.trait_implementations.push(crate::body_ir::TraitImplementation {
             owner: owner.clone(),

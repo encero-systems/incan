@@ -1,4 +1,4 @@
-# behavior: const FrozenDict and FrozenList values nest string and bytes elements that read back by length, by index and by iteration (RFC 008)
+# behavior: nested frozen text and byte collections retain reads; inferred native FrozenList retains tuple arguments
 # expect-stdout:
 #   2
 #   beta
@@ -8,12 +8,28 @@
 #   1
 #   2
 
+from rust::incan_std_core::frozen import FrozenList as NativeFrozenList, FrozenDict as NativeFrozenDict
+from std.rust import Static
+
 const TABLE: FrozenDict[str, FrozenList[str]] = {"names": ["alpha", "beta"], "empty": []}
 const NAMES: FrozenList[str] = ["alpha", "beta"]
 const CHUNKS: FrozenList[FrozenBytes] = [b"ab", b"c"]
+const ENTRIES: FrozenDict[int, int] = {1: 7}
+
+
+def retain_inferred_owner[K with Static, V with Static](value: NativeFrozenDict[K, V]) -> None:
+    """Exercise a later method on the owner inferred from a constructor with explicit tuple arguments."""
+    inferred = NativeFrozenList.new[tuple[K, V]](value.as_slice())
+    _ = inferred.get(0)
 
 
 def main() -> None:
+    """Observe nested frozen collections and an inferred native owner.
+
+    1. Read nested text and bytes through frozen collections.
+    2. Instantiate a method on an inferred frozen owner inside a function with type parameters.
+    """
+    # 1. Read nested text and bytes through frozen collections.
     println(len(TABLE))
     println(NAMES[1])
     for name in NAMES:
@@ -21,3 +37,5 @@ def main() -> None:
     for chunk in CHUNKS:
         println(len(chunk))
     println(len(CHUNKS[0]))
+    # 2. Instantiate the inferred frozen owner inside a function with type parameters.
+    retain_inferred_owner[int, int](ENTRIES)

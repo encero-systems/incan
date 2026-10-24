@@ -1,9 +1,10 @@
-# behavior: a user-defined decorator runs once, when the decorated binding is initialized before main starts and not again per call, and replaces the decorated function with the callable it returns, so each call of the decorated name runs the replacement (RFC 036)
+# behavior: user decorators initialize once and replace the callable and its checked input signature (RFC 036)
 # expect-stdout:
 #   decorating label
 #   main
 #   7
 #   9
+#   11
 
 # RFC 036: user-defined decorators
 
@@ -26,7 +27,24 @@ def run(value: int) -> int:
     return label(value)
 
 
+def parse_text(value: str) -> int:
+    """Parse the replacement's text input independently of the original integer signature."""
+    return int(value)
+
+
+def from_text(func: (int) -> int) -> ((str) -> int):
+    """Replace the original with a required ordinary parameter of a different checked type."""
+    return parse_text
+
+
+@from_text
+def number(value: int) -> int:
+    """Retain the original integer callable separately from its text-input replacement."""
+    return value
+
+
 def main() -> None:
     println("main")
     println(run(7))
     println(run(9))
+    println(number("11"))

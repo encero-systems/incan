@@ -992,6 +992,9 @@ pub struct RustInteropArtifacts {
     /// Checked native argument adaptations, including dereference calls and owned payload storage constructors,
     /// keyed by argument expression span. Body IR emits these exact steps before the source call.
     pub argument_adjustments: HashMap<(usize, usize), Vec<RustCheckedCall>>,
+    /// Exact owned native From calls applied to each source list element at an argument boundary. The list is
+    /// evaluated once; the selected conversion is executed once per element in source order.
+    pub element_adjustments: HashMap<(usize, usize), RustCheckedCall>,
     /// Metadata-selected shared dereference steps before a native public field read, keyed by the field expression.
     /// Field identity and payload remain in their ordinary checked-field facts.
     pub field_adjustments: HashMap<(usize, usize), Vec<RustCheckedCall>>,

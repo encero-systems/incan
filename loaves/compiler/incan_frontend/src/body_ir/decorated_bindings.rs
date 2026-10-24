@@ -103,6 +103,8 @@ fn shared_callable_receiver(mut shape: IncanType) -> IncanType {
 /// Open signatures preserve their return type and use the invocation wrapper. The measured closed generic profile
 /// remains a synchronous zero-argument string callable with its own initializer template. Factories retain their
 /// validated closed applications; extern delegations cannot bypass the visible replacement.
+/// A nongeneric replacement may change required ordinary input types and passing modes; the wrapper retains the
+/// original as a separate callable and receives the replacement's checked signature.
 pub(super) fn supports_function(
     function: &ast::FunctionDecl,
     span: ast::Span,
@@ -133,12 +135,19 @@ pub(super) fn supports_function(
                 || matches!(&signature, IncanType::Function { params, return_type }
                     if params.is_empty()
                         && **return_type == IncanType::Primitive(IncanPrimitiveType::Str))));
-    profile
-        && original.len() == replacement.len()
+    let preserves_inputs = original
+        .iter()
+        .zip(replacement)
+        .all(|(left, right)| left.ty == right.ty && left.is_mut == right.is_mut && left.kind == right.kind);
+    let changes_closed_inputs = type_parameters.is_empty()
+        && function.params.iter().all(|parameter| parameter.node.default.is_none())
         && original
             .iter()
             .zip(replacement)
-            .all(|(left, right)| left.ty == right.ty && left.is_mut == right.is_mut && left.kind == right.kind)
+            .all(|(left, right)| left.kind == ast::ParamKind::Normal && right.kind == ast::ParamKind::Normal);
+    profile
+        && original.len() == replacement.len()
+        && (preserves_inputs || changes_closed_inputs)
         && !function.is_async()
         && function.decorators.iter().all(
             |decorator| match decorators::from_segments(&decorator.node.path.segments) {

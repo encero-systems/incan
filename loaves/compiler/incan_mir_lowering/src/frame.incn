@@ -33,6 +33,7 @@ from rust::incan_semantics_core::body_ir import (
     ValueEnumDeclaration as RustValueEnumDeclaration,
     DecoratedBinding as RustDecoratedBinding,
     Body as RustBody,
+    TraitDefaultInstantiation,
 )
 
 
@@ -100,6 +101,8 @@ pub model Builder:
     pub type_arguments: list[RustType]
     # The callable's own checked arguments exclude the enclosing class and declaring-trait environments.
     pub callable_type_arguments: list[RustType] = []
+    # Specialized defaults retain their trait scope independently of method and nominal binders.
+    pub trait_environment: Option[TraitDefaultInstantiation] = None
     pub function_pointer_locals: list[int]
     pub name: str
     pub synthesized: list[Function]

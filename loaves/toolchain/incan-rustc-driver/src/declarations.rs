@@ -126,6 +126,13 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
             },
         ),
         PlanType::NativeStr => ast::TyKind::Path(None, ast::Path::from_ident(ident("str", span))),
+        PlanType::StrRef => ast::TyKind::Ref(
+            None,
+            ast::MutTy {
+                ty: ty(&PlanType::NativeStr, span),
+                mutbl: ast::Mutability::Not,
+            },
+        ),
         PlanType::NativeSlice(elements) => elements
             .first()
             .map_or(ast::TyKind::Infer, |element| ast::TyKind::Slice(ty(element, span))),
@@ -561,14 +568,15 @@ fn placeholder(span: Span) -> Box<ast::Block> {
     })
 }
 
-/// Inject one source-named function's declaration with no authored body in the AST.
+/// Inject one source-named function's declaration with no authored body in the AST. Future boxing constructors tie
+/// their explicit reference inputs and boxed result to the same lifetime before rustc checks the native call.
 pub fn function(function: &Function, span: Span) -> Box<ast::Item> {
     let inputs = function
         .parameters
         .iter()
         .map(|parameter| ast::Param {
             attrs: ThinVec::new(),
-            ty: ty(&parameter.ty, span),
+            ty: crate::futures::constructor_parameter_type(function, &parameter.ty, span),
             pat: Box::new(ast::Pat {
                 id: ast::DUMMY_NODE_ID,
                 kind: ast::PatKind::Ident(ast::BindingMode::NONE, ident(&parameter.name, span), None),
@@ -599,7 +607,7 @@ pub fn function(function: &Function, span: Span) -> Box<ast::Item> {
         ast::ItemKind::Fn(Box::new(ast::Fn {
             defaultness: ast::Defaultness::Implicit,
             ident: ident(&function.name, span),
-            generics: ast::Generics::default(),
+            generics: crate::futures::constructor_generics(function, span),
             sig: signature,
             contract: None,
             define_opaque: None,

@@ -10,6 +10,7 @@ use crate::typechecker::{IdentKind, OpenRustGenericCall, RustArgCoercionKind};
 use incan_lang::interop::{
     RustCollectionFamily, RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustTypeInfo,
 };
+use incan_lang::lang::types::numerics::NumericTypeId;
 
 /// The signature and owner context selected before validating an inherent method's written arguments.
 struct InherentSpecialization {
@@ -24,6 +25,63 @@ struct InherentSpecialization {
 }
 
 impl TypeChecker {
+    /// Retain an imported native value's inherent length method through ordinary metadata dispatch. Builtin source
+    /// collections and text keep their own length contract; native lengths return int or usize. No native identity
+    /// or missing method is invented.
+    pub(in crate::typechecker::check_expr) fn retain_native_length_call(
+        &mut self,
+        receiver: &crate::ast::Spanned<crate::ast::Expr>,
+        ty: &ResolvedType,
+        span: crate::ast::Span,
+    ) -> bool {
+        let Some((path, _, _, _)) = self.rust_identity_for_type(ty) else {
+            return false;
+        };
+        let Some(metadata) = self.rust_item_metadata_for_path(&path) else {
+            return false;
+        };
+        let RustItemKind::Type(info) = &metadata.kind else {
+            return false;
+        };
+        if !info.methods.iter().any(|method| {
+            method.name == "len"
+                && Self::rust_signature_has_receiver(&method.signature)
+                && method.signature.params.len() == 1
+        }) {
+            return false;
+        }
+        let previous_errors = self.errors.len();
+        self.resolve_rust_path_method_call(RustPathMethodCall {
+            rust_path: &path,
+            method: "len",
+            receiver_metadata: Some(&metadata),
+            receiver_binding: None,
+            receiver_expr: receiver,
+            type_args: &[],
+            args: &[],
+            arg_types: &[],
+            receiver_span: receiver.span,
+            expected_return_ty: None,
+            span,
+        });
+        let invalid_return = self
+            .type_info
+            .rust
+            .checked_calls
+            .get(&(span.start, span.end))
+            .filter(|call| {
+                !matches!(
+                    call.return_type,
+                    ResolvedType::Int | ResolvedType::Numeric(NumericTypeId::USize)
+                )
+            })
+            .map(|call| call.return_type.to_string());
+        if let Some(actual) = invalid_return {
+            self.errors.push(errors::type_mismatch("int or usize", &actual, span));
+        }
+        self.errors.len() != previous_errors || self.type_info.rust.checked_calls.contains_key(&(span.start, span.end))
+    }
+
     /// Dispatch one native method request without reconstructing receiver or declaration facts.
     pub(super) fn resolve_rust_path_method_call(&mut self, call: RustPathMethodCall<'_>) -> Option<ResolvedType> {
         let preserves_shape = RustCollectionFamily::for_canonical_path(call.rust_path)

@@ -8,6 +8,7 @@ from rust::incan_semantics_core import (
     SemanticSourceTargetKind,
     function_type,
     generic,
+    native_array_type,
 )
 from rust::std::cmp import PartialEq
 from rust::incan_semantics_core::body_ir import (
@@ -21,6 +22,7 @@ from rust::incan_semantics_core::body_ir import (
     Operand as RustOperand,
     TraitImplementation,
     TraitTypeArgument,
+    TraitDefaultInstantiation,
 )
 from pub::incan_mir_plan import SourceSpan, PlanType
 from frame import Builder
@@ -62,7 +64,11 @@ pub def is_default_body(module: &BodyIrModule, body: &Body) -> bool:
         None => return false
         Some(identity) =>
             for owner in module.trait_declarations:
-                if owner.origin == identity.origin and owner.declaration_span.start <= identity.declaration_span.start and identity.declaration_span.end <= owner.declaration_span.end:
+                if (
+                    owner.origin == identity.origin
+                    and owner.declaration_span.start <= identity.declaration_span.start
+                    and identity.declaration_span.end <= owner.declaration_span.end
+                ):
                     return true
     return false
 
@@ -74,7 +80,8 @@ pub def append_default_type_bindings(
     mut names: list[str],
     mut arguments: list[RustType],
 ) -> Result[None, str]:
-    """Retain a concrete default's checked declaring-trait bindings beside its class and method arguments.
+    """
+    Retain a concrete default's checked declaring-trait bindings beside its class and method arguments.
 
     1. Select the receiver's canonical owner from its validated frame.
     2. Read only that owner's implementation of this exact default body.
@@ -144,7 +151,8 @@ def merge_default_type_bindings(
 
 
 pub def is_lazy_method_body(module: &BodyIrModule, body: &Body) -> bool:
-    """Keep dependency generic-owner methods governed until a call or native bridge selects them.
+    """
+    Keep dependency generic-owner methods governed until a call or native bridge selects them.
 
     Discovering an imported layout does not authorize execution of every closed receiver method. Source methods keep
     their ordinary root policy, and trait defaults retain their existing call-driven scheduling.
@@ -162,7 +170,12 @@ pub def is_lazy_method_body(module: &BodyIrModule, body: &Body) -> bool:
                 SymbolOrigin.Package(library=_library, module_path=_path) => pass
                 _ => return false
             for owner in module.nominal_declarations:
-                if len(owner.type_parameters) != 0 and owner.canonical.origin == identity.origin and owner.canonical.declaration_span.start <= identity.declaration_span.start and identity.declaration_span.end <= owner.canonical.declaration_span.end:
+                if (
+                    len(owner.type_parameters) != 0
+                    and owner.canonical.origin == identity.origin
+                    and owner.canonical.declaration_span.start <= identity.declaration_span.start
+                    and identity.declaration_span.end <= owner.canonical.declaration_span.end
+                ):
                     return true
     return false
 
@@ -174,7 +187,9 @@ def append_records(mut records: list[TraitImplementation], module: &BodyIrModule
 
 
 def append_layouts(
-    mut owners: list[NominalDeclaration], mut enums: list[RustEnumDeclaration], module: &BodyIrModule,
+    mut owners: list[NominalDeclaration],
+    mut enums: list[RustEnumDeclaration],
+    module: &BodyIrModule,
 ) -> None:
     """Retain each module's owner layouts once for the borrowed trait-specialization lookup tables."""
     for owner in module.nominal_declarations:
@@ -246,6 +261,10 @@ def first_instantiation(retained: list[TraitImplementation], candidate: &TraitIm
 def specialize_body(body: &Body, concrete: &RustType, arguments: list[TraitTypeArgument]) -> Body:
     """Instantiate a trait default for one adopter: same statements and identities, Self and type parameters closed."""
     mut result = body.clone()
+    mut retained_arguments: list[TraitTypeArgument] = []
+    for argument in arguments:
+        retained_arguments.append(argument.clone())
+    result.set_trait_default_instantiation(concrete.clone(), retained_arguments)
     mut parameters: list[str] = []
     for parameter in body.type_parameters:
         if not is_adoption_parameter(str(parameter), arguments):
@@ -260,6 +279,28 @@ def specialize_body(body: &Body, concrete: &RustType, arguments: list[TraitTypeA
     return_type: RustType = instantiate_type(result.return_type, concrete, arguments)
     result.return_type = return_type
     return result
+
+
+pub def close_trait_dispatch_arguments(
+    environment: Option[TraitDefaultInstantiation],
+    arguments: list[RustType],
+) -> list[RustType]:
+    """
+    Close trait-scoped dispatch facts while preserving independent method parameters.
+
+    1. Read the default's retained adoption scope, if present.
+    2. Substitute that scope through each checked dispatch argument.
+    """
+    # 1. Read the adoption scope independently of the method's own bindings.
+    match environment:
+        None => return arguments
+        Some(retained) =>
+            # 2. Close trait facts using the same substitution as the specialized frame types.
+            mut closed: list[RustType] = []
+            for argument in arguments:
+                item: RustType = instantiate_type(argument, retained.receiver_type, retained.arguments)
+                closed.append(item.clone())
+            return closed
 
 
 def is_adoption_parameter(name: str, arguments: list[TraitTypeArgument]) -> bool:
@@ -279,6 +320,15 @@ def instantiate_type(ty: &RustType, concrete: &RustType, arguments: list[TraitTy
     match ty:
         RustType.SelfType => return concrete.clone()
         RustType.TypeVar(name) => return type_argument(ty, str(name), arguments)
+        RustType.Ref(inner) =>
+            closed: RustType = instantiate_type(inner, concrete, arguments)
+            return RustType.Ref(closed)
+        RustType.RefMut(inner) =>
+            closed: RustType = instantiate_type(inner, concrete, arguments)
+            return RustType.RefMut(closed)
+        RustType.NativeArray(element=element, length=length) =>
+            closed: RustType = instantiate_type(element, concrete, arguments)
+            return native_array_type(closed, length.clone())
         RustType.Generic(base=base, args=elements) =>
             mut closed: list[RustType] = []
             for element in elements:
@@ -319,7 +369,9 @@ def tuple_type_of(elements: list[RustType]) -> RustType:
 
 
 def concrete_self_type(
-    owner: &CanonicalSymbolId, mut owners: list[NominalDeclaration], mut enums: list[RustEnumDeclaration],
+    owner: &CanonicalSymbolId,
+    mut owners: list[NominalDeclaration],
+    mut enums: list[RustEnumDeclaration],
 ) -> Result[RustType, str]:
     """
     Retain the implementing owner's own parameters in Self until checked nominal instance scheduling closes them.
@@ -468,13 +520,14 @@ def owner_method_identity(
                 continue
             match selected:
                 Some(previous) =>
-                    if previous.implementation != implementation.implementation or previous.type_arguments != implementation.type_arguments:
+                    if (
+                        previous.implementation != implementation.implementation
+                        or previous.type_arguments != implementation.type_arguments
+                    ):
                         return Err("unsupported Body IR trait method at several instantiations for one receiver")
-                None =>
-                    selected = Some(implementation.clone())
+                None => selected = Some(implementation.clone())
     match selected:
-        Some(implementation) =>
-            canonical = Some(implementation.implementation.clone())
+        Some(implementation) => canonical = Some(implementation.implementation.clone())
         None => pass
     match canonical:
         Some(identity) => return Ok(identity.clone())
@@ -488,7 +541,7 @@ def selected_slot_arguments(
     owner: PlanType,
 ) -> bool:
     """Match a checked trait instantiation without mixing it with a default body's independent bindings."""
-    match target.trait_arguments.clone():
+    match target.trait_arguments:
         Some(arguments) => return arguments == implementation.slot_arguments
         None => pass
     return receiver_selects_slot_arguments(module, implementation, owner)
@@ -586,7 +639,11 @@ pub def receiver_method_target(
         Err(_reason) => return Ok(target.clone())
 
 
-pub def implementation_target(module: &BodyIrModule, target: &MethodTarget, owner: PlanType) -> Result[MethodTarget, str]:
+pub def implementation_target(
+    module: &BodyIrModule,
+    target: &MethodTarget,
+    owner: PlanType,
+) -> Result[MethodTarget, str]:
     """Name the retained concrete implementation rather than its trait slot when calling an already compiled method."""
     mut selected = target.clone()
     canonical = owner_method_identity(module, target, owner)?
@@ -667,7 +724,9 @@ pub def validate_static_receiver(
     """Close the checked receiver in its active frame; only a retained model or enum admits an associated call."""
     match target.receiver_type:
         Some(template) =>
-            closed: RustType = substitute(template, names, arguments)?
+            closed: RustType = substitute(template, names, arguments).map_err(
+                (reason) => f"{reason} in static receiver of {target.name}",
+            )?
             match enum_type(list(module.enum_declarations), closed):
                 Some(_owner) => return Ok(None)
                 None => pass

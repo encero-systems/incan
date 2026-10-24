@@ -36,10 +36,17 @@ from unions import union_slot
 
 
 pub def model_type(mut declarations: list[NominalDeclaration], ty: &RustType) -> Result[PlanType, str]:
-    """Translate checked scalar, collection, and callable types against retained declarations; refusals preserve the unsupported type and its parameters."""
+    """Translate checked types against retained declarations, preserving unsupported types in refusals.
+
+    1. Admit an existing generator representation.
+    2. Resolve scalar, nominal and callable carriers from their checked types.
+    3. Resolve collection elements, keeping exact native frozen storage distinct from source frozen views.
+    """
+    # 1. Admit an existing generator representation.
     match generator_type(ty):
         Some(result) => return result
         None => pass
+    # 2. Resolve scalar, nominal and callable carriers from their checked types.
     match ty:
         RustType.Never => return Ok(PlanType.Never)
         RustType.RustInteropPath(path) => return Err(f"unsupported Body IR type RustInteropPath {path}")
@@ -62,6 +69,12 @@ pub def model_type(mut declarations: list[NominalDeclaration], ty: &RustType) ->
         RustType.Tuple(elements) => return tuple_type(elements)
         RustType.Decimal(precision=_precision, scale=_scale) => return Ok(PlanType.Decimal)
         RustType.Generic(base=base, args=arguments) =>
+            # 3. Native frozen constructors preserve exact elements; source frozen views freeze text and bytes.
+            if base in ["$FrozenList", "$FrozenSet", "$FrozenDict"]:
+                mut storage: list[PlanType] = []
+                for argument in arguments:
+                    storage.append(model_type(declarations, argument)?)
+                return Ok(PlanType.FrozenCollection(str(base)[1:], storage))
             if base in ["FrozenList", "FrozenSet", "FrozenDict"]:
                 mut storage: list[PlanType] = []
                 for argument in arguments:

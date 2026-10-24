@@ -28,6 +28,77 @@ struct TraitCandidate {
 }
 
 impl TypeChecker {
+    /// Select an owned per-element From conversion using the same metadata candidates as explicit native calls.
+    /// The typed placeholder supplies no executable expression or source identity; only the checked element type
+    /// participates in inference, and exact input/output carriers must match before a call is retained.
+    pub(in crate::typechecker::check_expr) fn native_element_conversion(
+        &self,
+        source: &ResolvedType,
+        target: &ResolvedType,
+    ) -> Option<crate::typechecker::RustCheckedCall> {
+        // ---- Native conversion context ----
+        let path = self.rust_canonical_path_for_receiver_type(target)?;
+        let metadata = self.rust_item_metadata_for_path(&path)?;
+        let RustItemKind::Type(info) = &metadata.kind else {
+            return None;
+        };
+        let placeholder = Spanned::new(
+            Expr::Literal(crate::ast::Literal::String(String::new())),
+            crate::ast::Span::new(0, 0),
+        );
+        let arguments = [crate::ast::CallArg::Positional(placeholder.clone())];
+        let types = [source.clone()];
+        let call = RustPathMethodCall {
+            rust_path: &path,
+            method: "from",
+            receiver_metadata: Some(&metadata),
+            receiver_binding: None,
+            receiver_expr: &placeholder,
+            type_args: &[],
+            args: &arguments,
+            arg_types: &types,
+            receiver_span: placeholder.span,
+            expected_return_ty: Some(target),
+            span: placeholder.span,
+        };
+
+        // ---- Exact and unambiguous From implementation ----
+        let identity = self.rust_trait_definition_path("std::convert::From");
+        let mut selected: Option<crate::typechecker::RustCheckedCall> = None;
+        for implementation in &info.implemented_traits {
+            if incan_lang::interop::ancestral_rust_path(&implementation.path) != identity {
+                continue;
+            }
+            let Some(candidate) = self.retained_trait_candidate(implementation, &call, target, info) else {
+                continue;
+            };
+            if Self::rust_signature_has_receiver(&candidate.signature) || candidate.signature.params.len() != 1 {
+                continue;
+            }
+            let parameter = self.native_rust_signature_type(&candidate.signature.params[0].type_display, &path);
+            let result = self.native_rust_signature_type(&candidate.signature.return_type, &path);
+            if !self.rust_trait_carriers_match(&parameter, source) || !self.rust_trait_carriers_match(&result, target) {
+                continue;
+            }
+            let retained = crate::typechecker::RustCheckedCall {
+                storage: None,
+                source_type_parameters: self.native_call_type_parameters(),
+                receiver_adjustments: Vec::new(),
+                path: candidate.path,
+                type_arguments: candidate.arguments,
+                parameters: vec![crate::symbols::CallableParam::positional(parameter)],
+                return_type: result,
+                result_item_path: Some(path.clone()),
+                has_receiver: false,
+            };
+            if selected.as_ref().is_some_and(|previous| previous != &retained) {
+                return None;
+            }
+            selected = Some(retained);
+        }
+        selected
+    }
+
     /// Infer a receiver-free trait function's Self from its destination and its declared method binders from inputs.
     /// Close associated projections before validation, retaining source declaration types structurally rather than
     /// replacing an inferred model with a parsed Rust display. Rustc verifies the selected native trait obligations.
@@ -770,7 +841,10 @@ impl TypeChecker {
                 .map(render_resolved_type_as_rust_arg)
                 .collect::<Vec<_>>()
                 .join(", ");
-            owner = self.resolved_type_from_rust_display(&format!("{path}<{arguments}>"));
+            let display = format!("{path}<{arguments}>");
+            // Keep existing source Option/Result and collection projections while restoring frozen native owners,
+            // whose inferred method calls still need their exact impl identity and tuple arguments.
+            owner = self.native_frozen_owner(&display, path, self.resolved_type_from_rust_display(&display));
         }
         owner
     }
