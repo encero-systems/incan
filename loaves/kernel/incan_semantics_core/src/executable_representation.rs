@@ -39,7 +39,14 @@ use crate::body_ir::{
 /// Version 25 retains callable union payload signatures and producer-owned captured environment aliases.
 /// Version 26 appends native fixed-size arrays with their checked element storage and evaluated length.
 /// Version 27 retains checked native callable signatures with deferred executable bodies.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 27;
+/// Version 28 retains native default callees alongside compiled callable frames and appends checked panic-hook
+/// registration.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 28;
+
+/// Accept only the current positional schema; combined changes require regenerated producer artifacts.
+pub fn supported_representation_version(version: u32) -> bool {
+    version == EXECUTABLE_REPRESENTATION_VERSION
+}
 
 /// Largest index this format admits, in bytes.
 ///
@@ -226,13 +233,19 @@ pub enum ExecutableDeclaration {
         /// Only explicit original-callable reads select this implementation under the same declared binders.
         binding: Box<crate::body_ir::DecoratedBinding>,
     },
-    /// Authenticated signature and defaults of a compiled item. Its empty statement block is never executable.
-    CompiledCallable(Box<Body>),
     /// Deferred checked meaning and the exact native instantiations its calls select.
     NativeBody {
         /// The generic or otherwise caller-instantiated source frame.
         body: Box<Body>,
         /// Checker-produced signatures, matched by canonical identity and native type arguments.
+        callables: Vec<crate::body_ir::LoafCallable>,
+    },
+    /// Producer-authenticated passing modes and defaults of a compiled callable, with no executable implementation.
+    /// Consumers call the canonical rlib export; this frame never joins their executable body queue.
+    CompiledCallableFrame {
+        /// Exact declaration-local parameter passing, representation and default computations.
+        frame: Box<Body>,
+        /// Producer-selected native callees used by retained default computations.
         callables: Vec<crate::body_ir::LoafCallable>,
     },
 }
@@ -243,17 +256,11 @@ impl ExecutableDeclaration {
     pub fn identity(&self) -> Option<&CanonicalSymbolId> {
         match self {
             Self::Body(body) => body.canonical.as_ref(),
-            Self::NativeBody { body, callables } => (!callables.is_empty()
-                && callables.iter().all(|callable| {
-                    matches!(callable.canonical.origin, crate::SymbolOrigin::RustCrate(_))
-                        && crate::body_ir::rust_item_identity(&callable.item).as_ref() == Some(&callable.canonical)
-                        && callable.type_parameters.is_empty()
-                        && callable.parameter_defaults.is_empty()
-                        && callable.declaration_frame.is_none()
-                }))
-            .then_some(body.canonical.as_ref())
-            .flatten(),
-            Self::CompiledCallable(frame) => (frame.block.stmts.is_empty()
+            Self::NativeBody { body, callables } => (!callables.is_empty() && valid_native_calls(callables))
+                .then_some(body.canonical.as_ref())
+                .flatten(),
+            Self::CompiledCallableFrame { frame, callables } => (frame.block.stmts.is_empty()
+                && valid_native_calls(callables)
                 && crate::body_ir::LoafCallable::from_body(frame).is_some())
             .then_some(frame.canonical.as_ref())
             .flatten(),
@@ -298,6 +305,18 @@ impl ExecutableDeclaration {
             Self::Static(value) => Some(&value.canonical),
         }
     }
+}
+
+/// Native records carry exact Rust identities and closed signatures, never another source declaration's executable
+/// authority.
+fn valid_native_calls(callables: &[crate::body_ir::LoafCallable]) -> bool {
+    callables.iter().all(|callable| {
+        matches!(callable.canonical.origin, crate::SymbolOrigin::RustCrate(_))
+            && crate::body_ir::rust_item_identity(&callable.item).as_ref() == Some(&callable.canonical)
+            && callable.type_parameters.is_empty()
+            && callable.parameter_defaults.is_empty()
+            && callable.declaration_frame.is_none()
+    })
 }
 
 /// Explicit admission and payload address for one public root or internal execution dependency.
@@ -567,9 +586,11 @@ fn project_declarations(
             if !declarations.contains_key(identity) {
                 continue;
             }
-            // A profile-level refusal is recorded exactly like a projection failure, so the two reach a consumer
-            // through one vocabulary rather than two.
-            let projected = if unrepresentable.contains(identity) {
+            // A compiled implementation publishes its declaration independently; a consumer-instantiated body must
+            // retain the full executable closure and its ordinary refusal vocabulary.
+            let projected = if publishes_compiled_frame(module, body) {
+                publication::project_compiled_frame(body, module, library, public)
+            } else if unrepresentable.contains(identity) {
                 Err(CoverageReason::UnsupportedConstruct)
             } else {
                 publication::project_callable(body, module, library, public, &native_callables)
@@ -594,6 +615,36 @@ fn project_declarations(
         project_enums(module, library, public, &mut admitted, declarations)?;
     }
     Ok(admitted)
+}
+
+/// Compiled callables retain declaration frames independently of their implementation's portable closure.
+/// Open owners, trait defaults and generator producers still require their executable governed representation.
+fn publishes_compiled_frame(module: &BodyIrModule, body: &Body) -> bool {
+    let Some(identity) = &body.canonical else {
+        return false;
+    };
+    crate::body_ir::LoafCallable::from_body(body).is_some()
+        && !module.body_requires_instantiation(body)
+        && !body.is_generator()
+        && !module
+            .decorated_bindings
+            .iter()
+            .any(|binding| binding.original_body.canonical.as_ref() == Some(identity))
+        && !module
+            .static_declarations
+            .iter()
+            .any(|storage| &storage.canonical == identity)
+        && matches!(
+            identity.kind,
+            crate::SemanticSourceTargetKind::Function
+                | crate::SemanticSourceTargetKind::Method
+                | crate::SemanticSourceTargetKind::Property
+        )
+        && !module.trait_declarations.iter().any(|owner| {
+            owner.origin == identity.origin
+                && owner.declaration_span.start <= identity.declaration_span.start
+                && owner.declaration_span.end >= identity.declaration_span.end
+        })
 }
 
 /// Project public nominal layouts and retain checked trait slots without synthesizing consumer dispatch.
@@ -835,7 +886,7 @@ fn record_type_context_members(
             ExecutableDeclaration::Enum(value) => value.variants.iter().map(|variant| &variant.canonical).collect(),
             ExecutableDeclaration::Body(_)
             | ExecutableDeclaration::NativeBody { .. }
-            | ExecutableDeclaration::CompiledCallable(_)
+            | ExecutableDeclaration::CompiledCallableFrame { .. }
             | ExecutableDeclaration::DecoratedBody { .. }
             | ExecutableDeclaration::InvocationDecoratedBody { .. }
             | ExecutableDeclaration::Trait(_)
@@ -1098,7 +1149,7 @@ impl<'bytes> SurfaceReader<'bytes> {
         &self.index
     }
 
-    /// Canonical identities with covered executable fragments; uncovered exports remain visible through the index.
+    /// Canonical identities with covered declaration fragments; uncovered exports remain visible through the index.
     pub fn covered_identities(&self) -> impl Iterator<Item = &CanonicalSymbolId> {
         self.index.declarations.iter().filter_map(|(identity, coverage)| {
             matches!(coverage, DeclarationCoverage::Covered { .. }).then_some(identity)
@@ -1225,6 +1276,7 @@ mod tests {
     /// Synthetic module context used only for codec and public-closure invariants.
     fn module(bodies: Vec<Body>) -> BodyIrModule {
         BodyIrModule {
+            runtime_callable_bindings: Vec::new(),
             decorated_bindings: Vec::new(),
             entrypoint_effects: Vec::new(),
             program_entrypoints: Vec::new(),
@@ -1378,7 +1430,8 @@ mod tests {
             &BTreeSet::from([identity("compiled", 1), identity("governed", 2)]),
         )?;
         let reader = SurfaceReader::open(&bytes)?;
-        let ExecutableDeclaration::CompiledCallable(frame) = reader.fragment(&identity("compiled", 1))? else {
+        let ExecutableDeclaration::CompiledCallableFrame { frame, .. } = reader.fragment(&identity("compiled", 1))?
+        else {
             return Err("compiled callable contract missing".into());
         };
         assert!(frame.block.stmts.is_empty());
@@ -1434,6 +1487,21 @@ mod tests {
                 .windows(b"private_secret".len())
                 .any(|part| part == b"private_secret")
         );
+        // A compiled export's checked signature survives an unavailable implementation without becoming a body.
+        let mut compiled = module;
+        compiled.bodies[2].callable_representation = Some(crate::body_ir::CallableRepresentation {
+            function_pointer_locals: Vec::new(),
+            closure_holding_locals: Vec::new(),
+            closure_holding_parameters: Vec::new(),
+            closure_holding_return: false,
+        });
+        let bytes = publish(&compiled, &public)?;
+        let reader = SurfaceReader::open(&bytes)?;
+        assert!(matches!(
+            reader.fragment(&identity("unsupported", 4))?,
+            ExecutableDeclaration::CompiledCallableFrame { frame, .. } if frame.block.stmts.is_empty()
+        ));
+        assert!(reader.declaration(&identity("unsupported", 4)).is_err());
         Ok(())
     }
 

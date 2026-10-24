@@ -384,26 +384,11 @@ fn bound_callable_inputs<'tcx>(
     tcx: TyCtxt<'tcx>,
     parameters: &[PlanType],
 ) -> Result<(Vec<Ty<'tcx>>, Vec<rustc_middle::ty::BoundVariableKind<'tcx>>), PlanError> {
-    use rustc_middle::ty::{BoundRegion, BoundRegionKind, BoundVar, BoundVariableKind, INNERMOST, Region, TyKind};
-    let mut inputs = Vec::new();
-    let mut bound = Vec::new();
-    for parameter in parameters {
-        let native = native_type(tcx, parameter)?;
-        let input = if let TyKind::Ref(_, pointee, mutability) = native.kind() {
-            let var = BoundVar::from_usize(bound.len());
-            let kind = BoundRegionKind::Anon;
-            bound.push(BoundVariableKind::Region(kind));
-            let region = Region::new_bound(tcx, INNERMOST, BoundRegion { var, kind });
-            match mutability {
-                rustc_hir::Mutability::Mut => Ty::new_mut_ref(tcx, region, *pointee),
-                rustc_hir::Mutability::Not => Ty::new_imm_ref(tcx, region, *pointee),
-            }
-        } else {
-            native
-        };
-        inputs.push(input);
-    }
-    Ok((inputs, bound))
+    let inputs = parameters
+        .iter()
+        .map(|parameter| native_type(tcx, parameter))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(crate::native_loans::inputs(tcx, &inputs))
 }
 
 /// Recover the exact injected dyn alias, including rustc's Fn supertrait and bound-input lifetime lowering.
@@ -485,10 +470,11 @@ fn decimal_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
     Ok(tcx.fn_sig(definition).instantiate_identity().skip_binder().output())
 }
 
-/// Recover the dependency-owned builtin error from its canonical Incan wrapper, preserving its actual Rust identity.
+/// Recover the builtin error from its retained owner, independently of runtime wrapper exports or their calls.
 fn validation_error_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
-    let definition = crate::callees::external(tcx, "incan_native_runtime::make_validation_error")?;
-    Ok(tcx.fn_sig(definition).instantiate_identity().skip_binder().output())
+    let path = incan_semantics_core::RuntimeBuiltinType::ValidationError.carrier_path();
+    let definition = crate::callees::native_type_item(tcx, path)?;
+    Ok(tcx.type_of(definition).instantiate_identity().skip_normalization())
 }
 
 /// Recover the dependency-owned FrozenStr identity from its canonical observation wrapper.

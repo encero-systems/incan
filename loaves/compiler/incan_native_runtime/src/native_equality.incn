@@ -1,0 +1,9 @@
+"""Select borrowed native equality through a declared trait bound before source instances close their storage."""
+
+from rust::std::cmp import PartialEq
+
+
+pub def equal_native[T with PartialEq[T]](left: &T, right: &T) -> bool:
+    """Compare without cloning or consuming either input: 1. Invoke the declared native equality operation."""
+    # 1. Invoke the declared native equality operation.
+    return PartialEq.eq(left, right)

@@ -1,0 +1,9 @@
+"""Clone borrowed native values through their declared trait before source instances close their storage."""
+
+from rust::std::clone import Clone
+
+
+pub def clone_native[T with Clone](value: &T) -> T:
+    """Return an independent native value: 1. Clone the borrowed referent through its declared bound."""
+    # 1. Clone the borrowed referent through its declared bound.
+    return Clone.clone(value)

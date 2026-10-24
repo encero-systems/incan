@@ -62,7 +62,9 @@ from bytes_plan import bytes_literal
 from newtype_constants import numeric_newtype_literal
 from sdk_async_types import close_async_types, primary_async_body, async_call_type_arguments, selected_async_receiver
 from layout_types import shared_receiver_type, mutable_receiver_type, stored_field_type
+from native_call_keys import native_result_matches
 from text_ownership import drop_borrowed_text_temporaries
+from signature_lifetimes import signature_lifetimes
 from decimal_plan import decimal_literal, decimal_comparison, is_decimal_literal
 from frozen_plan import (
     frozen_literal,
@@ -72,10 +74,7 @@ from frozen_plan import (
     frozen_observation_type,
 )
 from loop_exits import exits_to
-from trait_links import (
-    validate_project_implementation,
-    has_open_trait_arguments,
-)
+from trait_links import validate_project_implementation, has_open_trait_arguments
 from derived_methods import (
     comparison_dunder,
     is_derived_clone,
@@ -88,7 +87,6 @@ from derived_methods import (
 )
 from result_combinators import result_combinator, lower_result_combinator
 from rust::std::env import var_os as native_environment
-
 from rust::incan_semantics_core import (
     IncanType as RustType,
     HirSourceSpan as RustSpan,
@@ -198,7 +196,11 @@ from body_index import body_index
 from program_context import ProgramContext
 from rust::std::sync import Arc
 from nominal_instances import (
-    NominalInstance, specialize_nominals_with_instances, instance_arguments, template_base, retain_frame_nominals,
+    NominalInstance,
+    specialize_nominals_with_instances,
+    instance_arguments,
+    template_base,
+    retain_frame_nominals,
 )
 from checked_json import lower_checked_deserialize
 from string_conversion import lower_string_conversions, string_conversion_callee
@@ -230,7 +232,14 @@ from traits import (
     receiver_method_identity,
     validate_static_receiver,
 )
-from decls import lower_model_declarations, publish_local_layouts, static_slot, static_accessors, library_item, library_enum_item
+from decls import (
+    lower_model_declarations,
+    publish_local_layouts,
+    static_slot,
+    static_accessors,
+    library_item,
+    library_enum_item,
+)
 from fallible_factories import NativeFactory, fallible_factory, retain_factory_callable_storage
 from iterator_methods import standard_protocol as standard_iterator_protocol
 from model_lists import model_list_read, structural_prefix, prefix_place
@@ -475,8 +484,6 @@ pub type BodyIrModule = rusttype RustBodyIrModule:
     """The frontend-owned canonical module, borrowed without conversion or duplication."""
 
 
-
-
 def validate_project_module(module: &BodyIrModule, modules: &list[BodyIrModule]) -> Result[int, str]:
     """Validate one module of a project, resolving its trait implementations against every module of the project."""
     count = validate_project_declarations(module, modules)?
@@ -486,12 +493,15 @@ def validate_project_module(module: &BodyIrModule, modules: &list[BodyIrModule])
             Err(reason) =>
                 if has_open_trait_arguments(implementation):
                     return Err("unsupported Body IR open trait default type arguments")
-                return Err(f"{reason}; owner={implementation.owner:?}; slot={implementation.method:?}; implementation={implementation.implementation:?}")
+                return Err(
+                    f"{reason}; owner={implementation.owner:?}; slot={implementation.method:?}; implementation={implementation.implementation:?}",
+                )
     return Ok(count)
 
 
 def validate_project_declarations(module: &BodyIrModule, modules: &list[BodyIrModule]) -> Result[int, str]:
-    """Validate decorated declarations with their owning compiled frames from the shared callable inventory.
+    """
+    Validate decorated declarations with their owning compiled frames from the shared callable inventory.
 
     The driver moves linked callables into one inventory. This view supplies declaration facts only; it does not
     restore a native wrapper as an executable source body or duplicate the program's callable inventory.
@@ -521,8 +531,7 @@ def validate_declarations_and_bodies(module: &BodyIrModule) -> Result[int, str]:
         if not module.is_well_formed_decorated_binding(binding):
             return Err("invalid Body IR decorated binding identity")
         match binding.initializer:
-            Some(_initializer) =>
-                _ = validate_text_binding(binding)?
+            Some(_initializer) => _ = validate_text_binding(binding)?
             None => pass
     for declaration in module.static_declarations:
         if not module.is_well_formed_static_declaration(declaration):
@@ -583,6 +592,7 @@ pub def scalar_place(mut builder: Builder, value: &RustPlace, span: SourceSpan) 
     ):
         Ok(place) => place
         Err(error) => return Err(f"{error} in {builder.name} at {span.file}:{span.line}")
+
     target.local += builder.local_offset
     return Ok(target)
 
@@ -699,9 +709,11 @@ def reference_value_read(
     fact: &OwnershipFact,
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
-    """Read an explicitly reference-typed slot or structural tuple field as its reference, never its referent.
+    """
+    Read an explicitly reference-typed slot or structural tuple field as its reference, never its referent.
     Shared references can copy; exclusive references transfer only under a checked Move. Borrowed storage for
-    source receivers is ineligible."""
+    source receivers is ineligible.
+    """
     if len(value.projection) != 0:
         for projection in value.projection:
             match projection:
@@ -711,7 +723,15 @@ def reference_value_read(
                 _ => return Ok(None)
         target = scalar_place(builder, value, span)?
         match place_type(builder.locals, target):
-            (PlanType.StrRef | PlanType.ScalarRef(_) | PlanType.ModelRef(_, _) | PlanType.SliceRef(_) | PlanType.NativeArrayRef(_, _) | PlanType.StringRef | PlanType.EnumRef(_, _)) =>
+            (
+                PlanType.StrRef
+                | PlanType.ScalarRef(_)
+                | PlanType.ModelRef(_, _)
+                | PlanType.SliceRef(_)
+                | PlanType.NativeArrayRef(_, _)
+                | PlanType.StringRef
+                | PlanType.EnumRef(_, _)
+            ) =>
                 if not reference_read_fact(fact):
                     return Err("unsupported Body IR projected reference without a checked read")
                 return Ok(Some(read_place(target, false, span)))
@@ -768,8 +788,12 @@ def target_read(mut builder: Builder, target: Place, fact: &OwnershipFact, span:
                 match target.projection:
                     Projection.VariantField(_variant, _slot, _ty) =>
                         return target_read(builder, target, OwnershipFact.Clone, span)
-                    (Projection.Field(_, _) | Projection.Fields(_) | Projection.DerefField(_, _) | Projection.DerefFields(_)) =>
-                        return callable_object(builder, target, signature, span)
+                    (
+                        Projection.Field(_, _)
+                        | Projection.Fields(_)
+                        | Projection.DerefField(_, _)
+                        | Projection.DerefFields(_)
+                    ) => return callable_object(builder, target, signature, span)
                     _ => pass
             match fact:
                 OwnershipFact.Move =>
@@ -784,25 +808,35 @@ def target_read(mut builder: Builder, target: Place, fact: &OwnershipFact, span:
                     return Ok(read_place(result, true, span))
                 _ =>
                     site = f"{builder.file}:{span.line}:{span.column} in {builder.name}"
-                    return Err(f"unsupported Body IR closure read outside a call, argument, clone, or move at {site}; ownership {fact:?}; projection {target.projection:?}")
+                    return Err(
+                        f"unsupported Body IR closure read outside a call, argument, clone, or move at {site}; ownership {fact:?}; projection {target.projection:?}",
+                    )
         _ => pass
     match fact:
         OwnershipFact.Copy => return Ok(Operand(kind=OperandKind.Copy(target), span=span))
         OwnershipFact.Move =>
             transferred_tuple_field = is_tuple_type(builder.locals[target.local].ty) and is_direct_tuple_field(target)
-            if target.projection != Projection.Whole and not transferred_tuple_field and (place_type(
-                builder.locals,
-                target,
-            ) == PlanType.String or tuple_has_owners(place_type(builder.locals, target))):
+            if (
+                target.projection != Projection.Whole
+                and not transferred_tuple_field
+                and (
+                    place_type(builder.locals, target) == PlanType.String
+                    or tuple_has_owners(place_type(builder.locals, target))
+                )
+            ):
                 return Err("unsupported Body IR partial model move")
-            # The whole tuple stays an owner, so moving an owned element out of it would drop that element twice.
-            if target.projection != Projection.Whole and not transferred_tuple_field and is_tuple_type(
-                builder.locals[target.local].ty,
-            ) and owned_carrier(place_type(builder.locals, target)):
+            if (
+                target.projection != Projection.Whole
+                and not transferred_tuple_field
+                and is_tuple_type(builder.locals[target.local].ty)
+                and owned_carrier(place_type(builder.locals, target))
+            ):
                 return Err("unsupported Body IR partial tuple move")
             if is_nominal_type(place_type(builder.locals, target)) and reads_through_reference(target):
                 site = f"{builder.file}:{span.line}:{span.column} in {builder.name}"
-                return Err(f"unsupported Body IR move out of a borrowed value at {site}; frame local {target.local}; projection {target.projection:?}")
+                return Err(
+                    f"unsupported Body IR move out of a borrowed value at {site}; frame local {target.local}; projection {target.projection:?}",
+                )
             return Ok(Operand(kind=OperandKind.Move(target), span=span))
         OwnershipFact.Clone =>
             if frozen_observation_type(place_type(builder.locals, target)):
@@ -847,7 +881,10 @@ def target_read(mut builder: Builder, target: Place, fact: &OwnershipFact, span:
                 Projection.VariantField(_variant, _slot, _ty) => return enum_payload_read(builder, target, fact, span)
                 _ =>
                     selected_type = place_type(builder.locals, target)
-                    if numeric_carrier(selected_type) or selected_type in [PlanType.Bool, PlanType.Unit, PlanType.Decimal]:
+                    if (
+                        numeric_carrier(selected_type)
+                        or selected_type in [PlanType.Bool, PlanType.Unit, PlanType.Decimal]
+                    ):
                         return Ok(Operand(kind=OperandKind.Copy(target), span=span))
                     site = f"{builder.file}:{span.line}:{span.column} in {builder.name}"
                     detail = f"projection {target.projection:?}; selected type {selected_type:?}"
@@ -1009,8 +1046,7 @@ def native_enum_equality(
         _ => return Ok(None)
     mut native = false
     match external_enum_equality_kind(builder, owner)?:
-        Some(preserve_ne) =>
-            native = preserve_ne
+        Some(preserve_ne) => native = preserve_ne
         None => return Ok(None)
     mut operands: list[Operand] = []
     for source in [left, right]:
@@ -1020,7 +1056,15 @@ def native_enum_equality(
     mut path = "core::cmp::PartialEq::eq"
     if native and operator == BinOp.Ne:
         path = "core::cmp::PartialEq::ne"
-    builder.externals.append(ExternalFunction(path=path, type_arguments=[ty, ty], parameters=[reference, reference], return_type=PlanType.Bool, span=span))
+    builder.externals.append(
+        ExternalFunction(
+            path=path,
+            type_arguments=[ty, ty],
+            parameters=[reference, reference],
+            return_type=PlanType.Bool,
+            span=span,
+        ),
+    )
     output = temporary(builder, PlanType.Bool, span)
     terminate_call(builder, CalleeKind.Instantiated(path, [ty, ty]), operands, output, span)
     if operator == BinOp.Ne and not native:
@@ -1205,23 +1249,26 @@ def scalar_rvalue(
                 None => pass
             if operator == BinOp.Div:
                 mut frame_locals = builder.locals[builder.local_offset:]
-                if not float_operand(
-                    builder.nominals,
-                    frame_locals,
-                    left,
-                    span,
-                    builder.enums,
-                    builder.unions,
-                    builder.intrinsics,
-                )? or not float_operand(
-                    builder.nominals,
-                    frame_locals,
-                    right,
-                    span,
-                    builder.enums,
-                    builder.unions,
-                    builder.intrinsics,
-                )?:
+                if (
+                    not float_operand(
+                        builder.nominals,
+                        frame_locals,
+                        left,
+                        span,
+                        builder.enums,
+                        builder.unions,
+                        builder.intrinsics,
+                    )?
+                    or not float_operand(
+                        builder.nominals,
+                        frame_locals,
+                        right,
+                        span,
+                        builder.enums,
+                        builder.unions,
+                        builder.intrinsics,
+                    )?
+                ):
                     return Err("unsupported Body IR non-float true division operands")
             left_operand = scalar_operator_operand(builder, left, span)?
             right_operand = scalar_operator_operand(builder, right, span)?
@@ -1245,7 +1292,9 @@ def scalar_rvalue(
             if left_type == PlanType.Decimal:
                 return Ok(RvalueKind.Use(decimal_comparison(builder, operator, left_operand, right_operand, span)?))
             if is_text_or_nominal(left_type):
-                return Err(f"unsupported Body IR binary operator {operator:?} on text or nominal operands {left_type:?} at {span:?}")
+                return Err(
+                    f"unsupported Body IR binary operator {operator:?} on text or nominal operands {left_type:?} at {span:?}",
+                )
             return Ok(RvalueKind.Binary(binary_operator(operator)?, left_operand, right_operand))
         RustRvalue.IsInstance(value=value, value_ty=ty, target=target) =>
             return lower_union_isinstance(builder, value, ty, target.ty, span)
@@ -1267,13 +1316,11 @@ def scalar_rvalue(
         RustRvalue.Match(scrutinee=_value, arms=_arms) => return Err("unsupported Body IR Match")
 
 
-def comparison_collection_place(
-    mut builder: Builder,
-    value: &RustOperand,
-    span: SourceSpan,
-) -> Result[Place, str]:
-    """Borrow checked collection storage, materializing a byte literal or an indexed or sliced operand once before its
-    shared read. Callers classify both operands first, so only owners, projections and byte literals arrive here."""
+def comparison_collection_place(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
+    """
+    Borrow checked collection storage, materializing a byte literal or an indexed or sliced operand once before its
+    shared read. Callers classify both operands first, so only owners, projections and byte literals arrive here.
+    """
     match value:
         RustOperand.Constant(constant) => return bytes_literal(builder, constant, span)
         RustOperand.Place(read) =>
@@ -1327,13 +1374,13 @@ def tuple_equality(
     right: &RustOperand,
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
-    """Compare matching structural tuples through their native PartialEq implementation without consuming fields.
+    """
+    Compare matching structural tuples through their native PartialEq implementation without consuming fields.
 
     1. Require the same checked tuple layout on both sides.
     2. Borrow each operand once, retaining model-field and parameter storage.
     3. Call native equality and negate its result for inequality.
     """
-    # 1. Scalars and other aggregate kinds keep their own comparison paths.
     if not local_comparison_operand(left) or not local_comparison_operand(right):
         return Ok(None)
     mut owned = PlanType.Unit
@@ -1345,14 +1392,22 @@ def tuple_equality(
         None => return Ok(None)
     if tuple_comparison_layout(source_operand_type(builder, right, span)?) != Some((owned, reference)):
         return Err("unsupported Body IR tuple equality across different layouts")
-    # 2. The shared argument boundary preserves existing references and borrows owned tuple fields.
-    operands = [shared_nominal_argument(builder, left, reference, span)?,
-                shared_nominal_argument(builder, right, reference, span)?]
-    # 3. Aggregate equality is a trait call, never a primitive MIR binary operation.
+    operands = [shared_nominal_argument(builder, left, reference, span)?, shared_nominal_argument(
+        builder,
+        right,
+        reference,
+        span,
+    )?]
     output = temporary(builder, PlanType.Bool, span)
     instantiated_external_call(
-        builder, "core::cmp::PartialEq::eq", [owned, owned], [reference, reference], PlanType.Bool,
-        operands, output, span,
+        builder,
+        "core::cmp::PartialEq::eq",
+        [owned, owned],
+        [reference, reference],
+        PlanType.Bool,
+        operands,
+        output,
+        span,
     )?
     if operator == BinOp.Ne:
         negated = temporary(builder, PlanType.Bool, span)
@@ -1413,10 +1468,13 @@ def newtype_equality(
         return Err("unsupported Body IR newtype equality without retained PartialEq")
     if source_operand_type(builder, right, span)? != ty:
         return Err("unsupported Body IR equality between different newtypes")
-    operands = [
-        newtype_comparison_operand(builder, left, ty, reference, span)?,
-        newtype_comparison_operand(builder, right, ty, reference, span)?,
-    ]
+    operands = [newtype_comparison_operand(builder, left, ty, reference, span)?, newtype_comparison_operand(
+        builder,
+        right,
+        ty,
+        reference,
+        span,
+    )?]
     path = "core::cmp::PartialEq::eq"
     builder.externals.append(
         ExternalFunction(
@@ -1473,18 +1531,12 @@ def text_comparison(
     """Bind a checked comparison in a closed text instance to the same borrowed runtime operation as concrete text."""
     mut name = ""
     match operator:
-        BinOp.Eq =>
-            name = "equal_text"
-        BinOp.Ne =>
-            name = "unequal_text"
-        BinOp.Lt =>
-            name = "less_text"
-        BinOp.Le =>
-            name = "less_equal_text"
-        BinOp.Gt =>
-            name = "greater_text"
-        BinOp.Ge =>
-            name = "greater_equal_text"
+        BinOp.Eq => name = "equal_text"
+        BinOp.Ne => name = "unequal_text"
+        BinOp.Lt => name = "less_text"
+        BinOp.Le => name = "less_equal_text"
+        BinOp.Gt => name = "greater_text"
+        BinOp.Ge => name = "greater_equal_text"
         _ => return Ok(None)
     if not text_comparison_operand(builder, left, span)? or not text_comparison_operand(builder, right, span)?:
         return Ok(None)
@@ -1493,6 +1545,8 @@ def text_comparison(
     output = emit_text_helper(builder, name, PlanType.Bool, [PlanType.StringRef, PlanType.StringRef], operands, span)
     drop_borrowed_text_temporaries(builder, incoming, output.local, span)
     return Ok(Some(read_place(output, false, span)))
+
+
 # =====================================================================================================================
 # The frame builder and ownership
 # =====================================================================================================================
@@ -1581,6 +1635,8 @@ def loop_local_owner(mut builder: Builder, local: int) -> bool:
             current = parent
         return true
     return true
+
+
 # =====================================================================================================================
 # Statements and control flow
 # =====================================================================================================================
@@ -1605,8 +1661,7 @@ pub def lower_statement(module: &BodyIrModule, mut builder: Builder, statement: 
     """Preserve statement order and refuse constructs outside the supported slice."""
     mut span = location(statement.span, builder.source, builder.file)
     match builder.anchor:
-        Some(site) =>
-            span = site
+        Some(site) => span = site
         None => pass
     match statement.kind:
         RustStatementKind.Assign(place=destination, rvalue=value) =>
@@ -1825,8 +1880,7 @@ def lower_return(mut builder: Builder, value: &Option[RustOperand], span: Source
     """Store the result in the return slot, drop every live owner, and return."""
     mut result = literal(Constant.Unit, span)
     match value:
-        Some(operand) =>
-            result = return_operand(builder, operand, span)?
+        Some(operand) => result = return_operand(builder, operand, span)?
         None => pass
     return finish_return(builder, result, span)
 
@@ -2054,8 +2108,9 @@ def lower_local_assignment(
         RustRvalue.Generator(source=source, captured_operands=captures, body=generator) =>
             return lower_generator_expression(module, builder, target, source, captures, generator, span)
         RustRvalue.Use(operand) =>
-            if callable_copy_type(place_type(builder.locals, target)) or is_owned_callable(
-                place_type(builder.locals, target),
+            if (
+                callable_copy_type(place_type(builder.locals, target))
+                or is_owned_callable(place_type(builder.locals, target))
             ):
                 callable = stored_callable(builder, operand, span)?
                 match operand_type(builder, callable)?:
@@ -2111,7 +2166,10 @@ def lower_local_assignment(
         return collection_assignment(builder, target, value, span)
     if is_list(place_type(builder.locals, target)):
         return list_assignment(builder, target, value, span)
-    if place_type(builder.locals, target) in [PlanType.String, PlanType.StringRef] and target.local in builder.iteration_locals:
+    if (
+        place_type(builder.locals, target) in [PlanType.String, PlanType.StringRef]
+        and target.local in builder.iteration_locals
+    ):
         return initialize_text_iterator(builder, target, value, span)
     if place_type(builder.locals, target) == PlanType.String:
         return lower_string_assignment(builder, target, value, span)
@@ -2198,8 +2256,10 @@ def in_place_iteration_binding(
     value: &RustRvalue,
     span: SourceSpan,
 ) -> Result[bool, str]:
-    """Consume a checked exclusive pattern binding as a view of its polled element. Only a whole binding can change
-    its frame carrier; a later field write must keep the owner and its earlier assignments intact."""
+    """
+    Consume a checked exclusive pattern binding as a view of its polled element. Only a whole binding can change
+    its frame carrier; a later field write must keep the owner and its earlier assignments intact.
+    """
     if destination.projection != Projection.Whole or destination.local in builder.iteration_locals:
         return Ok(false)
     match value:
@@ -2533,7 +2593,13 @@ def lift_closure(
     )
 
 
-def lifted_frame(mut builder: Builder, name: str, arguments: list[PlanType], result: PlanType, span: SourceSpan) -> Builder:
+def lifted_frame(
+    mut builder: Builder,
+    name: str,
+    arguments: list[PlanType],
+    result: PlanType,
+    span: SourceSpan,
+) -> Builder:
     """
     Start a lifted function's frame: its result slot, its arguments, then the enclosing frame's locals.
 
@@ -2887,10 +2953,8 @@ def bind_step_arguments(
             arguments[index],
         )
         match arguments[index]:
-            PlanType.ZipIterator(_left, _right) =>
-                owned = true
-            PlanType.Closure(_signature) =>
-                owned = true
+            PlanType.ZipIterator(_left, _right) => owned = true
+            PlanType.Closure(_signature) => owned = true
             _ => pass
         lifted.emit(
             plan_assign(
@@ -2919,12 +2983,9 @@ def bind_closure_input(
     if storage != ty:
         return Err("invalid Body IR closure argument type")
     lifted.locals[destination].ty = storage
-    # Text and an owned collection, model, enum or carrier input move into the local the body reads, which then owns them; an
-    # exclusive borrow moves in too, and every other input is a copy or a shared view.
     mut owned = ty == PlanType.String or is_nominal_type(ty) or is_owned_collection(ty)
     match ty:
-        PlanType.ZipIterator(_left, _right) =>
-            owned = true
+        PlanType.ZipIterator(_left, _right) => owned = true
         _ => pass
     value = read_place(plan_place(argument, span), owned or is_exclusive_borrow(ty), span)
     lifted.emit(plan_assign(plan_place(destination, span), RvalueKind.Use(value), span))
@@ -3099,6 +3160,8 @@ def lower_loop(module: &BodyIrModule, mut builder: Builder, body: &RustBlock, sp
             _ => pass
     builder.closed[after] = not exits_to(builder.blocks, header, after)
     return Ok(None)
+
+
 # =====================================================================================================================
 # Calls
 # =====================================================================================================================
@@ -3174,26 +3237,24 @@ def lower_value_enum_method(
 
 
 pub def ordinal_value_owner(mut builder: Builder, ty: PlanType) -> Option[int]:
-    """Locate a source value enum by its retained layout identity, including a borrowed receiver.
+    """
+    Locate a source value enum by its retained layout identity, including a borrowed receiver.
 
     1. Read the enum's checked layout slot.
     2. Match its exact retained source identity.
     """
-    # 1. Read the enum's checked layout slot.
     mut index = -1
     match ty:
-        PlanType.Enum(owner, _name) =>
-            index = owner
-        PlanType.EnumRef(owner, _name) =>
-            index = owner
+        PlanType.Enum(owner, _name) => index = owner
+        PlanType.EnumRef(owner, _name) => index = owner
         _ => return None
     if index < 0 or index >= len(builder.enums):
         return None
-    # 2. Match its exact retained source identity.
     for owner in range(len(builder.value_enums)):
-        if builder.enums[index].canonical == builder.value_enums[owner].canonical and library_enum_item(
-            builder.enums[index],
-        ) == "":
+        if (
+            builder.enums[index].canonical == builder.value_enums[owner].canonical
+            and library_enum_item(builder.enums[index]) == ""
+        ):
             return Some(owner)
     return None
 
@@ -3221,9 +3282,11 @@ def lower_value_enum_ordinal_encoding(
                 None => return Ok(false)
                 Some(owner) =>
                     for implementation in module.trait_implementations:
-                        if implementation.owner == builder.value_enums[owner].canonical and Some(
-                            implementation.method.clone(),
-                        ) == target.canonical and implementation.implementation != implementation.method:
+                        if (
+                            implementation.owner == builder.value_enums[owner].canonical
+                            and Some(implementation.method.clone()) == target.canonical
+                            and implementation.implementation != implementation.method
+                        ):
                             return Ok(false)
                     if len(arguments) != 0:
                         return Err("unsupported Body IR value enum ordinal encoding arguments")
@@ -3253,18 +3316,17 @@ def value_enum_ordinal_schema(mut builder: Builder, owner: int) -> Result[str, s
             RustConstant.Str(value) =>
                 raw = str(value)
                 schema += f"{len(raw.encode())}:{raw};"
-            RustConstant.Int(value) =>
-                schema += f"{value};"
+            RustConstant.Int(value) => schema += f"{value};"
             _ => return Err("unsupported Body IR value enum ordinal raw carrier")
     return Ok(schema + ":v1")
 
 
 pub def value_enum_raw_type(mut builder: Builder, owner: int) -> PlanType:
-    """Return the checked scalar backing of a value enum.
+    """
+    Return the checked scalar backing of a value enum.
 
     1. Read its retained text or integer backing.
     """
-    # 1. Read its retained scalar backing.
     match builder.value_enums[owner].backing:
         ValueEnumBacking.Str => return PlanType.String
         ValueEnumBacking.Int => return PlanType.Int
@@ -3277,19 +3339,18 @@ pub def select_value_enum_raw(
     output: Place,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Write the raw value of the variant source holds into output, selected by its native tag.
+    """
+    Write the raw value of the variant source holds into output, selected by its native tag.
 
     1. Allocate a branch per checked variant.
     2. Materialize that variant's retained scalar value.
     3. Join the branches and retain owned text for cleanup.
     """
-    # 1. Allocate a branch per checked variant.
     declaration = builder.value_enums[owner]
     result_type = value_enum_raw_type(builder, owner)
     join = builder.new_block(span)
     owners = builder.owned
     branches = tag_branches(builder, source, len(declaration.variants), span)
-    # 2. Materialize that variant's retained scalar value.
     for slot in range(len(branches)):
         builder.current = branches[slot]
         raw_value: RustConstant = declaration.variants[slot].raw_value.clone()
@@ -3302,7 +3363,6 @@ pub def select_value_enum_raw(
             builder.emit(plan_assign(output, RvalueKind.Use(value), span))
         builder.finish(TerminatorKind.Goto(join), span)
         builder.owned = owners
-    # 3. Join the branches and retain owned text for cleanup.
     builder.current = join
     if result_type == PlanType.String:
         builder.owned.append(output.local)
@@ -3412,8 +3472,7 @@ def raw_value_matches(mut builder: Builder, raw: Place, value: RustConstant, spa
         return Ok(read_place(condition, false, span))
     mut text = ""
     match value:
-        RustConstant.Str(spelling) =>
-            text = str(spelling)
+        RustConstant.Str(spelling) => text = str(spelling)
         _ => return Err("unsupported Body IR value enum raw value")
     literal = owned_literal(builder, text, span)
     left = temporary(builder, PlanType.StringRef, span)
@@ -3537,7 +3596,9 @@ def lower_checked_method_call(
                                 )
                             None => pass
                     None => pass
-            return Err(f"unsupported Body IR Method without canonical identity for {target.name} at {builder.file}:{span.line}:{span.column} in {builder.name}")
+            return Err(
+                f"unsupported Body IR Method without canonical identity for {target.name} at {builder.file}:{span.line}:{span.column} in {builder.name}",
+            )
     if len(arguments) == 0:
         return Err("invalid Body IR Method missing receiver")
     if lower_global_method(module, builder, target, arguments, destination, span)?:
@@ -3554,7 +3615,6 @@ def lower_checked_method_call(
         return Ok(None)
     if lower_sdk_element_method(module, builder, target, arguments, destination, span)?:
         return Ok(None)
-    # A list or dictionary element receiver is reborrowed in its container; no native place names it.
     match element_method_owner(builder, arguments[0])?:
         Some(owner) =>
             index = owner_method_index(module, target, owner, builder)?
@@ -3623,12 +3683,16 @@ def concrete_iterator_collect(
     span: SourceSpan,
 ) -> Result[MethodTarget, str]:
     """Resolve a builtin opaque-Iterator terminal only through its concrete SDK owner's unique retained default (#1698)."""
-    if len(arguments) != 1 or len(target.type_args) != 0 or target.loaf_trait != None or target.native_trait_delegation != None:
+    if (
+        len(arguments) != 1
+        or len(target.type_args) != 0
+        or target.loaf_trait != None
+        or target.native_trait_delegation != None
+    ):
         return Err("unsupported Body IR opaque Iterator.collect call contract")
     mut owner = -1
     match argument_type(builder, arguments, 0, span)?:
-        PlanType.Model(index, _name) =>
-            owner = index
+        PlanType.Model(index, _name) => owner = index
         _ => return Err("unsupported Body IR opaque Iterator.collect without concrete receiver")
     declaration = module.nominal_declarations[owner]
     if library_item(declaration) == "":
@@ -3640,7 +3704,13 @@ def concrete_iterator_collect(
             continue
         for implementation in module.trait_implementations:
             method = implementation.method
-            if implementation.owner != declaration.canonical or method.origin != protocol.origin or method.namespace != SymbolNamespace.Member or method.kind != SemanticSourceTargetKind.Method or method.declaration_name != "collect":
+            if (
+                implementation.owner != declaration.canonical
+                or method.origin != protocol.origin
+                or method.namespace != SymbolNamespace.Member
+                or method.kind != SemanticSourceTargetKind.Method
+                or method.declaration_name != "collect"
+            ):
                 continue
             if not (
                 protocol.declaration_span.start <= method.declaration_span.start
@@ -3670,11 +3740,20 @@ def retained_iterator_default(
     match target.canonical:
         None => return false
         Some(identity) =>
-            if identity.kind != SemanticSourceTargetKind.Method or identity.namespace != SymbolNamespace.Member or identity.declaration_name not in ["iter", "collect"]:
+            if (
+                identity.kind != SemanticSourceTargetKind.Method
+                or identity.namespace != SymbolNamespace.Member
+                or identity.declaration_name not in ["iter", "collect"]
+            ):
                 return false
             mut standard = false
             for protocol in module.trait_declarations:
-                if standard_iterator_protocol(protocol) and protocol.origin == identity.origin and protocol.declaration_span.start <= identity.declaration_span.start and identity.declaration_span.end <= protocol.declaration_span.end:
+                if (
+                    standard_iterator_protocol(protocol)
+                    and protocol.origin == identity.origin
+                    and protocol.declaration_span.start <= identity.declaration_span.start
+                    and identity.declaration_span.end <= protocol.declaration_span.end
+                ):
                     standard = true
             if not standard:
                 return false
@@ -3849,10 +3928,8 @@ def source_method_symbol(
         Some(value) =>
             mut reference = PlanType.Unit
             match value:
-                PlanType.Model(owner, name) =>
-                    reference = PlanType.ModelRef(owner, name)
-                PlanType.Enum(owner, name) =>
-                    reference = PlanType.EnumRef(owner, name)
+                PlanType.Model(owner, name) => reference = PlanType.ModelRef(owner, name)
+                PlanType.Enum(owner, name) => reference = PlanType.EnumRef(owner, name)
                 _ => return symbol
             wrapper_name = f"{builder.name}__owned_equality_{symbol}"
             mut wrapper = lifted_frame(builder, wrapper_name, [reference, value], PlanType.Bool, span)
@@ -3948,10 +4025,23 @@ def sdk_forwarded_type_arguments(
             match builder.callable_identity:
                 None => return Ok(closed)
                 Some(caller) =>
-                    if selected.kind != SemanticSourceTargetKind.Method or caller.kind != SemanticSourceTargetKind.Method or selected.namespace != SymbolNamespace.Member or caller.namespace != SymbolNamespace.Member:
+                    if (
+                        selected.kind != SemanticSourceTargetKind.Method
+                        or caller.kind != SemanticSourceTargetKind.Method
+                        or selected.namespace != SymbolNamespace.Member
+                        or caller.namespace != SymbolNamespace.Member
+                    ):
                         return Ok(closed)
                     for protocol in module.trait_declarations:
-                        if standard_iterator_protocol(protocol) and selected.origin == protocol.origin and caller.origin == protocol.origin and protocol.declaration_span.start <= selected.declaration_span.start and selected.declaration_span.end <= protocol.declaration_span.end and protocol.declaration_span.start <= caller.declaration_span.start and caller.declaration_span.end <= protocol.declaration_span.end:
+                        if (
+                            standard_iterator_protocol(protocol)
+                            and selected.origin == protocol.origin
+                            and caller.origin == protocol.origin
+                            and protocol.declaration_span.start <= selected.declaration_span.start
+                            and selected.declaration_span.end <= protocol.declaration_span.end
+                            and protocol.declaration_span.start <= caller.declaration_span.start
+                            and caller.declaration_span.end <= protocol.declaration_span.end
+                        ):
                             authenticated = true
     if not authenticated:
         return Ok(closed)
@@ -3993,8 +4083,6 @@ def method_ordinary_operands(
     span: SourceSpan,
 ) -> Result[list[Operand], str]:
     """Bind the ordinary slots once, excluding the method's separately prepared receiver."""
-    # A selected body with only its receiver proves there are no ordinary slots to bind. Keep every resolved
-    # binding on the normal validation path, so malformed slot/default records still refuse.
     if len(body.params) == 1 and len(arguments) == 1:
         match target.binding:
             RustArgumentBinding.UnresolvedPositional => return Ok([])
@@ -4003,16 +4091,13 @@ def method_ordinary_operands(
     for position in range(1, len(body.params)):
         mut ty = call_parameter_type(builder, body, body.params[position])?
         match source_equality_value(module, target, body):
-            Some(value) =>
-                ty = value
+            Some(value) => ty = value
             None => pass
         types.append(ty)
     mut ordinary: list[Operand] = []
     match method_default_arguments(module, builder, target, arguments, body, types, span)?:
-        Some(values) =>
-            ordinary = values
-        None =>
-            ordinary = ordered_slot_operands(builder, target.binding, arguments, types, span, 1)?
+        Some(values) => ordinary = values
+        None => ordinary = ordered_slot_operands(builder, target.binding, arguments, types, span, 1)?
     return Ok(ordinary)
 
 
@@ -4077,8 +4162,7 @@ def lower_static_sdk_method(
     owner = native_source_type(builder.nominals, builder.enums, builder.unions, global.ty, builder.intrinsics)?
     mut index = -1
     match owner:
-        PlanType.Model(owner_index, _name) =>
-            index = owner_index
+        PlanType.Model(owner_index, _name) => index = owner_index
         _ => return Err("unsupported Body IR SDK static method nonmodel carrier")
     mut names: list[str] = []
     for name in delegation.type_parameters:
@@ -4112,8 +4196,7 @@ def lower_static_sdk_method(
             _ => return Err("unsupported Body IR SDK static method borrowed or unproven result")
     mut path = ""
     match delegation.rust_path():
-        Some(native_path) =>
-            path = str(native_path)
+        Some(native_path) => path = str(native_path)
         None => return Err("unsupported Body IR SDK static method native identity")
     mut type_arguments: list[PlanType] = []
     for argument in closed:
@@ -4149,8 +4232,7 @@ def static_sdk_receiver(
     mut mutable = false
     mut referent = RustType.Unknown
     match declared:
-        RustType.Ref(inner) =>
-            referent = substitute(inner, names, arguments)?
+        RustType.Ref(inner) => referent = substitute(inner, names, arguments)?
         RustType.RefMut(inner) =>
             mutable = true
             referent = substitute(inner, names, arguments)?
@@ -4186,8 +4268,7 @@ def static_sdk_forwarder(
         locals.append(Local(ty=inputs[index], span=span))
         mut moved = index != 0
         match inputs[index]:
-            PlanType.ModelMutRef(_owner, _name) =>
-                moved = true
+            PlanType.ModelMutRef(_owner, _name) => moved = true
             _ => pass
         arguments.append(read_place(plan_place(index + 1, span), moved, span))
     invocation = TerminatorKind.Call(Callee(kind=callee, span=span), arguments, plan_place(0, span), 1, Unwind.Continue)
@@ -4240,9 +4321,15 @@ def lower_static_method_body(
     )?
     result = return_representation(body, declared_result)?
     if not numeric_carrier(result):
-        # Owned models and list snapshots move out of the call; neither borrows from the guarded storage.
         match result:
-            (PlanType.Bool | PlanType.Unit | PlanType.String | PlanType.FunctionPointer(_) | PlanType.Model(_, _) | PlanType.List(_, _)) => pass
+            (
+                PlanType.Bool
+                | PlanType.Unit
+                | PlanType.String
+                | PlanType.FunctionPointer(_)
+                | PlanType.Model(_, _)
+                | PlanType.List(_, _)
+            ) => pass
             _ => return Err("unsupported Body IR global method borrowed or unproven result")
     operands = method_ordinary_operands(module, builder, target, arguments, body, span)?
     initialize_module_statics(builder, static_owner(builder.program.statics.as_ref()[slot]), span)
@@ -4263,8 +4350,7 @@ def lower_static_method_body(
         mut root_reference = shared_receiver_type(owner)?
         if read.fact == OwnershipFact.MutBorrow:
             match owner:
-                PlanType.Model(index, name) =>
-                    root_reference = PlanType.ModelMutRef(index, name)
+                PlanType.Model(index, name) => root_reference = PlanType.ModelMutRef(index, name)
                 _ => return Err("unsupported Body IR static projection mutable root")
         wrapper = f"{builder.name}__incan_static_projection_{slot}_{len(builder.synthesized)}"
         synthesize(builder, static_projection_forwarder(wrapper, symbol, root_reference, fields, inputs, result, span))
@@ -4295,8 +4381,7 @@ def static_projection_forwarder(
     field = Place(local=1, projection=Projection.DerefFields(fields), span=span)
     mut borrow = RvalueKind.Borrow(field)
     match root_reference:
-        PlanType.ModelMutRef(_owner, _name) =>
-            borrow = RvalueKind.MutBorrow(field)
+        PlanType.ModelMutRef(_owner, _name) => borrow = RvalueKind.MutBorrow(field)
         _ => pass
     invocation = TerminatorKind.Call(
         Callee(kind=CalleeKind.Planned(method), span=span),
@@ -4310,7 +4395,11 @@ def static_projection_forwarder(
         parameters=parameters,
         return_type=result,
         locals=locals,
-        blocks=[plan_block([plan_assign(receiver, borrow, span)], invocation, span), plan_block([], TerminatorKind.Return, span)],
+        blocks=[plan_block([plan_assign(receiver, borrow, span)], invocation, span), plan_block(
+            [],
+            TerminatorKind.Return,
+            span,
+        )],
         span=span,
     )
 
@@ -4348,10 +4437,9 @@ def lower_library_method(
     mut ordinary_types: list[PlanType] = []
     for index in range(1, len(delegation.parameters)):
         parameter: RustType = substitute(delegation.parameters[index], names, closed)?
-        _ = require_native_union_signature(parameter, builder.intrinsics)?
+        _ = require_native_union_signature(parameter, builder.intrinsics, native_delegation(delegation))?
         match delegation.declaration_frame():
-            Some(frame) =>
-                ordinary_types.append(call_parameter_type(builder, frame, frame.params[index])?)
+            Some(frame) => ordinary_types.append(call_parameter_type(builder, frame, frame.params[index])?)
             None =>
                 ordinary_types.append(
                     native_source_type(builder.nominals, builder.enums, builder.unions, parameter, builder.intrinsics)?,
@@ -4364,8 +4452,7 @@ def lower_library_method(
     mut argument_types = ordinary_types.clone()
     for index in range(len(argument_types)):
         match argument_types[index]:
-            PlanType.SharedCallable(signature) =>
-                argument_types[index] = PlanType.Closure(signature)
+            PlanType.SharedCallable(signature) => argument_types[index] = PlanType.Closure(signature)
             _ => pass
     result = library_method_result(builder, delegation, target, destination, names, closed, span)?
     boxed_operands = library_call_operands(
@@ -4454,11 +4541,8 @@ def library_method_arguments(
                     closed = library_receiver_arguments(module, builder, reference, ["Self"])?
                 _ =>
                     match selected.receiver_type:
-                        Some(receiver) =>
-                            closed = checked_type_arguments(builder, [receiver.clone()])?
+                        Some(receiver) => closed = checked_type_arguments(builder, [receiver.clone()])?
                         None => return Err("unsupported Body IR SDK scalar receiver without checked Self")
-            # A selected native signature has already closed its trait binders; only Self remains a source binder.
-            # Its complete native argument vector is still substituted and validated at the external call boundary.
             if names == ["Self"] and len(delegation.native_type_arguments) != 0:
                 return Ok(closed)
             for argument in checked_type_arguments(builder, selected.type_arguments)?:
@@ -4485,7 +4569,7 @@ def library_method_result(
             Some(place) => return Ok(place_type(builder.locals, scalar_place(builder, place, span)?))
             None => pass
     returned: RustType = substitute(delegation.return_type, names, closed)?
-    _ = require_native_union_signature(returned, builder.intrinsics)?
+    _ = require_native_union_signature(returned, builder.intrinsics, native_delegation(delegation))?
     return native_source_type(builder.nominals, builder.enums, builder.unions, returned, builder.intrinsics)
 
 
@@ -4500,10 +4584,8 @@ def library_receiver_arguments(
         return Ok([])
     mut owner = -1
     match place_type(builder.locals, receiver):
-        PlanType.ModelRef(index, _name) =>
-            owner = index
-        PlanType.ModelMutRef(index, _name) =>
-            owner = index
+        PlanType.ModelRef(index, _name) => owner = index
+        PlanType.ModelMutRef(index, _name) => owner = index
         _ => return Err("unsupported Body IR SDK method receiver type arguments")
     declaration = builder.nominals[owner]
     arguments = instance_arguments(module, declaration)?
@@ -4598,7 +4680,6 @@ def lower_standard_slot(
         selected = receiver_method_identity(module, target, builder, arguments[0], span)?
         if selected != target.canonical:
             return Ok(false)
-        # A retained default points at the protocol itself; only a distinct implementation overrides that slot.
         json_default = true
     if is_json_serialize_method(target) or is_derived_clone(target) or is_derived_display(target):
         if not json_default and receiver_declares_method(module, builder, arguments[0], slot_name(target), span)?:
@@ -4676,8 +4757,7 @@ def lower_named_target(
             operands = ordered_slot_operands(builder, target.binding, arguments, [PlanType.String], span, 0, true, false)?
             mut output = temporary(builder, result, span)
             match destination:
-                Some(place) =>
-                    output = scalar_place(builder, place, span)?
+                Some(place) => output = scalar_place(builder, place, span)?
                 None => pass
             if place_type(builder.locals, output) != result:
                 return Err("unsupported Body IR string conversion Result destination")
@@ -4795,10 +4875,15 @@ def emit_selected_body_call(
     """Preserve the selected body's result carrier and unwind cleanup for direct and guarded static calls."""
     mut output = plan_place(0, span)
     match destination:
-        Some(place) =>
-            output = scalar_place(builder, place, span)?
+        Some(place) => output = scalar_place(builder, place, span)?
         None =>
-            result = native_source_type(builder.nominals, builder.enums, builder.unions, body.return_type, builder.intrinsics)?
+            result = native_source_type(
+                builder.nominals,
+                builder.enums,
+                builder.unions,
+                body.return_type,
+                builder.intrinsics,
+            )?
             output = temporary(builder, result, span)
     declared = native_source_type(builder.nominals, builder.enums, builder.unions, body.return_type, builder.intrinsics)?
     result_type = return_representation(body, declared)?
@@ -4813,7 +4898,8 @@ pub def lower_callable_result(
     result_type: PlanType,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Replace an owned return through its checked destination carrier, preserving unwind cleanup.
+    """
+    Replace an owned return through its checked destination carrier, preserving unwind cleanup.
 
     1. Materialize owned results in their declared return carrier.
     2. Apply the ordinary checked value-boundary conversions before dropping the old destination.
@@ -4827,18 +4913,19 @@ pub def lower_callable_result(
             builder.locals[output.local].ty = result_type
             owned_closure = true
         _ => pass
-    if result_type == PlanType.String or is_nominal_type(result_type) or is_owned_collection(result_type) or owned_closure or is_future(
-        result_type,
+    if (
+        result_type == PlanType.String
+        or is_nominal_type(result_type)
+        or is_owned_collection(result_type)
+        or owned_closure
+        or is_future(result_type)
     ):
-        # 1. Materialize the result in its declared return carrier.
         result = temporary(builder, result_type, span)
         terminate_call(builder, callee, operands, result, span)
         builder.owned.append(result.local)
-        # 2. Convert the checked boundary before replacing the old destination.
         target_type = place_type(builder.locals, output)
         value = boundary_plan_operand(builder, read_place(result, true, span), target_type, span)?
         drop_owned(builder, output.local, span)
-        # 3. Transfer exactly the selected owner to its destination.
         forget_moved_arguments(builder, [value])
         builder.emit(plan_assign(output, RvalueKind.Use(value), span))
         builder.owned.append(output.local)
@@ -4890,10 +4977,8 @@ pub def call_callable_place(
     result = signature[-1]
     mut output = plan_place(0, span)
     match destination:
-        Some(place) =>
-            output = scalar_place(builder, place, span)?
-        None =>
-            output = temporary(builder, result, span)
+        Some(place) => output = scalar_place(builder, place, span)?
+        None => output = temporary(builder, result, span)
     match place_type(builder.locals, callable):
         PlanType.ClosureOnce(_held) =>
             if held.fact != OwnershipFact.Move or not held.last_use:
@@ -4991,32 +5076,49 @@ def callable_argument(
                     pointer = temporary(builder, PlanType.FunctionPointer(signature), span)
                     builder.emit(plan_assign(pointer, RvalueKind.ReifyFunction(read_place(place, false, span)), span))
                     return pointer_callable_argument(builder, pointer, signature, span)
-                PlanType.FunctionPointer(_held) =>
-                    return pointer_callable_argument(builder, place, signature, span)
+                PlanType.FunctionPointer(_held) => return pointer_callable_argument(builder, place, signature, span)
                 _ => return callable_object(builder, place, signature, span)
         _ => return Err("unsupported Body IR constant passed to a closure-holding parameter")
 
 
-def pointer_callable_argument(mut builder: Builder, pointer: Place, signature: list[PlanType], span: SourceSpan) -> Result[Operand, str]:
+def pointer_callable_argument(
+    mut builder: Builder,
+    pointer: Place,
+    signature: list[PlanType],
+    span: SourceSpan,
+) -> Result[Operand, str]:
     """Box a function pointer behind the same local forwarding environment for source and compiled function items."""
     boxed = pointer_callable_owner(builder, pointer, signature, span)?
     return callable_object(builder, boxed, signature, span)
 
 
-def pointer_callable_owner(mut builder: Builder, pointer: Place, signature: list[PlanType], span: SourceSpan) -> Result[Place, str]:
+def pointer_callable_owner(
+    mut builder: Builder,
+    pointer: Place,
+    signature: list[PlanType],
+    span: SourceSpan,
+) -> Result[Place, str]:
     """Own a forwarding environment so either a borrowed argument or a union payload retains the function value."""
     _ = closure_arguments(signature)?
     name = f"__incan_pointer_closure_{builder.name}_{len(builder.synthesized)}"
     synthesize(builder, pointer_forwarder(name, signature, span))
     constructor = f"{name}_new"
-    synthesize(builder, closure_constructor(constructor, name, [PlanType.FunctionPointer(signature)], signature, false, span))
+    synthesize(
+        builder,
+        closure_constructor(constructor, name, [PlanType.FunctionPointer(signature)], signature, false, span),
+    )
     boxed = temporary(builder, PlanType.Closure(signature), span)
     terminate_call(builder, CalleeKind.Planned(constructor), [read_place(pointer, false, span)], boxed, span)
     builder.owned.append(boxed.local)
     return Ok(boxed)
 
 
-def carrier_callable_operand(mut builder: Builder, value: Operand, target: PlanType, span: SourceSpan) -> Result[Operand, str]:
+def carrier_callable_operand(
+    mut builder: Builder,
+    value: Operand,
+    target: PlanType,
+    span: SourceSpan,
+) -> Result[Operand, str]:
     """Fill an environment-owning payload selected by the retained union declaration, preserving captured values."""
     mut owner = -1
     match target:
@@ -5036,7 +5138,12 @@ def carrier_callable_operand(mut builder: Builder, value: Operand, target: PlanT
     return Ok(value)
 
 
-def owned_callable_value(mut builder: Builder, value: Operand, signature: list[PlanType], span: SourceSpan) -> Result[Operand, str]:
+def owned_callable_value(
+    mut builder: Builder,
+    value: Operand,
+    signature: list[PlanType],
+    span: SourceSpan,
+) -> Result[Operand, str]:
     """Retain a function item's forwarding environment at any environment-owning value boundary."""
     source = operand_type(builder, value)?
     if source == PlanType.Closure(signature):
@@ -5049,9 +5156,6 @@ def owned_callable_value(mut builder: Builder, value: Operand, signature: list[P
         _ => builder.emit(plan_assign(pointer, RvalueKind.Use(value), span))
     boxed = pointer_callable_owner(builder, pointer, signature, span)?
     return Ok(read_place(boxed, true, span))
-# =====================================================================================================================
-# Plain model construction and field replacement
-# =====================================================================================================================
 
 
 def lower_loaf_call(
@@ -5081,7 +5185,6 @@ def lower_loaf_call(
                 match identity.origin:
                     SymbolOrigin.RustCrate(_path) =>
                         written = checked_type_arguments(builder, target.type_args)?
-                        # A template from another source declaration may use binders absent from this frame.
                         match checked_type_arguments(builder, callable.native_type_arguments):
                             Err(reason) =>
                                 mismatch = reason
@@ -5090,9 +5193,14 @@ def lower_loaf_call(
                                 if written != retained:
                                     mismatch = f"native arguments differ: call {written}, declaration {retained}"
                                     continue
+                        if not native_result_matches(builder, callable, destination)?:
+                            mismatch = "retained native signatures disagree with the checked result slot"
+                            continue
                     _ => pass
         return lower_delegated_call(module, builder, callable, target, arguments, destination, span)
-    return Err(f"unsupported Body IR imported or unresolved canonical call target {target.name} in {builder.name}: {mismatch}")
+    return Err(
+        f"unsupported Body IR imported or unresolved canonical call target {target.name} in {builder.name}: {mismatch}",
+    )
 
 
 def lower_delegated_call(
@@ -5115,11 +5223,7 @@ def lower_delegated_call(
     mut names: list[str] = []
     for name in delegation.type_parameters:
         names.append(str(name))
-    mut checked_rust = false
-    match delegation.canonical.origin:
-        SymbolOrigin.RustCrate(_path) =>
-            checked_rust = true
-        _ => pass
+    checked_rust = native_delegation(delegation)
     mut closed = library_function_arguments(builder, target, names)?
     if len(closed) != len(names) and len(target.type_args) == 0 and builder.local_offset == 0:
         match target.receiver_type:
@@ -5127,15 +5231,12 @@ def lower_delegated_call(
                 match builder.async_source_body:
                     Some(body) =>
                         match async_call_type_arguments(body, delegation, arguments, destination)?:
-                            Some(arguments) =>
-                                closed = arguments
+                            Some(arguments) => closed = arguments
                             None => pass
                     None => pass
             Some(_receiver) => pass
     if len(closed) != len(names) or (not checked_rust and len(names) == 0 and len(target.type_args) != 0):
         return Err("unsupported Body IR nonlocal function with type parameters")
-    # A checked native signature in a source body can name that body's binders. A compiled Loaf instead owns its
-    # declaration binders; neither signature infers a type from a runtime operand.
     mut signature_names = names
     mut signature_arguments = closed
     if checked_rust:
@@ -5144,7 +5245,7 @@ def lower_delegated_call(
     mut parameters: list[PlanType] = []
     for parameter in delegation.parameters:
         instantiated: RustType = substitute(parameter, signature_names, signature_arguments)?
-        _ = require_native_union_signature(instantiated, builder.intrinsics)?
+        _ = require_native_union_signature(instantiated, builder.intrinsics, checked_rust)?
         parameters.append(
             native_source_type(builder.nominals, builder.enums, builder.unions, instantiated, builder.intrinsics)?,
         )
@@ -5155,7 +5256,7 @@ def lower_delegated_call(
                 parameters.append(call_parameter_type(builder, frame, frame.params[index])?)
         None => pass
     returned: RustType = substitute(delegation.return_type, signature_names, signature_arguments)?
-    _ = require_native_union_signature(returned, builder.intrinsics)?
+    _ = require_native_union_signature(returned, builder.intrinsics, checked_rust)?
     mut result = native_source_type(builder.nominals, builder.enums, builder.unions, returned, builder.intrinsics)?
     match delegation.declaration_frame():
         Some(frame) => result = return_representation(frame, result)?
@@ -5186,6 +5287,13 @@ def lower_delegated_call(
             return instantiated_external_call(builder, path, type_arguments, parameters, result, operands, output, span)
 
 
+def native_delegation(delegation: &RustLoafCallable) -> bool:
+    """Distinguish metadata-selected Rust items from compiled source Loaf signatures before admitting local carriers."""
+    match delegation.canonical.origin:
+        SymbolOrigin.RustCrate(_path) => return true
+        _ => return false
+
+
 def library_function_arguments(
     mut builder: Builder,
     target: &RustNamedCallableTarget,
@@ -5197,13 +5305,11 @@ def library_function_arguments(
     mut closed: list[RustType] = []
     mut associated = false
     match target.canonical:
-        Some(identity) =>
-            associated = identity.kind == SemanticSourceTargetKind.Method
+        Some(identity) => associated = identity.kind == SemanticSourceTargetKind.Method
         None => pass
     if names[0] == "Self" and associated:
         match target.receiver_type:
-            Some(receiver) =>
-                closed = checked_type_arguments(builder, [receiver.clone()])?
+            Some(receiver) => closed = checked_type_arguments(builder, [receiver.clone()])?
             None => return Err("unsupported Body IR SDK associated slot without checked Self")
         for argument in checked_type_arguments(builder, target.type_args)?:
             closed.append(argument.clone())
@@ -5212,8 +5318,6 @@ def library_function_arguments(
         Some(RustType.Generic(base=_base, args=arguments)) =>
             owner_arguments = checked_type_arguments(builder, arguments)?
             if len(target.type_args) != 0:
-                # Older checked nominal calls also retain their owner arguments on the associated call. Exact
-                # agreement across both views and all declared binders preserves that proven representation.
                 retained = checked_type_arguments(builder, target.type_args)?
                 if len(owner_arguments) != len(names) or retained != owner_arguments:
                     return Err("unsupported Body IR SDK owner and method type arguments")
@@ -5239,16 +5343,7 @@ def library_call_operands(
     method receiver, the record's first parameter.
     """
     if has_defaulted_slots(binding):
-        return library_default_arguments(
-            module,
-            builder,
-            delegation,
-            binding,
-            arguments[offset:],
-            types,
-            span,
-            offset,
-        )
+        return library_default_arguments(module, builder, delegation, binding, arguments[offset:], types, span, offset)
     if delegation.declaration_frame != None:
         return ordered_slot_operands(builder, binding, arguments, types, span, offset, false, positional)
     return ordered_slot_operands(builder, binding, arguments, types, span, offset, true, positional)
@@ -5298,7 +5393,11 @@ def ordered_arguments(
     return ordered_slot_operands(builder, binding, elements, types, span, 0)
 
 
-pub def call_parameter_type(mut builder: Builder, body: &RustBody, parameter: &RustCallableParam) -> Result[PlanType, str]:
+pub def call_parameter_type(
+    mut builder: Builder,
+    body: &RustBody,
+    parameter: &RustCallableParam,
+) -> Result[PlanType, str]:
     """
     The representation a call passes for one declared parameter, shared by functions and methods.
 
@@ -5314,7 +5413,8 @@ pub def call_parameter_type(mut builder: Builder, body: &RustBody, parameter: &R
 
 
 def stored_parameter_type(body: &RustBody, parameter: &RustCallableParam, ty: PlanType) -> Result[PlanType, str]:
-    """A deferred producer owns its value parameters; ordinary frames retain the shared collection ABI.
+    """
+    A deferred producer owns its value parameters; ordinary frames retain the shared collection ABI.
 
     Call materialization, frame locals and constructor signatures use this same storage decision so an escaping
     generator never captures a borrow of a caller's list snapshot. Explicit and mutable borrows remain refused.
@@ -5337,7 +5437,8 @@ def has_defaulted_slots(binding: &RustArgumentBinding) -> bool:
     """Report whether a resolved call leaves at least one declared slot to its default."""
     match binding:
         RustArgumentBinding.Resolved(arguments=_arguments, defaulted_slots=defaults) => return len(defaults) != 0
-        RustArgumentBinding.ResolvedDeclarationOrder(arguments=_arguments, defaulted_slots=defaults) => return len(defaults) != 0
+        RustArgumentBinding.ResolvedDeclarationOrder(arguments=_arguments, defaulted_slots=defaults) =>
+            return len(defaults) != 0
         _ => return false
 
 
@@ -5411,8 +5512,7 @@ def resolved_slot_operands(
             return Err("invalid Body IR argument slot map")
         occupied.append(slot)
         match elements[index + offset].as_one():
-            Some(value) =>
-                operands[slot] = call_argument_operand(builder, value, types[slot], span, owned)?
+            Some(value) => operands[slot] = call_argument_operand(builder, value, types[slot], span, owned)?
             None => return Err("unsupported Body IR named or spread ArgumentElement")
     return Ok(operands)
 
@@ -5517,10 +5617,14 @@ def shared_nominal_argument(
                         return Err("unsupported Body IR shared tuple owner mismatch")
                 PlanType.Model(owner, name) =>
                     if ty != PlanType.ModelRef(owner, name):
-                        return Err(f"unsupported Body IR shared receiver owner mismatch: {source:?} requires {ty:?} in {builder.name} at {span.file}:{span.line}")
+                        return Err(
+                            f"unsupported Body IR shared receiver owner mismatch: {source:?} requires {ty:?} in {builder.name} at {span.file}:{span.line}",
+                        )
                 PlanType.Enum(owner, name) =>
                     if ty != PlanType.EnumRef(owner, name):
-                        return Err(f"unsupported Body IR shared receiver owner mismatch: {source:?} requires {ty:?} in {builder.name} at {span.file}:{span.line}")
+                        return Err(
+                            f"unsupported Body IR shared receiver owner mismatch: {source:?} requires {ty:?} in {builder.name} at {span.file}:{span.line}",
+                        )
                 _ => return Err("unsupported Body IR shared receiver outside its nominal frame")
             reference = temporary(builder, ty, span)
             builder.emit(plan_assign(reference, RvalueKind.Borrow(receiver), span))
@@ -5634,10 +5738,8 @@ def lower_numeric_helper(
         return Ok(None)
     mut suffix = ""
     match ty:
-        PlanType.Int =>
-            suffix = "i64"
-        PlanType.Float =>
-            suffix = "f64"
+        PlanType.Int => suffix = "i64"
+        PlanType.Float => suffix = "f64"
         _ => return Err("unsupported Body IR division or modulo type")
     path = f"incan_std_core::num::{operation}_{suffix}"
     arguments = [value_operand(builder, left, span)?, value_operand(builder, right, span)?]
@@ -5687,21 +5789,35 @@ def lower_runtime_helper(
 ) -> Result[None, str]:
     """Dispatch retained runtime helper identities."""
     match helper:
+        RustHelper.InstallPanicHook =>
+            if len(arguments) != 1:
+                return Err("invalid Body IR panic-hook registration arity")
+            callback = argument_value(builder, arguments, 0, span)?
+            match operand_type(builder, callback)?:
+                PlanType.FunctionItem(_name, _signature) => pass
+                PlanType.FunctionPointer(_signature) => pass
+                _ => return Err("unsupported native panic callback with a captured environment")
+            signature = callable_signature(operand_type(builder, callback)?)?
+            pointer = function_argument(builder, PlanType.FunctionPointer(signature), callback, span)?
+            output = call_destination(builder, destination, PlanType.Unit, span)?
+            terminate_call(builder, CalleeKind.InstallPanicHook(signature), [pointer], output, span)
+            return Ok(None)
         RustHelper.RaiseValueError =>
             if len(arguments) != 1:
                 return Err("invalid Body IR RaiseValueError arity")
             match destination:
                 Some(_place) => return Err("invalid Body IR diverging helper destination")
                 None => pass
-            operands = fixed_arguments(builder, arguments, span)?
-            if operand_type(builder, operands[0])? != PlanType.String:
-                return Err("invalid Body IR RaiseValueError message type")
-            output = temporary(builder, PlanType.Unit, span)
+            mut operands: list[Operand] = []
+            match arguments[0].as_one():
+                Some(message) => operands.append(borrow_str_operand(builder, message, span)?)
+                None => return Err("invalid Body IR RaiseValueError message spread")
+            output = temporary(builder, PlanType.Never, span)
             external_call(
                 builder,
-                "incan_native_runtime::raise_value_error",
-                [PlanType.String],
-                PlanType.Unit,
+                "incan_std_core::errors::raise_value_error",
+                [PlanType.StrRef],
+                PlanType.Never,
                 operands,
                 output,
                 span,
@@ -5817,8 +5933,7 @@ def lower_file_builtin(
     mut output = plan_place(0, span)
     match destination:
         None => return Err("unsupported Body IR file builtin without result storage")
-        Some(place) =>
-            output = scalar_place(builder, place, span)?
+        Some(place) => output = scalar_place(builder, place, span)?
     result = place_type(builder.locals, output)
     _owner, declaration = carrier_layout(builder, result)?
     if declaration.carrier != "Result" or len(declaration.variants) != 2:
@@ -5954,10 +6069,10 @@ def lower_zip_builtin(
                 return Err("unsupported Body IR zip non-list operands")
             first_leaf, first_depth = require_list_shape(first_type, "unsupported Body IR zip left")?
             second_leaf, second_depth = require_list_shape(second_type, "unsupported Body IR zip right")?
-            if list_element(first_leaf, first_depth) != tuple_element_type(left) or list_element(
-                second_leaf,
-                second_depth,
-            ) != tuple_element_type(right):
+            if (
+                list_element(first_leaf, first_depth) != tuple_element_type(left)
+                or list_element(second_leaf, second_depth) != tuple_element_type(right)
+            ):
                 return Err("unsupported Body IR zip checked operand type")
             drop_owned(builder, output.local, span)
             zip_call(
@@ -5986,7 +6101,10 @@ def lower_enumerate_builtin(
         return Err("invalid Body IR enumerate arity")
     source_type = argument_type(builder, arguments, 0, span)?
     mut element_type = PlanType.String
-    byte_source = source_type in [PlanType.List(ListLeaf.U8, 1), PlanType.ListRef(ListLeaf.U8, 1), PlanType.ListMutRef(ListLeaf.U8, 1), PlanType.FrozenBytes]
+    byte_source = source_type in [PlanType.List(ListLeaf.U8, 1), PlanType.ListRef(ListLeaf.U8, 1), PlanType.ListMutRef(
+        ListLeaf.U8,
+        1,
+    ), PlanType.FrozenBytes]
     if source_type not in [PlanType.String, PlanType.StringRef, PlanType.FrozenStr]:
         if byte_source:
             element_type = PlanType.Int
@@ -6014,7 +6132,15 @@ def lower_enumerate_builtin(
     else:
         if byte_source:
             reference = enumerated_byte_argument(builder, arguments, source_type, span)?
-            external_call(builder, "incan_native_runtime::enumerate_bytes", [PlanType.ListRef(ListLeaf.U8, 1)], result, [reference], output, span)
+            external_call(
+                builder,
+                "incan_native_runtime::enumerate_bytes",
+                [PlanType.ListRef(ListLeaf.U8, 1)],
+                result,
+                [reference],
+                output,
+                span,
+            )
             builder.owned.append(output.local)
             return Ok(None)
         receiver = shared_receiver_place(builder, arguments, 0, span)?
@@ -6098,12 +6224,9 @@ def serialize_scalar_json(
     ty = operand_type(builder, operand)?
     mut name = ""
     match ty:
-        PlanType.Int =>
-            name = "serialize_int"
-        PlanType.Float =>
-            name = "serialize_float"
-        PlanType.Bool =>
-            name = "serialize_bool"
+        PlanType.Int => name = "serialize_int"
+        PlanType.Float => name = "serialize_float"
+        PlanType.Bool => name = "serialize_bool"
         _ => return Err(f"unsupported Body IR JSON serialization type {ty:?}")
     external_call(builder, f"incan_native_runtime::{name}", [ty], PlanType.String, [operand], result, span)
     return Ok(None)
@@ -6177,15 +6300,11 @@ def lower_print(
     format_parts(builder, text, parts, values, span)
     mut output = temporary(builder, PlanType.Unit, span)
     match destination:
-        Some(place) =>
-            output = scalar_place(builder, place, span)?
+        Some(place) => output = scalar_place(builder, place, span)?
         None => pass
     path = "incan_native_runtime::println_text"
     external_call(builder, path, [PlanType.String], PlanType.Unit, [read_place(text, true, span)], output, span)
     return Ok(None)
-# =====================================================================================================================
-# Formatting and strings
-# =====================================================================================================================
 
 
 def lower_scalar_conversion(
@@ -6214,29 +6333,16 @@ def lower_scalar_conversion(
             operand = operands[0]
             ty = operand_type(builder, operand)?
             if has_sized_numeric(ty):
-                mut builtin = "float"
                 mut result_type = PlanType.Float
                 if integer:
-                    builtin = "int"
                     result_type = PlanType.Int
-                external_call(
-                    builder,
-                    f"incan_native_runtime::{builtin}_{numeric_name(ty)}",
-                    [ty],
-                    result_type,
-                    [operand],
-                    output,
-                    span,
-                )
+                builder.emit(plan_assign(output, RvalueKind.NumericCast(operand, ty, result_type), span))
                 return Ok(None)
             mut conversion = float_conversion(operand, ty)
             if integer:
                 conversion = integer_conversion(operand, ty)
             builder.emit(plan_assign(output, conversion?, span))
             return Ok(None)
-# =====================================================================================================================
-# Formatting and strings
-# =====================================================================================================================
 
 
 def validate_exact_float(mut builder: Builder, target: Place, span: SourceSpan) -> None:
@@ -6275,13 +6381,10 @@ def lower_text_scalar_conversion(
                             return Err(
                                 "unsupported Body IR static text numeric conversion: legacy emits an invalid cast",
                             )
-                        RustConstant.Str(_text) =>
-                            text_input = true
+                        RustConstant.Str(_text) => text_input = true
                         _ => pass
                 RustOperand.Place(_read) =>
-                    text_input = argument_type(builder, arguments, 0, span)? in [
-                        PlanType.String, PlanType.StringRef, PlanType.StrRef, PlanType.FrozenStr,
-                    ]
+                    text_input = argument_type(builder, arguments, 0, span)? in [PlanType.String, PlanType.StringRef, PlanType.StrRef, PlanType.FrozenStr]
             if not text_input:
                 return Ok(false)
             text = display_operand(builder, value, span)?
@@ -6342,6 +6445,8 @@ pub def clone_nominal_operand(mut builder: Builder, value: Place, span: SourceSp
     """
     match place_type(builder.locals, value):
         PlanType.ScalarRef(_elements) => return carrier_payload_value(builder, value, span)
+        PlanType.TupleRef(_elements) => return Ok(read_place(value, false, span))
+        PlanType.FrozenCollectionRef(_name, _elements) => return Ok(read_place(value, false, span))
         PlanType.StringRef => return carrier_payload_value(builder, value, span)
         PlanType.ValidationError => return carrier_payload_value(builder, value, span)
         PlanType.ValidationErrorRef =>
@@ -6354,7 +6459,6 @@ pub def clone_nominal_operand(mut builder: Builder, value: Place, span: SourceSp
             builder.emit(plan_assign(reference, RvalueKind.Borrow(value), span))
             return Ok(clone_model_reference(builder, read_place(reference, false, span), index, name, span))
         PlanType.Enum(index, name) =>
-            # SDK enums own their Clone implementation; the local derive callee cannot validate a foreign layout.
             if index < len(builder.enums) and library_enum_item(builder.enums[index]) != "":
                 return carrier_payload_value(builder, value, span)
             reference = temporary(builder, PlanType.EnumRef(index, name), span)
@@ -6417,17 +6521,17 @@ def checked_aggregate(
         RustAggregateKind.Tuple =>
             mut element_types: list[TupleElement] = []
             match expected:
-                PlanType.Tuple(types) =>
-                    element_types = types
+                PlanType.Tuple(types) => element_types = types
                 _ => pass
             mut operands: list[Operand] = []
             for slot in range(len(elements)):
                 element = elements[slot]
                 match element.as_one():
                     Some(value) =>
-                        if slot < len(element_types) and (carrier_element(element_types[slot]) or tuple_pointer_element(
-                            element_types[slot],
-                        )):
+                        if (
+                            slot < len(element_types)
+                            and (carrier_element(element_types[slot]) or tuple_pointer_element(element_types[slot]))
+                        ):
                             operands.append(
                                 boundary_operand(builder, value, tuple_element_type(element_types[slot]), span)?,
                             )
@@ -6521,8 +6625,7 @@ def lower_string_field_assignment(
     """Evaluate replacement text before dropping the old field, retaining its initialized parent owner."""
     mut replacement = temporary(builder, PlanType.String, span)
     match value:
-        RustRvalue.Use(operand) =>
-            replacement = display_operand(builder, operand, span)?
+        RustRvalue.Use(operand) => replacement = display_operand(builder, operand, span)?
         RustRvalue.Format(parts) => lower_format(builder, replacement, parts, span)?
         _ => return Err("unsupported Body IR string field Rvalue outside formatting")
     continuation = builder.new_block(span)
@@ -6562,8 +6665,7 @@ def append_format_part(
     `parts` always has one more entry than `values`: the text before, between and after the values.
     """
     match part:
-        RustFormatPart.Literal(text) =>
-            parts[-1] += str(text)
+        RustFormatPart.Literal(text) => parts[-1] += str(text)
         RustFormatPart.Expr(operand=value, style=style) =>
             match style:
                 RustFormatStyle.Display => values.append(display_operand(builder, value, span)?)
@@ -6588,7 +6690,6 @@ def debug_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -
     match value:
         RustOperand.Place(read) =>
             if is_element_place(builder, read.place)?:
-                # An indexed model, including an opaque native one, materializes once for its retained Debug call.
                 match element_place_type(builder, read.place)?:
                     PlanType.Model(_owner, _name) => return debug_model_operand(builder, value, span)
                     _ => pass
@@ -6599,7 +6700,8 @@ def debug_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -
                         match place_type(builder.locals, place):
                             PlanType.Model(_owner, _name) => return debug_model_operand(builder, value, span)
                             PlanType.Enum(owner, _name) => return debug_enum_operand(builder, place, owner, span)
-                            PlanType.StringRef => return debug_plan_operand(builder, read_place(place, false, span), span)
+                            PlanType.StringRef =>
+                                return debug_plan_operand(builder, read_place(place, false, span), span)
                             PlanType.StrRef => return debug_plan_operand(builder, read_place(place, false, span), span)
                             _ => pass
                     Some(_global) => pass
@@ -6614,8 +6716,7 @@ def debug_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -
         _ => pass
     if (
         has_sized_numeric(ty)
-        or ty in [PlanType.Int, PlanType.Float, PlanType.Bool, PlanType.Unit,
-                  PlanType.String, PlanType.StringRef, PlanType.StrRef]
+        or ty in [PlanType.Int, PlanType.Float, PlanType.Bool, PlanType.Unit, PlanType.String, PlanType.StringRef, PlanType.StrRef]
         or is_owned_list(ty)
     ):
         return debug_plan_operand(builder, operand, span)
@@ -6780,6 +6881,13 @@ pub def display_plan_value(
         return exclusive_text_display(builder, operand, span)
     if ty == PlanType.StrRef:
         return Ok(owned_slice_text(builder, operand, span))
+    if ty == PlanType.StaticText:
+        return native_format_text(builder, operand, false, span)
+    match ty:
+        PlanType.ScalarRef(elements) =>
+            if len(elements) == 1 and elements[0] in [PlanType.StaticText, PlanType.FrozenStr]:
+                return native_format_text(builder, operand, false, span)
+        _ => pass
     if has_sized_numeric(ty):
         result = temporary(builder, PlanType.String, span)
         external_call(
@@ -6794,16 +6902,11 @@ pub def display_plan_value(
         return Ok(result)
     mut name = ""
     match ty:
-        PlanType.Decimal =>
-            name = "format_decimal"
-        PlanType.FrozenStr =>
-            name = "format_frozen"
-        PlanType.Int =>
-            name = "format_int"
-        PlanType.Float =>
-            name = "format_float"
-        PlanType.Bool =>
-            name = "format_bool"
+        PlanType.Decimal => name = "format_decimal"
+        PlanType.FrozenStr => name = "format_frozen"
+        PlanType.Int => name = "format_int"
+        PlanType.Float => name = "format_float"
+        PlanType.Bool => name = "format_bool"
         _ => return Err("unsupported Body IR display type")
     result = temporary(builder, PlanType.String, span)
     external_call(builder, f"incan_native_runtime::{name}", [ty], PlanType.String, [operand], result, span)
@@ -6814,10 +6917,8 @@ def exclusive_text_display(mut builder: Builder, operand: Operand, span: SourceS
     """Format an exclusive String reference through a shared reborrow of its referent."""
     mut reference = plan_place(0, span)
     match operand.kind:
-        OperandKind.Move(place) =>
-            reference = place
-        OperandKind.Copy(place) =>
-            reference = place
+        OperandKind.Move(place) => reference = place
+        OperandKind.Copy(place) => reference = place
         _ => return Err("unsupported Body IR exclusive text display without a place")
     referent = Place(local=reference.local, projection=Projection.Deref(PlanType.String), span=span)
     shared = temporary(builder, PlanType.StringRef, span)
@@ -6901,7 +7002,9 @@ def clone_display_place(
         return display_plan_value(builder, read_place(place, false, span), span, type_parameter)
     if place_type(builder.locals, place) != PlanType.String:
         site = f"{builder.file}:{span.line}:{span.column} in {builder.name}"
-        return Err(f"unsupported Body IR nonscalar display borrow at {site}; type {ty:?}; projection {place.projection:?}")
+        return Err(
+            f"unsupported Body IR nonscalar display borrow at {site}; type {ty:?}; projection {place.projection:?}",
+        )
     return clone_text(builder, place, span)
 
 
@@ -6931,9 +7034,6 @@ def lower_string_assignment(
             builder.owned.append(destination.local)
             return Ok(None)
         _ => return Err("unsupported Body IR string Rvalue outside formatting")
-# =====================================================================================================================
-# Module and function entry points
-# =====================================================================================================================
 
 
 def lower_discarded_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[None, str]:
@@ -6942,8 +7042,7 @@ def lower_discarded_operand(mut builder: Builder, value: &RustOperand, span: Sou
     match value:
         RustOperand.Constant(constant) =>
             match constant:
-                RustConstant.Str(_text) =>
-                    is_text = true
+                RustConstant.Str(_text) => is_text = true
                 _ => pass
         RustOperand.Place(read) =>
             place = scalar_place(builder, read.place, span)?
@@ -6987,7 +7086,11 @@ def borrow_slice_operand(
             if actual == PlanType.SliceMutRef(elements):
                 if mutable and read.fact != OwnershipFact.MutBorrow:
                     return Err("unsupported Body IR mutable slice without exclusive authority")
-                referent = Place(local=place.local, projection=Projection.Deref(PlanType.NativeSlice(elements)), span=span)
+                referent = Place(
+                    local=place.local,
+                    projection=Projection.Deref(PlanType.NativeSlice(elements)),
+                    span=span,
+                )
                 output = temporary(builder, reference_type, span)
                 mut operation = RvalueKind.Borrow(referent)
                 if mutable:
@@ -7009,7 +7112,15 @@ def borrow_slice_operand(
         return Err("unsupported Body IR native slice element mismatch")
     output = temporary(builder, reference_type, span)
     arguments = [PlanType.List(element, depth), PlanType.NativeSlice(elements)]
-    builder.externals.append(ExternalFunction(path=method, type_arguments=arguments, parameters=[parameter], return_type=reference_type, span=span))
+    builder.externals.append(
+        ExternalFunction(
+            path=method,
+            type_arguments=arguments,
+            parameters=[parameter],
+            return_type=reference_type,
+            span=span,
+        ),
+    )
     terminate_call(builder, CalleeKind.Instantiated(method, arguments), [reference], output, span)
     return Ok(read_place(output, mutable, span))
 
@@ -7092,7 +7203,15 @@ def borrow_str_operand(mut builder: Builder, value: &RustOperand, span: SourceSp
         _ => pass
     reference = borrow_text_operand(builder, value, span)?
     output = temporary(builder, PlanType.StrRef, span)
-    external_call(builder, "alloc::string::String::as_str", [PlanType.StringRef], PlanType.StrRef, [reference], output, span)
+    external_call(
+        builder,
+        "alloc::string::String::as_str",
+        [PlanType.StringRef],
+        PlanType.StrRef,
+        [reference],
+        output,
+        span,
+    )
     return Ok(read_place(output, false, span))
 
 
@@ -7222,8 +7341,7 @@ def lower_str_builtin(
         text = owned_literal(builder, "", span)
     elif len(arguments) == 1:
         match arguments[0].as_one():
-            Some(value) =>
-                text = display_operand(builder, value, span)?
+            Some(value) => text = display_operand(builder, value, span)?
             None => return Err("unsupported Body IR spread str argument")
     else:
         return Err("unsupported Body IR str arity")
@@ -7296,16 +7414,22 @@ pub def unit_plan(
     return lowered_plan(modules, sources, files, entry, kind, tests, published)
 
 
-def program_context(module: &BodyIrModule, mut intrinsics: list[EnumDeclaration], unions: list[RustType]) -> Result[ProgramContext, str]:
+def program_context(
+    module: &BodyIrModule,
+    mut intrinsics: list[EnumDeclaration],
+    unions: list[RustType],
+) -> Result[ProgramContext, str]:
     """Freeze program dispatch mappings after layout admission, copying storage once from the still-borrowed checked module."""
-    return Ok(ProgramContext(
-        body_indices=body_index(module),
-        bodies=Arc.new(list(module.bodies)),
-        display_functions=Arc.new(display_functions(module, intrinsics)?),
-        statics=Arc.new(list(module.static_declarations)),
-        comparison_functions=Arc.new(comparison_functions(module, intrinsics)?),
-        union_types=union_index(unions),
-    ))
+    return Ok(
+        ProgramContext(
+            body_indices=body_index(module),
+            bodies=Arc.new(list(module.bodies)),
+            display_functions=Arc.new(display_functions(module, intrinsics)?),
+            statics=Arc.new(list(module.static_declarations)),
+            comparison_functions=Arc.new(comparison_functions(module, intrinsics)?),
+            union_types=union_index(unions),
+        ),
+    )
 
 
 def lowered_plan(
@@ -7370,7 +7494,6 @@ def lowered_plan(
     mut enums = lower_enum_declarations(context, files[entry], intrinsics)?
     attach_enum_comparisons(context, enums, intrinsics)?
     program = program_context(context, intrinsics, unions)?
-    # Native comparison bridges call their checked slots without an ordinary source call to schedule them.
     mut bridge_bodies: list[str] = []
     for declaration in models:
         bridge_bodies.extend(declaration.comparison_methods)
@@ -7422,13 +7545,15 @@ def lowered_plan(
                 mut captures: list[PlanType] = []
                 for parameter in function.parameters:
                     captures.append(parameter.ty)
-                functions.append(boxed_future_constructor(
-                    function_name(context, body),
-                    CalleeKind.Planned(function.name),
-                    captures,
-                    function.return_type,
-                    function.span,
-                ))
+                functions.append(
+                    boxed_future_constructor(
+                        function_name(context, body),
+                        CalleeKind.Planned(function.name),
+                        captures,
+                        function.return_type,
+                        function.span,
+                    ),
+                )
             emitted_frames.bodies.append(body.clone())
             append_synthesized(functions, synthesized)?
             append_async_entry(context, body, function, index == entry, tests, intrinsics, functions, externals)?
@@ -7454,12 +7579,26 @@ def lowered_plan(
         println("lowering: generic instances")
     mut retained_nominals = nominal_instances
     instantiated_context = lower_instances(
-        context, closed_context, program, instances, unions, sources, files, owners, functions, externals, intrinsics,
+        context,
+        closed_context,
+        program,
+        instances,
+        unions,
+        sources,
+        files,
+        owners,
+        functions,
+        externals,
+        intrinsics,
         retained_nominals,
     )?
     if len(instantiated_context.nominal_declarations) != len(context.nominal_declarations):
         models = lower_model_declarations(
-            instantiated_context, files[entry], intrinsics, retained_nominals, kind == "library",
+            instantiated_context,
+            files[entry],
+            intrinsics,
+            retained_nominals,
+            kind == "library",
         )?
     for declaration in intrinsics:
         enums.append(declaration)
@@ -7793,7 +7932,14 @@ def lower_computed_statics(
                 if file == "":
                     return Err("unsupported Body IR literal collection without source provenance")
                 initializer, runtime = lower_literal_static(module, program, slot, unions, intrinsics, file)?
-                cells.append(StaticCell(slot=slot, ty=initializer.return_type, initializer=initializer.name, span=initializer.span))
+                cells.append(
+                    StaticCell(
+                        slot=slot,
+                        ty=initializer.return_type,
+                        initializer=initializer.name,
+                        span=initializer.span,
+                    ),
+                )
                 functions.append(initializer)
                 _ = merge_externals(externals, runtime)?
             _ => pass
@@ -7810,7 +7956,13 @@ def lower_literal_static(
 ) -> Result[tuple[Function, list[ExternalFunction]], str]:
     """Build literal list or dictionary initializers for guarded cells without runtime-managed persistent storage."""
     declaration = module.static_declarations[slot]
-    ty = native_source_type(list(module.nominal_declarations), list(module.enum_declarations), list(unions), declaration.ty, intrinsics)?
+    ty = native_source_type(
+        list(module.nominal_declarations),
+        list(module.enum_declarations),
+        list(unions),
+        declaration.ty,
+        intrinsics,
+    )?
     span = SourceSpan(file=file, line=1, column=1)
     name = static_initializer_name(slot)
     mut builder = Builder(
@@ -7855,11 +8007,18 @@ def lower_literal_static(
     value = static_initial_operand(builder, declaration.initial, ty, span)?
     builder.emit(plan_assign(plan_place(0, span), RvalueKind.Use(value), span))
     builder.finish(TerminatorKind.Return, span)
-    return Ok((Function(name=name, parameters=[], return_type=ty, locals=builder.locals, blocks=builder.blocks, span=span), builder.externals))
+    return Ok(
+        (Function(name=name, parameters=[], return_type=ty, locals=builder.locals, blocks=builder.blocks, span=span), builder.externals),
+    )
 
 
 pub def program_refusals(
-    modules: &list[BodyIrModule], sources: list[str], files: list[str], entry: int, progress: bool, selection: str,
+    modules: &list[BodyIrModule],
+    sources: list[str],
+    files: list[str],
+    entry: int,
+    progress: bool,
+    selection: str,
 ) -> list[str]:
     """
     Collect every body's first refusal rather than only the program's first, for the direct-route census.
@@ -7965,12 +8124,33 @@ def body_refusals(
     mut owners: list[str] = []
     for module in checked:
         owners.append(str(module.module_id.path()))
-    match lower_computed_statics(context, program, unions, sources, files, owners, intrinsics, functions, externals, instances):
+    match lower_computed_statics(
+        context,
+        program,
+        unions,
+        sources,
+        files,
+        owners,
+        intrinsics,
+        functions,
+        externals,
+        instances,
+    ):
         Ok(_cells) => pass
         Err(error) => refusals.append(f"computed static: {error}")
     mut retained_nominals = nominal_instances
     match lower_instances(
-        context, closed_context, program, instances, unions, sources, files, owners, functions, externals, intrinsics,
+        context,
+        closed_context,
+        program,
+        instances,
+        unions,
+        sources,
+        files,
+        owners,
+        functions,
+        externals,
+        intrinsics,
         retained_nominals,
     ):
         Ok(_lowered) => pass
@@ -8009,9 +8189,6 @@ def append_generator_constructor(
             )
             return Ok(None)
         None => return Err("unsupported Body IR generator return type")
-# =====================================================================================================================
-# Module and function entry points
-# =====================================================================================================================
 
 
 def retain_generic_decorator_frames(
@@ -8141,7 +8318,9 @@ def lower_instances(
             callable_storage_arguments(instance.body, instance.arguments, instance.owned_callable_slots)?,
             role,
         ).map_err((reason) => f"{reason} in {diagnostic_context}")?
-        retain_instance(functions, function)?
+        mut retained_function = function
+        retained_function.signature_lifetimes = signature_lifetimes(instance.body, instance.arguments)
+        retain_instance(functions, retained_function)?
         append_synthesized(functions, synthesized)?
         append_generator_constructor(functions, context, body, sources[source_index], files[source_index], intrinsics)?
         completed.append(instance)
@@ -8155,7 +8334,13 @@ def lower_instances(
 def instance_is_retained(mut instance: Instance, mut completed: list[Instance]) -> bool:
     """Borrow completed requests while comparing checked declarations, arguments and execution roles; duplicate checks never copy their retained bodies, and emitted spelling is never authority."""
     for retained in completed:
-        if retained.body.canonical == instance.body.canonical and retained.arguments == instance.arguments and retained.body.locals == instance.body.locals and retained.owned_callable_slots == instance.owned_callable_slots and retained.original_callable == instance.original_callable:
+        if (
+            retained.body.canonical == instance.body.canonical
+            and retained.arguments == instance.arguments
+            and retained.body.locals == instance.body.locals
+            and retained.owned_callable_slots == instance.owned_callable_slots
+            and retained.original_callable == instance.original_callable
+        ):
             return true
     return false
 
@@ -8183,7 +8368,7 @@ def append_synthesized(mut functions: list[Function], additions: list[Function])
     return Ok(None)
 
 
-def merge_externals(mut externals: list[ExternalFunction], additions: list[ExternalFunction]) -> Result[None, str]:
+pub def merge_externals(mut externals: list[ExternalFunction], additions: list[ExternalFunction]) -> Result[None, str]:
     """Retain one exact signature per native path and generic instantiation; conflicting checked overloads stay refused."""
     for external in additions:
         mut found = false
@@ -8267,7 +8452,13 @@ def lower_function(
             mut native_arguments: list[PlanType] = []
             for argument in type_arguments:
                 native_arguments.append(
-                    native_source_type(list(module.nominal_declarations), list(module.enum_declarations), list(unions), argument, intrinsics)?,
+                    native_source_type(
+                        list(module.nominal_declarations),
+                        list(module.enum_declarations),
+                        list(unions),
+                        argument,
+                        intrinsics,
+                    )?,
                 )
             function, externals = delegated_function(
                 selected_name,
@@ -8287,9 +8478,14 @@ def lower_function(
         None => pass
     validate_callable_representation(body)?
     mut declared_carrier = PlanType.Unit
-    match native_source_type(list(module.nominal_declarations), list(module.enum_declarations), list(unions), body.return_type, intrinsics):
-        Ok(carrier) =>
-            declared_carrier = carrier
+    match native_source_type(
+        list(module.nominal_declarations),
+        list(module.enum_declarations),
+        list(unions),
+        body.return_type,
+        intrinsics,
+    ):
+        Ok(carrier) => declared_carrier = carrier
         Err(reason) =>
             mut frame = str(body.name)
             if len(body.params) != 0:
@@ -8359,6 +8555,7 @@ def lower_function(
         moved_tuple_fields=[],
         decorated_bindings=module.decorated_bindings,
         body_identity=body.canonical,
+        checked_local_types=[local.ty.clone() for local in body.locals],
         initializing_decorator=initializing_decorator,
         cached_decorator=cached_decorator,
         callable_name_dynamic_profile=callable_name_profile(module, body_module_identity(body)?)?,
@@ -8372,9 +8569,13 @@ def lower_function(
                 builder.owned.append(handle.local)
             None => return Err("unsupported Body IR generator return type")
     for index in range(len(parameters)):
-        if parameters[index].ty == PlanType.String or is_nominal_type(parameters[index].ty) or is_owned_callable(
-            parameters[index].ty,
-        ) or is_future(parameters[index].ty) or owned_collection(parameters[index].ty):
+        if (
+            parameters[index].ty == PlanType.String
+            or is_nominal_type(parameters[index].ty)
+            or is_owned_callable(parameters[index].ty)
+            or is_future(parameters[index].ty)
+            or owned_collection(parameters[index].ty)
+        ):
             builder.owned.append(index + 1)
     if enters_module_initialization(body):
         initialize_module_statics(builder, body_module_identity(body)?, span)
@@ -8463,13 +8664,11 @@ def producer_return_type(
     return Ok(PlanType.Unit)
 
 
-def reference_value_storage(
-    body: &RustBody,
-    names: list[str],
-    arguments: list[RustType],
-) -> Result[list[int], str]:
-    """Retain the checked reference-value slots after ordinary type substitution. Receiver origins and borrowed
-    parameter representations do not change a source value's logical type and therefore add no slot here."""
+def reference_value_storage(body: &RustBody, names: list[str], arguments: list[RustType]) -> Result[list[int], str]:
+    """
+    Retain the checked reference-value slots after ordinary type substitution. Receiver origins and borrowed
+    parameter representations do not change a source value's logical type and therefore add no slot here.
+    """
     mut slots: list[int] = []
     for local in body.locals:
         closed: RustType = substitute(local.ty, names, arguments).map_err(
@@ -8491,8 +8690,7 @@ def frame_scopes(body: &RustBody) -> tuple[list[tuple[int, int]], list[tuple[int
     for scope in body.scopes:
         mut parent = -1
         match scope.parent:
-            Some(enclosing) =>
-                parent = int(enclosing.0)
+            Some(enclosing) => parent = int(enclosing.0)
             None => pass
         scope_parents.append((int(scope.id.0), parent))
     return (scoped_locals, scope_parents)
@@ -8520,37 +8718,28 @@ def frame_locals(
             return Err("Body IR local order disagrees with LocalId")
         mut ty = PlanType.Unit
         match future_type(module, local.ty, intrinsics)?:
-            Some(carrier) =>
-                ty = carrier
-            None =>
-                ty = body_frame_type(nominals, enums, body, local, intrinsics, file)?
+            Some(carrier) => ty = carrier
+            None => ty = body_frame_type(nominals, enums, body, local, intrinsics, file)?
         index = int(local.id.index()) + 1
         ty = local_representation(body, index - 1, ty)
         if index in pairs:
             ty = pair_generator_type(ty)
         if index in taking:
-            # A checked move preserves an admitted generator or zip carrier's existing ownership. Only an owned
-            # list needs the consuming list cursor representation; borrowed or unsupported carriers cannot supply it.
             match ty:
-                PlanType.List(leaf, depth) =>
-                    ty = PlanType.ListIntoIter(leaf, depth)
+                PlanType.List(leaf, depth) => ty = PlanType.ListIntoIter(leaf, depth)
                 PlanType.Generator(_leaf, _depth) => pass
                 PlanType.ZipIterator(_left, _right) => pass
                 _ => return Err("unsupported Body IR consuming iteration outside an owned list")
         elif index in iterators:
             match ty:
-                PlanType.FrozenCollection(_name, _elements) =>
-                    ty = frozen_list_snapshot_type(ty)?
+                PlanType.FrozenCollection(_name, _elements) => ty = frozen_list_snapshot_type(ty)?
                 _ => pass
             match zip_shape(ty):
-                Some((left, right)) =>
-                    ty = PlanType.ZipIteratorMutRef(left, right)
+                Some((left, right)) => ty = PlanType.ZipIteratorMutRef(left, right)
                 None => pass
             match generator_shape(ty):
-                Some((leaf, depth)) =>
-                    ty = PlanType.GeneratorMutRef(leaf, depth)
-                None =>
-                    ty = list_parameter_type(ty, false)
+                Some((leaf, depth)) => ty = PlanType.GeneratorMutRef(leaf, depth)
+                None => ty = list_parameter_type(ty, false)
         for parameter in body.params:
             if parameter.local == local.id:
                 ty = stored_parameter_type(body, parameter, parameter_representation(body, index - 1, ty)?)?
@@ -8619,13 +8808,7 @@ def frame_parameters(
         mut name = str(parameter.name)
         if name == "self":
             name = "__incan_self"
-        parameters.append(
-            Parameter(
-                name=name,
-                ty=ty,
-                span=location(parameter.span, source, file),
-            ),
-        )
+        parameters.append(Parameter(name=name, ty=ty, span=location(parameter.span, source, file)))
     return Ok(parameters)
 
 
@@ -8643,8 +8826,7 @@ pub def list_borrow(mut builder: Builder, place: Place, mutable: bool, span: Sou
             if mutable:
                 return Err("unsupported Body IR mutable access through shared list parameter")
             source.projection = Projection.Deref(PlanType.List(leaf, depth))
-        PlanType.ListMutRef(_leaf, _depth) =>
-            source.projection = Projection.Deref(PlanType.List(leaf, depth))
+        PlanType.ListMutRef(_leaf, _depth) => source.projection = Projection.Deref(PlanType.List(leaf, depth))
         _ => pass
     mut reference_type = PlanType.ListRef(leaf, depth)
     mut operation = RvalueKind.Borrow(source)
@@ -8784,7 +8966,10 @@ def element_read(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> 
         Some(local) =>
             root = plan_place(int(local.index()) + 1 + builder.local_offset, span)
             root_type = place_type(builder.locals, root)
-            if root_type in [PlanType.String, PlanType.StringRef, PlanType.StringMutRef, PlanType.FrozenStr, PlanType.FrozenBytes] and len(source.projection) != 0:
+            if (
+                root_type in [PlanType.String, PlanType.StringRef, PlanType.StringMutRef, PlanType.FrozenStr, PlanType.FrozenBytes]
+                and len(source.projection) != 0
+            ):
                 mut text = root
                 if root_type in [PlanType.StringRef, PlanType.StringMutRef]:
                     text = Place(local=root.local, projection=Projection.Deref(PlanType.String), span=span)
@@ -8841,8 +9026,7 @@ pub def projected_element_read(
                 place = read_element_field(builder, place, source.projection[slot], span)?
             PlaceElem.UnionMember(ty=_member) =>
                 place = read_element_field(builder, place, source.projection[slot], span)?
-            _ =>
-                place = read_indexed_element(builder, place, source, slot, span)?
+            _ => place = read_indexed_element(builder, place, source, slot, span)?
     ty = place_type(builder.locals, place)
     owned = ty == PlanType.String or is_owned_list(ty) or is_nominal_type(ty) or is_owned_collection(ty)
     return Ok(read_place(place, owned, span))
@@ -8855,7 +9039,15 @@ def sequence_read_storage(mut builder: Builder, source: Place, span: SourceSpan)
         return display_plan_operand(builder, read_place(source, false, span), span)
     if ty == PlanType.FrozenBytes:
         output = temporary(builder, PlanType.List(ListLeaf.U8, 1), span)
-        external_call(builder, "incan_native_runtime::copy_frozen_bytes", [ty], PlanType.List(ListLeaf.U8, 1), [read_place(source, false, span)], output, span)
+        external_call(
+            builder,
+            "incan_native_runtime::copy_frozen_bytes",
+            [ty],
+            PlanType.List(ListLeaf.U8, 1),
+            [read_place(source, false, span)],
+            output,
+            span,
+        )
         builder.owned.append(output.local)
         return Ok(output)
     return Ok(source)
@@ -9186,7 +9378,12 @@ pub def append_list_value(
     return Ok(None)
 
 
-def frozen_list_assignment(mut builder: Builder, target: Place, value: &RustRvalue, span: SourceSpan) -> Result[None, str]:
+def frozen_list_assignment(
+    mut builder: Builder,
+    target: Place,
+    value: &RustRvalue,
+    span: SourceSpan,
+) -> Result[None, str]:
     """
     Freeze a list literal: build the list, then keep it for the program as the frozen list's storage.
 
@@ -9295,15 +9492,14 @@ pub def argument_place(
     index: int,
     span: SourceSpan,
 ) -> Result[Place, str]:
-    """Require one retained local receiver before constructing a runtime borrow.
+    """
+    Require one retained local receiver before constructing a runtime borrow.
 
     1. Check the argument position.
     2. Retain its exact local projection, refusing constants and spreads.
     """
-    # 1. Check the argument position.
     if index >= len(arguments):
         return Err("invalid Body IR list call arity")
-    # 2. Retain its exact local projection.
     match arguments[index].as_one():
         Some(value) =>
             match value:
@@ -9400,8 +9596,10 @@ def lower_builtin_method(
             if identity.origin != SymbolOrigin.Builtin:
                 return Err("unsupported Body IR non-builtin list Method")
             member = str(identity.declaration_name)
-        None => return Err(f"unsupported Body IR Method {str(target.name)} without canonical identity in {builder.name} at {span.file}:{span.line}:{span.column}")
-    # Builtin Clone calls use the exact retained native carrier rather than a same-named list member.
+        None =>
+            return Err(
+                f"unsupported Body IR Method {str(target.name)} without canonical identity in {builder.name} at {span.file}:{span.line}:{span.column}",
+            )
     if member in ["Clone.clone", "Option.clone"]:
         return lower_derived_clone(builder, arguments, destination, span)
     receiver_type = argument_type(builder, arguments, 0, span)?
@@ -9453,7 +9651,7 @@ def lower_integer_helper(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[bool, str]:
-    """Lower wrapping arithmetic directly; retain checked and saturating u8 helpers at their native widths."""
+    """Lower wrapping arithmetic directly and call native checked and saturating u8 methods at their exact widths."""
     if lower_wrapping_integer(builder, member, receiver, arguments, destination, span)?:
         return Ok(true)
     if receiver != PlanType.U8:
@@ -9481,15 +9679,7 @@ def lower_integer_helper(
             operand_type,
             span,
         )?]
-        external_call(
-            builder,
-            f"incan_native_runtime::{operation}_u8",
-            [PlanType.U8, operand_type],
-            result,
-            operands,
-            output,
-            span,
-        )
+        external_call(builder, f"u8::{operation}", [PlanType.U8, operand_type], result, operands, output, span)
         return Ok(true)
     return Ok(false)
 
@@ -9638,7 +9828,7 @@ def lower_text_codec_method(
 
 
 def float_method(member: str, receiver: PlanType) -> Option[tuple[str, list[PlanType], PlanType]]:
-    """Select the runtime boundary for a builtin float member; `powf` is the same `powf` legacy emits for `**`."""
+    """Select the checked native float member; these primitives must not reenter their runtime wrappers."""
     mut width = ""
     if receiver == PlanType.F32:
         width = "f32"
@@ -9647,11 +9837,11 @@ def float_method(member: str, receiver: PlanType) -> Option[tuple[str, list[Plan
     else:
         return None
     if member == "f64.powf":
-        return Some(("power_f64", [receiver, receiver], receiver))
+        return Some(("f64::powf", [receiver, receiver], receiver))
     if member == f"{width}.is_finite":
-        return Some((f"is_finite_{width}", [receiver], PlanType.Bool))
+        return Some((f"{width}::is_finite", [receiver], PlanType.Bool))
     if member == f"{width}.is_nan":
-        return Some((f"is_nan_{width}", [receiver], PlanType.Bool))
+        return Some((f"{width}::is_nan", [receiver], PlanType.Bool))
     return None
 
 
@@ -9664,7 +9854,7 @@ def lower_float_method(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Call a float member's runtime boundary with the copied receiver and each argument at its checked carrier."""
+    """Call the native float member with the copied receiver and each argument at its checked carrier."""
     if len(arguments) != len(parameters):
         return Err("unsupported Body IR float Method arity")
     mut operands = [numeric_receiver(builder, arguments, span)?]
@@ -9672,7 +9862,7 @@ def lower_float_method(
         argument = argument_value(builder, arguments, index, span)?
         operands.append(coerce_numeric_operand(builder, argument, parameters[index], span)?)
     output = call_destination(builder, destination, result, span)?
-    external_call(builder, f"incan_native_runtime::{name}", parameters, result, operands, output, span)
+    external_call(builder, name, parameters, result, operands, output, span)
     return Ok(None)
 
 
@@ -9738,10 +9928,8 @@ def lower_list_iter(
     cell = static_collection_receiver(builder, arguments, false, span)?
     mut reference = read_place(plan_place(0, span), false, span)
     match cell:
-        Some((_global, receiver)) =>
-            reference = list_borrow(builder, receiver, false, span)?
-        None =>
-            reference = borrowed_list_argument(builder, arguments, 0, false, span)?
+        Some((_global, receiver)) => reference = list_borrow(builder, receiver, false, span)?
+        None => reference = borrowed_list_argument(builder, arguments, 0, false, span)?
     snapshot = temporary(builder, PlanType.List(leaf, depth), span)
     list_call(
         builder,
@@ -9801,7 +9989,13 @@ def lower_list_method(
     if member == "List.iter":
         return lower_list_iter(builder, arguments, destination, span)
     if member == "bytes.as_slice":
-        if len(arguments) != 1 or receiver_ty not in [PlanType.List(ListLeaf.U8, 1), PlanType.ListRef(ListLeaf.U8, 1), PlanType.ListMutRef(ListLeaf.U8, 1)]:
+        if (
+            len(arguments) != 1
+            or receiver_ty not in [PlanType.List(ListLeaf.U8, 1), PlanType.ListRef(ListLeaf.U8, 1), PlanType.ListMutRef(
+                ListLeaf.U8,
+                1,
+            )]
+        ):
             return Err("invalid Body IR bytes.as_slice receiver or arity")
         match arguments[0].as_one():
             Some(value) =>
@@ -9885,10 +10079,8 @@ def lower_list_method(
     cell = static_collection_receiver(builder, arguments, mutable, span)?
     mut reference = read_place(plan_place(0, span), false, span)
     match cell:
-        Some((_global, receiver)) =>
-            reference = list_borrow(builder, receiver, mutable, span)?
-        None =>
-            reference = borrowed_list_argument(builder, arguments, 0, mutable, span)?
+        Some((_global, receiver)) => reference = list_borrow(builder, receiver, mutable, span)?
+        None => reference = borrowed_list_argument(builder, arguments, 0, mutable, span)?
     mut receiver_type = PlanType.ListRef(leaf, depth)
     if mutable:
         receiver_type = PlanType.ListMutRef(leaf, depth)
@@ -9983,8 +10175,7 @@ def lower_list_builtin(
                 operand = scalar_operand(builder, value, span)?
                 mut output = temporary(builder, PlanType.Int, span)
                 match destination:
-                    Some(place) =>
-                        output = scalar_place(builder, place, span)?
+                    Some(place) => output = scalar_place(builder, place, span)?
                     None => pass
                 external_call(
                     builder,
@@ -10110,10 +10301,8 @@ def indexed_assignment_at(
     )?
     element = list_element(leaf, depth)
     match value:
-        RustRvalue.Use(RustOperand.Constant(RustConstant.None)) =>
-            argument = none_operand(builder, element, span)?
-        _ =>
-            argument = element_plan_operand(builder, argument, element, span)?
+        RustRvalue.Use(RustOperand.Constant(RustConstant.None)) => argument = none_operand(builder, element, span)?
+        _ => argument = element_plan_operand(builder, argument, element, span)?
     subscript = list_index_operand(builder, destination, len(destination.projection) - 1, span)?
     reference = list_borrow(builder, receiver, true, span)?
     unit = temporary(builder, PlanType.Unit, span)
@@ -10479,8 +10668,7 @@ def list_next(
     ty = place_type(builder.locals, receiver)
     mut element = PlanType.Unit
     match list_shape(ty):
-        Some((leaf, depth)) =>
-            element = list_element(leaf, depth)
+        Some((leaf, depth)) => element = list_element(leaf, depth)
         None =>
             arguments = collection_arguments(ty)
             if len(arguments) == 0:
@@ -10522,8 +10710,11 @@ def list_next(
         if widened:
             item = temporary(builder, PlanType.U8, span)
         iterable_call(builder, ty, "nth", [PlanType.Int], element, [item_reference, position], item, span)?
-        if owned_carrier(element) or element == PlanType.String or is_owned_collection(element) or tuple_has_owners(
-            element,
+        if (
+            owned_carrier(element)
+            or element == PlanType.String
+            or is_owned_collection(element)
+            or tuple_has_owners(element)
         ):
             builder.owned.append(item.local)
         if widened:
@@ -10554,8 +10745,7 @@ def in_place_item(
     leaf, depth = require_list_shape(place_type(builder.locals, iterator), "unsupported Body IR nonlist cursor")?
     mut reference_type = PlanType.Unit
     match exclusive_reference(element):
-        Some(reference) =>
-            reference_type = reference
+        Some(reference) => reference_type = reference
         None => return Err("unsupported Body IR in-place iteration over tuple or scalar elements")
     builder.locals[item.local].ty = reference_type
     if item.local not in builder.in_place_items:
@@ -10605,8 +10795,7 @@ def iterator_assignment(
                     mut exclusive = false
                     match read.fact:
                         OwnershipFact.Borrow => pass
-                        OwnershipFact.MutBorrow =>
-                            exclusive = true
+                        OwnershipFact.MutBorrow => exclusive = true
                         _ => return Err("unsupported Body IR list iterator initialization ownership")
                     mut root = iteration_root(builder, read.place, exclusive, span)?
                     match place_type(builder.locals, root):
@@ -10657,12 +10846,9 @@ pub def list_root_place(mut builder: Builder, value: &RustPlace, span: SourceSpa
             Some(local) =>
                 mut ty = builder.locals[int(local.index()) + 1 + builder.local_offset].ty
                 match ty:
-                    PlanType.ModelRef(owner, name) =>
-                        ty = PlanType.Model(owner, name)
-                    PlanType.ModelMutRef(owner, name) =>
-                        ty = PlanType.Model(owner, name)
-                    PlanType.EnumMutRef(owner, name) =>
-                        ty = PlanType.Enum(owner, name)
+                    PlanType.ModelRef(owner, name) => ty = PlanType.Model(owner, name)
+                    PlanType.ModelMutRef(owner, name) => ty = PlanType.Model(owner, name)
+                    PlanType.EnumMutRef(owner, name) => ty = PlanType.Enum(owner, name)
                     _ => pass
                 for projection in value.projection:
                     match projection:
@@ -10691,7 +10877,8 @@ def list_projection_refusal(name: str, ty: PlanType, projection: &PlaceElem) -> 
 
 
 def collection_value(mut builder: Builder, read: &RustPlaceOperand, span: SourceSpan) -> Result[Operand, str]:
-    """Materialize a checked collection read while preserving caller-owned bindings.
+    """
+    Materialize a checked collection read while preserving caller-owned bindings.
 
     Moving a value parameter that uses a shared collection ABI copies its stored value, just as a list parameter
     does; the caller still owns the borrowed storage.
@@ -10702,7 +10889,12 @@ def collection_value(mut builder: Builder, read: &RustPlaceOperand, span: Source
     return collection_place_value(builder, place, read.fact, span)
 
 
-def collection_place_value(mut builder: Builder, place: Place, fact: &OwnershipFact, span: SourceSpan) -> Result[Operand, str]:
+def collection_place_value(
+    mut builder: Builder,
+    place: Place,
+    fact: &OwnershipFact,
+    span: SourceSpan,
+) -> Result[Operand, str]:
     """Materialize whole or structurally projected dictionary/set storage using the same checked read policy; projected moves gain no authority over their containing owner."""
     ty = place_type(builder.locals, place)
     owned = collection_owned(ty)
@@ -10887,8 +11079,7 @@ def read_dictionary_element(
         _ => pass
     mut key = read_place(receiver, false, span)
     match source.projection[slot]:
-        PlaceElem.Index(index) =>
-            key = value_operand(builder, index, span)?
+        PlaceElem.Index(index) => key = value_operand(builder, index, span)?
         _ => return Err("unsupported Body IR dictionary slice or field projection")
     reference = borrow_collection(builder, receiver, false, span)?
     output = temporary(builder, types[1], span)
@@ -11011,8 +11202,7 @@ def optional_dictionary_get(
     """Copy a present value into the checked Option destination, replacing that destination's earlier value."""
     mut output = plan_place(0, span)
     match destination:
-        Some(place) =>
-            output = list_root_place(builder, place, span)?
+        Some(place) => output = list_root_place(builder, place, span)?
         None => return Err("unsupported Body IR discarded optional dictionary get")
     ty = place_type(builder.locals, receiver)
     types = collection_arguments(ty)
@@ -11338,8 +11528,7 @@ def match_scrutinee_place(
             mut indexed = false
             for projection in read.place.projection:
                 match projection:
-                    PlaceElem.Index(_index) =>
-                        indexed = true
+                    PlaceElem.Index(_index) => indexed = true
                     _ => pass
             if indexed and in_place:
                 return exclusive_element(builder, read.place, span)
@@ -11384,10 +11573,8 @@ def exclusive_element(mut builder: Builder, source: &RustPlace, span: SourceSpan
     element = list_element(leaf, depth)
     mut reference_type = PlanType.Unit
     match element:
-        PlanType.Enum(owner, name) =>
-            reference_type = PlanType.EnumMutRef(owner, name)
-        PlanType.List(inner_leaf, inner_depth) =>
-            reference_type = PlanType.ListMutRef(inner_leaf, inner_depth)
+        PlanType.Enum(owner, name) => reference_type = PlanType.EnumMutRef(owner, name)
+        PlanType.List(inner_leaf, inner_depth) => reference_type = PlanType.ListMutRef(inner_leaf, inner_depth)
         _ => return Err("unsupported Body IR in-place match on a non-carrier element")
     index = list_index_operand(builder, source, last, span)?
     exclusive_list = list_borrow(builder, container, true, span)?
@@ -11437,9 +11624,13 @@ def lower_structural_match(
     """Dispatch primitive and structural patterns, retaining checked list bindings as references to matched storage."""
     source_type = place_type(builder.locals, source)
     in_place_list = validate_in_place_list_match(source_type, arms)?
-    if not numeric_carrier(source_type) and source_type not in [PlanType.Bool, PlanType.Unit, PlanType.String] and not is_tuple_type(
-        source_type,
-    ) and not is_model_type(source_type) and not in_place_list:
+    if (
+        not numeric_carrier(source_type)
+        and source_type not in [PlanType.Bool, PlanType.Unit, PlanType.String]
+        and not is_tuple_type(source_type)
+        and not is_model_type(source_type)
+        and not in_place_list
+    ):
         return Err("unsupported Body IR nonprimitive structural match scrutinee")
     result_type = place_type(builder.locals, target)
     join = builder.new_block(span)
@@ -11474,9 +11665,15 @@ def lower_structural_match(
     builder.current = join
     builder.closed[join] = not reaches_join
     builder.owned = join_owners
-    if reaches_join and (result_type == PlanType.String or tuple_has_owners(result_type) or is_nominal_type(result_type) or is_owned_collection(
-        result_type,
-    )):
+    if (
+        reaches_join
+        and (
+            result_type == PlanType.String
+            or tuple_has_owners(result_type)
+            or is_nominal_type(result_type)
+            or is_owned_collection(result_type)
+        )
+    ):
         builder.owned.append(target.local)
     return Ok(None)
 
@@ -11580,7 +11777,6 @@ def bind_structural_pattern(
             local = int(binding.local.index()) + 1 + builder.local_offset
             ty = place_type(builder.locals, source)
             if builder.locals[local].ty != ty:
-                # A borrowed subject binds its components as shared references to them.
                 reference = borrowed_binding_type(ty)
                 if reference == PlanType.Unit or builder.locals[local].ty != reference:
                     return Err("invalid Body IR structural pattern binding carrier")
@@ -11859,7 +12055,6 @@ def read_static(
     elif fact != OwnershipFact.Copy:
         return Err("unsupported Body IR static ownership")
     read_cell, _write_cell = static_accessors(ty)?
-    # Keep the immutable initializer owner alive independently while materialization mutates the frame.
     statics = builder.program.statics.clone()
     initial = static_initial_operand(builder, statics.as_ref()[slot].initial, ty, span)?
     target = temporary(builder, ty, span)
@@ -11925,8 +12120,7 @@ def read_guarded_static_field(
     """Clone a selected enum or text field under the actual storage guard, without cloning unrelated object fields."""
     mut receiver = PlanType.Unit
     match owner:
-        PlanType.Model(index, name) =>
-            receiver = PlanType.ModelRef(index, name)
+        PlanType.Model(index, name) => receiver = PlanType.ModelRef(index, name)
         _ => return Ok(None)
     fields = field_path(
         builder.nominals,
@@ -12074,7 +12268,12 @@ def computed_static_type(mut builder: Builder, value: &RustPlace, global: &RustG
     return Ok(ty)
 
 
-def snapshot_projection(mut builder: Builder, value: &RustPlace, snapshot: Place, span: SourceSpan) -> Result[Place, str]:
+def snapshot_projection(
+    mut builder: Builder,
+    value: &RustPlace,
+    snapshot: Place,
+    span: SourceSpan,
+) -> Result[Place, str]:
     """Select a static place's checked field and payload path inside its loaded copy."""
     fields = field_path(
         builder.nominals,
@@ -12269,23 +12468,21 @@ def static_field_writer(
     finished = plan_assign(plan_place(0, span), RvalueKind.Use(literal(Constant.Unit, span)), span)
     return Function(
         name=name,
-        parameters=[
-            Parameter(name="__incan_root", ty=root_reference, span=span),
-            Parameter(name="__incan_value", ty=selected, span=span),
-        ],
+        parameters=[Parameter(name="__incan_root", ty=root_reference, span=span), Parameter(
+            name="__incan_value",
+            ty=selected,
+            span=span,
+        )],
         return_type=PlanType.Unit,
-        locals=[
-            Local(ty=PlanType.Unit, span=span),
-            Local(ty=root_reference, span=span),
-            Local(ty=selected, span=span),
-            Local(ty=reference, span=span),
-            Local(ty=selected, span=span),
-        ],
-        blocks=[
-            plan_block([borrow], replace, span),
-            plan_block([], TerminatorKind.Drop(plan_place(4, span), 2, Unwind.Continue), span),
-            plan_block([finished], TerminatorKind.Return, span),
-        ],
+        locals=[Local(ty=PlanType.Unit, span=span), Local(ty=root_reference, span=span), Local(ty=selected, span=span), Local(
+            ty=reference,
+            span=span,
+        ), Local(ty=selected, span=span)],
+        blocks=[plan_block([borrow], replace, span), plan_block(
+            [],
+            TerminatorKind.Drop(plan_place(4, span), 2, Unwind.Continue),
+            span,
+        ), plan_block([finished], TerminatorKind.Return, span)],
         span=span,
     )
 
@@ -12313,13 +12510,11 @@ def write_static_entry(
         return Err("unsupported Body IR static set indexing assignment")
     mut argument = literal(Constant.Unit, span)
     match value:
-        RustRvalue.Use(operand) =>
-            argument = element_operand(builder, operand, types[1], span)?
+        RustRvalue.Use(operand) => argument = element_operand(builder, operand, types[1], span)?
         _ => return Err("unsupported Body IR static dictionary indexed rvalue")
     mut key = literal(Constant.Unit, span)
     match destination.projection[0]:
-        PlaceElem.Index(index) =>
-            key = element_operand(builder, index, types[0], span)?
+        PlaceElem.Index(index) => key = element_operand(builder, index, types[0], span)?
         _ => return Err("unsupported Body IR static dictionary mutation projection")
     receiver = list_base_place(builder, destination, span)?
     insert_collection(builder, receiver, [key, argument], span)?
@@ -12435,7 +12630,6 @@ pub def boundary_plan_operand(
     if source == PlanType.StrRef and target == PlanType.String:
         owned = owned_slice_text(builder, value, span)
         return Ok(read_place(owned, true, span))
-    # A borrowed source model that reaches a destination owning one was admitted by the checker there, so it is cloned.
     match (source, target):
         (PlanType.Tuple(_source_fields), PlanType.Tuple(_target_fields)) =>
             if source != target:
@@ -12499,27 +12693,6 @@ pub def boundary_plan_operand(
             builder.emit(plan_assign(output, operation, span))
             builder.owned.append(output.local)
             return Ok(read_place(output, true, span))
-# =====================================================================================================================
-# Lists: borrowing and runtime calls
-# =====================================================================================================================
-# =====================================================================================================================
-# Lists: owned values and indexed reads
-# =====================================================================================================================
-# =====================================================================================================================
-# Lists: checked arguments and methods
-# =====================================================================================================================
-# =====================================================================================================================
-# Lists: indexed mutation
-# =====================================================================================================================
-# =====================================================================================================================
-# Lists: iteration
-# =====================================================================================================================
-# =====================================================================================================================
-# Hashed collections: shared frame operations
-# =====================================================================================================================
-# =====================================================================================================================
-# Persistent scalar storage
-# =====================================================================================================================
 
 
 def converted_carrier_operand(
@@ -12535,12 +12708,10 @@ def converted_carrier_operand(
     mut source_owner = -1
     mut target_owner = -1
     match source_type:
-        PlanType.Enum(owner, _name) =>
-            source_owner = owner
+        PlanType.Enum(owner, _name) => source_owner = owner
         _ => return Ok(None)
     match target:
-        PlanType.Enum(owner, _name) =>
-            target_owner = owner
+        PlanType.Enum(owner, _name) => target_owner = owner
         _ => return Ok(None)
     if source_owner < len(builder.enums) or target_owner < len(builder.enums):
         return Ok(None)
@@ -12548,13 +12719,11 @@ def converted_carrier_operand(
     after = builder.intrinsics[target_owner - len(builder.enums)]
     if before.carrier not in ["Option", "Result"] or before.carrier != after.carrier:
         return Ok(None)
-    # An existing optional payload lifts as a whole, including None inside Some(None).
     if after.carrier == "Option" and after.variants[1].fields == [source_type]:
         return Ok(None)
     mut source = plan_place(-1, span)
     match value.kind:
-        OperandKind.Move(place) =>
-            source = place
+        OperandKind.Move(place) => source = place
         _ => return Err("unsupported Body IR carrier conversion without an owned value")
     output = temporary(builder, target, span)
     selected = builder.new_block(span)
@@ -12640,7 +12809,11 @@ def lower_union_isinstance(
         PlanType.Model(owner, _name) =>
             if source_ty == member:
                 return Ok(RvalueKind.Use(literal(Constant.Bool(true), span)))
-            if owner < 0 or owner >= len(builder.nominals) or builder.nominals[owner].canonical.kind != SemanticSourceTargetKind.Newtype:
+            if (
+                owner < 0
+                or owner >= len(builder.nominals)
+                or builder.nominals[owner].canonical.kind != SemanticSourceTargetKind.Newtype
+            ):
                 return Err("unsupported Body IR isinstance over a non-newtype nominal")
             return Ok(RvalueKind.Use(literal(Constant.Bool(source_ty == member), span)))
         _ => pass
@@ -12723,17 +12896,18 @@ def bind_enum_fields(
             RustPattern.Var(binding) =>
                 local = int(binding.local.index()) + 1 + builder.local_offset
                 ty = builder.locals[local].ty
-                projected = appended_field(source, FieldProjection(slot=slot, ty=payload_types[slot], variant=variant), span)?
+                projected = appended_field(
+                    source,
+                    FieldProjection(slot=slot, ty=payload_types[slot], variant=variant),
+                    span,
+                )?
                 if ty != payload_types[slot]:
-                    # A reference binding borrows its exact payload. Other representation changes, such as native
-                    # borrowed text becoming owned source text, keep their ordinary materialization path below.
                     match shared_receiver_type(payload_types[slot]):
                         Ok(reference) =>
                             if ty == reference:
                                 builder.emit(plan_assign(plan_place(local, span), RvalueKind.Borrow(projected), span))
                                 continue
                         Err(_reason) => pass
-                    # An exclusive subject binds each payload as an exclusive reference to it.
                     match exclusive_reference(payload_types[slot]):
                         Some(exclusive) =>
                             if ty == exclusive:
@@ -12765,8 +12939,10 @@ def moved_native_enum_payload(
     fact: &OwnershipFact,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Transfer a checked native or standard payload move, retiring its carrier's drop entry when present.
-    Intrinsic call temporaries can be drop-free; checked Body IR supplies their move authority."""
+    """
+    Transfer a checked native or standard payload move, retiring its carrier's drop entry when present.
+    Intrinsic call temporaries can be drop-free; checked Body IR supplies their move authority.
+    """
     owner = enum_owner(place_type(builder.locals, source))?
     if fact != OwnershipFact.Move:
         return enum_payload_read(builder, payload, fact, span)
@@ -12796,8 +12972,7 @@ def bind_nested_payload(
     """Bind the names a nested carrier or tuple payload pattern names, from the payload its tests already matched."""
     mut owner = -1
     match place_type(builder.locals, source):
-        PlanType.Enum(index, _name) =>
-            owner = index
+        PlanType.Enum(index, _name) => owner = index
         _ => return Err("invalid Body IR nested payload carrier")
     types = carrier_payload_types(builder, owner, variant)?
     payload = appended_field(source, FieldProjection(slot=slot, ty=types[slot], variant=variant), span)?
@@ -12817,8 +12992,7 @@ def bind_payload_in_place(mut builder: Builder, local: int, payload: Place, span
     """
     mut reference = PlanType.Unit
     match exclusive_reference(place_type(builder.locals, payload)):
-        Some(exclusive) =>
-            reference = exclusive
+        Some(exclusive) => reference = exclusive
         None => return Err("unsupported Body IR in-place pattern payload without an exclusive reference")
     builder.locals[local].ty = reference
     builder.emit(plan_assign(plan_place(local, span), RvalueKind.MutBorrow(payload), span))
@@ -12897,9 +13071,13 @@ def require_sort_order(mut builder: Builder, element: PlanType) -> Result[None, 
     """
     match element:
         PlanType.Model(owner, _name) =>
-            if owner >= len(builder.nominals) or ("Ord" not in builder.nominals[owner].derives and len(
-                builder.program.comparison_functions.as_ref()[owner],
-            ) != 5):
+            if (
+                owner >= len(builder.nominals)
+                or (
+                    "Ord" not in builder.nominals[owner].derives
+                    and len(builder.program.comparison_functions.as_ref()[owner]) != 5
+                )
+            ):
                 return Err("unsupported Body IR Sorted nominal without a retained Ord derive")
         PlanType.Tuple(elements) =>
             for item in elements:
@@ -12963,10 +13141,7 @@ def lower_list_concat(
     source_type = argument_type(builder, arguments, 0, span)?
     leaf, depth = require_list_shape(source_type, "unsupported Body IR list_concat type")?
     other_type = argument_type(builder, arguments, 1, span)?
-    other_leaf, other_depth = require_list_shape(
-        other_type,
-        "unsupported Body IR list_concat type",
-    )?
+    other_leaf, other_depth = require_list_shape(other_type, "unsupported Body IR list_concat type")?
     if leaf != other_leaf or depth != other_depth:
         return Err("unsupported Body IR mixed list_concat type")
     operands = [borrowed_list_argument(builder, arguments, 0, false, span)?, borrowed_list_argument(
@@ -13144,8 +13319,7 @@ def lower_split_helper(
     mut omitted = len(arguments) == 1
     if len(arguments) == 2:
         match arguments[1].as_one():
-            Some(RustOperand.Constant(RustConstant.None)) =>
-                omitted = true
+            Some(RustOperand.Constant(RustConstant.None)) => omitted = true
             _ => pass
     mut name = "split_default_text"
     mut parameters = [PlanType.StringRef]
@@ -13203,16 +13377,18 @@ pub def argument_type(
 
 
 pub def source_operand_type(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[PlanType, str]:
-    """Read a retained carrier without materializing its value.
+    """
+    Read a retained carrier without materializing its value.
 
     1. Select an exact local, field or global carrier, or preserve a constant's ordinary typed conversion.
     """
-    # 1. Select the exact place carrier or the constant's ordinary typed conversion.
     match value:
         RustOperand.Place(read) =>
             match read.place.global():
                 Some(global) =>
-                    if has_native_static_cell(builder.program.statics.as_ref()[static_slot(builder.program.statics.as_ref(), global)?]):
+                    if has_native_static_cell(
+                        builder.program.statics.as_ref()[static_slot(builder.program.statics.as_ref(), global)?],
+                    ):
                         return computed_static_type(builder, read.place, global)
                     return model_type(builder.nominals, global.ty)
                 None => pass
@@ -13279,7 +13455,11 @@ def lower_option_construction(
 ) -> Result[None, str]:
     """Build only an explicitly retained intrinsic Some node in the checked Option destination."""
     owner = enum_owner(place_type(builder.locals, target))?
-    if owner < len(builder.enums) or builder.intrinsics[owner - len(builder.enums)].carrier != "Option" or len(elements) != 1:
+    if (
+        owner < len(builder.enums)
+        or builder.intrinsics[owner - len(builder.enums)].carrier != "Option"
+        or len(elements) != 1
+    ):
         return Err("invalid Body IR Some destination or payload")
     match elements[0].as_one():
         Some(payload) =>
@@ -13334,8 +13514,7 @@ def lower_carrier_method(
         return Err("unsupported Body IR intrinsic carrier method arity")
     if arity == 2:
         match arguments[1].as_one():
-            Some(value) =>
-                fallback = Some(boundary_operand(builder, value, ty, span)?)
+            Some(value) => fallback = Some(boundary_operand(builder, value, ty, span)?)
             None => return Err("unsupported Body IR carrier fallback spread")
     target = call_destination(builder, destination, ty, span)?
     return lower_carrier_method_plan(builder, name, source, target, fallback, span)
@@ -13391,24 +13570,25 @@ def retained_reference_value(
     expected: PlanType,
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
-    """Transfer an exact exclusive reference, copy a shared one, or borrow whole owner storage under a checked fact."""
+    """Transfer an exact exclusive reference, copy a shared reference, or borrow a checked local or structural field."""
     exclusive = is_exclusive_borrow(expected)
     if not exclusive:
         match expected:
             PlanType.ModelRef(_owner, _name) => pass
             PlanType.EnumRef(_owner, _name) => pass
+            PlanType.TupleRef(_elements) => pass
+            PlanType.FrozenCollectionRef(_name, _elements) => pass
             PlanType.StringRef => pass
             PlanType.ScalarRef(_elements) => pass
             PlanType.SliceRef(_elements) => pass
             _ => return Ok(None)
     match value:
         RustOperand.Place(read) =>
-            if len(read.place.projection) != 0:
+            if exclusive and len(read.place.projection) != 0:
                 return Ok(None)
-            match read.place.local_id():
+            match retained_reference_place(builder, read.place, span)?:
                 None => return Ok(None)
-                Some(local) =>
-                    place = plan_place(int(local.index()) + 1 + builder.local_offset, span)
+                Some(place) =>
                     if exclusive:
                         if read.fact != OwnershipFact.Move or place_type(builder.locals, place) != expected:
                             return Ok(None)
@@ -13430,13 +13610,30 @@ def retained_reference_value(
         _ => return Ok(None)
 
 
+def retained_reference_place(mut builder: Builder, source: &RustPlace, span: SourceSpan) -> Result[Option[Place], str]:
+    """Keep local and structural field storage addressable; collection indexing retains its own borrow path."""
+    match source.local_id():
+        None => return Ok(None)
+        Some(local) =>
+            if len(source.projection) == 0:
+                return Ok(Some(plan_place(int(local.index()) + 1 + builder.local_offset, span)))
+    if len(source.projection) != 0:
+        match structural_prefix(builder, source)?:
+            Some((count, _through_tuple)) =>
+                if count != len(source.projection):
+                    return Ok(None)
+            None => return Ok(None)
+    return Ok(Some(scalar_place(builder, source, span)?))
+
+
 def typed_carrier_operand(
     mut builder: Builder,
     operand: &RustOperand,
     ty: PlanType,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Materialize checked carrier and text conversions at a concrete call, return, or collection boundary.
+    """
+    Materialize checked carrier and text conversions at a concrete call, return, or collection boundary.
 
     A checked native Copy read can dereference an explicit reference slot only for its matching owned carrier. Other
     reference values retain the early reference-read boundary, and the adapter verifies the native Copy capability.
@@ -13474,6 +13671,99 @@ def frozen_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) 
             if operand_type(builder, operand)? != PlanType.FrozenStr:
                 return Err("unsupported Body IR dynamic text to FrozenStr conversion")
             return Ok(operand)
+            # The whole tuple stays an owner, so moving an owned element out of it would drop that element twice.
+    # 1. Scalars and other aggregate kinds keep their own comparison paths.
+    # 2. The shared argument boundary preserves existing references and borrows owned tuple fields.
+    # 3. Aggregate equality is a trait call, never a primitive MIR binary operation.
+    # Text and an owned collection, model, enum or carrier input move into the local the body reads, which then owns them; an
+    # exclusive borrow moves in too, and every other input is a copy or a shared view.
+    # 1. Read the enum's checked layout slot.
+    # 2. Match its exact retained source identity.
+    # 1. Read its retained scalar backing.
+    # 1. Allocate a branch per checked variant.
+    # 2. Materialize that variant's retained scalar value.
+    # 3. Join the branches and retain owned text for cleanup.
+    # A list or dictionary element receiver is reborrowed in its container; no native place names it.
+    # A selected body with only its receiver proves there are no ordinary slots to bind. Keep every resolved
+    # binding on the normal validation path, so malformed slot/default records still refuse.
+        # Owned models and list snapshots move out of the call; neither borrows from the guarded storage.
+            # A selected native signature has already closed its trait binders; only Self remains a source binder.
+            # Its complete native argument vector is still substituted and validated at the external call boundary.
+        # A retained default points at the protocol itself; only a distinct implementation overrides that slot.
+        # 1. Materialize the result in its declared return carrier.
+        # 2. Convert the checked boundary before replacing the old destination.
+        # 3. Transfer exactly the selected owner to its destination.
+                        # A template from another source declaration may use binders absent from this frame.
+    # A checked native signature in a source body can name that body's binders. A compiled Loaf instead owns its
+    # declaration binders; neither signature infers a type from a runtime operand.
+                # Older checked nominal calls also retain their owner arguments on the associated call. Exact
+                # agreement across both views and all declared binders preserves that proven representation.
+            # SDK enums own their Clone implementation; the local derive callee cannot validate a foreign layout.
+                # An indexed model, including an opaque native one, materializes once for its retained Debug call.
+    # Native comparison bridges call their checked slots without an ordinary source call to schedule them.
+            # A checked move preserves an admitted generator or zip carrier's existing ownership. Only an owned
+            # list needs the consuming list cursor representation; borrowed or unsupported carriers cannot supply it.
+    # 1. Check the argument position.
+    # 2. Retain its exact local projection.
+    # Builtin Clone calls use the exact retained native carrier rather than a same-named list member.
+                # A borrowed subject binds its components as shared references to them.
+    # Keep the immutable initializer owner alive independently while materialization mutates the frame.
+    # A borrowed source model that reaches a destination owning one was admitted by the checker there, so it is cloned.
+    # An existing optional payload lifts as a whole, including None inside Some(None).
+                    # A reference binding borrows its exact payload. Other representation changes, such as native
+                    # borrowed text becoming owned source text, keep their ordinary materialization path below.
+                    # An exclusive subject binds each payload as an exclusive reference to it.
+    # 1. Select the exact place carrier or the constant's ordinary typed conversion.
+
+
+# =====================================================================================================================
+# Plain model construction and field replacement
+# =====================================================================================================================
+
+
+# =====================================================================================================================
+# Formatting and strings
+# =====================================================================================================================
+
+
+# =====================================================================================================================
+# Formatting and strings
+# =====================================================================================================================
+
+
+# =====================================================================================================================
+# Module and function entry points
+# =====================================================================================================================
+
+
+# =====================================================================================================================
+# Module and function entry points
+# =====================================================================================================================
+
+
+# =====================================================================================================================
+# Lists: borrowing and runtime calls
+# =====================================================================================================================
+# =====================================================================================================================
+# Lists: owned values and indexed reads
+# =====================================================================================================================
+# =====================================================================================================================
+# Lists: checked arguments and methods
+# =====================================================================================================================
+# =====================================================================================================================
+# Lists: indexed mutation
+# =====================================================================================================================
+# =====================================================================================================================
+# Lists: iteration
+# =====================================================================================================================
+# =====================================================================================================================
+# Hashed collections: shared frame operations
+# =====================================================================================================================
+# =====================================================================================================================
+# Persistent scalar storage
+# =====================================================================================================================
+
+
 # ---- The checked Body IR, read through Rust interop ----
 # ---- Admission helpers owned by this Loaf ----
 # =====================================================================================================================

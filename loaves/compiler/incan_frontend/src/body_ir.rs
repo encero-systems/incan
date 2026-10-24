@@ -323,6 +323,7 @@ pub fn build_body_ir_module(
     static_declarations.sort_by_key(|declaration| declaration.canonical.declaration_span.start);
     registry_effects::collect(program, &lowering_facts, &mut static_declarations);
     let mut module = bir::BodyIrModule {
+        runtime_callable_bindings: Vec::new(),
         string_conversion_contract: bir::StringConversionContract::Unselected,
         decorated_bindings,
         entrypoint_effects: entrypoint_effects::collect(program),

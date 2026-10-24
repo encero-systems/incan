@@ -1,8 +1,21 @@
 """Forward runtime-owned arguments into their published Incan frame's borrowing contract."""
 
 from pub::incan_mir_plan import (
-    BasicBlock, Callee, CalleeKind, ExternalFunction, Function, Local, Operand, Parameter, Place, PlanType,
-    RvalueKind, SourceSpan, Statement, TerminatorKind, Unwind,
+    BasicBlock,
+    Callee,
+    CalleeKind,
+    ExternalFunction,
+    Function,
+    Local,
+    Operand,
+    Parameter,
+    Place,
+    PlanType,
+    RvalueKind,
+    SourceSpan,
+    Statement,
+    TerminatorKind,
+    Unwind,
 )
 from pub::incan_mir_plan import assign as plan_assign, block as plan_block, place as plan_place
 from frame import read_place
@@ -12,9 +25,15 @@ from decls import library_item
 
 
 pub def runtime_frame_adapter(
-    module: &BodyIrModule, external: ExternalFunction, parameters: list[PlanType], result: PlanType, target: str,
+    module: &BodyIrModule,
+    external: ExternalFunction,
+    parameters: list[PlanType],
+    result: PlanType,
+    target: str,
+    callee: CalleeKind,
 ) -> Result[Option[Function], str]:
-    """Forward a runtime call: 1. Retain its inputs. 2. Adapt declared storage. 3. Clean up borrowed owners.
+    """
+    Forward a runtime call: 1. Retain its inputs. 2. Adapt declared storage. 3. Clean up borrowed owners.
 
     Runtime operations describe their owned native inputs. A published Incan value parameter can instead receive
     a shared view of that owner. The declaration's frame supplies every target type; this forwarder adds no body
@@ -51,9 +70,9 @@ pub def runtime_frame_adapter(
         if native_alias_boundary(module, actual, expected):
             alias = plan_place(len(locals), span)
             locals.append(Local(ty=expected, span=span))
-            statements.append(plan_assign(alias, RvalueKind.NativeAlias(
-                read_place(source, true, span), actual, expected,
-            ), span))
+            statements.append(
+                plan_assign(alias, RvalueKind.NativeAlias(read_place(source, true, span), actual, expected), span),
+            )
             operands.append(read_place(alias, true, span))
             continue
         borrowed = shared_receiver_type(actual)?
@@ -66,9 +85,13 @@ pub def runtime_frame_adapter(
         if borrowed != expected:
             argument = plan_place(len(locals), span)
             locals.append(Local(ty=expected, span=span))
-            statements.append(plan_assign(argument, RvalueKind.NativeAlias(
-                read_place(reference, false, span), borrowed, expected,
-            ), span))
+            statements.append(
+                plan_assign(
+                    argument,
+                    RvalueKind.NativeAlias(read_place(reference, false, span), borrowed, expected),
+                    span,
+                ),
+            )
         operands.append(read_place(argument, false, span))
         owners.append(source)
     # 3. Both completion paths release only owners whose views were lent to the target frame.
@@ -82,24 +105,35 @@ pub def runtime_frame_adapter(
         locals.append(Local(ty=result, span=span))
         cleanup = normal
         normal = len(blocks)
-        blocks.append(plan_block([
-            plan_assign(plan_place(0, span), RvalueKind.NativeAlias(
-                read_place(output, true, span), result, external.return_type,
-            ), span),
-        ], TerminatorKind.Goto(cleanup), span))
+        blocks.append(
+            plan_block(
+                [plan_assign(
+                    plan_place(0, span),
+                    RvalueKind.NativeAlias(read_place(output, true, span), result, external.return_type),
+                    span,
+                )],
+                TerminatorKind.Goto(cleanup),
+                span,
+            ),
+        )
     cleanup = owner_cleanup(blocks, owners, true, span)
     blocks[0] = plan_block(
         statements,
-        TerminatorKind.Call(
-            Callee(kind=CalleeKind.Planned(target), span=span), operands, output, normal,
-            Unwind.Cleanup(cleanup),
-        ),
+        TerminatorKind.Call(Callee(kind=callee, span=span), operands, output, normal, Unwind.Cleanup(cleanup)),
         span,
     )
-    return Ok(Some(Function(
-        name=f"{target}__runtime_frame", parameters=inputs, return_type=external.return_type,
-        locals=locals, blocks=blocks, span=span,
-    )))
+    return Ok(
+        Some(
+            Function(
+                name=f"{target}__runtime_frame",
+                parameters=inputs,
+                return_type=external.return_type,
+                locals=locals,
+                blocks=blocks,
+                span=span,
+            ),
+        ),
+    )
 
 
 def native_alias_boundary(module: &BodyIrModule, source: PlanType, target: PlanType) -> bool:
@@ -112,13 +146,33 @@ def native_alias_boundary(module: &BodyIrModule, source: PlanType, target: PlanT
 def alias_reference_mode(ty: PlanType) -> int:
     """Keep shared and exclusive loans distinct from owners when forwarding exact native aliases."""
     match ty:
-        (PlanType.ModelRef(_, _) | PlanType.EnumRef(_, _) | PlanType.TupleRef(_) | PlanType.ZipIteratorRef(_, _)
-         | PlanType.ListRef(_, _) | PlanType.SetRef(_) | PlanType.DictRef(_, _) | PlanType.ScalarRef(_)
-         | PlanType.SliceRef(_) | PlanType.StringRef | PlanType.StrRef) => return 1
-        (PlanType.ModelMutRef(_, _) | PlanType.EnumMutRef(_, _) | PlanType.TupleMutRef(_)
-         | PlanType.ZipIteratorMutRef(_, _) | PlanType.ListMutRef(_, _) | PlanType.SetMutRef(_)
-         | PlanType.DictMutRef(_, _) | PlanType.ScalarMutRef(_) | PlanType.SliceMutRef(_)
-         | PlanType.StringMutRef | PlanType.GeneratorMutRef(_, _)) => return 2
+        (
+            PlanType.ModelRef(_, _)
+            | PlanType.EnumRef(_, _)
+            | PlanType.TupleRef(_)
+            | PlanType.ZipIteratorRef(_, _)
+            | PlanType.ListRef(_, _)
+            | PlanType.SetRef(_)
+            | PlanType.DictRef(_, _)
+            | PlanType.ScalarRef(_)
+            | PlanType.SliceRef(_)
+            | PlanType.StringRef
+            | PlanType.StrRef
+            | PlanType.FrozenCollectionRef(_, _)
+        ) => return 1
+        (
+            PlanType.ModelMutRef(_, _)
+            | PlanType.EnumMutRef(_, _)
+            | PlanType.TupleMutRef(_)
+            | PlanType.ZipIteratorMutRef(_, _)
+            | PlanType.ListMutRef(_, _)
+            | PlanType.SetMutRef(_)
+            | PlanType.DictMutRef(_, _)
+            | PlanType.ScalarMutRef(_)
+            | PlanType.SliceMutRef(_)
+            | PlanType.StringMutRef
+            | PlanType.GeneratorMutRef(_, _)
+        ) => return 2
         _ => return 0
 
 

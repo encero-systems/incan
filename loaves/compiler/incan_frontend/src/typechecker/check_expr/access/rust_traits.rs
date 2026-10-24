@@ -14,6 +14,7 @@ use crate::typechecker::{IdentKind, RustArgCoercionKind};
 use incan_lang::interop::{
     RustFunctionSig, RustImplementedTrait, RustItemKind, RustItemMetadata, RustTraitAssoc, RustTraitInfo, RustTypeInfo,
 };
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_lang::lang::types::numerics;
 
 /// A closed trait reference and the signature it contributes to one method call.
@@ -707,7 +708,35 @@ impl TypeChecker {
     fn rust_trait_comparison_type(&self, ty: &ResolvedType) -> ResolvedType {
         let ty = self.rust_inference_type(ty, &[]);
         map_resolved_type_leaves(&ty, &|leaf| {
+            if let ResolvedType::Generic(path, arguments) = leaf
+                && path.contains("::")
+                && arguments.is_empty()
+            {
+                return Some(ResolvedType::RustPath(self.rust_native_type_identity_path(path)));
+            }
+            if let ResolvedType::Function(parameters, result) = leaf {
+                return Some(ResolvedType::Function(
+                    parameters
+                        .iter()
+                        .map(|parameter| {
+                            let mut parameter = parameter.clone();
+                            parameter.name = None;
+                            parameter.ty = self.rust_trait_comparison_type(&parameter.ty);
+                            parameter
+                        })
+                        .collect(),
+                    Box::new(self.rust_trait_comparison_type(result)),
+                ));
+            }
             if let ResolvedType::Generic(base, arguments) = leaf {
+                if collections::from_str(base) == Some(CollectionTypeId::Tuple) {
+                    return Some(ResolvedType::Tuple(
+                        arguments
+                            .iter()
+                            .map(|argument| self.rust_trait_comparison_type(argument))
+                            .collect(),
+                    ));
+                }
                 let base = if base.contains("::") {
                     self.rust_native_type_identity_path(base)
                 } else {
@@ -775,7 +804,48 @@ impl TypeChecker {
         self.infer_type_param_bindings(&template, &actual, &mut bindings);
         self.insert_rust_impl_default_bindings(implementation, &mut bindings);
         let closed = substitute_resolved_type(&template, &bindings);
-        self.rust_trait_carriers_match(&closed, &actual).then_some(bindings)
+        if !self.rust_trait_carriers_match(&closed, &actual) {
+            return None;
+        }
+        self.rust_callable_impl_bindings(implementation, &mut bindings);
+        Some(bindings)
+    }
+
+    /// Close an impl binder constrained by a retained native callable Output equality. Iterator adapters commonly
+    /// bind their Item through `F: FnMut(...) -> B`, so matching Self alone cannot discover B. The actual checked
+    /// function signature supplies that result; rustc still verifies every native trait predicate before execution.
+    fn rust_callable_impl_bindings(
+        &self,
+        implementation: &RustImplementedTrait,
+        bindings: &mut HashMap<String, ResolvedType>,
+    ) {
+        for _ in 0..implementation.type_params.len() {
+            for bound in &implementation.bounds {
+                let Some(name) = bound
+                    .path
+                    .strip_prefix("std::ops::")
+                    .or_else(|| bound.path.strip_prefix("core::ops::"))
+                else {
+                    continue;
+                };
+                if !incan_lang::interop::is_rust_callable_capability_bound(name) {
+                    continue;
+                }
+                let owner = self.native_rust_signature_type(&bound.self_type, "");
+                let owner = self.rust_inference_type(&owner, &implementation.type_params);
+                let ResolvedType::Function(_, result) = substitute_resolved_type(&owner, bindings) else {
+                    continue;
+                };
+                for equality in &bound.associated_type_bindings {
+                    if equality.name != "Output" {
+                        continue;
+                    }
+                    let output = self.native_rust_signature_type(&equality.value_path, "");
+                    let output = self.rust_inference_type(&output, &implementation.type_params);
+                    self.infer_type_param_bindings(&output, &result, bindings);
+                }
+            }
+        }
     }
 
     /// Bind the impl binders that stand at a defaulted position of its Self template (`A` in `Vec<T, A>`) to the

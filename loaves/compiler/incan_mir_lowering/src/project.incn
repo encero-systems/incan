@@ -1,6 +1,6 @@
 """Shared declaration context for a project whose individual owning modules have been validated."""
 
-from rust::incan_semantics_core::body_ir import BodyIrModule, EnumDeclaration, NominalDeclaration
+from rust::incan_semantics_core::body_ir import BodyIrModule, EnumDeclaration, NominalDeclaration, LoafCallable
 from traits import specialize_project_traits
 
 
@@ -63,11 +63,17 @@ pub def project_context(
             context.decorated_bindings.push(module.decorated_bindings[index].clone())
         for index in range(len(module.loaf_callables)):
             declaration = module.loaf_callables[index].clone()
-            context.loaf_callables.push(declaration.clone())
+            if not retains_callable(context, declaration):
+                context.loaf_callables.push(declaration.clone())
         for index in range(len(module.native_union_declarations)):
             declaration = module.native_union_declarations[index].clone()
             context.native_union_declarations.push(declaration.clone())
     return Ok((context, checked))
+
+
+def retains_callable(context: &BodyIrModule, candidate: &LoafCallable) -> bool:
+    """Reuse an exact authenticated callable record, including its native arguments, signature and declaration frame."""
+    return context.loaf_callables.contains(candidate)
 
 
 def retains_nominal(context: &BodyIrModule, candidate: &NominalDeclaration) -> Result[bool, str]:

@@ -75,20 +75,24 @@ pub def deserialize_model[T with DeserializeOwned](text: &str) -> Result[T, str]
 
 
 pub def serialize_int(value: int) -> str:
-    """Serialize the canonical signed Incan integer through the legacy JSON builtin boundary."""
-    return json_stringify(value)
+    """Serialize the canonical integer: 1. Call the existing serde primitive and structured error boundary."""
+    # 1. Call serde without reentering the language's JSON operation.
+    return stringify_or_raise(value, type_name_of_val(value))
 
 
 pub def serialize_float(value: float) -> str:
-    """Preserve serde's floating-point spelling and nonfinite-value behavior."""
-    return json_stringify(value)
+    """Preserve floating-point JSON: 1. Call serde with its original nonfinite-value policy."""
+    # 1. Keep serde's spelling and nonfinite-value behavior.
+    return stringify_or_raise(value, type_name_of_val(value))
 
 
 pub def serialize_bool(value: bool) -> str:
-    """Serialize a boolean as the same lowercase JSON literal as legacy."""
-    return json_stringify(value)
+    """Serialize a boolean: 1. Call serde for the original lowercase literal."""
+    # 1. Preserve the primitive's spelling and error behavior.
+    return stringify_or_raise(value, type_name_of_val(value))
 
 
 pub def serialize_string(value: &str) -> str:
-    """Serialize borrowed string text with serde's escaping without consuming its source owner."""
-    return json_stringify(value)
+    """Serialize borrowed text: 1. Use serde's escaping while retaining its source owner."""
+    # 1. Borrow the original owner through the native serializer.
+    return stringify_or_raise(value, type_name_of_val(value))

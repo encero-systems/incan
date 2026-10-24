@@ -1,0 +1,42 @@
+"""Select a retained native signature using the checked call result in its original source frame."""
+
+from rust::incan_semantics_core::body_ir import LoafCallable, Place as RustPlace
+from frame import Builder
+from type_parameters import substitute
+
+
+pub def native_result_matches(
+    mut builder: Builder,
+    declaration: &LoafCallable,
+    destination: &Option[RustPlace],
+) -> Result[bool, str]:
+    """
+    Disambiguate checked native records: 1. Read the original result slot. 2. Compare their closed checked types.
+
+    Distinct generic bodies can use the same binder spelling for different associated outputs. Canonical callee and
+    native arguments alone do not distinguish those records. The result slot already carries the checker's selected
+    output; this comparison neither infers a signature from an operand nor resolves a native item again. Closed owner
+    instances share a canonical declaration identity, so the frame retains its own checked local types directly.
+    """
+    # 1. Read only a whole result slot in its authenticated source frame.
+    match destination:
+        None => return Ok(true)
+        Some(place) =>
+            if len(place.projection) != 0 or builder.local_offset != 0:
+                return Ok(true)
+            match place.local_id():
+                None => return Ok(true)
+                Some(local) =>
+                    index = int(local.index())
+                    if len(builder.checked_local_types) == 0:
+                        return Ok(true)
+                    if index >= len(builder.checked_local_types):
+                        return Err("invalid checked native result slot")
+                    # 2. Compare the existing checked types under this exact frame's retained binding.
+                    actual = substitute(
+                        builder.checked_local_types[index],
+                        builder.type_parameters,
+                        builder.type_arguments,
+                    )?
+                    selected = substitute(declaration.return_type, builder.type_parameters, builder.type_arguments)?
+                    return Ok(actual == selected)

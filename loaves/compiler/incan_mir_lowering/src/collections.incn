@@ -23,10 +23,14 @@ from rust::incan_semantics_core::body_ir import (
 )
 from rust::incan_semantics_core import IncanType as RustType, IncanPrimitiveType as Primitive
 from tuples import tuple_type, generic_tuple_type
+from models import runtime_storage_marker
 
 
 pub def primitive_leaf(ty: &RustType, hashed: bool) -> Result[ListLeaf, str]:
     """Admit primitive leaves, owned byte buffers and flat scalar tuple keys; floating point keys lack Eq and Hash."""
+    match runtime_storage_marker(ty):
+        Some(PlanType.Decimal) => return Ok(ListLeaf.Decimal)
+        _ => pass
     match ty:
         RustType.Decimal(precision=_precision, scale=_scale) => return Ok(ListLeaf.Decimal)
         RustType.Primitive(primitive) =>
@@ -297,8 +301,7 @@ pub def extend_collection(
     """Splice one checked owner into a set constructor or dictionary literal, then consume that owner."""
     mut source_place = destination
     match source.kind:
-        OperandKind.Move(place) =>
-            source_place = place
+        OperandKind.Move(place) => source_place = place
         _ => return Err("unsupported Body IR collection spread without owned source")
     ty = builder.locals[destination.local].ty
     source_type = builder.locals[source_place.local].ty

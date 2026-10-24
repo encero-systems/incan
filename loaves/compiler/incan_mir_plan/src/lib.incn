@@ -34,6 +34,11 @@ pub enum TupleElement:
     SliceRef(list[PlanType])
     SliceMutRef(list[PlanType])
     FrozenStr
+    # Exact native frozen storage remains Copy inside a tuple, including nested frozen collections.
+    StaticText
+    StaticBytes
+    FrozenBytes
+    FrozenCollection(str, list[PlanType])
 
 
 @derive(Clone, PartialEq)
@@ -281,6 +286,10 @@ pub def tuple_element_type(element: TupleElement) -> PlanType:
         TupleElement.SliceRef(elements) => return PlanType.SliceRef(elements)
         TupleElement.SliceMutRef(elements) => return PlanType.SliceMutRef(elements)
         TupleElement.FrozenStr => return PlanType.FrozenStr
+        TupleElement.StaticText => return PlanType.StaticText
+        TupleElement.StaticBytes => return PlanType.StaticBytes
+        TupleElement.FrozenBytes => return PlanType.FrozenBytes
+        TupleElement.FrozenCollection(name, elements) => return PlanType.FrozenCollection(name, elements)
 
 
 def reference_type(mutable: bool, referent: list[PlanType]) -> PlanType:
@@ -556,6 +565,8 @@ pub enum CalleeKind:
     CloneClosure(list[PlanType])
     # Format the exact native carrier through rustc's Debug (true) or Display (false) implementation.
     FormatValue(PlanType, bool)
+    # Box a checked noncapturing native callback and install it through Rust's standard panic API.
+    InstallPanicHook(list[PlanType])
 
 
 @derive(Clone, PartialEq)
@@ -659,6 +670,9 @@ pub model Function:
     pub future_callee: Option[Callee] = None
     # Attribute macros rustc expands on the declaration; the macro's output replaces it.
     pub attributes: list[NativeAttribute] = []
+    # Reference preorder for each parameter and the result; equal nonempty names retain one source generic loan.
+    # Empty names keep ordinary elision, including the independent outer borrow of a mutable collection.
+    pub signature_lifetimes: list[list[str]] = []
 
 
 @derive(Clone, PartialEq)

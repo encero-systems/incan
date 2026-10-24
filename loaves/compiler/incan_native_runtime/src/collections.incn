@@ -5,34 +5,38 @@ from std.derives.comparison import Eq, Hash
 from rust::std::fmt import Display
 from rust::std::clone import Clone as RuntimeClone
 from rust::std::cmp import Eq as RuntimeEq
-from rust::std::collections import HashMap as RuntimeDict
-from rust::std::collections import HashSet as RuntimeSet
+from rust::std::collections import HashMap as RuntimeDict, HashSet as RuntimeSet
 from rust::std::collections::hash_set import Iter as RuntimeSetIter
 from rust::std::collections::hash_map import Keys as RuntimeKeys, Values as RuntimeValues
 from rust::std::iter import Iterator
 from rust::incan_std_core::iter import nonnegative_count
 from rust::incan_std_core::errors import raise_index_error
 from rust::incan_std_core::collections import set_contains, dict_contains_key, dict_get, dict_get_mut
+from native_equality import equal_native
 
 
 pub def equal_set[T with (Eq, Hash)](left: &Set[T], right: &Set[T]) -> bool:
-    """Compare hashed membership through legacy's shared equality receivers."""
-    return left == right
+    """Compare hashed membership without copying inputs: 1. Invoke native equality through its declared bound."""
+    # 1. Invoke native equality through its declared bound.
+    return equal_native(left, right)
 
 
 pub def unequal_set[T with (Eq, Hash)](left: &Set[T], right: &Set[T]) -> bool:
-    """Compare unequal hashed sets without consuming either source."""
-    return left != right
+    """Compare unequal hashed sets: 1. Negate borrowed native equality without consuming either source."""
+    # 1. Negate borrowed native equality without consuming either source.
+    return not equal_native(left, right)
 
 
 pub def equal_dict[K with (Eq, Hash), V with Eq](left: &Dict[K, V], right: &Dict[K, V]) -> bool:
-    """Compare matching keys and values through the legacy HashMap PartialEq operation."""
-    return left == right
+    """Compare matching keys and values: 1. Invoke the dictionary's borrowed native equality."""
+    # 1. Invoke the dictionary's borrowed native equality.
+    return equal_native(left, right)
 
 
 pub def unequal_dict[K with (Eq, Hash), V with Eq](left: &Dict[K, V], right: &Dict[K, V]) -> bool:
-    """Retain HashMap inequality on shared operands without cloning keys or values."""
-    return left != right
+    """Compare unequal dictionaries: 1. Negate borrowed native equality without cloning keys or values."""
+    # 1. Negate borrowed native equality without cloning keys or values.
+    return not equal_native(left, right)
 
 
 pub def empty_set[T with (Eq, Hash)]() -> Set[T]:

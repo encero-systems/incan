@@ -38,6 +38,7 @@ pub fn constant(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
 pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
     match &callee.kind {
         CalleeKind::Planned(name) => planned(tcx, name),
+        CalleeKind::InstallPanicHook(signature) => planned(tcx, &crate::panic_hooks::name(signature)),
         CalleeKind::FormatValue(_, debug) => planned(tcx, crate::formatting::name(*debug)),
         CalleeKind::Value(_) => Err(PlanError::UnknownCallee(
             "local callable has no declaration callee".into(),
@@ -249,6 +250,18 @@ fn layout_definition(tcx: TyCtxt<'_>, definition: DefId, expected: DefKind) -> O
 /// concrete Self arguments and bounds remain subject to native signature validation.
 /// A structural slice owner selects one public builtin impl item through the same rustc index used by extraction.
 pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
+    if let Some((owner, method)) = path.split_once("::") {
+        let native = match owner {
+            "f32" => Some(tcx.types.f32),
+            "f64" => Some(tcx.types.f64),
+            "u8" => Some(tcx.types.u8),
+            _ => None,
+        };
+        if let Some(native) = native {
+            return inherent_function_in(tcx, primitive_inherent_impls(tcx, native), method)
+                .ok_or_else(|| PlanError::UnknownCallee(path.into()));
+        }
+    }
     if let Some(method) = path.strip_prefix("[]::") {
         return primitive_function(tcx, SimplifiedType::Slice, method)
             .ok_or_else(|| PlanError::UnknownCallee(path.into()));
@@ -344,6 +357,19 @@ pub fn owner_inherent_impls(tcx: TyCtxt<'_>, owner: DefId) -> Vec<DefId> {
     let mut implementations = tcx.inherent_impls(owner).to_vec();
     implementations.extend_from_slice(tcx.incoherent_impls(SimplifiedType::Adt(owner)));
     implementations
+}
+
+/// Read the exact inherent impl bucket for a primitive carrier, shared by metadata extraction and executable callee
+/// selection.
+pub(crate) fn primitive_inherent_impls<'tcx>(tcx: TyCtxt<'tcx>, native: rustc_middle::ty::Ty<'tcx>) -> &'tcx [DefId] {
+    let Some(bucket) = rustc_middle::ty::fast_reject::simplify_type(
+        tcx,
+        native,
+        rustc_middle::ty::fast_reject::TreatParams::InstantiateWithInfer,
+    ) else {
+        return &[];
+    };
+    tcx.incoherent_impls(bucket)
 }
 
 /// Resolve a retained native slice or `str` method through the same primitive impl bucket rustc uses for method

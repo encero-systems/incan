@@ -744,7 +744,7 @@ pub fn strip_rust_borrow_lifetimes(text: &str) -> String {
 }
 
 /// Split a comma-separated Rust generic/tuple argument list without splitting inside nested generic, tuple, or slice
-/// delimiters.
+/// delimiters. A function return arrow does not close an enclosing generic argument list.
 #[must_use]
 pub fn split_top_level_rust_args(text: &str) -> Vec<&str> {
     let mut args = Vec::new();
@@ -755,7 +755,7 @@ pub fn split_top_level_rust_args(text: &str) -> Vec<&str> {
     for (idx, ch) in text.char_indices() {
         match ch {
             '<' => angle += 1,
-            '>' => angle = angle.saturating_sub(1),
+            '>' if !text[..idx].ends_with('-') => angle = angle.saturating_sub(1),
             '(' => paren += 1,
             ')' => paren = paren.saturating_sub(1),
             '[' => bracket += 1,
@@ -1068,7 +1068,7 @@ fn split_top_level_rust_bounds(text: &str) -> Vec<&str> {
     for (idx, ch) in text.char_indices() {
         match ch {
             '<' => angle += 1,
-            '>' => angle = angle.saturating_sub(1),
+            '>' if !text[..idx].ends_with('-') => angle = angle.saturating_sub(1),
             '(' => paren += 1,
             ')' => paren = paren.saturating_sub(1),
             '[' => bracket += 1,
@@ -1540,6 +1540,7 @@ mod tests {
         assert!(!RustCollectionFamily::HashSet.preserves_lookup_arg_shape("insert"));
     }
 
+    /// Preserve nested structural argument boundaries, including function pointers inside iterator storage.
     #[test]
     fn parse_rust_type_shape_text_classifies_shared_structural_shapes() {
         let shape = parse_rust_type_shape_text(
@@ -1557,6 +1558,15 @@ mod tests {
                     args: Vec::new(),
                 }),
             )))
+        );
+        assert_eq!(
+            split_top_level_rust_args(
+                "TakeWhile<Map<Repeat<i64>, fn(i64) -> Option<i64>>, fn(&Option<i64>) -> bool>, fn(Option<i64>) -> i64"
+            ),
+            vec![
+                "TakeWhile<Map<Repeat<i64>, fn(i64) -> Option<i64>>, fn(&Option<i64>) -> bool>",
+                "fn(Option<i64>) -> i64",
+            ],
         );
     }
 

@@ -10,7 +10,10 @@ from rust::incan_semantics_core import IncanType as RustType
 pub def local_generic_item(declaration: &NominalDeclaration, instances: list[NominalInstance]) -> Result[str, str]:
     """Select the retained template of a local closed carrier, so its storage aliases the ADT published by this Loaf."""
     for instance in instances:
-        if instance.declaration.canonical == declaration.canonical and nominal_symbol(str(instance.declaration.name), instance.arguments) == declaration.name:
+        if (
+            instance.declaration.canonical == declaration.canonical
+            and nominal_symbol(str(instance.declaration.name), instance.arguments) == declaration.name
+        ):
             return Ok("crate::" + str(instance.declaration.name))
     return Err("invalid Body IR local generic layout without its template")
 
@@ -22,8 +25,11 @@ pub def library_model_arguments(
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[PlanType], str]:
     """Transport a retained instance's actual arguments, without decoding names or inferring them from fields."""
+    native_item: str = str(declaration.native_item)
     if len(declaration.type_parameters) == 0:
-        return native_arguments(module, declaration, intrinsics)
+        return native_arguments(module, declaration, intrinsics).map_err(
+            (reason) => f"{reason} in native arguments of {native_item}",
+        )
     mut selected: Option[NominalInstance] = None
     for instance in instances:
         if instance.declaration.canonical != declaration.canonical:
@@ -33,14 +39,16 @@ pub def library_model_arguments(
         if len(instance.arguments) != len(declaration.type_parameters):
             return Err("unsupported Body IR SDK model argument arity")
         match selected:
-            None =>
-                selected = Some(instance)
+            None => selected = Some(instance)
             Some(previous) =>
                 if previous.arguments != instance.arguments:
                     return Err("unsupported Body IR conflicting SDK model arguments")
     match selected:
         None => return Err(f"unsupported Body IR SDK model without checked instance arguments for {declaration.name}")
-        Some(instance) => return instance_native_arguments(module, declaration, instance, intrinsics)
+        Some(instance) =>
+            return instance_native_arguments(module, declaration, instance, intrinsics).map_err(
+                (reason) => f"{reason} in native instance arguments of {native_item}",
+            )
 
 
 def native_arguments(

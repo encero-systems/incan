@@ -49,6 +49,8 @@ impl TypeChecker {
     /// that owner's metadata and preserve each executable adjustment.
     /// Unanchored Self templates require bound filtering before their associated values compete with concrete owner
     /// templates. Native signature and predicate validation remains authoritative for a selected concrete call.
+    /// An unresolved blanket projection does not prevent a later concrete candidate from supplying its associated
+    /// value.
     fn rust_associated_type_at_depth(
         &self,
         ty: &ResolvedType,
@@ -138,7 +140,9 @@ impl TypeChecker {
                 &substitutions,
                 &render_resolved_type_as_rust_arg(&owner),
             );
-            let mut value = self.rust_projected_type(&display, depth + 1)?;
+            let Some(mut value) = self.rust_projected_type(&display, depth + 1) else {
+                continue;
+            };
             if member == "Target"
                 && matches!(&value, ResolvedType::Generic(name, _) if crate::typechecker::helpers::collection_type_id(name).is_some())
                 && let Some(path) = self.rust_result_item_path(&display, "")

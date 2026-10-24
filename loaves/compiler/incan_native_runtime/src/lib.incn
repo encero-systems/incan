@@ -3,7 +3,9 @@
 from rust::incan_std_core::strings import float_to_string
 from rust::std::primitive import i64 as RuntimeInt
 from rust::std::string import String as RustString
-
+from rust::std::io import stdout, Stdout, Write
+from rust::std::vec import Vec
+from rust::std::panic import panic_any
 pub from fallible_defaults import (
     fallible_next,
     fallible_map,
@@ -332,8 +334,17 @@ pub def format_bool(value: bool) -> str:
 
 
 pub def println_text(value: str) -> None:
-    """Print one formatted value followed by the language's normal newline."""
-    println(value)
+    """Print one line: 1. Retain UTF-8 bytes. 2. Append a newline. 3. Write the line or raise its I/O failure."""
+    # 1. Retain independently owned UTF-8 bytes.
+    native: RustString = value
+    mut bytes: Vec[u8] = native.into_bytes()
+    # 2. Append the language's normal newline.
+    bytes.push(10)
+    mut stream: Stdout = stdout()
+    # 3. Write the complete line with the standard I/O failure message.
+    match stream.write_all(bytes):
+        Ok(_value) => return
+        Err(error) => panic_any(f"failed printing to stdout: {error}")
 
 
 pub def clone_text(value: &str) -> str:
@@ -347,8 +358,12 @@ pub def validate_range(start: int, end: int, step: int) -> None:
 
 
 pub def assert_failure(message: str) -> None:
-    """Raise the same assertion panic and empty-message fallback as the legacy language primitive."""
-    assert false, message
+    """Raise an assertion panic: 1. Retain the empty-message fallback. 2. Attach an explicit message."""
+    # 1. Retain the language's empty-message fallback.
+    if message == "":
+        panic_any("AssertionError")
+    # 2. Attach an explicit message to the same owned panic payload.
+    panic_any(f"AssertionError: {message}")
 
 
 pub def initialize_panic_hook() -> None:

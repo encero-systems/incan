@@ -384,6 +384,30 @@ impl TypeChecker {
         rendered
     }
 
+    /// Read a boxed native callback's metadata signature before a direct function pointer is boxed at its call
+    /// boundary. Capturing callable objects still need their own auto-trait proof and are not admitted by this
+    /// projection.
+    pub(in crate::typechecker::check_expr) fn rust_boxed_callable_signature(
+        &self,
+        display: &str,
+    ) -> Option<ResolvedType> {
+        let (owner, arguments) = Self::rust_generic_base_and_args(display)?;
+        if !incan_lang::interop::is_box_carrier_path(owner) || arguments.len() != 1 {
+            return None;
+        }
+        let signature = self.rust_callable_alias_signature(&ResolvedType::RustPath(display.to_owned()))?;
+        Some(ResolvedType::Function(
+            signature
+                .params
+                .iter()
+                .map(|parameter| {
+                    CallableParam::positional(self.native_rust_signature_type(&parameter.rust_display, ""))
+                })
+                .collect(),
+            Box::new(signature.return_ty),
+        ))
+    }
+
     /// Parse a Rust callable alias target such as `Arc<dyn Fn(&[T]) -> Result<U, E> + Send + Sync>`.
     fn rust_callable_alias_signature(&self, expected_ty: &ResolvedType) -> Option<RustCallableAliasSignature> {
         let target_display = self.rust_callable_alias_target_display(expected_ty)?;

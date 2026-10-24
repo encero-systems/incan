@@ -165,6 +165,17 @@ fn native_alias_type<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> rustc_middle::
     )
 }
 
+/// Give opaque native input lifetimes a fresh call-scoped binder before rustc computes implied outlives bounds.
+/// Only injected source functions and their native callback bridges use this provider; external metadata stays with
+/// rustc's separate external provider. Body-local native storage remains region-erased.
+fn native_function_signature<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def: LocalDefId,
+) -> rustc_middle::ty::EarlyBinder<'tcx, rustc_middle::ty::PolyFnSig<'tcx>> {
+    (rustc_interface::DEFAULT_QUERY_PROVIDERS.queries.fn_sig)(tcx, def)
+        .map_bound(|signature| crate::native_loans::signature(tcx, signature))
+}
+
 /// Override only source-named planned functions; all compiler-generated items retain rustc's provider.
 fn mir_built<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> &'tcx Steal<Body<'tcx>> {
     let plan = match active_plan() {
@@ -260,6 +271,7 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
         config.override_queries = Some(|_session, providers| {
             providers.queries.mir_built = mir_built;
             providers.queries.type_of = native_alias_type;
+            providers.queries.fn_sig = native_function_signature;
         });
     }
 
@@ -335,7 +347,10 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
                     compiler.sess.dcx().fatal(message);
                 }
             };
-            let mut item = declarations::function(function, span);
+            let mut item = match declarations::function(function, span) {
+                Ok(item) => item,
+                Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+            };
             if !function.attributes.is_empty() {
                 item.attrs.extend(crate::native_attributes::attributes(
                     &compiler.sess.psess.attr_id_generator,
@@ -353,13 +368,20 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
             krate.items.push(item);
         }
         if !self.plan.programs.is_empty() {
-            krate
-                .items
-                .push(crate::program_entries::dispatcher(&self.plan, krate.spans.inner_span));
+            krate.items.push(
+                match crate::program_entries::dispatcher(&self.plan, krate.spans.inner_span) {
+                    Ok(item) => item,
+                    Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+                },
+            );
         }
         krate
             .items
             .extend(crate::shared_callables::items(&self.plan, krate.spans.inner_span));
+        match crate::panic_hooks::items(&self.plan, krate.spans.inner_span) {
+            Ok(items) => krate.items.extend(items),
+            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+        }
         match crate::field_metadata::items(&self.plan, krate.spans.inner_span) {
             Ok(items) => krate.items.extend(items),
             Err(error) => compiler.sess.dcx().fatal(error.to_string()),
@@ -413,6 +435,7 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
             )
             .collect();
         roots.extend(constant_crate_roots(&self.plan));
+        roots.extend(crate::native_crates::declaration_roots(krate));
         if self.plan.functions.iter().any(|function| {
             function.locals.iter().any(|local| {
                 matches!(

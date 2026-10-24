@@ -363,9 +363,9 @@ fn describe_str(tcx: TyCtxt<'_>, facts: &mut BTreeMap<String, RustItemMetadata>,
     }
 }
 
-/// Publish primitive trait facts under their native and standard public paths. Primitive items have no DefId for
-/// the public module walker; their impl templates and associated types still come from rustc's exact scalar type.
-/// Public primitive re-exports are transparent aliases to that scalar, never new nominal layouts.
+/// Publish primitive inherent methods and trait facts under native and standard public paths. Primitive items have no
+/// DefId for the public module walker; their methods, impl templates and associated types come from rustc's exact
+/// scalar type. Public primitive re-exports are transparent aliases to that scalar, never new nominal layouts.
 fn describe_primitives(tcx: TyCtxt<'_>, facts: &mut BTreeMap<String, RustItemMetadata>, named: &mut HashSet<DefId>) {
     let primitives = [
         ("bool", tcx.types.bool),
@@ -387,6 +387,7 @@ fn describe_primitives(tcx: TyCtxt<'_>, facts: &mut BTreeMap<String, RustItemMet
     ];
     for (name, native) in primitives {
         let info = RustTypeInfo {
+            methods: inherent_methods(tcx, crate::callees::primitive_inherent_impls(tcx, native), named),
             implemented_traits: trait_impls(tcx, native, named),
             ..RustTypeInfo::default()
         };

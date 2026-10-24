@@ -4,8 +4,47 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use rustc_ast::{
+    self as ast,
+    visit::{self, Visitor},
+};
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
+
+/// Native wrapper paths in declarations require explicit aliases even when no executable call names their crate.
+pub(crate) fn declaration_roots(krate: &ast::Crate) -> BTreeSet<&'static str> {
+    let mut visitor = DeclarationRoots { roots: BTreeSet::new() };
+    visitor.visit_crate(krate);
+    visitor.roots
+}
+
+/// Read the backend's actual wrapper paths, rather than reconstructing carrier usage from incidental calls.
+struct DeclarationRoots {
+    roots: BTreeSet<&'static str>,
+}
+
+impl<'ast> Visitor<'ast> for DeclarationRoots {
+    /// Keep wrapper crate bindings independent of call and constant requirements, including nested type arguments.
+    fn visit_path(&mut self, path: &'ast ast::Path) {
+        if path.segments.len() > 1
+            && let Some(segment) = path
+                .segments
+                .iter()
+                .find(|segment| segment.ident.name != rustc_span::kw::PathRoot)
+        {
+            match segment.ident.name.as_str() {
+                "incan_native_runtime" => {
+                    self.roots.insert("incan_native_runtime");
+                }
+                "incan_std_core" => {
+                    self.roots.insert("incan_std_core");
+                }
+                _ => {}
+            }
+        }
+        visit::walk_path(self, path);
+    }
+}
 
 use incan_driver::unit::UnitLoaf;
 use incan_frontend::loaf_index::LoafArtifact;
@@ -86,9 +125,13 @@ fn same_artifact(left: &Path, right: &Path) -> Result<bool, String> {
 /// The crate a retained callee needs loaded. A slice or `str` method's internal owner is not a crate; its primitive
 /// impl bucket belongs to the always-linked standard closure. Full path and signature validation remain separate.
 pub(crate) fn callee_root(path: &str) -> Option<&str> {
-    path.split("::")
-        .next()
-        .map(|root| if matches!(root, "[]" | "str") { "core" } else { root })
+    path.split("::").next().map(|root| {
+        if matches!(root, "[]" | "str" | "f32" | "f64" | "u8") {
+            "core"
+        } else {
+            root
+        }
+    })
 }
 
 /// Find an explicitly imported alias, including an anonymous metadata import, before a unique canonical crate name.
