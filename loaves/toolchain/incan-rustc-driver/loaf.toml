@@ -4,6 +4,7 @@ version = "0.6.0-dev.7"
 private = true
 
 [dependencies]
+libc = { loaf = "crates-io/libc", version = "0.2" }
 incan_codegraph = { loaf = "incan_codegraph", path = "../../kernel/incan_codegraph" }
 tracing = { loaf = "crates-io/tracing", version = "0.1" }
 incan_mir_lowering = { loaf = "incan_mir_lowering", path = "../../compiler/incan_mir_lowering" }

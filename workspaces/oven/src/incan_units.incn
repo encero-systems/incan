@@ -13,10 +13,11 @@ from rust::std::fs import File, OpenOptions
 from rust::std::os::unix::process import CommandExt
 from rust::std::process import Command, Stdio
 from std.fs import Path
+from codegen import driver_arguments
 from files import discard_file
 from home import dependency_artifact_dir
-from native_codegen import native_codegen_arguments
-from observation import trace
+from observation import trace, trace_launch
+from compiler_worker import compile_resident
 from publication import place
 from toolchain import Toolchain
 from unit import UnitDescription, dependency_units
@@ -225,10 +226,8 @@ def compile_prepared_unit(unit: UnitDescription, toolchain: Toolchain, output: P
     compiled = crate_name(unit)
     path = write_unit(unit, compiled)?
     output.parent().mkdir(true, true).map_err((error) => f"{output.parent().0}: {error.message()}")?
-    mut arguments = ["--unit", path.0, compiled, output.0, toolchain.sysroot]
-    # 2. Select the same native flags that bind the unit's reuse key.
-    for flag in native_codegen_arguments(unit.profile):
-        arguments.extend(["--rustc-arg", flag])
+    # 2. Frame the same native flags that bind the unit's reuse key.
+    arguments = ["--unit", path.0, compiled, output.0, toolchain.sysroot] + driver_arguments(unit.profile)
     # 3. Run the compiler once and preserve its exit code.
     return run_compiler(toolchain, arguments)
 
@@ -246,6 +245,7 @@ pub def run_program(binary: Path, arguments: list[str], argv0: Option[str] = Non
         None => pass
     for argument in arguments:
         command.arg(argument)
+    trace_launch(program)
     failure = command.exec()
     return Err(f"cannot run {program}: {failure}")
 
@@ -264,11 +264,24 @@ pub def write_unit(unit: UnitDescription, compiled: str, owner: Option[Path] = N
 
 
 pub def run_compiler(toolchain: Toolchain, arguments: list[str]) -> Result[i32, str]:
-    """Run the toolchain's compiler; it refuses an inherited `RUSTC_BOOTSTRAP`, so none reaches it."""
+    """
+    Run the toolchain's compiler without inheriting `RUSTC_BOOTSTRAP`.
+
+    1. Native units use the shared worker when it is available.
+    2. Other commands, and startup fallbacks, run the original compiler process.
+    3. A project owner captures the process's console for its caller.
+    """
+    # 1. A submitted worker request is never replayed through another compiler process.
+    if len(arguments) > 0 and arguments[0] == "--unit":
+        match compile_resident(toolchain, arguments)?:
+            Some(code) => return Ok(code)
+            None => pass
+    # 2. The cold process receives the original arguments and no bootstrap override.
     mut command = Command.new(toolchain.driver)
     for argument in arguments:
         command.arg(argument)
     command.env_remove("RUSTC_BOOTSTRAP")
+    # 3. Project owners report console output separately from the completion status.
     if toolchain.console != "":
         command.stdout(Stdio.from(open_stream(f"{toolchain.console}.out")?))
         command.stderr(Stdio.from(open_stream(f"{toolchain.console}.err")?))

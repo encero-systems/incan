@@ -299,6 +299,15 @@ def refusal(failed: list[str]) -> str:
     return ".".join(failed)
 
 
+pub def trace_launch(program: str) -> None:
+    """Record a pre-launch Unix timestamp only when tracing is enabled, naming an unavailable clock explicitly."""
+    if get_or("OVEN_TRACE", "") == "":
+        return
+    match SystemTime.now().duration_since(UNIX_EPOCH):
+        Ok(now) => trace(f"launch epoch={now.as_secs_f64()} program={program}")
+        Err(_) => trace(f"launch epoch=unavailable program={program}")
+
+
 pub def trace(message: str) -> None:
     """Record a line of the build's reasoning where `OVEN_TRACE` says: stderr for `-`, else the file it names.
 

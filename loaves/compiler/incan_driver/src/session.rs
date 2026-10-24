@@ -229,8 +229,9 @@ impl CompilationSession {
     /// leave uncovered.
     pub fn with_rust_facts(mut self, setup: &RustFactsSetup) -> CliResult<Self> {
         for cache in &setup.caches {
-            let decoded = incan_lang::interop::RustAbiCache::open(cache).map_err(CliError::failure)?;
-            Arc::make_mut(&mut self.loaves).add_rust_abi_cache(Arc::new(decoded));
+            let decoded =
+                LoafIndex::read_rust_abi_cache(cache).map_err(|error| CliError::failure(error.to_string()))?;
+            Arc::make_mut(&mut self.loaves).add_rust_abi_cache(decoded);
         }
         Arc::make_mut(&mut self.loaves).declare_rust_crates(self.unit.rust_crates.iter().cloned());
         self.rust_facts_source = setup.source.clone();

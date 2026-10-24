@@ -18,10 +18,10 @@ from std.encoding.hex import hexlify
 from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue
+from codegen import native_arguments
 from files import json_text
 from home import unit_ledger
 from loaf_local_graph import unique
-from native_codegen import native_codegen_arguments
 from observation import Ledger, SETTLE_SECONDS, load_ledger, observe, trace
 from publication import place, publish
 from toolchain import NativeCrate, Toolchain
@@ -129,8 +129,8 @@ pub def cache_identities(caches: list[str]) -> Result[list[str], str]:
 
 
 pub def description_digest(unit: UnitDescription) -> Result[str, str]:
-    """Digest the unit's description and native compiler flags, including profile, features, paths and crates."""
-    return fingerprint([json_text(unit.to_json())?] + native_codegen_arguments(unit.profile))
+    """The unit description and its effective native flags: changing a profile's code generation invalidates reuse."""
+    return fingerprint([json_text(unit.to_json())?] + native_arguments(unit.profile))
 
 
 pub def source_fingerprint(unit: UnitDescription, compiler: str, mut project: Ledger) -> Result[Key, str]:

@@ -14,6 +14,7 @@ from std.fs import Path
 from std.json import JsonValue
 from std.hash import sha256
 from std.encoding.hex import hexlify
+from codegen import optimization_level
 from files import json_text, parse_json, read, read_json
 from home import unit_ledger
 from json_fields import field, required_items, required_text, strings
@@ -633,7 +634,7 @@ pub def linking(
     # 4. A release build optimizes, and no build carries debug information.
     if request.profile == "release":
         arguments.append("-C")
-        arguments.append("opt-level=3")
+        arguments.append(f"opt-level={optimization_level(request.profile)}")
     arguments.append("-C")
     arguments.append("debuginfo=0")
     return Ok(arguments)

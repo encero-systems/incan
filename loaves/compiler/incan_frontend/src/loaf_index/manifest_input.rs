@@ -1,4 +1,4 @@
-//! Read a compiled manifest and retain its content identity only for an unchanged file generation.
+//! Read a compiled artifact and retain its content identity only for an unchanged file generation.
 //!
 //! Records are optional, private toolchain-home accelerators, under the same trusted-home assumption as the driver
 //! identity proofs. They do not protect against forged records or filesystem metadata. Parsing and semantic validation
@@ -19,6 +19,7 @@ pub(super) struct Generation {
     device: u64,
     inode: u64,
     size: u64,
+    mode: u32,
     modified: i64,
     modified_ns: i64,
     changed: i64,
@@ -37,6 +38,14 @@ struct Record {
 
 /// Read current UTF-8 bytes, retaining or computing their digest only while descriptor and path stay stable.
 pub(super) fn read(path: &Path) -> io::Result<(String, String)> {
+    let (bytes, digest) = read_bytes(path)?;
+    let content = String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    Ok((content, digest))
+}
+
+/// Read current binary bytes under the same generation guards as manifests. A retained digest never bypasses the
+/// caller's format validation or its comparison with a manifest-authenticated ABI digest.
+pub(super) fn read_bytes(path: &Path) -> io::Result<(Vec<u8>, String)> {
     // ---- Current bytes and their file generation ----
     let canonical = fs::canonicalize(path)?;
     let mut file = File::open(&canonical)?;
@@ -44,9 +53,9 @@ pub(super) fn read(path: &Path) -> io::Result<(String, String)> {
     let key = format!("{:x}", Sha256::digest(canonical.as_os_str().as_encoded_bytes()));
     let cache = cache_path(&key);
     let retained = before.and_then(|state| cache.as_deref().and_then(|path| retained_digest(path, &key, state)));
-    tracing::debug!(target: "incan::invocation", cached = retained.is_some(), "Loaf manifest digest");
-    let mut content = String::new();
-    file.read_to_string(&mut content)?;
+    tracing::debug!(target: "incan::invocation", cached = retained.is_some(), path = %path.display(), "Loaf artifact digest");
+    let mut content = Vec::new();
+    file.read_to_end(&mut content)?;
 
     // ---- Stable descriptor and path ----
     if let Some(state) = before
@@ -59,7 +68,7 @@ pub(super) fn read(path: &Path) -> io::Result<(String, String)> {
     if let Some(digest) = retained {
         return Ok((content, digest));
     }
-    let digest = format!("sha256:{:x}", Sha256::digest(content.as_bytes()));
+    let digest = format!("sha256:{:x}", Sha256::digest(&content));
     if let (Some(state), Some(path)) = (before, cache) {
         let _ = store(&path, &key, state, &digest);
     }
@@ -76,6 +85,7 @@ pub(super) fn generation(metadata: &Metadata) -> Option<Generation> {
         device: metadata.dev(),
         inode: metadata.ino(),
         size: metadata.len(),
+        mode: metadata.mode(),
         modified: metadata.mtime(),
         modified_ns: metadata.mtime_nsec(),
         changed: metadata.ctime(),
