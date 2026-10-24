@@ -4,8 +4,10 @@ from rust::std::process import Command
 from rust::std::string import String as RustString
 from std.fs import Path
 from files import make_directory, read
-from observation import file_digest
+from home import home
+from observation import Ledger, SETTLE_SECONDS, load_ledger, trace
 from publication import publish
+from unit_freshness import fingerprint
 
 
 pub model GraphUnit:
@@ -96,9 +98,55 @@ pub def output_text(content: bytes) -> Result[str, str]:
 
 
 pub def tree_inputs(root: Path) -> Result[list[str], str]:
-    """Hash authored files in deterministic order, including manifests and included assets, excluding build outputs."""
+    """Return the existing ordered content keys, including manifests and assets, excluding build outputs.
+
+    1. Load observations under this consumer's home, even for a source tree outside its project.
+    2. Read directory entries and reconcile file digests in their original traversal order.
+    3. Save changed observations; their metadata never enters the content key.
+    """
+    # 1. Load observations for this root.
+    mut ledger = graph_observations(root)?
+    # 2. Keep the original file ordering and content digests.
+    inputs = observed_tree(root, ledger)?
+    # 3. Retain only the work that can be reused next time.
+    save_observations(ledger)
+    return Ok(inputs)
+
+
+pub def graph_digest(path: Path) -> Result[str, str]:
+    """Return the exact content digest of a graph or unchecked note.
+
+    1. Load the file's retained observations from this consumer's home.
+    2. Reconcile its full identity, hashing again after a change or an unsettled observation.
+    3. Save the observation without changing the digest used by snapshot identity.
+    """
+    # 1. Load observations for this artifact.
+    mut ledger = graph_observations(path)?
+    # 2. Reconcile the artifact's bytes.
+    digest = ledger.digest(path)?
+    # 3. Retain its observation independently of its content key.
+    save_observations(ledger)
+    return Ok(digest)
+
+
+def graph_observations(root: Path) -> Result[Ledger, str]:
+    """Keep inspection's optional observations in its own home, never inside a selected external source or artifact."""
+    name = fingerprint([root.0])?
+    directory = home()?.joinpath("cache").joinpath("codegraph-observations")
+    return Ok(load_ledger(directory.joinpath(f"{name}.json"), SETTLE_SECONDS, ""))
+
+
+def save_observations(mut ledger: Ledger) -> None:
+    """An unavailable optional cache must leave inspection using the exact freshly computed content digests."""
+    match ledger.save():
+        Ok(_) => pass
+        Err(reason) => trace(f"graph observations not retained: {reason}")
+
+
+def observed_tree(root: Path, mut ledger: Ledger) -> Result[list[str], str]:
+    """Preserve tree selection, ordering and read failures while reconciling file digests against observations."""
     if root.is_file():
-        return Ok([root.0, file_digest(root)?])
+        return Ok([root.0, ledger.digest(root)?])
     mut by_name: Dict[str, Path] = {}
     for entry in root.iterdir().map_err((error) => f"{root.0}: {error.message()}")?:
         name = entry.name()
@@ -107,7 +155,7 @@ pub def tree_inputs(root: Path) -> Result[list[str], str]:
         by_name[name] = entry
     mut inputs: list[str] = []
     for name in sorted([key for key in by_name.keys()]):
-        for value in tree_inputs(by_name[name])?:
+        for value in observed_tree(by_name[name], ledger)?:
             inputs.append(value)
     return Ok(inputs)
 

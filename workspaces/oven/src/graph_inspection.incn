@@ -2,6 +2,7 @@
 
 from rust::std::io import Write, stderr
 from rust::std::string import String as RustString
+from rust::std::time import Instant
 from std.fs import Path
 from std.json import JsonValue, parse
 from features import FeatureRequest
@@ -16,6 +17,7 @@ from graph_cache import (
     unchecked_warning,
 )
 from graph_dependencies import GraphDependencies, prepare_graph, unit_natives, unit_loaves
+from observation import trace
 from graph_incan import inspect_incan
 from graph_loaves import registry_artifacts, registry_graphs, standard_graphs
 from graph_queries import query, query_group, text
@@ -187,6 +189,7 @@ pub def graph_response(arguments: list[str], preferences: Dict[str, int] = {}) -
     """
     # 1. A bad invocation is refused before the toolchain is read or anything is built.
     selected = options(arguments)?
+    started = Instant.now()
     path = Path(selected.path).resolve().map_err((error) => error.message())?
     toolchain = load_toolchain()?
     # 2. An Incan source is inspected through its checked dependencies' interfaces; anything else is a Rust project.
@@ -197,6 +200,7 @@ pub def graph_response(arguments: list[str], preferences: Dict[str, int] = {}) -
     else:
         root = owning_project(path, selected.path)?
         paths = inspect_rust(root, "debug", FeatureRequest(), selected.substitutes, toolchain)?
+    trace(f"graph preparation: {started.elapsed().as_millis()} ms")
     # 3. CLI and service consumers share the same rendered facts and freshness checks.
     return response(paths, path.0, selected, toolchain, preferences)
 
@@ -239,6 +243,7 @@ def response(
     if len(paths) == 0:
         return Err("no units selected for graph inspection")
     # 1. A unit that failed checking is named on stderr before any answer, and under `--strict` it refuses the answer.
+    started = Instant.now()
     notes = unchecked_notes(paths)?
     if selected.strict and len(notes) > 0:
         return Err("\n".join([unchecked_refusal(note) for note in notes]))
@@ -246,6 +251,8 @@ def response(
         warn(unchecked_warning(note))
     # 2. The same selection over the same graphs gets its answer from the cache without decoding a record.
     mut snapshot = snapshot_identity(paths, root, selected.strict)?
+    trace(f"graph snapshot: {started.elapsed().as_millis()} ms")
+    lookup = Instant.now()
     mut process: list[JsonValue] = []
     if selected.risk:
         files = read_records(paths, root, toolchain, "file", selected.strict, len(notes) > 0, snapshot)?
@@ -260,11 +267,14 @@ def response(
         owner = owner.parent()
     inputs = presentation_inputs(paths, root, selected, snapshot, preferences)?
     cached = Path(f"{cache_file(owner, fingerprint(inputs)?)?.0}.answer")
+    trace(f"graph answer lookup: {lookup.elapsed().as_millis()} ms")
     if cached.is_file():
         return read(cached)
     # 3. Any other answer is rendered once and cached for the next time.
+    evaluation = Instant.now()
     rendered = render(paths, root, selected, toolchain, len(notes) > 0, snapshot, process, preferences)?
     publish(cached, rendered)?
+    trace(f"graph answer evaluation: {evaluation.elapsed().as_millis()} ms")
     return Ok(rendered)
 
 
