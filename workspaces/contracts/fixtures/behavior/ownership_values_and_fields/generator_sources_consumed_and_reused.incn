@@ -1,9 +1,18 @@
-# behavior: a generator expression over a list the function still reads afterwards, over a list at its last use and over a one-shot list literal each yield the filtered values, and a comprehension over a generator variable collects what it yields
+# behavior: generator expressions snapshot lists, retain callbacks across polls and collect generators (#2256)
 # expect-stdout:
 #   [2, 3]
 #   [1, 2, 3]
 #   3 1
 #   [0, 4, 16]
+#   [6, 7]
+
+from std.rust import Static
+from std.traits.callable import Callable1
+
+
+def transformed[F with (Callable1[int, int], Static)](step: F) -> Generator[int]:
+    """Keep a captured callable alive for every deferred step."""
+    return (step(value) for value in [1, 2])
 
 def positive_last_use(values: list[int]) -> Generator[int]:
     return (x for x in values if x > 0)
@@ -31,3 +40,6 @@ def main() -> None:
     produced = squares(5)
     evens = [x for x in produced if x % 2 == 0]
     println(f"{evens:?}")
+    offset = 5
+    changed = transformed((value) => value + offset)
+    println(f"{changed.collect():?}")

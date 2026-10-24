@@ -230,7 +230,7 @@ pub def closure_arguments(signature: list[PlanType]) -> Result[list[PlanType], s
     """
     Pack scalar/text inputs, owned models and enums, shared collection views and the exclusive borrows `mut`
     parameters take with their exact checked call representations. Results may own a list, set, dictionary, model,
-    newtype or enum, transferred from the lifted function to its caller under the same retained layout.
+    newtype, enum or generator, transferred from the lifted function to its caller under the same retained layout.
     """
     if len(signature) == 0:
         return Err("invalid Body IR callable signature without return type")
@@ -255,8 +255,11 @@ pub def closure_arguments(signature: list[PlanType]) -> Result[list[PlanType], s
                         "unsupported Body IR closure input outside scalars, text, models, collection views and borrows",
                     )
         elements.append(input)
-    if not closure_value_type(signature[-1]) and not is_owned_collection(signature[-1]) and not owned_nominal_result(
-        signature[-1],
+    if (
+        not closure_value_type(signature[-1])
+        and not is_owned_collection(signature[-1])
+        and not is_generator_type(signature[-1])
+        and not owned_nominal_result(signature[-1])
     ):
         return Err(
             "unsupported Body IR closure result outside scalars, owned text, collections and retained nominal values",
@@ -297,12 +300,18 @@ pub def closure_capture_type(ty: PlanType, consumes_environment: bool) -> bool:
 
 
 pub def owned_capture(ty: PlanType) -> bool:
-    """Select environment-owned snapshots for construction, validation, and invocation; reusable calls clone them. The descriptor remains by value until stage zero supports borrowed local-enum matching (#2256)."""
+    """
+    Select owned text, list, callable, model, enum and zip snapshots for construction, validation and invocation.
+
+    Reusable calls clone these snapshots. The descriptor stays by value until stage zero supports borrowed
+    local-enum matching (#2256).
+    """
     match ty:
         PlanType.String => return true
         PlanType.List(_leaf, _depth) => return true
         PlanType.Model(_owner, _name) => return true
         PlanType.Enum(_owner, _name) => return true
+        PlanType.Closure(_signature) => return true
         PlanType.ZipIterator(_left, _right) => return true
         _ => return false
 

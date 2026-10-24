@@ -2698,6 +2698,7 @@ impl TypeChecker {
 
     /// Return the receiver's Rust item path, keeping instantiated arguments on the checked receiver type.
     /// Method identity never contains generic display syntax; impl inference reads arguments from the receiver.
+    /// Native slice displays use their structural `[]` owner while retaining their element type separately.
     pub(in crate::typechecker) fn rust_canonical_path_for_receiver_type(&self, ty: &ResolvedType) -> Option<String> {
         // ---- Rusttype backing owner ----
         if let Some(target) = self.rusttype_native_target(ty) {
@@ -2727,6 +2728,11 @@ impl TypeChecker {
                     return (object != *ty)
                         .then(|| self.rust_canonical_path_for_receiver_type(&object))
                         .flatten();
+                }
+                if let ResolvedType::Generic(base, _) = self.native_rust_signature_type(path, "")
+                    && base == "[]"
+                {
+                    return Some(base);
                 }
                 Some(Self::rust_generic_base_and_args(path).map_or_else(|| path.clone(), |(base, _)| base.to_owned()))
             }
@@ -3181,6 +3187,12 @@ impl TypeChecker {
                 Some(args.clone())
             }
             ResolvedType::RustPath(display) => {
+                if rust_path == "[]"
+                    && let ResolvedType::Generic(base, arguments) = self.native_rust_signature_type(display, "")
+                    && base == "[]"
+                {
+                    return Some(arguments);
+                }
                 let normalized = display.strip_prefix("rust::").unwrap_or(display);
                 let (base, args) = Self::rust_generic_base_and_args(normalized).unwrap_or((normalized, Vec::new()));
                 if incan_lang::interop::ancestral_rust_path(base) != incan_lang::interop::ancestral_rust_path(rust_path)

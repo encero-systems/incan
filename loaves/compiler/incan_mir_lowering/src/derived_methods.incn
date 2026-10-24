@@ -94,15 +94,21 @@ def clone_place(
     ty = place_type(builder.locals, source)
     match ty:
         PlanType.StringRef =>
-            reference = temporary(builder, ty, span)
-            builder.emit(plan_assign(reference, RvalueKind.Use(read_place(source, false, span)), span))
-            referent = Place(local=reference.local, projection=Projection.Deref(PlanType.String), span=span)
-            return clone_string_into(builder, referent, destination, span)
+            return clone_referent(builder, source, PlanType.String, destination, span)
         PlanType.TupleRef(elements) =>
-            if source.projection != Projection.Whole:
-                return Err("unsupported Body IR Clone through a projected tuple reference")
-            referent = Place(local=source.local, projection=Projection.Deref(PlanType.Tuple(elements)), span=span)
-            return clone_builtin_place(builder, referent, destination, span)
+            return clone_referent(builder, source, PlanType.Tuple(elements), destination, span)
+        PlanType.ListRef(leaf, depth) =>
+            return clone_referent(builder, source, PlanType.List(leaf, depth), destination, span)
+        PlanType.SetRef(leaf) =>
+            return clone_referent(builder, source, PlanType.Set(leaf), destination, span)
+        PlanType.DictRef(key, value) =>
+            return clone_referent(builder, source, PlanType.Dict(key, value), destination, span)
+        PlanType.ModelRef(owner, name) =>
+            return clone_referent(builder, source, PlanType.Model(owner, name), destination, span)
+        PlanType.EnumRef(owner, name) =>
+            return clone_referent(builder, source, PlanType.Enum(owner, name), destination, span)
+        PlanType.ValidationErrorRef =>
+            return clone_referent(builder, source, PlanType.ValidationError, destination, span)
         PlanType.ScalarRef(elements) =>
             if len(elements) == 1:
                 mut copyable = numeric_carrier(elements[0]) or elements[0] == PlanType.Bool or elements[0] == PlanType.Unit
@@ -135,6 +141,20 @@ def clone_place(
             reference = PlanType.EnumRef(index, name)
             return clone_into(builder, source, reference, CalleeKind.CloneEnum(index, name), ty, destination, span)
         _ => return clone_builtin_place(builder, source, destination, span)
+
+
+def clone_referent(
+    mut builder: Builder, source: Place, ty: PlanType, destination: &Option[RustPlace], span: SourceSpan,
+) -> Result[None, str]:
+    """Clone a selected shared receiver's referent, including a stored reference projected from a carrier.
+
+    The standard Clone selection returns the referent's owned type. Copying its shared reference would instead
+    change the result ABI and retain the caller's storage. Materialize the reference once before dereferencing it.
+    """
+    reference = temporary(builder, place_type(builder.locals, source), span)
+    builder.emit(plan_assign(reference, RvalueKind.Use(read_place(source, false, span)), span))
+    referent = Place(local=reference.local, projection=Projection.Deref(ty), span=span)
+    return clone_place(builder, referent, destination, span)
 
 
 def copy_clone_into(

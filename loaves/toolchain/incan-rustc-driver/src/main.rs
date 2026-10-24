@@ -32,6 +32,7 @@ mod declarations;
 mod error;
 mod fallible_bridges;
 mod field_metadata;
+mod formatting;
 mod frontend;
 mod frozen_values;
 mod futures;

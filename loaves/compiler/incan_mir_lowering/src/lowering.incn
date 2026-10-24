@@ -2589,7 +2589,8 @@ def lower_generator_expression(
         operand = value_operand(builder, capture, span)?
         ty = operand_type(builder, operand)?
         if not step_capture_type(ty):
-            return Err("unsupported Body IR generator expression capture outside scalars, owned text and lists")
+            reason = f"unsupported Body IR generator expression capture {ty:?} in {builder.name}"
+            return Err(f"{reason} at {span.line}:{span.column}")
         operands.append(operand)
         capture_types.append(ty)
     mut bindings: list[int] = []
@@ -2772,13 +2773,14 @@ def clause_source(mut builder: Builder, slot: int, span: SourceSpan) -> Result[O
 
 
 def environment_operand(mut builder: Builder, slot: int, span: SourceSpan) -> Result[Operand, str]:
-    """Copy a scalar or clone an owned snapshot so the outer step keeps its own value and cursor."""
+    """Copy a scalar or clone an owned snapshot or callable so the outer step retains its reusable environment."""
     place = plan_place(slot, span)
     ty = builder.locals[slot].ty
     if not step_capture_type(ty):
         return Err("unsupported Body IR generator expression clause environment outside scalars, owned text and lists")
     match ty:
         PlanType.ZipIterator(_left, _right) => return clone_zip(builder, place, span)
+        PlanType.Closure(_signature) => return target_read(builder, place, OwnershipFact.Clone, span)
         _ => pass
     if ty == PlanType.String:
         text = clone_text(builder, place, span)?
@@ -2820,6 +2822,8 @@ def bind_step_arguments(
         )
         match arguments[index]:
             PlanType.ZipIterator(_left, _right) =>
+                owned = true
+            PlanType.Closure(_signature) =>
                 owned = true
             _ => pass
         lifted.emit(
@@ -5245,6 +5249,17 @@ pub def call_parameter_type(mut builder: Builder, body: &RustBody, parameter: &R
     ty = parameter_representation(body, int(parameter.local.index()), declared)?
     if parameter.mutable and lacks_exclusive_parameter(ty):
         return Err("unsupported Body IR mutable tuple or iterator parameter")
+    return stored_parameter_type(body, parameter, ty)
+
+
+def stored_parameter_type(body: &RustBody, parameter: &RustCallableParam, ty: PlanType) -> Result[PlanType, str]:
+    """A deferred producer owns its value parameters; ordinary frames retain the shared collection ABI.
+
+    Call materialization, frame locals and constructor signatures use this same storage decision so an escaping
+    generator never captures a borrow of a caller's list snapshot. Explicit and mutable borrows remain refused.
+    """
+    if body.is_generator() and not parameter.mutable:
+        return Ok(ty)
     return packed_input(ty, parameter.kind, parameter.mutable)
 
 
@@ -6249,10 +6264,11 @@ pub def clone_nominal_operand(mut builder: Builder, value: Place, span: SourceSp
     Materialize the checker's clone fact through a source nominal's real derived Clone implementation.
 
     A shared model reference, such as a receiver, already is the borrow that Clone takes. An immutable scalar
-    reference copies the reference itself through the ordinary carrier-payload read.
+    reference, including a text reference, copies the reference itself through the ordinary carrier-payload read.
     """
     match place_type(builder.locals, value):
         PlanType.ScalarRef(_elements) => return carrier_payload_value(builder, value, span)
+        PlanType.StringRef => return carrier_payload_value(builder, value, span)
         PlanType.ValidationError => return carrier_payload_value(builder, value, span)
         PlanType.ValidationErrorRef =>
             owned = Place(local=value.local, projection=Projection.Deref(PlanType.ValidationError), span=span)
@@ -6740,27 +6756,34 @@ def debug_enum_operand(mut builder: Builder, place: Place, owner: int, span: Sou
     if owner >= 0 and owner < len(builder.enums):
         declaration = builder.enums[owner]
         if "Debug" in declaration.derives:
-            ty = PlanType.Enum(owner, str(declaration.name))
-            return borrowed_enum_debug(builder, place, ty, owner, str(declaration.name), span)
+            return borrowed_enum_debug(builder, place, owner, str(declaration.name), span)
     if is_union_carrier(builder, owner):
         copied = clone_nominal_operand(builder, place, span)?
         return debug_plan_operand(builder, copied, span)
     if owner >= len(builder.enums) and owner < len(builder.enums) + len(builder.intrinsics):
         declaration = builder.intrinsics[owner - len(builder.enums)]
         if declaration.carrier == "Option" or declaration.carrier == "Result":
-            ty = PlanType.Enum(owner, declaration.name)
-            return borrowed_enum_debug(builder, place, ty, owner, declaration.name, span)
+            return borrowed_enum_debug(builder, place, owner, declaration.name, span)
     return Err("unsupported Body IR nonmodel FormatStyle.Debug")
 
 
 def debug_plan_operand(mut builder: Builder, operand: Operand, span: SourceSpan) -> Result[Place, str]:
     """Invoke legacy Debug on an admitted carrier after its read ownership has been materialized."""
-    return runtime_text(builder, "incan_native_runtime::debug_value", operand, span)
+    return native_format_text(builder, operand, true, span)
 
 
 def type_parameter_display(mut builder: Builder, operand: Operand, span: SourceSpan) -> Result[Place, str]:
     """Invoke the carrier's own Display, as generic code formats a type-parameter value."""
-    return runtime_text(builder, "incan_native_runtime::display_value", operand, span)
+    return native_format_text(builder, operand, false, span)
+
+
+pub def native_format_text(mut builder: Builder, operand: Operand, debug: bool, span: SourceSpan) -> Result[Place, str]:
+    """Format an exact owned or borrowed carrier with native Debug or Display, without a runtime cycle."""
+    ty = operand_type(builder, operand)?
+    result = temporary(builder, PlanType.String, span)
+    terminate_call(builder, CalleeKind.FormatValue(ty, debug), [operand], result, span)
+    builder.owned.append(result.local)
+    return Ok(result)
 
 
 pub def runtime_text(mut builder: Builder, path: str, operand: Operand, span: SourceSpan) -> Result[Place, str]:
@@ -6866,7 +6889,11 @@ def borrow_slice_operand(
     mutable: bool,
     span: SourceSpan,
 ) -> Result[Operand, str]:
-    """Lend exact vector storage through its native slice conversion, preserving checked exclusive-access authority."""
+    """
+    Lend exact vector storage through its native slice conversion.
+
+    Nested element layouts and checked exclusive-access authority remain unchanged.
+    """
     if len(elements) != 1:
         return Err("invalid Body IR native slice element arity")
     mut reference_type = PlanType.SliceRef(elements)
@@ -6904,7 +6931,7 @@ def borrow_slice_operand(
         RustOperand.Place(_read) => reference = checked_list_argument(builder, value, mutable, span)?
     parameter = operand_type(builder, reference)?
     element, depth = require_list_shape(parameter, "unsupported Body IR native slice owner")?
-    if depth != 1 or list_leaf_type(element) != elements[0]:
+    if list_element(element, depth) != elements[0]:
         return Err("unsupported Body IR native slice element mismatch")
     output = temporary(builder, reference_type, span)
     arguments = [PlanType.List(element, depth), PlanType.NativeSlice(elements)]
@@ -7942,7 +7969,7 @@ def lower_instances(
         if owners[index].startswith("pub::incan_native_runtime::"):
             governed_runtime = true
     if governed_runtime:
-        retain_runtime_instances(module, functions, externals, instances)?
+        retain_runtime_instances(module, functions, externals, instances, intrinsics)?
     mut cursor = 0
     while cursor < len(instances):
         mut instance = instances[cursor]
@@ -7986,11 +8013,12 @@ def lower_instances(
         )?
         retain_instance(functions, function)?
         append_synthesized(functions, synthesized)?
+        append_generator_constructor(functions, module, body, sources[source_index], files[source_index], intrinsics)?
         completed.append(instance)
         _ = merge_externals(externals, runtime)?
         instances.extend(pending)
         if governed_runtime:
-            retain_runtime_instances(module, functions, externals, instances)?
+            retain_runtime_instances(module, functions, externals, instances, intrinsics)?
     return Ok(None)
 
 
@@ -8289,8 +8317,8 @@ def producer_return_type(
     mut enums = module.enum_declarations
     for parameter in body.params:
         capture = frame_type(nominals, enums, body.locals[int(parameter.local.index())], intrinsics)?
-        if packed_input(capture, parameter.kind, parameter.mutable)? != capture:
-            return Err("unsupported Body IR borrowed generator parameter")
+        if stored_parameter_type(body, parameter, capture)? != capture:
+            return Err(f"unsupported Body IR borrowed generator parameter in {body.name}")
         match capture:
             PlanType.ModelRef(_owner, _name) => return Err("unsupported Body IR borrowed generator receiver")
             PlanType.ModelMutRef(_owner, _name) => return Err("unsupported Body IR borrowed generator receiver")
@@ -8386,7 +8414,7 @@ def frame_locals(
                     ty = list_parameter_type(ty, false)
         for parameter in body.params:
             if parameter.local == local.id:
-                ty = packed_input(parameter_representation(body, index - 1, ty)?, parameter.kind, parameter.mutable)?
+                ty = stored_parameter_type(body, parameter, parameter_representation(body, index - 1, ty)?)?
         locals.append(Local(ty=ty, span=location(local.span, source, file)))
     return Ok(locals)
 
@@ -8404,6 +8432,26 @@ def body_frame_type(
         Err(reason) => return Err(f"{reason} in {body.name} frame local {int(local.id.index())} at source bytes {local.span.start}..{local.span.end}")
 
 
+pub def frame_parameter_type(
+    mut nominals: list[RustNominalDeclaration],
+    mut enums: list[RustEnumDeclaration],
+    body: &RustBody,
+    parameter: &RustCallableParam,
+    mut intrinsics: list[EnumDeclaration],
+) -> Result[PlanType, str]:
+    """Read a declared frame slot's checked representation for its definition and generated runtime forwarders."""
+    ty = parameter_representation(
+        body,
+        int(parameter.local.index()),
+        body_frame_type(nominals, enums, body, body.locals[int(parameter.local.index())], intrinsics)?,
+    )?
+    if parameter.mutable and lacks_exclusive_parameter(ty):
+        return Err("unsupported Body IR mutable tuple or iterator parameter")
+    if ty == PlanType.FrozenStr and parameter.mutable:
+        return Err("unsupported Body IR mutable FrozenStr parameter: mutable scalar parameter representation")
+    return stored_parameter_type(body, parameter, ty)
+
+
 def frame_parameters(
     module: &BodyIrModule,
     body: &RustBody,
@@ -8411,33 +8459,27 @@ def frame_parameters(
     file: str,
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[Parameter], str]:
-    """The frame's parameters, in declaration order; mutable model and frozen text parameters are refused."""
+    """Build declaration-ordered parameters from their checked frame storage and source locations."""
     mut parameters: list[Parameter] = []
     mut nominals = module.nominal_declarations
     mut enums = module.enum_declarations
     for parameter in body.params:
-        ty = parameter_representation(
-            body,
-            int(parameter.local.index()),
-            body_frame_type(nominals, enums, body, body.locals[int(parameter.local.index())], intrinsics)?,
-        )?
-        if parameter.mutable and lacks_exclusive_parameter(ty):
-            return Err("unsupported Body IR mutable tuple or iterator parameter")
-        if ty == PlanType.FrozenStr and parameter.mutable:
-            return Err("unsupported Body IR mutable FrozenStr parameter: mutable scalar parameter representation")
+        ty = frame_parameter_type(nominals, enums, body, parameter, intrinsics)?
         if int(parameter.local.index()) != len(parameters):
             return Err("Body IR parameter order disagrees with scalar frame")
         match parameter.default:
             CallableParamDefault.Required => pass
             _ =>
-                _ = default_type(ty)?
+                local = body.locals[int(parameter.local.index())]
+                declared = body_frame_type(nominals, enums, body, local, intrinsics)?
+                _ = default_type(parameter_representation(body, int(parameter.local.index()), declared)?)?
         mut name = str(parameter.name)
         if name == "self":
             name = "__incan_self"
         parameters.append(
             Parameter(
                 name=name,
-                ty=packed_input(ty, parameter.kind, parameter.mutable)?,
+                ty=ty,
                 span=location(parameter.span, source, file),
             ),
         )
@@ -10075,7 +10117,7 @@ def frozen_dictionary_value(
         span,
     )?
     if elements[1] == PlanType.StaticText:
-        return runtime_text(builder, "incan_native_runtime::display_value", read_place(raw, false, span), span)
+        return native_format_text(builder, read_place(raw, false, span), false, span)
     if elements[1] == PlanType.StaticBytes:
         output = temporary(builder, PlanType.List(ListLeaf.U8, 1), span)
         instantiated_external_call(
@@ -10488,7 +10530,11 @@ pub def list_root_place(mut builder: Builder, value: &RustPlace, span: SourceSpa
 
 
 def collection_value(mut builder: Builder, read: &RustPlaceOperand, span: SourceSpan) -> Result[Operand, str]:
-    """Materialize a checked collection read while preserving caller-owned bindings."""
+    """Materialize a checked collection read while preserving caller-owned bindings.
+
+    Moving a value parameter that uses a shared collection ABI copies its stored value, just as a list parameter
+    does; the caller still owns the borrowed storage.
+    """
     if len(read.place.projection) != 0:
         return dictionary_index_read(builder, read.place, span)
     place = list_root_place(builder, read.place, span)?
@@ -10501,8 +10547,10 @@ def collection_place_value(mut builder: Builder, place: Place, fact: &OwnershipF
     owned = collection_owned(ty)
     if fact == OwnershipFact.Move and ty == owned and place.projection == Projection.Whole:
         return Ok(read_place(place, true, span))
-    if fact != OwnershipFact.Clone and fact != OwnershipFact.Borrow:
-        return Err("unsupported Body IR collection value ownership")
+    shared_move = fact == OwnershipFact.Move and ty != owned
+    if fact != OwnershipFact.Clone and fact != OwnershipFact.Borrow and not shared_move:
+        reason = f"unsupported Body IR collection value ownership {fact:?} for {ty:?}"
+        return Err(f"{reason} in {builder.name} at {span.line}:{span.column}")
     return cloned_collection(builder, place, span)
 
 
@@ -13176,14 +13224,16 @@ def retained_reference_value(
     expected: PlanType,
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
-    """Copy a retained reference or initialize one from a checked shared borrow of whole owner storage, without writing through an uninitialized reference."""
-    match expected:
-        PlanType.ModelRef(_owner, _name) => pass
-        PlanType.EnumRef(_owner, _name) => pass
-        PlanType.StringRef => pass
-        PlanType.ScalarRef(_elements) => pass
-        PlanType.SliceRef(_elements) => pass
-        _ => return Ok(None)
+    """Transfer an exact exclusive reference, copy a shared one, or borrow whole owner storage under a checked fact."""
+    exclusive = is_exclusive_borrow(expected)
+    if not exclusive:
+        match expected:
+            PlanType.ModelRef(_owner, _name) => pass
+            PlanType.EnumRef(_owner, _name) => pass
+            PlanType.StringRef => pass
+            PlanType.ScalarRef(_elements) => pass
+            PlanType.SliceRef(_elements) => pass
+            _ => return Ok(None)
     match value:
         RustOperand.Place(read) =>
             if len(read.place.projection) != 0:
@@ -13192,6 +13242,10 @@ def retained_reference_value(
                 None => return Ok(None)
                 Some(local) =>
                     place = plan_place(int(local.index()) + 1 + builder.local_offset, span)
+                    if exclusive:
+                        if read.fact != OwnershipFact.Move or place_type(builder.locals, place) != expected:
+                            return Ok(None)
+                        return Ok(Some(read_place(place, true, span)))
                     if read.fact == OwnershipFact.Unknown or read.fact == OwnershipFact.MutBorrow:
                         return Err("unsupported Body IR shared-reference value ownership")
                     if place_type(builder.locals, place) != expected:

@@ -1,0 +1,98 @@
+"""Forward runtime-owned arguments into their published Incan frame's borrowing contract."""
+
+from pub::incan_mir_plan import (
+    BasicBlock, Callee, CalleeKind, ExternalFunction, Function, Local, Operand, Parameter, Place, PlanType,
+    RvalueKind, SourceSpan, Statement, TerminatorKind, Unwind,
+)
+from pub::incan_mir_plan import assign as plan_assign, block as plan_block, place as plan_place
+from frame import read_place
+from layout_types import shared_receiver_type
+
+
+pub def runtime_frame_adapter(
+    external: ExternalFunction, parameters: list[PlanType], target: str,
+) -> Result[Option[Function], str]:
+    """Borrow transferred owners for an Incan value frame, retaining them through the call and its cleanup.
+
+    Runtime operations describe their owned native inputs. A published Incan value parameter can instead receive
+    a shared view of that owner. The declaration's frame supplies every target type; this forwarder adds no body
+    semantics and never infers a signature from an operand.
+
+    1. Require matching input arity and keep an unchanged ABI direct.
+    2. Declare the input owners and lend only the frame's declared shared views.
+    3. Call the frame with normal and unwinding cleanup for the borrowed owners.
+    """
+    # 1. A direct ABI needs no adapter; an arity mismatch grants no forwarding contract.
+    if parameters == external.parameters:
+        return Ok(None)
+    if len(parameters) != len(external.parameters):
+        return Err(f"invalid governed runtime frame arity for {external.path}")
+    # 2. Owned input slots stay alive until every declared shared view is no longer in use.
+    span = external.span
+    mut locals = [Local(ty=external.return_type, span=span)]
+    mut inputs: list[Parameter] = []
+    for index in range(len(parameters)):
+        ty = external.parameters[index]
+        inputs.append(Parameter(name=f"__incan_argument_{index}", ty=ty, span=span))
+        locals.append(Local(ty=ty, span=span))
+    mut statements: list[Statement] = []
+    mut operands: list[Operand] = []
+    mut owners: list[Place] = []
+    for index in range(len(parameters)):
+        source = plan_place(index + 1, span)
+        actual = external.parameters[index]
+        expected = parameters[index]
+        if actual == expected:
+            operands.append(read_place(source, true, span))
+            continue
+        match shared_receiver_type(actual):
+            Ok(reference) =>
+                if reference != expected:
+                    return Err(unsupported_argument(actual, expected, external.path))
+            Err(_reason) =>
+                return Err(unsupported_argument(actual, expected, external.path))
+        reference = plan_place(len(locals), span)
+        locals.append(Local(ty=expected, span=span))
+        statements.append(plan_assign(reference, RvalueKind.Borrow(source), span))
+        operands.append(read_place(reference, false, span))
+        owners.append(source)
+    # 3. Both completion paths release only owners whose views were lent to the target frame.
+    mut blocks: list[BasicBlock] = [plan_block([], TerminatorKind.Unreachable, span)]
+    normal = owner_cleanup(blocks, owners, false, span)
+    cleanup = owner_cleanup(blocks, owners, true, span)
+    blocks[0] = plan_block(
+        statements,
+        TerminatorKind.Call(
+            Callee(kind=CalleeKind.Planned(target), span=span), operands, plan_place(0, span), normal,
+            Unwind.Cleanup(cleanup),
+        ),
+        span,
+    )
+    return Ok(Some(Function(
+        name=f"{target}__runtime_frame", parameters=inputs, return_type=external.return_type,
+        locals=locals, blocks=blocks, span=span,
+    )))
+
+
+def unsupported_argument(actual: PlanType, expected: PlanType, operation: str) -> str:
+    """Describe a declared runtime input whose owned carrier cannot supply the target frame's shared view."""
+    return f"unsupported governed runtime frame argument {actual:?} to {expected:?} for {operation}"
+
+
+def owner_cleanup(mut blocks: list[BasicBlock], owners: list[Place], unwinding: bool, span: SourceSpan) -> int:
+    """Release only the owners borrowed by the forwarder; transferred arguments belong to the target frame."""
+    first = len(blocks)
+    for index in range(len(owners) - 1, -1, -1):
+        mut unwind = Unwind.Continue
+        if unwinding:
+            unwind = Unwind.Terminate
+        mut block = plan_block([], TerminatorKind.Drop(owners[index], len(blocks) + 1, unwind), span)
+        block.cleanup = unwinding
+        blocks.append(block)
+    mut finished = TerminatorKind.Return
+    if unwinding:
+        finished = TerminatorKind.UnwindResume
+    mut block = plan_block([], finished, span)
+    block.cleanup = unwinding
+    blocks.append(block)
+    return first

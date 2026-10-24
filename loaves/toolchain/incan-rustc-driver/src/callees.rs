@@ -38,6 +38,7 @@ pub fn constant(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
 pub fn resolve(tcx: TyCtxt<'_>, callee: &Callee) -> Result<DefId, PlanError> {
     match &callee.kind {
         CalleeKind::Planned(name) => planned(tcx, name),
+        CalleeKind::FormatValue(_, debug) => planned(tcx, crate::formatting::name(*debug)),
         CalleeKind::Value(_) => Err(PlanError::UnknownCallee(
             "local callable has no declaration callee".into(),
         )),
@@ -246,6 +247,7 @@ fn layout_definition(tcx: TyCtxt<'_>, definition: DefId, expected: DefKind) -> O
 /// compiles a constructor function under its own name beside its struct, so `Class::method` must step through the
 /// struct while a call of `Class` itself selects the function. A trait path selects its declared associated function;
 /// concrete Self arguments and bounds remain subject to native signature validation.
+/// A structural slice owner selects one public builtin impl item through the same rustc index used by extraction.
 pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
     if let Some(method) = path.strip_prefix("[]::") {
         return primitive_function(tcx, SimplifiedType::Slice, method)
