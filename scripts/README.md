@@ -6,7 +6,7 @@ Utility scripts for development and CI.
 
 - `relink-driver.sh`: Rebuilds and installs a dev.8 bootstrap lane's driver through its installed Oven. `--release` optimizes the local Rust units; `--lowering` first refreshes the bootstrap lowering.
 - `generated_rust_audit.py`: Emits an objective generated Rust strict-surface report for selected generated `.rs` files or artifact directories.
-- `run_examples.sh`: Smoke-tests all examples. It pre-builds nested example library projects, typechecks every `.incn` file under `examples/`, and then runs files that define `def main(...)` with a configurable timeout. Invoked by `make examples`.
+- `run_examples.sh`: Runs example entry points, including async functions, and checks the entries declared in `examples/check-only.txt`. Installed Oven prepares dependencies automatically. Invoked by `make examples`; `bash scripts/test_run_examples.sh` checks mode selection, working directories and failure propagation with a fake command.
 - `test_inventory/collect.py` and `test_inventory/render.py`: the test corpus inventory (#1561). `collect.py` enumerates every Rust test and `.incn` fixture root with its lane signals, `--propose` writes a reviewer sidecar, `--check` is the gate; `render.py` writes `workspaces/docs-site/docs/contributing/reference/test_corpus_inventory.md` from `test_inventory/dispositions.json`. Invoked by `make test-inventory` and `make test-inventory-check`.
 - `check_docs_examples.sh`: Typechecks committed `verified_*.incn` documentation snippets so tutorial examples cannot drift away from the compiler. Set `INCAN_DOCS_BUILD_WEB=1` only when the active toolchain provides a receipt-compatible Oven Loaf for backend verification. Invoked by `make smoke-test-examples`.
 - `../workspaces/docs-site/scripts/check_incapunk_components.py`: Validates the Incus asset manifest, semantic pools, reusable component hooks, representative adoption, navigation, and accessibility contracts. Invoked by `make docs-check-components` and `make docs-build`.
@@ -39,5 +39,7 @@ For real generated artifacts, run `scripts/generated_rust_audit.py` with explici
 
 |         Variable         |                       Default                       |                  Description                   |
 | ------------------------ | --------------------------------------------------- | ---------------------------------------------- |
-| `INCAN_BIN`              | `./target/release/incan` (if present), else `incan` | Path to the Incan binary                       |
-| `INCAN_EXAMPLES_TIMEOUT` | `30`                                                | Per-example timeout in seconds for `incan run` |
+| `INCAN_BIN`              | `incan` | Installed Incan command |
+| `INCAN_EXAMPLES_TIMEOUT` | `120` | Deadline in seconds for each command; requires GNU `timeout` or `gtimeout` |
+| `INCAN_EXAMPLES_ONLY` | Empty | Colon-separated repository-relative entry paths; empty selects all entries |
+| `INCAN_EXAMPLES_OUT` | `target/examples` | Directory for `examples.tsv`, command logs and generated input snapshots |

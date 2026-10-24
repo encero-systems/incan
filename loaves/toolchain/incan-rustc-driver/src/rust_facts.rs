@@ -194,9 +194,10 @@ impl rustc_driver::Callbacks for FactsCallbacks {
     }
 }
 
-/// Describe named paths and bounded signature dependencies, closing every selected public field layout transitively.
-/// Field records can be reached through nested Options and collections without a source import of each record.
-/// Their types need the same metadata as an imported owner; signature expansion stays bounded independently.
+/// Describe named paths and bounded signature dependencies, closing unambiguous selected public field layouts
+/// transitively. Field records can be reached through nested Options and collections without a source import of each
+/// record. Their types need the same metadata as an imported owner; signature expansion stays bounded independently. A
+/// path shared by distinct native crate versions grants no transitive facts without one selected crate binding.
 fn describe_paths(tcx: TyCtxt<'_>, paths: &BTreeSet<String>, depth: usize) -> BTreeMap<String, RustItemMetadata> {
     let mut facts = BTreeMap::new();
     let mut pending = paths
@@ -212,6 +213,7 @@ fn describe_paths(tcx: TyCtxt<'_>, paths: &BTreeSet<String>, depth: usize) -> BT
             pending.extend(
                 layout_dependencies(tcx, def)
                     .into_iter()
+                    .filter(|dependency| has_selected_native_crate(tcx, *dependency))
                     .map(|dependency| (visible_path(tcx, dependency), dependency)),
             );
             pending.extend(public_associated_constants(tcx, def, &path));
@@ -224,11 +226,20 @@ fn describe_paths(tcx: TyCtxt<'_>, paths: &BTreeSet<String>, depth: usize) -> BT
         }
         pending = named
             .into_iter()
+            .filter(|def| has_selected_native_crate(tcx, *def))
             .map(|def| (visible_path(tcx, def), def))
             .filter(|(path, _)| !facts.contains_key(path))
             .collect();
     }
     facts
+}
+
+/// Admit transitive facts only from the native crate selected by an explicit canonical binding or a unique loaded
+/// crate name. Distinct versions cannot share a path-indexed entry: choosing the first HashSet member would publish
+/// another version's fields or traits. Use the definition's crate identity, preserving standard-library reexports.
+fn has_selected_native_crate(tcx: TyCtxt<'_>, definition: DefId) -> bool {
+    let name = tcx.crate_name(definition.krate);
+    crate::native_crates::root(tcx, name.as_str()).is_some_and(|root| root.krate == definition.krate)
 }
 
 /// Collect public field and enum payload owners, including generic arguments, without expanding method signatures.
@@ -316,7 +327,10 @@ fn describe_crates(tcx: TyCtxt<'_>, crates: &BTreeSet<String>) -> BTreeMap<Strin
         );
     }
     // Trait references use definition identities, including traits reached through a public re-export.
-    for def in named.into_iter().filter(|def| tcx.def_kind(*def) == DefKind::Trait) {
+    for def in named
+        .into_iter()
+        .filter(|def| tcx.def_kind(*def) == DefKind::Trait && has_selected_native_crate(tcx, *def))
+    {
         let path = visible_path(tcx, def);
         facts
             .entry(path.clone())
@@ -950,7 +964,7 @@ fn trait_impls<'tcx>(tcx: TyCtxt<'tcx>, owner: Ty<'tcx>, named: &mut HashSet<Def
         }
     }
     let mut implementations = implementations.into_iter().collect::<Vec<_>>();
-    implementations.sort_by_cached_key(|implementation| tcx.def_path_str(*implementation));
+    sort_trait_implementations(tcx, &mut implementations);
     implementations
         .into_iter()
         .filter_map(|implementation| {
@@ -1034,11 +1048,18 @@ fn trait_implementations(tcx: TyCtxt<'_>, owner: DefId, named: &mut HashSet<DefI
         .chain(templates.non_blanket_impls().values().flatten())
         .copied()
         .collect::<Vec<_>>();
-    implementations.sort_by_cached_key(|implementation| tcx.def_path_str(*implementation));
+    sort_trait_implementations(tcx, &mut implementations);
     implementations
         .into_iter()
         .filter_map(|implementation| trait_impl_template(tcx, implementation, named))
         .collect()
+}
+
+/// Order impl facts by their public path and stable native identity. Distinct versions of a crate can expose the same
+/// path; its text alone leaves ties in randomized set or map iteration order and produces different ABI cache bytes.
+fn sort_trait_implementations(tcx: TyCtxt<'_>, implementations: &mut [DefId]) {
+    implementations
+        .sort_by_cached_key(|implementation| (tcx.def_path_str(*implementation), tcx.def_path_hash(*implementation)));
 }
 
 /// Eliminate impossible blanket candidates for scalar and unsized primitives. A slice element remains unconstrained

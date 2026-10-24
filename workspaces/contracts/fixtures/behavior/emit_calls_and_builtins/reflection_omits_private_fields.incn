@@ -1,17 +1,33 @@
-# behavior: __fields__() on a public model lists its pub fields only; a private defaulted field is absent from runtime reflection
+# behavior: generated instance metadata preserves receiver effects and excludes private fields from reflection (#1442)
 # expect-stdout:
 #   label
 #   1
 #   public
+#   Vault
+#   public
+#   Vault
+#   made
+#   Vault
 
 pub model Vault:
     secret: str = "sealed"
     pub label: str
 
 
+def make_vault() -> Vault:
+    """Make receiver evaluation visible before metadata is read."""
+    println("made")
+    return Vault(label="fresh")
+
+
 def main() -> None:
+    """Print visible fields and generated class names, including one effectful receiver."""
     vault = Vault(label="public")
     for info in vault.__fields__():
         println(info.name)
     println(len(vault.__fields__()))
     println(vault.label)
+    println(vault.__class_name__())
+    println(vault.label)
+    println(Vault.__class_name__())
+    println(make_vault().__class_name__())

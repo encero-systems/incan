@@ -1,17 +1,38 @@
-"""Import `codegraph.jsonl` in the current directory and print a deterministic summary."""
+"""Import a selected compiler codegraph snapshot and print a deterministic summary."""
 
+from rust::std::env import args
 from importer import GraphSummary, import_jsonl
 from std.fs import Path
 
 
+def main() -> Result[None, str]:
+    """
+    Print one snapshot's summary; missing or invalid input fails the command.
+
+    1. Select the optional input path, defaulting to `codegraph.jsonl`.
+    2. Read and validate the compiler-exported snapshot.
+    3. Print its deterministic JSON summary.
+    """
+    # 1. An explicit input lets a caller keep generated snapshots outside the source tree.
+    path = input_path()?
+    # 2. Failed reads or validation propagate to the process status.
+    summary = load_summary(path)?
+    # 3. A successful command prints the summary.
+    println(json_stringify(summary))
+    return Ok(None)
+
+
+def input_path() -> Result[Path, str]:
+    """Select at most one command-line input, preserving the documented default filename."""
+    arguments = [str(argument) for argument in args()]
+    if len(arguments) > 2:
+        return Err("usage: codegraph_importer [SNAPSHOT.jsonl]")
+    if len(arguments) == 2:
+        return Ok(Path(arguments[1]))
+    return Ok(Path("codegraph.jsonl"))
+
+
 def load_summary(path: Path) -> Result[GraphSummary, str]:
     """Read and import one codegraph snapshot, normalizing boundary errors for CLI presentation."""
-
     source = path.read_text("utf-8", "strict").map_err((error) => error.message())?
     return import_jsonl(source).map_err((error) => error.message())
-
-
-def main() -> None:
-    load_summary(Path("codegraph.jsonl"))
-        .inspect((summary) => println(json_stringify(summary)))
-        .inspect_err((error) => println(error))

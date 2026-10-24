@@ -27,6 +27,10 @@ help:  ## Display this help message
 # Build
 # =============================================================================
 
+.PHONY: examples  ## build - Run examples and check declared frontend-only examples with installed incan
+examples:
+	@bash scripts/run_examples.sh
+
 .PHONY: install-hooks  ## build - Point git at the repository's commit hooks
 install-hooks:
 	@git config core.hooksPath "$(CURDIR)/.githooks"
