@@ -1,195 +1,25 @@
-# Oven Alpha benchmark protocol
+# Measure an Oven command
 
-Use this protocol to measure the DX-recovery lane: explicit release-envelope preparation into an empty developer environment, then repeated normal Oven `build`, `run`, or `test` commands. It is separate from generated-program runtime benchmarks. The measured normal commands and prepared compiler-suite replay run with Cargo guarded out; only an explicit `incan oven bake` miss or the separately named compiler-suite publisher may use Cargo.
+Use the same installed dev.8 compiler, source, package features and artifact profile for repeated measurements.
 
-The harness is deliberately strict. It starts with an empty `INCAN_HOME`, records an explicit `incan oven bake` where the workload needs preparation, records the first normal command, then records unchanged normal-command repeats. The first command is not labeled warm. A required failing `cargo` executable is probed to confirm that it exits with status 97, then prepended to `PATH`; a successful normal stage therefore proves that it did not launch Cargo.
+## Establish and measure reuse
 
-## Reference-machine requirements
-
-Run the same supported workload on one documented macOS machine and one documented Linux machine. Record the checkout revision, release archive/artifact identity, `incan --version`, OS/architecture, exact source fixture and digest, profile, storage limits, and whether the store started empty. Keep the generated `report.json` and per-phase logs with the release evidence. The harness requires an archive or CI-artifact identity rather than silently treating an arbitrary local binary as a comparable measurement.
-
-The documented Alpha envelope is intentionally finite. The release archive ships one complete standard-library Loaf family with two profile variants: debug and release. Each immutable variant contains the checked full standard-library/provider closure, its direct-`rustc` plan, sealed registry-source authority, provenance, digests, and byte accounting. An unsupported provider/dependency closure must fail explicitly or be prepared through the public `incan oven bake` boundary; do not invoke its internal publisher directly to make a benchmark pass.
-
-## Run a guarded test workload
-
-Extract the candidate release archive and use the matching Incan checkout for the harness and its fixtures; those benchmark assets are deliberately not shipped inside the toolchain archive. Then create a task-specific failing Cargo guard outside the repository. The guard proves that the tested normal command cannot accidentally invoke Cargo.
+From a small project:
 
 ```bash
-mkdir -p /tmp/incan-oven-cargo-guard
-printf '#!/bin/sh\necho unexpected Cargo launch >&2\nexit 97\n' > /tmp/incan-oven-cargo-guard/cargo
-chmod +x /tmp/incan-oven-cargo-guard/cargo
-
-bash scripts/bench_oven_alpha.sh \
-  --incan /path/to/extracted/incan/bin/incan \
-  --release-identity 'incan-VERSION-TARGET.tar.gz sha256:...' \
-  --rustc "$(rustup which --toolchain 1.98.0 rustc)" \
-  --checkout-revision "$(git rev-parse HEAD)" \
-  --workload test \
-  --source loaves/compiler/incan_test_support/fixtures/test_assert_canary.incn \
-  --incan-home /tmp/incan-oven-test-home \
-  --output /tmp/incan-oven-test-evidence \
-  --cargo-guard-dir /tmp/incan-oven-cargo-guard \
-  --repetitions 2
+incan build src/main.incn
+time incan build src/main.incn
+OVEN_TRACE=- incan build src/main.incn
 ```
 
-To prove that reuse is not tied to the original checkout, create a clean worktree at the same revision and pass its byte-identical fixture as `--clean-worktree-source`. The harness rejects a different source digest rather than calling two unrelated commands a reuse measurement:
+Measure with tracing disabled; use the separate traced invocation to explain the decision. `reused` means the executable was retained. `compiled (...)` explains an invalidation. Record the compiler version and whether the project owner was already running.
+
+## Separate execution from compilation
 
 ```bash
-git worktree add --detach /tmp/incan-oven-benchmark-clean HEAD
-# Add --clean-worktree-source /tmp/incan-oven-benchmark-clean/tests/fixtures/test_assert_canary.incn
+time incan run src/main.incn
 ```
 
-For build or run, set `--workload build` or `--workload run` and use a small project inside the documented release envelope; the checked sources that bake that envelope live in `loaves/oven/oven_rustc/src/fixtures/`. A `std.testing` fixture is debug-only and is intentionally not a release-build benchmark. On Linux, use a task-specific directory below `/tmp`; the store must start empty so its first materialization is attributable. The default developer policy is 12 GiB aggregate physical allocation, 12 GiB physical allocation per compatibility domain, and 6 GiB logical artifact bytes per domain. The compiler-suite policy is explicitly 16 GiB aggregate physical, 6 GiB domain physical, and 4 GiB domain logical. Pass explicit byte overrides only when recording a different policy.
+A run includes program execution. Tests always execute even when their compilation is reused. Changing the source or replacing the executable establishes a different measurement condition.
 
-Pass the exact `rustc` compatible with the shipped Loafs. The harness passes it as `RUSTC` to every measured command and records both its path and `--version` identity. This prevents an ambient Rustup default from minting an incompatible receipt and turning a toolchain mismatch into a misleading benchmark failure.
-
-## Read the report
-
-`report.json` contains:
-
-- the machine and toolchain identity;
-- `first_materialization`, each `warm_repeat_N`, and (when requested) `clean_worktree_reuse` elapsed duration and exit status;
-- the required Cargo-guard probe status and verdict that successful normal stages did not launch Cargo;
-- storage junctions before materialization, after first materialization, after every warm repeat, and after the clean-worktree repeat. Each keeps its own bounded-store inspection (physical allocation separate from logical artifact bytes, reclaimable bytes, and lease-protected bytes) plus raw store/output disk totals; and
-- one log file per phase, including verbose Oven timing for a test workload.
-
-Use `first_materialization` for the supported compiler-shipped Loaf's initial user-machine cost and the warm repeats for the unchanged normal-command goal. If the first normal command fails, a warm command launches the guard, a plan changes unexpectedly, or store reporting loses the physical/logical distinction, treat the result as a failure rather than averaging it into a performance claim.
-
-## Measure the complete compiler repository suite
-
-The repository suite has one explicit preparation boundary and one Cargo-guarded consumer:
-
-1. `make test-prewarm-oven-loafs` invokes the internal compiler-suite publisher once to create or exactly reuse the typed Loaf envelope and receipt-bound compiler-suite store.
-2. `incan oven compiler-libtests` compiles and executes every discovered root from the prepared store with Cargo guarded out.
-
-The publisher's one Cargo compilation is the third-party foundation every suite root links, and it is reused by its own key across compiler edits (see [Oven Alpha](../../tooling/explanation/oven_alpha.md) for why). To confirm a reuse, read the bake report: `compiler_suite.prepare.foundation.selection` is `reused-from-store` or `reused-from-mirror` and `compiler_suite.prepare.timing.foundation_build_elapsed_ms` is `0`; a cold or changed foundation reports `built` with its build time. The text report prints the same on its `Third-party foundation:` line. A mirror on `INCAN_OVEN_MIRRORS` is consulted after the local compiler-suite store and before Cargo.
-
-The Makefile owns only this command composition. Oven owns Loaf identity, contents, admission, storage policy, selection, root inventory, and reporting. `make test-oven` is the complete local gate and pins its explicit publisher to `nightly-2026-03-24`, while its consumer remains direct `rustc`.
-
-```bash
-cargo build -p incan-cli -p incan-lsp
-INCAN_TEST_COMPILER_ALREADY_BUILT=1 make test-prewarm-oven-loafs
-make test-oven
-```
-
-### Measure an authored native test root
-
-Use `make test-one` for a Rust test root with a sibling `<root-name>.loaf.toml` dependency declaration. Make starts the Cargo guard before preparation and calls the Incan compiler-bootstrap workspace through `incan run`. That program binds the current CLI source, builds or reuses the compiler through Oven, and executes the native test kernel. The selected path does not build the LSP. It selects an explicitly prepared SDK inventory when supplied; otherwise stage zero prepares the SDK against `workspaces/oven/compiler-suite-native.json` and its pinned registry lock. The full-suite wrapper still has its separate preparation path.
-
-For roots with dependencies or fixture inputs outside that sibling declaration, configure `native_roots` in `workspaces/compiler-bootstrap/fixture-preparers.json`. An external `declaration` keeps the test contract outside production source directories; `inputs` binds extra files or trees, including compile-time fixture contents, before binary lookup. A root-specific `dependency_graph` prepares development dependency variants in a separate test SDK. `use_compiler_resolution` retains the compiler's pinned registry selection and declared codegen options while selecting that graph's local facets. See the [compiler-bootstrap README](https://github.com/encero-systems/incan/blob/main/workspaces/compiler-bootstrap/README.md#native-root-declarations-and-inputs) for this internal declaration boundary. Count actual native cases and guard entries; preparation success alone does not establish test execution or Cargo independence.
-
-Stage zero defaults to `incan` on PATH; `INCAN_TEST_BOOTSTRAP_COMPILER` selects a deliberate development-stage input. Installed 0.5.1 does not satisfy the current SDK requirement. The historical recovery stage zero retains an experimental adjacent runtime lock. The rebuilt source compiler uses its adjacent source receipt, native output record and receipt-bound identity engine; an incomplete or mismatched envelope refuses native-runtime admission. Passing a selected root proves the guarded invocation and stated receipt behavior, not released-stage bootstrap or complete Cargo metadata independence.
-
-For a Rust dependency declared by `loaf.toml`, source authority follows the SDK publisher's declared Rust source directory, compiler-owned embedded inputs and named normal path dependencies, including target alternatives. Unrelated tests and documentation outside that directory do not invalidate the library facet; a neighboring Cargo declaration is ignored. Cargo-only legacy path packages retain conservative whole-package authority. Native test binaries use a separate receipt-qualified store domain, so a changed test cannot borrow the original binary, and restoring the original inputs can reuse the original admitted binary under its lease.
-
-The native compiler-test runner uses the ordinary versioned Store below `INCAN_HOME`, or the user home when `INCAN_HOME` is unset. Checkouts sharing that home share retained native dependencies and test executables under its compiler-suite allowance; changing a checkout or output directory does not create another dependency or test Store. Native preparation passes that same selected Store through registry units, local facets and durable native records. Checkout-local preparation directories retain mutable source observations and consumer hints, while successful compilation staging is removed after publication. The internal `compiler-native-tests` command accepts the ordinary `--store` and byte-limit flags; the existing `INCAN_OVEN_MAX_*` overrides also apply. Explicit Stores and isolated homes have independent allowances. Output directories retain their current executable and reports. Changing only an output path can reuse the stored executable when its source, dependency and environment identities match. Store pruning preserves active leases; the retention allowance can be exceeded while entries are actively leased. Older checkout-local and output-local Stores are left intact for an explicit audited prune. Native preparation, output projections and failed staging are separate storage consumers; the Store allowance is not a machine-wide disk budget.
-
-The compiler bootstrap's declared-native plan adapter also places native dependencies in its caller-supplied Store. Its preparation output retains staging and mutable consumer hints rather than creating another dependency Store. A bootstrap executable compiled before this adapter change retains its earlier behavior until it is rebuilt; rebuilding the source compiler with that older executable does not update the bootstrap itself.
-
-Rust project binaries calling Incan exports use that ordinary producer for their own declared native dependencies when the source toolchain supplies native graph coordinates. Their `loaf.toml` selects the roots; the original receipt selects the target and profile. Native records retain their original immutable owners in the shared command Store. Missing or invalid configured producer inputs refuse without falling back to SDK coverage. Completed caller outputs remain reusable before preparation, while native dependency source edits invalidate that reuse. The checked Incan caller foundation still uses the temporary SDK route; this native dependency handoff does not establish complete SDK removal.
-
-Ordinary library publication's full native producer uses the shared command Store for every requested profile. Relocating its staging output does not create another native dependency Store. Dependencies already admitted from a Store mirror retain their original immutable paths and leases. This storage behavior does not establish ordinary admission in every CLI path or complete standard-library publication.
-
-On a cold ordinary native-consumer request, preparation follows the current declared roots and their transitive dependency edges before compiling. Registry edges come from the authenticated schema 2 resolution; local edges use the producer's existing version, domain and feature selector against the complete original candidate set. Unrelated native units are not prepared. Compatible alternatives remain visible and ambiguous selections refuse. Selected registry codegen options remain bound to their receipts. An unchanged admitted repeat reports zero preparation calls, prepared units and compilations. This physical projection cannot supply a complete producer request observation for semantic inspection: the full producer entry point continues to observe every unit supplied in its request. Measure both cold and repeat commands using the compiler that actually contains the change; an older host keeps its earlier preparation behavior.
-
-The native consumer report's `graph_verification` records complete record/native-owner checks and exact physical edge comparisons during graph admission or selection. Each selected record is checked once in that graph handoff, even when dependencies share children or multiple root aliases select the same record; every selected edge is compared. Counts accumulate when a stale hint requires another selection. Canonical Store selection, subsequent current-input replay and later independent handoffs perform their own checks and are outside these counters. Reusing a held lease never suppresses verification on a later handoff. Compare the whole native preparation time as well as these counts; they do not measure bytes read or establish a latency target.
-
-Registry preparation uses one command-owned reader for its pinned adoption metadata, index entries, fact declarations and generated fact bytes. The reader must finish successfully before native compilation starts; archive/source checks and exact fact selection remain unchanged. `preparation_index_reads` reports its actual process count, protocol requests, file demands, distinct blobs, cache hits and blob payload bytes. A supported batch transport normally uses three Git processes: capability selection, the persistent reader and one adoption listing. Unsupported batching retains the existing checked compatibility transport. Empty registry selections and unchanged prepared-consumer reuse report zero preparation index work. The separate current-input replay counters exclude this preparation work, so compare both boundaries when measuring a cold command.
-
-For a materialized Incan dependency with a sealed package Loaf and complete generated-source receipt evidence, the additional provider identity binds the package seal after validating checked metadata, generated source and native bytes. Generated Cargo projections and their lock bookkeeping do not participate in that native identity. Authored dependency sources remain independently bound, and the normal package importer still validates receipt selection and holds store leases before execution. Older handoffs without complete generated-source evidence retain conservative physical artifact authority. Include changed-source, metadata, generated-source and native-byte controls when checking this boundary.
-
-When checking a library or executable source edit and exact restoration, require completed-output reuse on the first restored bake. An older admitted generation can restore its original receipt from the store's verified producer witness only after source, compiler, dependencies, lock, project, compatibility and intent agree. The local receipt and package projection switch within the existing library publication transaction. Executable replay captures its selected generated/native files, receipts and projection markers separately, restoring their prior bytes or absence after an ordinary error without writing into immutable native aliases. These caller publication transactions do not guarantee process-crash or concurrent-reader atomicity. A legacy entry without the retained producer witness remains a cache miss, and unchanged warm files are left in place.
-
-The canonical lock's semantic provider identity excludes the generated provider-root `Cargo.lock` and its `.incan-cargo-lock-manifest` witness. These files describe generated delivery bookkeeping; they remain covered by physical artifact integrity. Actual Cargo requirements, provider metadata, authored sources and nested lock witnesses still participate in semantic identity. Compatible fixture checkouts use relative dependency coordinates to keep their declarations portable without changing which source roots they select.
-
-Completed-output selection binds the canonical authored lock through source authority. A derived dependency fingerprint may change when compiler-owned SDK records refresh, so it remains diagnostic metadata rather than a second reuse veto. Actual feature, package, custom-provider and lock-payload changes still invalidate source authority. The compiler, target, toolchain, dependency closure, original receipts and inspection authority remain checked separately.
-
-After a completed-output miss, an explicit bake can reconcile stale resolved custom-provider content digests against the current checked provider graph. This uses ordinary lock resolution, including source parsing, without typechecking, code generation, native compilation or SDK preparation. Coordinates, features, provider participation and all remaining canonical selections must agree. The candidate lock is committed only if completed-output selection succeeds; a miss or ordinary error restores the prior lock bytes. Warm hits return before this resolution, and normal locked/frozen command policy remains unchanged. Check actual provider and consumer execution through an edit and exact restoration, together with changed-source and lock-selection refusals.
-
-Native-runtime identity verification uses the existing observed-file digest acceleration for the compiler executable and its adjacent identity engine. The expected content digests still come from the compiler's validated receipt and output witness. On Unix, unchanged inode, size, mtime and ctime permit reuse; replacement or preserved-mtime edits require another content read, and malformed acceleration records fall back to hashing. Other platforms read the content conservatively. Set `INCAN_OVEN_TRACE_FILE_DIGESTS=1` to record the authoritative input bytes read by these digest operations. These observations exclude metadata and cache-record IO and do not count compiler launches or total command IO.
-
-```bash
-INCAN_SDK_NATIVE_BLOBS=/path/to/admitted/sha256 \
-INCAN_SDK_NATIVE_INDEX=/path/to/incan.pub-index \
-INCAN_OVEN_BAKE_PROFILES=debug \
-make test-one \
-  TEST_ROOT=loaves/compiler/incan_driver/tests/native_driver_project_tests.rs \
-  TEST_EXACT=plain_model_output_matches_legacy
-```
-
-To measure the direct-route census, use the same command with `TEST_EXACT=direct_route_fixture_census` and set `INCAN_CENSUS_OUT` to the desired evidence directory. Naming an ignored case executes that case; the runner verifies every exact name against the compiled binary's inventory. Without `TEST_EXACT`, it executes the declared complete root with the normal ignored-case policy. A root without an authored sibling declaration refuses rather than entering the Cargo publisher.
-
-Run again without changing the sources, toolchain, graph or native inputs. The bootstrap JSON reports source preparation, SDK selection, compiler execution or reuse, output identities and compiler/SDK compilation counts for that bootstrap call. The native report records plan selection, test compilation or reuse, inventory and execution time. Its `test_binary_reused` field distinguishes validation from an actual test compilation. Measure fixture-program compilation separately and require reuse when its qualified inputs are unchanged.
-
-Prepared test binaries remain under `target/compiler-development/test-roots/`; each invocation retains its current reports and command streams in a distinct `test-runs/` directory. Prior reports move into that invocation's evidence before the new command starts, so a setup failure cannot present yesterday's success as current. The outer guard logs live under `compiler-development/command-evidence/` in the selected target directory. Set `INCAN_TEST_OVEN_TEST_ONE_REPORT` to publish a caller-owned JSON report, transcript archive and retention timing record. Publication cleans only a disposable evidence copy; it preserves both the prepared test binary and invocation evidence.
-
-For retained timing evidence, run the baker command shown by `make -n test-prewarm-oven-loafs`, then the replay command shown by `make -n test-oven`, using fresh task-specific evidence directories. Put a Cargo executable that records its arguments and exits 97 first on `PATH` only for the `compiler-libtests` command. Record these phases independently:
-
-- cold Loaf and compiler-suite-store preparation;
-- exact baker reuse, including confirmation that Cargo did not start;
-- Cargo-free prepared replay;
-- `incan oven store inspect --format json` before publication and after replay; and
-- `du -sk` for the store, Loaf root, and caller-owned output at each junction.
-
-The suite JSON reports total, passed, failed, and ignored cases plus reported, green, failed, and unreported roots. Its `selection.mode` is `complete-suite` for an unfiltered workspace replay, `selected-complete-roots` for an explicit target set or a deterministic partition made of whole roots, `joint-coverage-partition` for a partition that also ran a case slice of a divided giant root, and `exact-diagnostic` for one or more exact cases from one root. Only the first mode can set `complete_suite_success`; the first two can set `complete_root_success`; a `joint-coverage-partition` report claims no complete-root evidence for its sliced root and records the slice's index, count, inventory size and selected cases under `native_test_roots[].case_slice`, so that a reconciliation over every partition can prove each case ran exactly once. An exact diagnostic is retained failure-isolation evidence, not a substitute for a green root or suite. The publisher and store reports keep logical artifact bytes, policy-accounted physical bytes, whole-root owned/raw disk allocation, reclaimable bytes, active-lease bytes, and the configured limits distinct. A repeat is valid only when the publisher reports `reused`, its compiler-suite result reports receipt-compatible reuse, the Cargo guard remains empty, and the applicable complete-root or complete-suite aggregate is green. Virtualized Linux is a portability gate, not authoritative reference-machine timing.
-
-GitHub Actions keeps preparation and replay separate. The ordinary `CI` workflow builds the Linux Rust 1.98.0 compiler once, prepares one immutable Linux compiler-suite closure, and restores that exact-SHA closure into four deterministic replay partitions. A partition carries whole roots and, when the previous run's timing record shows a root heavier than one partition's fair share, a case slice of that root; the timing-record job then reconciles the four selection reports with `incan oven reconcile-partitions`, which fails the run if any root or case ran zero times or twice, and only that reconciliation constitutes complete-suite evidence — no individual partition claims it. Linux also runs the release-envelope Cargo guard and focused process-containment regressions. Separate macOS and Android-targeted Linux jobs retain only their platform-specific C-ABI verification under that same Rust release, avoiding another full suite bake or a second Rust-version promise. Retained reference-machine performance still requires the benchmark protocol above rather than treating hosted or virtualized CI as authoritative timing.
-
-## Compiler-suite progress and retained timing evidence
-
-Prepared replay reports one completion line per native case, including its duration and root label. Failures show their captured diagnostic text when the case finishes. A 30-second heartbeat names outstanding work even for single-threaded roots; it proves the supervisor is alive, not that the case itself is progressing. Successful diagnostic output is kept in transcripts instead of repeated on the console. On a failing root, the console also shows up to 64 KiB of recent uncaptured output; the retained transcript contains the complete bytes.
-
-Every compiler-suite root records non-ignored case durations at millisecond precision. An ignored case has no measured duration. The report distinguishes `process_success` from `success`: complete success additionally requires one valid root-owned result for every selected case and no failed result. `case_counts: null` means incomplete or malformed case evidence; partial `case_timings` remain useful observations and must not be treated as complete coverage. Exact selection reconciles each selected invocation, while `inventory_count` still describes the full binary.
-
-The pinned Rust harness writes these outcomes to a private result file supplied only to the root invocation. Nested JSON on stdout or stderr cannot supply counts or replace times. This relies on libtest's deprecated but supported `--logfile` option, which is covered by real-process regressions; a toolchain change that stops emitting results fails evidence validation instead of silently falling back to diagnostic parsing. The public `incan test` text transcript remains unchanged.
-
-Suite phases announce receipt selection, shared setup, target preparation, root execution, scratch cleanup, result aggregation, store inspection and report publication. Long phases emit a 30-second heartbeat through cleanup. The in-process `timing.total_elapsed_ms` ends after store inspection and includes the command's scratch deletion; it excludes report publication and process teardown. Per-root durations can overlap and must not be added together to explain elapsed suite time.
-
-Run `make test-oven-case-timings` to retain `target/oven-compiler-suite-case-timings.json`, its `.transcripts.tar.gz` archive and its `.wall-time.json` timing record. `INCAN_TEST_OVEN_COMPILER_SUITE_REPORT` chooses another destination. Selected `make test-one` publication uses the same archive utility on an evidence copy; its retention record covers publication and cleanup, with no outer wrapper clock supplied. The outer timing record separates wrapper setup, the compiler invocation through process exit and trap entry, wrapper scratch deletion, report publication, transcript inventory, archive creation and caller-output deletion. Transcript evidence includes file count, total input bytes and published archive bytes, so traversal and compression costs can be compared against the data volume. A failed inventory is marked incomplete; an unpublished archive has no measured published size. Its monotonic total ends at the final retention snapshot, before that timing file's final publication and interpreter exit. This explains the boundary between the compiler's report and the replay step without assigning an unexplained gap to cleanup by inference.
-
-Outer timing evidence is retained even if the compiler fails before producing its normal JSON report. `exit_status` describes the wrapper's result, while `replay_exit_status` preserves the replay status even when retention also fails; `complete: false` means the final retention update did not complete and must not be read as a successful cleanup. Failed report/archive publication and timing preflight preserve caller output. If the final timing update fails after deletion, the earlier record remains explicitly incomplete and the wrapper fails. CI enables nested command timing markers on every partition, uploads both JSON records for 30 days, and keeps full native transcripts for seven days, on success and failure. These artifacts supply the duration evidence needed by replay weighting; producing them does not imply the current partitioner consumes them.
-
-For reporting-overhead measurements, hold the root binary, verified inventory, worker/thread budgets, environment, warm providers, and output destination fixed. Alternate baseline and candidate runs and report median, spread, CPU time, and emitted bytes. Include both a quiet workload and a deterministic high-output workload. Separate console I/O from parsing by repeating with a collecting sink. A microbenchmark cannot explain heavy-root wall time: measure the same prewarmed integration roots before making that claim, and distinguish root execution from total CI job duration.
-
-### Controlled reporting probe
-
-A macOS arm64 probe on 8 September 2026 compared the runner at `5ff730ffb` with the result-channel implementation above. Both runner modules were compiled together with Rust 1.99.0-nightly (`504869653`); the identical native workload binaries used the pinned CI Rust 1.98.0 (`88d9e12ae`). This isolates native reporting behavior from the separate full compiler verification gate.
-
-Each workload selected eight cases with two libtest threads, over seven alternating baseline/candidate pairs per sink. The quiet cases only emitted a completion marker; the high-output cases produced 80,000 captured stdout lines and 80,000 uncaptured stderr lines in total. Every run verified complete work and eight passing cases. `collect` buffered progress in memory; `stderr` wrote to a regular file, not an interactive terminal. CPU is child-process user plus system time, including the runner and its descendants.
-
-| Workload | Sink | Runner | Median wall ms | Min–max ms | Median CPU s | Progress bytes |
-|---|---|---|---:|---|---:|---:|
-| quiet | collect | baseline | 110.159 | 104.254–114.561 | 0.00800 | 647 |
-| quiet | collect | candidate | 11.533 | 10.267–15.527 | 0.01306 | 328 |
-| quiet | stderr | baseline | 113.999 | 104.331–114.413 | 0.00860 | 647 |
-| quiet | stderr | candidate | 11.589 | 10.526–14.976 | 0.01396 | 328 |
-| high_output | collect | baseline | 263.977 | 257.991–272.117 | 0.32868 | 10,222,887 |
-| high_output | collect | candidate | 149.826 | 144.816–153.642 | 0.21191 | 328 |
-| high_output | stderr | baseline | 687.760 | 672.039–698.220 | 0.84243 | 10,222,887 |
-| high_output | stderr | candidate | 152.676 | 145.728–154.286 | 0.20967 | 328 |
-
-The quiet cases cost a few more CPU milliseconds to own and validate the result channel, while removing the heartbeat's 100 ms shutdown poll lowers wall time. Retaining successful diagnostics in transcripts reduces console traffic and high-output CPU cost. These probes use no SDK/provider work and do not establish heavy-root throughput or explain historical CI job duration. The prewarmed-root comparison and complete partition reports remain separate evidence.
-
-### Controlled retention probe
-
-A separate macOS arm64 probe compared the retention shell at `95a1dc2b5` with the measured retention implementation. Ten alternating pairs per workload used identical successful reports and compressible transcripts, with stdout/stderr captured to pipes. The candidate included both Make clock-helper invocations, all retention operations and its final timing artifact. Both implementations verified report/archive publication and deletion of scratch and caller output.
-
-| Transcript size | Baseline median wall ms | Measured retention median wall ms | Baseline / measured CPU ms | Measured progress bytes |
-|---|---:|---:|---:|---:|
-| 1 KiB | 28.13 | 103.15 | 21.93 / 92.89 | 497 |
-| 2 MiB | 30.91 | 105.80 | 24.70 / 95.84 | 497 |
-
-Wall ranges were 25.82–34.72 ms versus 99.61–112.19 ms for 1 KiB, and 28.84–31.91 ms versus 103.23–107.43 ms for 2 MiB. The added cost is about 75 ms per suite invocation in this small probe, including interpreter startup and timing publication. It does not measure large filesystem cleanup, incompressible transcript throughput or heavy-root CI execution; those remain direct measurements from the phase records.
-
-For completed Rust caller generations, include a compatible second project whose previous executable is read-only and aliased. After the producer admits changed source, require reuse on the consumer’s first command and execute the result. Replay replaces the caller executable through a private staged file with writable executable permissions; the previous inode and its aliases retain their bytes and permissions. An unchanged repeat leaves both the executable and an identical producer receipt in place. Restore the original source and require exact native and receipt recovery.
-
-Standalone `incan build FILE OUTPUT_DIR` also retains its native executable in the bounded Oven store. Remove the local output projection, then require stored native reuse on the first restored build. The same source, selected dependency plan, declared environment, compiler and linker must select the original native bytes. A source edit must miss that generation; exact restoration may recover it again. The numerical conformance helper records native and reference compilation times separately, with an optional reference-only reuse assertion. SDK selection and input verification remain measured command work.
-
-The direct-route census writes every observed result before evaluating acceptance, including a separate `acceptance.json`. Driver failures, compilation or execution timeouts, diagnostic mismatches and non-pending wrong results fail the command. Empty or unknown restricted selections refuse, and every requested fixture must appear exactly once. Pending semantic outcomes retain their observations; named unsupported constructs remain visible as unresolved route support. The report's `route_support_complete` field distinguishes complete support from a valid measurement containing those limitations.
-
-
-Rust Loaf source freshness preserves the native publisher's exact portable source mapping and source-tree identity. It assembles that identity from individual source-member hashes instead of copying a temporary snapshot. On Unix, existing replacement-sensitive file observations retain unchanged member hashes when another leaf changes; additions and removals still change the source identity. The native source-authority control records cold, warm, one-leaf-edit, restoration and addition/removal byte reads. That counter covers regular Rust source members and embedded resources: Loaf declaration reads and parsing, metadata traversal, synthetic declaration hashing and cache IO remain separate work. Unsupported observation platforms conservatively read the member bytes.
-
-For an authored Rust Loaf path dependency, include a replay after changing only a transitive native source file. The test dependency envelope hashes the native producer's mapped inputs, including embedded resources, and replaces active path coordinates with recursive source identities. A relocated equivalent graph retains that dependency identity; an active source edit changes it. Disabled optional paths are not accessed, while unresolved target forms, cycles and linked source entries refuse. An adjacent `Cargo.toml` contributes nothing to this native identity. These source facts do not replace the original native owners or authorize additional bindings. The checked library recipe still conservatively includes Rust source edges: after a Rust dependency edit, require a changed metadata recipe and unchanged Incan entry bytes, rather than assuming its complete source digest covers only Incan code. The dependency-envelope observer currently hashes mapped source bytes directly; its byte work is separate from the cached source-authority measurements above.
-
-Shared native plans acquire the requested owners from each store in one atomic batch. Repeated logical references retain one owner lease while every reference still checks its original receipt and complete admitted member digests. Multi-store selection, substituted receipts/digests, missing owners and pruning under retained execution leases have dedicated public controls.
+On macOS, first execution of a new binary can include a system assessment. Record that condition separately from warm compilation reuse. Retain exact commands, trace output and program results rather than attributing all elapsed time to the compiler.

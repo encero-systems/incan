@@ -4,6 +4,8 @@ This tutorial calls C's `abs` function through a small Incan façade. It shows t
 
 The checked C surface is experimental and intentionally small. Use this tutorial on a Linux x86-64 or Apple arm64 host with a Clang-compatible C toolchain and the standard C headers installed. It does not yet provision cross-target toolchains or native artifacts for you.
 
+The tested dev.8 interop artifact does not activate the `binding` vocabulary: this example is refused at parse time (`INCAN-P0001`). The source below illustrates the binding contract; it is not a runnable native tutorial with that installation.
+
 ## Declare the raw contract
 
 Create `src/main.incn`:
@@ -19,7 +21,7 @@ binding LibC:
         native = "abs"
 ```
 
-`from std.interop import c` activates `binding` in this module. The `binding` form is vocabulary for an ordinary, unexported declaration class; it is not a new global class syntax. `header` names the header Clang must check, while `link` records the logical system library used by generated Rust. The `symbol` member has no implementation body: it only maps an Incan name and exact C types to one native symbol spelling.
+`from std.interop import c` activates `binding` in this module. The `binding` form is vocabulary for an ordinary, unexported declaration class. `header` names the header Clang must check, while `link` records the logical system library. The `symbol` member maps an Incan name and exact C types to one native symbol spelling.
 
 ## Add an ordinary Incan façade
 
@@ -42,7 +44,7 @@ Run it:
 incan run src/main.incn
 ```
 
-Before Rust is generated, Incan asks Clang to check the declared C signature against `stdlib.h` for the host target. If the header says that `abs` has a different type, the compiler reports the binding error before it can become a link-time or runtime surprise.
+During checking, Incan asks Clang to check the declared C signature against `stdlib.h` for the host target. A mismatched signature is a binding error.
 
 ## Expose a C constant as an Incan value
 

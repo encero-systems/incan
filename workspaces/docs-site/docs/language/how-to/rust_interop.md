@@ -1,6 +1,6 @@
 # Rust Interoperability
 
-Incan exposes a Rust interop boundary for crates and Rust types. In the documented Oven Alpha envelope, current beta normal commands consume receipt-bound direct-`rustc` plans; `rust::` imports can therefore connect supported sealed Rust dependencies while keeping the application surface in Incan. Unsupported dependency shapes fail explicitly rather than making Cargo a normal-command fallback.
+Incan exposes a Rust interop boundary for crates and Rust types. Dev.8 checks Rust items through the installed compiler's ABI caches and Rust metadata extraction, then compiles native calls directly. External dependencies must match artifacts in the installed toolchain closure.
 
 ## Importing Rust Crates
 
@@ -42,18 +42,15 @@ Using `rust::std` types means working with their Rust behavior; for common file 
 
 ### Check a project that uses only Rust's standard library
 
-For a project with no declared Rust dependencies, use `rust::std::` imports without adding a crate dependency. Install the selected Rust toolchain's `rust-src` component, then bake the project once:
+For a project with no declared Rust dependencies, use `rust::std::` imports without adding a crate dependency. Use the matching installed compiler and Rust sysroot:
 
 ```bash
-incan oven bake --project .
 incan check src/main.incn
 incan run src/main.incn
-incan test
+incan test tests/test_main.incn
 ```
 
-The bake derives inspection metadata from that toolchain's sysroot without running Cargo. Comment-only edits preserve the baked source authority, so you can check and run again without rebaking. Changes to executable tokens, literals, or indentation still change source authority.
-
-If the project declares Rust dependencies, the bake needs an existing sealed Loaf source resolution. An unresolved dependency is reported by name, for example "Rust dependency `semver` needs a Loaf resolution"; the bake does not ask Cargo to resolve it.
+The checker reads installed Rust ABI caches and extracts uncovered paths with the pinned Rust compiler. External Rust dependencies must match the installed registry closure; declaring a missing crate does not download or build it.
 
 ### Paths and names that match Incan keywords
 
@@ -418,9 +415,9 @@ Body-less `rusttype` adoption is only accepted when Rust metadata proves that th
 
 ## Published libraries and shipped ABI metadata
 
-When a library exposes Rust-backed items, run `incan build --lib` before another project consumes it through `pub::`. The generated `.incnlib` embeds a versioned Rust ABI payload containing the canonical Rust item signatures captured during the producer build.
+When a library exposes Rust-backed items, run `incan build src/lib.incn` before another project consumes it through `pub::`. Its `.incnlib` includes the checked Rust-facing public contract from the producer build.
 
-Consumers load that shipped ABI metadata first for Rust-backed imported symbols. `rust_inspect` remains available for producer capture, local workspace imports, and explicit fallback/debug paths, but a packaged dependency should not require consumer-side workspace inspection for signatures that were already published in its `.incnlib`.
+Consumers load the published contract for Rust-backed imported symbols. The pinned compiler obtains other Rust facts from installed ABI caches and extraction during checking.
 
 Producer capture includes successful metadata lookups made while checking function bodies, in addition to explicit imports and `rust.extern` backing items. A Rust factory's inferred return receiver can therefore carry its checked ABI without a separate type import. Complete ABI records already shipped by dependencies are reused; other requested type records are completed before shipping them. Partial fast-inspection records are insufficient. Repeated queries are deduplicated, and unsuccessful speculative lookups do not become ABI requirements.
 
@@ -431,7 +428,7 @@ A library can deliberately publish a checked Rust import:
 pub from rust::rubato import Fft, FixedSync, ResamplerConstructionError
 ```
 
-After building that library with `incan build --lib`, a consumer imports the same types through the package boundary:
+After building that library with `incan build src/lib.incn`, a consumer imports the same types through the package boundary:
 
 ```incan
 from pub::audio_native import Fft, FixedSync, ResamplerConstructionError

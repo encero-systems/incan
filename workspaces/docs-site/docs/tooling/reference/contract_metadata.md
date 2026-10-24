@@ -1,148 +1,32 @@
-# Checked Contract Metadata
+# Checked contract metadata
 
-Checked contract metadata is the tooling surface for canonical model bundles, contract-backed model materialization, and artifact introspection. It is separate from checked API metadata: model bundles describe structural row-shaped contracts that can be projected to Incan `model` source, while API metadata describes checked public declarations already present in source.
+## Project input
 
-## Project Configuration
+`[tool.incan.metadata] model-bundles` accepts an array of model-bundle JSON paths. Relative paths are resolved against the project root.
 
-Declare model bundle JSON files in `loaf.toml`:
+## Bundle schema
 
-```toml
-[tool.incan.metadata]
-model-bundles = ["contracts/order_summary.json"]
-```
+A single model has `schema_version: 1`, `stable_model_id`, `logical_type_name`, `publishable` and an ordered `fields` array. A package object has `schema_version: 1` and a `model_bundles` array of model objects.
 
-Paths are resolved relative to the project root unless they are absolute.
+| Field | Type | Contract |
+| --- | --- | --- |
+| `stable_model_id` | String or null | Required identity for a publishable bundle. |
+| `logical_type_name` | String | Incan model name. |
+| `publishable` | Boolean | Whether the model may be included in artifact metadata. |
+| `fields` | Array | Ordered field definitions. |
+| Field `name` | String | Incan field name. |
+| Field `type` | String | Incan type spelling. |
+| Field `nullable` | Boolean | Nullable fields have `Option[T]` unless already optional. |
+| Field `alias` | String or null | Wire name. |
+| Field `description` | String or null | Reflection description. |
+| Field `metadata` | Object | Producer metadata outside type identity. |
 
-## Bundle Shape
+Duplicate logical names, stable IDs, field names or aliases are refused. Empty aliases, descriptions or metadata keys and unknown or opaque type spellings are refused.
 
-A bundle may be stored as a single canonical model object:
+## Materialized declarations
 
-```json
-{
-  "schema_version": 1,
-  "stable_model_id": "orders.summary",
-  "logical_type_name": "OrderSummary",
-  "publishable": true,
-  "fields": [
-    {
-      "name": "order_id",
-      "type": "str",
-      "alias": "orderId",
-      "description": "Stable order identifier"
-    },
-    {
-      "name": "coupon_code",
-      "type": "str",
-      "nullable": true
-    }
-  ]
-}
-```
+Declared bundles contribute public model declarations before source checking. Constructors, field access, JSON aliases and field reflection use the declared model fields. A model name colliding with another visible declaration or bundle is refused.
 
-Or as a package object with `model_bundles`:
+## CLI availability
 
-```json
-{
-  "schema_version": 1,
-  "model_bundles": [
-    {
-      "schema_version": 1,
-      "stable_model_id": "orders.summary",
-      "logical_type_name": "OrderSummary",
-      "publishable": true,
-      "fields": [
-        {
-          "name": "order_id",
-          "type": "str"
-        }
-      ]
-    }
-  ]
-}
-```
-
-Fields:
-
-| Field               | Type           | Meaning                                                               |
-| ------------------- | -------------- | --------------------------------------------------------------------- |
-| `schema_version`    | number         | Bundle or package schema version.                                     |
-| `stable_model_id`   | string or null | Artifact-facing identity for publishable bundles.                     |
-| `logical_type_name` | string         | Incan model type name.                                                |
-| `publishable`       | bool           | Whether the bundle may be embedded into artifact contract metadata.   |
-| `fields`            | array          | Ordered canonical field list.                                         |
-| `field.name`        | string         | Incan field name.                                                     |
-| `field.type`        | string         | Incan type spelling.                                                  |
-| `field.nullable`    | bool           | When true, emit uses `Option[T]` unless the type is already optional. |
-| `field.alias`       | string or null | Field alias used as the wire name.                                    |
-| `field.description` | string or null | Field description surfaced through model reflection.                  |
-| `field.metadata`    | object         | Producer metadata that does not affect type identity.                 |
-
-Publishable bundles require `stable_model_id`. Bundle validation rejects duplicate logical type names, duplicate stable ids, duplicate field names, duplicate aliases, empty aliases/descriptions, empty metadata keys, and unknown or opaque type spellings.
-
-## Materialization
-
-When a project declares model bundles, build and run commands materialize them as ordinary public `model` declarations before typechecking the project entry point. Materialized models participate in constructors, member access, model lowering, JSON alias metadata, and `__fields__()` reflection the same way handwritten models do for the represented field subset.
-
-```incan
-def main() -> None:
-    let row = OrderSummary(order_id="o-1", coupon_code=None)
-    println(row.order_id)
-```
-
-If a materialized model name collides with a visible source declaration or another bundle, the compiler reports a hard error instead of shadowing or mangling the generated name.
-
-## Model Emit
-
-Use `incan tools metadata model` to project a model bundle to formatted Incan source:
-
-```bash
-incan tools metadata model path/to/project OrderSummary --format incan
-incan tools metadata model path/to/project orders.summary --format json
-incan tools metadata model contracts/order_summary.json OrderSummary
-```
-
-The first positional argument is a project directory, bundle JSON file, source file inside a project, or `.incnlib` artifact. The second positional argument is either `logical_type_name` or `stable_model_id`.
-
-`--format incan` prints formatted model source:
-
-```incan
-pub model OrderSummary:
-    pub order_id [alias="orderId", description="Stable order identifier"]: str
-    pub coupon_code: Option[str]
-```
-
-`--format json` prints the canonical bundle JSON for the selected model.
-
-Projection is intentionally lossy. It preserves logical type name, field order, type spelling, nullability, alias, and description. It does not reconstruct comments, imports, author-only formatting, producer implementation details, or metadata fields that do not have an Incan model syntax.
-
-## Artifact Inspection
-
-`incan build --lib` embeds publishable model bundles and checked API metadata into the `.incnlib` manifest under
-`contract_metadata` through its receipt-selected direct-`rustc` library path. Tooling can inspect a built artifact
-without requiring the original source checkout:
-
-```bash
-incan build --lib
-incan tools metadata model target/lib/my_package.incnlib OrderSummary --format incan
-```
-
-Artifacts that do not carry checked model metadata are reported as non-introspectable for model emit instead of being reconstructed from generated Rust or machine code.
-
-## LSP Command
-
-The language server registers `workspace/executeCommand` command `incan.metadata.model.emit`. Clients pass either one object argument or positional arguments:
-
-```json
-{
-  "command": "incan.metadata.model.emit",
-  "arguments": [
-    {
-      "uri": "file:///path/to/project/src/main.incn",
-      "model": "OrderSummary",
-      "format": "incan"
-    }
-  ]
-}
-```
-
-The command returns a JSON object containing `format`, `model`, `stableModelId`, and either `source` for Incan output or `bundle` for JSON output. The same validation and formatter path as the CLI command are used.
+Dev.8 exposes no `incan tools metadata model` projection or artifact-inspection command. Model-bundle paths appear in `incan describe-unit PATH`. Source diagnostics use `incan check PATH --format json`.

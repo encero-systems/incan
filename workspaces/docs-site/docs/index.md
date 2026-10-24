@@ -42,10 +42,10 @@ hide:
 <div class="inc-hero__quickstart" aria-label="First Incan project">
 <div class="inc-quickstart__terminal">
 <div class="inc-quickstart__terminal-bar"><img src="shared/incapunk/icons/terminal.svg" alt=""><span>First run</span><strong>ready</strong></div>
-<pre><code><span class="inc-terminal-line inc-terminal-line--command"><span aria-hidden="true">$</span> incan new hello --yes</span>
-<span class="inc-terminal-line inc-terminal-line--output">Created project 'hello' at hello</span>
-<span class="inc-terminal-line inc-terminal-line--command"><span aria-hidden="true">$</span> cd hello &amp;&amp; incan run</span>
-<span class="inc-terminal-line inc-terminal-line--success">Hello from hello!</span></code></pre>
+<pre><code><span class="inc-terminal-line inc-terminal-line--command"><span aria-hidden="true">$</span> incan check hello.incn</span>
+<span class="inc-terminal-line inc-terminal-line--output">✓ Type check passed!</span>
+<span class="inc-terminal-line inc-terminal-line--command"><span aria-hidden="true">$</span> incan run hello.incn</span>
+<span class="inc-terminal-line inc-terminal-line--success">Hello, Incan!</span></code></pre>
 </div>
 <div class="inc-quickstart__incus">
 <a class="inc-quickstart__incus-link" href="project/incus/" aria-label="Meet Incus">
@@ -106,7 +106,7 @@ Incan 0.5 ships a full-standard-library Loaf and can explicitly bake project ext
 <div class="inc-build-strip__grid">
 <div class="inc-build-card inc-tone-cyan"><img src="shared/incapunk/icons/terminal.svg" alt=""><strong>Typed by default</strong><span>Types, errors, and mutability stay explicit.</span></div>
 <div class="inc-build-card inc-tone-gold"><img src="shared/incapunk/icons/workflow.svg" alt=""><strong>Ownership planned</strong><span>Compiler-assisted ownership, not runtime guesswork.</span></div>
-<div class="inc-build-card inc-tone-cyan"><img src="shared/incapunk/icons/file-code.svg" alt=""><strong>Rust emitted</strong><span>Generated Rust stays inspectable.</span></div>
+<div class="inc-build-card inc-tone-cyan"><img src="shared/incapunk/icons/file-code.svg" alt=""><strong>Checked native plan</strong><span>Compiler facts remain inspectable.</span></div>
 <div class="inc-build-card inc-tone-cyan"><img src="shared/incapunk/icons/shield-check.svg" alt=""><strong>Receipt checked</strong><span>Oven validates the resolved build plan before rustc runs.</span></div>
 <div class="inc-build-card inc-tone-gold"><img src="shared/incapunk/icons/rocket.svg" alt=""><strong>Native binary</strong><span>No Python process model at deploy time.</span></div>
 </div>
@@ -214,7 +214,7 @@ fn main() {
 
 <div class="inc-why-card inc-tone-cyan">
 <img src="shared/incapunk/icons/eye.svg" alt="">
-<span>Generated Rust, diagnostics, and build reports stay inspectable.</span>
+<span>Source diagnostics and checked codegraph records stay inspectable.</span>
 </div>
 
 <div class="inc-why-card inc-tone-gold">
@@ -256,7 +256,7 @@ Incan is built for that shift: a smaller typed language surface with Rust-native
 <ul>
 <li><span>Intent:</span> models, errors, and mutability stay explicit.</li>
 <li><span>Diagnostics:</span> stable checks, explanations, and inspection data.</li>
-<li><span>Inspectability:</span> generated Rust and build reports.</li>
+<li><span>Inspectability:</span> diagnostics and checked codegraph records.</li>
 <li><span>Deployment:</span> native binaries instead of a Python runtime.</li>
 </ul>
 </div>
@@ -290,7 +290,7 @@ Incan plans the Rust-facing ownership path. You keep writing clear application c
 <span class="inc-duck-arrow"><img src="shared/incapunk/icons/arrow-right.svg" alt=""></span>
 <div class="inc-duck-step inc-tone-cyan"><img src="shared/incapunk/icons/database-arrow-right.svg" alt=""><span>Owned storage</span></div>
 <span class="inc-duck-arrow"><img src="shared/incapunk/icons/arrow-right.svg" alt=""></span>
-<div class="inc-duck-step inc-tone-gold"><img src="shared/incapunk/icons/rust.svg" alt=""><span>Generated Rust</span></div>
+<div class="inc-duck-step inc-tone-gold"><img src="shared/incapunk/icons/rust.svg" alt=""><span>Native compilation</span></div>
 </div>
 
 <p class="inc-duck-link"><a href="contributing/explanation/duckborrowing/">Read the Duckborrowing deep dive</a></p>

@@ -1,57 +1,17 @@
-# 6. Tooling loop: formatter + tests
+# 6. Formatter and tests
 
-This chapter explains the contributor “inner loop” for making changes safely:
+A language change must remain parseable after formatting and retain its checked behavior.
 
-- format code consistently
-- run tests quickly
-- prevent drift between syntax, compiler, and tooling
+## Follow formatting
 
-## End-to-end checklist
+Read a nearby rule in `loaves/compiler/incan_format/src/`. Extend the matching `format` contract case before adding a new case. Prove that formatting produces the expected source, check mode leaves it unchanged and a second format is idempotent.
 
-Just like in the previous chapter, use this checklist to keep the pipeline aligned while you work:
+## Follow behavior
 
---8<-- "_snippets/contributing/compiler_pipeline_checklist.md"
+Use the smallest selector from `workspaces/contracts/README.md` to demonstrate the change. Run the affected whole families at a commit point. Extend existing area cases rather than creating one per bug.
 
-## Formatter (`incan fmt`)
+## Finish the local gate
 
-The formatter is part of the toolchain and should remain aligned with the parser/AST:
+Run `make pre-commit-fast`, `make reference-contract-check` for reference changes and `make docs-build` for documentation. These check different boundaries; formatting success is not proof of runtime behavior.
 
-- it should be idempotent (formatting twice yields the same output)
-- it should never print invalid syntax
-- its behavior should match the [Incan Code Style Guide](../../../language/reference/code_style.md), with [Formatting with `incan fmt`](../../../tooling/how-to/formatting.md) documenting the tool-specific surface
-
-See:
-
-- [Incan Code Style Guide](../../../language/reference/code_style.md)
-- [Formatting with `incan fmt`](../../../tooling/how-to/formatting.md)
-
-Where it lives:
-
-- `loaves/compiler/incan_format/src/`
-
-## Testing (Rust tests + integration checks)
-
-Depending on your change, you will usually run:
-
-- `make test` for the Rust unit/integration test suite (fast feedback)
-- `make pre-commit` for a fast local gate (fmt-check + cargo check)
-- `make pre-commit-full` before pushing (fmt-check + tests + clippy)
-- `make smoke-test` when you want extra confidence (build + tests + examples + benchmarks-incan)
-
-See:
-
-- [Testing](../../../tooling/how-to/testing.md)
-
-## A practical workflow
-
-When you add a feature:
-
-1. add/adjust a small Rust regression test (parse/typecheck/codegen)
-2. run `make test`
-3. run `make pre-commit` as a quick local sanity pass
-4. run `make pre-commit-full` before opening the PR
-5. run `make smoke-test` if the change touches the pipeline end-to-end (parser/typechecker/codegen/tooling)
-
-## Next
-
-Next chapter: [07. Tooling loop: LSP](07_tooling_loop_lsp.md).
+See [Formatting](../../../tooling/how-to/formatting.md) and [Testing](../../../tooling/how-to/testing.md).

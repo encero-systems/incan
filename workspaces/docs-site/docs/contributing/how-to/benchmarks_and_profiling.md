@@ -1,95 +1,29 @@
-# Benchmarks & profiling (repository)
+# Benchmark and profile a program
 
-This page is for contributors working on Incan’s performance: running the repository benchmark suite, adding new benchmarks, and profiling the compiler.
+Use an installed dev.8 compiler. Keep compiler, source, dependency artifacts and profile fixed between measurements.
 
-If you want to speed up **your program**, see [Performance (how-to)](../../language/how-to/performance.md).
+## Build and measure
 
-## Benchmark suite
-
-The repository includes a benchmark suite that compares generated binaries against Rust and Python baselines.
-
-### Available benchmarks
-
-| Category | Benchmark     | Description                           |
-| -------- | ------------- | ------------------------------------- |
-| Compute  | `fib`         | Iterative Fibonacci (N=1,000,000)     |
-| Compute  | `collatz`     | Collatz sequence (1,000,000 numbers) |
-| Compute  | `gcd`         | GCD of 10,000,000 pairs               |
-| Compute  | `mandelbrot`  | 2000×2000 escape iterations           |
-| Compute  | `nbody`       | N-body simulation (500,000 steps)     |
-| Compute  | `primes`      | Sieve up to 50,000,000                |
-| Sorting  | `quicksort`   | In-place sort (1M integers)           |
-| Sorting  | `mergesort`   | Merge sort (1M integers)              |
-
-### Running benchmarks
+From a project with `src/main.incn`:
 
 ```bash
-# Prerequisites (macOS)
-brew install hyperfine jq bc
-
-# Build the compiler
-cargo build --release
-
-# Run all benchmarks
-make benchmarks
-
-# Or run the benchmark runner directly
-./workspaces/benchmarks/run_all.sh
+incan build src/main.incn
+time incan run src/main.incn
+OVEN_TRACE=- incan run src/main.incn
 ```
 
-### Running an individual benchmark
+The default profile is `debug`. For optimized measurements use `--profile release` with a toolchain containing release-profile standard packages. Do not compare a first compilation with an unchanged executable run.
 
-```bash
-cd workspaces/benchmarks/compute/fib
+## Profile the executable
 
-# Build Incan version
-../../../../target/release/incan build fib.incn
-cp target/incan/fib/target/release/fib ./fib_incan
+Program binaries reside under `target/incan/<profile>/bin/`. Select the binary for your source, then launch it under Instruments on macOS or `perf` on Linux. Record the source arguments and input data with the measurement.
 
-# Build Rust baseline
-rustc -O fib.rs -o fib_rust
+A profiler around `incan build` measures preparation and compilation. A profiler around the resulting binary measures the application. These answer different questions.
 
-# Compare
-hyperfine --warmup 2 --min-runs 5 \
-  './fib_incan' \
-  './fib_rust' \
-  'python3 fib.py'
-```
+## Compare baselines
 
-### Results
+The repository keeps Incan, Rust and Python benchmark sources under `workspaces/benchmarks/`. Compare identical workloads and output values. Python baselines are research inputs, not production Incan tooling.
 
-For current measured results, see `workspaces/benchmarks/results/results.md` in the repository.
+The repository Makefile has no benchmark build target. Use explicit installed-toolchain commands and verify each benchmark script's assumptions before running it.
 
-## Profiling
-
-### Profiling generated code (your benchmark/program)
-
-```bash
-# Build (incan always builds the generated project in release mode today)
-incan build myprogram.incn
-
-# Profile with Instruments (macOS)
-xcrun xctrace record --template "Time Profiler" \
-  --launch ./target/incan/myprogram/target/release/myprogram
-
-# Profile with perf (Linux)
-perf record ./target/incan/myprogram/target/release/myprogram
-perf report
-```
-
-### Profiling the compiler
-
-```bash
-# Profile compilation itself
-cargo flamegraph -p incan-cli --bin incan -- build examples/advanced/async_await.incn
-
-# Or with samply (macOS)
-samply record ./target/release/incan build large_program.incn
-```
-
-## Adding a new benchmark
-
-1. Create a directory under `workspaces/benchmarks/compute/` or `workspaces/benchmarks/sorting/`.
-2. Add three implementations: `name.incn`, `name.rs`, `name.py`.
-3. Each should print a single result line for verification.
-4. Run `./workspaces/benchmarks/run_all.sh` to include it in the suite.
+See [Measure Oven reuse](oven_alpha_benchmark.md) for compilation measurements.

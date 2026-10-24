@@ -1,112 +1,41 @@
-# Troubleshooting
+# Troubleshoot a dev.8 command
 
-This page collects common setup and first-run fixes for the installed toolchain path. Contributor-only source-build notes are called out separately.
+## Verify the executable
 
-## `incan: command not found` after toolchain install
+Run `incan --version`. This guide describes `0.6.0-dev.8`; the 0.5 CLI has different commands and flags. Dev.8 has no `--help` command. The [CLI reference](../reference/cli_reference.md) lists accepted signatures.
 
-The toolchain installer links `incan` and `incan-lsp` into `INCAN_BIN_DIR`, defaulting to `~/.local/bin`. Make sure that directory is on your `PATH`:
+## Supply a source path
 
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-command -v incan
-incan --version
-```
-
-If you installed with a custom bin directory, use that path instead:
+`run`, `check` and `test` require an explicit source file:
 
 ```bash
-curl -fsSL https://github.com/encero-systems/incan/releases/latest/download/install.sh | INCAN_BIN_DIR="$HOME/bin" bash
-export PATH="$HOME/bin:$PATH"
+incan check src/main.incn --format json
+incan run src/main.incn
+incan test tests/test_main.incn
 ```
 
-## Shell or editor is using an old `incan` / `incan-lsp`
+`build` also accepts a project directory. Use `incan build src/lib.incn` to build a library.
 
-This usually means your shell and editor resolve different binaries. Check both commands:
+## Inspect selected dependencies
 
 ```bash
-command -v incan
-command -v incan-lsp
-incan --version
-incan tools doctor
+incan describe-unit src/main.incn
 ```
 
-For VS Code/Cursor, also check the Incan settings:
+Check the package, source root, profile and Loaf artifact directories. `INCAN_STDLIB` must name the matching standard-package source directory; compiled artifacts must exist in the selected home and profile. A missing `.incnlib` is an installation or profile mismatch, not a request to download another build system.
 
-```json
-{
-  "incan.lsp.path": "",
-  "incan.compiler.path": ""
-}
-```
-
-Leaving these empty makes the extension use workspace binary discovery or `PATH`. If you set `incan.lsp.path`, use a literal executable path such as `/Users/me/.local/bin/incan-lsp`; the setting does not expand `$HOME`, `~`, or shell commands. The extension warns when either path setting contains shell syntax, points at a missing file, or points at a non-executable file.
-
-After changing paths or reinstalling, reload the editor window so it starts a new language-server process:
-
-1. Run **Incan: Doctor** from the command palette and check the **Incan** output channel.
-2. Run **Developer: Reload Window** from the command palette.
-3. Reopen a `.incn` file.
-4. Re-run **Incan: Doctor** if diagnostics still look stale.
-
-## Contributor source builds
-
-If you are working from a compiler checkout, use repository `make` targets instead of the toolchain installer:
+## Inspect declarations and calls
 
 ```bash
-cd /path/to/incan
-make build
+incan inspect codegraph . --query defs main
 ```
 
-On local machines, `make build` builds the compiler and LSP with `cargo build -p incan-cli -p incan-lsp`, then links `~/.cargo/bin/incan` to `target/debug/incan` and `~/.cargo/bin/incan-lsp` to `target/debug/incan-lsp`. Keep `~/.cargo/bin` early enough in your `PATH` that both tools resolve there.
+An unchecked-unit warning means reference and call information may be incomplete. Use `--strict` when that must fail the command.
 
-If you intentionally want the release binary from a checkout:
+## Observe rebuilds
 
 ```bash
-make release
-./target/release/incan --version
+OVEN_TRACE=- incan run src/main.incn
 ```
 
-Leave `INCAN_STDLIB` unset unless the compiler cannot find its standard library; when it is set, it replaces the detected standard-library directory.
-
-## Rust backend provisioning fails
-
-The direct installer and pipx adapter provision the release's pinned Rust 1.98.0 toolchain through `rustup` when `rustup`, `cargo`, or `rustc` are missing, then run `rustup target add wasm32-wasip1`. The npm adapter does not run lifecycle scripts or bootstrap Rust during package installation. If installer-backed provisioning fails on a fresh machine, check whether your network can reach the rustup bootstrap script and Rust distribution servers:
-
-```bash
-command -v rustup || true
-command -v cargo || true
-command -v rustc || true
-rustup target list --installed 2>/dev/null || true
-```
-
-Use `INCAN_SKIP_RUST_INSTALL=1` or `install.sh --skip-rust` only when your environment manages Rust separately. In that mode, make sure `cargo`, `rustc`, and `wasm32-wasip1` are already available before running `incan run`, `incan test`, `incan build`, or package checks that load vocab companions.
-
-## Builds are slow the first time
-
-The first `incan build`, `incan test`, or generated project run needs either a compatible full-stdlib Loaf supplied by an Oven-enabled toolchain or a receipt-bound project extension prepared from that base. A miss explains whether to install or reinstall the toolchain or run `incan oven bake --project` for declared project Rust dependencies. The normal command never runs the internal compatibility publisher or compiles a closure through Cargo automatically.
-
-## Preparing a compatibility closure needs its publisher inputs
-
-The internal compatibility publisher may need Rust ecosystem inputs that are already available to it. This is not a normal `incan build`, `incan run`, or `incan test` concern.
-
-For restricted or offline environments, run the supported preflight before the build:
-
-```bash
-incan tools doctor
-```
-
-The doctor report includes advisory diagnostics for the publisher's local dependency inputs. Normal Oven commands do not accept Cargo offline, lock-enforcement, or feature flags: they select a previously prepared receipt-compatible closure. If an explicit publisher preparation needs networked Cargo inputs, prepare that closure under the publisher's own documented policy before normal developer commands run.
-
-## macOS: toolchain/linker issues
-
-If you see errors about a missing C toolchain or linker, install Xcode Command Line Tools:
-
-```bash
-xcode-select --install
-```
-
-## Still stuck?
-
-If you’re still stuck, please [open an issue](https://github.com/encero-systems/incan/issues) and include your OS, architecture, exact commands, and full error output.
-
-`incan tools doctor --format json` prints the same toolchain report in machine-readable form; attach it to an issue, or read it from an editor integration or a CI preflight.
+A `reused` line means the executable was retained. A `compiled (...)` line records why it was rebuilt. Tests always execute; their outcomes are not cached.

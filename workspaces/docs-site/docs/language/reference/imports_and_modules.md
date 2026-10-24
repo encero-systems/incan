@@ -201,11 +201,11 @@ def main() -> None:
     println(b_calculate(41))    # accepted
 ```
 
-`incan build --lib` refuses (`INCAN-C0001`) a library entrypoint that re-exports from an unknown module, re-exports a name its module does not export, or exports one name twice.
+`incan build src/lib.incn` refuses (`INCAN-C0001`) a library entrypoint that re-exports from an unknown module, re-exports a name its module does not export, or exports one name twice.
 
 ## Package namespaces
 
-`incan build --lib` publishes the library's modules under `pub::package`, following its source files below the source root.
+`incan build src/lib.incn` publishes the library's modules under `pub::package`, following its source files below the source root.
 
 - Each source module path, and each directory prefix of one, is a namespace: `src/hyperquant/index.incn` gives `pub::pkg.hyperquant` and `pub::pkg.hyperquant.index`.
 - A namespace exposes the `pub` declarations of its own module and of its immediate child modules. Deeper modules stay in their own namespaces.

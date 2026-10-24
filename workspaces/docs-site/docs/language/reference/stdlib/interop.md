@@ -287,16 +287,11 @@ Before a module with a binding is checked, built or run, each binding is verifie
 | --- | --- | --- |
 | Linux x86-64 host | Default on that host | `x86_64-unknown-linux-gnu` |
 | macOS arm64 host | Default on that host | `arm64-apple-macos11` |
-| `x86_64-unknown-linux-gnu` | `incan check --interop-target x86_64-unknown-linux-gnu` | `x86_64-unknown-linux-gnu` |
-| `aarch64-apple-darwin` | `incan check --interop-target aarch64-apple-darwin` | `arm64-apple-macos11` |
-| `aarch64-linux-android` with Android platform facts | `incan check --interop-target aarch64-linux-android` | `aarch64-linux-android<api-level>` |
-| `aarch64-apple-ios` with iOS platform facts | `incan check --interop-target aarch64-apple-ios` | `arm64-apple-ios<deployment-target>` |
-| `aarch64-apple-ios-sim` with iOS platform facts | `incan check --interop-target aarch64-apple-ios-sim` | `arm64-apple-ios<deployment-target>-simulator` |
 
-- `--interop-target` selects a target declared under [`[interop.c]`](../../../tooling/reference/project_configuration.md#interopc) in `loaf.toml`; the target's `definitions` are passed to Clang. A triple the package does not declare fails the command.
+- Dev.8's CLI exposes no `--interop-target` selector. Package header declarations are specified in [`[interop.c]`](../../../tooling/reference/project_configuration.md#interopc).
 - `INCAN_C_ABI_CLANG`, when set, is the Clang executable. Otherwise the executable is Xcode's Clang, with the macOS, iPhoneOS or iPhoneSimulator SDK as sysroot, on macOS, and `clang` on Linux. An Android target requires `INCAN_C_ABI_CLANG`.
 - A `native` name, enum constant or struct field name is a C identifier; a struct or resource `native` may also be `struct tag`.
-- Refused (`INCAN-T0001`): a binding that fails verification; a name that is not a C identifier; a binding that Clang cannot verify; and, without `--interop-target`, a binding on a host other than Linux x86-64 and macOS arm64.
+- Refused (`INCAN-T0001`): a binding that fails verification; a name that is not a C identifier; a binding that Clang cannot verify; and a host binding on a platform other than Linux x86-64 and macOS arm64.
 
 ## See also
 

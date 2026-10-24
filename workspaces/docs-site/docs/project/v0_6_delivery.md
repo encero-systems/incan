@@ -10,7 +10,7 @@ tags:
 
 # Incan 0.6 roadmap
 
-0.6 is the architectural cutover that makes compiler-owned facts and the Oven project model the normal authority for compilation, packages, build artifacts, and inspection. Generated Rust remains available for inspection and debugging; it is no longer the semantic handoff the release is working toward.
+0.6 makes compiler-owned facts and Oven's project model the authority for compilation, packages, artifacts and inspection. Dev.8 compiles checked Body IR directly through the pinned Rust compiler; source diagnostics and codegraph records provide inspection.
 
 This page is the public delivery map for that work. It complements the [development release note](../release_notes/0_6.md): the release note explains the contract, while this page shows how the work is organized and what each slice must prove.
 

@@ -5,6 +5,8 @@ This page covers the language model for writing tests in Incan: where tests live
 > If you want CLI usage (`incan test`, discovery, flags), see [Tooling: Testing](../../tooling/how-to/testing.md).
 > If you want the API reference only, see [Standard library reference: `std.testing`](../reference/stdlib/testing.md).
 
+Prefer the language `assert` statement for ordinary Boolean assertions. Use `std.testing` helpers when their comparison or Option/Result contract gives a more specific test.
+
 ## Where tests live
 
 Incan supports two test contexts.
@@ -133,8 +135,8 @@ Test markers control how `incan test` discovers and runs tests:
 | `@skipif(condition, reason?)`       | Skips the test when a collection-time condition is true.               |
 | `@xfail(reason?)`                   | Marks the test as expected to fail (XPASS if it passes).               |
 | `@xfailif(condition, reason?)`      | Marks the test expected-fail when a collection-time condition is true. |
-| `@slow`                             | Excludes the test by default; include with `incan test --slow`.        |
-| `@mark(name)`                       | Adds a custom marker for `incan test -m` selection.                    |
+| `@slow`                             | Marks a slow test; dev.8 exposes no slow-test selection flag.          |
+| `@mark(name)`                       | Adds marker metadata; dev.8 exposes no marker-selection flag.         |
 | `@timeout(duration)`                | Overrides the timeout for the generated test batch.                    |
 | `@fixture`                          | Declares a test fixture (see below).                                   |
 | `@parametrize(argnames, argvalues)` | Runs the test once per parameter set.                                  |
@@ -160,7 +162,7 @@ def test_new_parser_case() -> None:
     assert_eq(parse("..."), expected)
 ```
 
-Pass `incan test --feature new_parser` to make `feature("new_parser")` true during collection.
+Dev.8 exposes no test-probe `--feature` switch. Package `--features` selects declared package features, not this collection probe.
 
 ## Fixtures
 
@@ -347,7 +349,7 @@ The first argument is a comma-separated string of parameter names. The second is
 
 The test runner generates a separate test case per tuple, with the values shown in the test ID:
 
-```bash
+```text
 test_add[1-2-3] ... PASSED
 test_add[0-0-0] ... PASSED
 test_add[-1-1-0] ... PASSED
@@ -372,9 +374,9 @@ def test_double(x: int, expected: int) -> None:
 
 ## Timeouts and worker termination
 
-Use `incan test --timeout <duration>` or `@timeout("duration")` to set a timeout for the generated test batch. Fixtures do not have their own timeout configuration.
+The `@timeout("duration")` marker records a test timeout. Dev.8 exposes no CLI timeout override. Fixtures do not have their own timeout configuration.
 
-For async fixtures, the runner awaits teardown after ordinary assertion failures and panics while the worker remains alive. `--timeout`, `@timeout`, external interruption, and process termination are enforced at the generated worker or batch level; if that enforcement terminates the worker process, remaining teardown is best-effort and may not run. Keep teardown idempotent and prefer narrow fixture scopes for resources that must be released promptly.
+For async fixtures, teardown after ordinary failures requires the worker to remain alive. External interruption or process termination can bypass remaining teardown. Keep teardown idempotent and prefer narrow fixture scopes for resources that must be released promptly.
 
 ## Full example
 
