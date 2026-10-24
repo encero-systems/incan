@@ -13,6 +13,7 @@
     - RFC 124 (Oven store unit identity and cross-plan artifact sharing)
     - RFC 125 (`incan.pub` Loaf registry and baked asset distribution)
     - RFC 161 (the semantic core, SCIR)
+    - RFC 162 (source surfaces: vocabularies, dialects and frontends)
 - **Issue:** —
 - **RFC PR:** —
 - **Written against:** v0.6 (in development)
@@ -67,7 +68,7 @@ A desugarer written in Incan and compiled like any other Incan program removes t
 
 - Changing the vocabulary surface model of RFC 027, RFC 040, RFC 045 or RFC 081: declarations, clauses, activation on import and embedded fragments keep their meaning.
 - Changing RFC 108's `pub vocab` extension properties. Whether registration should be written as source declarations of that kind is an open question below.
-- File-scoped surface activation (a header that selects a surface for a whole file), project-level surface defaults, alternate grammars with Incan semantics, and foreign-language frontends. A later source-surface RFC specifies them; see "Relationship to source surfaces".
+- File-scoped surface activation (a header that selects a surface for a whole file), project-level surface defaults, alternate grammars with Incan semantics, and foreign-language frontends. RFC 162 specifies them; see "Relationship to source surfaces".
 - Sandboxing desugarers. A desugarer has the trust of the dependency that ships it; see "Trust and evidence".
 - Loading previously published WebAssembly desugarers.
 - Defining how a consumer selects among competing vocabularies; activation rules are unchanged.
@@ -234,7 +235,7 @@ This RFC defines package-owned vocabulary registration and lowering. Vocabulary 
 - **dialect:** a different grammar with Incan's semantics;
 - **frontend:** another source language, with its own parser, lowerability rules, runtime assumptions and source maps.
 
-File-scoped activation of a surface, project-level surface defaults, dialects and frontends are separate concerns. A later source-surface RFC specifies them. It selects a provider before ordinary parsing, and it owns the provider's identity, version, compatibility level, lowerability diagnostics, and runtime and ABI requirements. Those providers are expected to reuse this RFC's mechanisms:
+File-scoped activation of a surface, project-level surface defaults, dialects and frontends are separate concerns, specified by RFC 162. It selects a provider before ordinary parsing, and it owns the provider's identity, version, compatibility level, lowerability diagnostics, and runtime and ABI requirements. Those providers are expected to reuse this RFC's mechanisms:
 - the vocabulary unit;
 - out-of-process workers;
 - structured canonical output with source maps;

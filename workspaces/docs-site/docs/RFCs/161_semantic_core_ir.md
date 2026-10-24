@@ -12,6 +12,7 @@
     - RFC 120 (canonical source symbol identity)
     - RFC 129 (shared or copied bindings and the `mut` parameter contract)
     - RFC 160 (vocabulary in Incan and native desugarers)
+    - RFC 162 (source surfaces: vocabularies, dialects and frontends)
 - **Issue:** —
 - **RFC PR:** —
 - **Written against:** v0.6 (in development)
@@ -179,7 +180,7 @@ So that 0.6 does not foreclose SCIR, 0.6 work keeps these properties:
 
 ### Relationship to RFC 160 and source surfaces
 
-RFC 160 desugarers return canonical surface syntax. Vocabulary, dialects and frontends under a later source-surface RFC enter the compiler the same way. SCIR is where all of them meet. A dialect could eventually be a writable form of SCIR itself, for code that needs precise control of ownership and layout. That is left open here.
+RFC 160 desugarers return canonical surface syntax. Vocabulary, dialects and frontends under RFC 162 enter the compiler the same way. SCIR is where all of them meet. A dialect could eventually be a writable form of SCIR itself, for code that needs precise control of ownership and layout. That is left open here.
 
 ## Alternatives considered
 
