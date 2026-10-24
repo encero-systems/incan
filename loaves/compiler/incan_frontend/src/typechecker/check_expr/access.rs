@@ -231,7 +231,7 @@ impl TypeChecker {
             );
         }
         let (source_type, native) = self.resolved_rust_field_types(path, rust_field);
-        self.type_info.rust.field_values.insert((span.start, span.end), native);
+        self.type_info.rust.field_values.insert(span, native);
         Some(source_type)
     }
 
@@ -543,7 +543,7 @@ impl TypeChecker {
         self.symbols.exit_scope();
 
         self.type_info.rust.closure_param_type_displays.insert(
-            (expr.span.start, expr.span.end),
+            expr.span,
             signature
                 .params
                 .iter()
@@ -1738,9 +1738,7 @@ impl TypeChecker {
         let valid_arity = self.validate_iterator_method_arity(method, 0, args.len(), span);
         let result = self.iterator_sum_output_type(elem, span);
         if valid_arity && self.native_iterator_sum_item_profile(&result) && !matches!(result, ResolvedType::Unknown) {
-            self.type_info
-                .body_ir_iterator_sum_items
-                .insert((span.start, span.end), result.clone());
+            self.type_info.body_ir_iterator_sum_items.insert(span, result.clone());
         }
         result
     }
@@ -2137,7 +2135,7 @@ impl TypeChecker {
             return;
         }
         self.type_info.traits.inferred_method_identities.insert(
-            (span.start, span.end),
+            span,
             Self::compiler_builtin_member_identity(core_traits::as_str(TraitId::Clone), method),
         );
     }
@@ -2448,7 +2446,7 @@ impl TypeChecker {
         self.type_info
             .calls
             .call_site_monomorph_type_args
-            .insert((span.start, span.end), vec![monomorph_target]);
+            .insert(span, vec![monomorph_target]);
         result
     }
 
@@ -3535,10 +3533,7 @@ impl TypeChecker {
                     .checked_enums
                     .insert(self.rust_public_type_path(path), layout);
             }
-            self.type_info
-                .rust
-                .copy_receivers
-                .insert((span.start, span.end), path.into());
+            self.type_info.rust.copy_receivers.insert(span, path.into());
         }
         let result_item_path = self
             .rust_result_item_path(&render_resolved_type_as_rust_arg(&native_result), path)
@@ -3555,7 +3550,7 @@ impl TypeChecker {
             &native_parameters,
         );
         self.type_info.rust.checked_calls.insert(
-            (span.start, span.end),
+            span,
             crate::typechecker::type_info::RustCheckedCall {
                 storage: None,
                 source_type_parameters: self.native_call_type_parameters(),
@@ -3732,7 +3727,7 @@ impl TypeChecker {
             self.type_info
                 .calls
                 .call_site_monomorph_type_args
-                .insert((call.span.start, call.span.end), resolved_type_args.clone());
+                .insert(call.span, resolved_type_args.clone());
         }
         let effective_sig = if resolved_type_args.is_empty() {
             call.sig.clone()
@@ -5611,10 +5606,7 @@ impl TypeChecker {
                         let mut source_type_path = source_module_path.iter().skip(2).cloned().collect::<Vec<_>>();
                         source_type_path.push(source_name.clone());
                         let canonical_name = canonical_public_library_type_name(&library, &source_type_path.join("::"));
-                        self.type_info
-                            .expressions
-                            .ident_kinds
-                            .insert((span.start, span.end), IdentKind::TypeName);
+                        self.type_info.expressions.ident_kinds.insert(span, IdentKind::TypeName);
                         let source_kind = Self::source_target_kind_for_type_info(&type_info).unwrap_or("type");
                         self.record_source_target(span, source_module_path, source_name, source_kind);
                         return Some(ResolvedType::Named(canonical_name));
@@ -5690,7 +5682,7 @@ impl TypeChecker {
                                 self.type_info
                                     .expressions
                                     .ident_kinds
-                                    .insert((span.start, span.end), IdentKind::RustImport);
+                                    .insert(span, IdentKind::RustImport);
                             }
                             ResolvedType::RustPath(format!("{path}::{field}"))
                         }
@@ -5725,11 +5717,8 @@ impl TypeChecker {
                             let RustItemKind::Constant { type_display } = &metadata.kind else {
                                 return ResolvedType::Unknown;
                             };
-                            self.type_info
-                                .rust
-                                .checked_constants
-                                .insert((span.start, span.end), selected);
-                            self.resolved_type_from_rust_display(&type_display)
+                            self.type_info.rust.checked_constants.insert(span, selected);
+                            self.native_rust_signature_type(&type_display, path)
                         }
                     };
                 }
@@ -5743,10 +5732,7 @@ impl TypeChecker {
                 if let Some(metadata) = self.rust_item_metadata_for_path(&selected)
                     && let RustItemKind::Constant { type_display } = &metadata.kind
                 {
-                    self.type_info
-                        .rust
-                        .checked_constants
-                        .insert((span.start, span.end), selected);
+                    self.type_info.rust.checked_constants.insert(span, selected);
                     return self.native_rust_signature_type(type_display, path);
                 }
                 if let Some(method) = owner
@@ -5771,8 +5757,8 @@ impl TypeChecker {
                             self.type_info
                                 .rust
                                 .checked_constants
-                                .insert((span.start, span.end), metadata.canonical_path.clone());
-                            return self.resolved_type_from_rust_display(&type_display);
+                                .insert(span, metadata.canonical_path.clone());
+                            return self.native_rust_signature_type(&type_display, path);
                         }
                         self.retain_rust_variant_construction(path, field, &[], &params, span);
                         return ResolvedType::RustPath(path.to_string());
@@ -5832,10 +5818,7 @@ impl TypeChecker {
         ) {
             return;
         }
-        self.type_info
-            .expressions
-            .body_ir_callable_name_reads
-            .insert((span.start, span.end));
+        self.type_info.expressions.body_ir_callable_name_reads.insert(span);
     }
 
     /// Resolve a nominal value's field without changing the receiver's ownership or reference facts.
@@ -6126,10 +6109,7 @@ impl TypeChecker {
             return;
         };
         if !declared.is_empty() && declared.iter().all(|receiver| *receiver == Some(Receiver::Mutable)) {
-            self.type_info
-                .calls
-                .mutable_receiver_method_calls
-                .insert((span.start, span.end));
+            self.type_info.calls.mutable_receiver_method_calls.insert(span);
         }
     }
 
@@ -6237,7 +6217,7 @@ impl TypeChecker {
             return Some(ResolvedType::Unknown);
         }
         // The closed receiver is a permitted slot read; retain its ordinary canonical binding facts too.
-        let receiver_span = (base.span.start, base.span.end);
+        let receiver_span = base.span;
         let inserted = self.c_abi_raw_argument_spans.insert(receiver_span);
         self.check_expr(base);
         if inserted {
@@ -6418,10 +6398,7 @@ impl TypeChecker {
         span: Span,
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
-        self.type_info
-            .traits
-            .inferred_method_identities
-            .remove(&(span.start, span.end));
+        self.type_info.traits.inferred_method_identities.remove(&span);
         if let Some(result) = self.check_c_abi_c_string_constructor(base, method, type_args, args, span) {
             return result;
         }
@@ -6481,7 +6458,7 @@ impl TypeChecker {
             self.type_info
                 .expressions
                 .ident_kinds
-                .insert((base.span.start, base.span.end), IdentKind::TypeName);
+                .insert(base.span, IdentKind::TypeName);
             return self.check_builtin_list_repeat_call(args, span);
         }
 
@@ -6971,17 +6948,17 @@ impl TypeChecker {
                     self.type_info
                         .traits
                         .self_method_identities
-                        .insert((span.start, span.end), identity.clone());
+                        .insert(span, identity.clone());
                 }
                 if self.checks_standard_library_source() {
                     self.type_info
                         .traits
                         .self_method_result_types
-                        .insert((span.start, span.end), method_info.return_type.clone());
+                        .insert(span, method_info.return_type.clone());
                     self.type_info
                         .traits
                         .self_method_params
-                        .insert((span.start, span.end), method_info.params.clone());
+                        .insert(span, method_info.params.clone());
                     return ResolvedType::Unknown;
                 }
                 return self.check_generic_method_call(
@@ -7128,10 +7105,7 @@ impl TypeChecker {
         if matches!(base_ty, ResolvedType::Bytes) && method == "as_slice" && args.is_empty() {
             // The source bytes view keeps its exact borrowed native slice carrier for the executable boundary.
             let native = self.native_rust_signature_type("&[u8]", "std");
-            self.type_info
-                .calls
-                .body_ir_call_result_types
-                .insert((span.start, span.end), native);
+            self.type_info.calls.body_ir_call_result_types.insert(span, native);
             return ResolvedType::Bytes;
         }
 
@@ -7152,7 +7126,7 @@ impl TypeChecker {
                     incan_lang::lang::types::stringlike::StringLikeId::FrozenBytes,
                 );
                 self.type_info.calls.body_ir_native_codec_members.insert(
-                    (span.start, span.end),
+                    span,
                     Self::compiler_builtin_member_identity(
                         owner,
                         bytes_methods::as_str(bytes_methods::BytesMethodId::Decode),
@@ -7869,8 +7843,7 @@ impl TypeChecker {
                 receiver_span: base.span,
                 expected_return_ty,
                 span,
-            }) && (self.errors.len() != errors_before
-                || self.type_info.rust.checked_calls.contains_key(&(span.start, span.end)))
+            }) && (self.errors.len() != errors_before || self.type_info.rust.checked_calls.contains_key(&span))
             {
                 return result;
             }

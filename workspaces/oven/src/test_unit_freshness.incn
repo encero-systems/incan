@@ -11,6 +11,7 @@ from scratch import scratch_directory
 from rust_freshness import compilation_observations, inputs_unchanged, library_key
 from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription, UnitLoaf
+from unit_rust import compile_library_unit
 from unit_freshness import (
     Key,
     artifact_files,
@@ -240,7 +241,7 @@ def verify_refusal_replay(scratch: Path) -> Result[None, str]:
 
 
 pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
-    """A rebuilt path dependency or standard package changes the key of everything that links it."""
+    """Dependency rebuilds rekey consumers; fresh ABI publication remains reusable."""
     scratch = scratch_directory()?
     setup = fixture(scratch.path())?
     first = reconcile(scratch.path(), setup)?
@@ -251,6 +252,38 @@ pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
     write(artifact_files(Path(setup.unit.loaves[1].dir), "std")[1], "standard package recompiled")?
     recompiled = reconcile(scratch.path(), setup)?
     assert recompiled.key != rebuilt.key
+    verify_completed_library_abi(scratch.path().joinpath("publication"))?
+    return Ok(None)
+
+
+def verify_completed_library_abi(scratch: Path) -> Result[None, str]:
+    """
+    Reuse a library whose first compilation creates its indexed Rust ABI cache.
+
+    1. Count a compiler that publishes the complete library artifact set, including a new ABI cache.
+    2. Compile the prepared library twice without changing its inputs.
+    3. Require one compiler invocation and retain the published ABI cache.
+    """
+    # 1. The optional cache appears only after the first compiler invocation.
+    setup = fixture(scratch)?
+    attempts = scratch.joinpath("attempts")
+    driver = Path(setup.toolchain.driver)
+    mut script = "#!/bin/sh\nset -eu\n" + f"printf x >> '{attempts.0}'\n"
+    script += "directory=${4%/*}\nmkdir -p \"$directory\"\n"
+    script += "for name in libapp.rlib app.incnlib app.incnbody app.native.json app.incngraph app.rustabi; do\n"
+    script += "printf published > \"$directory/$name\"\ndone\n"
+    write(driver, script)?
+    mut chmod = Command.new("/bin/chmod")
+    assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
+    # 2. The completed stamp must include the cache that publication added.
+    mut library = setup.unit
+    library.kind = "library"
+    output = setup.root.joinpath("target").joinpath("published").joinpath("libapp.rlib")
+    assert compile_library_unit(library, setup.toolchain, output)? == 0
+    assert compile_library_unit(library, setup.toolchain, output)? == 0
+    # 3. A missing cache or an incomplete stamp cannot pass by recompiling silently.
+    assert read(attempts)? == "x"
+    assert output.parent().joinpath("app.rustabi").is_file()
     return Ok(None)
 
 

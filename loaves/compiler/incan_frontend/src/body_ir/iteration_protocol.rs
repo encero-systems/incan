@@ -24,13 +24,7 @@ impl BodyBuilder<'_, '_> {
     ) -> Result<(bir::LocalId, usize, bool), String> {
         let iterable = self.lower_expr_to_place(expression, scope, out);
         let initializer = out.len();
-        if let Some(hooks) = self
-            .type_info
-            .rust
-            .iteration_hooks
-            .get(&(protocol_span.start, protocol_span.end))
-            .cloned()
-        {
+        if let Some(hooks) = self.type_info.rust.iteration_hooks.get(&protocol_span).cloned() {
             let result = self.native_iteration_call(&hooks.iter, iterable, scope, span, out)?;
             return match result {
                 bir::Operand::Place(read) => read
@@ -46,7 +40,7 @@ impl BodyBuilder<'_, '_> {
                 .type_info
                 .protocols
                 .body_ir_iterations
-                .get(&(protocol_span.start, protocol_span.end))
+                .get(&protocol_span)
                 .ok_or("iteration without retained checked hooks")?
                 .clone();
             let result = match &hooks.iter {
@@ -120,7 +114,7 @@ impl BodyBuilder<'_, '_> {
                 fact == bir::OwnershipFact::Move,
             ))],
             bir::ArgumentBinding::resolved_positional(1),
-            ast::Span::new(span.start, span.end),
+            span,
             scope,
             out,
         )
@@ -197,12 +191,7 @@ impl BodyBuilder<'_, '_> {
         out: &mut Vec<bir::Statement>,
     ) -> Result<(), String> {
         // ---- Checked result carrier ----
-        let native = self
-            .type_info
-            .rust
-            .iteration_hooks
-            .get(&(protocol_span.start, protocol_span.end))
-            .cloned();
+        let native = self.type_info.rust.iteration_hooks.get(&protocol_span).cloned();
         let (returned, polled) = if let Some(hooks) = native {
             self.native_enum_payload_bindings.insert(item);
             let returned = hooks
@@ -219,7 +208,7 @@ impl BodyBuilder<'_, '_> {
                 .type_info
                 .protocols
                 .body_ir_iterations
-                .get(&(protocol_span.start, protocol_span.end))
+                .get(&protocol_span)
                 .ok_or("iteration poll without retained checked hooks")?
                 .next
                 .clone();

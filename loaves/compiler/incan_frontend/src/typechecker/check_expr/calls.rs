@@ -380,7 +380,7 @@ impl TypeChecker {
                     self.type_info
                         .expressions
                         .ident_kinds
-                        .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
+                        .insert(callee.span, IdentKind::TypeName);
                     self.check_model_or_class_constructor_call(&owner_name, &owner_name, &fields, args, span);
                     return self_ty;
                 }
@@ -440,7 +440,7 @@ impl TypeChecker {
                             self.type_info
                                 .expressions
                                 .ident_kinds
-                                .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
+                                .insert(callee.span, IdentKind::TypeName);
                             return ret;
                         }
                         if stdlib::is_graph_constructor_type(name) && args.is_empty() {
@@ -459,7 +459,7 @@ impl TypeChecker {
                             self.type_info
                                 .expressions
                                 .ident_kinds
-                                .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
+                                .insert(callee.span, IdentKind::TypeName);
                             if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
                                 return self.check_json_query_constructor_call(tid, args, span);
                             }
@@ -503,7 +503,7 @@ impl TypeChecker {
                             self.type_info
                                 .expressions
                                 .ident_kinds
-                                .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
+                                .insert(callee.span, IdentKind::TypeName);
                             let constructor_ty = self.check_constructor(name, args, span);
                             return contextual_constructor_ty.unwrap_or(constructor_ty);
                         }
@@ -537,7 +537,7 @@ impl TypeChecker {
                         self.type_info
                             .expressions
                             .ident_kinds
-                            .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
+                            .insert(callee.span, IdentKind::TypeName);
                         return contextual_constructor_ty.unwrap_or(constructor_ty);
                     }
                     SymbolKind::Function(func_info) => {
@@ -656,7 +656,7 @@ impl TypeChecker {
                                         self.type_info
                                             .expressions
                                             .ident_kinds
-                                            .insert((callee.span.start, callee.span.end), IdentKind::RustImport);
+                                            .insert(callee.span, IdentKind::RustImport);
                                     }
                                     return result;
                                 }
@@ -748,7 +748,7 @@ impl TypeChecker {
                 self.type_info
                     .expressions
                     .ident_kinds
-                    .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
+                    .insert(callee.span, IdentKind::TypeName);
                 if in_scope && let Some(tid) = self.constructor_surface_type(name) {
                     if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
                         return self.check_json_query_constructor_call(tid, args, span);
@@ -911,7 +911,7 @@ impl TypeChecker {
         let raw_argument_spans = args
             .iter()
             .filter_map(|argument| match argument {
-                CallArg::Positional(value) | CallArg::Named(_, value) => Some((value.span.start, value.span.end)),
+                CallArg::Positional(value) | CallArg::Named(_, value) => Some(value.span),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -939,7 +939,7 @@ impl TypeChecker {
         let return_type = Self::c_raw_call_return_type(&binding, &symbol.return_type);
         if matches!(&return_type, ResolvedType::Named(identity) if identity == c_abi::SCOPED_C_STRING_VIEW_TYPE_ID) {
             // The view may only be bound to a local or copied at once; anything else lets it escape (RFC 116).
-            self.unbound_scoped_c_string_views.insert((span.start, span.end));
+            self.unbound_scoped_c_string_views.insert(span);
         }
         self.type_info.c_abi.raw_calls.push(CBindingRawCall {
             span,
@@ -949,11 +949,9 @@ impl TypeChecker {
         });
         if let Some(owner) = self.current_c_abi_raw_call_owner.as_ref()
             && owner.visibility == crate::ast::Visibility::Public
-            && self.warned_public_c_abi_raw_call_owners.insert((
-                owner.name.clone(),
-                owner.declaration_span.start,
-                owner.declaration_span.end,
-            ))
+            && self
+                .warned_public_c_abi_raw_call_owners
+                .insert((owner.name.clone(), owner.declaration_span))
         {
             self.warnings
                 .push(errors::public_checked_c_call_requires_private_bridge(
@@ -963,7 +961,7 @@ impl TypeChecker {
         }
         if !output_slots.is_empty() {
             self.unbound_c_abi_raw_call_results.insert(
-                (span.start, span.end),
+                span,
                 CAbiRawCallResult {
                     binding,
                     symbol: member.to_string(),
@@ -1394,9 +1392,7 @@ impl TypeChecker {
                 kind,
             });
         }
-        self.unbound_c_abi_span_constructors
-            .entry((span.start, span.end))
-            .or_insert(kind);
+        self.unbound_c_abi_span_constructors.entry(span).or_insert(kind);
         Some(ResolvedType::Named(identity.to_string()))
     }
 
@@ -1411,11 +1407,7 @@ impl TypeChecker {
     ) -> Option<ResolvedType> {
         let local_name = Self::c_checked_span_local_name(base)?;
         let local = self.c_abi_span_bindings.get(local_name).copied()?;
-        if let Some(consumed_at) = self
-            .consumed_c_abi_span_bindings
-            .get(&(local.binding_span.start, local.binding_span.end))
-            .copied()
-        {
+        if let Some(consumed_at) = self.consumed_c_abi_span_bindings.get(&local.binding_span).copied() {
             self.errors.push(CompileError::type_error(
                 format!(
                     "checked mutable C span `{local_name}` was already consumed at byte range {}..{}; it cannot be used again",
@@ -1507,8 +1499,7 @@ impl TypeChecker {
                 }
                 self.type_info.c_abi.uses_checked_c_span_buffers = true;
                 self.record_c_abi_span_access(span, local.kind, CAbiSpanAccessKind::Finish);
-                self.consumed_c_abi_span_bindings
-                    .insert((local.binding_span.start, local.binding_span.end), span);
+                self.consumed_c_abi_span_bindings.insert(local.binding_span, span);
                 return Some(ResolvedType::Generic(
                     "Result".to_string(),
                     vec![Self::c_abi_span_storage_type(local.kind.element), ResolvedType::Str],
@@ -1589,7 +1580,7 @@ impl TypeChecker {
             ));
             return Some(ResolvedType::Unknown);
         }
-        if !self.c_abi_raw_argument_spans.contains(&(span.start, span.end)) {
+        if !self.c_abi_raw_argument_spans.contains(&span) {
             self.errors.push(CompileError::type_error(
                 "a checked C string pointer may only be extracted as a direct checked raw-call argument".to_string(),
                 span,
@@ -1627,7 +1618,7 @@ impl TypeChecker {
         while let Expr::Paren(inner) = &receiver.node {
             receiver = inner;
         }
-        let receiver_key = (receiver.span.start, receiver.span.end);
+        let receiver_key = receiver.span;
         self.scoped_c_string_view_receivers.insert(receiver_key);
         let base_ty = self.check_expr(base);
         self.scoped_c_string_view_receivers.remove(&receiver_key);
@@ -1756,8 +1747,7 @@ impl TypeChecker {
             _ => return None,
         };
 
-        self.unbound_c_abi_output_slot_constructors
-            .insert((span.start, span.end), slot);
+        self.unbound_c_abi_output_slot_constructors.insert(span, slot);
         Some(ResolvedType::Unknown)
     }
 
@@ -1988,10 +1978,7 @@ impl TypeChecker {
         span: Span,
         callee_span: Span,
     ) -> ResolvedType {
-        self.type_info
-            .calls
-            .body_ir_module_constructor_bindings
-            .remove(&(span.start, span.end));
+        self.type_info.calls.body_ir_module_constructor_bindings.remove(&span);
         let PublicModuleConstructorContext {
             display_name,
             canonical_name: type_name,
@@ -2002,7 +1989,7 @@ impl TypeChecker {
             self.type_info
                 .expressions
                 .ident_kinds
-                .insert((callee_span.start, callee_span.end), IdentKind::TypeName);
+                .insert(callee_span, IdentKind::TypeName);
             return ret;
         }
 
@@ -2066,7 +2053,7 @@ impl TypeChecker {
         self.type_info
             .expressions
             .ident_kinds
-            .insert((callee_span.start, callee_span.end), IdentKind::TypeName);
+            .insert(callee_span, IdentKind::TypeName);
         result
     }
 
@@ -2131,7 +2118,7 @@ impl TypeChecker {
                     baseline_type_info
                         .declarations
                         .function_bindings_by_span
-                        .get(&(overload.span.start, overload.span.end))
+                        .get(&overload.span)
                         .and_then(|binding| binding.identity.clone())
                 });
                 matches.push((
@@ -2531,7 +2518,7 @@ impl TypeChecker {
                 self.type_info
                     .rust
                     .body_ir_diverging_import_calls
-                    .insert((span.start, span.end), path.split("::").map(str::to_owned).collect());
+                    .insert(span, path.split("::").map(str::to_owned).collect());
             }
             self.record_expr_type(
                 callee_span,
@@ -2540,7 +2527,7 @@ impl TypeChecker {
             self.type_info
                 .expressions
                 .ident_kinds
-                .insert((callee_span.start, callee_span.end), IdentKind::RustImport);
+                .insert(callee_span, IdentKind::RustImport);
         }
         result
     }

@@ -224,11 +224,7 @@ fn published_conversion_trait<'manifest>(
         .filter(|module| module.module_path == module_path)
         .flat_map(|module| &module.declarations)
         .filter_map(|declaration| match declaration {
-            ApiDeclaration::Trait(value)
-                if value.name == *name
-                    && value.anchor.span.start == identity.declaration_span.start
-                    && value.anchor.span.end == identity.declaration_span.end =>
-            {
+            ApiDeclaration::Trait(value) if value.name == *name && value.anchor.span == identity.declaration_span => {
                 Some(value)
             }
             _ => None,

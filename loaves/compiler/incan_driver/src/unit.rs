@@ -83,12 +83,26 @@ pub struct UnitDescription {
     /// This native unit registers vocabulary and must not activate its own surfaces through its imports.
     #[serde(default)]
     pub vocabulary: bool,
+    /// Exact vocabulary worker unit identities admitted after Oven locks the resolved provider artifacts.
+    #[serde(default)]
+    pub vocab_admissions: Vec<String>,
+    /// Policy that admitted or denied the vocabulary identities in this unit's resolved provider lock.
+    #[serde(default = "default_vocab_policy")]
+    pub vocab_policy: String,
+    /// This vocabulary unit is the generated adapter for the required public desugar export.
+    #[serde(default)]
+    pub vocab_desugarer: bool,
     /// The exact Rust libraries this unit links, including its toolchain and reached Loaves.
     pub externs: Vec<UnitNativeCrate>,
     /// Directories containing the transitive dependencies of the named libraries.
     pub search: Vec<PathBuf>,
     /// Rust ABI caches supplied by the toolchain for this unit.
     pub rust_abi: Vec<PathBuf>,
+}
+
+/// Preserve the default policy when reading unit descriptions written before explicit provider evidence.
+fn default_vocab_policy() -> String {
+    "locked-dependencies".into()
 }
 
 /// One exact native artifact bound to the crate alias the unit names.

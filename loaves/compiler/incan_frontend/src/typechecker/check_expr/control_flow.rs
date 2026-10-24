@@ -31,7 +31,7 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
 
-        let prev_await_operand_span = self.await_operand_span.replace((inner.span.start, inner.span.end));
+        let prev_await_operand_span = self.await_operand_span.replace(inner.span);
         let inner_ty = self.check_expr(inner);
         self.await_operand_span = prev_await_operand_span;
 
@@ -61,10 +61,7 @@ impl TypeChecker {
             return;
         };
         let output = self.body_ir_close_value_parts(legacy, &output);
-        self.type_info
-            .expressions
-            .body_ir_expr_types
-            .insert((span.start, span.end), output);
+        self.type_info.expressions.body_ir_expr_types.insert(span, output);
     }
 
     /// Resolve the output type of one checked await operand.
@@ -77,7 +74,7 @@ impl TypeChecker {
         {
             let output = self.rust_associated_type(&future, "std::future::Future", "Output")?;
             self.type_info.rust.await_conversions.insert(
-                (expr.span.start, expr.span.end),
+                expr.span,
                 crate::typechecker::RustCheckedCall {
                     storage: None,
                     source_type_parameters: self.native_call_type_parameters(),
@@ -97,12 +94,7 @@ impl TypeChecker {
 
     /// Return whether this expression is a direct async call, the shape `await` and a task argument both admit.
     pub(in crate::typechecker::check_expr) fn expr_is_async_call_realization(&mut self, expr: &Spanned<Expr>) -> bool {
-        if self
-            .type_info
-            .rust
-            .async_call_realizations
-            .contains(&(expr.span.start, expr.span.end))
-        {
+        if self.type_info.rust.async_call_realizations.contains(&expr.span) {
             return true;
         }
         match &expr.node {
@@ -469,7 +461,7 @@ impl TypeChecker {
         span: Span,
     ) -> ResolvedType {
         self.symbols.enter_scope(ScopeKind::Block);
-        self.push_loop_context(LoopContextKind::Expression, expected.cloned(), span.start);
+        self.push_loop_context(LoopContextKind::Expression, expected.cloned(), span);
         self.check_statement_block(&loop_expr.body);
         let loop_ctx = self.pop_loop_context();
         self.symbols.exit_scope();

@@ -351,7 +351,8 @@ impl Formatter {
         }
     }
 
-    /// Render one declaration-value or selector-position literal.
+    /// Render one declaration-value or selector-position literal. Custom-property references retain only the
+    /// property name in the parsed node, so their required `var(...)` delimiters are restored here.
     fn format_embedded_value(&mut self, value: &EmbeddedValue) {
         match value {
             EmbeddedValue::Dimension { number, unit } => {
@@ -359,10 +360,14 @@ impl Formatter {
                 self.writer.write(unit);
             }
             EmbeddedValue::Color(text)
-            | EmbeddedValue::CustomPropertyRef(text)
             | EmbeddedValue::Ident(text)
             | EmbeddedValue::Number(text)
             | EmbeddedValue::Selector(text) => self.writer.write(text),
+            EmbeddedValue::CustomPropertyRef(text) => {
+                self.writer.write("var(");
+                self.writer.write(text);
+                self.writer.write(")");
+            }
             EmbeddedValue::StringLit(text) => {
                 self.writer.write("\"");
                 self.writer.write(text);

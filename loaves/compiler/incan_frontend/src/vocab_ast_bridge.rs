@@ -8,74 +8,64 @@
 //! - provide explicit, typed failures for shapes that are currently unsupported
 //! - keep mapping rules centralized so parser/desugarer/runtime evolution stays coherent
 
+use sha2::{Digest, Sha256};
+
 use crate::ast;
 
 const CURRENT_FIELD_SENTINEL_IDENT: &str = "__incan_vocab_current_row";
-const SYNTHETIC_SPAN_BASE: usize = 1usize << 48;
 
 /// Return whether `span` marks an AST node the compiler synthesized rather than one the source spelled.
 ///
-/// Desugared vocabulary output carries spans from `SyntheticSpanAllocator`, which start at a base no source file
-/// reaches, and the hidden helper imports a desugarer receives carry the empty default span. A parsed node always
-/// covers at least one source byte below that base. Source-spelling checks, such as the reserved `__incan_` name
-/// prefix (#1769), use this to leave compiler-authored nodes alone.
+/// Generated syntax retains its original source coordinates and carries an expansion context. Hidden helper imports
+/// retain the empty default span. Source-spelling checks use this fact to leave compiler-authored names alone.
 pub(crate) fn is_synthetic_span(span: ast::Span) -> bool {
-    span == ast::Span::default() || span.start >= SYNTHETIC_SPAN_BASE
+    span == ast::Span::default() || span.expansion.is_some()
 }
 
 /// Return the synthetic span that stands in for `source` on a declaration a tool generates from source it rewrites.
 ///
-/// A generated declaration needs a span of its own, because declarations are keyed by span, yet its generated name
-/// must not read as a source spelling to checks such as the reserved `__incan_` prefix (#1769). The result lies above
-/// the synthetic base, one span per source span. Spans from `SyntheticSpanAllocator` start at an even offset from that
-/// base and these start at an odd one, so the two never coincide.
+/// The testing transform uses a separate context from public-tree decoding, so both can retain the genuine range
+/// without sharing checked declaration facts.
 pub fn synthetic_span_anchored_at(source: ast::Span) -> ast::Span {
-    let synthetic_offset = |position: usize| {
-        SYNTHETIC_SPAN_BASE
-            .saturating_add(position.saturating_mul(2))
-            .saturating_add(1)
-    };
-    ast::Span::new(synthetic_offset(source.start), synthetic_offset(source.end))
+    expansion_anchor(source).expansion_child("testing-declaration")
+}
+
+/// Seed compiler-generated syntax from its genuine source coordinates and any enclosing expansion context.
+fn expansion_anchor(source: ast::Span) -> ast::Span {
+    let mut identity = Sha256::new();
+    identity.update(b"incan.compiler.syntax/1\0");
+    identity.update(source.start.to_le_bytes());
+    identity.update(source.end.to_le_bytes());
+    if let Some(parent) = source.expansion {
+        identity.update(parent);
+    }
+    source.with_expansion(Some(identity.finalize().into()))
 }
 
 /// Allocates unique spans for AST nodes synthesized from desugarer output.
 ///
-/// The public vocab AST intentionally does not assign source offsets to every helper-produced expression, but later
-/// compiler phases use spans as stable keys for typechecker metadata such as call-planning decisions. Giving every
-/// generated node a distinct synthetic span avoids collapsing nested helper calls into one `Span::default()` entry.
+/// Builtin vocabulary conversion assigns a deterministic context to each decoding position while retaining the
+/// source anchor. Native providers use their unit, request and structured output path at the worker boundary.
 #[derive(Debug, Clone)]
 struct SyntheticSpanAllocator {
-    next_start: usize,
-    preserve_default: bool,
+    anchor: ast::Span,
+    next_node: usize,
 }
 
 impl SyntheticSpanAllocator {
     /// Create an allocator whose synthetic span range is anchored by the original vocab surface span.
     fn new(anchor: ast::Span) -> Self {
-        if anchor == ast::Span::default() {
-            return Self {
-                next_start: 0,
-                preserve_default: true,
-            };
-        }
-        let seed = anchor
-            .start
-            .saturating_mul(257)
-            .saturating_add(anchor.end.saturating_mul(17));
         Self {
-            next_start: SYNTHETIC_SPAN_BASE.saturating_add(seed.saturating_mul(4)),
-            preserve_default: false,
+            anchor: expansion_anchor(anchor),
+            next_node: 0,
         }
     }
 
     /// Return the next unique synthetic span for one internal AST node generated from public vocab output.
     fn next(&mut self) -> ast::Span {
-        if self.preserve_default {
-            return ast::Span::default();
-        }
-        let start = self.next_start;
-        self.next_start = self.next_start.saturating_add(2);
-        ast::Span::new(start, start.saturating_add(1))
+        let span = self.anchor.expansion_child(&format!("public-node:{}", self.next_node));
+        self.next_node += 1;
+        span
     }
 }
 
@@ -653,6 +643,7 @@ fn public_decorator_span_or_synthetic(
         return spans.next();
     }
     ast::Span::new(decorator.span.start, decorator.span.end.max(decorator.span.start))
+        .with_expansion(spans.next().expansion)
 }
 
 /// Convert public statements into internal statements while assigning unique synthetic spans under `anchor`.
@@ -1656,22 +1647,12 @@ mod tests {
         let mut allocator = SyntheticSpanAllocator::new(ast::Span::new(1, 2));
         for _ in 0..64 {
             let allocated = allocator.next();
-            assert_eq!(
-                (allocated.start - SYNTHETIC_SPAN_BASE) % 2,
-                0,
-                "allocated spans start at an even offset"
-            );
+            assert_eq!((allocated.start, allocated.end), (1, 2));
+            assert_ne!(allocated, first);
+            assert_ne!(allocated, allocator.next());
         }
-        assert_eq!(
-            (first.start - SYNTHETIC_SPAN_BASE) % 2,
-            1,
-            "anchored spans start at an odd offset"
-        );
-        assert_eq!(
-            (second.start - SYNTHETIC_SPAN_BASE) % 2,
-            1,
-            "anchored spans start at an odd offset"
-        );
+        assert_eq!((first.start, first.end), (10, 20));
+        assert_eq!((second.start, second.end), (30, 40));
     }
 
     #[test]

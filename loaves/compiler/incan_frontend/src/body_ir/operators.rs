@@ -64,7 +64,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.type_info
                 .expressions
                 .expression_type_identities
-                .get(&(expression.span.start, expression.span.end))?
+                .get(&expression.span)?
                 .get(&Vec::new())
         }) else {
             return value;
@@ -434,7 +434,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     .type_info
                     .protocols
                     .body_ir_truthiness_receivers
-                    .contains_key(&(expr.span.start, expr.span.end)) =>
+                    .contains_key(&expr.span) =>
             {
                 let bool_ty = IncanType::Primitive(IncanPrimitiveType::Bool);
                 Some(self.lower_operator_dispatch(&method, expr, &[], bool_ty, expr.span, scope, out))

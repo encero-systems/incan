@@ -464,7 +464,7 @@ pub(super) fn collect_properties(
                 has_body: property.node.body.is_some(),
             };
             checker.type_info.declarations.body_ir_property_bindings.insert(
-                (property.span.start, property.span.end),
+                property.span,
                 BodyIrPropertyBindingInfo {
                     callable: FunctionBindingInfo {
                         is_async: false,

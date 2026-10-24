@@ -68,10 +68,7 @@ impl TypeChecker {
             projections.push(self.type_info.resolved_identity(span)?.clone());
             result
         };
-        self.type_info
-            .rust
-            .field_projection_paths
-            .insert((span.start, span.end), projections);
+        self.type_info.rust.field_projection_paths.insert(span, projections);
         Some(result)
     }
 }

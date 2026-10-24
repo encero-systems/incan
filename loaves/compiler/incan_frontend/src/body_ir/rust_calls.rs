@@ -62,8 +62,13 @@ pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::LoafCallable> {
                 .rust
                 .native_callable_parameters
                 .get(&call.path)
-                .cloned()
-                .unwrap_or_default(),
+                .into_iter()
+                .flatten()
+                .map(|&(parameter_slot, type_argument_slot)| bir::NativeCallableParameter {
+                    parameter_slot,
+                    type_argument_slot,
+                })
+                .collect(),
             parameter_defaults: Vec::new(),
             declaration_frame: None,
         };
@@ -165,21 +170,10 @@ impl BodyBuilder<'_, '_> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> Option<Result<bir::Operand, String>> {
-        if let Some(conversion) = self
-            .type_info
-            .rust
-            .element_adjustments
-            .get(&(expr.span.start, expr.span.end))
-            .cloned()
-        {
+        if let Some(conversion) = self.type_info.rust.element_adjustments.get(&expr.span).cloned() {
             return Some(self.lower_native_list_conversion(expr, &conversion, scope, out));
         }
-        let steps = self
-            .type_info
-            .rust
-            .argument_adjustments
-            .get(&(expr.span.start, expr.span.end))?
-            .clone();
+        let steps = self.type_info.rust.argument_adjustments.get(&expr.span)?.clone();
         Some(self.lower_native_adjustment_value(expr, &steps, scope, out))
     }
 
@@ -228,13 +222,7 @@ impl BodyBuilder<'_, '_> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Place {
-        let Some(steps) = self
-            .type_info
-            .rust
-            .field_adjustments
-            .get(&(span.start, span.end))
-            .cloned()
-        else {
+        let Some(steps) = self.type_info.rust.field_adjustments.get(&span).cloned() else {
             return self.lower_expr_to_place(base, scope, out);
         };
         let value = match self.lower_native_adjustment_value(base, &steps, scope, out) {
@@ -257,12 +245,7 @@ impl BodyBuilder<'_, '_> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> Option<bir::Operand> {
-        let call = self
-            .type_info
-            .rust
-            .checked_function_values
-            .get(&(expr.span.start, expr.span.end))?
-            .clone();
+        let call = self.type_info.rust.checked_function_values.get(&expr.span)?.clone();
         let span = hir_span(expr.span);
         let storage = call.storage.as_ref()?;
         if call.has_receiver || !call.receiver_adjustments.is_empty() || !storage.type_arguments.is_empty() {
@@ -328,7 +311,7 @@ impl BodyBuilder<'_, '_> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> Option<bir::Operand> {
-        let call = self.type_info.rust.checked_calls.get(&(span.start, span.end))?.clone();
+        let call = self.type_info.rust.checked_calls.get(&span)?.clone();
         if call.path == "std::panic::set_hook" {
             let (operands, _binding) = match self.bind_declared_args(&call.path, None, args, scope, out) {
                 Ok(bound) => bound,
@@ -380,7 +363,7 @@ impl BodyBuilder<'_, '_> {
                 return Some(self.unsupported_operand(reason, scope, hir_span(span), out));
             }
         };
-        if self.type_info.rust.copy_receivers.contains_key(&(span.start, span.end))
+        if self.type_info.rust.copy_receivers.contains_key(&span)
             && let Some(bir::ArgumentElement::One(bir::Operand::Place(read))) = operands.first_mut()
         {
             read.fact = bir::OwnershipFact::Copy;

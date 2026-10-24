@@ -199,11 +199,7 @@ fn project_invocation_body(
 /// Bind a declaration's physical fragment address to the already-published canonical owner and span.
 pub(super) fn declaration_id(identity: &CanonicalSymbolId) -> Result<CompilerNodeId, CoverageReason> {
     let module = canonical_module_identity(identity).ok_or(CoverageReason::UnresolvedReference)?;
-    Ok(CompilerNodeId::declaration_span(
-        &module,
-        identity.declaration_span.start,
-        identity.declaration_span.end,
-    ))
+    Ok(CompilerNodeId::declaration_at(&module, identity.declaration_span))
 }
 
 /// Project one eligible body onto package-owned addresses and audit every retained computation and type.
@@ -1248,11 +1244,7 @@ fn is_well_formed_source_binding(
     else {
         return false;
     };
-    let source_address = CompilerNodeId::declaration_span(
-        module.module_id.path(),
-        identity.declaration_span.start,
-        identity.declaration_span.end,
-    );
+    let source_address = CompilerNodeId::declaration_at(module.module_id.path(), identity.declaration_span);
     let mut roles = vec![&binding.original_body, wrapper];
     if binding.initialization == crate::body_ir::DecoratedInitialization::ModuleStorage {
         let Some(storage) = module

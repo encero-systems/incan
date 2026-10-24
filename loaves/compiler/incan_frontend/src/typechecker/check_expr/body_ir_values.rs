@@ -25,7 +25,7 @@ impl TypeChecker {
         self.type_info
             .calls
             .body_ir_call_result_types
-            .entry((span.start, span.end))
+            .entry(span)
             .or_insert(qualified);
     }
 
@@ -40,10 +40,7 @@ impl TypeChecker {
         let Some(qualified) = self.declared_nominal_value(declared, bindings, declaration) else {
             return;
         };
-        self.type_info
-            .expressions
-            .body_ir_expr_types
-            .insert((span.start, span.end), qualified);
+        self.type_info.expressions.body_ir_expr_types.insert(span, qualified);
     }
 
     /// Apply only declaration-owned nominal positions, leaving caller binder substitutions under their own owners.
@@ -115,17 +112,11 @@ impl TypeChecker {
         }
         if let Expr::Paren(inner) = &expression.node {
             self.retain_contextual_literal_type(inner, expected, declaration, template);
-            if let Some(ty) = self
-                .type_info
-                .expressions
-                .body_ir_expr_types
-                .get(&(inner.span.start, inner.span.end))
-                .cloned()
-            {
+            if let Some(ty) = self.type_info.expressions.body_ir_expr_types.get(&inner.span).cloned() {
                 self.type_info
                     .expressions
                     .body_ir_expr_types
-                    .insert((expression.span.start, expression.span.end), ty);
+                    .insert(expression.span, ty);
             }
             return;
         }
@@ -163,7 +154,7 @@ impl TypeChecker {
         self.type_info
             .expressions
             .body_ir_expr_types
-            .insert((expression.span.start, expression.span.end), ty);
+            .insert(expression.span, ty);
     }
 
     /// Apply a selected aggregate's context only to its written members. Nonempty members retain their own checked
@@ -233,19 +224,9 @@ impl TypeChecker {
         self.type_info
             .expressions
             .body_ir_expr_types
-            .get(&(span.start, span.end))
-            .or_else(|| {
-                self.type_info
-                    .calls
-                    .body_ir_constructor_types
-                    .get(&(span.start, span.end))
-            })
-            .or_else(|| {
-                self.type_info
-                    .calls
-                    .body_ir_call_result_types
-                    .get(&(span.start, span.end))
-            })
+            .get(&span)
+            .or_else(|| self.type_info.calls.body_ir_constructor_types.get(&span))
+            .or_else(|| self.type_info.calls.body_ir_call_result_types.get(&span))
             .or_else(|| self.type_info.expr_type(span))
     }
 
@@ -262,10 +243,10 @@ impl TypeChecker {
             return;
         }
         fill_open_result_parts(&mut returned, actual, false);
-        self.type_info.expressions.body_ir_expr_types.insert(
-            (span.start, span.end),
-            ResolvedType::Function(parameters.to_vec(), Box::new(returned)),
-        );
+        self.type_info
+            .expressions
+            .body_ir_expr_types
+            .insert(span, ResolvedType::Function(parameters.to_vec(), Box::new(returned)));
     }
 
     /// Preserve an initializer's executable carrier under its canonical lexical binding identity.
@@ -304,14 +285,14 @@ impl TypeChecker {
             self.type_info
                 .calls
                 .body_ir_async_call_targets
-                .insert((expression.span.start, expression.span.end), identity);
+                .insert(expression.span, identity);
         }
         self.retain_open_value_expression(expression);
         if self
             .type_info
             .calls
             .body_ir_factory_result_conflicts
-            .contains(&(expression.span.start, expression.span.end))
+            .contains(&expression.span)
         {
             return;
         }
@@ -327,13 +308,13 @@ impl TypeChecker {
                 .type_info
                 .calls
                 .body_ir_call_result_types
-                .get(&(expression.span.start, expression.span.end))
+                .get(&expression.span)
                 .cloned()
         {
             self.type_info
                 .expressions
                 .body_ir_expr_types
-                .insert((expression.span.start, expression.span.end), actual);
+                .insert(expression.span, actual);
             return;
         }
         let actual = match &expression.node {
@@ -356,7 +337,7 @@ impl TypeChecker {
                     self.type_info
                         .expressions
                         .body_ir_expr_types
-                        .insert((expression.span.start, expression.span.end), actual);
+                        .insert(expression.span, actual);
                     return;
                 }
                 let Some(method_id) = result_methods::from_str(method) else {
@@ -373,13 +354,8 @@ impl TypeChecker {
                 .type_info
                 .calls
                 .body_ir_call_result_types
-                .get(&(expression.span.start, expression.span.end))
-                .or_else(|| {
-                    self.type_info
-                        .calls
-                        .body_ir_constructor_types
-                        .get(&(expression.span.start, expression.span.end))
-                })
+                .get(&expression.span)
+                .or_else(|| self.type_info.calls.body_ir_constructor_types.get(&expression.span))
                 .cloned(),
             Expr::Field(receiver, field) => self.body_ir_nominal_field_type(receiver, field),
             Expr::Index(receiver, index) => self.body_ir_indexed_value_type(receiver, index),
@@ -396,7 +372,7 @@ impl TypeChecker {
             self.type_info
                 .expressions
                 .body_ir_expr_types
-                .insert((expression.span.start, expression.span.end), actual);
+                .insert(expression.span, actual);
             return;
         }
         let closed = self.body_ir_close_value_parts(recorded, &actual);
@@ -406,7 +382,7 @@ impl TypeChecker {
         self.type_info
             .expressions
             .body_ir_expr_types
-            .insert((expression.span.start, expression.span.end), closed);
+            .insert(expression.span, closed);
     }
 
     /// Keep a builtin Some payload's already checked owner without changing contextual or still-open storage.
@@ -424,10 +400,10 @@ impl TypeChecker {
         if closed == *inner || !Self::is_settled_type_argument(&closed) || !self.types_compatible(&closed, actual) {
             return;
         }
-        self.type_info.calls.body_ir_call_result_types.insert(
-            (span.start, span.end),
-            ResolvedType::Generic("Option".to_owned(), vec![closed]),
-        );
+        self.type_info
+            .calls
+            .body_ir_call_result_types
+            .insert(span, ResolvedType::Generic("Option".to_owned(), vec![closed]));
     }
 
     /// Pass only a registry-selected Result channel's checked owner into its inline closure parameter facts.
@@ -586,7 +562,7 @@ impl TypeChecker {
         self.type_info
             .expressions
             .body_ir_expr_types
-            .insert((pattern.span.start, pattern.span.end), value.clone());
+            .insert(pattern.span, value.clone());
         match &pattern.node {
             Pattern::Binding(name) => {
                 if let Some(identity) = self.type_info.resolved_write_identity(pattern.span, name).cloned() {
@@ -618,7 +594,7 @@ impl TypeChecker {
             .type_info
             .calls
             .body_ir_factory_result_conflicts
-            .contains(&(expression.span.start, expression.span.end))
+            .contains(&expression.span)
         {
             return;
         }
@@ -645,7 +621,7 @@ impl TypeChecker {
         self.type_info
             .expressions
             .body_ir_expr_types
-            .insert((expression.span.start, expression.span.end), actual);
+            .insert(expression.span, actual);
     }
 
     /// The registry-selected member fixes which checked callback output replaces which Result channel.

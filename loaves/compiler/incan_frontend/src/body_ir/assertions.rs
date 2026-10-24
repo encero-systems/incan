@@ -208,7 +208,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 .resolved_identity(callee.span)
                 .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Function)
         {
-            let key = (callee.span.start, callee.span.end);
+            let key = callee.span;
             let signature = IncanType::Function {
                 params: Vec::new(),
                 return_type: Box::new(self.resolve_ty(call.span)),

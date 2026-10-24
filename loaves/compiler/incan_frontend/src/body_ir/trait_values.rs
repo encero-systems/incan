@@ -83,7 +83,7 @@ pub(super) fn retain_inputs(
 /// Retain identities from the checked annotation spans rather than widening legacy's nominal-only identity table.
 fn retain_annotation_identities(body: &mut bir::Body, program: &ast::Program, facts: &TypeCheckInfo) {
     let Some(function) = program.declarations.iter().find_map(|declaration| {
-        if declaration.span.start != body.span.start || declaration.span.end != body.span.end {
+        if declaration.span != body.span {
             return None;
         }
         match &declaration.node {

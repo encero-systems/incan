@@ -1364,17 +1364,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let protocol = self.type_info.protocol_iteration(iter_expr.span).cloned();
         let fallible = protocol.as_ref().is_some_and(|p| p.fallible_error_type.is_some());
         // The private hook table also covers opaque SDK Iterator returns whose legacy view stays builtin.
-        let custom = self
-            .type_info
-            .rust
-            .iteration_hooks
-            .contains_key(&(iter_expr.span.start, iter_expr.span.end))
+        let custom = self.type_info.rust.iteration_hooks.contains_key(&iter_expr.span)
             || protocol.is_some()
             || self
                 .type_info
                 .protocols
                 .body_ir_iterations
-                .contains_key(&(iter_expr.span.start, iter_expr.span.end));
+                .contains_key(&iter_expr.span);
         let effective_iter_expr: &ast::Spanned<ast::Expr> = match (&iter_expr.node, fallible) {
             (ast::Expr::Try(inner), true) => inner,
             _ => iter_expr,
@@ -1510,12 +1506,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let [ast::CallArg::Positional(source)] = args.as_slice() else {
             return None;
         };
-        if !self
-            .type_info
-            .rust
-            .iteration_hooks
-            .contains_key(&(source.span.start, source.span.end))
-        {
+        if !self.type_info.rust.iteration_hooks.contains_key(&source.span) {
             collection_member_types(&self.resolve_ty(source.span), CollectionTypeId::List)?;
         }
         Some(source)
@@ -1576,11 +1567,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         body_fn: impl FnOnce(&mut Self, bir::ScopeId, &mut Vec<bir::Statement>),
     ) {
         // ---- Source storage and enumeration state ----
-        let native = self
-            .type_info
-            .rust
-            .iteration_hooks
-            .contains_key(&(source.span.start, source.span.end));
+        let native = self.type_info.rust.iteration_hooks.contains_key(&source.span);
         let (iterator, initializer) = match self.initialize_enumeration_source(source, native, outer_scope, span, out) {
             Ok(initialized) => initialized,
             Err(reason) => {
@@ -2127,10 +2114,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return false;
         };
         read.place.local_id() == Some(item)
-            && (read.fact == bir::OwnershipFact::MutBorrow
-                || self
-                    .type_info
-                    .method_call_takes_mutable_receiver(ast::Span::new(span.start, span.end)))
+            && (read.fact == bir::OwnershipFact::MutBorrow || self.type_info.method_call_takes_mutable_receiver(span))
     }
 
     /// Report whether an assigned value borrows `item` exclusively (a nested loop iterating it in place), or is a

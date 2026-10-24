@@ -16,6 +16,9 @@ pub(crate) fn validate_source(
     source: &Path,
 ) -> Result<(), Vec<CompileError>> {
     validate_entry_export(program, unit, source)?;
+    if unit.vocab_desugarer && is_entry_source(unit, source) {
+        validate_desugar_export(program)?;
+    }
     for declaration in &program.declarations {
         let Declaration::Import(import) = &declaration.node else {
             continue;
@@ -47,11 +50,7 @@ pub(crate) fn validate_source(
 /// Require the designated entry to export a synchronous function with no parameters or type parameters.
 /// The generated adapter's explicit `VocabRegistration` annotation delegates return-type identity to the checker.
 fn validate_entry_export(program: &Program, unit: &UnitDescription, source: &Path) -> Result<(), Vec<CompileError>> {
-    let Some(entry) = &unit.vocab_entry else {
-        return Ok(());
-    };
-    let entry = unit.project_root.join(entry).canonicalize().ok();
-    if entry.as_deref() != source.canonicalize().ok().as_deref() {
+    if !is_entry_source(unit, source) {
         return Ok(());
     }
     for declaration in &program.declarations {
@@ -71,6 +70,44 @@ fn validate_entry_export(program: &Program, unit: &UnitDescription, source: &Pat
         return Err(export_refusal(declaration.span));
     }
     Err(export_refusal(Span::default()))
+}
+
+/// Match only an existing authored entry file; missing paths never become equal by both failing canonicalization.
+fn is_entry_source(unit: &UnitDescription, source: &Path) -> bool {
+    let Some(entry) = &unit.vocab_entry else {
+        return false;
+    };
+    match (unit.project_root.join(entry).canonicalize(), source.canonicalize()) {
+        (Ok(entry), Ok(source)) => entry == source,
+        _ => false,
+    }
+}
+
+/// Require the worker's export to be public, synchronous, non-generic and to accept one immutable request.
+/// The generated adapter delegates the request and result type identities to ordinary callable checking.
+fn validate_desugar_export(program: &Program) -> Result<(), Vec<CompileError>> {
+    let mut span = Span::default();
+    for declaration in &program.declarations {
+        let Declaration::Function(function) = &declaration.node else {
+            continue;
+        };
+        if function.name != "desugar" {
+            continue;
+        }
+        span = declaration.span;
+        if function.visibility == Visibility::Public
+            && function.type_params.is_empty()
+            && !function.is_async()
+            && function.params.len() == 1
+            && !function.params[0].node.is_mut
+        {
+            return Ok(());
+        }
+        break;
+    }
+    Err(vec![CompileError::syntax(
+        "vocabulary entry must export pub def desugar(request: DesugarRequest) -> Result[DesugarResponse, DesugarError]".into(), span,
+    )])
 }
 
 /// Anchor the registration export contract at the invalid declaration, or the entry when it is missing.

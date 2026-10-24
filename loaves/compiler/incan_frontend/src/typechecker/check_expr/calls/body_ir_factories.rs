@@ -110,15 +110,9 @@ impl TypeChecker {
         self.type_info
             .calls
             .body_ir_factory_owner_types
-            .insert((span.start, span.end), ResolvedType::Generic(owner, arguments.clone()));
-        self.type_info
-            .calls
-            .body_ir_call_type_arguments
-            .insert((span.start, span.end), arguments);
-        self.type_info
-            .calls
-            .body_ir_call_result_types
-            .insert((span.start, span.end), output);
+            .insert(span, ResolvedType::Generic(owner, arguments.clone()));
+        self.type_info.calls.body_ir_call_type_arguments.insert(span, arguments);
+        self.type_info.calls.body_ir_call_result_types.insert(span, output);
     }
 
     /// Admit only fixed leaves and type parameters declared by the active frame, recursively through storage.
@@ -153,7 +147,7 @@ impl TypeChecker {
     /// Retain a checked factory contradiction once, clearing only supplemental native results. Legacy inference and
     /// signatures stay unchanged; neither nominal member propagation nor destination filling may reopen this call.
     pub(in crate::typechecker::check_expr) fn refuse_body_ir_factory_result(&mut self, span: Span) {
-        let key = (span.start, span.end);
+        let key = span;
         self.type_info.calls.body_ir_factory_result_conflicts.insert(key);
         self.type_info.calls.body_ir_call_result_types.remove(&key);
         self.type_info.calls.body_ir_factory_owner_types.remove(&key);

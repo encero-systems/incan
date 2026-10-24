@@ -295,11 +295,7 @@ impl BodyIrModule {
                     && variant.canonical.scope_discriminant.is_none()
                     && variant.canonical.origin == declaration.canonical.origin
                     && variant.direct_declaration_id
-                        == CompilerNodeId::declaration_span(
-                            self.module_id.path(),
-                            variant.canonical.declaration_span.start,
-                            variant.canonical.declaration_span.end,
-                        )
+                        == CompilerNodeId::declaration_at(self.module_id.path(), variant.canonical.declaration_span)
                     && declares_member(&declaration.canonical, &variant.canonical)
                     && variant.canonical.declaration_name == variant.name
             })
@@ -313,6 +309,15 @@ impl BodyIrModule {
         let prefix = format!("{}#decl.", self.module_id.path());
         let Some(span) = id.path().strip_prefix(&prefix) else {
             return false;
+        };
+        let span = match span.split_once("/expansion.") {
+            Some((range, expansion))
+                if expansion.len() == 64 && expansion.bytes().all(|byte| byte.is_ascii_hexdigit()) =>
+            {
+                range
+            }
+            Some(_) => return false,
+            None => span,
         };
         let Some((start, end)) = span.split_once("..") else {
             return false;
@@ -336,13 +341,7 @@ impl BodyIrModule {
             && identity.kind == expected_kind
             && identity.scope_discriminant.is_none()
             && owner == self.module_id.path())
-        .then(|| {
-            CompilerNodeId::declaration_span(
-                self.module_id.path(),
-                identity.declaration_span.start,
-                identity.declaration_span.end,
-            )
-        })
+        .then(|| CompilerNodeId::declaration_at(self.module_id.path(), identity.declaration_span))
     }
 
     /// Whether a body is governed by its own type parameters or by the checked parameters of its enclosing owner.
@@ -381,7 +380,7 @@ impl BodyIrModule {
     /// owner. A getter additionally requires its exact implicit immutable receiver and no ordinary or method-scoped
     /// parameters.
     pub fn body_has_canonical_direct_call_id(&self, body: &Body) -> bool {
-        body.direct_call_id == CompilerNodeId::declaration_span(self.module_id.path(), body.span.start, body.span.end)
+        body.direct_call_id == CompilerNodeId::declaration_at(self.module_id.path(), body.span)
             && body.canonical.as_ref().is_some_and(|canonical| {
                 let namespace = match canonical.kind {
                     SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Partial => {
@@ -868,8 +867,7 @@ impl BodyIrModule {
         // This check is nonrecursive: body_has_canonical_direct_call_id validates the owner's layout in turn.
         if self.declaration_id_for_canonical(hook, SymbolNamespace::Member, SemanticSourceTargetKind::Method)
             != Some(body.direct_call_id.clone())
-            || body.direct_call_id
-                != CompilerNodeId::declaration_span(self.module_id.path(), body.span.start, body.span.end)
+            || body.direct_call_id != CompilerNodeId::declaration_at(self.module_id.path(), body.span)
             || body.name != hook.declaration_name
             || body.is_async
             || body.is_generator()

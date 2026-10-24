@@ -12,7 +12,6 @@ from json_fields import required_text
 from observation import observe
 from publication import publish
 
-
 const SELECTORS = [
     "/var/select/developer_dir", "/var/db/xcode_select_link",
     "/usr/share/xcode-select/xcode_dir_link", "/usr/share/xcode-select/xcode_dir_path",
@@ -53,12 +52,12 @@ pub def sdk_identity(sysroot: str) -> Result[str, str]:
     return Ok(selection_identity(sysroot) + "\n" + root + "\n" + sdk_observation(root))
 
 
-pub def configure_sdk(mut command: Command, sysroot: str) -> Result[Command, str]:
-    """Give a child the validated discovery result without changing the parent process's environment."""
+pub def configure_sdk(mut command: &mut Command, sysroot: str) -> Result[None, str]:
+    """Configure the caller's command with the validated SDK without changing the parent process's environment."""
     mut root = selected_sdk(sysroot)?
     if root != "":
         command.env("SDKROOT", root)
-    return Ok(command)
+    return Ok(None)
 
 
 pub def sdk_paths(sysroot: str) -> Result[list[str], str]:
@@ -90,7 +89,8 @@ def selection_identity(sysroot: str) -> str:
         if name == "DEVELOPER_DIR" and value != "":
             parts.append(observed(value))
     for path in SELECTORS:
-        parts.append(f"{path}={observed(str(path))}")
+        text = str(path)
+        parts.append(f"{text}={observed(text)}")
     return "\n".join(parts)
 
 
@@ -128,7 +128,8 @@ def valid_sdk(root: str) -> bool:
 def discover() -> Result[str, str]:
     """Ask the same absolute xcrun rustc uses for its default macOS SDK, preserving inherited developer settings."""
     mut command = Command.new("/usr/bin/xcrun")
-    command.args(["--sdk", "macosx", "--show-sdk-path"])
+    for argument in ["--sdk", "macosx", "--show-sdk-path"]:
+        command.arg(argument)
     output = command.output().map_err((error) => str(error))?
     if not output.status.success():
         return Err("xcrun could not select the macOS SDK")

@@ -478,7 +478,7 @@ impl TypeChecker {
         self.type_info
             .declarations
             .function_bindings_by_span
-            .insert((span.start, span.end), binding.clone());
+            .insert(span, binding.clone());
         self.type_info
             .declarations
             .function_bindings
@@ -1949,7 +1949,7 @@ impl TypeChecker {
             self.type_info
                 .declarations
                 .function_bindings_by_span
-                .insert((span.start, span.end), binding.clone());
+                .insert(span, binding.clone());
             let emitted_name = overloaded_function_emitted_name(&func.name, &info);
             info.emitted_name = Some(emitted_name.clone());
             self.type_info.record_function_emitted_name(span, emitted_name);
@@ -2012,7 +2012,7 @@ impl TypeChecker {
         self.type_info
             .declarations
             .function_bindings_by_span
-            .insert((span.start, span.end), binding);
+            .insert(span, binding);
         self.current_module_function_symbols
             .insert(func.name.clone(), symbol_id);
     }

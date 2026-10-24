@@ -146,7 +146,7 @@ impl TypeChecker {
                 vec![param.ty.clone()],
             ));
             self.type_info.rust.argument_adjustments.insert(
-                (value.span.start, value.span.end),
+                value.span,
                 vec![RustCheckedCall {
                     storage: None,
                     source_type_parameters: self.native_call_type_parameters(),
@@ -294,9 +294,9 @@ impl TypeChecker {
         self.type_info
             .calls
             .body_ir_constructor_types
-            .insert((span.start, span.end), result.clone());
+            .insert(span, result.clone());
         self.type_info.calls.body_ir_native_constructor_bindings.insert(
-            (span.start, span.end),
+            span,
             (
                 body_ir::rust_item_identity(base)?,
                 ConstructorFieldBinding {

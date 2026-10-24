@@ -983,7 +983,7 @@ impl TypeChecker {
     /// Validate a boolean control-flow condition using RFC 068 structural `__bool__` when needed. Preserve its
     /// receiver's original value identity separately for Body IR; legacy keeps the synthetic method's reference.
     pub(in crate::typechecker) fn validate_truthiness_condition(&mut self, cond_ty: &ResolvedType, span: Span) {
-        let key = (span.start, span.end);
+        let key = span;
         self.type_info.protocols.body_ir_truthiness_receivers.remove(&key);
         if self.types_compatible(cond_ty, &ResolvedType::Bool) || matches!(cond_ty, ResolvedType::Unknown) {
             return;
@@ -1166,7 +1166,7 @@ impl TypeChecker {
         self.type_info
             .protocols
             .body_ir_iterations
-            .insert((span.start, span.end), BodyIrIterationHooksInfo { iter: None, next });
+            .insert(span, BodyIrIterationHooksInfo { iter: None, next });
         Some(item)
     }
 
@@ -1282,7 +1282,7 @@ impl TypeChecker {
             self.type_info
                 .protocols
                 .body_ir_iterations
-                .insert((protocol_span.start, protocol_span.end), hooks.body_ir.clone());
+                .insert(protocol_span, hooks.body_ir.clone());
         }
         hooks
     }
@@ -1296,7 +1296,7 @@ impl TypeChecker {
         span: Span,
     ) -> BodyIrProtocolCallInfo {
         // ---- Selected declaration ----
-        let key = (span.start, span.end);
+        let key = span;
         let canonical = self
             .type_info
             .traits

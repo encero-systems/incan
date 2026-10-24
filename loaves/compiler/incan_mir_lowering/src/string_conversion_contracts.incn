@@ -40,7 +40,11 @@ pub def conversion_trait(module: &BodyIrModule) -> Result[str, str]:
         StringConversionContract.Selected(selection) =>
             owner = selection.trait_identity
             method = selection.method_identity
-            if not is_conversion_trait(owner) or not is_conversion_method(method) or not method_belongs_to_owner(method, owner):
+            if (
+                not is_conversion_trait(owner)
+                or not is_conversion_method(method)
+                or not method_belongs_to_owner(method, owner)
+            ):
                 return Err("unsupported Body IR string conversion contract identity")
             match owner.scope_discriminant:
                 Some(_scope) => return Err("unsupported Body IR string conversion contract identity")
@@ -158,15 +162,25 @@ def raw_conversion_layout(declaration: &NominalDeclaration) -> bool:
     """Require one public raw field with its exact owner identity, no binders, and no declared defaults."""
     if len(declaration.type_parameters) != 0 or declaration.type_parameter_count != 0:
         return false
-    if declaration.fields != ["0"] or declaration.field_identities != [declaration.canonical] or len(declaration.field_types) != 1:
+    if (
+        declaration.fields != ["0"]
+        or declaration.field_identities != [declaration.canonical]
+        or len(declaration.field_types) != 1
+    ):
         return false
-    return declaration.field_public == [true] and not declaration.has_field_defaults and len(declaration.method_partial_defaults) == 0
+    return declaration.field_public == [true] and not declaration.has_field_defaults and len(
+        declaration.method_partial_defaults,
+    ) == 0
 
 
 def raw_conversion_owner(declaration: &NominalDeclaration) -> Result[None, str]:
     """Validate the canonical layout before or after project assembly gives it its exact retained carrier name."""
     owner = declaration.canonical
-    if owner.kind != SemanticSourceTargetKind.Newtype or owner.namespace != SymbolNamespace.OrdinaryLexical or not conversion_owner_name(declaration):
+    if (
+        owner.kind != SemanticSourceTargetKind.Newtype
+        or owner.namespace != SymbolNamespace.OrdinaryLexical
+        or not conversion_owner_name(declaration)
+    ):
         return Err("unsupported Body IR automatic string conversion owner")
     if not raw_conversion_layout(declaration):
         return Err("unsupported Body IR automatic string conversion owner")
@@ -186,7 +200,7 @@ def raw_conversion_owner(declaration: &NominalDeclaration) -> Result[None, str]:
     match canonical_module_identity(owner):
         None => return Err("unsupported Body IR automatic string conversion owner")
         Some(module) =>
-            expected = CompilerNodeId.declaration_span(module, owner.declaration_span.start, owner.declaration_span.end)
+            expected = CompilerNodeId.declaration_at(module, owner.declaration_span)
             if declaration.direct_declaration_id != expected:
                 return Err("unsupported Body IR automatic string conversion owner")
     return Ok(None)

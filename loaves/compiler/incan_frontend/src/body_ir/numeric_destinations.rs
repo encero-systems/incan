@@ -74,7 +74,7 @@ impl BodyBuilder<'_, '_> {
             .type_info
             .expressions
             .numeric_conversion_destinations
-            .contains_key(&(expr.span.start, expr.span.end))
+            .contains_key(&expr.span)
         {
             return self.retain_checked_numeric_result(operand, expr.span, scope, out);
         }
@@ -101,7 +101,7 @@ impl BodyBuilder<'_, '_> {
             .type_info
             .expressions
             .numeric_conversion_destinations
-            .get(&(span.start, span.end))
+            .get(&span)
         else {
             return operand;
         };

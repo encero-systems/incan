@@ -66,10 +66,7 @@ pub(super) fn project(program: &Program, info: &TypeCheckInfo) -> NativeNewtypeF
         if let Declaration::Function(function) = &declaration.node
             && function.type_params.is_empty()
             && function.params.is_empty()
-            && let Some(binding) = info
-                .declarations
-                .function_bindings_by_span
-                .get(&(declaration.span.start, declaration.span.end))
+            && let Some(binding) = info.declarations.function_bindings_by_span.get(&declaration.span)
             && !binding.is_async
             && let Some(facts) = body_transaction(
                 &function.body,
@@ -88,7 +85,7 @@ pub(super) fn project(program: &Program, info: &TypeCheckInfo) -> NativeNewtypeF
     for owner in &owners {
         for method in &owner.source.methods {
             let span = method.span;
-            let Some(binding) = info.declarations.method_bindings_by_span.get(&(span.start, span.end)) else {
+            let Some(binding) = info.declarations.method_bindings_by_span.get(&span) else {
                 continue;
             };
             let Some(identity) = &binding.identity else {
@@ -252,11 +249,11 @@ impl BodyFactsBuilder<'_> {
             .guards
             .push(NativeFactGuard::Reference(span, identity.clone()));
         self.facts.guards.push(NativeFactGuard::Parameters(span, params));
-        self.facts.parameters.insert((span.start, span.end), closed_params);
+        self.facts.parameters.insert(span, closed_params);
         if frame.source.node.receiver.is_none() {
             self.facts
                 .static_receivers
-                .insert((span.start, span.end), frame.owner.instantiated_type(argument.clone()));
+                .insert(span, frame.owner.instantiated_type(argument.clone()));
         }
         let parameter = (!holes.is_empty()).then(|| frame.owner.binder_origin(argument));
         Some(NativeValue {
@@ -327,11 +324,7 @@ impl BodyFactsBuilder<'_> {
         self.facts.guards.push(NativeFactGuard::Expression(
             span,
             checked.clone(),
-            self.info
-                .expressions
-                .expression_type_identities
-                .get(&(span.start, span.end))
-                .cloned(),
+            self.info.expressions.expression_type_identities.get(&span).cloned(),
         ));
         let fallback = NativeValue {
             ty: checked.clone(),
@@ -479,7 +472,7 @@ impl BodyFactsBuilder<'_> {
         if *name != owner.source.name {
             return None;
         }
-        self.facts.field_owners.insert((span.start, span.end), identity.clone());
+        self.facts.field_owners.insert(span, identity.clone());
         Some(NativeValue {
             ty: payload.clone(),
             owner: None,
@@ -502,7 +495,7 @@ impl BodyFactsBuilder<'_> {
             self.info
                 .expressions
                 .expression_type_identities
-                .get(&(index.span.start, index.span.end))
+                .get(&index.span)
                 .cloned(),
         ));
         let index = crate::typechecker::TypeChecker::constant_tuple_index(index)?;
@@ -668,7 +661,7 @@ impl BodyFactsBuilder<'_> {
             if !refines_checked_type(checked, &value, self.info) {
                 return None;
             }
-            self.facts.assignments.insert((span.start, span.end), value.ty.clone());
+            self.facts.assignments.insert(span, value.ty.clone());
         }
         self.bindings.insert(identity, value);
         Some(())
@@ -681,7 +674,7 @@ impl BodyFactsBuilder<'_> {
                 .info
                 .expressions
                 .expression_type_identities
-                .get(&(span.start, span.end))
+                .get(&span)
                 .is_some_and(|identities| value.holes.iter().any(|path| identities.contains_key(path)))
             {
                 return None;
@@ -689,7 +682,7 @@ impl BodyFactsBuilder<'_> {
             if !refines_checked_type(checked, &value, self.info) {
                 return None;
             }
-            self.facts.expressions.insert((span.start, span.end), value.ty.clone());
+            self.facts.expressions.insert(span, value.ty.clone());
         }
         Some(value)
     }

@@ -1,4 +1,4 @@
-# behavior: a dependency's Incan descriptors parse its block before requesting custom expansion
+# behavior: a dependency round-trips spanned public syntax and publishes descriptors before custom expansion
 # expect-exit: 1
 # expect-stderr-contains:
 #   dependency `words` has no desugarer artifact

@@ -185,16 +185,13 @@ impl TypeChecker {
     }
 
     /// Find the originating closure behind parentheses and immutable local aliases, preserving lexical identity.
-    pub(in crate::typechecker) fn native_closure_origin(&self, expression: &Spanned<Expr>) -> Option<(usize, usize)> {
+    pub(in crate::typechecker) fn native_closure_origin(&self, expression: &Spanned<Expr>) -> Option<crate::ast::Span> {
         match &expression.node {
             Expr::Paren(inner) => self.native_closure_origin(inner),
-            Expr::Closure(..) => Some((expression.span.start, expression.span.end)),
+            Expr::Closure(..) => Some(expression.span),
             Expr::Ident(name) => {
                 let symbol = self.lookup_symbol(name)?;
-                self.capturing_callables
-                    .origins
-                    .get(&(symbol.span.start, symbol.span.end))
-                    .copied()
+                self.capturing_callables.origins.get(&symbol.span).copied()
             }
             _ => None,
         }

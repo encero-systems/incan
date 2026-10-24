@@ -39,11 +39,7 @@ pub(super) fn collect_local_receiver_methods(
             ast::Declaration::Class(class) => &class.methods,
             _ => continue,
         };
-        let Some(owner) = facts
-            .declarations
-            .declaration_identities
-            .get(&(declaration.span.start, declaration.span.end))
-        else {
+        let Some(owner) = facts.declarations.declaration_identities.get(&declaration.span) else {
             continue;
         };
         for method in source {
@@ -83,7 +79,7 @@ pub(super) fn collect_constants(
             let canonical = type_info
                 .declarations
                 .declaration_identities
-                .get(&(declaration.span.start, declaration.span.end))?
+                .get(&declaration.span)?
                 .clone();
             let value = match type_info.const_value(&item.name) {
                 Some(crate::typechecker::ConstValue::Int(value)) => bir::Constant::Int(*value),
@@ -113,10 +109,7 @@ fn checked_newtype_constant(
     type_info: &TypeCheckInfo,
     nominals: &[bir::NominalDeclaration],
 ) -> Option<bir::Constant> {
-    let fact = type_info
-        .consts
-        .body_ir_newtype_values
-        .get(&(expression.span.start, expression.span.end))?;
+    let fact = type_info.consts.body_ir_newtype_values.get(&expression.span)?;
     let mut owners = nominals.iter().filter(|nominal| nominal.canonical == fact.owner);
     let owner = owners.next()?;
     if owners.next().is_some() {
@@ -227,7 +220,7 @@ pub(super) fn collect_type_aliases(
             let canonical = type_info
                 .declarations
                 .declaration_identities
-                .get(&(declaration.span.start, declaration.span.end))?
+                .get(&declaration.span)?
                 .clone();
             Some(bir::TypeAliasDeclaration {
                 canonical,
@@ -259,7 +252,7 @@ pub(super) fn collect_statics(
             let canonical = type_info
                 .declarations
                 .declaration_identities
-                .get(&(declaration.span.start, declaration.span.end))?
+                .get(&declaration.span)?
                 .clone();
             let initial = static_initializer(&storage.value, &ty, type_info).unwrap_or_else(|| {
                 bir::StaticInitializer::Computed(Box::new(lower_static_initializer_body(
@@ -294,7 +287,7 @@ pub(super) fn collect_computed_constants(
             let canonical = type_info
                 .declarations
                 .declaration_identities
-                .get(&(declaration.span.start, declaration.span.end))?
+                .get(&declaration.span)?
                 .clone();
             if retained.iter().any(|constant| constant.canonical == canonical) {
                 return None;
@@ -439,7 +432,7 @@ pub(super) fn collect_local_enum_declarations(
             let canonical = type_info
                 .declarations
                 .declaration_identities
-                .get(&(declaration.span.start, declaration.span.end))?
+                .get(&declaration.span)?
                 .clone();
             let parameter_names = value
                 .type_params
@@ -453,7 +446,7 @@ pub(super) fn collect_local_enum_declarations(
                     let canonical = type_info
                         .declarations
                         .member_declaration_identities
-                        .get(&(variant.span.start, variant.span.end))?
+                        .get(&variant.span)?
                         .clone();
                     let fields = variant
                         .node
@@ -463,16 +456,12 @@ pub(super) fn collect_local_enum_declarations(
                             type_info
                                 .declarations
                                 .enum_payload_types
-                                .get(&(field.span.start, field.span.end))
+                                .get(&field.span)
                                 .map(|ty| parameter_types::checked_parameter_type(ty, type_info, &parameter_names))
                         })
                         .collect::<Option<Vec<_>>>()?;
                     Some(bir::EnumVariantDeclaration {
-                        direct_declaration_id: CompilerNodeId::declaration_span(
-                            module_identity,
-                            variant.span.start,
-                            variant.span.end,
-                        ),
+                        direct_declaration_id: CompilerNodeId::declaration_at(module_identity, variant.span),
                         canonical,
                         name: variant.node.name.clone(),
                         fields,
@@ -482,11 +471,7 @@ pub(super) fn collect_local_enum_declarations(
             Some(bir::EnumDeclaration {
                 native_item: String::new(),
                 native_type_arguments: Vec::new(),
-                direct_declaration_id: CompilerNodeId::declaration_span(
-                    module_identity,
-                    declaration.span.start,
-                    declaration.span.end,
-                ),
+                direct_declaration_id: CompilerNodeId::declaration_at(module_identity, declaration.span),
                 canonical,
                 name: value.name.clone(),
                 public: value.visibility == ast::Visibility::Public,
@@ -715,7 +700,7 @@ pub(super) fn collect_local_nongeneric_function_identities(
             type_info
                 .declarations
                 .function_bindings_by_span
-                .get(&(declaration.span.start, declaration.span.end))
+                .get(&declaration.span)
                 .and_then(|binding| binding.identity.clone())
         })
         .collect()
@@ -766,7 +751,7 @@ pub(super) fn collect_local_nominal_declarations(
             let canonical = type_info
                 .declarations
                 .declaration_identities
-                .get(&(declaration.span.start, declaration.span.end))?
+                .get(&declaration.span)?
                 .clone();
             let field_identities = fields
                 .iter()
@@ -774,7 +759,7 @@ pub(super) fn collect_local_nominal_declarations(
                     type_info
                         .declarations
                         .member_declaration_identities
-                        .get(&(field.span.start, field.span.end))
+                        .get(&field.span)
                         .cloned()
                 })
                 .collect::<Option<Vec<_>>>()?;
@@ -783,11 +768,7 @@ pub(super) fn collect_local_nominal_declarations(
                 native_item: String::new(),
                 class_inheritance: None,
                 native_type_arguments: Vec::new(),
-                direct_declaration_id: CompilerNodeId::declaration_span(
-                    module_identity,
-                    declaration.span.start,
-                    declaration.span.end,
-                ),
+                direct_declaration_id: CompilerNodeId::declaration_at(module_identity, declaration.span),
                 canonical,
                 name: name.clone(),
                 fields: fields.iter().map(|field| field.node.name.clone()).collect(),
@@ -856,7 +837,7 @@ pub(super) fn collect_local_nominal_declarations(
                             type_info
                                 .declarations
                                 .model_field_types
-                                .get(&(field.span.start, field.span.end))
+                                .get(&field.span)
                                 .map(|ty| parameter_types::checked_parameter_type(ty, type_info, &type_parameters))
                                 .unwrap_or(IncanType::Unknown)
                         }
@@ -966,7 +947,7 @@ fn checked_trait_adoptions(owner: &str, parameters: &[String], facts: &TypeCheck
         .into_iter()
         .flatten()
         .map(|adoption| {
-            let key = (adoption.span.start, adoption.span.end);
+            let key = adoption.span;
             let arguments = facts
                 .traits
                 .body_ir_adoption_type_args
@@ -1010,11 +991,7 @@ fn collect_plain_newtype(
     {
         return None;
     }
-    let canonical = type_info
-        .declarations
-        .declaration_identities
-        .get(&(span.start, span.end))?
-        .clone();
+    let canonical = type_info.declarations.declaration_identities.get(&span)?.clone();
     let underlying = parameter_types::checked_parameter_type(&facts.underlying, type_info, &facts.type_params);
     if !facts.constraints.is_empty() && underlying != IncanType::Primitive(IncanPrimitiveType::Int) {
         return None;
@@ -1046,7 +1023,7 @@ fn collect_plain_newtype(
         native_item: String::new(),
         class_inheritance: None,
         native_type_arguments: Vec::new(),
-        direct_declaration_id: CompilerNodeId::declaration_span(module_identity, span.start, span.end),
+        direct_declaration_id: CompilerNodeId::declaration_at(module_identity, span),
         field_identities: vec![canonical.clone()],
         canonical,
         name: newtype.name.clone(),
@@ -1088,10 +1065,7 @@ fn collect_field_metadata(
                 .contains(&(name.to_owned(), field.node.name.clone()))
         })
         .map(|field| {
-            let ty = facts
-                .declarations
-                .model_field_types
-                .get(&(field.span.start, field.span.end))?;
+            let ty = facts.declarations.model_field_types.get(&field.span)?;
             Some(bir::FieldMetadata {
                 name: field.node.name.clone(),
                 alias: field.node.metadata.alias.clone(),
@@ -1115,7 +1089,7 @@ fn checked_display_method(declaration: &ast::Declaration, type_info: &TypeCheckI
         return type_info
             .declarations
             .method_bindings_by_span
-            .get(&(method.span.start, method.span.end))?
+            .get(&method.span)?
             .identity
             .clone();
     }
@@ -1144,7 +1118,7 @@ pub(super) fn collect_local_fieldless_enum_declarations(
             let canonical = type_info
                 .declarations
                 .declaration_identities
-                .get(&(declaration.span.start, declaration.span.end))?
+                .get(&declaration.span)?
                 .clone();
             let variants = enum_decl
                 .variants
@@ -1153,25 +1127,17 @@ pub(super) fn collect_local_fieldless_enum_declarations(
                     let canonical = type_info
                         .declarations
                         .member_declaration_identities
-                        .get(&(variant.span.start, variant.span.end))?
+                        .get(&variant.span)?
                         .clone();
                     Some(bir::FieldlessEnumVariantDeclaration {
-                        direct_declaration_id: CompilerNodeId::declaration_span(
-                            module_identity,
-                            variant.span.start,
-                            variant.span.end,
-                        ),
+                        direct_declaration_id: CompilerNodeId::declaration_at(module_identity, variant.span),
                         canonical,
                         name: variant.node.name.clone(),
                     })
                 })
                 .collect::<Option<Vec<_>>>()?;
             Some(bir::FieldlessEnumDeclaration {
-                direct_declaration_id: CompilerNodeId::declaration_span(
-                    module_identity,
-                    declaration.span.start,
-                    declaration.span.end,
-                ),
+                direct_declaration_id: CompilerNodeId::declaration_at(module_identity, declaration.span),
                 canonical,
                 name: enum_decl.name.clone(),
                 variants,
@@ -1202,7 +1168,7 @@ pub(super) fn collect_local_value_enum_declarations(
             let canonical = type_info
                 .declarations
                 .declaration_identities
-                .get(&(declaration.span.start, declaration.span.end))?
+                .get(&declaration.span)?
                 .clone();
             let backing = match enum_decl.value_type.as_ref().map(|value| value.node) {
                 Some(ast::ValueEnumType::Int) => bir::ValueEnumBacking::Int,
@@ -1216,7 +1182,7 @@ pub(super) fn collect_local_value_enum_declarations(
                     let canonical = type_info
                         .declarations
                         .member_declaration_identities
-                        .get(&(variant.span.start, variant.span.end))?
+                        .get(&variant.span)?
                         .clone();
                     let raw_value = match variant.node.value.as_ref().map(|value| &value.node) {
                         Some(ast::ValueEnumLiteral::Int(value)) if matches!(backing, bir::ValueEnumBacking::Int) => {
@@ -1228,11 +1194,7 @@ pub(super) fn collect_local_value_enum_declarations(
                         _ => return None,
                     };
                     Some(bir::ValueEnumVariantDeclaration {
-                        direct_declaration_id: CompilerNodeId::declaration_span(
-                            module_identity,
-                            variant.span.start,
-                            variant.span.end,
-                        ),
+                        direct_declaration_id: CompilerNodeId::declaration_at(module_identity, variant.span),
                         canonical,
                         name: variant.node.name.clone(),
                         raw_value,
@@ -1240,11 +1202,7 @@ pub(super) fn collect_local_value_enum_declarations(
                 })
                 .collect::<Vec<_>>();
             (variants.len() == enum_decl.variants.len()).then(|| bir::ValueEnumDeclaration {
-                direct_declaration_id: CompilerNodeId::declaration_span(
-                    module_identity,
-                    declaration.span.start,
-                    declaration.span.end,
-                ),
+                direct_declaration_id: CompilerNodeId::declaration_at(module_identity, declaration.span),
                 canonical,
                 name: enum_decl.name.clone(),
                 backing,
@@ -1269,7 +1227,7 @@ pub(super) fn collect_local_trait_declarations(
             type_info
                 .declarations
                 .declaration_identities
-                .get(&(declaration.span.start, declaration.span.end))
+                .get(&declaration.span)
                 .cloned()
         })
         .collect()
@@ -1370,13 +1328,9 @@ fn adopted_local_traits<'program>(
             match type_info
                 .traits
                 .body_ir_adoption_type_args
-                .get(&(adoption.span.start, adoption.span.end))
-                .or_else(|| {
-                    type_info
-                        .traits
-                        .adoption_type_args
-                        .get(&(adoption.span.start, adoption.span.end))
-                }) {
+                .get(&adoption.span)
+                .or_else(|| type_info.traits.adoption_type_args.get(&adoption.span))
+            {
                 Some(arguments) if arguments.len() == declaration.type_params.len() => arguments.clone(),
                 _ => continue,
             }
@@ -1432,7 +1386,7 @@ fn slot_implementation(
         [candidate] => type_info
             .declarations
             .method_bindings_by_span
-            .get(&(candidate.span.start, candidate.span.end))
+            .get(&candidate.span)
             .and_then(|binding| binding.identity.clone())
             .map(|identity| (identity, Vec::new())),
         [] if slot.node.body.is_some() => type_info
@@ -1480,10 +1434,10 @@ fn instantiated_slot_signature_matches(
     candidate: &ast::Spanned<ast::MethodDecl>,
 ) -> bool {
     let bindings = &facts.declarations.method_bindings_by_span;
-    let Some(expected) = bindings.get(&(slot.span.start, slot.span.end)) else {
+    let Some(expected) = bindings.get(&slot.span) else {
         return false;
     };
-    let Some(actual) = bindings.get(&(candidate.span.start, candidate.span.end)) else {
+    let Some(actual) = bindings.get(&candidate.span) else {
         return false;
     };
     let parameters = adopted
@@ -1546,7 +1500,7 @@ fn derived_trait_implementations(
                 (Some(candidate), None) => type_info
                     .declarations
                     .method_bindings_by_span
-                    .get(&(candidate.span.start, candidate.span.end))
+                    .get(&candidate.span)
                     .and_then(|binding| binding.identity.clone()),
                 (None, None) if method.has_default => Some(method.method.clone()),
                 _ => None,
@@ -1588,11 +1542,7 @@ pub(super) fn collect_trait_argument_witnesses(
             ast::Declaration::Newtype(value) => &value.traits,
             _ => continue,
         };
-        let Some(identity) = facts
-            .declarations
-            .declaration_identities
-            .get(&(declaration.span.start, declaration.span.end))
-        else {
+        let Some(identity) = facts.declarations.declaration_identities.get(&declaration.span) else {
             continue;
         };
         let Some(owner) = nominals.iter().find(|owner| &owner.canonical == identity) else {
@@ -1603,10 +1553,9 @@ pub(super) fn collect_trait_argument_witnesses(
                 .declarations
                 .iter()
                 .find_map(|declaration| match &declaration.node {
-                    ast::Declaration::Trait(value) if std::ptr::eq(value, adopted.declaration) => facts
-                        .declarations
-                        .declaration_identities
-                        .get(&(declaration.span.start, declaration.span.end)),
+                    ast::Declaration::Trait(value) if std::ptr::eq(value, adopted.declaration) => {
+                        facts.declarations.declaration_identities.get(&declaration.span)
+                    }
                     _ => None,
                 })
             else {
@@ -1658,11 +1607,7 @@ pub(super) fn collect_local_trait_implementations(
             }
             _ => continue,
         };
-        let Some(owner) = type_info
-            .declarations
-            .declaration_identities
-            .get(&(declaration.span.start, declaration.span.end))
-        else {
+        let Some(owner) = type_info.declarations.declaration_identities.get(&declaration.span) else {
             continue;
         };
         let retained = nominal_declarations
@@ -1736,7 +1681,7 @@ fn property_implementations(
             let Some(method) = facts
                 .declarations
                 .body_ir_property_bindings
-                .get(&(slot.span.start, slot.span.end))
+                .get(&slot.span)
                 .and_then(|binding| binding.callable.identity.as_ref())
             else {
                 continue;
@@ -1753,7 +1698,7 @@ fn property_implementations(
             let Some(implementation) = facts
                 .declarations
                 .body_ir_property_bindings
-                .get(&(property.span.start, property.span.end))
+                .get(&property.span)
                 .and_then(|binding| binding.callable.identity.as_ref())
             else {
                 continue;
@@ -1854,7 +1799,7 @@ fn imported_slot_arguments(
     if parameters.is_empty() {
         return adoption.node.type_args.is_empty().then(Vec::new);
     }
-    let key = (adoption.span.start, adoption.span.end);
+    let key = adoption.span;
     let arguments = type_info
         .traits
         .body_ir_adoption_type_args
@@ -2006,7 +1951,7 @@ fn imported_slot_implementation(
         [candidate] => type_info
             .declarations
             .method_bindings_by_span
-            .get(&(candidate.span.start, candidate.span.end))
+            .get(&candidate.span)
             .and_then(|binding| binding.identity.clone()),
         [] if defaults && type_info.traits.default_method_identities.contains(method) => Some(method.clone()),
         _ => None,

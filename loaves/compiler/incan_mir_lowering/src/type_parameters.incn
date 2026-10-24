@@ -18,7 +18,6 @@ from rust::incan_semantics_core::body_ir import (
     nominal_carrier_key,
     TraitDefaultInstantiation,
 )
-from rust::std::vec import Vec as NativeVec
 from symbols import type_component
 
 
@@ -162,9 +161,10 @@ pub def instantiate(body: &Body, arguments: list[RustType], owned_callable_slots
     pointers = native_pointer_parameters(body, storage)
     if len(pointers) != 0:
         result = retain_native_pointer_storage(result, pointers)
+    body_name = str(body.name)
     for index in range(len(result.locals)):
         concrete: RustType = substitute(result.locals[index].ty, names, storage).map_err(
-            (reason) => f"{reason} in instantiated local of {body.name}",
+            (reason) => f"{reason} in instantiated local of {body_name}",
         )?
         result.locals[index].ty = source_nominal_storage(body, concrete)?
     for index in range(len(result.params)):
@@ -172,7 +172,7 @@ pub def instantiate(body: &Body, arguments: list[RustType], owned_callable_slots
         result.params[index].ty = source_nominal_storage(body, concrete)?
     concrete: RustType = substitute(result.return_type, names, storage)?
     result.return_type = source_nominal_storage(body, concrete)?
-    mut name = str(body.name)
+    mut name = body_name
     for argument in arguments:
         name += type_component(argument)
     for slot in owned_callable_slots:
@@ -353,12 +353,12 @@ def retain_native_pointer_storage(body: &Body, names: list[str]) -> Body:
     match body.callable_representation:
         Some(representation) =>
             mut retained = representation.clone()
-            mut pointers: NativeVec[RustLocalId] = NativeVec.new()
+            mut pointers: list[RustLocalId] = []
             for local in body.locals:
                 match local.ty:
                     RustType.TypeVar(name) =>
                         if str(name) in names:
-                            pointers.push(local.id.clone())
+                            pointers.append(local.id.clone())
                     _ => pass
             local_holds: list[RustLocalId] = without_locals(retained.closure_holding_locals, pointers)
             parameter_holds: list[RustLocalId] = without_locals(retained.closure_holding_parameters, pointers)

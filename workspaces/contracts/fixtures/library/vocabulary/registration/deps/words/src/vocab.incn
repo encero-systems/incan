@@ -1,10 +1,21 @@
 """Register a descriptor without requesting custom expansion during production."""
 
 from std.vocab import ClauseSurface, DeclarationSurface, DslSurface, VocabRegistration
+from std.vocab import DesugarRequest, IncanExpr, Span, VocabSyntaxNode, VOCAB_SYNTAX_VERSION
 
 
 pub def library_vocab() -> VocabRegistration:
     """Publish the import-activated note declaration."""
+    expression = IncanExpr.path("orders", Span(start=10, end=16))
+    request = DesugarRequest(node=VocabSyntaxNode.Expression(expression), module_path="consumer.incn")
+    match DesugarRequest.from_json(request.to_json()):
+        Ok(decoded) =>
+            assert decoded.schema_version == VOCAB_SYNTAX_VERSION
+            assert decoded.module_path == "consumer.incn"
+            assert decoded.node.span().start == 10
+            assert decoded.node.span().end == 16
+        Err(_) =>
+            assert false
     mut note = DeclarationSurface.named("note").with_header_args().with_clause_body()
     clause = ClauseSurface.expr("VALUE OF").required()
     note = note.with_clause(clause)

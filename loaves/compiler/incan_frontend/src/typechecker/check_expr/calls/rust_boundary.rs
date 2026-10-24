@@ -223,7 +223,7 @@ impl TypeChecker {
                 self.type_info
                     .rust
                     .closure_param_type_displays
-                    .insert((arg_expr.span.start, arg_expr.span.end), param_displays);
+                    .insert(arg_expr.span, param_displays);
             }
             Expr::Ident(name) => {
                 self.type_info
@@ -368,12 +368,7 @@ impl TypeChecker {
         &self,
         expression: &Spanned<Expr>,
     ) -> Option<ResolvedType> {
-        if let Some(conversion) = self
-            .type_info
-            .rust
-            .element_adjustments
-            .get(&(expression.span.start, expression.span.end))
-        {
+        if let Some(conversion) = self.type_info.rust.element_adjustments.get(&expression.span) {
             return Some(ResolvedType::Generic(
                 "List".into(),
                 vec![conversion.return_type.clone()],
@@ -796,7 +791,7 @@ impl TypeChecker {
             self.type_info
                 .calls
                 .call_site_monomorph_type_args
-                .insert((span.start, span.end), arguments);
+                .insert(span, arguments);
         }
     }
 
@@ -843,7 +838,7 @@ impl TypeChecker {
             result
         };
         self.type_info.rust.checked_calls.insert(
-            (span.start, span.end),
+            span,
             crate::typechecker::type_info::RustCheckedCall {
                 storage: None,
                 source_type_parameters: self.native_call_type_parameters(),
@@ -879,7 +874,7 @@ impl TypeChecker {
         &mut self,
         span: Span,
     ) -> Option<ResolvedType> {
-        let key = (span.start, span.end);
+        let key = span;
         let selected = self.type_info.rust.checked_calls.remove(&key)?;
         let ty = ResolvedType::Function(selected.parameters.clone(), Box::new(selected.return_type.clone()));
         self.type_info.rust.checked_function_values.insert(key, selected);
@@ -893,12 +888,7 @@ impl TypeChecker {
         incan_ret: &ResolvedType,
         span: Span,
     ) {
-        if self
-            .type_info
-            .rust
-            .native_return_consumers
-            .contains(&(span.start, span.end))
-        {
+        if self.type_info.rust.native_return_consumers.contains(&span) {
             return;
         }
         let normalized = rust_return_type.replace(' ', "");
@@ -918,7 +908,7 @@ impl TypeChecker {
             return;
         };
         self.type_info.rust.return_coercions.insert(
-            (span.start, span.end),
+            span,
             RustArgCoercionInfo {
                 rust_target_type: rust_target_type.to_string(),
                 target_type,
@@ -1291,14 +1281,8 @@ impl TypeChecker {
                     // (for example `String::from(match_.as_str())`). Record the consumption as well as clearing an
                     // existing coercion because return and argument artifacts can be discovered in either order.
                     // The Rust bound remains the final authority.
-                    self.type_info
-                        .rust
-                        .native_return_consumers
-                        .insert((arg_expr.span.start, arg_expr.span.end));
-                    self.type_info
-                        .rust
-                        .return_coercions
-                        .remove(&(arg_expr.span.start, arg_expr.span.end));
+                    self.type_info.rust.native_return_consumers.insert(arg_expr.span);
+                    self.type_info.rust.return_coercions.remove(&arg_expr.span);
                 }
                 if record_exact_builtin_coercion
                     && let Some(incan_display) = Self::incan_boundary_type_display(arg_ty)
@@ -1306,7 +1290,7 @@ impl TypeChecker {
                         == Some(CoercionPolicy::Exact)
                 {
                     self.type_info.rust.arg_coercions.insert(
-                        (arg_expr.span.start, arg_expr.span.end),
+                        arg_expr.span,
                         RustArgCoercionInfo {
                             rust_target_type: normalized,
                             target_type: target_ty,
@@ -1320,7 +1304,7 @@ impl TypeChecker {
                     return;
                 }
                 self.type_info.rust.arg_coercions.insert(
-                    (arg_expr.span.start, arg_expr.span.end),
+                    arg_expr.span,
                     RustArgCoercionInfo {
                         rust_target_type: normalized,
                         target_type: target_ty,
@@ -1374,10 +1358,7 @@ impl TypeChecker {
         let Some(conversion) = self.native_element_conversion(source, target) else {
             return false;
         };
-        self.type_info
-            .rust
-            .element_adjustments
-            .insert((expression.span.start, expression.span.end), conversion);
+        self.type_info.rust.element_adjustments.insert(expression.span, conversion);
         true
     }
 
@@ -1410,7 +1391,7 @@ impl TypeChecker {
             let Some(conversion) = self.native_element_conversion(source, target) else {
                 return false;
             };
-            conversions.push(((value.span.start, value.span.end), vec![conversion]));
+            conversions.push((value.span, vec![conversion]));
         }
 
         // ---- Retain only a fully selected literal ----
@@ -1429,7 +1410,7 @@ impl TypeChecker {
     pub(in crate::typechecker) fn preserve_unresolved_rust_call_argument_returns(&mut self, args: &[CallArg]) {
         for arg in args {
             let expr = Self::call_arg_expr(arg);
-            let key = (expr.span.start, expr.span.end);
+            let key = expr.span;
             self.type_info.rust.native_return_consumers.insert(key);
             self.type_info.rust.return_coercions.remove(&key);
         }
@@ -1722,16 +1703,10 @@ impl TypeChecker {
         let contextual_types = self.contextualize_rust_bound_closures(sig, args, arg_types);
         let arg_types = contextual_types.as_slice();
         if let Some(contract) = sig.receiver_contract {
-            self.type_info
-                .rust
-                .receiver_contracts
-                .insert((span.start, span.end), contract);
+            self.type_info.rust.receiver_contracts.insert(span, contract);
         }
         if sig.is_async {
-            self.type_info
-                .rust
-                .async_call_realizations
-                .insert((span.start, span.end));
+            self.type_info.rust.async_call_realizations.insert(span);
         }
         if sig.is_async && !self.is_in_await_operand(span) {
             self.errors
@@ -1824,10 +1799,7 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
         if sig.is_async {
-            self.type_info
-                .rust
-                .async_call_realizations
-                .insert((span.start, span.end));
+            self.type_info.rust.async_call_realizations.insert(span);
         }
         if sig.is_async && !self.is_in_await_operand(span) {
             self.errors.push(errors::async_call_without_await(path, span));
@@ -1904,7 +1876,7 @@ mod validate_rust_function_call_tests {
         let span = Span::new(10, 20);
         let argument = Spanned::new(Expr::Ident("borrowed".to_string()), span);
         checker.type_info.rust.return_coercions.insert(
-            (span.start, span.end),
+            span,
             RustArgCoercionInfo {
                 rust_target_type: "String".to_string(),
                 target_type: ResolvedType::Str,
@@ -1925,7 +1897,7 @@ mod validate_rust_function_call_tests {
         );
         assert_eq!(
             checker.type_info.rust.native_return_consumers,
-            std::collections::HashSet::from([(span.start, span.end)])
+            std::collections::HashSet::from([span])
         );
     }
 
@@ -1935,7 +1907,7 @@ mod validate_rust_function_call_tests {
         let span = Span::new(30, 45);
         let argument = Spanned::new(Expr::Ident("borrowed".to_string()), span);
         checker.type_info.rust.return_coercions.insert(
-            (span.start, span.end),
+            span,
             RustArgCoercionInfo {
                 rust_target_type: "String".to_string(),
                 target_type: ResolvedType::Str,
@@ -1946,13 +1918,7 @@ mod validate_rust_function_call_tests {
         checker.preserve_unresolved_rust_call_argument_returns(&[CallArg::Positional(argument)]);
 
         assert!(checker.type_info.rust.return_coercions.is_empty());
-        assert!(
-            checker
-                .type_info
-                .rust
-                .native_return_consumers
-                .contains(&(span.start, span.end))
-        );
+        assert!(checker.type_info.rust.native_return_consumers.contains(&span));
     }
 
     #[test]
@@ -2073,7 +2039,7 @@ mod validate_rust_function_call_tests {
                 .type_info
                 .rust
                 .arg_coercions
-                .get(&(span.start, span.end))
+                .get(&span)
                 .map(|coercion| coercion.kind),
             Some(RustArgCoercionKind::Borrow { mutable: true })
         );
@@ -2455,7 +2421,7 @@ mod validate_rust_function_call_tests {
             .type_info
             .calls
             .call_site_callable_params
-            .get(&(span.start, span.end))
+            .get(&span)
             .expect("keyword Rust calls should record exact call-site params for lowering");
         let names: Vec<_> = recorded.iter().filter_map(|param| param.name.as_deref()).collect();
         assert_eq!(names, vec!["count", "text"]);
@@ -2739,11 +2705,7 @@ mod validate_rust_function_call_tests {
             checker.errors
         );
         assert!(
-            checker
-                .type_info
-                .rust
-                .arg_coercions
-                .contains_key(&(span.start, span.end)),
+            checker.type_info.rust.arg_coercions.contains_key(&span),
             "expected rust arg coercion metadata for borrowed String boundary"
         );
         let expected = ResolvedType::Ref(Box::new(ResolvedType::RustPath("String".to_string())));
@@ -2752,7 +2714,7 @@ mod validate_rust_function_call_tests {
                 .type_info
                 .rust
                 .arg_coercions
-                .get(&(span.start, span.end))
+                .get(&span)
                 .map(|coercion| &coercion.target_type),
             Some(&expected),
             "borrowed owned Rust params must preserve owned target shape in lowering metadata"
@@ -2792,7 +2754,7 @@ mod validate_rust_function_call_tests {
                 .type_info
                 .rust
                 .arg_coercions
-                .get(&(span.start, span.end))
+                .get(&span)
                 .map(|coercion| &coercion.target_type),
             Some(&expected),
             "borrowed str params must stay distinct from borrowed owned String params"
@@ -2832,7 +2794,7 @@ mod validate_rust_function_call_tests {
                 .type_info
                 .rust
                 .arg_coercions
-                .get(&(span.start, span.end))
+                .get(&span)
                 .map(|coercion| &coercion.target_type),
             Some(&expected),
             "borrowed owned Rust byte-vector params must preserve owned target shape in lowering metadata"
@@ -2928,11 +2890,7 @@ mod validate_rust_function_call_tests {
             checker.errors
         );
         assert!(
-            checker
-                .type_info
-                .rust
-                .arg_coercions
-                .contains_key(&(span.start, span.end)),
+            checker.type_info.rust.arg_coercions.contains_key(&span),
             "expected rust arg coercion metadata for rusttype target boundary"
         );
     }
@@ -2988,7 +2946,7 @@ mod validate_rust_function_call_tests {
                 .type_info
                 .calls
                 .call_site_callable_params
-                .get(&(span.start, span.end))
+                .get(&span)
                 .is_some_and(|params| params.len() == 1 && params[0].ty == ResolvedType::TypeVar("T".to_string())),
             "expected Rust by-value generic method param shape to be recorded, got {:?}",
             checker.type_info.calls.call_site_callable_params
@@ -3028,7 +2986,7 @@ mod validate_rust_function_call_tests {
                 .type_info
                 .calls
                 .call_site_callable_params
-                .get(&(span.start, span.end))
+                .get(&span)
                 .is_some_and(|params| params.len() == 1 && params[0].ty == ResolvedType::Str),
             "an inspected by-value String parameter must reach lowering exactly"
         );
@@ -3079,7 +3037,7 @@ mod validate_rust_function_call_tests {
                 .type_info
                 .calls
                 .call_site_callable_params
-                .get(&(span.start, span.end))
+                .get(&span)
                 .is_some_and(|params| params.len() == 1
                     && params[0].ty == ResolvedType::TypeVar("implBuf".to_string())),
             "expected Rust by-value impl Trait method param shape to be recorded, got {:?}",
@@ -3203,11 +3161,7 @@ mod validate_rust_function_call_tests {
             checker.errors
         );
         assert!(
-            checker
-                .type_info
-                .rust
-                .arg_coercions
-                .contains_key(&(span.start, span.end)),
+            checker.type_info.rust.arg_coercions.contains_key(&span),
             "expected rust arg coercion metadata for rust method boundary"
         );
     }

@@ -76,21 +76,29 @@ pub def function_name(module: &BodyIrModule, body: &Body) -> str:
             if identity.kind == SemanticSourceTargetKind.Function:
                 # Overloads share their source name, so each takes its own declaration span as well.
                 if has_overloaded_name(module, body, identity):
-                    return f"__incan_overload_{body.span.start}{symbol_component(str(body.name))}"
+                    return f"__incan_overload_{body_span_symbol(body)}{symbol_component(str(body.name))}"
                 return str(body.name)
         None => pass
     if len(body.locals) != 0:
         match receiver_mode(body.locals[0].origin):
             Some(_mutable) =>
-                mut symbol = f"__incan_body_{body.span.start}{type_component(body.locals[0].ty)}"
+                mut symbol = f"__incan_body_{body_span_symbol(body)}{type_component(body.locals[0].ty)}"
                 if len(body.type_parameters) != 0:
                     symbol += symbol_component(str(body.name))
                 return symbol
             None => pass
     # Instances of one associated method share its span; the instantiated name tells their frames apart.
     if len(body.type_parameters) != 0:
-        return f"__incan_body_{body.span.start}{symbol_component(str(body.name))}"
-    return f"__incan_body_{body.span.start}"
+        return f"__incan_body_{body_span_symbol(body)}{symbol_component(str(body.name))}"
+    return f"__incan_body_{body_span_symbol(body)}"
+
+
+def body_span_symbol(body: &Body) -> str:
+    """Retain authored symbols while distinguishing generated frames by their complete checked declaration identity."""
+    mut symbol = str(body.span.start)
+    if body.span.is_generated():
+        symbol += symbol_component(body.direct_call_id.path())
+    return symbol
 
 
 pub def is_program_entry(module: &BodyIrModule, body: &Body) -> bool:
@@ -112,7 +120,7 @@ def has_overloaded_name(module: &BodyIrModule, body: &Body, identity: &Canonical
     """Report whether another function of the same module declares this body's source name, as overloads do."""
     owner = canonical_module_identity(identity)
     for other in module.bodies:
-        if other.name != body.name or other.span.start == body.span.start:
+        if other.name != body.name or other.span == body.span:
             continue
         match other.canonical:
             Some(other_identity) =>
@@ -190,7 +198,7 @@ def module_function_symbol(owner: str, body: &Body) -> str:
             None => pass
     if len(body.type_parameters) != 0:
         symbol += symbol_component(str(body.name))
-    return f"{symbol}_{body.span.start}_{body.span.end}"
+    return f"{symbol}_{body_span_symbol(body)}_{body.span.end}"
 
 
 pub def method_receiver(

@@ -25,7 +25,7 @@ from unit import UnitDescription, UnitLoaf, describe
 from observation import trace
 from unit_compiler import compile_prepared_unit
 from unit_freshness import artifact_files, record, staleness, unit_key
-from vocabulary import prepare_vocabulary
+from vocabulary import prepare_vocabulary, stage_vocabulary
 
 
 pub def describe_native(source: Path, profile: str, request: FeatureRequest) -> Result[UnitDescription, str]:
@@ -76,13 +76,14 @@ def rebase_loaves(declared: list[UnitLoaf], providers: list[Tuple[str, str]]) ->
     return result
 
 
-def compile_library_unit(library: UnitDescription, toolchain: Toolchain, output: Path) -> Result[i32, str]:
+pub def compile_library_unit(library: UnitDescription, toolchain: Toolchain, output: Path) -> Result[i32, str]:
     """
-    Keep a prepared library's current artifact or compile and record its complete replacement.
+    Reuse or replace a prepared library and record all published artifacts.
+    The caller supplies its selected toolchain and exact output path after dependency preparation is complete.
 
     1. Key the library against its stored artifact stamp.
-    2. Reuse a current library, or withdraw its stale stamp before compilation.
-    3. Require every artifact before recording the completed build.
+    2. Reuse a current library, or withdraw its stale stamp and stage its vocabulary worker before compilation.
+    3. Require every published artifact, including a worker its manifest names, before recording the build.
     """
     # 1. Both source and native inputs contribute to the ordinary library key.
     directory = output.parent()
@@ -96,14 +97,17 @@ def compile_library_unit(library: UnitDescription, toolchain: Toolchain, output:
         return Ok(0)
     if stamp.is_file():
         stamp.unlink().map_err((error) => f"{stamp.0}: {error.message()}")?
+    stage_vocabulary(library, directory)?
     compiled = compile_prepared_unit(library, toolchain, output, Some(key), why)?
     if compiled != 0:
         return Ok(compiled)
-    # 3. Partial publication never receives a stamp.
-    for artifact in artifacts:
+    # 3. Partial publication never receives a stamp. Publication can add an indexed Rust ABI cache, and the new
+    #    manifest decides whether a vocabulary worker belongs to the completed set.
+    completed = artifact_files(directory, library.package)
+    for artifact in completed:
         if not artifact.is_file():
             return Err(f"compiler did not publish {artifact.0}")
-    record(stamp, key, artifacts)?
+    record(stamp, key, completed)?
     return Ok(0)
 
 

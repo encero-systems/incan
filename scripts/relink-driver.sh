@@ -32,7 +32,7 @@ fi
 emitted=$EPOCHREALTIME
 
 sysroot=$(jq -er '.sysroot' "$toolchain/toolchain.json")
-export RUSTC=$sysroot/bin/rustc INCAN_STDLIB=$bootstrap/stdlib-available INCAN_HOME=$toolchain_home
+export RUSTC=$sysroot/bin/rustc INCAN_STDLIB=${SELFBUILD_STDLIB:-$bootstrap/stdlib-available} INCAN_HOME=$toolchain_home
 prepared=$EPOCHREALTIME
 build_log=${INCAN_RELINK_LOG:-$bootstrap/driver-build-$profile.log}
 

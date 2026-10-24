@@ -75,7 +75,7 @@ fn documented_trait_value_placeholder(
     type_info
         .declarations
         .method_bindings_by_span
-        .get(&(method.span.start, method.span.end))
+        .get(&method.span)
         .is_some_and(|binding| binding.return_type != ResolvedType::Unit)
 }
 
@@ -179,19 +179,13 @@ pub(super) fn lower_static_initializer_body(
 ) -> bir::Body {
     let mut builder = BodyBuilder::new(lowering_facts, ty.clone());
     if registry_effects::entry_type(storage, decl_span, lowering_facts.type_info).as_ref() == Some(ty) {
-        builder
-            .type_overrides
-            .insert((storage.value.span.start, storage.value.span.end), ty.clone());
+        builder.type_overrides.insert(storage.value.span, ty.clone());
     }
     if registry_descriptions::initialization_type(storage, lowering_facts.type_info).as_ref() == Some(ty)
         && let ast::Expr::MethodCall(receiver, _, _, _) = &storage.value.node
     {
-        builder
-            .type_overrides
-            .insert((storage.value.span.start, storage.value.span.end), ty.clone());
-        builder
-            .type_overrides
-            .insert((receiver.span.start, receiver.span.end), ty.clone());
+        builder.type_overrides.insert(storage.value.span, ty.clone());
+        builder.type_overrides.insert(receiver.span, ty.clone());
     }
     let root_scope = builder.new_scope(None, hir_span(decl_span));
     let source = [ast::Spanned::new(
@@ -226,9 +220,7 @@ pub(super) fn lower_constant_initializer_body(
     lowering_facts: &BodyIrLoweringFacts<'_, '_>,
 ) -> bir::Body {
     let mut builder = BodyBuilder::new(lowering_facts, ty.clone());
-    builder
-        .type_overrides
-        .insert((item.value.span.start, item.value.span.end), ty.clone());
+    builder.type_overrides.insert(item.value.span, ty.clone());
     let root_scope = builder.new_scope(None, hir_span(decl_span));
     let source = [ast::Spanned::new(
         ast::Statement::Return(Some(item.value.clone())),
@@ -257,7 +249,7 @@ pub(super) fn finish_static_initializer_body(
     }
     let named_type_identities =
         builder.finish_type_identities(parameter_types::retained_type_identities(builder.type_info));
-    let direct_call_id = CompilerNodeId::declaration_span(builder.module_identity, span.start, span.end);
+    let direct_call_id = CompilerNodeId::declaration_at(builder.module_identity, span);
     bir::Body {
         type_parameters: Vec::new(),
         trait_default_instantiation: None,
@@ -297,8 +289,7 @@ pub(super) fn lower_function_body(
     decl_span: ast::Span,
     lowering_facts: &BodyIrLoweringFacts<'_, '_>,
 ) -> bir::Body {
-    let direct_call_id =
-        CompilerNodeId::declaration_span(lowering_facts.module_identity, decl_span.start, decl_span.end);
+    let direct_call_id = CompilerNodeId::declaration_at(lowering_facts.module_identity, decl_span);
     let decl_id = direct_call_id.clone();
     // The bare-name map is a compatibility projection and collapses top-level overloads. A body is one physical
     // declaration, so its parameter types must come from the same span-keyed fact the direct-call identity uses.
@@ -306,13 +297,13 @@ pub(super) fn lower_function_body(
         .type_info
         .declarations
         .function_bindings_by_span
-        .get(&(decl_span.start, decl_span.end));
+        .get(&decl_span);
     let type_parameters = crate::body_ir_parameter_names::source_parameter_names(&function.type_params);
     let shared_method_chain = lowering_facts
         .type_info
         .declarations
         .method_decorator_receiver_slots
-        .get(&(decl_span.start, decl_span.end))
+        .get(&decl_span)
         .is_some_and(|slot| !slot.mutable);
     let owner_return_type = binding
         .map(|binding| {
@@ -347,7 +338,7 @@ pub(super) fn lower_function_body(
             .type_info
             .declarations
             .method_decorator_receiver_slots
-            .get(&(decl_span.start, decl_span.end))
+            .get(&decl_span)
             .is_some_and(|slot| {
                 !slot.mutable && slot.role == crate::typechecker::MethodDecoratorReceiverRole::Replacement
             });
@@ -403,7 +394,7 @@ pub(super) fn lower_function_body(
         .type_info
         .declarations
         .decorated_function_bindings_by_span
-        .contains_key(&(decl_span.start, decl_span.end))
+        .contains_key(&decl_span)
         && !decorated_bindings::supports_function(function, decl_span, lowering_facts);
     let (stmts, extern_delegation) = lower_declaration_statements(
         &mut builder,
@@ -466,7 +457,7 @@ pub(super) fn lower_function_body(
             .type_info
             .declarations
             .native_attribute_applications
-            .get(&(decl_span.start, decl_span.end))
+            .get(&decl_span)
             .cloned()
             .unwrap_or_default(),
     }
@@ -511,14 +502,13 @@ pub(super) fn lower_method_body(
         lowering_facts.module_identity,
         &format!("{owner_name}::{}", method.name),
     );
-    let direct_call_id =
-        CompilerNodeId::declaration_span(lowering_facts.module_identity, decl_span.start, decl_span.end);
+    let direct_call_id = CompilerNodeId::declaration_at(lowering_facts.module_identity, decl_span);
     // Computed getters use their dedicated checked property frame in `lower_getter_body`.
     let binding = lowering_facts
         .type_info
         .declarations
         .method_bindings_by_span
-        .get(&(decl_span.start, decl_span.end));
+        .get(&decl_span);
     let mut type_parameters = owner_parameter_names(receiver_ty, owner_name, lowering_facts.type_info);
     type_parameters.extend(method.type_params.iter().map(|parameter| parameter.name.clone()));
     let owner_return_type = binding

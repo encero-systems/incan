@@ -52,10 +52,7 @@ impl TypeChecker {
 
         let Some(sym_id) = self.symbols.lookup(name) else {
             if name == "log" {
-                self.type_info
-                    .expressions
-                    .ident_kinds
-                    .insert((span.start, span.end), IdentKind::Value);
+                self.type_info.expressions.ident_kinds.insert(span, IdentKind::Value);
                 self.type_info.record_ambient_logger_binding(span);
                 return self.ambient_logger_type().unwrap_or(ResolvedType::Unknown);
             }
@@ -91,7 +88,7 @@ impl TypeChecker {
         if let Some(span_carrier) = self.c_abi_span_bindings.get(name).copied() {
             if let Some(consumed_at) = self
                 .consumed_c_abi_span_bindings
-                .get(&(span_carrier.binding_span.start, span_carrier.binding_span.end))
+                .get(&span_carrier.binding_span)
                 .copied()
             {
                 self.errors.push(CompileError::type_error(
@@ -116,12 +113,8 @@ impl TypeChecker {
         {
             // A scoped C text view is read only as the receiver of `copy_utf8`, in the closure depth it was bound at
             // (RFC 116); any other read would let it outlive the memory it points into.
-            let receiver = self.scoped_c_string_view_receivers.contains(&(span.start, span.end));
-            let bound_depth = self
-                .scoped_c_string_view_bindings
-                .get(&(sym.span.start, sym.span.end))
-                .copied()
-                .unwrap_or(0);
+            let receiver = self.scoped_c_string_view_receivers.contains(&span);
+            let bound_depth = self.scoped_c_string_view_bindings.get(&sym.span).copied().unwrap_or(0);
             if !receiver || self.closure_depth > bound_depth {
                 self.errors.push(errors::scoped_c_string_view_escapes(span));
                 return ResolvedType::Unknown;
@@ -152,7 +145,7 @@ impl TypeChecker {
                     .map(|slot| slot.closure_depth)
             });
         if let Some(depth) = slot_depth
-            && (!self.c_abi_raw_argument_spans.contains(&(span.start, span.end)) || self.closure_depth > depth)
+            && (!self.c_abi_raw_argument_spans.contains(&span) || self.closure_depth > depth)
         {
             self.errors.push(CompileError::type_error(
                 "C output slots have no ordinary value surface and cannot be captured; use the checked raw call and take()".to_string(), span,
@@ -192,10 +185,7 @@ impl TypeChecker {
                 if !self.is_type_receiver_span(span) {
                     if !self.is_type_token_value_span(span) {
                         self.errors.push(errors::type_name_used_as_value(name, span));
-                        self.type_info
-                            .expressions
-                            .ident_kinds
-                            .insert((span.start, span.end), IdentKind::TypeName);
+                        self.type_info.expressions.ident_kinds.insert(span, IdentKind::TypeName);
                         return ResolvedType::Unknown;
                     }
                     let ty = if matches!(info, TypeInfo::Builtin) && sym.scope > 0 {
@@ -203,10 +193,7 @@ impl TypeChecker {
                     } else {
                         resolve_type(&Type::Simple(name.to_string()), &self.symbols)
                     };
-                    self.type_info
-                        .expressions
-                        .ident_kinds
-                        .insert((span.start, span.end), IdentKind::Value);
+                    self.type_info.expressions.ident_kinds.insert(span, IdentKind::Value);
                     if let Some(target) = source_target {
                         self.record_source_target(span, target.module_path, target.name, target.kind);
                     }
@@ -246,10 +233,7 @@ impl TypeChecker {
             SymbolKind::Trait(_) => {
                 if !self.is_type_receiver_span(span) {
                     self.errors.push(errors::type_name_used_as_value(name, span));
-                    self.type_info
-                        .expressions
-                        .ident_kinds
-                        .insert((span.start, span.end), IdentKind::Trait);
+                    self.type_info.expressions.ident_kinds.insert(span, IdentKind::Trait);
                     return ResolvedType::Unknown;
                 }
                 (IdentKind::Trait, ResolvedType::Named(name.to_string()))
@@ -263,7 +247,7 @@ impl TypeChecker {
                     self.type_info
                         .expressions
                         .ident_kinds
-                        .insert((span.start, span.end), IdentKind::RustImport);
+                        .insert(span, IdentKind::RustImport);
                     return ResolvedType::Unknown;
                 }
                 // RFC 041: carry canonical Rust path and (when available) extracted rust-inspect metadata.
@@ -281,11 +265,8 @@ impl TypeChecker {
                             self.resolved_function_type_from_rust_sig_for_owner_path(sig, false, info.path.as_str())
                         }
                         incan_lang::interop::RustItemKind::Constant { type_display } => {
-                            self.type_info
-                                .rust
-                                .checked_constants
-                                .insert((span.start, span.end), info.path.clone());
-                            self.resolved_type_from_rust_display(type_display.as_str())
+                            self.type_info.rust.checked_constants.insert(span, info.path.clone());
+                            self.native_rust_signature_type(type_display.as_str(), info.path.as_str())
                         }
                         incan_lang::interop::RustItemKind::Unsupported { description } => {
                             self.errors.push(errors::rust_item_shape_not_supported(
@@ -307,10 +288,7 @@ impl TypeChecker {
         let ty = native_function_value
             .and_then(|(path, signature)| self.retain_rust_function_value(&path, &signature, span))
             .unwrap_or(ty);
-        self.type_info
-            .expressions
-            .ident_kinds
-            .insert((span.start, span.end), kind);
+        self.type_info.expressions.ident_kinds.insert(span, kind);
         if let Some(target) = source_target {
             self.record_source_target(span, target.module_path, target.name, target.kind);
         }

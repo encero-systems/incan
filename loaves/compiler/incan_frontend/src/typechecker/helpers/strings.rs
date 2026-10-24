@@ -10,9 +10,13 @@ use incan_lang::lang::types::stringlike::StringLikeId;
 /// This returns `true` for:
 /// - `str` (runtime string)
 /// - `FrozenStr` (const-eval / frozen string)
+/// - shared native `&String` and `&str` views, without changing their checked storage
 pub fn is_str_like(ty: &ResolvedType) -> bool {
     matches!(ty, ResolvedType::Str | ResolvedType::FrozenStr)
         || matches!(ty, ResolvedType::Named(name) if stringlike_type_id(name.as_str()) == Some(StringLikeId::FrozenStr))
+        || matches!(ty, ResolvedType::Ref(inner)
+            if matches!(inner.as_ref(), ResolvedType::Str)
+                || matches!(inner.as_ref(), ResolvedType::RustPath(path) if path == "str"))
 }
 
 /// Check whether a resolved type is `FrozenStr`.

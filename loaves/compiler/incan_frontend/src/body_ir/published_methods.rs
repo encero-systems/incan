@@ -81,11 +81,7 @@ impl BodyBuilder<'_, '_> {
         if !type_args.is_empty()
             || !args.is_empty()
             || self.type_info.resolved_identity(span).is_some()
-            || self
-                .type_info
-                .traits
-                .self_method_identities
-                .contains_key(&(span.start, span.end))
+            || self.type_info.traits.self_method_identities.contains_key(&span)
         {
             return None;
         }

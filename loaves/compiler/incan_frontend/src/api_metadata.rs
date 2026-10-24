@@ -122,11 +122,8 @@ pub struct CheckedApiMetadata {
     pub declarations: Vec<ApiDeclaration>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SourceSpan {
-    pub start: usize,
-    pub end: usize,
-}
+/// Source coordinates and generated declaration identity retained by checked API publication.
+pub use incan_semantics_core::HirSourceSpan as SourceSpan;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceAnchor {
@@ -1301,7 +1298,7 @@ fn api_function(
             .type_info()
             .declarations
             .native_attribute_externs
-            .get(&(span.start, span.end))
+            .get(&span)
             .cloned(),
     }
 }
@@ -2741,7 +2738,7 @@ fn push_docstring_diagnostic(
 ) {
     diagnostics.push(ApiDocstringDiagnostic {
         module_path: module_path.to_vec(),
-        error: CompileError::new(message, Span::new(anchor.span.start, anchor.span.end)).with_hint(hint),
+        error: CompileError::new(message, anchor.span).with_hint(hint),
     });
 }
 
@@ -2835,10 +2832,7 @@ fn anchor(module_path: &[String], name: &str, span: Span) -> SourceAnchor {
 
 /// Convert a concrete span into an API metadata source span.
 fn source_span(span: Span) -> SourceSpan {
-    SourceSpan {
-        start: span.start,
-        end: span.end,
-    }
+    span
 }
 
 #[cfg(test)]

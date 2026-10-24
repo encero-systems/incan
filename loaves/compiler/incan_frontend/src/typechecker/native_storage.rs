@@ -101,8 +101,8 @@ impl TypeChecker {
             let parameters = source_storage_parameters(program, *span);
             self.rust_call_storage_type(ty, &parameters, storage, &mut BTreeMap::new());
         }
-        for ((start, end, _), ty) in &self.type_info.references.resolved_write_types {
-            let parameters = source_storage_parameters(program, (*start, *end));
+        for ((span, _), ty) in &self.type_info.references.resolved_write_types {
+            let parameters = source_storage_parameters(program, *span);
             self.rust_call_storage_type(ty, &parameters, storage, &mut BTreeMap::new());
         }
         for (identity, ty) in expressions
@@ -110,8 +110,7 @@ impl TypeChecker {
             .iter()
             .chain(&self.type_info.rust.value_native_types)
         {
-            let span = &identity.declaration_span;
-            let parameters = source_storage_parameters(program, (span.start, span.end));
+            let parameters = source_storage_parameters(program, identity.declaration_span);
             self.rust_call_storage_type(ty, &parameters, storage, &mut BTreeMap::new());
         }
     }
@@ -153,19 +152,16 @@ impl TypeChecker {
                 };
                 self.rust_call_storage_type(&alias, &parameters, storage, &mut BTreeMap::new());
             }
-            for ((start, end), ty) in facts.model_field_types.iter().chain(&facts.enum_payload_types) {
-                if *start >= declaration.span.start && *end <= declaration.span.end {
+            for (span, ty) in facts.model_field_types.iter().chain(&facts.enum_payload_types) {
+                if span.start >= declaration.span.start && span.end <= declaration.span.end {
                     self.rust_call_storage_type(ty, &parameters, storage, &mut BTreeMap::new());
                 }
             }
-            if let Some(binding) = facts
-                .function_bindings_by_span
-                .get(&(declaration.span.start, declaration.span.end))
-            {
+            if let Some(binding) = facts.function_bindings_by_span.get(&declaration.span) {
                 self.freeze_source_signature(binding, &parameters, storage);
             }
             for method in methods {
-                let Some(binding) = facts.method_bindings_by_span.get(&(method.span.start, method.span.end)) else {
+                let Some(binding) = facts.method_bindings_by_span.get(&method.span) else {
                     continue;
                 };
                 let mut frame = parameters.clone();
@@ -598,9 +594,9 @@ impl TypeChecker {
 
 /// Select the innermost declaration's source binders by its checked fact's provenance span. Syntax contributes only
 /// binder roles; native types and declaration identities still come from the accepting checker's retained facts.
-fn source_storage_parameters(program: &Program, span: (usize, usize)) -> Vec<String> {
+fn source_storage_parameters(program: &Program, span: crate::ast::Span) -> Vec<String> {
     for declaration in &program.declarations {
-        if span.0 < declaration.span.start || span.1 > declaration.span.end {
+        if span.start < declaration.span.start || span.end > declaration.span.end {
             continue;
         }
         let (parameters, methods) = match &declaration.node {
@@ -619,7 +615,7 @@ fn source_storage_parameters(program: &Program, span: (usize, usize)) -> Vec<Str
             .collect::<Vec<_>>();
         if let Some(method) = methods
             .iter()
-            .find(|method| span.0 >= method.span.start && span.1 <= method.span.end)
+            .find(|method| span.start >= method.span.start && span.end <= method.span.end)
         {
             names.extend(method.node.type_params.iter().map(|parameter| parameter.name.clone()));
         }

@@ -249,7 +249,7 @@ impl TypeChecker {
                 .type_info
                 .rust
                 .receiver_contracts
-                .get(&(expr.span.start, expr.span.end))
+                .get(&expr.span)
                 .is_some_and(|contract| contract.shared)
     }
 

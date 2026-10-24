@@ -187,7 +187,7 @@ impl TypeChecker {
             );
         }
         self.type_info.rust.checked_calls.insert(
-            (call.span.start, call.span.end),
+            call.span,
             crate::typechecker::type_info::RustCheckedCall {
                 storage: None,
                 source_type_parameters: self.native_call_type_parameters(),
@@ -373,7 +373,7 @@ impl TypeChecker {
         let next = self.rust_iteration_call(expression, &iter.return_type, "core::iter::Iterator", "next")?;
         let item = next.return_type.option_inner_type()?.clone();
         self.type_info.rust.iteration_hooks.insert(
-            (expression.span.start, expression.span.end),
+            expression.span,
             crate::typechecker::type_info::RustIterationHooks { iter, next },
         );
         Some(item)
@@ -570,11 +570,7 @@ impl TypeChecker {
                 returns_self: false,
             },
         )?;
-        self.type_info
-            .rust
-            .checked_calls
-            .get_mut(&(call.span.start, call.span.end))?
-            .has_receiver = false;
+        self.type_info.rust.checked_calls.get_mut(&call.span)?.has_receiver = false;
         Some(result)
     }
 
@@ -606,12 +602,7 @@ impl TypeChecker {
         &self,
         expression: &Spanned<Expr>,
     ) -> Option<String> {
-        if let Some(field) = self
-            .type_info
-            .rust
-            .field_values
-            .get(&(expression.span.start, expression.span.end))
-        {
+        if let Some(field) = self.type_info.rust.field_values.get(&expression.span) {
             return field.item_path.clone();
         }
         if let Expr::Paren(inner) = &expression.node {
@@ -629,7 +620,7 @@ impl TypeChecker {
         self.type_info
             .rust
             .checked_calls
-            .get(&(expression.span.start, expression.span.end))?
+            .get(&expression.span)?
             .result_item_path
             .clone()
     }
@@ -659,20 +650,10 @@ impl TypeChecker {
         &self,
         expression: &Spanned<Expr>,
     ) -> Option<ResolvedType> {
-        if let Some(field) = self
-            .type_info
-            .rust
-            .field_values
-            .get(&(expression.span.start, expression.span.end))
-        {
+        if let Some(field) = self.type_info.rust.field_values.get(&expression.span) {
             return Some(field.native_type.clone());
         }
-        if let Some(conversion) = self
-            .type_info
-            .rust
-            .return_coercions
-            .get(&(expression.span.start, expression.span.end))
-        {
+        if let Some(conversion) = self.type_info.rust.return_coercions.get(&expression.span) {
             return Some(conversion.target_type.clone());
         }
         if let Expr::Paren(inner) = &expression.node {
@@ -687,7 +668,7 @@ impl TypeChecker {
                 .get(self.symbols.identity_of(symbol)?)
                 .cloned();
         }
-        let key = (expression.span.start, expression.span.end);
+        let key = expression.span;
         self.type_info
             .rust
             .checked_calls
@@ -1094,11 +1075,7 @@ impl TypeChecker {
             self.rust_impl_self_bindings(implementation, owner)?
         };
         if !call.type_args.is_empty() {
-            let explicit = self
-                .type_info
-                .calls
-                .call_site_monomorph_type_args
-                .get(&(call.span.start, call.span.end))?;
+            let explicit = self.type_info.calls.call_site_monomorph_type_args.get(&call.span)?;
             if explicit.len() != original.type_params.len() {
                 return None;
             }
@@ -1307,7 +1284,7 @@ impl TypeChecker {
             self.type_info
                 .calls
                 .call_site_monomorph_type_args
-                .insert((call.span.start, call.span.end), explicit);
+                .insert(call.span, explicit);
         }
         let mut candidates = self.retained_rust_trait_candidates(&call, info, owner, trait_path, false);
         if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
@@ -1592,7 +1569,7 @@ impl TypeChecker {
             );
         }
         self.type_info.rust.checked_calls.insert(
-            (call.span.start, call.span.end),
+            call.span,
             crate::typechecker::type_info::RustCheckedCall {
                 storage: None,
                 source_type_parameters: self.native_call_type_parameters(),

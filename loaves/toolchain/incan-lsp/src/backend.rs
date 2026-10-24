@@ -975,8 +975,8 @@ fn registry_previews(artifacts: &typechecker::RegistryArtifacts) -> Vec<Registry
         .descriptions
         .iter()
         .map(|description| RegistryPreview {
-            registration_span: Span::new(description.decorator_span.0, description.decorator_span.1),
-            subject_span: Span::new(description.declaration_span.0, description.declaration_span.1),
+            registration_span: description.decorator_span,
+            subject_span: description.declaration_span,
             markdown: format!(
                 "```incan\n@describe({}, {}, {})\n```\n\n*checked registry membership*\n\n- Registry: `{}`\n- Subject: `{}`\n- Key: `{}`\n- Descriptor: `{}`",
                 description.registry_name,
@@ -1187,9 +1187,9 @@ fn preview_for_anchor(anchor: &SourceAnchor, markdown: String) -> ApiMetadataPre
     }
 }
 
-/// Convert a metadata anchor span to the frontend span type used by LSP ranges.
+/// Retain the metadata anchor's complete checked span for source locations and declaration lookups.
 fn source_anchor_span(anchor: &SourceAnchor) -> Span {
-    Span::new(anchor.span.start, anchor.span.end)
+    anchor.span
 }
 
 /// Find a top-level declaration by its exported source name.
@@ -1925,8 +1925,8 @@ fn checked_identity_at_offset(
         .references
         .resolved_identities
         .iter()
-        .filter_map(|((start, end), identity)| {
-            let reference_span = checked_reference_token_span(source, Span::new(*start, *end), identity)?;
+        .filter_map(|(span, identity)| {
+            let reference_span = checked_reference_token_span(source, *span, identity)?;
             (reference_span == token_span).then_some((identity, reference_span))
         })
         .min_by_key(|(_, span)| span.end.saturating_sub(span.start))
@@ -1937,8 +1937,7 @@ fn checked_identity_at_offset(
         });
     }
 
-    for ((start, end), bindings) in &snapshot.type_info.declarations.hir_bindings_by_span {
-        let declaration_span = Span::new(*start, *end);
+    for (&declaration_span, bindings) in &snapshot.type_info.declarations.hir_bindings_by_span {
         for binding in bindings {
             if binding.local_name != identifier {
                 continue;
@@ -1958,11 +1957,11 @@ fn checked_identity_at_offset(
         }
     }
 
-    for ((start, end, name), identity) in &snapshot.type_info.references.resolved_write_identities {
+    for ((span, name), identity) in &snapshot.type_info.references.resolved_write_identities {
         if name != &identifier {
             continue;
         }
-        let statement_span = Span::new(*start, *end);
+        let statement_span = *span;
         if first_identifier_span_named(source, statement_span, name) == Some(token_span) {
             return Some(CheckedIdentityOccurrence {
                 identity: identity.clone(),
@@ -2111,9 +2110,9 @@ fn checked_reference_token_span(source: &str, span: Span, identity: &CanonicalSy
         .map(|(_, span)| *span)
 }
 
-/// Convert a semantics-core source span into the frontend span representation.
+/// Retain the semantic source span, including expansion context, when looking up frontend declarations.
 fn source_span(span: HirSourceSpan) -> Span {
-    Span::new(span.start, span.end)
+    span
 }
 
 /// Project a canonical identity to its genuine source file, if that exact source was retained by the analysis.

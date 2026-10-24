@@ -47,13 +47,13 @@ pub(super) struct CapturingCallables {
     /// Functions and methods of this module whose one returned value is a capturing closure.
     closure_returning: HashSet<CanonicalSymbolId>,
     /// Closure expressions that capture a local of an enclosing callable, by span.
-    capturing_closures: HashSet<(usize, usize)>,
+    capturing_closures: HashSet<crate::ast::Span>,
     /// Declaration spans of the locals bound to a capturing callable.
-    capturing_bindings: HashSet<(usize, usize)>,
+    capturing_bindings: HashSet<crate::ast::Span>,
     /// Captured names and checked value types, frozen before a closure shadows its enclosing scope.
-    pub(super) captures: HashMap<(usize, usize), Vec<(String, ResolvedType)>>,
+    pub(super) captures: HashMap<crate::ast::Span, Vec<(String, ResolvedType)>>,
     /// Originating closure spans for locally retained callable values.
-    pub(super) origins: HashMap<(usize, usize), (usize, usize)>,
+    pub(super) origins: HashMap<crate::ast::Span, crate::ast::Span>,
 }
 
 /// One function or method whose parameters and return this module may spell as `impl Fn(...) -> R`.
@@ -235,10 +235,7 @@ impl TypeChecker {
                 continue;
             }
             admitted.insert(index);
-            self.type_info
-                .calls
-                .closure_holding_params
-                .insert((param.span.start, param.span.end));
+            self.type_info.calls.closure_holding_params.insert(param.span);
         }
         if !admitted.is_empty() {
             self.capturing_callables
@@ -255,7 +252,7 @@ impl TypeChecker {
             self.type_info
                 .calls
                 .closure_returning_callables
-                .insert((candidate.return_type.span.start, candidate.return_type.span.end));
+                .insert(candidate.return_type.span);
         }
     }
 
@@ -278,18 +275,14 @@ impl TypeChecker {
                 Some((name.clone(), info.ty.clone()))
             })
             .collect();
-        self.capturing_callables
-            .captures
-            .insert((span.start, span.end), captures);
+        self.capturing_callables.captures.insert(span, captures);
         let reads_self = any_expr_in_expr(&body.node, |expr| matches!(expr, Expr::SelfExpr));
         let captures_local = free_vars_in_closure_body(params, body).iter().any(|name| {
             self.lookup_symbol(name)
                 .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::Variable(_)))
         });
         if reads_self || captures_local {
-            self.capturing_callables
-                .capturing_closures
-                .insert((span.start, span.end));
+            self.capturing_callables.capturing_closures.insert(span);
         }
     }
 
@@ -315,22 +308,14 @@ impl TypeChecker {
         }
         match &expr.node {
             Expr::Paren(inner) => self.capturing_callable_description(inner),
-            Expr::Closure(..)
-                if self
-                    .capturing_callables
-                    .capturing_closures
-                    .contains(&(expr.span.start, expr.span.end)) =>
-            {
+            Expr::Closure(..) if self.capturing_callables.capturing_closures.contains(&expr.span) => {
                 Some("A closure that captures local values".to_string())
             }
             Expr::Partial(_) => Some("A local partial, which holds its presets,".to_string()),
             Expr::Ident(name) => {
                 let symbol = self.lookup_symbol(name)?;
                 (matches!(symbol.kind, SymbolKind::Variable(_))
-                    && self
-                        .capturing_callables
-                        .capturing_bindings
-                        .contains(&(symbol.span.start, symbol.span.end)))
+                    && self.capturing_callables.capturing_bindings.contains(&symbol.span))
                 .then(|| format!("'{name}', which holds a closure that captures local values,"))
             }
             Expr::Call(..) | Expr::MethodCall(..) => {
@@ -548,10 +533,7 @@ impl TypeChecker {
                 if self.capturing_callable_description(value).is_some()
                     && matches!(strip_parens(value).node, Expr::Ident(_))
                 {
-                    self.type_info
-                        .calls
-                        .borrowed_callable_arguments
-                        .insert((value.span.start, value.span.end));
+                    self.type_info.calls.borrowed_callable_arguments.insert(value.span);
                 }
                 continue;
             }
@@ -575,10 +557,7 @@ impl TypeChecker {
         }
         let value = strip_parens(value);
         if matches!(value.node, Expr::Closure(..)) {
-            self.type_info
-                .calls
-                .returned_closures
-                .insert((value.span.start, value.span.end));
+            self.type_info.calls.returned_closures.insert(value.span);
         }
     }
 
@@ -589,17 +568,10 @@ impl TypeChecker {
             return;
         }
         if let Some(origin) = self.native_closure_origin(value) {
-            self.capturing_callables
-                .origins
-                .insert((binding_span.start, binding_span.end), origin);
+            self.capturing_callables.origins.insert(binding_span, origin);
         }
-        self.capturing_callables
-            .capturing_bindings
-            .insert((binding_span.start, binding_span.end));
-        self.type_info
-            .calls
-            .capturing_callable_bindings
-            .insert((statement_span.start, statement_span.end));
+        self.capturing_callables.capturing_bindings.insert(binding_span);
+        self.type_info.calls.capturing_callable_bindings.insert(statement_span);
     }
 
     /// Refuse an assignment to the existing local `name`, a field or an element of `value` when it is a capturing
@@ -607,10 +579,7 @@ impl TypeChecker {
     pub(super) fn refuse_capturing_reassignment(&mut self, name: Option<&str>, value: &Spanned<Expr>, span: Span) {
         if let Some(name) = name
             && let Some(symbol) = self.lookup_symbol(name)
-            && self
-                .capturing_callables
-                .capturing_bindings
-                .contains(&(symbol.span.start, symbol.span.end))
+            && self.capturing_callables.capturing_bindings.contains(&symbol.span)
         {
             let error = errors::capturing_callable_in_function_slot(
                 &format!("'{name}', which holds a closure that captures local values,"),

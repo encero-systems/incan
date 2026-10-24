@@ -104,7 +104,7 @@ impl TypeChecker {
                 return;
             }
         }
-        let key = (expression.span.start, expression.span.end);
+        let key = expression.span;
         self.type_info.calls.body_ir_reexport_calls.insert(
             key,
             BodyIrReexportCallInfo {

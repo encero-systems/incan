@@ -23,6 +23,7 @@ from unit_compiler import compile_prepared_unit, crate_name, run_compiler, write
 from unit_freshness import Key, install_all, reusable, staleness, unit_key
 from unit_rust import prepare_native
 from shared_link import development_link, library_witness, linkage_key, shared_current
+from vocabulary import stage_vocabulary
 
 
 pub def check_unit(unit: UnitDescription, toolchain: Toolchain, format: str) -> Result[i32, str]:
@@ -60,6 +61,7 @@ pub def compile_unit(
     ready = prepare_native(unit, toolchain)?
     # 2. A library is always compiled; an executable is compiled only when its key has changed.
     if ready.kind == "library":
+        stage_vocabulary(ready, output.parent())?
         return compile_prepared_unit(ready, toolchain, output)
     return compile_executable(ready, toolchain, output, unit_key(ready, toolchain)?, development)
 

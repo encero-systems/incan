@@ -134,25 +134,19 @@ impl TypeChecker {
 impl TypeCheckInfo {
     /// Record that each target of the chained assignment whose value is at `value_span` gets its own evaluation of it.
     pub fn record_chained_value_written_per_target(&mut self, value_span: Span) {
-        self.expressions
-            .chained_values_written_per_target
-            .insert((value_span.start, value_span.end));
+        self.expressions.chained_values_written_per_target.insert(value_span);
     }
 
     /// Return whether each target of the chained assignment whose value is at `value_span` gets its own evaluation of
     /// it: the targets have different types and the value is built only from literals and builtin empty
     /// constructors. Otherwise the value is evaluated once and shared.
     pub fn chained_value_is_written_per_target(&self, value_span: Span) -> bool {
-        self.expressions
-            .chained_values_written_per_target
-            .contains(&(value_span.start, value_span.end))
+        self.expressions.chained_values_written_per_target.contains(&value_span)
     }
 
     /// Record that the chained assignment whose value is at `value_span` has bound targets that all have one type.
     pub fn record_chained_targets_agree(&mut self, value_span: Span) {
-        self.expressions
-            .chained_values_of_agreeing_targets
-            .insert((value_span.start, value_span.end));
+        self.expressions.chained_values_of_agreeing_targets.insert(value_span);
     }
 
     /// Return whether the chained assignment whose value is at `value_span` has at least one bound target and every
@@ -161,6 +155,6 @@ impl TypeCheckInfo {
     pub fn chained_targets_agree(&self, value_span: Span) -> bool {
         self.expressions
             .chained_values_of_agreeing_targets
-            .contains(&(value_span.start, value_span.end))
+            .contains(&value_span)
     }
 }

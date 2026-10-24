@@ -26,11 +26,7 @@ impl TypeChecker {
             || names.len() != info.type_params.len()
             || info.type_param_bound_details.values().any(|bounds| !bounds.is_empty())
             || identity.is_none_or(|identity| identity.kind != SemanticSourceTargetKind::Function)
-            || self
-                .type_info
-                .expressions
-                .body_ir_open_values
-                .contains_key(&(span.start, span.end))
+            || self.type_info.expressions.body_ir_open_values.contains_key(&span)
         {
             return;
         }
@@ -46,17 +42,12 @@ impl TypeChecker {
         self.type_info
             .expressions
             .body_ir_open_values
-            .insert((span.start, span.end), BodyIrOpenValue { group, ty: result });
+            .insert(span, BodyIrOpenValue { group, ty: result });
     }
 
     /// Tie one assignment to the initializer's existing binder scope, invalidating a reused lexical storage slot.
     pub(in crate::typechecker) fn bind_open_value(&mut self, value: Span, target: Span, name: &str) {
-        let symbolic = self
-            .type_info
-            .expressions
-            .body_ir_open_values
-            .get(&(value.start, value.end))
-            .cloned();
+        let symbolic = self.type_info.expressions.body_ir_open_values.get(&value).cloned();
         self.bind_symbolic_value(symbolic, target, name);
     }
 
@@ -68,11 +59,7 @@ impl TypeChecker {
         target: Span,
         name: &str,
     ) {
-        let symbolic = self
-            .type_info
-            .expressions
-            .body_ir_open_values
-            .get(&(value.start, value.end));
+        let symbolic = self.type_info.expressions.body_ir_open_values.get(&value);
         let symbolic = symbolic.and_then(|value| {
             let parts = match &value.ty {
                 ResolvedType::Tuple(parts) => parts,
@@ -115,12 +102,7 @@ impl TypeChecker {
                 .resolved_identity(expression.span)
                 .and_then(|identity| self.type_info.expressions.body_ir_open_bindings.get(identity))
                 .cloned(),
-            Expr::Paren(inner) => self
-                .type_info
-                .expressions
-                .body_ir_open_values
-                .get(&(inner.span.start, inner.span.end))
-                .cloned(),
+            Expr::Paren(inner) => self.type_info.expressions.body_ir_open_values.get(&inner.span).cloned(),
             Expr::MethodCall(receiver, name, _, args) => self.open_method_value(receiver, name, args, expression.span),
             _ => None,
         };
@@ -129,7 +111,7 @@ impl TypeChecker {
             self.type_info
                 .expressions
                 .body_ir_open_values
-                .insert((expression.span.start, expression.span.end), symbolic);
+                .insert(expression.span, symbolic);
             self.publish_open_value_group(group);
         }
     }
@@ -146,7 +128,7 @@ impl TypeChecker {
             .type_info
             .expressions
             .body_ir_open_values
-            .get(&(receiver.span.start, receiver.span.end))?
+            .get(&receiver.span)?
             .clone();
         let ResolvedType::Generic(owner, arguments) = &value.ty else {
             return None;
@@ -178,39 +160,20 @@ impl TypeChecker {
 
     /// Keep an await output in its operand's binder scope without treating independent task outputs as aliases.
     pub(in crate::typechecker) fn retain_open_await_value(&mut self, inner: Span, span: Span) {
-        let value = self
-            .type_info
-            .expressions
-            .body_ir_open_values
-            .get(&(inner.start, inner.end))
-            .cloned();
+        let value = self.type_info.expressions.body_ir_open_values.get(&inner).cloned();
         let Some(value) = value else {
             return;
         };
-        if self
-            .type_info
-            .calls
-            .body_ir_async_call_targets
-            .contains_key(&(inner.start, inner.end))
-        {
+        if self.type_info.calls.body_ir_async_call_targets.contains_key(&inner) {
             let group = value.group;
-            self.type_info
-                .expressions
-                .body_ir_open_values
-                .insert((span.start, span.end), value);
+            self.type_info.expressions.body_ir_open_values.insert(span, value);
             self.publish_open_value_group(group);
         }
     }
 
     /// Use ordinary checked destinations as constraints after all lexical references have been collected.
     pub(in crate::typechecker) fn constrain_open_value_destination(&mut self, span: Span, expected: &ResolvedType) {
-        if let Some(value) = self
-            .type_info
-            .expressions
-            .body_ir_open_values
-            .get(&(span.start, span.end))
-            .cloned()
-        {
+        if let Some(value) = self.type_info.expressions.body_ir_open_values.get(&span).cloned() {
             self.constrain_open_value(value.group, &value.ty, expected, span);
         }
     }
@@ -220,15 +183,7 @@ impl TypeChecker {
         let destinations = self.type_info.expressions.value_destination_types.clone();
         for (span, actual) in destinations {
             if let Some(value) = self.type_info.expressions.body_ir_open_values.get(&span).cloned() {
-                self.constrain_open_value(
-                    value.group,
-                    &value.ty,
-                    &actual,
-                    Span {
-                        start: span.0,
-                        end: span.1,
-                    },
-                );
+                self.constrain_open_value(value.group, &value.ty, &actual, span);
             }
         }
         for group in 0..self.type_info.expressions.body_ir_open_calls.len() {
@@ -268,7 +223,7 @@ impl TypeChecker {
                     self.type_info.expressions.body_ir_binding_types.remove(identity);
                 }
             }
-            let span = (call.span.start, call.span.end);
+            let span = call.span;
             self.type_info.calls.body_ir_call_type_arguments.remove(&span);
             self.type_info.calls.body_ir_call_result_types.remove(&span);
             return;
@@ -300,7 +255,7 @@ impl TypeChecker {
                 }
             }
         }
-        let span = (call.span.start, call.span.end);
+        let span = call.span;
         self.type_info.calls.body_ir_call_type_arguments.insert(span, arguments);
         self.type_info
             .calls

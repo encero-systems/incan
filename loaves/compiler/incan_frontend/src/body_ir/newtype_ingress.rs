@@ -66,7 +66,7 @@ impl BodyBuilder<'_, '_> {
                 out,
             );
         }
-        let key = (expr.span.start, expr.span.end);
+        let key = expr.span;
 
         // ---- Context: evaluate the original source input once before wrapping ----
         self.coercions_in_progress.insert(key);

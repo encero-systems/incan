@@ -50,7 +50,8 @@ pub def compile_or_replay(
     certificate = Path(f"{path.0}.{id()}.certificate")
     if certificate.is_file():
         certificate.unlink().map_err((error) => error.message())?
-    mut command = configure_sdk(Command.new(toolchain.driver), toolchain.sysroot)?
+    mut command = Command.new(toolchain.driver)
+    configure_sdk(command, toolchain.sysroot)?
     command.env_remove("RUSTC_BOOTSTRAP")
     command.env("INCAN_COMPILER_REFUSAL", f"{certificate.0}")
     command.stdin(Stdio.inherit())
@@ -58,11 +59,13 @@ pub def compile_or_replay(
         command.arg(argument)
     result = command.output().map_err((error) => f"cannot run {toolchain.driver}: {error}")?
     mut code: i32 = 1
+    mut diagnostic_exit = false
     if let Some(status) = result.status.code():
         code = status
+        diagnostic_exit = status == 1
     refusal = Refusal(code=code, output=result.stdout, error=result.stderr)
     # 3. Publish a certified refusal only if the complete input identity is still unchanged.
-    if cacheable and result.status.code() == Some(1) and certified(certificate):
+    if cacheable and diagnostic_exit and certified(certificate):
         match unit_key(unit, toolchain):
             Ok(current) =>
                 if current.digest == key.digest:

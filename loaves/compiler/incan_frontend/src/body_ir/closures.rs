@@ -241,12 +241,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.materialized_range_locals = saved_materialized_range_locals;
 
         let closure_body = bir::ClosureBody {
-            native_storage: self
-                .type_info
-                .rust
-                .closure_storage
-                .get(&(expr_span.start, expr_span.end))
-                .cloned(),
+            native_storage: self.type_info.rust.closure_storage.get(&expr_span).cloned(),
             original_callable: None,
             function_item: false,
             consumes_environment: consumes_zip_environment(&captured_operands, &capture_locals, &body_stmts, out),

@@ -302,6 +302,16 @@ pub struct NativeUnionDeclaration {
     pub closure_items: Vec<String>,
 }
 
+/// One checked callback parameter and the native type argument that retains its environment representation.
+/// The named fields preserve the checker's slot mapping across the Body IR boundary.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeCallableParameter {
+    /// Declaration-order parameter slot whose checked value is a callback.
+    pub parameter_slot: usize,
+    /// Position in the native instantiation's type arguments that carries this callback's environment.
+    pub type_argument_slot: usize,
+}
+
 /// An external callable: a linked Loaf declaration (DD-0007) or a checker-selected Rust instantiation (DD-0006).
 /// The driver verifies its recorded signature against the exact compiled item's metadata.
 ///
@@ -329,7 +339,7 @@ pub struct LoafCallable {
     pub native_type_arguments: Vec<IncanType>,
     /// Checked callback parameter slots and their exact native generic argument positions, before signature erasure.
     #[serde(default)]
-    pub native_callable_parameters: Vec<(usize, usize)>,
+    pub native_callable_parameters: Vec<NativeCallableParameter>,
     /// What each parameter takes when a call omits it, in `parameters` order, a method's receiver first.
     ///
     /// A parameter without a default is [`CallableParamDefault::Required`]. A default is a
@@ -4636,14 +4646,14 @@ impl Block {
     }
 }
 
-/// Source acknowledgment of one `unsafe:` region, binding its receipt to the module, byte span, and enclosing scope.
+/// Source acknowledgment of one `unsafe:` region, binding its receipt to the module, full span, and enclosing scope.
 ///
 /// This records source syntax, not a capability grant or an authority decision. The enclosing
 /// [`StatementKind::UnsafeRegion`] retains the exact operations being acknowledged; a consumer must validate this
 /// receipt before admitting them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UnsafeAcknowledgment {
-    /// Compiler-owned statement identity minted from the source module and the region's byte span.
+    /// Compiler-owned statement identity minted from the source module and the region's range and expansion context.
     pub receipt: CompilerNodeId,
     /// Original region span; generated operations retain their individual spans inside this boundary.
     pub span: HirSourceSpan,
@@ -4659,7 +4669,7 @@ impl UnsafeAcknowledgment {
         module == &CompilerNodeId::module(module.path())
             && self.span == *span
             && self.scope == scope
-            && self.receipt == CompilerNodeId::statement_span(module.path(), span.start, span.end)
+            && self.receipt == CompilerNodeId::statement_at(module.path(), *span)
     }
 }
 
@@ -5184,13 +5194,18 @@ pub fn nominal_carrier_key(identity: &CanonicalSymbolId) -> Option<String> {
         .map(|byte| format!("{byte:02x}"))
         .collect();
     Some(format!(
-        "__incan_carrier_{kind}_{}_{}_{}_{}_{}_{}",
+        "__incan_carrier_{kind}_{}_{}_{}_{}_{}_{}{}",
         module.len(),
         encoded_module,
         identity.declaration_name.len(),
         encoded_name,
         identity.declaration_span.start,
-        identity.declaration_span.end
+        identity.declaration_span.end,
+        identity
+            .declaration_span
+            .expansion
+            .map(|value| format!("_expansion_{}", hex::encode(value)))
+            .unwrap_or_default()
     ))
 }
 

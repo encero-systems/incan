@@ -50,6 +50,48 @@ impl Formatter {
         self.format_spanned_expr(&arg.value);
     }
 
+    /// Keep list elements together when they fit, otherwise start each element on its own line.
+    fn format_list(&mut self, items: &[ListEntry]) {
+        let checkpoint = self.writer.checkpoint();
+        self.writer.write("[");
+        for (index, item) in items.iter().enumerate() {
+            if index > 0 {
+                self.writer.write(", ");
+            }
+            self.format_list_entry(item);
+        }
+        self.writer.write("]");
+        if items.is_empty()
+            || (!self.writer.output_since_contains_newline(checkpoint) && !self.writer.line_length_exceeded())
+        {
+            return;
+        }
+        self.writer.restore(checkpoint);
+        self.writer.write("[");
+        self.writer.newline();
+        self.writer.indent();
+        for (index, item) in items.iter().enumerate() {
+            self.format_list_entry(item);
+            if self.writer.config().trailing_commas || index + 1 < items.len() {
+                self.writer.write(",");
+            }
+            self.writer.newline();
+        }
+        self.writer.dedent();
+        self.writer.write("]");
+    }
+
+    /// Format a list element or its spread prefix identically in inline and multiline layouts.
+    fn format_list_entry(&mut self, item: &ListEntry) {
+        match item {
+            ListEntry::Element(value) => self.format_spanned_expr(value),
+            ListEntry::Spread(value) => {
+                self.writer.write("*");
+                self.format_spanned_expr(value);
+            }
+        }
+    }
+
     /// Format the comma-separated keyword preset list in a partial callable template.
     pub(super) fn format_partial_args(&mut self, args: &[PartialArg]) {
         for (i, arg) in args.iter().enumerate() {
@@ -421,22 +463,7 @@ impl Formatter {
                 }
                 self.writer.write(")");
             }
-            Expr::List(items) => {
-                self.writer.write("[");
-                for (i, item) in items.iter().enumerate() {
-                    if i > 0 {
-                        self.writer.write(", ");
-                    }
-                    match item {
-                        ListEntry::Element(value) => self.format_spanned_expr(value),
-                        ListEntry::Spread(value) => {
-                            self.writer.write("*");
-                            self.format_spanned_expr(value);
-                        }
-                    }
-                }
-                self.writer.write("]");
-            }
+            Expr::List(items) => self.format_list(items),
             Expr::Dict(pairs) => {
                 self.writer.write("{");
                 for (i, entry) in pairs.iter().enumerate() {

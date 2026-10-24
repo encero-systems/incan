@@ -1,0 +1,40 @@
+"""Register scriptkit's regex, template, type-position and raw-text fragments without runtime hooks."""
+
+from std.vocab import DeclarationSurface, DslSurface, EmbeddedFragmentDescriptor, EmbeddedFragmentSubmode
+from std.vocab import VocabRegistration
+
+
+pub def library_vocab() -> VocabRegistration:
+    """
+    Register scriptkit's three import-activated fragment blocks without executable script semantics.
+
+    1. Declare each block's statement body.
+    2. Attach its owned lexical submode.
+    """
+    # 1. Block descriptors control exactly where each fragment grammar is available.
+    # Pattern introduces a statement block.
+    pattern_block = DeclarationSurface.named("pattern").with_statement_body()
+    # Shape introduces a statement block.
+    shape_block = DeclarationSurface.named("shape").with_statement_body()
+    # Note introduces a statement block.
+    note_block = DeclarationSurface.named("note").with_statement_body()
+    # 2. Each grammar retains its original descriptor and capture identity.
+    # Pattern blocks capture regex-template nodes.
+    pattern = EmbeddedFragmentDescriptor
+        .new("pattern.fragment", EmbeddedFragmentSubmode.RegexTemplate, "pattern_nodes")
+        .in_declaration_body("pattern")
+    # Shape blocks capture a type-position node.
+    shape = EmbeddedFragmentDescriptor
+        .new("shape.fragment", EmbeddedFragmentSubmode.TypePosition, "shape_node")
+        .in_declaration_body("shape")
+    # Note blocks capture raw text.
+    note = EmbeddedFragmentDescriptor
+        .new("note.fragment", EmbeddedFragmentSubmode.RawText, "note_nodes")
+        .in_declaration_body("note")
+    surface = DslSurface
+        .on_import("scriptkit")
+        .with_declarations([pattern_block, shape_block, note_block])
+        .with_embedded_fragment(pattern)
+        .with_embedded_fragment(shape)
+        .with_embedded_fragment(note)
+    return VocabRegistration.new().with_surface(surface)

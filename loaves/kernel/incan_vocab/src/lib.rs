@@ -1,29 +1,8 @@
-//! Stable vocabulary registration contract for Incan library companion crates.
+//! Vocabulary descriptor DTOs and compatibility bindings below the compiler boundary.
 //!
-//! Companion crates should expose one canonical Rust entrypoint:
-//!
-//! ```rust
-//! use incan_vocab::{ClauseSurface, DeclarationSurface, DslSurface, VocabRegistration};
-//!
-//! pub fn library_vocab() -> VocabRegistration {
-//!     VocabRegistration::new().with_surface(
-//!         DslSurface::on_import("demo.surface").with_declaration(
-//!             DeclarationSurface::named("query")
-//!                 .with_clause_body()
-//!                 .desugars_to_expression()
-//!                 .with_clauses([
-//!                     ClauseSurface::expr("FROM").required(),
-//!                     ClauseSurface::expr_list("SELECT").required().after("FROM"),
-//!                 ]),
-//!         ),
-//!     )
-//! }
-//! ```
-//!
-//! [`VocabRegistration`], [`DslSurface`], [`DeclarationSurface`], [`ClauseSurface`], [`VocabSyntaxNode`], and
-//! [`DesugarOutput`] are the canonical author-facing surface. [`VocabMetadata`] and [`KeywordRegistration`] remain
-//! available as lower-level transport and escape-hatch types, but they are not the intended starting point for normal
-//! companion-crate authoring.
+//! Authors register and expand vocabulary in Incan through `std.vocab`. The frontend translates that versioned public
+//! syntax model explicitly; compiler-private AST types never cross a worker pipe. Rust registration types here retain
+//! compatibility metadata but provide no executable companion-crate route or WebAssembly runtime.
 
 /// Public AST types used by vocab desugarers.
 pub mod ast;
@@ -33,13 +12,8 @@ pub mod desugar;
 pub mod keywords;
 /// Stable manifest DTOs carried inside a vocabulary registration.
 pub mod manifest;
-/// WASM desugarer runtime export helpers for companion crates.
-#[cfg(feature = "serde")]
-pub mod runtime;
 /// Version constants for serialized vocab metadata.
 pub mod version;
-/// Canonical WASM ABI names shared between desugarers and compiler tooling.
-pub mod wasm_abi;
 
 pub use ast::{
     Decorator, DecoratorArg, DecoratorArgValue, IncanBinaryOp, IncanClassDeclaration, IncanDeclaration, IncanExpr,
@@ -49,8 +23,6 @@ pub use ast::{
     VocabDeclarationHead, VocabExpressionItem, VocabExpressionItemModifier, VocabFieldSpec, VocabKeywordMetadata,
     VocabParameter, VocabSyntaxNode, VocabTypeExpr,
 };
-#[cfg(feature = "serde")]
-pub use desugar::execute_desugar_request;
 pub use desugar::{
     DesugarError, DesugarOutput, DesugarRequest, DesugarResponse, DesugarerArtifactKind, DesugarerMetadata,
     DesugarerRegistration, VocabDesugarer,
@@ -70,13 +42,7 @@ pub use manifest::{
     CargoDependency, CargoDependencySource, FieldExport, FunctionExport, HelperBinding, LibraryManifest,
     ManifestFormatVersion, ModuleExport, TypeExport, TypeExportKind, TypeRef,
 };
-pub use version::{VOCAB_METADATA_VERSION, WASM_DESUGAR_ABI_VERSION};
-pub use wasm_abi::{
-    WASM_DESUGAR_ENTRYPOINT, WASM_DESUGAR_ERROR_LEN_GLOBAL, WASM_DESUGAR_ERROR_PTR_GLOBAL, WASM_DESUGAR_FAILURE_STATUS,
-    WASM_DESUGAR_INIT_ENTRYPOINT, WASM_DESUGAR_INPUT_CAPACITY_GLOBAL, WASM_DESUGAR_INPUT_LEN_GLOBAL,
-    WASM_DESUGAR_INPUT_PTR_GLOBAL, WASM_DESUGAR_MEMORY_EXPORT, WASM_DESUGAR_OUTPUT_LEN_GLOBAL,
-    WASM_DESUGAR_OUTPUT_PTR_GLOBAL, WASM_DESUGAR_REQUIRED_I32_GLOBAL_EXPORTS, WASM_DESUGAR_SUCCESS_STATUS,
-};
+pub use version::{VOCAB_METADATA_VERSION, VOCAB_SYNTAX_VERSION};
 
 /// The stable serializable output shape derived from a companion crate registration.
 ///
@@ -103,6 +69,7 @@ pub struct VocabMetadata {
 }
 
 impl Default for VocabMetadata {
+    /// Construct an empty descriptor payload under the supported registration schema.
     fn default() -> Self {
         Self {
             metadata_version: VOCAB_METADATA_VERSION,
@@ -115,6 +82,7 @@ impl Default for VocabMetadata {
 }
 
 #[cfg(feature = "serde")]
+/// Read a descriptor written before registrations carried an explicit schema version.
 fn default_vocab_metadata_version() -> u32 {
     VOCAB_METADATA_VERSION
 }

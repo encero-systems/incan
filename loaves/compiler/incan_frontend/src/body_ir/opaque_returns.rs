@@ -89,7 +89,7 @@ fn self_returning_methods(
             let binding = type_info
                 .declarations
                 .method_bindings_by_span
-                .get(&(identity.declaration_span.start, identity.declaration_span.end))?;
+                .get(&identity.declaration_span)?;
             (identity.kind == SemanticSourceTargetKind::Method
                 && identity.origin == owner.origin
                 && owner.declaration_span.start <= identity.declaration_span.start

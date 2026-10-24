@@ -1,16 +1,11 @@
 use crate::ast;
 use crate::diagnostics::CompileError;
 use crate::loaf_index::LoafIndex;
-use crate::vocab_ast_bridge::{
-    internal_vocab_block_to_public, public_declarations_to_internal_with_anchor, public_expr_to_internal_with_anchor,
-    public_statements_to_internal_with_anchor,
-};
+use crate::vocab_ast_bridge::{internal_vocab_block_to_public, public_declarations_to_internal_with_anchor};
 
-use super::helper_bindings::{
-    HelperImportAccumulator, inject_helper_imports, resolve_helper_bindings_in_expr,
-    resolve_helper_bindings_in_statements,
-};
-use super::{VocabDesugarPassError, WasmDesugarerRuntime};
+use super::helper_bindings::{HelperImportAccumulator, inject_helper_imports};
+use super::surface::Output;
+use super::{NativeDesugarerRuntime, VocabDesugarPassError};
 
 /// Rewrite all raw vocab blocks in a parsed program before typechecking/lowering.
 ///
@@ -22,7 +17,7 @@ use super::{VocabDesugarPassError, WasmDesugarerRuntime};
 /// Returns compiler diagnostics when:
 /// - AST bridge mapping fails,
 /// - desugarer artifact resolution/loading fails,
-/// - WASM runtime execution fails, or
+/// - native worker execution fails, or
 /// - desugarer output cannot be decoded/mapped back into internal AST.
 pub fn desugar_program_vocab_blocks(
     program: &mut ast::Program,
@@ -32,21 +27,21 @@ pub fn desugar_program_vocab_blocks(
     desugar_program_vocab_blocks_with_runtime(program, module_path, loaves, &mut None)
 }
 
-/// Rewrite fresh source using the caller's retained runtime; every vocabulary invocation still uses a fresh guest.
-/// Only compiled artifact modules are retained. Diagnostics, source AST and helper imports remain request-local.
+/// Collect one module's requests and rewrite it using the owner's retained workers and validated pure responses.
+/// Both phases use the same traversal, so declaration, expression and statement ownership cannot drift.
 pub fn desugar_program_vocab_blocks_with_runtime(
     program: &mut ast::Program,
     module_path: Option<&str>,
     loaves: &LoafIndex,
-    retained: &mut Option<WasmDesugarerRuntime>,
+    retained: &mut Option<NativeDesugarerRuntime>,
 ) -> Result<(), Vec<CompileError>> {
     let runtime = match retained {
         Some(runtime) => runtime,
-        None => match WasmDesugarerRuntime::new() {
+        None => match NativeDesugarerRuntime::new() {
             Ok(runtime) => retained.insert(runtime),
             Err(err) => {
                 return Err(vec![CompileError::new(
-                    format!("failed to initialize vocab wasm runtime: {err}"),
+                    format!("failed to initialize native vocabulary runtime: {err}"),
                     ast::Span::default(),
                 )]);
             }
@@ -54,6 +49,18 @@ pub fn desugar_program_vocab_blocks_with_runtime(
     };
     let mut errors = Vec::new();
     let mut helper_imports = HelperImportAccumulator::default();
+
+    runtime.begin_module();
+    let mut collected = program.declarations.clone();
+    rewrite_declaration_list(
+        &mut collected,
+        module_path,
+        loaves,
+        runtime,
+        &mut HelperImportAccumulator::default(),
+        &mut Vec::new(),
+    );
+    runtime.finish_module(module_path.unwrap_or(""));
 
     rewrite_declaration_list(
         &mut program.declarations,
@@ -77,7 +84,7 @@ fn rewrite_declaration_list(
     declarations: &mut Vec<ast::Spanned<ast::Declaration>>,
     module_path: Option<&str>,
     loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
+    runtime: &mut NativeDesugarerRuntime,
     helper_imports: &mut HelperImportAccumulator,
     errors: &mut Vec<CompileError>,
 ) {
@@ -96,7 +103,6 @@ fn rewrite_declaration_list(
                     }
                 };
                 for (index, declaration) in lowered.iter_mut().enumerate() {
-                    declaration.span = span;
                     declaration.leading_blank_lines = if index == 0 { leading_blank_lines } else { 0 };
                     declaration.required_features.clone_from(&required_features);
                     rewrite_declaration(
@@ -130,7 +136,7 @@ fn desugar_vocab_declaration(
     span: ast::Span,
     module_path: Option<&str>,
     loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
+    runtime: &mut NativeDesugarerRuntime,
 ) -> Result<Vec<ast::Spanned<ast::Declaration>>, CompileError> {
     let bridged = internal_vocab_block_to_public(block, span).map_err(|source| {
         error_from_pass_error(
@@ -147,26 +153,18 @@ fn desugar_vocab_declaration(
         return public_declarations_to_internal_with_anchor(&declarations, span)
             .map_err(|error| CompileError::syntax(format!("invalid checked C binding: {error}"), span));
     }
-    let keyword = bridged.keyword.clone();
-    let desugared = runtime
-        .desugar_node(loaves, &incan_vocab::VocabSyntaxNode::Declaration(bridged), module_path)
+    let output = runtime
+        .desugar_node(loaves, block, span, module_path)
         .map_err(|error| error_from_pass_error(error, span))?;
-    let incan_vocab::DesugarOutput::Declarations(declarations) = desugared.output else {
-        return Err(error_from_pass_error(
-            VocabDesugarPassError::UnsupportedOutput { keyword },
-            span,
-        ));
-    };
-
-    public_declarations_to_internal_with_anchor(&declarations, span).map_err(|source| {
-        error_from_pass_error(
-            VocabDesugarPassError::Bridge {
-                keyword: block.keyword.clone(),
-                source,
-            },
-            span,
-        )
-    })
+    if let Output::Declarations(declarations) = output {
+        return Ok(declarations);
+    }
+    Err(error_from_pass_error(
+        VocabDesugarPassError::UnsupportedOutput {
+            keyword: block.keyword.clone(),
+        },
+        span,
+    ))
 }
 
 /// Select compiler-owned C binding semantics only for the pinned standard namespace issuer.
@@ -188,7 +186,7 @@ fn rewrite_declaration(
     declaration: &mut ast::Declaration,
     module_path: Option<&str>,
     loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
+    runtime: &mut NativeDesugarerRuntime,
     helper_imports: &mut HelperImportAccumulator,
     errors: &mut Vec<CompileError>,
 ) {
@@ -306,7 +304,7 @@ fn rewrite_field_defaults(
     fields: &mut [ast::Spanned<ast::FieldDecl>],
     module_path: Option<&str>,
     loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
+    runtime: &mut NativeDesugarerRuntime,
     helper_imports: &mut HelperImportAccumulator,
     errors: &mut Vec<CompileError>,
 ) {
@@ -322,7 +320,7 @@ fn rewrite_method_partial_args(
     partials: &mut [ast::Spanned<ast::MethodPartialDecl>],
     module_path: Option<&str>,
     loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
+    runtime: &mut NativeDesugarerRuntime,
     helper_imports: &mut HelperImportAccumulator,
     errors: &mut Vec<CompileError>,
 ) {
@@ -343,7 +341,7 @@ fn rewrite_partial_args(
     args: &mut [ast::PartialArg],
     module_path: Option<&str>,
     loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
+    runtime: &mut NativeDesugarerRuntime,
     helper_imports: &mut HelperImportAccumulator,
     errors: &mut Vec<CompileError>,
 ) {
@@ -372,6 +370,14 @@ fn vocab_block_body_is_embedded_fragment(block: &ast::VocabBlockStmt) -> bool {
     )
 }
 
+/// Preserve RFC 081's no-hook route only when the owning published vocabulary supplies no native desugarer.
+fn fragment_has_hook(block: &ast::VocabBlockStmt, loaves: &LoafIndex) -> bool {
+    loaves
+        .entry(&block.keyword_binding.dependency_key)
+        .and_then(|entry| entry.artifact.manifest.vocab.as_ref())
+        .is_some_and(|vocab| vocab.desugarer_artifact.is_some())
+}
+
 /// Recursively rewrite a statement list so no raw vocab block statement or expression nodes survive past this pass.
 ///
 /// The recursion matters because desugarers may emit statements that themselves still contain nested control-flow
@@ -380,7 +386,7 @@ fn rewrite_statement_list(
     statements: &mut Vec<ast::Spanned<ast::Statement>>,
     module_path: Option<&str>,
     loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
+    runtime: &mut NativeDesugarerRuntime,
     helper_imports: &mut HelperImportAccumulator,
     errors: &mut Vec<CompileError>,
 ) {
@@ -389,38 +395,18 @@ fn rewrite_statement_list(
     for statement in statements.drain(..) {
         let span = statement.span;
         match statement.node {
-            // RFC 081 (#1023): a vocab block whose body is descriptor-claimed embedded-fragment content (parsed by
-            // `Parser::try_embedded_fragment_body`) is not DSL-owned statement syntax at all -- it carries no
-            // desugarer contract to bridge. Unwrap the `VocabBlockStmt` wrapper directly (rewriting the inner
-            // statement the same way any ordinary statement would be, so holes/nested DSLs still get rewritten)
-            // instead of routing it through `runtime.desugar_node`, which requires a registered WASM desugarer
-            // that embedded-fragment descriptors never need.
-            ast::Statement::VocabBlock(block) if vocab_block_body_is_embedded_fragment(&block) => {
+            // Without a lowering hook, preserve RFC 081's existing owned-fragment path, including ordinary checking
+            // of expression holes and the explicit emission refusal. A registered hook receives the structured
+            // artifact through the native worker instead.
+            ast::Statement::VocabBlock(block)
+                if vocab_block_body_is_embedded_fragment(&block) && !fragment_has_hook(&block, loaves) =>
+            {
                 let mut body = block.body;
                 rewrite_statement_list(&mut body, module_path, loaves, runtime, helper_imports, errors);
                 rewritten.extend(body);
             }
             ast::Statement::VocabBlock(block) => {
-                // ---- Context: bridge one raw DSL block into the public vocab AST ----
-                let bridged = internal_vocab_block_to_public(&block, span);
-                let bridged = match bridged {
-                    Ok(value) => value,
-                    Err(source) => {
-                        errors.push(error_from_pass_error(
-                            VocabDesugarPassError::Bridge {
-                                keyword: block.keyword.clone(),
-                                source,
-                            },
-                            span,
-                        ));
-                        continue;
-                    }
-                };
-
-                let bridged_keyword = bridged.keyword.clone();
-                let bridged_keyword_metadata = bridged.keyword_metadata.clone();
-                let request_node = incan_vocab::VocabSyntaxNode::Declaration(bridged);
-                let desugared = runtime.desugar_node(loaves, &request_node, module_path);
+                let desugared = runtime.desugar_node(loaves, &block, span, module_path);
                 let desugared = match desugared {
                     Ok(value) => value,
                     Err(err) => {
@@ -429,55 +415,17 @@ fn rewrite_statement_list(
                     }
                 };
 
-                let public_statements = match desugared.output {
-                    incan_vocab::DesugarOutput::Statements(statements) => statements,
-                    incan_vocab::DesugarOutput::Expression(expression) => {
-                        vec![incan_vocab::IncanStatement::Expr(expression)]
-                    }
-                    _ => {
-                        errors.push(error_from_pass_error(
-                            VocabDesugarPassError::UnsupportedOutput {
-                                keyword: bridged_keyword.clone(),
-                            },
+                let mut lowered = match desugared {
+                    Output::Statements(statements) => statements,
+                    Output::Expression(expression) => vec![ast::Spanned::new(ast::Statement::Expr(expression), span)],
+                    Output::Declarations(_) => {
+                        errors.push(CompileError::syntax(
+                            "declaration output requires compilation-unit scope".into(),
                             span,
                         ));
                         continue;
                     }
                 };
-                let mut public_statements = public_statements;
-                if let Err(message) = resolve_helper_bindings_in_statements(
-                    &mut public_statements,
-                    bridged_keyword_metadata.as_ref(),
-                    &bridged_keyword,
-                    loaves,
-                    helper_imports,
-                ) {
-                    errors.push(error_from_pass_error(
-                        VocabDesugarPassError::HelperBinding {
-                            keyword: bridged_keyword.clone(),
-                            message,
-                        },
-                        span,
-                    ));
-                    continue;
-                }
-
-                let mut lowered = match public_statements_to_internal_with_anchor(&public_statements, span) {
-                    Ok(stmts) => stmts,
-                    Err(source) => {
-                        errors.push(error_from_pass_error(
-                            VocabDesugarPassError::Bridge {
-                                keyword: bridged_keyword.clone(),
-                                source,
-                            },
-                            span,
-                        ));
-                        continue;
-                    }
-                };
-                for lowered_statement in &mut lowered {
-                    lowered_statement.span = span;
-                }
                 rewrite_statement_list(&mut lowered, module_path, loaves, runtime, helper_imports, errors);
                 rewritten.extend(lowered);
             }
@@ -693,7 +641,7 @@ fn rewrite_condition_exprs(
     condition: &mut ast::Condition,
     module_path: Option<&str>,
     loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
+    runtime: &mut NativeDesugarerRuntime,
     helper_imports: &mut HelperImportAccumulator,
     errors: &mut Vec<CompileError>,
 ) {
@@ -709,7 +657,7 @@ fn rewrite_assert_exprs(
     assert_stmt: &mut ast::AssertStmt,
     module_path: Option<&str>,
     loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
+    runtime: &mut NativeDesugarerRuntime,
     helper_imports: &mut HelperImportAccumulator,
     errors: &mut Vec<CompileError>,
 ) {
@@ -734,7 +682,7 @@ fn rewrite_spanned_expr(
     expr: &mut ast::Spanned<ast::Expr>,
     module_path: Option<&str>,
     loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
+    runtime: &mut NativeDesugarerRuntime,
     helper_imports: &mut HelperImportAccumulator,
     errors: &mut Vec<CompileError>,
 ) {
@@ -744,7 +692,7 @@ fn rewrite_spanned_expr(
             unreachable!("raw vocab expression was checked immediately before replacement");
         };
         match desugar_vocab_block_to_expression(&block, expr.span, module_path, loaves, runtime, helper_imports) {
-            Ok(node) => expr.node = node,
+            Ok(node) => *expr = node,
             Err(err) => {
                 errors.push(err);
                 return;
@@ -955,7 +903,7 @@ fn rewrite_call_args(
     args: &mut [ast::CallArg],
     module_path: Option<&str>,
     loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
+    runtime: &mut NativeDesugarerRuntime,
     helper_imports: &mut HelperImportAccumulator,
     errors: &mut Vec<CompileError>,
 ) {
@@ -976,7 +924,7 @@ fn rewrite_comprehension_clauses(
     clauses: &mut [ast::ComprehensionClause],
     module_path: Option<&str>,
     loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
+    runtime: &mut NativeDesugarerRuntime,
     helper_imports: &mut HelperImportAccumulator,
     errors: &mut Vec<CompileError>,
 ) {
@@ -994,7 +942,7 @@ fn rewrite_surface_expr(
     surface: &mut ast::SurfaceExpr,
     module_path: Option<&str>,
     loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
+    runtime: &mut NativeDesugarerRuntime,
     helper_imports: &mut HelperImportAccumulator,
     errors: &mut Vec<CompileError>,
 ) {
@@ -1032,66 +980,32 @@ fn desugar_vocab_block_to_expression(
     span: ast::Span,
     module_path: Option<&str>,
     loaves: &LoafIndex,
-    runtime: &mut WasmDesugarerRuntime,
-    helper_imports: &mut HelperImportAccumulator,
-) -> Result<ast::Expr, CompileError> {
-    let bridged = internal_vocab_block_to_public(block, span).map_err(|source| {
-        error_from_pass_error(
-            VocabDesugarPassError::Bridge {
-                keyword: block.keyword.clone(),
-                source,
-            },
-            span,
-        )
-    })?;
-    let bridged_keyword = bridged.keyword.clone();
-    let bridged_keyword_metadata = bridged.keyword_metadata.clone();
-    let request_node = incan_vocab::VocabSyntaxNode::Declaration(bridged);
-    let mut desugared = runtime
-        .desugar_node(loaves, &request_node, module_path)
+    runtime: &mut NativeDesugarerRuntime,
+    _helper_imports: &mut HelperImportAccumulator,
+) -> Result<ast::Spanned<ast::Expr>, CompileError> {
+    let desugared = runtime
+        .desugar_node(loaves, block, span, module_path)
         .map_err(|err| error_from_pass_error(err, span))?;
-
-    let incan_vocab::DesugarOutput::Expression(expression) = &mut desugared.output else {
+    let Output::Expression(expression) = desugared else {
         return Err(error_from_pass_error(
             VocabDesugarPassError::UnsupportedOutput {
-                keyword: bridged_keyword,
+                keyword: block.keyword.clone(),
             },
             span,
         ));
     };
 
-    resolve_helper_bindings_in_expr(
-        expression,
-        bridged_keyword_metadata.as_ref(),
-        &bridged_keyword,
-        loaves,
-        helper_imports,
-    )
-    .map_err(|message| {
-        error_from_pass_error(
-            VocabDesugarPassError::HelperBinding {
-                keyword: bridged_keyword.clone(),
-                message,
-            },
-            span,
-        )
-    })?;
-
-    public_expr_to_internal_with_anchor(expression, span).map_err(|source| {
-        error_from_pass_error(
-            VocabDesugarPassError::Bridge {
-                keyword: bridged_keyword,
-                source,
-            },
-            span,
-        )
-    })
+    Ok(expression)
 }
 
 /// Map a pass/runtime error into a compiler diagnostic.
 ///
-/// These are infrastructure failures (artifact I/O, WASM compilation, checksum mismatches), not semantic type errors,
+/// These are infrastructure failures (artifact I/O, worker execution, checksum mismatches), not semantic type errors,
 /// so we use the generic `Error` kind rather than `Type`.
 fn error_from_pass_error(error: VocabDesugarPassError, fallback_span: ast::Span) -> CompileError {
-    CompileError::new(format!("vocab desugar pass failed: {error}"), fallback_span)
+    let span = match &error {
+        VocabDesugarPassError::Native { span: Some(span), .. } => *span,
+        _ => fallback_span,
+    };
+    CompileError::new(format!("vocab desugar pass failed: {error}"), span)
 }

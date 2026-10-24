@@ -2,10 +2,14 @@
 
 from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind, SymbolOrigin
 from rust::incan_semantics_core::body_ir import (
-    BodyIrModule, Body, NominalDeclaration, LocalOrigin, TraitImplementation,
-    TraitDefaultInstantiation, TraitTypeArgument,
+    BodyIrModule,
+    Body,
+    NominalDeclaration,
+    LocalOrigin,
+    TraitImplementation,
+    TraitDefaultInstantiation,
+    TraitTypeArgument,
 )
-from rust::std::borrow import Borrow
 from symbols import type_component
 from type_parameters import substitute, close_trait_environment
 from class_inheritance import specialize_classes
@@ -99,7 +103,9 @@ pub def specialize_nominals(module: &BodyIrModule) -> Result[BodyIrModule, str]:
 
 
 pub def retain_frame_nominals(
-    context: &BodyIrModule, templates: &BodyIrModule, body: &Body,
+    context: &BodyIrModule,
+    templates: &BodyIrModule,
+    body: &Body,
     mut retained_instances: list[NominalInstance],
 ) -> Result[list[NominalDeclaration], str]:
     """1. Collect closed frame carriers. 2. Append missing native layouts while preserving existing owner indices."""
@@ -135,7 +141,7 @@ def package_template(declaration: &NominalDeclaration) -> bool:
         _ => return false
 
 
-def retains_declaration(mut declarations: list[NominalDeclaration], declaration: &NominalDeclaration) -> bool:
+def retains_declaration(declarations: &list[NominalDeclaration], declaration: &NominalDeclaration) -> bool:
     """Reuse only an identical canonical declaration with the same closed specialization key."""
     for retained in declarations:
         if retained.name == declaration.name and retained.canonical == declaration.canonical:
@@ -146,7 +152,8 @@ def retains_declaration(mut declarations: list[NominalDeclaration], declaration:
 pub def specialize_nominals_with_instances(
     module: &BodyIrModule,
 ) -> Result[tuple[BodyIrModule, list[NominalInstance]], str]:
-    """Retain checked instances beside concrete layouts and dispatch records for native planning.
+    """
+    Retain checked instances beside concrete layouts and dispatch records for native planning.
 
     1. Collect checked frame and external-signature instances.
     2. Close their field and method dependencies.
@@ -276,12 +283,11 @@ def collect_owner_body_types(
     """Retain storage from selected frames, rejecting other owners before scanning their member inventory."""
     for body in module.bodies:
         match owner_template(module, body):
-            None =>
-                continue
+            None => continue
             Some(owner) =>
                 if module.nominal_declarations[owner].canonical != instance.declaration.canonical:
                     continue
-        if not selected_owner_body(module, Borrow.borrow(instance), body, Borrow.borrow(selected)):
+        if not selected_owner_body(module, instance, body, selected):
             continue
         closed = close_owner_body(body, instance)?
         retain_selected_members(closed, selected)
@@ -456,8 +462,10 @@ def owner_template(module: &BodyIrModule, body: &Body) -> Option[int]:
         RustType.Generic(base=base, args=_arguments) =>
             mut index = 0
             for declaration in module.nominal_declarations:
-                if admitted_owner(declaration) and len(declaration.type_parameters) != 0 and declaration.name == str(
-                    base,
+                if (
+                    admitted_owner(declaration)
+                    and len(declaration.type_parameters) != 0
+                    and declaration.name == str(base)
                 ):
                     return Some(index)
                 index += 1
@@ -492,12 +500,17 @@ def close_owner_body(body: &Body, instance: NominalInstance) -> Result[Body, str
     mut result = body.clone()
     mut owner_bindings: list[TraitTypeArgument] = []
     for index in range(len(instance.declaration.type_parameters)):
-        owner_bindings.append(TraitTypeArgument(
-            parameter=str(instance.declaration.type_parameters[index]), argument=instance.arguments[index].clone(),
-        ))
+        owner_bindings.append(
+            TraitTypeArgument(
+                parameter=str(instance.declaration.type_parameters[index]),
+                argument=instance.arguments[index].clone(),
+            ),
+        )
     result.set_nominal_instantiation(owner_bindings)
     environment: Option[TraitDefaultInstantiation] = close_trait_environment(
-        body.trait_default_instantiation, names, arguments,
+        body.trait_default_instantiation,
+        names,
+        arguments,
     )?
     result.trait_default_instantiation = environment
     for index in range(len(result.locals)):

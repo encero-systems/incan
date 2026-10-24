@@ -41,8 +41,8 @@ impl TypeChecker {
             return;
         }
         let candidate = BodyIrEmptyListRequirement {
-            initializer: (assignment.value.span.start, assignment.value.span.end),
-            declaration_write: (assignment.name_span.start, assignment.name_span.end),
+            initializer: assignment.value.span,
+            declaration_write: assignment.name_span,
             list_name: name.clone(),
             element: None,
             invalidated: false,
@@ -89,7 +89,7 @@ impl TypeChecker {
             _ => None,
         };
         let actual = actual.filter(|ty| self.body_ir_requirement_is_closed(ty) && !matches!(ty, ResolvedType::Never));
-        let key = (receiver.span.start, receiver.span.end);
+        let key = receiver.span;
         let Some(identity) = self.type_info.references.resolved_identities.get(&key) else {
             return;
         };
@@ -114,7 +114,7 @@ impl TypeChecker {
         if !matches!(value.node, Expr::Ident(_)) {
             return;
         }
-        let key = (value.span.start, value.span.end);
+        let key = value.span;
         let Some(identity) = self.type_info.references.resolved_identities.get(&key) else {
             return;
         };
@@ -143,9 +143,7 @@ impl TypeChecker {
                     .references
                     .resolved_write_identities
                     .iter()
-                    .any(|((start, end, _), selected)| {
-                        selected == &identity && (*start, *end) != candidate.declaration_write
-                    })
+                    .any(|((span, _), selected)| selected == &identity && *span != candidate.declaration_write)
                 || self
                     .type_info
                     .references

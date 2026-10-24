@@ -93,9 +93,9 @@ fn attachment<'a>(
         .iter()
         .find(|entry| {
             entry.declaration_name == format!("{owner}.{}", method.name)
-                && entry.decorator_span == (decorator.span.start, decorator.span.end)
-                && entry.key_span == (key.span.start, key.span.end)
-                && entry.descriptor_span == (descriptor.span.start, descriptor.span.end)
+                && entry.decorator_span == decorator.span
+                && entry.key_span == key.span
+                && entry.descriptor_span == descriptor.span
                 && literal_materialization(key, info)
                 && literal_materialization(descriptor, info)
         })

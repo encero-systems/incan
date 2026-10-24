@@ -182,7 +182,7 @@ impl TypeChecker {
             self.type_info
                 .declarations
                 .native_attribute_applications
-                .insert((declaration.start, declaration.end), applications);
+                .insert(declaration, applications);
         }
     }
 
@@ -963,7 +963,7 @@ impl TypeChecker {
     /// Prefer a vocabulary member's source span, retaining the binding span for synthesized members.
     fn c_member_span(member: &incan_vocab::VocabDeclaration, fallback: Span) -> Span {
         if member.span.end > member.span.start {
-            Span::new(member.span.start, member.span.end)
+            Span::new(member.span.start, member.span.end).with_expansion(fallback.expansion)
         } else {
             fallback
         }

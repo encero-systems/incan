@@ -28,8 +28,8 @@ pub def native_callable_storage(
     mut inputs = parameters
     mut generics = type_arguments
     for positions in declaration.native_callable_parameters:
-        slot = int(positions.0)
-        generic = int(positions.1)
+        slot = int(positions.parameter_slot)
+        generic = int(positions.type_argument_slot)
         if slot < 0 or slot >= len(inputs) or generic < 0 or generic >= len(generics):
             return Err("invalid Body IR native callback generic position")
         # 1. Read the callback's already evaluated storage from its checked slot.

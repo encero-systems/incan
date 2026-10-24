@@ -115,7 +115,7 @@ fn retain_return_annotation(body: &mut bir::Body, program: &ast::Program, facts:
     else {
         return;
     };
-    let key = (body.span.start, body.span.end);
+    let key = body.span;
     let declared = facts
         .declarations
         .function_bindings_by_span
@@ -144,8 +144,7 @@ fn retain_return_annotation(body: &mut bir::Body, program: &ast::Program, facts:
 fn return_annotation_span(program: &ast::Program, body: &bir::Body) -> Option<ast::Span> {
     program.declarations.iter().find_map(|declaration| {
         if let ast::Declaration::Function(function) = &declaration.node {
-            return (declaration.span.start == body.span.start && declaration.span.end == body.span.end)
-                .then_some(function.return_type.span);
+            return (declaration.span == body.span).then_some(function.return_type.span);
         }
         let methods = match &declaration.node {
             ast::Declaration::Model(owner) => &owner.methods,
@@ -155,10 +154,9 @@ fn return_annotation_span(program: &ast::Program, body: &bir::Body) -> Option<as
             ast::Declaration::Newtype(owner) => &owner.methods,
             _ => return None,
         };
-        methods.iter().find_map(|method| {
-            (method.span.start == body.span.start && method.span.end == body.span.end)
-                .then_some(method.node.return_type.span)
-        })
+        methods
+            .iter()
+            .find_map(|method| (method.span == body.span).then_some(method.node.return_type.span))
     })
 }
 
@@ -538,8 +536,7 @@ fn call_carrier(
             let declared_self = signatures
                 .get(selected)
                 .is_some_and(|signature| signature.original == IncanType::SelfType);
-            if !declared_self && facts.calls.body_ir_self_result_methods.get(&(span.start, span.end)) != Some(selected)
-            {
+            if !declared_self && facts.calls.body_ir_self_result_methods.get(&span) != Some(selected) {
                 return None;
             }
             let bir::ArgumentElement::One(receiver) = args.first()? else {

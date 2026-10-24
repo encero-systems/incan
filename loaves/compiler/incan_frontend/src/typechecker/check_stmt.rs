@@ -503,8 +503,7 @@ impl TypeChecker {
     /// go through (see [`Self::refuse_write_through_read_only_binding`]).
     pub(in crate::typechecker) fn record_read_only_binding(&mut self, is_mutable: bool, declaration_span: Span) {
         if !is_mutable {
-            self.read_only_binding_spans
-                .insert((declaration_span.start, declaration_span.end));
+            self.read_only_binding_spans.insert(declaration_span);
         }
     }
 
@@ -582,11 +581,7 @@ impl TypeChecker {
         let Some(symbol) = self.symbols.get(symbol_id) else {
             return;
         };
-        if !matches!(symbol.kind, SymbolKind::Variable(_))
-            || !self
-                .read_only_binding_spans
-                .contains(&(symbol.span.start, symbol.span.end))
-        {
+        if !matches!(symbol.kind, SymbolKind::Variable(_)) || !self.read_only_binding_spans.contains(&symbol.span) {
             return;
         }
         self.errors.push(errors::mutation_without_mut(root, span));
@@ -1215,10 +1210,7 @@ impl TypeChecker {
 
     /// Give a compiler-managed C output constructor the ordinary local name supplied by its enclosing assignment.
     fn bind_c_abi_output_slot_assignment(&mut self, name: &str, value_span: Span) {
-        let Some(slot) = self
-            .unbound_c_abi_output_slot_constructors
-            .remove(&(value_span.start, value_span.end))
-        else {
+        let Some(slot) = self.unbound_c_abi_output_slot_constructors.remove(&value_span) else {
             return;
         };
         self.pending_c_abi_output_slots.insert(name.to_string(), slot);
@@ -1226,10 +1218,7 @@ impl TypeChecker {
 
     /// Bind an opaque checked typed span only when its constructor is the exact value of one ordinary local.
     fn bind_c_abi_span_assignment(&mut self, name: &str, value_span: Span) {
-        let Some(kind) = self
-            .unbound_c_abi_span_constructors
-            .remove(&(value_span.start, value_span.end))
-        else {
+        let Some(kind) = self.unbound_c_abi_span_constructors.remove(&value_span) else {
             return;
         };
         let Some(binding_span) = self
@@ -1248,11 +1237,11 @@ impl TypeChecker {
     /// receiving the compiler-tracked local owner required by the checked bridge.
     fn reject_unbound_c_abi_span_constructors(&mut self) {
         let constructors = std::mem::take(&mut self.unbound_c_abi_span_constructors);
-        for ((start, end), _kind) in constructors {
+        for (span, _kind) in constructors {
             self.errors.push(crate::diagnostics::CompileError::type_error(
                 "a checked byte carrier must be assigned directly to one local before its closed bridge methods are used"
                     .to_string(),
-                Span::new(start, end),
+                span,
             ));
         }
     }
@@ -1261,12 +1250,9 @@ impl TypeChecker {
     ///
     /// The local may then be read as the receiver of `copy_utf8` only; see `check_ident`.
     fn bind_scoped_c_string_view_assignment(&mut self, binding_span: Span, value_span: Span) {
-        if self
-            .unbound_scoped_c_string_views
-            .remove(&(value_span.start, value_span.end))
-        {
+        if self.unbound_scoped_c_string_views.remove(&value_span) {
             self.scoped_c_string_view_bindings
-                .insert((binding_span.start, binding_span.end), self.closure_depth);
+                .insert(binding_span, self.closure_depth);
         }
     }
 
@@ -1276,25 +1262,20 @@ impl TypeChecker {
     /// expression statement that only discards the view is not an escape.
     fn reject_unbound_scoped_c_string_views(&mut self, statement: &Statement) {
         if let Statement::Expr(expr) = statement {
-            self.unbound_scoped_c_string_views
-                .remove(&(expr.span.start, expr.span.end));
+            self.unbound_scoped_c_string_views.remove(&expr.span);
         }
         let mut escaped = std::mem::take(&mut self.unbound_scoped_c_string_views)
             .into_iter()
             .collect::<Vec<_>>();
         escaped.sort_unstable();
-        for (start, end) in escaped {
-            self.errors
-                .push(errors::scoped_c_string_view_escapes(Span::new(start, end)));
+        for span in escaped {
+            self.errors.push(errors::scoped_c_string_view_escapes(span));
         }
     }
 
     /// Give a checked C raw call result the ordinary local name supplied by its enclosing assignment.
     fn bind_c_abi_raw_result_assignment(&mut self, name: &str, value_span: Span) {
-        let Some(mut result) = self
-            .unbound_c_abi_raw_call_results
-            .remove(&(value_span.start, value_span.end))
-        else {
+        let Some(mut result) = self.unbound_c_abi_raw_call_results.remove(&value_span) else {
             return;
         };
         result.local_symbol_span = self
@@ -1313,7 +1294,7 @@ impl TypeChecker {
     /// a later reader can still fix the owner's type arguments, so the binding is watched until its block ends
     /// instead of being refused here. `_` is never read, so nothing can fix them and the call is refused at once.
     fn bind_open_rust_generic_assignment(&mut self, name: &str, value_span: Span) {
-        let Some(call) = self.open_rust_generic_calls.remove(&(value_span.start, value_span.end)) else {
+        let Some(call) = self.open_rust_generic_calls.remove(&value_span) else {
             return;
         };
         if name == "_" {
@@ -1339,7 +1320,7 @@ impl TypeChecker {
     /// `HashMap.new()` on its own line binds nothing, so no later statement can supply the type arguments Rust
     /// would need; the call is refused where it stands.
     fn reject_discarded_open_rust_generic_call(&mut self, expr_span: Span) {
-        let Some(call) = self.open_rust_generic_calls.remove(&(expr_span.start, expr_span.end)) else {
+        let Some(call) = self.open_rust_generic_calls.remove(&expr_span) else {
             return;
         };
         self.errors.push(errors::rust_owner_type_args_not_inferred(
@@ -1404,13 +1385,13 @@ impl TypeChecker {
             .type_info
             .rust
             .checked_calls
-            .get(&(expr.span.start, expr.span.end))
+            .get(&expr.span)
             .is_some_and(|call| &call.return_type == actual);
         if accepted {
             self.type_info
                 .expressions
                 .numeric_conversion_destinations
-                .insert((boundary_span.start, boundary_span.end), expected.clone());
+                .insert(boundary_span, expected.clone());
         }
         accepted
     }
@@ -1461,7 +1442,7 @@ impl TypeChecker {
                 target.module_path,
                 target.name,
                 kind,
-                incan_semantics_core::HirSourceSpan::new(symbol.span.start, symbol.span.end),
+                symbol.span,
             ))
         });
         imported.or(local)
@@ -1844,7 +1825,7 @@ impl TypeChecker {
                 self.validate_truthiness_condition(&cond_ty, expr.span);
 
                 self.symbols.enter_scope(ScopeKind::Block);
-                self.push_loop_context(LoopContextKind::Statement, None, span.start);
+                self.push_loop_context(LoopContextKind::Statement, None, span);
                 self.check_statement_block(&while_stmt.body);
                 let _ = self.pop_loop_context();
                 self.symbols.exit_scope();
@@ -1856,7 +1837,7 @@ impl TypeChecker {
                 self.symbols.enter_scope(ScopeKind::Block);
                 self.check_pattern(pattern, &value_ty);
                 let views = self.enter_pattern_views(&pattern.node, view_param);
-                self.push_loop_context(LoopContextKind::Statement, None, span.start);
+                self.push_loop_context(LoopContextKind::Statement, None, span);
                 self.check_statement_block(&while_stmt.body);
                 let _ = self.pop_loop_context();
                 self.exit_pattern_views(views);
@@ -1872,7 +1853,7 @@ impl TypeChecker {
     /// because no surrounding expression consumes a result.
     fn check_loop_stmt(&mut self, loop_stmt: &LoopStmt, span: Span) {
         self.symbols.enter_scope(ScopeKind::Block);
-        self.push_loop_context(LoopContextKind::Statement, None, span.start);
+        self.push_loop_context(LoopContextKind::Statement, None, span);
         self.check_statement_block(&loop_stmt.body);
         let _ = self.pop_loop_context();
         self.symbols.exit_scope();
@@ -1927,7 +1908,7 @@ impl TypeChecker {
         self.define_for_pattern_bindings(&for_stmt.pattern, &elem_ty);
         self.retain_body_ir_iteration_binding(&for_stmt.pattern, &for_stmt.iter);
         self.remember_for_pattern_bindings(&for_stmt.pattern.node, owns_items);
-        self.push_loop_context(LoopContextKind::Statement, None, span.start);
+        self.push_loop_context(LoopContextKind::Statement, None, span);
         let loop_body = self.enter_for_loop_body(&for_stmt.pattern.node, loop_view_param, derived_views);
 
         self.check_statement_block(&for_stmt.body);

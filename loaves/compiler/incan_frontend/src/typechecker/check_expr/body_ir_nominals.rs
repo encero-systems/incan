@@ -73,14 +73,11 @@ impl TypeChecker {
             .into_iter()
             .map(|name| bindings.get(name).cloned())
             .collect::<Option<Vec<_>>>()?;
-        self.type_info
-            .calls
-            .body_ir_call_type_arguments
-            .insert((span.start, span.end), ordered);
+        self.type_info.calls.body_ir_call_type_arguments.insert(span, ordered);
         self.type_info
             .calls
             .body_ir_call_result_types
-            .insert((span.start, span.end), returned.clone());
+            .insert(span, returned.clone());
         Some(returned)
     }
 

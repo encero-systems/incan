@@ -64,8 +64,8 @@ pub(super) struct ForItemTaking {
     captures: Vec<(SymbolId, Span)>,
     /// Every assignment to an existing list binding checked so far, with where it starts and the blocks around it.
     reassignments: Vec<Reassignment>,
-    /// Every `break` and `continue` checked so far: where it is, and the start of the loop it leaves.
-    loop_exits: Vec<(usize, usize)>,
+    /// Every checked exit and its exact target loop; generated loops may share original-source coordinates.
+    loop_exits: Vec<(Span, Span)>,
     /// Comprehension sources waiting for every later binding read to be known (#1983).
     copying_comprehensions: Vec<CopyingComprehension>,
 }
@@ -225,7 +225,7 @@ impl TypeChecker {
             .loop_stack
             .iter()
             .filter(|enclosing| definition.scope < enclosing.scope)
-            .map(|enclosing| (enclosing.start, enclosing.block_depth))
+            .map(|enclosing| (enclosing.span.start, enclosing.block_depth))
             .collect();
         if let (Some(&(outermost_start, _)), Some(&(_, innermost_depth))) = (repeating.first(), repeating.last()) {
             match self.refill_in_each_pass(symbol, innermost_depth) {
@@ -296,8 +296,7 @@ impl TypeChecker {
     /// Record a `break` or `continue` at `span`, which leaves the innermost enclosing loop.
     pub(super) fn note_loop_exit(&mut self, span: Span) {
         if let Some(enclosing) = self.loop_stack.last() {
-            let target = enclosing.start;
-            self.for_item_taking.loop_exits.push((span.start, target));
+            self.for_item_taking.loop_exits.push((span, enclosing.span));
         }
     }
 
@@ -307,7 +306,7 @@ impl TypeChecker {
         self.for_item_taking
             .loop_exits
             .iter()
-            .any(|(at, target)| *at > after && self.loop_stack.iter().any(|enclosing| enclosing.start == *target))
+            .any(|(at, target)| at.start > after && self.loop_stack.iter().any(|enclosing| enclosing.span == *target))
     }
 
     /// Return where the latest assignment of a new list to `symbol` starts, when it runs in each pass of the innermost

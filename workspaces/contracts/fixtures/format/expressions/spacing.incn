@@ -1,4 +1,4 @@
-# behavior: Annotations, arithmetic operators, parameters, call arguments and list elements receive canonical spacing, and ordinary strings use double quotes.
+# behavior: Annotations, operators, parameters and strings receive canonical spacing; wrapped builder lists put each element on its own line.
 # expect-formatted:
 #   const ITEMS: list[int] = [1, 2, 3]
 #   const TEXT: str = "hello"
@@ -12,6 +12,18 @@
 #   def greet() -> None:
 #       """Print two greeting words."""
 #       println("hello", "world")
+#
+#
+#   def descriptors() -> None:
+#       """Keep each long descriptor on its own list line."""
+#       registry
+#           .with_descriptors(
+#               [
+#                   Descriptor.named("query.field").in_declaration_body("query").with_receiver("owning-declaration"),
+#                   Descriptor.named("query.pipe").in_declaration_body("query").with_receiver("owning-declaration"),
+#               ],
+#           )
+#           .finish()
 
 const ITEMS:list[int]=[1,2,3]
 const TEXT:str='hello'
@@ -21,3 +33,6 @@ def add(a:int,b:int)->int:
 def greet()->None:
     """Print two greeting words."""
     println('hello','world')
+def descriptors()->None:
+    """Keep each long descriptor on its own list line."""
+    registry.with_descriptors([Descriptor.named("query.field").in_declaration_body("query").with_receiver("owning-declaration"),Descriptor.named("query.pipe").in_declaration_body("query").with_receiver("owning-declaration")]).finish()

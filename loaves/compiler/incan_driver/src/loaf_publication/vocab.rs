@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use crate::error::{CliError, CliResult};
 use crate::unit::UnitDescription;
-use incan_frontend::library_manifest::VocabExports;
+use incan_frontend::library_manifest::{VocabDesugarerArtifact, VocabExports};
 
 /// The existing registration DTO accompanied by its producer identity and entry module.
 #[derive(Deserialize)]
@@ -18,6 +18,9 @@ struct PreparedRegistration {
     unit_identity: String,
     /// Descriptors computed by the producer's native Incan entry.
     metadata: incan_vocab::VocabMetadata,
+    /// Verified native worker compiled from this entry, when custom expansion was requested.
+    #[serde(default)]
+    worker: Option<VocabDesugarerArtifact>,
 }
 
 /// Read a prepared registration without running any producer code in the compiler or its consumers.
@@ -43,9 +46,9 @@ pub(crate) fn prepared_registration(unit: &UnitDescription) -> CliResult<Option<
     if prepared.unit_identity.len() != 64 || !prepared.unit_identity.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(CliError::failure("vocabulary unit identity must be a SHA-256 digest"));
     }
-    if prepared.metadata.desugarer.is_some() {
+    if prepared.metadata.desugarer.is_some() && prepared.worker.is_none() {
         return Err(CliError::failure(
-            "native custom desugarer publication is not available yet",
+            "vocabulary registration requires a compiled native desugar export",
         ));
     }
     Ok(Some(VocabExports {
@@ -56,6 +59,6 @@ pub(crate) fn prepared_registration(unit: &UnitDescription) -> CliResult<Option<
         keyword_registrations: prepared.metadata.keyword_registrations,
         dsl_surfaces: prepared.metadata.dsl_surfaces,
         provider_manifest: prepared.metadata.library_manifest,
-        desugarer_artifact: None,
+        desugarer_artifact: prepared.worker,
     }))
 }

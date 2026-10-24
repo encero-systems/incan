@@ -99,9 +99,7 @@ impl TypeChecker {
         {
             Some(target) => target,
             None => {
-                let previous_span = self
-                    .generic_partial_target_span
-                    .replace((partial.target.span.start, partial.target.span.end));
+                let previous_span = self.generic_partial_target_span.replace(partial.target.span);
                 let previous_target = self.generic_partial_target.take();
                 let target_ty = self.check_expr(&partial.target);
                 let generic_target = std::mem::replace(&mut self.generic_partial_target, previous_target);
@@ -253,7 +251,7 @@ impl TypeChecker {
                     self.type_info
                         .calls
                         .call_site_monomorph_type_args
-                        .insert((span.start, span.end), type_args);
+                        .insert(span, type_args);
                 }
                 (instantiated_params, instantiated_ret)
             }
@@ -381,7 +379,7 @@ impl TypeChecker {
         self.type_info
             .expressions
             .local_partial_method_targets
-            .insert((target.span.start, target.span.end), method);
+            .insert(target.span, method);
         self.record_expr_type(target.span, method_ty.clone());
         Ok(Some(method_ty))
     }
@@ -402,17 +400,14 @@ impl TypeChecker {
     /// Return whether a span is the target of the local partial being checked, where a generic function may be named
     /// as a value for the partial to instantiate.
     pub(in crate::typechecker::check_expr) fn is_generic_partial_target_span(&self, span: Span) -> bool {
-        self.generic_partial_target_span == Some((span.start, span.end))
+        self.generic_partial_target_span == Some(span)
     }
 
     /// Whether a local partial's target is a generic function, whose call takes the partial's type arguments, rather
     /// than a generic type's constructor, which is built from its fields.
     fn generic_partial_target_names_a_function(&self, target: &Spanned<Expr>) -> bool {
         !matches!(
-            self.type_info
-                .expressions
-                .ident_kinds
-                .get(&(target.span.start, target.span.end)),
+            self.type_info.expressions.ident_kinds.get(&target.span),
             Some(IdentKind::TypeName)
         )
     }
@@ -447,7 +442,7 @@ impl TypeChecker {
         self.type_info
             .expressions
             .ident_kinds
-            .insert((target.span.start, target.span.end), IdentKind::TypeName);
+            .insert(target.span, IdentKind::TypeName);
         let (return_type, generic_target) = if type_params.is_empty() {
             (return_type, None)
         } else {
@@ -776,7 +771,7 @@ impl TypeChecker {
 
     /// Type-check an expression used as a type-owned receiver, such as `Type.method()` or `Enum.Variant`.
     pub fn check_type_receiver_expr(&mut self, expr: &Spanned<Expr>) -> ResolvedType {
-        self.type_receiver_spans.push((expr.span.start, expr.span.end));
+        self.type_receiver_spans.push(expr.span);
         let ty = self.check_expr(expr);
         self.type_receiver_spans.pop();
         ty
@@ -792,7 +787,7 @@ impl TypeChecker {
         expr: &Spanned<Expr>,
         expected: &ResolvedType,
     ) -> ResolvedType {
-        self.type_receiver_spans.push((expr.span.start, expr.span.end));
+        self.type_receiver_spans.push(expr.span);
         let ty = self.check_expr_with_expected(expr, Some(expected));
         self.type_receiver_spans.pop();
         ty
@@ -803,7 +798,7 @@ impl TypeChecker {
         self.type_receiver_spans
             .iter()
             .rev()
-            .any(|&(start, end)| start == span.start && end == span.end)
+            .any(|&candidate| candidate == span)
     }
 
     /// Return whether a span identifies a type name being checked against an explicit `Type[T]` destination.
@@ -811,7 +806,7 @@ impl TypeChecker {
         self.type_token_value_spans
             .iter()
             .rev()
-            .any(|&(start, end)| start == span.start && end == span.end)
+            .any(|&candidate| candidate == span)
     }
 
     /// Type-check an expression with an expected destination type when one is already known.
@@ -848,7 +843,7 @@ impl TypeChecker {
             (_, Some(ResolvedType::TypeVar(_))) => return self.check_expr(expr),
             (Expr::Paren(inner), Some(expected_ty)) => self.check_expr_with_expected(inner, Some(expected_ty)),
             (Expr::Ident(_), Some(ResolvedType::TypeToken(_))) => {
-                self.type_token_value_spans.push((expr.span.start, expr.span.end));
+                self.type_token_value_spans.push(expr.span);
                 let ty = self.check_expr(expr);
                 self.type_token_value_spans.pop();
                 ty

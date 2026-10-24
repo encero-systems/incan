@@ -163,8 +163,8 @@ pub struct LoopContext {
     /// How many statement blocks surround the loop; its body is the next one, so an assignment in a block deeper than
     /// this runs in every pass of the loop that reaches it.
     pub block_depth: usize,
-    /// Where the loop statement or expression starts; it also identifies the loop a `break` or `continue` leaves.
-    pub start: usize,
+    /// The loop's original-source range and expansion context; exits compare this complete identity.
+    pub span: Span,
 }
 
 /// Resolved target for a source-level `type Alias = Target` declaration.
@@ -514,20 +514,20 @@ pub struct TypeChecker {
     /// Declaration spans of the read-only bindings a field or element write may not go through (#1561): a local
     /// declared without `mut`, by `let` or by a first plain assignment, and a parameter not marked `mut`. Loop and
     /// pattern bindings are not recorded; a write through one follows the place it binds.
-    read_only_binding_spans: HashSet<(usize, usize)>,
+    read_only_binding_spans: HashSet<crate::ast::Span>,
     /// How many closure bodies enclose the expression being checked.
     closure_depth: usize,
     /// Spans of the expressions being checked as the receiver of `copy_utf8(max_bytes=...)`, the one position a scoped
     /// C text view may be read in (RFC 116).
-    scoped_c_string_view_receivers: HashSet<(usize, usize)>,
+    scoped_c_string_view_receivers: HashSet<crate::ast::Span>,
     /// Direct argument expressions of the checked raw call currently being validated.
-    c_abi_raw_argument_spans: HashSet<(usize, usize)>,
+    c_abi_raw_argument_spans: HashSet<crate::ast::Span>,
     /// Calls that returned a scoped C text view in the statement being checked and are neither bound to a local nor
     /// the receiver of `copy_utf8`; each one left at the end of the statement escapes (RFC 116).
-    unbound_scoped_c_string_views: HashSet<(usize, usize)>,
+    unbound_scoped_c_string_views: HashSet<crate::ast::Span>,
     /// Locals bound to a scoped C text view, by declaration span, with the closure depth they were bound at: a read
     /// from a deeper closure captures the view (RFC 116).
-    scoped_c_string_view_bindings: HashMap<(usize, usize), usize>,
+    scoped_c_string_view_bindings: HashMap<crate::ast::Span, usize>,
     /// Resource bindings transferred to an owning C ABI parameter in the current local checking flow.
     pub transferred_c_resource_bindings: HashMap<String, Span>,
     /// Lists whose items a `for` loop of the current body takes, and that body's `for` pattern bindings (#1844).
@@ -537,23 +537,23 @@ pub struct TypeChecker {
     /// The standard package the program being checked is, when it is one; its `std.*` roots are its own modules.
     own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
     /// Checked span constructors waiting for the enclosing direct assignment to name their only legal owner.
-    pub unbound_c_abi_span_constructors: HashMap<(usize, usize), CAbiSpanKind>,
+    pub unbound_c_abi_span_constructors: HashMap<crate::ast::Span, CAbiSpanKind>,
     /// Opaque checked typed span carriers keyed by their direct source local.
     pub c_abi_span_bindings: HashMap<String, CAbiSpanLocal>,
     /// Checked mutable spans already consumed by their finish bridge in the active local flow.
-    pub consumed_c_abi_span_bindings: HashMap<(usize, usize), Span>,
+    pub consumed_c_abi_span_bindings: HashMap<crate::ast::Span, Span>,
     /// Local output handles created by `c.out[...]()` or `c.inout(...)` before a raw symbol binds them.
     pub pending_c_abi_output_slots: HashMap<String, PendingCAbiOutputSlot>,
     /// Constructor facts waiting for their enclosing ordinary assignment to supply a local slot name.
-    pub unbound_c_abi_output_slot_constructors: HashMap<(usize, usize), PendingCAbiOutputSlot>,
+    pub unbound_c_abi_output_slot_constructors: HashMap<crate::ast::Span, PendingCAbiOutputSlot>,
     /// Checked raw-call output relationships waiting for their enclosing ordinary assignment to supply a result name.
-    pub unbound_c_abi_raw_call_results: HashMap<(usize, usize), CAbiRawCallResult>,
+    pub unbound_c_abi_raw_call_results: HashMap<crate::ast::Span, CAbiRawCallResult>,
     /// Raw C result bindings whose enum outcome may establish branch-local output validity.
     pub c_abi_raw_call_results: Vec<CAbiRawCallResult>,
     /// Rust associated calls in the current statement whose owner type arguments were left open, keyed by call
     /// span, waiting for the statement to say whether a local receives the value (#1720). Cleared when the
     /// statement ends: a value nested somewhere else may still be fixed by its context.
-    open_rust_generic_calls: HashMap<(usize, usize), OpenRustGenericCall>,
+    open_rust_generic_calls: HashMap<crate::ast::Span, OpenRustGenericCall>,
     /// Locals bound to open Rust associated calls that nothing has read yet (#1720).
     open_rust_generic_bindings: Vec<OpenRustGenericBinding>,
     /// Identity of the statement block being checked, and the count that mints those identities. A block's
@@ -571,18 +571,18 @@ pub struct TypeChecker {
     /// Whether the body currently being checked belongs to an `async def` or async method.
     pub in_async_body: bool,
     /// Expression span currently being typechecked as an `await` operand.
-    pub await_operand_span: Option<(usize, usize)>,
+    pub await_operand_span: Option<crate::ast::Span>,
     /// Nesting depth for expressions being checked as call arguments.
     pub call_argument_depth: usize,
     /// Nesting depth of explicit `unsafe:` acknowledgment blocks.
     pub unsafe_depth: usize,
     /// Expression spans where type-like identifiers are valid namespace/type owners.
-    pub type_receiver_spans: Vec<(usize, usize)>,
+    pub type_receiver_spans: Vec<crate::ast::Span>,
     /// Expression spans where type-like identifiers are valid value-level `Type[T]` tokens.
-    pub type_token_value_spans: Vec<(usize, usize)>,
+    pub type_token_value_spans: Vec<crate::ast::Span>,
     /// The target span of the local partial expression being checked, where a generic function may be named as a value
     /// so the partial can instantiate it (RFC 084).
-    pub(in crate::typechecker) generic_partial_target_span: Option<(usize, usize)>,
+    pub(in crate::typechecker) generic_partial_target_span: Option<crate::ast::Span>,
     /// The generic function a local partial's target named at [`Self::generic_partial_target_span`], taken by the
     /// partial expression check to instantiate it.
     pub(in crate::typechecker) generic_partial_target: Option<check_expr::GenericPartialTarget>,
@@ -601,7 +601,7 @@ pub struct TypeChecker {
     /// Named function currently checked as the owner of a direct C raw call.
     pub current_c_abi_raw_call_owner: Option<CBindingRawCallOwner>,
     /// Public function declarations already warned for direct checked C calls in the active program check.
-    pub warned_public_c_abi_raw_call_owners: HashSet<(String, usize, usize)>,
+    pub warned_public_c_abi_raw_call_owners: HashSet<(String, crate::ast::Span)>,
     /// In-scope generic type-parameter trait bounds, preserving generic arguments for RFC 025 dispatch.
     pub current_type_param_bound_details: Vec<HashMap<String, Vec<TypeBoundInfo>>>,
     /// Declared plain trait bounds of the bounded nominals visible to the checked module, keyed by the declaring
@@ -636,7 +636,7 @@ pub struct TypeChecker {
     ///
     /// Collection and semantic checking both consult this set so a later colliding declaration cannot overwrite the
     /// first active member or produce a second, contradictory collision through the lexical symbol table.
-    rejected_member_bindings: HashSet<(usize, usize)>,
+    rejected_member_bindings: HashSet<crate::ast::Span>,
     /// Previous type-alias bindings changed while dependency imports are collected transactionally.
     dependency_import_type_alias_transaction: Option<HashMap<String, Option<TypeAliasTarget>>>,
     /// Whether source annotation names should be validated during the semantic check pass.
@@ -644,7 +644,7 @@ pub struct TypeChecker {
     /// Source annotation diagnostics already emitted in the current program check, keyed by spelling and span:
     /// unbound names, and bare builtin collection annotations (#1717, #1749), which the collection pass and the body
     /// check can both meet.
-    unknown_source_type_names_emitted: HashSet<(String, usize, usize)>,
+    unknown_source_type_names_emitted: HashSet<(String, crate::ast::Span)>,
     /// Type names the program under check declares itself, recorded before its declarations are collected.
     ///
     /// A program may take a builtin collection spelling (`Result`, `Tuple`) for its own type; an annotation that
@@ -1040,18 +1040,18 @@ impl TypeChecker {
         true
     }
 
-    /// Push a new loop context before checking a loop body; the loop starts at `start`.
+    /// Push a loop's complete checked identity before checking its body, including generated expansion context.
     ///
     /// Statement loops pass `None` for `expected_break_ty`; expression loops forward whatever result type the
     /// surrounding context expects.
-    pub fn push_loop_context(&mut self, kind: LoopContextKind, expected_break_ty: Option<ResolvedType>, start: usize) {
+    pub fn push_loop_context(&mut self, kind: LoopContextKind, expected_break_ty: Option<ResolvedType>, span: Span) {
         self.loop_stack.push(LoopContext {
             kind,
             expected_break_ty,
             break_types: Vec::new(),
             scope: self.symbols.current_scope_index(),
             block_depth: self.item_taking_block_depth(),
-            start,
+            span,
         });
     }
 
@@ -1068,7 +1068,7 @@ impl TypeChecker {
     /// Return whether this call expression is inside the active `await` operand.
     pub fn is_in_await_operand(&self, span: Span) -> bool {
         self.await_operand_span
-            .is_some_and(|(start, end)| start <= span.start && span.end <= end)
+            .is_some_and(|operand| operand.start <= span.start && span.end <= operand.end)
     }
 
     /// Emit the missing-await warning for a direct async call when the current expression context should report it.
@@ -2629,18 +2629,15 @@ impl TypeChecker {
         let mut identities = std::collections::BTreeMap::new();
         self.collect_expression_type_identities(&ty, &mut Vec::new(), &mut identities);
         if identities.is_empty() {
-            self.type_info
-                .expressions
-                .expression_type_identities
-                .remove(&(span.start, span.end));
+            self.type_info.expressions.expression_type_identities.remove(&span);
         } else {
             self.type_info
                 .expressions
                 .expression_type_identities
-                .insert((span.start, span.end), identities);
+                .insert(span, identities);
         }
         self.refuse_unbounded_nominal_expression_type(&ty, span);
-        self.type_info.expressions.expr_types.insert((span.start, span.end), ty);
+        self.type_info.expressions.expr_types.insert(span, ty);
     }
 
     /// Project named leaves through the accepted module/provider binding or retained carrier identity, retaining an
@@ -2779,7 +2776,7 @@ impl TypeChecker {
         self.type_info
             .expressions
             .value_destination_types
-            .insert((value_span.start, value_span.end), destination);
+            .insert(value_span, destination);
     }
 
     /// Whether `borrowed` is a shared reference to a source model, or to a class that derives `Clone`: the language
@@ -2804,10 +2801,7 @@ impl TypeChecker {
 
     /// Record the final checked type selected for one assignment binding.
     pub fn record_assignment_binding_type(&mut self, span: Span, ty: ResolvedType) {
-        self.type_info
-            .expressions
-            .assignment_binding_types
-            .insert((span.start, span.end), ty);
+        self.type_info.expressions.assignment_binding_types.insert(span, ty);
     }
 
     /// Record a source declaration target proven by normal typechecking.
@@ -2819,7 +2813,7 @@ impl TypeChecker {
         kind: impl Into<String>,
     ) {
         self.type_info.expressions.source_targets.insert(
-            (span.start, span.end),
+            span,
             SourceTargetInfo {
                 module_path,
                 name: name.into(),
@@ -2839,13 +2833,13 @@ impl TypeChecker {
             self.type_info
                 .declarations
                 .declaration_identities
-                .insert((span.start, span.end), identity.clone());
+                .insert(span, identity.clone());
         }
         for (span, identity) in self.symbols.nested_declaration_identities() {
             self.type_info
                 .declarations
                 .nested_declaration_identities
-                .insert((span.start, span.end), identity.clone());
+                .insert(span, identity.clone());
         }
 
         self.type_info.declarations.hir_bindings_by_span.clear();
@@ -2866,7 +2860,7 @@ impl TypeChecker {
             self.type_info
                 .declarations
                 .hir_bindings_by_span
-                .entry((span.start, span.end))
+                .entry(span)
                 .or_default()
                 .push(binding);
         }
@@ -2939,10 +2933,7 @@ impl TypeChecker {
 
     /// Record a typechecker-proven unpack binding plan for backend lowering.
     pub fn record_fixed_unpack_plan(&mut self, span: Span, plan: FixedUnpackPlan) {
-        self.type_info
-            .calls
-            .fixed_unpack_plans
-            .insert((span.start, span.end), plan);
+        self.type_info.calls.fixed_unpack_plans.insert(span, plan);
     }
 
     /// Look up a type by name and return its [`TypeInfo`], if known.
@@ -3652,7 +3643,7 @@ impl TypeChecker {
                 {
                     continue;
                 }
-                recorded.push(((clause.span.start, clause.span.end), adoption.type_args.clone()));
+                recorded.push((clause.span, adoption.type_args.clone()));
             }
         }
         self.type_info.traits.adoption_type_args = recorded.into_iter().collect();
@@ -3699,7 +3690,7 @@ impl TypeChecker {
                     continue;
                 };
                 if !arguments.is_empty() {
-                    recorded.insert((clause.span.start, clause.span.end), arguments);
+                    recorded.insert(clause.span, arguments);
                 }
             }
         }
@@ -4111,7 +4102,7 @@ impl TypeChecker {
             };
             for field in &model.fields {
                 if let Some(checked) = info.fields.get(&field.node.name) {
-                    model_field_types.insert((field.span.start, field.span.end), checked.ty.clone());
+                    model_field_types.insert(field.span, checked.ty.clone());
                 }
             }
             model_field_visibilities.insert(
@@ -5960,7 +5951,7 @@ impl TypeChecker {
             self.type_info
                 .rust
                 .mutable_reference_type_argument_projections
-                .insert((ty.span.start, ty.span.end), projections);
+                .insert(ty.span, projections);
         }
     }
 
@@ -6376,7 +6367,7 @@ impl TypeChecker {
         {
             return;
         }
-        let key = (spelling.clone(), span.start, span.end);
+        let key = (spelling.clone(), span);
         if !self.unknown_source_type_names_emitted.insert(key) {
             return;
         }
@@ -6447,7 +6438,7 @@ impl TypeChecker {
     /// Inside a callable the diagnostic suggests declaring the name as a type parameter of that callable; elsewhere
     /// it keeps the import-or-define remedy.
     fn emit_unknown_source_type_annotation_name(&mut self, name: &str, span: Span) {
-        let key = (name.to_string(), span.start, span.end);
+        let key = (name.to_string(), span);
         if !self.unknown_source_type_names_emitted.insert(key) {
             return;
         }
@@ -7001,7 +6992,7 @@ impl TypeChecker {
         owner: &str,
         mut declarations: Vec<(String, MemberBindingKind, MemberBindingSurface, Span)>,
     ) {
-        declarations.sort_by_key(|(_, _, _, span)| (span.start, span.end));
+        declarations.sort_by_key(|(_, _, _, span)| *span);
 
         let mut seen = HashMap::new();
         for (name, kind, surface, span) in declarations {
@@ -7036,7 +7027,7 @@ impl TypeChecker {
                 BindingRegistration::Collision {
                     existing: (previous_kind, previous_span),
                 } => {
-                    self.rejected_member_bindings.insert((span.start, span.end));
+                    self.rejected_member_bindings.insert(span);
                     self.record_member_name_collision(owner, &name, previous_kind, previous_span, kind, span);
                 }
             }
@@ -7045,7 +7036,7 @@ impl TypeChecker {
 
     /// Return whether one member declaration survived the shared first-wins registry.
     pub(super) fn member_binding_is_active(&self, span: Span) -> bool {
-        !self.rejected_member_bindings.contains(&(span.start, span.end))
+        !self.rejected_member_bindings.contains(&span)
     }
 
     /// Export one accepted source-owned member declaration from the shared member registry.
@@ -7058,7 +7049,7 @@ impl TypeChecker {
         self.type_info
             .declarations
             .member_declaration_identities
-            .insert((span.start, span.end), identity);
+            .insert(span, identity);
     }
 
     /// Render one collision already decided by the shared member registration.

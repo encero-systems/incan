@@ -12,11 +12,13 @@ use super::{DocumentState, identifier_at_offset, span_to_range};
 pub(super) fn checked_call_hover(document: &DocumentState, offset: usize) -> Option<Hover> {
     let (name, token) = identifier_at_offset(&document.source, offset)?;
     let calls = &document.checked_identities.type_info.rust.checked_calls;
-    let (&(_, end), call) = calls
+    let (&span, call) = calls
         .iter()
-        .filter(|((start, end), call)| *start == token.start && token.end < *end && !call.has_receiver)
-        .min_by_key(|((_, end), _)| *end)?;
-    let tail = document.source.get(token.end..end)?.trim_start();
+        .filter(|(span, call)| {
+            span.expansion == token.expansion && span.start == token.start && token.end < span.end && !call.has_receiver
+        })
+        .min_by_key(|(span, _)| span.end)?;
+    let tail = document.source.get(token.end..span.end)?.trim_start();
     if !tail.starts_with('(') && !tail.starts_with('[') {
         return None;
     }

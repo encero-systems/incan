@@ -39,10 +39,10 @@ impl TypeChecker {
         };
         parameter.ty = closed.clone();
         self.retain_body_ir_parameter_reads(&identity, &closed);
-        self.type_info.expressions.body_ir_expr_types.insert(
-            (callback.span.start, callback.span.end),
-            ResolvedType::Function(parameters, returned),
-        );
+        self.type_info
+            .expressions
+            .body_ir_expr_types
+            .insert(callback.span, ResolvedType::Function(parameters, returned));
     }
 
     /// Retain agreed requirements only from a successfully validated, independently identified function call.

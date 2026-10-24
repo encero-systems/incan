@@ -14,8 +14,10 @@ use crate::ast::{IncanDeclaration, IncanExpr, IncanStatement, Span, VocabSyntaxN
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum DesugarerArtifactKind {
-    /// WASM module artifact loaded at consumer compile time.
+    /// Host-native process speaking the versioned public syntax protocol.
     #[default]
+    NativeWorker,
+    /// Historical metadata tag, retained only so consumers can issue the required rebuild diagnostic.
     WasmModule,
 }
 
@@ -25,42 +27,47 @@ pub enum DesugarerArtifactKind {
 pub struct DesugarerMetadata {
     /// Artifact kind to produce and package.
     pub artifact_kind: DesugarerArtifactKind,
-    /// WASM ABI contract version for compiler/desugarer runtime interop.
-    #[cfg_attr(feature = "serde", serde(default = "default_wasm_desugar_abi_version"))]
+    /// Public syntax schema version for the native worker protocol.
+    #[cfg_attr(feature = "serde", serde(default = "default_desugar_schema_version"))]
     pub abi_version: u32,
     /// Target triple used to build the artifact.
     pub target: String,
-    /// Cargo profile used to build the artifact (`release` by default).
+    /// Native profile used to build the artifact.
     pub profile: String,
     /// Optional explicit output file name.
     pub file_name: Option<String>,
-    /// Runtime entrypoint symbol used by the compiler.
+    /// Authored export used by Oven's generated worker main.
     pub entrypoint: String,
 }
 
 impl Default for DesugarerMetadata {
+    /// Describe a host-native worker using the current public syntax schema.
     fn default() -> Self {
         Self {
-            artifact_kind: DesugarerArtifactKind::WasmModule,
-            abi_version: crate::WASM_DESUGAR_ABI_VERSION,
-            target: "wasm32-wasip1".to_string(),
+            artifact_kind: DesugarerArtifactKind::NativeWorker,
+            abi_version: crate::VOCAB_SYNTAX_VERSION,
+            target: "host".to_string(),
             profile: "release".to_string(),
             file_name: None,
-            entrypoint: crate::WASM_DESUGAR_ENTRYPOINT.to_string(),
+            entrypoint: "desugar".to_string(),
         }
     }
 }
 
 #[cfg(feature = "serde")]
-fn default_wasm_desugar_abi_version() -> u32 {
-    crate::WASM_DESUGAR_ABI_VERSION
+/// Decode a descriptor that predates an explicit artifact ABI version.
+fn default_desugar_schema_version() -> u32 {
+    crate::VOCAB_SYNTAX_VERSION
 }
 
 impl DesugarerMetadata {
-    /// Create the default Wasm packaging metadata used by library desugarers.
+    /// Construct historical metadata for migration diagnostics; this format cannot be built or executed.
     #[must_use]
     pub fn wasm() -> Self {
-        Self::default()
+        Self {
+            artifact_kind: DesugarerArtifactKind::WasmModule,
+            ..Self::default()
+        }
     }
 
     /// Override the target triple used to build the runtime artifact.
@@ -123,6 +130,7 @@ pub enum DesugarOutput {
 }
 
 impl Default for DesugarOutput {
+    /// Represent an empty expansion as a statement sequence.
     fn default() -> Self {
         Self::Statements(Vec::new())
     }
@@ -192,6 +200,7 @@ impl DesugarError {
 }
 
 impl Display for DesugarError {
+    /// Render the provider's message with its original-source byte range when available.
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         if let Some(span) = self.span {
             write!(f, "{} at {}..{}", self.message, span.start, span.end)
@@ -220,23 +229,6 @@ pub trait VocabDesugarer: Send + Sync {
     }
 }
 
-/// Execute one serialized desugar request with a default-constructed desugarer.
-///
-/// This helper powers the standard WASM export macro and keeps request/response decoding logic in one canonical place.
-#[cfg(feature = "serde")]
-pub fn execute_desugar_request<D>(request_json: &[u8]) -> Result<Vec<u8>, String>
-where
-    D: VocabDesugarer + Default,
-{
-    let request = serde_json::from_slice::<DesugarRequest>(request_json)
-        .map_err(|err| format!("failed to parse desugar request json: {err}"))?;
-    let desugarer = D::default();
-    let response = desugarer
-        .desugar_with_context(&request)
-        .map_err(|err| format!("desugarer failed: {err}"))?;
-    serde_json::to_vec(&response).map_err(|err| format!("failed to serialize desugar response json: {err}"))
-}
-
 /// High-level registration for a library-provided desugarer.
 ///
 /// The common path is `DesugarerRegistration::new(MyDesugarer)` and then, only if needed, chaining metadata overrides
@@ -247,7 +239,7 @@ pub struct DesugarerRegistration {
 }
 
 impl DesugarerRegistration {
-    /// Register one Rust desugarer using the default Wasm packaging metadata.
+    /// Retain one legacy Rust registration as metadata; native executable providers are authored through `std.vocab`.
     #[must_use]
     pub fn new<D>(desugarer: D) -> Self
     where

@@ -39,10 +39,7 @@ impl TypeChecker {
         }
         self.refuse_unsatisfied_nominal_type_arguments(name, &bindings, TypeArgumentOrigin::Inferred, span);
         let carrier = self.constructor_result_type_with_bindings(name, &bindings);
-        self.type_info
-            .calls
-            .body_ir_constructor_types
-            .insert((span.start, span.end), carrier);
+        self.type_info.calls.body_ir_constructor_types.insert(span, carrier);
     }
 
     /// Retain an executable constructor binding without changing contextual types or legacy call facts.
@@ -110,10 +107,7 @@ impl TypeChecker {
             }
         }
         let carrier = self.constructor_result_type_with_bindings(name, &bindings);
-        self.type_info
-            .calls
-            .body_ir_constructor_types
-            .insert((span.start, span.end), carrier);
+        self.type_info.calls.body_ir_constructor_types.insert(span, carrier);
     }
 
     /// Validate model/class constructor arguments, including RFC 017 coercions for typed field initializers.
@@ -283,7 +277,7 @@ impl TypeChecker {
             self.type_info
                 .calls
                 .inferred_constructor_types
-                .insert((call_span.start, call_span.end), result.clone());
+                .insert(call_span, result.clone());
         }
         if self.errors.len() == errors_before_fields {
             let owner = self.named_type_reference_identity(type_name);
@@ -335,7 +329,7 @@ impl TypeChecker {
         self.type_info
             .calls
             .body_ir_constructor_field_requirements
-            .insert((span.start, span.end), (identity.clone(), owner));
+            .insert(span, (identity.clone(), owner));
     }
 
     /// Record the resolved argument-to-field binding for one `model`/`class` construction, for Body IR lowering.
@@ -421,7 +415,7 @@ impl TypeChecker {
             return;
         };
         self.type_info.calls.body_ir_module_constructor_bindings.insert(
-            (span.start, span.end),
+            span,
             (
                 owner,
                 ConstructorFieldBinding {
@@ -458,7 +452,7 @@ impl TypeChecker {
             self.type_info
                 .calls
                 .body_ir_native_argument_types
-                .insert((value.span.start, value.span.end), ResolvedType::Str);
+                .insert(value.span, ResolvedType::Str);
             if let Expr::Ident(name) = &value.node
                 && let Some(identity) = self
                     .symbols
@@ -469,7 +463,7 @@ impl TypeChecker {
                 self.type_info
                     .calls
                     .body_ir_native_argument_identities
-                    .insert((value.span.start, value.span.end), identity);
+                    .insert(value.span, identity);
             }
         }
     }
@@ -933,7 +927,7 @@ impl TypeChecker {
             &receiver_ty,
             None,
         );
-        let key = (span.start, span.end);
+        let key = span;
         if self.errors.len() == errors_before_call
             && let Some(arguments) = self.type_info.calls.call_site_monomorph_type_args.get(&key).cloned()
         {

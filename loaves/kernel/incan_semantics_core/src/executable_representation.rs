@@ -48,7 +48,8 @@ use crate::body_ir::{
 /// Version 32 retains owned native collection parameter ABIs independently of source callable mutability markers.
 /// Version 33 retains verified foreign call descriptors independently of source class layouts.
 /// Version 34 retains checked private pointer carriers and foreign bridge operations.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 34;
+/// Version 35 retains expansion contexts in every checked source span and canonical identity.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 35;
 
 /// Combined positional changes require regenerated providers; no older payload is compatible with this reader.
 const OLDEST_SUPPORTED_VERSION: u32 = EXECUTABLE_REPRESENTATION_VERSION;

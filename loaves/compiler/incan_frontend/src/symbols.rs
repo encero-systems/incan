@@ -1038,11 +1038,7 @@ impl SymbolTable {
                     HirSourceSpan::new(0, 0),
                 )
             }
-            _ => (
-                self.declaration_origin(),
-                symbol.name.clone(),
-                HirSourceSpan::new(symbol.span.start, symbol.span.end),
-            ),
+            _ => (self.declaration_origin(), symbol.name.clone(), symbol.span),
         };
         // A member is owned by its nominal type and distinguished by its declaration span, not by which table scope
         // its convenience binding happened to be defined in — so member identities never carry a scope discriminant
@@ -1100,7 +1096,7 @@ impl SymbolTable {
                 return None;
             }
             let identity = self.identities.get(&id)?;
-            let identity_span = HirSourceSpan::new(symbol.span.start, symbol.span.end);
+            let identity_span = symbol.span;
             if identity.declaration_span != identity_span {
                 return None;
             }
@@ -1132,7 +1128,7 @@ impl SymbolTable {
             declaration_name: name.to_string(),
             kind,
             scope_discriminant: None,
-            declaration_span: HirSourceSpan::new(span.start, span.end),
+            declaration_span: span,
         }
     }
 
@@ -1177,7 +1173,7 @@ impl SymbolTable {
             declaration_name: name.to_string(),
             kind,
             scope_discriminant: None,
-            declaration_span: HirSourceSpan::new(span.start, span.end),
+            declaration_span: span,
         }
     }
 
@@ -1448,7 +1444,7 @@ pub fn source_member_identity(
         declaration_name: name.to_string(),
         kind,
         scope_discriminant: None,
-        declaration_span: HirSourceSpan::new(span.start, span.end),
+        declaration_span: span,
     }
 }
 

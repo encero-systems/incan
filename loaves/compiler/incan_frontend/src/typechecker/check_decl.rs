@@ -36,7 +36,7 @@ use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_lang::lang::testing;
 use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 use incan_lang::lang::types::collections::CollectionTypeId;
-use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind};
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 use incan_semantics_core::{SemanticRegistrySubjectKind, SemanticRegistryValue, SurfaceModifierTypeCheck};
 use std::collections::{HashMap, HashSet};
 
@@ -3196,10 +3196,10 @@ impl TypeChecker {
                 subject_constructor_identity,
                 checked_constructor_identity,
                 entry_name: static_decl.name.clone(),
-                declaration_span: (span.start, span.end),
-                key_span: (key.span.start, key.span.end),
-                subject_span: (subject.span.start, subject.span.end),
-                descriptor_span: (descriptor.span.start, descriptor.span.end),
+                declaration_span: span,
+                key_span: key.span,
+                subject_span: subject.span,
+                descriptor_span: descriptor.span,
             });
     }
 
@@ -5288,7 +5288,7 @@ impl TypeChecker {
                 self.type_info
                     .declarations
                     .enum_payload_types
-                    .insert((field_ty.span.start, field_ty.span.end), resolved.clone());
+                    .insert(field_ty.span, resolved.clone());
                 if matches!(resolved, ResolvedType::Unknown) {
                     self.errors
                         .push(errors::unknown_symbol(&format!("{:?}", field_ty.node), field_ty.span));
@@ -5566,7 +5566,7 @@ impl TypeChecker {
         self.type_info
             .declarations
             .decorated_function_bindings_by_span
-            .insert((span.start, span.end), binding.clone());
+            .insert(span, binding.clone());
 
         if let Some(symbol_id) = self.symbols.lookup(&func.name)
             && let Some(symbol) = self.symbols.get_mut(symbol_id)
@@ -5730,7 +5730,7 @@ impl TypeChecker {
 
     /// Type-check a decorator factory expression such as `@logged(label="x")` or `@app.get("/")`.
     fn check_decorator_factory_expr(&mut self, decorator: &Spanned<Decorator>, display: &str) -> ResolvedType {
-        let key = (decorator.span.start, decorator.span.end);
+        let key = decorator.span;
         self.type_info
             .declarations
             .body_ir_decorator_static_receivers
@@ -5739,7 +5739,7 @@ impl TypeChecker {
         self.type_info
             .declarations
             .body_ir_decorator_applications
-            .remove(&(decorator.span.start, decorator.span.end));
+            .remove(&decorator.span);
         let Some(args) = self.decorator_call_args(decorator, display) else {
             return ResolvedType::Unknown;
         };
@@ -5809,7 +5809,7 @@ impl TypeChecker {
     /// Retain ordered arguments from the factory declaration actually resolved by checking, without changing its
     /// legacy call-site facts. Unbound declaration parameters remain placeholders until decorator validation.
     fn retain_body_ir_decorator_factory(&mut self, decorator: &Spanned<Decorator>, result: &ResolvedType) {
-        let key = (decorator.span.start, decorator.span.end);
+        let key = decorator.span;
         let partial_arguments = self
             .type_info
             .declarations
@@ -5873,7 +5873,7 @@ impl TypeChecker {
         binding_name: &str,
         span: Span,
     ) -> ResolvedType {
-        let key = (span.start, span.end);
+        let key = span;
         let factory_type_args = self
             .type_info
             .declarations
@@ -5884,7 +5884,7 @@ impl TypeChecker {
         self.type_info
             .declarations
             .generic_identity_decorator_applications
-            .remove(&(span.start, span.end));
+            .remove(&span);
         let ResolvedType::Function(params, ret) = callable_ty else {
             if !matches!(callable_ty, ResolvedType::Unknown) {
                 self.errors.push(if display.contains('(') {
@@ -5912,7 +5912,7 @@ impl TypeChecker {
             self.type_info
                 .declarations
                 .generic_identity_decorator_applications
-                .insert((span.start, span.end));
+                .insert(span);
         }
         let result_ty = substitute_resolved_type(&ret, &type_bindings);
         if !matches!(result_ty, ResolvedType::Function(_, _) | ResolvedType::Unknown) {
@@ -6124,10 +6124,10 @@ impl TypeChecker {
                 descriptor: descriptor_value,
                 subject_kind,
                 declaration_name: declaration_name.to_string(),
-                declaration_span: (decl_span.start, decl_span.end),
-                decorator_span: (decorator.span.start, decorator.span.end),
-                key_span: (key.span.start, key.span.end),
-                descriptor_span: (descriptor.span.start, descriptor.span.end),
+                declaration_span: decl_span,
+                decorator_span: decorator.span,
+                key_span: key.span,
+                descriptor_span: descriptor.span,
             });
         }
     }
@@ -6188,7 +6188,7 @@ impl TypeChecker {
             module_path,
             func.name.clone(),
             SemanticSourceTargetKind::Function,
-            HirSourceSpan::new(decl_span.start, decl_span.end),
+            decl_span,
         );
         self.type_info.declarations.provider_operations.insert(
             operation.clone(),
@@ -6614,7 +6614,7 @@ impl TypeChecker {
                 });
 
         // Check body
-        let previous_function = (self.receiver_plan_inputs.current_function).replace((decl_span.start, decl_span.end));
+        let previous_function = (self.receiver_plan_inputs.current_function).replace(decl_span);
         self.check_statement_block(&func.body);
         self.finalize_comprehension_collection_sources();
         self.receiver_plan_inputs.current_function = previous_function;
@@ -6919,7 +6919,7 @@ impl TypeChecker {
             .type_info
             .declarations
             .body_ir_property_bindings
-            .get_mut(&(property_span.start, property_span.end))
+            .get_mut(&property_span)
         {
             binding.receiver_identity = receiver_identity;
         }
@@ -7116,7 +7116,7 @@ impl TypeChecker {
         self.refuse_unbounded_nominal_type_arguments(&return_type, method.return_type.span);
         self.refuse_trait_type_nested_in_annotation(&return_type, method.return_type.span);
         self.type_info.declarations.method_bindings_by_span.insert(
-            (method_span.start, method_span.end),
+            method_span,
             FunctionBindingInfo {
                 is_async: method.is_async(),
                 params: checked_params,

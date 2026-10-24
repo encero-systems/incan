@@ -56,6 +56,9 @@ pub model UnitDescription:
     pub vocab_entry: Option[str] = None
     pub vocab: Option[str] = None
     pub vocabulary: bool = false
+    pub vocab_admissions: list[str] = []
+    pub vocab_policy: str = "locked-dependencies"
+    pub vocab_desugarer: bool = false
 
     def to_json(self) -> JsonValue:
         """The description as the compiler reads it."""
@@ -72,9 +75,9 @@ pub model UnitDescription:
                 self.c_headers,
             ), "vocab": optional_text(self.vocab), "vocab_entry": optional_text(self.vocab_entry), "vocabulary": JsonValue.bool(
                 self.vocabulary,
-            ), "externs": JsonValue.array([item.to_json() for item in self.externs]), "search": texts(self.search), "rust_abi": texts(
-                self.rust_abi,
-            )},
+            ), "vocab_admissions": texts(self.vocab_admissions), "vocab_policy": JsonValue.string(self.vocab_policy), "vocab_desugarer": JsonValue.bool(self.vocab_desugarer), "externs": JsonValue.array(
+                [item.to_json() for item in self.externs],
+            ), "search": texts(self.search), "rust_abi": texts(self.rust_abi)},
         )
 
 

@@ -85,18 +85,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         name: &str,
         span: ast::Span,
     ) -> Vec<bir::PlaceElem> {
-        self.type_info
-            .rust
-            .field_projection_paths
-            .get(&(span.start, span.end))
-            .map_or_else(
-                || vec![self.lower_checked_field_projection(base, name, span)],
-                |path| {
-                    path.iter()
-                        .map(|identity| bir::PlaceElem::field(&identity.declaration_name, Some(identity.clone())))
-                        .collect()
-                },
-            )
+        self.type_info.rust.field_projection_paths.get(&span).map_or_else(
+            || vec![self.lower_checked_field_projection(base, name, span)],
+            |path| {
+                path.iter()
+                    .map(|identity| bir::PlaceElem::field(&identity.declaration_name, Some(identity.clone())))
+                    .collect()
+            },
+        )
     }
 
     /// Classify tuple projections and retain the declaration name selected for a checked nominal field alias.
@@ -365,12 +361,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let Some(value) = self.lower_checked_rust_function_value(expr, scope, out) {
             return value;
         }
-        if let Some(path) = self
-            .type_info
-            .rust
-            .checked_constants
-            .get(&(expr.span.start, expr.span.end))
-        {
+        if let Some(path) = self.type_info.rust.checked_constants.get(&expr.span) {
             return self.push_assign_temp(
                 bir::Rvalue::Use(bir::Operand::Constant(bir::Constant::RustItem(
                     path.clone(),
@@ -386,7 +377,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // retained plain newtype is that newtype's construction; one that validates or constrains it has no Body IR
         // form yet, so it refuses rather than handing a consumer the unconverted underlying value.
         if let Some(coercion) = self.type_info.validated_newtype_coercion(expr.span)
-            && !self.coercions_in_progress.contains(&(expr.span.start, expr.span.end))
+            && !self.coercions_in_progress.contains(&expr.span)
         {
             return self.lower_newtype_coercion(expr, coercion, scope, out);
         }
@@ -468,7 +459,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     .type_info
                     .expressions
                     .body_ir_callable_name_reads
-                    .contains(&(expr.span.start, expr.span.end))
+                    .contains(&expr.span)
                 {
                     let value = self.lower_expr_to_operand(base, scope, out);
                     return self.push_call_temp(

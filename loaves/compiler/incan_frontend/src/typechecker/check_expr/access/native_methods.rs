@@ -72,8 +72,7 @@ impl TypeChecker {
         if self.errors.len() != previous_errors {
             return true;
         }
-        let key = (span.start, span.end);
-        let Some(call) = self.type_info.rust.checked_calls.get_mut(&key) else {
+        let Some(call) = self.type_info.rust.checked_calls.get_mut(&span) else {
             return true;
         };
         let shared = matches!(
@@ -97,7 +96,7 @@ impl TypeChecker {
             self.type_info
                 .expressions
                 .numeric_conversion_destinations
-                .insert(key, ResolvedType::Int);
+                .insert(span, ResolvedType::Int);
         }
         true
     }
@@ -371,7 +370,7 @@ impl TypeChecker {
             .type_info
             .rust
             .checked_calls
-            .get(&(call.span.start, call.span.end))
+            .get(&call.span)
             .map(|checked| self.rust_source_result_type(&checked.return_type, &result))
             .unwrap_or(result);
         if receiver_is_type
@@ -423,7 +422,7 @@ impl TypeChecker {
             self.type_info
                 .calls
                 .call_site_monomorph_type_args
-                .insert((call.span.start, call.span.end), arguments.clone());
+                .insert(call.span, arguments.clone());
         }
         Some(InherentSpecialization {
             signature: effective,
@@ -469,7 +468,7 @@ impl TypeChecker {
             self.type_info
                 .calls
                 .call_site_monomorph_type_args
-                .insert((call.span.start, call.span.end), arguments.clone());
+                .insert(call.span, arguments.clone());
         }
         // ---- Expected owner ----
         // An expectation that still names the enclosing callee's open binder fixes no owner argument.
@@ -543,7 +542,7 @@ impl TypeChecker {
             .map(str::to_owned)
             .unwrap_or_else(|| call.rust_path.rsplit("::").next().unwrap_or(call.rust_path).to_owned());
         self.open_rust_generic_calls.insert(
-            (call.span.start, call.span.end),
+            call.span,
             OpenRustGenericCall {
                 owner,
                 method: call.method.to_owned(),

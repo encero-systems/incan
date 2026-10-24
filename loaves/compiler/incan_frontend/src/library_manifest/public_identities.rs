@@ -147,8 +147,7 @@ fn is_exported_type(
 ) -> bool {
     exported_types.iter().any(|identity| {
         identity.kind == kind
-            && identity.declaration_span.start == anchor.span.start
-            && identity.declaration_span.end == anchor.span.end
+            && identity.declaration_span == anchor.span
             && matches!(
                 &identity.origin,
                 incan_semantics_core::SymbolOrigin::Package { library, module_path: path }

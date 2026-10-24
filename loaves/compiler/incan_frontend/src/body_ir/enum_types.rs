@@ -120,8 +120,7 @@ impl BodyBuilder<'_, '_> {
         if fields.len() != arguments.len() {
             return false;
         }
-        self.settled_types
-            .insert((value.span.start, value.span.end), destination.clone());
+        self.settled_types.insert(value.span, destination.clone());
         for (argument, field) in arguments.iter().zip(fields) {
             if let ast::CallArg::Positional(argument) = argument {
                 self.settle_open_result_value(argument, &field);

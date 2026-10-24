@@ -67,7 +67,7 @@ impl BodyBuilder<'_, '_> {
         }
 
         // ---- Complete local layout and hook selection ----
-        let accepted = self.type_info.body_ir_iterator_sum_items.get(&(span.start, span.end));
+        let accepted = self.type_info.body_ir_iterator_sum_items.get(&span);
         let hook_matches = sum_hook_matches(
             identity,
             facts.checked_constructor.as_deref(),

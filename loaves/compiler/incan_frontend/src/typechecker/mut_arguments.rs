@@ -101,7 +101,7 @@ struct PendingMutArgument {
     uncopyable_type: Option<String>,
     span: Span,
     /// The declaration span of the local the call went through (`f(items)` after `f = extend`), when it did.
-    through_local: Option<(usize, usize)>,
+    through_local: Option<Span>,
 }
 
 /// A caller-visible parameter passed on to another callee's caller-visible parameter.
@@ -114,7 +114,7 @@ struct MutParamForward {
     callee: CanonicalSymbolId,
     callee_param: String,
     /// The declaration span of the local the call went through, when it did.
-    through_local: Option<(usize, usize)>,
+    through_local: Option<Span>,
 }
 
 /// What a binding is a view into, and how the view was bound.
@@ -222,13 +222,13 @@ pub(crate) struct MutParamFacts {
     forwards: Vec<MutParamForward>,
     /// Local bindings that hold a declared callable by reference, `f = extend`, keyed by the binding's declaration
     /// span, so a call through them is checked too.
-    function_values: HashMap<(usize, usize), CanonicalSymbolId>,
+    function_values: HashMap<Span, CanonicalSymbolId>,
     /// Binding spans of the variables of every `for` loop being checked, which are not mutable bindings, each with
     /// whether its loop's pattern destructures the element.
     loop_variables: Vec<(Span, bool)>,
     /// Local bindings reassigned anywhere in the module, keyed by declaration span. A call through such a local may
     /// run any callable it was assigned, so it counts as changing every marked parameter.
-    reassigned_locals: HashSet<(usize, usize)>,
+    reassigned_locals: HashSet<Span>,
     /// Arguments waiting for the module's change facts.
     pending: Vec<PendingMutArgument>,
     /// The body being checked, when it declares caller-visible parameters.
@@ -1186,9 +1186,7 @@ impl TypeChecker {
             return;
         };
         if self.mut_params.declared.contains_key(&callee) {
-            self.mut_params
-                .function_values
-                .insert((target_span.start, target_span.end), callee);
+            self.mut_params.function_values.insert(target_span, callee);
         }
     }
 
@@ -1201,9 +1199,7 @@ impl TypeChecker {
             .and_then(|symbol_id| self.symbols.get(symbol_id))
             && matches!(symbol.kind, SymbolKind::Variable(_))
         {
-            self.mut_params
-                .reassigned_locals
-                .insert((symbol.span.start, symbol.span.end));
+            self.mut_params.reassigned_locals.insert(symbol.span);
         }
     }
 
@@ -1244,7 +1240,7 @@ impl TypeChecker {
         if let Some(local) = &identity
             && local.kind == SemanticSourceTargetKind::Local
         {
-            let key = (local.declaration_span.start, local.declaration_span.end);
+            let key = local.declaration_span;
             through_local = Some(key);
             if let Some(callee) = self.mut_params.function_values.get(&key) {
                 identity = Some(callee.clone());
@@ -1256,7 +1252,7 @@ impl TypeChecker {
         let slots = match declared {
             Some(slots) => {
                 self.type_info.calls.caller_visible_mut_arguments.insert(
-                    (call_span.start, call_span.end),
+                    call_span,
                     slots
                         .iter()
                         .filter(|slot| slot.shows_changes_to_caller)
@@ -1607,10 +1603,7 @@ impl TypeChecker {
             } else {
                 // A binding the caller cannot change, or a loop variable, handed to a parameter the callee never
                 // changes is passed as a copy of its value.
-                self.type_info
-                    .calls
-                    .mut_argument_copies
-                    .insert((argument.span.start, argument.span.end));
+                self.type_info.calls.mut_argument_copies.insert(argument.span);
                 continue;
             };
             let already_reported = self
@@ -1625,7 +1618,7 @@ impl TypeChecker {
 
     /// Return whether a call went through a local that is reassigned somewhere in the module, so the callable it runs
     /// is not known at the call.
-    fn call_goes_through_a_reassigned_local(&self, through_local: Option<(usize, usize)>) -> bool {
+    fn call_goes_through_a_reassigned_local(&self, through_local: Option<Span>) -> bool {
         through_local.is_some_and(|local| self.mut_params.reassigned_locals.contains(&local))
     }
 

@@ -151,8 +151,12 @@ impl TypeChecker {
     /// type and the provider-qualified key a dependency signature carries when the signature was imported before the
     /// type, or two public paths of the type. Both carry the declaration's identity, so the pattern names the subject's
     /// type.
+    /// A retained storage key is compared through that same canonical declaration identity, never by parsing its
+    /// spelling.
     fn pattern_type_spelling_names_subject(&self, written: &str, subject_name: &str) -> bool {
         written == subject_name
+            || self.source_nominal_carrier_key(written).as_deref() == Some(subject_name)
+            || self.source_nominal_carrier_key(subject_name).as_deref() == Some(written)
             || matches!(
                 (
                     self.public_library_type_identities.get(written),
@@ -491,12 +495,9 @@ impl TypeChecker {
             self.type_info
                 .expressions
                 .pattern_rests_with_private_fields
-                .insert((span.start, span.end));
+                .insert(span);
         }
-        self.type_info
-            .expressions
-            .pattern_rest_fields
-            .insert((span.start, span.end), rest);
+        self.type_info.expressions.pattern_rest_fields.insert(span, rest);
     }
 
     /// Record a constructor pattern that resolved through the active lexical binding.
@@ -562,10 +563,7 @@ impl TypeChecker {
             },
         };
         let path = format!("{owner}::{canonical}");
-        self.type_info
-            .expressions
-            .pattern_variant_paths
-            .insert((span.start, span.end), path);
+        self.type_info.expressions.pattern_variant_paths.insert(span, path);
     }
 
     /// Type-check a pattern against an expected type, defining bindings in the current scope.
@@ -607,7 +605,7 @@ impl TypeChecker {
                 self.type_info
                     .expressions
                     .body_ir_nominal_pattern_owners
-                    .remove(&(name.span.start, name.span.end));
+                    .remove(&name.span);
                 let (subject_ty, borrow) = borrowed_pattern_subject(expected_ty);
                 let (enum_qualifier_opt, ctor_name) = Self::split_pattern_constructor_name(name.node.as_str());
                 if enum_qualifier_opt.is_none()
@@ -790,7 +788,7 @@ impl TypeChecker {
                         self.type_info
                             .expressions
                             .body_ir_nominal_pattern_owners
-                            .insert((name.span.start, name.span.end), identity);
+                            .insert(name.span, identity);
                     }
                     return;
                 }

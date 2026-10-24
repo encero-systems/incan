@@ -114,7 +114,7 @@ pub(super) fn supports_function(
         .type_info
         .declarations
         .decorated_function_bindings_by_span
-        .get(&(span.start, span.end))
+        .get(&span)
     else {
         return false;
     };
@@ -159,7 +159,7 @@ pub(super) fn supports_function(
                             .type_info
                             .declarations
                             .body_ir_decorator_static_receivers
-                            .contains_key(&(decorator.span.start, decorator.span.end))
+                            .contains_key(&decorator.span)
                 }
             },
         )
@@ -216,7 +216,7 @@ pub(super) fn collect(
             .type_info
             .declarations
             .decorated_function_bindings_by_span
-            .get(&(declaration.span.start, declaration.span.end))
+            .get(&declaration.span)
         else {
             continue;
         };
@@ -430,15 +430,13 @@ fn lower_application(
         .type_info
         .declarations
         .body_ir_decorator_applications
-        .get(&(decorator.span.start, decorator.span.end))
+        .get(&decorator.span)
     {
         let ty = crate::resolved_type_subst::substitute_resolved_type(
             &application.callable_type,
             &application.type_bindings,
         );
-        builder
-            .type_overrides
-            .insert((decorator.span.start, decorator.span.end), builder.checked_type(&ty));
+        builder.type_overrides.insert(decorator.span, builder.checked_type(&ty));
     }
     let callable = builder.lower_expr_to_operand(&path, scope, statements);
     let IncanType::Function { return_type, .. } = builder.resolve_ty(decorator.span) else {

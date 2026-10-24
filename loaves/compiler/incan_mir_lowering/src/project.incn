@@ -73,7 +73,10 @@ pub def project_context(
 
 def retains_callable(context: &BodyIrModule, candidate: &LoafCallable) -> bool:
     """Reuse an exact authenticated callable record, including its native arguments, signature and declaration frame."""
-    return context.loaf_callables.contains(candidate)
+    for declaration in context.loaf_callables:
+        if declaration == candidate:
+            return true
+    return false
 
 
 def retains_nominal(context: &BodyIrModule, candidate: &NominalDeclaration) -> Result[bool, str]:

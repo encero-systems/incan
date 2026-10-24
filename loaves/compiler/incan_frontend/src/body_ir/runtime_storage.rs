@@ -60,7 +60,7 @@ impl BodyBuilder<'_, '_> {
         }
         let refined = self.fill_open_type_parts(&checked, &retained);
         if refined != checked {
-            self.settled_types.insert((span.start, span.end), refined.clone());
+            self.settled_types.insert(span, refined.clone());
         }
         refined
     }

@@ -211,6 +211,7 @@ nav:
               - std.regex: language/reference/stdlib/regex.md
               - std.registry: language/reference/stdlib/registry.md
               - std.uuid: language/reference/stdlib/uuid.md
+              - std.vocab: language/reference/stdlib/vocab.md
               - std.tempfile: language/reference/stdlib/tempfile.md
               - std.reflection: language/reference/stdlib/reflection.md
               - std.result: language/reference/stdlib/result.md
@@ -305,6 +306,7 @@ nav:
           - Checked API metadata: tooling/reference/checked_api_metadata.md
           - Package executable representation: tooling/reference/package_executable_representation.md
           - Project configuration: tooling/reference/project_configuration.md
+          - Vocabulary entries: tooling/reference/vocabulary.md
           - Standard packages and features: tooling/reference/sdk_components_and_package_features.md
           - Oven interop deployment plans: tooling/reference/interop_deployment_plans.md
           - LSP protocol support: tooling/reference/lsp_protocol_support.md
@@ -324,7 +326,7 @@ nav:
               - 8. Docsite contributor loop: contributing/tutorials/book/08_docsite_contributor_loop.md
       - How-to:
           - Extending the language: contributing/how-to/extending_language.md
-          - Author library DSLs with incan_vocab: contributing/how-to/authoring_vocab_crates.md
+          - Author a vocabulary in Incan: contributing/how-to/authoring_vocabularies.md
           - Benchmarks & profiling (repository): contributing/how-to/benchmarks_and_profiling.md
           - Trace compiler invocations: contributing/how-to/trace-compiler-invocations.md
           - Profile native compilation: contributing/how-to/profile-native-compilation.md

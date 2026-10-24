@@ -667,7 +667,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.type_info
                 .expressions
                 .body_ir_nominal_pattern_owners
-                .get(&(name.span.start, name.span.end))
+                .get(&name.span)
         });
         if let Some(declaration) = self
             .local_nominal_declarations
@@ -846,7 +846,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         .projection
                         .push(bir::PlaceElem::structural_field(positional_index.to_string()));
                     if let Some(ty) = payload_types.as_ref().and_then(|fields| fields.get(positional_index)) {
-                        self.settled_types.insert((pat.span.start, pat.span.end), ty.clone());
+                        self.settled_types.insert(pat.span, ty.clone());
                     }
                     positional_index += 1;
                     let mut lowered = self.lower_match_pattern(

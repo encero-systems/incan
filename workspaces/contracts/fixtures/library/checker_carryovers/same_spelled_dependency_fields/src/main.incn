@@ -1,4 +1,4 @@
-# behavior: provider fields keep their owners through annotations and unimported reads beside same-named caller types
+# behavior: provider fields and enum patterns retain canonical owners beside same-named caller types (#2256)
 # expect-stdout:
 #   0
 #   true
@@ -11,7 +11,15 @@
 
 from pub::records import Decision, populated
 from pub::records import EvidenceId as ForeignEvidenceId
+from pub::records import DecisionKind as ForeignKind, chosen
 from observe import first_text
+
+
+enum DecisionKind:
+    """The caller's decision variants, which cannot name the provider's values."""
+
+    Accept
+    Reject
 
 
 model EvidenceId:
@@ -27,6 +35,7 @@ def main() -> None:
     1. Construct empty fields under the dependency's declared element type.
     2. Read the caller's own identifier independently.
     3. Read populated collections through imported annotations and unimported field owners.
+    4. Match provider and caller enum values through their own declarations.
     """
     # 1. Empty fields take the provider's declared context.
     decision = Decision(evidence_ids=[], first=None)
@@ -38,6 +47,27 @@ def main() -> None:
     # 3. Both imported annotations and unimported elements retain the provider's fields.
     println(count_foreign(populated().evidence_ids))
     println(first_text(populated()))
+    # 4. A retained provider carrier still belongs to the imported enum.
+    observe_kinds()
+
+
+def observe_kinds() -> None:
+    """Match a returned provider enum through its alias without admitting a same-named caller declaration."""
+    selected = chosen()
+    match selected:
+        ForeignKind.Accept => pass
+        _ =>
+            assert false
+    direct = ForeignKind.Reject
+    match direct:
+        ForeignKind.Reject => pass
+        _ =>
+            assert false
+    local = DecisionKind.Reject
+    match local:
+        DecisionKind.Reject => pass
+        _ =>
+            assert false
 
 
 def count_foreign(values: list[ForeignEvidenceId]) -> int:

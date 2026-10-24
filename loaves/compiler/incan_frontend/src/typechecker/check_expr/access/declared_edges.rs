@@ -72,12 +72,7 @@ impl TypeChecker {
         if self.errors.len() != errors_before {
             return;
         }
-        let Some(call) = self
-            .type_info
-            .rust
-            .checked_calls
-            .remove(&(edge.span.start, edge.span.end))
-        else {
+        let Some(call) = self.type_info.rust.checked_calls.remove(&edge.span) else {
             return;
         };
         self.type_info.rust.declared_conversions.push(RustDeclaredConversion {
@@ -112,7 +107,7 @@ impl TypeChecker {
         self.type_info
             .rust
             .argument_adjustments
-            .insert((expression.span.start, expression.span.end), vec![edge.call]);
+            .insert(expression.span, vec![edge.call]);
         destination.clone()
     }
 }

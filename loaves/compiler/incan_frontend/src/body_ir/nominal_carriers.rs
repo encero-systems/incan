@@ -240,7 +240,7 @@ fn retain_body_types(body: &mut bir::Body, facts: Option<&TypeCheckInfo>) {
     let checked_return = binding.map(|binding| semantic_type_from_resolved(&binding.return_type));
     qualify_type(&mut body.return_type, checked_return.as_ref(), identities);
     for local in &mut body.locals {
-        let span = ast::Span::new(local.span.start, local.span.end);
+        let span = local.span;
         let checked = facts
             .and_then(|facts| {
                 facts.expr_type(span).or_else(|| {

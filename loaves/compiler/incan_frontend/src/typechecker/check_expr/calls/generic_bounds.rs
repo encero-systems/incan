@@ -49,7 +49,7 @@ impl TypeChecker {
             receiver_ty,
             expected_return_ty,
         );
-        let site = (call_site_span.start, call_site_span.end);
+        let site = call_site_span;
         self.type_info.calls.body_ir_self_result_methods.remove(&site);
         if returns_receiver
             && self.errors.len() == first_error
@@ -265,13 +265,8 @@ impl TypeChecker {
         self.type_info
             .calls
             .body_ir_call_result_types
-            .get(&(call_span.start, call_span.end))
-            .or_else(|| {
-                self.type_info
-                    .calls
-                    .inferred_call_result_types
-                    .get(&(call_span.start, call_span.end))
-            })
+            .get(&call_span)
+            .or_else(|| self.type_info.calls.inferred_call_result_types.get(&call_span))
             .cloned()
             .unwrap_or_else(|| substitute_resolved_type(&info.return_type, &type_bindings))
     }
@@ -754,7 +749,7 @@ impl TypeChecker {
         self.type_info
             .calls
             .call_site_monomorph_type_args
-            .insert((call_span.start, call_span.end), out);
+            .insert(call_span, out);
     }
 
     /// Preserve checked partial factory inference before the legacy complete-only record is considered.
@@ -779,7 +774,7 @@ impl TypeChecker {
             })
             .collect();
         self.type_info.declarations.body_ir_decorator_applications.insert(
-            (call_span.start, call_span.end),
+            call_span,
             BodyIrDecoratorApplication {
                 callable_type: ResolvedType::Unknown,
                 type_bindings: std::collections::HashMap::new(),
@@ -801,13 +796,7 @@ impl TypeChecker {
         concrete.retain(|_, ty| first_open_type_param(ty, type_params).is_none());
         let mut has_constructor_fact = false;
         for (expr, parameter) in arguments {
-            if let Some(actual) = self
-                .type_info
-                .calls
-                .inferred_constructor_types
-                .get(&(expr.span.start, expr.span.end))
-                .cloned()
-            {
+            if let Some(actual) = self.type_info.calls.inferred_constructor_types.get(&expr.span).cloned() {
                 has_constructor_fact = true;
                 self.infer_type_param_bindings(parameter, &actual, &mut concrete);
             }
@@ -816,10 +805,10 @@ impl TypeChecker {
             return;
         }
         self.record_call_site_monomorph_if_complete(call_span, type_params, &concrete);
-        self.type_info.calls.inferred_call_result_types.insert(
-            (call_span.start, call_span.end),
-            substitute_resolved_type(return_type, &concrete),
-        );
+        self.type_info
+            .calls
+            .inferred_call_result_types
+            .insert(call_span, substitute_resolved_type(return_type, &concrete));
     }
 
     /// Close one executable call from Body IR-only constructor facts, preserving every legacy-read call table.
@@ -843,12 +832,7 @@ impl TypeChecker {
             .collect::<std::collections::HashMap<_, _>>();
         let mut has_constructor = false;
         for (expression, parameter) in arguments {
-            if let Some(actual) = self
-                .type_info
-                .calls
-                .body_ir_constructor_types
-                .get(&(expression.span.start, expression.span.end))
-            {
+            if let Some(actual) = self.type_info.calls.body_ir_constructor_types.get(&expression.span) {
                 has_constructor = true;
                 self.infer_type_param_bindings(parameter, actual, &mut concrete);
             }
@@ -877,14 +861,11 @@ impl TypeChecker {
             .iter()
             .filter_map(|parameter| concrete.get(parameter).cloned())
             .collect();
-        self.type_info
-            .calls
-            .body_ir_call_type_arguments
-            .insert((span.start, span.end), ordered);
+        self.type_info.calls.body_ir_call_type_arguments.insert(span, ordered);
         self.type_info
             .calls
             .body_ir_call_result_types
-            .insert((span.start, span.end), substitute_resolved_type(returned, &concrete));
+            .insert(span, substitute_resolved_type(returned, &concrete));
     }
 
     /// Seed owner type-parameter bindings from the concrete receiver type.
@@ -1157,7 +1138,7 @@ impl TypeChecker {
         self.type_info
             .calls
             .body_ir_call_result_types
-            .get(&(call_site_span.start, call_site_span.end))
+            .get(&call_site_span)
             .cloned()
             .unwrap_or_else(|| substitute_resolved_type(&return_type, &type_bindings))
     }

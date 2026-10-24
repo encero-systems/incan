@@ -20,6 +20,9 @@ pub const INCAN_SYMBOL_PROJECTION_VERSION: &str = "incan-v1";
 /// emitted item name. The remainder is lower-case hexadecimal and therefore survives as one Rust identifier.
 pub const INCAN_SYMBOL_RUST_PREFIX: &str = "__incan_v1_";
 
+/// Projection carrying a generated declaration's expansion identity after its source range.
+pub const INCAN_GENERATED_SYMBOL_RUST_PREFIX: &str = "__incan_v2_";
+
 /// Failure to decode a malformed or unsupported Incan symbol payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EmittedSymbolDecodeError {
@@ -52,7 +55,7 @@ impl fmt::Display for EmittedSymbolDecodeError {
 
 impl std::error::Error for EmittedSymbolDecodeError {}
 
-/// Encode a complete canonical identity as one Rust-safe `incan-v1` item identifier.
+/// Encode a complete canonical identity, retaining v1 for authored declarations and using v2 for generated ones.
 ///
 /// RFC 120 requires this projection to carry the *complete* canonical identity, and the complete identity includes
 /// both the declaring [`SymbolOrigin`] and the declaration span. Two consequences follow that are easier to meet
@@ -85,9 +88,14 @@ pub fn encode_incan_symbol_identity(identity: &CanonicalSymbolId) -> String {
     }
     write_usize(&mut payload, identity.declaration_span.start);
     write_usize(&mut payload, identity.declaration_span.end);
-
-    let mut emitted = String::with_capacity(INCAN_SYMBOL_RUST_PREFIX.len() + payload.len() * 2);
-    emitted.push_str(INCAN_SYMBOL_RUST_PREFIX);
+    let prefix = if let Some(expansion) = identity.declaration_span.expansion {
+        payload.extend_from_slice(&expansion);
+        INCAN_GENERATED_SYMBOL_RUST_PREFIX
+    } else {
+        INCAN_SYMBOL_RUST_PREFIX
+    };
+    let mut emitted = String::with_capacity(prefix.len() + payload.len() * 2);
+    emitted.push_str(prefix);
     const HEX: &[u8; 16] = b"0123456789abcdef";
     for byte in payload {
         emitted.push(char::from(HEX[usize::from(byte >> 4)]));
@@ -101,7 +109,12 @@ pub fn encode_incan_symbol_identity(identity: &CanonicalSymbolId) -> String {
 /// An identifier without any Incan marker is a runtime, host, interop, or otherwise non-Incan symbol and returns
 /// `Ok(None)`. A marker for another `incan-vN` version is reported rather than guessed.
 pub fn decode_incan_symbol_identity(identifier: &str) -> Result<Option<CanonicalSymbolId>, EmittedSymbolDecodeError> {
-    let Some(hex) = identifier.strip_prefix(INCAN_SYMBOL_RUST_PREFIX) else {
+    let generated = identifier.starts_with(INCAN_GENERATED_SYMBOL_RUST_PREFIX);
+    let Some(hex) = identifier.strip_prefix(if generated {
+        INCAN_GENERATED_SYMBOL_RUST_PREFIX
+    } else {
+        INCAN_SYMBOL_RUST_PREFIX
+    }) else {
         if let Some(version) = identifier.strip_prefix("__incan_v") {
             let version = version.split('_').next().unwrap_or(version);
             return Err(EmittedSymbolDecodeError::UnsupportedVersion(format!(
@@ -134,10 +147,17 @@ pub fn decode_incan_symbol_identity(identifier: &str) -> Result<Option<Canonical
         1 => Some(ScopeDiscriminant(reader.usize("scope_discriminant")?)),
         _ => return Err(EmittedSymbolDecodeError::InvalidPayload("scope_presence")),
     };
-    let declaration_span = HirSourceSpan::new(
+    let mut declaration_span = HirSourceSpan::new(
         reader.usize("declaration_span.start")?,
         reader.usize("declaration_span.end")?,
     );
+    if generated {
+        let expansion = reader
+            .take(32, "declaration_span.expansion")?
+            .try_into()
+            .map_err(|_| EmittedSymbolDecodeError::InvalidPayload("declaration_span.expansion"))?;
+        declaration_span = declaration_span.with_expansion(Some(expansion));
+    }
     if !reader.remaining().is_empty() {
         return Err(EmittedSymbolDecodeError::TrailingPayload);
     }
@@ -444,7 +464,13 @@ mod tests {
             let emitted = encode_incan_symbol_identity(&identity);
             assert!(emitted.starts_with(INCAN_SYMBOL_RUST_PREFIX));
             assert!(emitted.chars().all(|ch| ch == '_' || ch.is_ascii_alphanumeric()));
-            assert_eq!(decode_incan_symbol_identity(&emitted)?, Some(identity));
+            assert_eq!(decode_incan_symbol_identity(&emitted)?, Some(identity.clone()));
+            let mut generated = identity;
+            generated.declaration_span = generated.declaration_span.with_expansion(Some([7; 32]));
+            let expanded = encode_incan_symbol_identity(&generated);
+            assert_ne!(emitted, expanded);
+            assert!(expanded.starts_with(INCAN_GENERATED_SYMBOL_RUST_PREFIX));
+            assert_eq!(decode_incan_symbol_identity(&expanded)?, Some(generated));
         }
         Ok(())
     }
@@ -530,8 +556,8 @@ mod tests {
     #[test]
     fn malformed_or_unknown_markers_fail_closed() {
         assert_eq!(
-            decode_incan_symbol_identity("__incan_v2_00"),
-            Err(EmittedSymbolDecodeError::UnsupportedVersion("incan-v2".to_string()))
+            decode_incan_symbol_identity("__incan_v3_00"),
+            Err(EmittedSymbolDecodeError::UnsupportedVersion("incan-v3".to_string()))
         );
         assert_eq!(
             decode_incan_symbol_identity("__incan_v1_0g"),

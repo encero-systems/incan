@@ -214,7 +214,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         out.push(bir::Statement {
             kind: bir::StatementKind::UnsafeRegion {
                 acknowledgment: bir::UnsafeAcknowledgment {
-                    receipt: CompilerNodeId::statement_span(self.module_identity, span.start, span.end),
+                    receipt: CompilerNodeId::statement_at(self.module_identity, span),
                     span,
                     scope,
                 },
@@ -254,7 +254,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // type, with captured presets represented as named-overrideable defaults. Positional calls skip those preset
         // slots, and `LocalCallableTarget::binding` records the resulting declaration mapping. Keeping this type on
         // the binding makes the local call contract agree with the `Rvalue::Closure` that creates the value.
-        let assignment_span = ast::Span::new(span.start, span.end);
+        let assignment_span = span;
         let atomic_storage = self
             .type_info
             .assignment_binding_type(assignment_span)
@@ -273,12 +273,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 .type_info
                 .expressions
                 .body_ir_expr_types
-                .get(&(assignment.value.span.start, assignment.value.span.end))
+                .get(&assignment.value.span)
                 .or_else(|| {
                     self.type_info
                         .calls
                         .inferred_call_result_types
-                        .get(&(assignment.value.span.start, assignment.value.span.end))
+                        .get(&assignment.value.span)
                 })
                 .map(|ty| self.checked_type(ty))
                 .or_else(|| self.published_expression_type(&assignment.value))
@@ -297,9 +297,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // An awaited method can retain its closed output only after its future has been constructed. Preserve that
         // checked native constraint through an inferred binding without changing an explicit annotation.
         if assignment.ty.is_none()
-            && let Some(settled) = self
-                .settled_types
-                .get(&(assignment.value.span.start, assignment.value.span.end))
+            && let Some(settled) = self.settled_types.get(&assignment.value.span)
         {
             ty = self.fill_open_type_parts(&ty, settled);
         }
@@ -309,9 +307,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // An awaited method can retain its closed output only after its future has been constructed. Preserve that
         // checked native constraint through an inferred binding without changing an explicit annotation.
         if assignment.ty.is_none()
-            && let Some(settled) = self
-                .settled_types
-                .get(&(assignment.value.span.start, assignment.value.span.end))
+            && let Some(settled) = self.settled_types.get(&assignment.value.span)
         {
             ty = self.fill_open_type_parts(&ty, settled);
         }
@@ -1041,11 +1037,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         &self,
         value: &ast::Spanned<ast::Expr>,
         target: &IncanType,
-        overrides: &mut HashMap<(usize, usize), IncanType>,
+        overrides: &mut HashMap<crate::ast::Span, IncanType>,
     ) {
         let recorded = self.resolve_ty(value.span);
         if recorded == IncanType::Unknown || same_container_kind(&recorded, target) {
-            overrides.insert((value.span.start, value.span.end), target.clone());
+            overrides.insert(value.span, target.clone());
         }
         match (&value.node, target) {
             (ast::Expr::Paren(inner), _) => self.chained_value_types(inner, target, overrides),
@@ -1157,7 +1153,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 fn chained_integer_literal_types(
     value: &ast::Spanned<ast::Expr>,
     target: &IncanType,
-    overrides: &mut HashMap<(usize, usize), IncanType>,
+    overrides: &mut HashMap<crate::ast::Span, IncanType>,
 ) {
     if !matches!(
         target,
@@ -1168,13 +1164,13 @@ fn chained_integer_literal_types(
     match &value.node {
         ast::Expr::Paren(inner) => chained_integer_literal_types(inner, target, overrides),
         ast::Expr::Literal(ast::Literal::Int(_)) => {
-            overrides.insert((value.span.start, value.span.end), target.clone());
+            overrides.insert(value.span, target.clone());
         }
         ast::Expr::Unary(ast::UnaryOp::Neg, operand)
             if matches!(operand.node, ast::Expr::Literal(ast::Literal::Int(_))) =>
         {
-            overrides.insert((value.span.start, value.span.end), target.clone());
-            overrides.insert((operand.span.start, operand.span.end), target.clone());
+            overrides.insert(value.span, target.clone());
+            overrides.insert(operand.span, target.clone());
         }
         _ => {}
     }

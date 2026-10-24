@@ -200,7 +200,7 @@ fn method_partial_frame(
         .type_info
         .declarations
         .method_bindings_by_span
-        .get(&(method.span.start, method.span.end))?
+        .get(&method.span)?
         .identity
         .clone()?;
     if target.kind != SemanticSourceTargetKind::Method

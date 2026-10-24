@@ -17,8 +17,6 @@ tempfile = { loaf = "crates-io/tempfile", optional = true, version = "3" }
 thiserror = { loaf = "crates-io/thiserror", version = "2.0" }
 toml = { loaf = "crates-io/toml", version = "0.9" }
 tracing = { loaf = "crates-io/tracing", version = "0.1" }
-wasmtime = { default-features = false, features = ["cranelift", "runtime", "std"], loaf = "crates-io/wasmtime", version = "36.0.17" }
-wasmtime-wasi = { default-features = false, features = ["preview1"], loaf = "crates-io/wasmtime-wasi", version = "36.0.17" }
 
 [project]
 description = "The Incan compiler frontend: parsed modules, symbols, the typechecker, Body IR and the provider contract"

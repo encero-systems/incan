@@ -55,10 +55,7 @@ impl TypeChecker {
             .resolve_display_method_call(method, span, source)
             .and_then(|selected| selected.identity)
         {
-            self.type_info
-                .calls
-                .source_display_methods
-                .insert((span.start, span.end), identity);
+            self.type_info.calls.source_display_methods.insert(span, identity);
         }
     }
 
@@ -187,7 +184,7 @@ impl TypeChecker {
         if operand_span.start >= operand_span.end {
             return None;
         }
-        let probe = Span::new(operand_span.end, operand_span.start);
+        let probe = Span::new(operand_span.end, operand_span.start).with_expansion(operand_span.expansion);
         let before = ProbeFacts::take(&mut self.type_info, probe);
         let first_error = self.errors.len();
         // The two resolutions a written instance call goes through, in the same order: the owner's sole direct or
@@ -284,7 +281,7 @@ struct ProbeFacts {
 impl ProbeFacts {
     /// Remove and return the call facts held under `span`, including executable type facts.
     fn take(info: &mut TypeCheckInfo, span: Span) -> Self {
-        let key = (span.start, span.end);
+        let key = span;
         Self {
             body_ir_type_arguments: info.calls.body_ir_call_type_arguments.remove(&key),
             inferred_constructor_type: info.calls.inferred_constructor_types.remove(&key),
@@ -298,7 +295,7 @@ impl ProbeFacts {
 
     /// Put these entries back under `span`, leaving absent ones absent.
     fn restore(self, info: &mut TypeCheckInfo, span: Span) {
-        let key = (span.start, span.end);
+        let key = span;
         if let Some(arguments) = self.body_ir_type_arguments {
             info.calls.body_ir_call_type_arguments.insert(key, arguments);
         }

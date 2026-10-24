@@ -19,7 +19,6 @@ from toolchain import Toolchain
 from unit_freshness import compiler_fingerprint, fingerprint
 from apple_sdk import configure_sdk
 
-
 const SCHEMA: str = "incan.compiler-worker/1"
 const READINESS_POLLS: int = 7500
 const IDLE_SECONDS: int = 600
@@ -155,18 +154,21 @@ def endpoint_for(toolchain: Toolchain) -> Result[Endpoint, str]:
     ready = f"{prefix}.{id()}.ready"
     if len(f"{prefix}.sock") > MAX_SOCKET_PATH or len(ready) > MAX_SOCKET_PATH:
         return Err("the compiler worker socket path is too long")
-    return Ok(Endpoint(
-        generation=generation,
-        directory=directory.0,
-        socket=f"{prefix}.sock",
-        lock=f"{prefix}.lock",
-        ready=ready,
-        mailbox="",
-    ))
+    return Ok(
+        Endpoint(
+            generation=generation,
+            directory=directory.0,
+            socket=f"{prefix}.sock",
+            lock=f"{prefix}.lock",
+            ready=ready,
+            mailbox="",
+        ),
+    )
 
 
 pub def generation_for(compiler: str) -> Result[str, str]:
-    """Bind a worker to the complete observed compiler identity and this process's inherited configuration.
+    """
+    Bind a worker to the complete observed compiler identity and this process's inherited configuration.
 
     A resident owner may retain this digest only while it watches all compiler inputs and its environment remains
     unchanged. Every other caller derives it for the request; source, checking and compilation are never retained.
@@ -199,7 +201,8 @@ def unicode_environment(value: OsString) -> Result[str, str]:
 def launch(toolchain: Toolchain, endpoint: Endpoint) -> Result[None, str]:
     """Start the exact driver detached from the owner, with protocol and console on separate streams."""
     mut listener = listen(f"{endpoint.ready}", false)?
-    mut command = configure_sdk(Command.new(toolchain.driver), toolchain.sysroot)?
+    mut command = Command.new(toolchain.driver)
+    configure_sdk(command, toolchain.sysroot)?
     command.arg("--resident").arg(f"{endpoint.socket}").arg(f"{endpoint.generation}")
     command.arg(f"{endpoint.ready}").arg(str(IDLE_SECONDS))
     command.env_remove("RUSTC_BOOTSTRAP")
@@ -240,14 +243,16 @@ def await_ready(mut listener: Listener, mut child: Child, endpoint: Endpoint) ->
 def request(toolchain: Toolchain, arguments: list[str], generation: str) -> Result[JsonValue, str]:
     """The original unit invocation plus its owner's current working directory and request-local console sinks."""
     directory = current_dir().map_err((error) => f"compiler working directory: {error}")?
-    return Ok(JsonValue.object({
-        "schema": JsonValue.string(SCHEMA),
-        "generation": JsonValue.string(generation),
-        "arguments": JsonValue.array([JsonValue.string(argument) for argument in arguments]),
-        "cwd": JsonValue.string(directory.to_string_lossy().into_owned()),
-        "stdout": JsonValue.string(f"{toolchain.console}.out"),
-        "stderr": JsonValue.string(f"{toolchain.console}.err"),
-    }))
+    return Ok(
+        JsonValue.object(
+            {"schema": JsonValue.string(SCHEMA), "generation": JsonValue.string(generation),
+            "arguments": JsonValue.array(
+                [JsonValue.string(argument) for argument in arguments],
+            ), "cwd": JsonValue.string(directory.to_string_lossy().into_owned()), "stdout": JsonValue.string(
+                f"{toolchain.console}.out",
+            ), "stderr": JsonValue.string(f"{toolchain.console}.err")},
+        ),
+    )
 
 
 def completion(document: JsonValue) -> Result[Option[i32], str]:

@@ -802,7 +802,7 @@ fn checked_direct_identity_at_span(checker: &TypeChecker, name: &str, span: Span
         .type_info()
         .declarations
         .function_bindings_by_span
-        .get(&(span.start, span.end))
+        .get(&span)
         .and_then(|binding| binding.identity.clone())
         .or_else(|| checked_binding_canonical(checker, name));
     CheckedExportIdentity::direct(checked_export_source_path(checker, name)).with_canonical(canonical)

@@ -133,7 +133,8 @@ pub def run_compiler(toolchain: Toolchain, arguments: list[str]) -> Result[i32, 
             Some(code) => return Ok(code)
             None => pass
     # 2. The cold process retains SDK selection and the owner's explicit console sinks.
-    mut command = configure_sdk(Command.new(toolchain.driver), toolchain.sysroot)?
+    mut command = Command.new(toolchain.driver)
+    configure_sdk(command, toolchain.sysroot)?
     for argument in arguments:
         command.arg(argument)
     command.env_remove("RUSTC_BOOTSTRAP")
@@ -145,7 +146,7 @@ pub def run_compiler(toolchain: Toolchain, arguments: list[str]) -> Result[i32, 
     return status_of(command, toolchain.driver)
 
 
-def status_of(mut command: Command, program: str) -> Result[i32, str]:
+def status_of(mut command: &mut Command, program: str) -> Result[i32, str]:
     """Run with the caller's streams, mapping a signal termination to exit code one."""
     match command.status():
         Err(error) => return Err(f"cannot run {program}: {error}")

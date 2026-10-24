@@ -1,7 +1,7 @@
 //! Checking one described unit (DD-0008), and the stable diagnostic report it produces.
 //!
-//! Checking reads the Loaves a unit imports from their artifacts and never executes or publishes anything. Callers
-//! render the returned report; module collection and typechecking stay in this driver.
+//! Checking reads imported Loaf artifacts and runs admitted vocabulary expansion before ordinary typechecking.
+//! Callers render the returned report; collection, retained expansion errors and checking stay in this driver.
 
 use incan_frontend::diagnostics::{self, StableDiagnostic};
 use serde::{Deserialize, Serialize};
@@ -10,7 +10,6 @@ use crate::diagnostics::{CliDiagnostic, CliDiagnosticFailure};
 use crate::error::{CliError, CliResult};
 use crate::modules::collect_modules_detailed_with_session;
 use crate::session::{CompilationSession, RustFactsSetup};
-use crate::typecheck::typecheck_modules;
 use crate::unit::UnitDescription;
 
 /// One check's presentation: its typed report as JSON, its human message and its warnings.
@@ -104,15 +103,7 @@ pub fn check_report(unit: &UnitDescription, rust: &RustFactsSetup) -> CliResult<
     if let Err(error) = session.resolve_rust_facts(&modules) {
         return Ok(import_failure(error));
     }
-    let typecheck = typecheck_modules(
-        &modules,
-        unit,
-        session.loaves(),
-        session.own_standard_package(),
-        None,
-        None,
-        &mut |_, _| {},
-    );
+    let typecheck = session.typecheck_unit(&modules, None, &mut |_, _| {});
     match typecheck {
         Ok(checked) => Ok(DiagnosticReport {
             schema_version: CHECK_REPORT_SCHEMA_VERSION,

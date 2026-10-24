@@ -19,7 +19,8 @@ from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue
 from codegen import native_arguments
-from files import json_text
+from files import json_text, read_json
+from graph_queries import nested
 from home import unit_ledger
 from loaf_local_graph import unique
 from observation import Ledger, SETTLE_SECONDS, load_ledger, observe, trace
@@ -40,6 +41,13 @@ pub def artifact_files(directory: Path, package: str) -> list[Path]:
     cache = directory.joinpath(f"{package}.rustabi")
     if cache.is_file():
         artifacts.append(cache)
+    manifest = directory.joinpath(f"{package}.incnlib")
+    if manifest.is_file():
+        match read_json(manifest):
+            Ok(document) =>
+                if not nested(nested(document, "vocab"), "desugarer_artifact").is_null():
+                    artifacts.append(directory.joinpath("vocab-worker"))
+            Err(_) => pass
     return artifacts
 
 

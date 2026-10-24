@@ -152,11 +152,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 };
                 path
             }
-            None if self.type_info.ident_kind(callee.span) == Some(IdentKind::RustImport) => self
-                .type_info
-                .rust
-                .body_ir_diverging_import_calls
-                .get(&(span.start, span.end))?,
+            None if self.type_info.ident_kind(callee.span) == Some(IdentKind::RustImport) => {
+                self.type_info.rust.body_ir_diverging_import_calls.get(&span)?
+            }
             None => return None,
         };
         if !path.iter().map(String::as_str).eq([
@@ -214,15 +212,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     .type_info
                     .calls
                     .body_ir_factory_owner_types
-                    .get(&(call_span.start, call_span.end))
+                    .get(&call_span)
                     .map(|ty| self.checked_type(ty))
                     && let IncanType::Generic { base, .. } = &factory_owner
                     && parameter_types::retained_nominal_identity(base, self.type_info) == Some(identity)
                 {
                     return Some(factory_owner);
                 }
-                if let Some(ty @ IncanType::Generic { base, .. }) =
-                    self.type_overrides.get(&(recv.span.start, recv.span.end))
+                if let Some(ty @ IncanType::Generic { base, .. }) = self.type_overrides.get(&recv.span)
                     && parameter_types::retained_nominal_identity(base, self.type_info) == Some(identity)
                 {
                     return Some(ty.clone());
@@ -534,7 +531,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let selected_span = local_declarations.iter().find(|candidate_span| {
                 declarations
                     .function_bindings_by_span
-                    .get(&(candidate_span.start, candidate_span.end))
+                    .get(&candidate_span)
                     .and_then(|binding| binding.identity.as_ref())
                     .is_some_and(|identity| identity == selected)
             });
@@ -543,10 +540,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     "call to overloaded function `{name}` whose canonical declaration is not present in this module"
                 ));
             };
-            let Some(binding) = declarations
-                .function_bindings_by_span
-                .get(&(selected_span.start, selected_span.end))
-            else {
+            let Some(binding) = declarations.function_bindings_by_span.get(&selected_span) else {
                 return Err(format!(
                     "call to overloaded function `{name}` whose selected declaration has no checked signature"
                 ));
@@ -554,11 +548,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return Ok(DirectCallDeclaration {
                 is_async: binding.is_async,
                 slots: Some(binding.params.iter().map(DeclaredSlot::from_checked_param).collect()),
-                direct_call_id: Some(CompilerNodeId::declaration_span(
-                    self.module_identity,
-                    selected_span.start,
-                    selected_span.end,
-                )),
+                direct_call_id: Some(CompilerNodeId::declaration_at(self.module_identity, *selected_span)),
                 builtin: None,
                 // The identity anchors to the declaration span, so the selected overload is as nameable as any other
                 // declaration; it is the *spelling* that cannot separate them, and the spelling is not the identity.
@@ -573,10 +563,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 "direct call to `{name}` has no unambiguous same-module declaration identity"
             ));
         };
-        let Some(binding) = declarations
-            .function_bindings_by_span
-            .get(&(declaration_span.start, declaration_span.end))
-        else {
+        let Some(binding) = declarations.function_bindings_by_span.get(&declaration_span) else {
             return Err(format!(
                 "same-module declaration `{name}` has no checked callable signature"
             ));
@@ -590,11 +577,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         Ok(DirectCallDeclaration {
             is_async: binding.is_async,
             slots: Some(binding.params.iter().map(DeclaredSlot::from_checked_param).collect()),
-            direct_call_id: Some(CompilerNodeId::declaration_span(
-                self.module_identity,
-                declaration_span.start,
-                declaration_span.end,
-            )),
+            direct_call_id: Some(CompilerNodeId::declaration_at(self.module_identity, *declaration_span)),
             builtin: None,
             // Consumed from the declaration's checked binding — minted once by the typechecker at the declaration
             // site, never re-derived here from module path plus spelling.
@@ -720,11 +703,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let Some(factory) = self.checked_nominal_factory_declaration(callee_span, call_span) {
             return Ok(factory);
         }
-        let reexport = self
-            .type_info
-            .calls
-            .body_ir_reexport_calls
-            .get(&(call_span.start, call_span.end));
+        let reexport = self.type_info.calls.body_ir_reexport_calls.get(&call_span);
         let canonical = self
             .type_info
             .resolved_call_identity(name, callee_span, reexport.map(|call| &call.canonical))
@@ -779,11 +758,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// Consume the private async target selected by successful module-call validation, independent of its spelling.
     fn checked_module_async_call(&self, canonical: &CanonicalSymbolId, span: ast::Span) -> bool {
-        self.type_info
-            .calls
-            .body_ir_async_call_targets
-            .get(&(span.start, span.end))
-            == Some(canonical)
+        self.type_info.calls.body_ir_async_call_targets.get(&span) == Some(canonical)
     }
 
     /// Keep the static factory the checker selected for constructor syntax, independently of the named type.
@@ -819,7 +794,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     .method_bindings_by_span
                     .iter()
                     .find(|(_, binding)| binding.identity.as_ref() == Some(factory))
-                    .map(|((start, end), _)| CompilerNodeId::declaration_span(self.module_identity, *start, *end))
+                    .map(|(span, _)| CompilerNodeId::declaration_at(self.module_identity, *span))
             } else {
                 None
             };
@@ -858,7 +833,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.type_info
             .calls
             .call_site_monomorph_type_args
-            .get(&(span.start, span.end))
+            .get(&span)
             .into_iter()
             .flatten()
             .map(|ty| self.checked_type(ty))
@@ -876,11 +851,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: ast::Span,
         type_args: &[ast::Spanned<ast::Type>],
     ) -> Result<Vec<IncanType>, String> {
-        if let Some(application) = self
-            .type_info
-            .declarations
-            .body_ir_decorator_applications
-            .get(&(span.start, span.end))
+        if let Some(application) = self.type_info.declarations.body_ir_decorator_applications.get(&span)
             && !application.factory_type_args.is_empty()
         {
             return Ok(application
@@ -906,13 +877,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .type_info
             .calls
             .body_ir_call_type_arguments
-            .get(&(span.start, span.end))
-            .or_else(|| {
-                self.type_info
-                    .calls
-                    .call_site_monomorph_type_args
-                    .get(&(span.start, span.end))
-            })
+            .get(&span)
+            .or_else(|| self.type_info.calls.call_site_monomorph_type_args.get(&span))
         else {
             if type_args.is_empty() {
                 return Ok(Vec::new());
@@ -1676,11 +1642,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 .type_info
                 .expressions
                 .expression_type_identities
-                .get(&(span.start, span.end))
+                .get(&span)
                 .cloned()
                 .unwrap_or_default();
             // A side its destination settled can name leaves the checker's own constructor type does not.
-            let canonical_types = if self.settled_types.contains_key(&(span.start, span.end)) {
+            let canonical_types = if self.settled_types.contains_key(&span) {
                 self.settled_result_identities(&result_ty, &recorded)
             } else {
                 recorded
@@ -1853,7 +1819,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     .type_info
                     .declarations
                     .method_decorator_receiver_slots
-                    .get(&(identity.declaration_span.start, identity.declaration_span.end))
+                    .get(&identity.declaration_span)
                     .is_some_and(|slot| {
                         !slot.mutable && slot.role == crate::typechecker::MethodDecoratorReceiverRole::Replacement
                     })
@@ -1978,7 +1944,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .type_info
             .calls
             .source_display_methods
-            .get(&(span.start, span.end))
+            .get(&span)
             .cloned()
         else {
             return operand;
@@ -2171,7 +2137,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if self.type_info.resolved_builtin_call(span) != Some(BuiltinFnId::Len) {
             return None;
         }
-        if self.type_info.rust.checked_calls.contains_key(&(span.start, span.end)) {
+        if self.type_info.rust.checked_calls.contains_key(&span) {
             let [ast::CallArg::Positional(receiver) | ast::CallArg::Named(_, receiver)] = args else {
                 return None;
             };
@@ -2415,7 +2381,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.type_info
             .traits
             .self_method_result_types
-            .get(&(span.start, span.end))
+            .get(&span)
             .map_or(checked, |declared| self.checked_type(declared))
     }
 
@@ -2457,10 +2423,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return None;
         }
         let facts: &'type_info TypeCheckInfo = self.type_info;
-        let binding = facts
-            .declarations
-            .method_bindings_by_span
-            .get(&(method.span.start, method.span.end))?;
+        let binding = facts.declarations.method_bindings_by_span.get(&method.span)?;
         let identity = binding.identity.as_ref()?;
         (identity.kind == SemanticSourceTargetKind::Method).then_some(binding)
     }
@@ -2553,31 +2516,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let canonical = native_member
             .as_ref()
             .map(|member| member.canonical.clone())
-            .or_else(|| {
-                self.type_info
-                    .calls
-                    .body_ir_string_slice_members
-                    .get(&(span.start, span.end))
-                    .cloned()
-            })
+            .or_else(|| self.type_info.calls.body_ir_string_slice_members.get(&span).cloned())
             .or_else(|| {
                 self.type_info
                     .traits
                     .provider_slot_identities
-                    .get(&(span.start, span.end))
+                    .get(&span)
                     .or_else(|| self.type_info.resolved_identity(span))
-                    .or_else(|| {
-                        self.type_info
-                            .traits
-                            .inferred_method_identities
-                            .get(&(span.start, span.end))
-                    })
-                    .or_else(|| {
-                        self.type_info
-                            .traits
-                            .self_method_identities
-                            .get(&(span.start, span.end))
-                    })
+                    .or_else(|| self.type_info.traits.inferred_method_identities.get(&span))
+                    .or_else(|| self.type_info.traits.self_method_identities.get(&span))
                     .or_else(|| retained_binding.and_then(|binding| binding.identity.as_ref()))
                     .cloned()
             });
@@ -2587,7 +2534,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.type_info
                     .traits
                     .self_method_params
-                    .get(&(span.start, span.end))
+                    .get(&span)
                     .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect())
             })
             .or_else(|| {
@@ -2634,7 +2581,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .type_info
             .calls
             .body_ir_async_call_targets
-            .get(&(span.start, span.end))
+            .get(&span)
             .is_some_and(|identity| canonical.as_ref() == Some(identity))
         {
             IncanType::Generic {
@@ -2744,7 +2691,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 span,
             });
         }
-        let key = (call_span.start, call_span.end);
+        let key = call_span;
         let mutable = self
             .type_info
             .resolved_identity(call_span)
@@ -3020,7 +2967,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .type_info
             .calls
             .call_site_monomorph_type_args
-            .get(&(span.start, span.end))
+            .get(&span)
             .filter(|_| matches!(receiver_type, Some(IncanType::Generic { .. })));
         let resolved_type_args = match method_arguments
             .map(|arguments| Ok(arguments.iter().map(|ty| self.checked_type(ty)).collect()))
@@ -3042,7 +2989,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .method_bindings_by_span
             .iter()
             .find(|(_, binding)| binding.identity.as_ref() == Some(&canonical))
-            .map(|((start, end), _)| CompilerNodeId::declaration_span(self.module_identity, *start, *end));
+            .map(|(span, _)| CompilerNodeId::declaration_at(self.module_identity, *span));
         let declared = self.native_source_method_slots(span);
         let (operands, binding) =
             match self.bind_declared_args(&format!("static method `{spelling}`"), declared, args, scope, out) {

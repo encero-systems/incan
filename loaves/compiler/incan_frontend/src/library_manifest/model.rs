@@ -1011,6 +1011,7 @@ impl CanonicalIdentityExport {
             declaration_span: CanonicalIdentitySpanExport {
                 start: u64::try_from(identity.declaration_span.start).ok()?,
                 end: u64::try_from(identity.declaration_span.end).ok()?,
+                expansion: identity.declaration_span.expansion,
             },
         })
     }
@@ -1038,7 +1039,8 @@ impl CanonicalIdentityExport {
             declaration_span: HirSourceSpan::new(
                 usize::try_from(self.declaration_span.start).ok()?,
                 usize::try_from(self.declaration_span.end).ok()?,
-            ),
+            )
+            .with_expansion(self.declaration_span.expansion),
         })
     }
 }
@@ -1084,6 +1086,8 @@ pub enum CanonicalIdentityOriginExport {
 /// Stable byte-offset provenance for one declaration in the published source projection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct CanonicalIdentitySpanExport {
+    /// Compiler-owned context of a generated declaration, absent for authored declarations.
+    pub expansion: Option<[u8; 32]>,
     pub start: u64,
     pub end: u64,
 }
@@ -1236,10 +1240,13 @@ impl VocabExports {
 /// Packaged compile-time desugarer artifact metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VocabDesugarerArtifact {
+    /// RFC 124 identity of the compiled native vocabulary unit.
+    #[serde(default)]
+    pub unit_identity: String,
     /// Artifact representation understood by the compiler.
     pub artifact_kind: incan_vocab::DesugarerArtifactKind,
     /// ABI version expected by the artifact/host bridge.
-    #[serde(default = "default_wasm_desugar_abi_version")]
+    #[serde(default = "default_desugar_schema_version")]
     pub abi_version: u32,
     /// Normalized relative path from the packaged crate root to the artifact file.
     pub relative_path: String,
@@ -1253,8 +1260,9 @@ pub struct VocabDesugarerArtifact {
     pub sha256: String,
 }
 
-fn default_wasm_desugar_abi_version() -> u32 {
-    incan_vocab::WASM_DESUGAR_ABI_VERSION
+/// Decode a descriptor that predates an explicit artifact ABI version before validating its executable format.
+fn default_desugar_schema_version() -> u32 {
+    incan_vocab::VOCAB_SYNTAX_VERSION
 }
 
 /// One import-activated soft keyword exported by a library.

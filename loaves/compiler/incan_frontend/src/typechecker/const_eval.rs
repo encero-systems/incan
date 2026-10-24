@@ -958,10 +958,10 @@ impl TypeChecker {
             },
             _ => return,
         };
-        self.type_info.consts.body_ir_newtype_values.insert(
-            (span.start, span.end),
-            super::type_info::BodyIrNewtypeConstantValue { owner, value },
-        );
+        self.type_info
+            .consts
+            .body_ir_newtype_values
+            .insert(span, super::type_info::BodyIrNewtypeConstantValue { owner, value });
     }
 
     /// Return whether a name resolves to a model constructor that can be considered for const literal validation.

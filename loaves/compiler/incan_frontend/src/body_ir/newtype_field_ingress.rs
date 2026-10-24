@@ -154,7 +154,7 @@ impl BodyBuilder<'_, '_> {
         // ---- Context: every supplied argument runs before a field error is raised ----
         for (written_position, (slot, expression)) in planned.iter().enumerate() {
             if *slot == plan.slot {
-                let key = (expression.span.start, expression.span.end);
+                let key = expression.span;
                 self.coercions_in_progress.insert(key);
                 let input = self.lower_expr_to_operand(expression, scope, out);
                 self.coercions_in_progress.remove(&key);

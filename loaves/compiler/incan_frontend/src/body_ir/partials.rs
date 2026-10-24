@@ -139,7 +139,7 @@ fn function_target(
         .type_info
         .declarations
         .function_bindings_by_span
-        .get(&(span.start, span.end))
+        .get(&span)
         .and_then(|binding| binding.identity.as_ref())
         == Some(canonical);
     if !physically_owned {
@@ -153,7 +153,7 @@ fn function_target(
     Ok(PartialFunctionTarget {
         name: name.clone(),
         canonical: canonical.clone(),
-        direct_call_id: CompilerNodeId::declaration_span(facts.module_identity, span.start, span.end),
+        direct_call_id: CompilerNodeId::declaration_at(facts.module_identity, *span),
         defaults: defaults.clone(),
     })
 }
@@ -328,11 +328,7 @@ pub(super) fn lower_source_partial(
     facts: &BodyIrLoweringFacts<'_, '_>,
 ) -> bir::Body {
     let span = hir_span(decl_span);
-    let binding = facts
-        .type_info
-        .declarations
-        .function_bindings_by_span
-        .get(&(decl_span.start, decl_span.end));
+    let binding = facts.type_info.declarations.function_bindings_by_span.get(&decl_span);
     let return_type = binding
         .map(|binding| semantic_type_from_resolved(&binding.return_type))
         .unwrap_or(IncanType::Unknown);
@@ -368,7 +364,7 @@ pub(super) fn lower_source_partial(
     {
         builder.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
     }
-    let direct_call_id = CompilerNodeId::declaration_span(facts.module_identity, decl_span.start, decl_span.end);
+    let direct_call_id = CompilerNodeId::declaration_at(facts.module_identity, decl_span);
     let named_type_identities =
         builder.finish_type_identities(facts.type_info.declarations.named_type_identities.clone());
     bir::Body {

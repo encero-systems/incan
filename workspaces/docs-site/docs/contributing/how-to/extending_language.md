@@ -4,7 +4,7 @@ Start from the observable source contract and trace a nearby implementation befo
 
 ## Choose the owning boundary
 
-Use an ordinary Incan library function when the behavior can be expressed in the language. A builtin needs a language-owned contract; new syntax needs parser, formatter and checker support as well as native behavior. Vocabulary declarations do not automatically build desugarers; see [Vocabulary metadata](authoring_vocab_crates.md).
+Use an ordinary Incan library function when the behavior can be expressed in the language. A builtin needs a language-owned contract; new syntax needs parser, formatter and checker support as well as native behavior. If the syntax belongs to a library and should only activate after import, use an Incan vocabulary entry; see [Author a vocabulary in Incan](authoring_vocabularies.md).
 
 ## Read a local precedent
 

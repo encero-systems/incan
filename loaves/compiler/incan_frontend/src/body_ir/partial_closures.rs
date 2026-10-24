@@ -156,11 +156,7 @@ impl BodyBuilder<'_, '_> {
             .local_function_declarations
             .get(source_name)
             .and_then(|candidates| match candidates.as_slice() {
-                [span] => Some(CompilerNodeId::declaration_span(
-                    self.module_identity,
-                    span.start,
-                    span.end,
-                )),
+                [span] => Some(CompilerNodeId::declaration_at(self.module_identity, *span)),
                 _ => None,
             });
         let defaults = self.function_default_sources.get(source_name).cloned();

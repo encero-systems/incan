@@ -884,6 +884,7 @@ fn api_declaration_matches_canonical(
         && identity.kind == kind
         && usize::try_from(identity.declaration_span.start).ok() == Some(anchor.span.start)
         && usize::try_from(identity.declaration_span.end).ok() == Some(anchor.span.end)
+        && identity.declaration_span.expansion == anchor.span.expansion
         && matches!(
             &identity.origin,
             CanonicalIdentityOriginExport::Package {
@@ -1805,16 +1806,28 @@ fn validate_vocab_payload(raw: &RawLibraryManifest) -> Result<(), LibraryManifes
         return Ok(());
     };
 
+    if matches!(desugarer.artifact_kind, incan_vocab::DesugarerArtifactKind::WasmModule) {
+        return Err(LibraryManifestError::Invalid(
+            "WebAssembly vocabulary desugarers are no longer supported; the Loaf must be rebuilt under RFC 160"
+                .to_string(),
+        ));
+    }
+    if desugarer.unit_identity.len() != 64 || !desugarer.unit_identity.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(LibraryManifestError::Invalid(
+            "native vocabulary unit identity must be a SHA-256 digest".into(),
+        ));
+    }
+
     if desugarer.abi_version == 0 {
         return Err(LibraryManifestError::Invalid(
             "vocab desugarer_artifact.abi_version must be >= 1".to_string(),
         ));
     }
-    if desugarer.abi_version > incan_vocab::WASM_DESUGAR_ABI_VERSION {
+    if desugarer.abi_version > incan_vocab::VOCAB_SYNTAX_VERSION {
         return Err(LibraryManifestError::Invalid(format!(
             "vocab desugarer_artifact.abi_version {} is newer than compiler-supported version {}",
             desugarer.abi_version,
-            incan_vocab::WASM_DESUGAR_ABI_VERSION
+            incan_vocab::VOCAB_SYNTAX_VERSION
         )));
     }
     if desugarer.relative_path.trim().is_empty() {

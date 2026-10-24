@@ -1,8 +1,13 @@
 """Build versioned vocabulary descriptors in Incan for producer-side publication."""
 
 from std.json import JsonValue
+from std.serde import json
+from rust::std::io import Write, stdin, stdout
+pub from scoped import ScopedSurfaceDescriptor, ScopedSurfaceEligibility, ScopedSurfaceFamily
+pub from scoped import ScopedSurfaceReceiver, ScopedSurfaceSyntax
 
 pub const VOCAB_METADATA_VERSION: int = 1
+pub const VOCAB_SYNTAX_VERSION: int = 3
 
 
 pub enum KeywordActivation:
@@ -488,11 +493,73 @@ pub model DeclarationSurface:
         return keywords
 
 
+@derive(json)
+pub enum EmbeddedFragmentSubmode(str):
+    """RFC 081's fixed lexical grammars; descriptors cannot install arbitrary parser grammars."""
+
+    Markup = "Markup"
+    Style = "Style"
+    RawText = "RawText"
+    RegexTemplate = "RegexTemplate"
+    SelectorDeclarationValue = "SelectorDeclarationValue"
+    TypePosition = "TypePosition"
+
+
+pub model EmbeddedFragmentDescriptor:
+    """An RFC 081 owned lexical submode and its stable artifact identity and eligible positions."""
+
+    pub key: str
+    pub submode: EmbeddedFragmentSubmode
+    pub artifact_key: str
+    pub eligible_in: list[ScopedSurfaceEligibility] = []
+    pub layout_sensitive: bool = false
+
+    def new(key: str, submode: EmbeddedFragmentSubmode, artifact_key: str) -> Self:
+        """Construct a descriptor without admitting any source position yet."""
+        return EmbeddedFragmentDescriptor(key=key, submode=submode, artifact_key=artifact_key)
+
+    def in_declaration_body(self, declaration: str) -> Self:
+        """Claim the body of the named owning declaration."""
+        return self.with_eligibility(ScopedSurfaceEligibility(declaration=declaration))
+
+    def in_clause_body(self, declaration: str, clause: str) -> Self:
+        """Claim a clause body inside the named owning declaration."""
+        return self.with_eligibility(
+            ScopedSurfaceEligibility(declaration=declaration, clause=Some(clause), position="ClauseBody"),
+        )
+
+    def in_call_argument(self, declaration: str, call: str) -> Self:
+        """Claim arguments to a named call inside the owning declaration."""
+        return self.with_eligibility(
+            ScopedSurfaceEligibility(declaration=declaration, call=Some(call), position="CallArgument"),
+        )
+
+    def with_eligibility(self, eligibility: ScopedSurfaceEligibility) -> Self:
+        """Add a positive position while preserving previously registered positions."""
+        mut result = self
+        result.eligible_in.append(eligibility)
+        return result
+
+    def to_json(self) -> JsonValue:
+        """Publish the unchanged RFC 081 descriptor grammar through ordinary vocabulary metadata."""
+        return JsonValue.object(
+            {"key": JsonValue.string(self.key), "submode": JsonValue.string(self.submode.value()), "artifact_key": JsonValue.string(
+                self.artifact_key,
+            ), "eligible_in": JsonValue.array([position.to_json() for position in self.eligible_in]), "misuse_scope": JsonValue.string(
+                "None",
+            ), "diagnostics": JsonValue.array([]), "format_hint": JsonValue.object(
+                {"layout_sensitive": JsonValue.bool(self.layout_sensitive)},
+            )},
+        )
+
+
 pub model DslSurface:
     """Declarations sharing one activation rule."""
 
     pub activation: KeywordActivation = KeywordActivation.Always
     pub declarations: list[DeclarationSurface] = []
+    pub embedded_fragments: list[EmbeddedFragmentDescriptor] = []
+    pub scoped_surfaces: list[ScopedSurfaceDescriptor] = []
 
     def new(activation: KeywordActivation) -> Self:
         """Construct an empty surface with an explicit activation rule."""
@@ -516,11 +583,29 @@ pub model DslSurface:
         result.declarations = result.declarations + declarations
         return result
 
+    def with_embedded_fragment(self, fragment: EmbeddedFragmentDescriptor) -> Self:
+        """Attach an owned fragment descriptor without changing its parser or formatter semantics."""
+        mut result = self
+        result.embedded_fragments.append(fragment)
+        return result
+
+    def with_scoped_surface(self, surface: ScopedSurfaceDescriptor) -> Self:
+        """Append one descriptor-owned glyph or leading-dot surface."""
+        return self.with_scoped_surfaces([surface])
+
+    def with_scoped_surfaces(self, surfaces: list[ScopedSurfaceDescriptor]) -> Self:
+        """Append scoped surfaces in declaration order."""
+        mut result = self
+        result.scoped_surfaces = result.scoped_surfaces + surfaces
+        return result
+
     def to_json(self) -> JsonValue:
         """Encode a surface in the descriptor reader's format."""
         return JsonValue.object(
             {"activation": self.activation.to_json(), "declarations": JsonValue.array(
                 [declaration.to_json() for declaration in self.declarations],
+            ), "embedded_fragments": JsonValue.array([fragment.to_json() for fragment in self.embedded_fragments]), "scoped_surfaces": JsonValue.array(
+                [surface.to_json() for surface in self.scoped_surfaces],
             )},
         )
 
@@ -708,6 +793,7 @@ pub model VocabRegistration:
     pub keyword_registrations: list[KeywordRegistration] = []
     pub dsl_surfaces: list[DslSurface] = []
     pub library_manifest: LibraryManifest = LibraryManifest()
+    pub custom_desugaring: bool = false
 
     def new() -> Self:
         """Construct an empty registration under the current schema."""
@@ -741,6 +827,12 @@ pub model VocabRegistration:
         result.library_manifest = manifest
         return result
 
+    def with_desugarer(self) -> Self:
+        """Require the entry's public typed desugar export when this vocabulary is built."""
+        mut result = self
+        result.custom_desugaring = true
+        return result
+
     def metadata(self) -> JsonValue:
         """
         Return the compiler's existing versioned VocabMetadata payload.
@@ -753,13 +845,23 @@ pub model VocabRegistration:
         for surface in self.dsl_surfaces:
             registrations.append(surface.keyword_registration())
         # 2. Preserve the existing descriptor transport, including its schema version.
+        mut desugarer = JsonValue.null()
+        if self.custom_desugaring:
+            desugarer = JsonValue.object(
+                {"artifact_kind": JsonValue.string("NativeWorker"), "abi_version": JsonValue.int(VOCAB_SYNTAX_VERSION), "target": JsonValue.string(
+                    "host",
+                ), "profile": JsonValue.string("release"), "file_name": JsonValue.null(), "entrypoint": JsonValue.string(
+                    "desugar",
+                )},
+            )
         return JsonValue.object(
             {"metadata_version": JsonValue.int(self.metadata_version), "keyword_registrations": JsonValue.array(
                 [registration.to_json() for registration in registrations],
-            ), "dsl_surfaces": JsonValue.array([surface.to_json() for surface in self.dsl_surfaces]), "library_manifest": self.library_manifest.to_json(), "desugarer": JsonValue.null()},
+            ), "dsl_surfaces": JsonValue.array([surface.to_json() for surface in self.dsl_surfaces]), "library_manifest": self.library_manifest.to_json(), "desugarer": desugarer},
         )
 
 
+@derive(json)
 pub model Span:
     """A half-open byte range in the requesting module's original source."""
 
@@ -767,6 +869,7 @@ pub model Span:
     pub end: int
 
 
+@derive(json)
 pub model IncanExpr:
     """Structured host expression syntax with an explicit original-source span."""
 
@@ -786,6 +889,7 @@ pub model IncanExpr:
         return IncanExpr(span=span, kind=IncanExprKind.List(items))
 
 
+@derive(json)
 pub enum IncanExprKind:
     """Expression payloads; each recursive expression is independently spanned."""
 
@@ -803,8 +907,127 @@ pub enum IncanExprKind:
     Index(list[IncanExpr])
     Binary(str, list[IncanExpr])
     Unary(str, list[IncanExpr])
+    Embedded(VocabFragment)
+    Scoped(VocabScopedSurface)
 
 
+@derive(json)
+pub model VocabScopedSurface:
+    """An accepted expression payload with its descriptor identity and parser-retained owner context."""
+
+    pub dependency_key: str
+    pub descriptor_key: str
+    pub owner: VocabSurfaceOwner
+    pub kind: VocabScopedSurfaceKind
+
+
+@derive(json)
+pub model VocabSurfaceOwner:
+    """The exact declaration, clause and call-argument context that admitted a scoped expression."""
+
+    pub declaration: str
+    pub clause: Option[str] = None
+    pub call: Option[str] = None
+
+
+@derive(json)
+pub enum VocabScopedSurfaceKind:
+    """A scoped field path or glyph's structured operands; these are input syntax, not executable operations."""
+
+    LeadingDotPath(list[str], ScopedSurfaceReceiver)
+    Glyph(str, list[IncanExpr])
+
+
+@derive(json)
+pub model VocabFragment:
+    """An RFC 081 owned fragment with its canonical descriptor identity and structured lexical tree."""
+
+    pub span: Span
+    pub dependency_key: str
+    pub descriptor_key: str
+    pub submode: EmbeddedFragmentSubmode
+    pub nodes: list[VocabFragmentNode]
+    pub source_text: str
+    pub layout_sensitive: bool
+
+
+@derive(json)
+pub model VocabFragmentNode:
+    """One lexical node with an original-source range, including every embedded expression hole."""
+
+    pub span: Span
+    pub kind: VocabFragmentNodeKind
+
+
+@derive(json)
+pub enum VocabFragmentNodeKind:
+    """RFC 081 grammar productions, independent of compiler-private node definitions."""
+
+    Text(str)
+    Hole(IncanExpr)
+    Element(VocabFragmentElement)
+    EntityRef(str)
+    Comment(str)
+    StyleRule(list[VocabFragmentNode], list[VocabFragmentNode])
+    Declaration(str, list[VocabFragmentNode])
+    Value(VocabFragmentValue)
+    Regex(str, str)
+    TypeShape(VocabFragmentType)
+
+
+@derive(json)
+pub model VocabFragmentElement:
+    """A markup element retaining its name, attributes, children and source range."""
+
+    pub span: Span
+    pub name: str
+    pub attributes: list[VocabFragmentAttribute]
+    pub children: list[VocabFragmentNode]
+    pub self_closing: bool
+
+
+@derive(json)
+pub model VocabFragmentAttribute:
+    """A markup attribute whose optional value remains a structured lexical node."""
+
+    pub span: Span
+    pub name: str
+    pub value: list[VocabFragmentNode]
+
+
+@derive(json)
+pub enum VocabFragmentValue:
+    """Literal values from RFC 081's style and selector grammars; the enclosing node supplies the span."""
+
+    Dimension(str, str)
+    Color(str)
+    CustomPropertyRef(str)
+    Ident(str)
+    StringLit(str)
+    Number(str)
+    Selector(str)
+
+
+@derive(json)
+pub model VocabFragmentType:
+    """A type-position production anchored to the finest source range retained by RFC 081 parsing."""
+
+    pub span: Span
+    pub kind: VocabFragmentTypeKind
+
+
+@derive(json)
+pub enum VocabFragmentTypeKind:
+    """Type-position grammar shapes; a generic's first child is its constructor."""
+
+    Name(list[str])
+    Generic(list[VocabFragmentType])
+    Nullable(list[VocabFragmentType])
+    Array(list[VocabFragmentType])
+    Union(list[VocabFragmentType])
+
+
+@derive(json)
 pub model IncanStatement:
     """Structured host statement syntax carrying its original-source span."""
 
@@ -812,6 +1035,7 @@ pub model IncanStatement:
     pub kind: IncanStatementKind
 
 
+@derive(json)
 pub enum IncanStatementKind:
     """Statement payloads with spanned expression and statement children."""
 
@@ -827,6 +1051,7 @@ pub enum IncanStatementKind:
     Unsafe(list[IncanStatement])
 
 
+@derive(json)
 pub model VocabTypeExpr:
     """A structured type position with the source range it came from."""
 
@@ -835,6 +1060,7 @@ pub model VocabTypeExpr:
     pub arguments: list[VocabTypeExpr] = []
 
 
+@derive(json)
 pub model VocabParameter:
     """A declaration parameter with its own source location."""
 
@@ -844,6 +1070,7 @@ pub model VocabParameter:
     pub default_value: Option[IncanExpr] = None
 
 
+@derive(json)
 pub model VocabDeclarationHead:
     """The structured head of a vocabulary declaration and its source location."""
 
@@ -854,6 +1081,7 @@ pub model VocabDeclarationHead:
     pub return_type: Option[VocabTypeExpr] = None
 
 
+@derive(json)
 pub model VocabFieldSpec:
     """A field-set entry preserving the field's source span."""
 
@@ -863,6 +1091,7 @@ pub model VocabFieldSpec:
     pub default_value: Option[IncanExpr] = None
 
 
+@derive(json)
 pub model VocabExpressionItemModifier:
     """A trailing expression-item modifier with its original-source location."""
 
@@ -871,6 +1100,7 @@ pub model VocabExpressionItemModifier:
     pub value: IncanExpr
 
 
+@derive(json)
 pub model VocabExpressionItem:
     """An expression-list item with its alias, modifiers and source location."""
 
@@ -880,6 +1110,7 @@ pub model VocabExpressionItem:
     pub modifiers: list[VocabExpressionItemModifier] = []
 
 
+@derive(json)
 pub model VocabClause:
     """A parsed vocabulary clause whose head and body retain their source spans."""
 
@@ -889,7 +1120,21 @@ pub model VocabClause:
     pub compound_tokens: list[str] = []
     pub head: list[IncanExpr] = []
 
+    def expression(self) -> Result[IncanExpr, DesugarError]:
+        """Return an expression clause's value with its original source range, or a clause-local diagnostic."""
+        match self.body:
+            VocabClauseBody.Expression(value) => return Ok(value)
+            _ => return Err(DesugarError.at(self.span, f"{self.keyword} requires an expression"))
 
+    def head_list(self) -> list[IncanExpr]:
+        """Return expression-list clause values in source order, preserving each item's range."""
+        match self.body:
+            VocabClauseBody.ExpressionList(items) => return [item.expr for item in items]
+            VocabClauseBody.Expression(value) => return [value]
+            _ => return self.head
+
+
+@derive(json)
 pub enum VocabClauseBody:
     """Structured clause payloads; enclosing clauses also carry their own spans."""
 
@@ -901,6 +1146,7 @@ pub enum VocabClauseBody:
     Items(list[VocabBodyItem])
 
 
+@derive(json)
 pub model VocabDeclaration:
     """A parsed vocabulary declaration retaining its head, children and original-source span."""
 
@@ -910,7 +1156,26 @@ pub model VocabDeclaration:
     pub compound_tokens: list[str] = []
     pub body: list[VocabBodyItem] = []
 
+    def clause(self, keyword: str) -> Result[VocabClause, DesugarError]:
+        """Find the first owned clause with this keyword, or report its absence at the declaration."""
+        for item in self.body:
+            match item:
+                VocabBodyItem.Clause(clause) =>
+                    if clause.keyword == keyword:
+                        return Ok(clause)
+                _ => pass
+        return Err(DesugarError.at(self.span, f"missing {keyword} clause"))
 
+    def fragment(self) -> Result[VocabFragment, DesugarError]:
+        """Return this declaration's owned embedded fragment without interpreting its lexical contents."""
+        for item in self.body:
+            match body_item_fragment(item):
+                Some(fragment) => return Ok(fragment)
+                None => pass
+        return Err(DesugarError.at(self.span, "expected an owned embedded fragment"))
+
+
+@derive(json)
 pub enum VocabBodyItem:
     """A body item whose contained node always has an original-source span."""
 
@@ -919,6 +1184,7 @@ pub enum VocabBodyItem:
     Statement(IncanStatement)
 
 
+@derive(json)
 pub enum VocabSyntaxNode:
     """A parsed syntax node; every alternative carries a spanned structured value."""
 
@@ -936,28 +1202,52 @@ pub enum VocabSyntaxNode:
             VocabSyntaxNode.Expression(node) => return node.span
 
 
+@derive(json)
 pub model DesugarRequest:
     """A requesting module and its structured vocabulary syntax node."""
 
     pub node: VocabSyntaxNode
     pub module_path: str
-    pub schema_version: int = VOCAB_METADATA_VERSION
+    pub schema_version: int = VOCAB_SYNTAX_VERSION
 
 
+@derive(json)
 pub model DesugarResponse:
     """Canonical structured syntax output retaining every node's source location."""
 
     pub output: DesugarOutput
-    pub schema_version: int = VOCAB_METADATA_VERSION
+    pub schema_version: int = VOCAB_SYNTAX_VERSION
 
 
+@derive(json)
 pub enum DesugarOutput:
     """The structured output position selected by a registered surface."""
 
     Statements(list[IncanStatement])
     Expression(IncanExpr)
+    Declarations(list[IncanDeclaration])
 
 
+@derive(json)
+pub model IncanDeclaration:
+    """A compilation-unit declaration with its original source range and explicit visibility."""
+
+    pub span: Span
+    pub name: str
+    pub kind: IncanDeclarationKind
+    pub is_public: bool = false
+
+
+@derive(json)
+pub enum IncanDeclarationKind:
+    """Function signatures and bodies, model fields, and optionally annotated constant initializers."""
+
+    Function(list[VocabParameter], VocabTypeExpr, list[IncanStatement])
+    Model(list[VocabFieldSpec])
+    Const(Option[VocabTypeExpr], IncanExpr)
+
+
+@derive(json)
 pub model DesugarError:
     """A provider diagnostic anchored within its requesting vocabulary node."""
 
@@ -967,6 +1257,69 @@ pub model DesugarError:
     def at(span: Span, message: str) -> Self:
         """Construct a diagnostic at an original-source location."""
         return DesugarError(span=span, message=message)
+
+
+@derive(json)
+pub model DesugarBatchRequest:
+    """One framed worker invocation containing requests from a single module."""
+
+    pub requests: list[DesugarRequest]
+
+
+@derive(json)
+pub enum DesugarReply:
+    """The structured success or provider diagnostic for one requested node."""
+
+    Ok(DesugarResponse)
+    Err(DesugarError)
+
+
+@derive(json)
+pub model DesugarBatchResponse:
+    """Replies in the same order as the module's requested vocabulary nodes."""
+
+    pub responses: list[DesugarReply]
+
+
+pub def run_desugar_worker(desugar: (DesugarRequest) -> Result[DesugarResponse, DesugarError]) -> Result[None, str]:
+    """
+    Serve the generated native worker's framed structured protocol until its owner closes input.
+
+    1. Decode one module's batch from each input line.
+    2. Invoke the authored desugarer independently for every node.
+    3. Encode and flush one response line before reading the next batch.
+    """
+    # 1. Each line is a complete invocation, without compiler-private syntax or ambient context.
+    while true:
+        mut line = ""
+        count = stdin().read_line(line).map_err((error) => f"cannot read desugar request: {error}")?
+        if count == 0:
+            return Ok(None)
+        batch = DesugarBatchRequest.from_json(line)?
+        mut replies: list[DesugarReply] = []
+        # 2. The authored function receives one node, so batch neighbors do not become part of its interface.
+        for request in batch.requests:
+            match desugar(request):
+                Ok(response) => replies.append(DesugarReply.Ok(response))
+                Err(error) => replies.append(DesugarReply.Err(error))
+        # 3. Protocol output is flushed for retained workers as well as one-shot invocations.
+        println(DesugarBatchResponse(responses=replies).to_json())
+        stdout().flush().map_err((error) => f"cannot flush desugar response: {error}")?
+    return Ok(None)
+
+
+def body_item_fragment(item: VocabBodyItem) -> Option[VocabFragment]:
+    """Find a fragment only at its explicit statement/expression ownership boundary."""
+    match item:
+        VocabBodyItem.Statement(statement) =>
+            match statement.kind:
+                IncanStatementKind.Expr(expression) =>
+                    match expression.kind:
+                        IncanExprKind.Embedded(fragment) => return Some(fragment)
+                        _ => pass
+                _ => pass
+        _ => pass
+    return None
 
 
 def clause_keyword(clause: ClauseSurface, parent: str) -> KeywordSpec:

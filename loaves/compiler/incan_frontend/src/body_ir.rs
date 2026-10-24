@@ -254,10 +254,7 @@ pub fn build_body_ir_module(
                 }
                 // An extern naming an attribute macro is applied by rustc to the items it decorates, not called.
                 ast::Declaration::Function(_)
-                    if type_info
-                        .declarations
-                        .native_attribute_externs
-                        .contains_key(&(decl.span.start, decl.span.end)) =>
+                    if type_info.declarations.native_attribute_externs.contains_key(&decl.span) =>
                 {
                     Vec::new()
                 }
@@ -1034,7 +1031,7 @@ fn body_ir_module_identity(module_path: &[String]) -> String {
 
 /// Convert an AST byte-offset span into a Body IR source span.
 const fn hir_span(span: ast::Span) -> HirSourceSpan {
-    HirSourceSpan::new(span.start, span.end)
+    span
 }
 
 /// Per-function lowering state: fresh local/scope allocation, current name bindings, and accumulated body-level
@@ -1154,7 +1151,7 @@ struct BodyBuilder<'type_info, 'source> {
     /// Source-span types that replace the checker's recorded ones while one evaluation of a chained value written per
     /// target is lowered. The checker checks such a value once per target but records one type per span, so each
     /// evaluation installs its own target's types here and clears them afterwards; it is empty everywhere else.
-    type_overrides: HashMap<(usize, usize), IncanType>,
+    type_overrides: HashMap<crate::ast::Span, IncanType>,
     /// Canonical leaves consumed from an exactly selected constructor field, emitted beside this body's projected
     /// carriers.
     contextual_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
@@ -1169,10 +1166,10 @@ struct BodyBuilder<'type_info, 'source> {
     /// (see [`Self::settle_open_result_value`]). Canonical set conversions also retain the exact element their
     /// evaluated builtin iterable proves, so an inferred binding preserves that storage without changing legacy
     /// checker facts (see [`Self::retain_set_constructor_type`]).
-    settled_types: HashMap<(usize, usize), IncanType>,
+    settled_types: HashMap<crate::ast::Span, IncanType>,
     /// Spans of values whose newtype coercion is being lowered, so lowering the wrapped value itself does not apply
     /// the coercion again (see `lower_newtype_coercion`).
-    coercions_in_progress: HashSet<(usize, usize)>,
+    coercions_in_progress: HashSet<crate::ast::Span>,
     next_local: u32,
     next_scope: u32,
 }
@@ -1274,57 +1271,22 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let Some(ty) = checked_bridge::constructor_storage(span, self.type_info) {
             return ty;
         }
-        if let Some(ty) = self.type_overrides.get(&(span.start, span.end)) {
+        if let Some(ty) = self.type_overrides.get(&span) {
             return ty.clone();
         }
-        if let Some(ty) = self.settled_types.get(&(span.start, span.end)) {
+        if let Some(ty) = self.settled_types.get(&span) {
             return ty.clone();
         }
         let native = self.type_info.body_ir_newtypes.expression_type(span, self.type_info);
         let checked = native
-            .or_else(|| {
-                self.type_info
-                    .expressions
-                    .body_ir_expr_types
-                    .get(&(span.start, span.end))
-            })
-            .or_else(|| {
-                self.type_info
-                    .calls
-                    .body_ir_constructor_types
-                    .get(&(span.start, span.end))
-            })
-            .or_else(|| {
-                self.type_info
-                    .calls
-                    .body_ir_call_result_types
-                    .get(&(span.start, span.end))
-            })
-            .or_else(|| {
-                self.type_info
-                    .calls
-                    .inferred_constructor_types
-                    .get(&(span.start, span.end))
-            })
-            .or_else(|| {
-                self.type_info
-                    .calls
-                    .inferred_call_result_types
-                    .get(&(span.start, span.end))
-            })
-            .or_else(|| {
-                self.type_info
-                    .traits
-                    .self_method_result_types
-                    .get(&(span.start, span.end))
-            })
+            .or_else(|| self.type_info.expressions.body_ir_expr_types.get(&span))
+            .or_else(|| self.type_info.calls.body_ir_constructor_types.get(&span))
+            .or_else(|| self.type_info.calls.body_ir_call_result_types.get(&span))
+            .or_else(|| self.type_info.calls.inferred_constructor_types.get(&span))
+            .or_else(|| self.type_info.calls.inferred_call_result_types.get(&span))
+            .or_else(|| self.type_info.traits.self_method_result_types.get(&span))
             .or_else(|| self.type_info.expr_type(span))
-            .or_else(|| {
-                self.type_info
-                    .calls
-                    .body_ir_native_argument_types
-                    .get(&(span.start, span.end))
-            })
+            .or_else(|| self.type_info.calls.body_ir_native_argument_types.get(&span))
             .filter(|ty| native.is_some() || !self.type_info.body_ir_newtypes.controls_type(ty))
             .or_else(|| self.type_info.expr_type(span))
             .map(|ty| self.checked_type(ty))
@@ -1466,7 +1428,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         let settled = self.fill_open_type_parts(&recorded, destination);
         if settled != recorded && !self.leaves_type_open(&settled) {
-            self.settled_types.insert((span.start, span.end), settled);
+            self.settled_types.insert(span, settled);
         }
     }
 
@@ -1588,7 +1550,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: HirSourceSpan,
         total_reads: usize,
     ) -> bir::LocalId {
-        let source_span = ast::Span::new(span.start, span.end);
+        let source_span = span;
         let identity = self.type_info.resolved_write_identity(source_span, &name).cloned();
         let id = bir::LocalId(self.next_local);
         self.next_local += 1;
@@ -1625,7 +1587,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         span: HirSourceSpan,
     ) -> bir::LocalId {
-        let source_span = ast::Span::new(span.start, span.end);
+        let source_span = span;
         let identity = self
             .type_info
             .resolved_write_identity(source_span, "self")
@@ -1634,7 +1596,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.type_info
                     .declarations
                     .body_ir_property_bindings
-                    .get(&(source_span.start, source_span.end))
+                    .get(&source_span)
                     .and_then(|binding| binding.receiver_identity.clone())
             });
         let id = bir::LocalId(self.next_local);
@@ -1690,7 +1652,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .type_info
             .declarations
             .body_ir_decorator_static_receivers
-            .get(&(span.start, span.end))
+            .get(&span)
             .filter(|receiver| receiver.binding_name == name)
         {
             return self
@@ -1701,14 +1663,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .type_info
             .protocols
             .body_ir_truthiness_receivers
-            .get(&(span.start, span.end))
+            .get(&span)
             .or_else(|| self.type_info.resolved_identity(span))
-            .or_else(|| {
-                self.type_info
-                    .calls
-                    .body_ir_native_argument_identities
-                    .get(&(span.start, span.end))
-            })
+            .or_else(|| self.type_info.calls.body_ir_native_argument_identities.get(&span))
             .cloned()
         {
             if let Some(&id) = self.identity_bindings.get(&identity) {

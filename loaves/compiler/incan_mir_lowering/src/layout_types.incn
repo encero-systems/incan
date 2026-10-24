@@ -38,11 +38,9 @@ pub def native_source_type(
     match ty:
         RustType.NativeCChar => return Ok(PlanType.CChar)
         RustType.NativePointer(mutable=mutable, pointee=pointee) =>
-            return Ok(
-                PlanType.RawPointer(mutable.clone(), [native_source_type(nominals, enums, unions, pointee, intrinsics)?]),
-            )
+            return Ok(PlanType.RawPointer(mutable, [native_source_type(nominals, enums, unions, pointee, intrinsics)?]))
         RustType.NativeTraitObject(path=path, send=send, sync=sync) =>
-            return Ok(PlanType.NativeTraitObject(str(path), send.clone(), sync.clone()))
+            return Ok(PlanType.NativeTraitObject(str(path), send, sync))
         RustType.NativeArray(element=element, length=length) =>
             # The bootstrap binds Rust enum scalar fields by reference; copy the checked integer before conversion.
             count = length.clone()

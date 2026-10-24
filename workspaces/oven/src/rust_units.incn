@@ -27,16 +27,7 @@ from rust_activation import CfgSnapshot, DependencyDomain, TargetConfiguration, 
 from semver_req import compare_version_order, parse_version
 from toml_fields import optional_string, optional_strings, read_manifest, required_string
 from toolchain import NativeCrate, Toolchain, load_toolchain, located
-from unit_freshness import (
-    Key,
-    artifact_identity,
-    fingerprint,
-    install_all,
-    record,
-    reusable,
-    rust_key,
-    staleness,
-)
+from unit_freshness import Key, artifact_identity, fingerprint, install_all, record, reusable, rust_key, staleness
 from rust_freshness import compilation_observations, inputs_unchanged, library_key
 
 # The schema of the receipt a build leaves of the libraries it built.
@@ -132,12 +123,12 @@ def newer(unit: RegistryUnit, current: RegistryUnit) -> Result[bool, str]:
 
 
 def sole_library(unit: RegistryUnit) -> Result[str, str]:
-    """The one library in a compiled unit's artifact directory; none, or several, are refused."""
+    """The one library's canonical path, so an overlay and retained closure bind the same stored artifact once."""
     mut artifacts: list[str] = []
     for candidate in Path(unit.directory).iterdir().map_err((error) => error.message())?:
         name = candidate.name()
         if name.startswith("lib") and is_rust_library(name):
-            artifacts.append(candidate.0)
+            artifacts.append(candidate.resolve().map_err((error) => error.message())?.0)
     if len(artifacts) != 1:
         return Err(
             f"the compiled unit of {unit.loaf} {unit.version} has {len(artifacts)} libraries in {unit.directory}; " + "expected exactly one",
@@ -902,6 +893,7 @@ def compile_incan_library(
         None => return Err(f"no Incan unit compiler was supplied for {declared.package}")
     if code != 0:
         return Err(f"Incan library {declared.package} failed with exit code {code}")
+    # 3. Rust's extern edge names the same public facade an Incan consumer receives.
     return Ok(
         BuiltUnit(
             crate_name=compiled_name,
@@ -988,7 +980,6 @@ def compile_binary(
     invoke_rustc(request.rustc, arguments + ["-o", staged.0], environment, declared.unstable, name)?
     install_all([staged], [binary], stamp, inputs)?
     println(f"compiled {name}")
-    # 3. Rust's extern edge names the same public facade an Incan consumer receives.
     return Ok(binary.0)
 
 

@@ -22,7 +22,7 @@ impl TypeChecker {
         callee_span: Span,
         errors_before_call: usize,
     ) {
-        let key = (span.start, span.end);
+        let key = span;
         self.type_info.calls.body_ir_async_call_targets.remove(&key);
         if !is_async || self.errors.len() != errors_before_call {
             return;
@@ -89,10 +89,7 @@ impl TypeChecker {
         if !concrete(&output) {
             return;
         }
-        self.type_info
-            .calls
-            .body_ir_call_result_types
-            .insert((span.start, span.end), output);
+        self.type_info.calls.body_ir_call_result_types.insert(span, output);
     }
 
     /// Record a concrete native instantiation from already checked parameter/argument relationships.
@@ -145,7 +142,7 @@ impl TypeChecker {
             };
             let testing_argument = self.body_ir_testing_argument_type(identity, expression);
             let testing_channel = testing_argument.is_some();
-            let key = (expression.span.start, expression.span.end);
+            let key = expression.span;
             let Some(actual) = self
                 .type_info
                 .expressions
@@ -191,10 +188,7 @@ impl TypeChecker {
             .map(|name| bindings.get(name).filter(|ty| concrete(ty)).cloned())
             .collect();
         if let Some(arguments) = arguments {
-            self.type_info
-                .calls
-                .body_ir_call_type_arguments
-                .insert((span.start, span.end), arguments);
+            self.type_info.calls.body_ir_call_type_arguments.insert(span, arguments);
             let result = substitute_resolved_type(&normalized(&info.return_type, &names, self), &bindings);
             self.retain_body_ir_call_parameters(info, &names, &bindings, span);
             tracing::debug!(target: "incan::invocation", identity = ?identity, declared = ?info.return_type, names = ?names, bindings = ?bindings, result = ?result, "direct-route checked call result");
@@ -202,7 +196,7 @@ impl TypeChecker {
                 self.type_info
                     .calls
                     .body_ir_call_result_types
-                    .insert((span.start, span.end), result.clone());
+                    .insert(span, result.clone());
             }
             if concrete(&result) {
                 // Keep a settled source spelling in the semantic checker; canonical owner keys belong to Body IR.
@@ -211,10 +205,7 @@ impl TypeChecker {
                 } else {
                     result
                 };
-                self.type_info
-                    .calls
-                    .inferred_call_result_types
-                    .insert((span.start, span.end), result);
+                self.type_info.calls.inferred_call_result_types.insert(span, result);
             }
         } else {
             self.retain_open_source_call(info, &names, &bindings, span, identity);
@@ -259,7 +250,7 @@ impl TypeChecker {
             self.type_info
                 .calls
                 .body_ir_call_parameter_types
-                .insert((span.start, span.end), parameters);
+                .insert(span, parameters);
         }
     }
 
@@ -376,7 +367,7 @@ impl TypeChecker {
         self.type_info
             .rust
             .checked_calls
-            .get(&(expression.span.start, expression.span.end))
+            .get(&expression.span)
             .map(|call| call.return_type.clone())
             .or_else(|| self.rust_native_value_type(expression))
             .filter(|ty| {
@@ -407,16 +398,9 @@ impl TypeChecker {
             .type_info
             .calls
             .body_ir_async_call_targets
-            .get(&(expression.span.start, expression.span.end))
+            .get(&expression.span)
             .is_some_and(|identity| self.type_info.resolved_identity(callee_span) == Some(identity));
-        if source_async
-            || checked_async
-            || self
-                .type_info
-                .rust
-                .async_call_realizations
-                .contains(&(expression.span.start, expression.span.end))
-        {
+        if source_async || checked_async || self.type_info.rust.async_call_realizations.contains(&expression.span) {
             ResolvedType::Generic("Awaitable".into(), vec![actual.clone()])
         } else {
             actual.clone()

@@ -1,6 +1,18 @@
 """Declare the provider's identifiers and decision collections."""
 
 
+pub enum DecisionKind:
+    """The provider's decision variants, independent of same-named caller declarations."""
+
+    Accept
+    Reject
+
+
+pub def chosen() -> DecisionKind:
+    """Return the provider's accepted kind through its declared type."""
+    return DecisionKind.Accept
+
+
 pub model EvidenceId:
     """The dependency's identifier carried by decision fields."""
 

@@ -13,7 +13,7 @@ use incan_lang::lang::stdlib;
 
 use crate::diagnostics::CliDiagnosticFailure;
 use crate::error::{CliError, CliResult};
-use crate::typecheck::typecheck_modules;
+use crate::typecheck::{TypecheckedModules, typecheck_modules};
 use crate::unit::UnitDescription;
 use incan_frontend::ast::{Program, Span};
 use incan_frontend::contract_metadata::{
@@ -109,8 +109,10 @@ pub struct RustFactsSetup {
 pub struct CompilationSession {
     /// Where Rust facts no ABI cache holds come from, when the compiler can read them.
     rust_facts_source: Option<Arc<dyn RustFactsSource>>,
-    /// Vocabulary module map shared across cloned sessions; fresh source and guest state remain local.
-    pub(crate) vocab_runtime: Arc<Mutex<Option<vocab_desugar_pass::WasmDesugarerRuntime>>>,
+    /// Native vocabulary workers and pure responses shared across cloned sessions.
+    pub(crate) vocab_runtime: Arc<Mutex<Option<vocab_desugar_pass::NativeDesugarerRuntime>>>,
+    /// Node-local expansion failures retained while the rest of each module undergoes ordinary checking.
+    desugar_diagnostics: Arc<Mutex<BTreeMap<PathBuf, Vec<diagnostics::CompileError>>>>,
     /// The unit as the Oven describes it.
     unit: UnitDescription,
     pub source_root: PathBuf,
@@ -187,6 +189,7 @@ impl CompilationSession {
         Ok(Self {
             rust_facts_source: None,
             vocab_runtime: Arc::default(),
+            desugar_diagnostics: Arc::default(),
             source_root: unit.source_root.clone(),
             library_imported_vocab,
             library_imported_dsl_surfaces,
@@ -268,16 +271,7 @@ impl CompilationSession {
         package: Option<&str>,
         visit: &mut dyn FnMut(&ParsedModule, &TypeChecker),
     ) -> Result<CompilationAnalysis, CliDiagnosticFailure> {
-        let type_infos = typecheck_modules(
-            modules,
-            &self.unit,
-            &self.loaves,
-            self.own_standard_package,
-            package,
-            None,
-            visit,
-        )?
-        .type_infos;
+        let type_infos = self.typecheck_unit(modules, package, visit)?.type_infos;
         let mut type_info_by_path = BTreeMap::new();
         let mut type_info_by_module_path = BTreeMap::new();
         let mut semantic_snapshots_by_path = BTreeMap::new();
@@ -293,6 +287,69 @@ impl CompilationSession {
             type_info_by_module_path,
             semantic_snapshots_by_path,
         })
+    }
+
+    /// Check the unit once and combine retained expansion errors with ordinary diagnostics and warnings.
+    /// Both check reports and native compilation use this boundary, so delaying a node-local expansion failure never
+    /// makes it disappear from one command or prevents independent statements from being checked.
+    pub(crate) fn typecheck_unit(
+        &self,
+        modules: &[ParsedModule],
+        package: Option<&str>,
+        visit: &mut dyn FnMut(&ParsedModule, &TypeChecker),
+    ) -> Result<TypecheckedModules, CliDiagnosticFailure> {
+        let checked = typecheck_modules(
+            modules,
+            &self.unit,
+            &self.loaves,
+            self.own_standard_package,
+            package,
+            None,
+            visit,
+        );
+        let mut expansion_errors = self.expansion_failures(modules);
+        match checked {
+            Ok(checked) if expansion_errors.diagnostics.is_empty() => Ok(checked),
+            Ok(checked) => {
+                expansion_errors.warnings = checked.warnings;
+                Err(expansion_errors)
+            }
+            Err(mut failure) => {
+                failure.diagnostics.append(&mut expansion_errors.diagnostics);
+                Err(failure)
+            }
+        }
+    }
+
+    /// Project retained expansion failures with each module's original source after typechecking has continued.
+    fn expansion_failures(&self, modules: &[ParsedModule]) -> CliDiagnosticFailure {
+        let mut failure = CliDiagnosticFailure {
+            diagnostics: Vec::new(),
+            warnings: Vec::new(),
+        };
+        let retained = match self.desugar_diagnostics.lock() {
+            Ok(retained) => retained,
+            Err(_) => {
+                return CliDiagnosticFailure::single(
+                    self.unit.source.to_string_lossy(),
+                    "",
+                    diagnostics::CompileError::new("vocabulary diagnostic owner is poisoned".into(), Span::default()),
+                    diagnostics::DiagnosticPhase::Parse,
+                );
+            }
+        };
+        for module in modules {
+            if let Some(errors) = retained.get(&module.file_path) {
+                let mut projected = CliDiagnosticFailure::from_errors(
+                    module.file_path.to_string_lossy(),
+                    &module.source,
+                    errors.clone(),
+                    diagnostics::DiagnosticPhase::Parse,
+                );
+                failure.diagnostics.append(&mut projected.diagnostics);
+            }
+        }
+        failure
     }
 
     /// The test runner's marker contract, read from the standard package owning `std.testing`; `None` when no such
@@ -384,12 +441,35 @@ impl CompilationSession {
                     Span::default(),
                 )]
             })?;
-            vocab_desugar_pass::desugar_program_vocab_blocks_with_runtime(
+            if let Some(runtime) = runtime.as_mut() {
+                runtime.configure(
+                    self.unit.vocab_admissions.clone(),
+                    self.unit.project_root.clone(),
+                    self.unit.vocab_policy.clone(),
+                );
+            } else {
+                let mut created = vocab_desugar_pass::NativeDesugarerRuntime::new()
+                    .map_err(|error| vec![diagnostics::CompileError::new(error.to_string(), Span::default())])?;
+                created.configure(
+                    self.unit.vocab_admissions.clone(),
+                    self.unit.project_root.clone(),
+                    self.unit.vocab_policy.clone(),
+                );
+                *runtime = Some(created);
+            }
+            let expansion = vocab_desugar_pass::desugar_program_vocab_blocks_with_runtime(
                 &mut ast,
                 Some(file_path_display.as_ref()),
                 &self.loaves,
                 &mut runtime,
-            )?;
+            );
+            let mut retained = self.desugar_diagnostics.lock().map_err(|_| {
+                vec![diagnostics::CompileError::new(
+                    "vocabulary diagnostic owner is poisoned".into(),
+                    Span::default(),
+                )]
+            })?;
+            retained.insert(file_path.to_path_buf(), expansion.err().unwrap_or_default());
         }
         if materialize_models && let Err(error) = materialize_contract_models(&mut ast, &self.contract_model_bundles) {
             return Err(vec![diagnostics::CompileError::new(

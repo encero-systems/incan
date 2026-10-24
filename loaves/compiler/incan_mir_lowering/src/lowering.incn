@@ -5840,7 +5840,7 @@ def lower_runtime_helper(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Dispatch retained runtime helper identities; the explicit enum Clone keeps the #2256 bootstrap compatible."""
+    """Dispatch retained runtime helper identities and name unsupported variants without taking their value."""
     match helper:
         RustHelper.InstallPanicHook =>
             if len(arguments) != 1:
@@ -5925,7 +5925,7 @@ def lower_runtime_helper(
                 span,
             )
             return Ok(None)
-        _ => return Err(f"unsupported Body IR Helper {helper.clone().as_str()}")
+        _ => return Err(f"unsupported Body IR Helper {helper:?}")
 
 
 def lower_builtin(
@@ -7038,8 +7038,9 @@ pub def runtime_text(mut builder: Builder, path: str, operand: Operand, span: So
 
 
 def display_string_operand(mut builder: Builder, operand: Operand, span: SourceSpan) -> Result[Place, str]:
-    """A string displays as itself: a moved string is used directly, a copied one is cloned."""
+    """Materialize checked text literals, retain moved strings and clone copied strings for display."""
     match operand.kind:
+        OperandKind.Literal(Constant.Text(text)) => return Ok(owned_literal(builder, text, span))
         OperandKind.Move(place) => return Ok(place)
         OperandKind.Copy(place) => return clone_text(builder, place, span)
         _ => return Err("unsupported Body IR string display ownership")
@@ -8350,7 +8351,7 @@ def lower_instances(
     mut nominal_instances: list[NominalInstance],
 ) -> Result[RustBodyIrModule, str]:
     """Drain checked instances, retaining each closed frame's native layouts before lowering its executable body."""
-    mut context = module.clone()
+    mut context: RustBodyIrModule = module.clone()
     mut completed: list[Instance] = []
     mut governed_runtime = false
     for index in range(len(owners)):
@@ -8754,9 +8755,10 @@ def reference_value_storage(body: &RustBody, names: list[str], arguments: list[R
     parameter representations do not change a source value's logical type and therefore add no slot here.
     """
     mut slots: list[int] = []
+    body_name = str(body.name)
     for local in body.locals:
         closed: RustType = substitute(local.ty, names, arguments).map_err(
-            (reason) => f"{reason} in reference storage of {body.name}",
+            (reason) => f"{reason} in reference storage of {body_name}",
         )?
         match closed:
             RustType.Ref(_inner) => slots.append(int(local.id.index()) + 1)
@@ -8839,11 +8841,14 @@ def body_frame_type(
     mut intrinsics: list[EnumDeclaration],
     file: str,
 ) -> Result[PlanType, str]:
-    """Resolve a frame local against borrowed tables, retaining its source file, declaration and slot in refusals."""
+    """Resolve a frame local, retaining its location and Body IR's own unsupported-construct explanation on failure."""
     match frame_type(nominals, enums, local, intrinsics):
         Ok(ty) => return Ok(ty)
         Err(reason) =>
-            context = f"{reason} in {body.name} frame local {int(local.id.index())} in {file}"
+            mut context = f"{reason} in {body.name} frame local {int(local.id.index())} in {file}"
+            match body.first_representation_gap():
+                Some(gap) => context = f"{context}; unsupported source construct: {gap}"
+                None => pass
             return Err(f"{context} at source bytes {local.span.start}..{local.span.end}")
 
 
