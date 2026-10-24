@@ -12,6 +12,7 @@
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 124 (Oven store unit identity and cross-plan artifact sharing)
     - RFC 125 (`incan.pub` Loaf registry and baked asset distribution)
+    - RFC 161 (the semantic core, SCIR)
 - **Issue:** —
 - **RFC PR:** —
 - **Written against:** v0.6 (in development)
@@ -242,7 +243,7 @@ File-scoped activation of a surface, project-level surface defaults, dialects an
 
 Import-activated vocabulary keeps the surface model of RFC 027, RFC 040, RFC 045 and RFC 081.
 
-The canonical syntax model in `std.vocab` is this RFC's interchange. Incan's semantic pipeline is headed toward a canonical HIR. A later schema version may let providers return that representation directly once it is public. Generated source text is not an interchange at any point.
+The canonical syntax model in `std.vocab` is this RFC's interchange. Incan's semantic pipeline is headed toward a semantic core, which RFC 161 defines. A later schema version may let providers return that representation directly. Generated source text is not an interchange at any point.
 
 ### Interaction with existing features
 
