@@ -42,6 +42,9 @@ pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::LoafCallable> {
         .map(|(_, call)| call)
         .flat_map(|call| call.receiver_adjustments.iter().chain(std::iter::once(call)))
     {
+        if call.path == "std::panic::set_hook" {
+            continue;
+        }
         let Some(canonical) = bir::rust_item_identity(&call.path) else {
             continue;
         };
@@ -318,6 +321,21 @@ impl BodyBuilder<'_, '_> {
         out: &mut Vec<bir::Statement>,
     ) -> Option<bir::Operand> {
         let call = self.type_info.rust.checked_calls.get(&(span.start, span.end))?.clone();
+        if call.path == "std::panic::set_hook" {
+            let (operands, _binding) = match self.bind_declared_args(&call.path, None, args, scope, out) {
+                Ok(bound) => bound,
+                Err(reason) => return Some(self.unsupported_operand(reason, scope, hir_span(span), out)),
+            };
+            return Some(self.push_call_temp(
+                bir::Callee::Helper(bir::HelperOp::InstallPanicHook),
+                operands,
+                self.checked_type(&call.return_type),
+                scope,
+                hir_span(span),
+                false,
+                out,
+            ));
+        }
         let storage = call.storage.as_ref()?;
         if !call.receiver_adjustments.is_empty() {
             let (receiver, args) = if call.has_receiver {

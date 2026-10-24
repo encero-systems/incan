@@ -10,8 +10,9 @@ use rustc_ast as ast;
 use rustc_span::{Span, Symbol, respan};
 use thin_vec::{ThinVec, thin_vec};
 
-/// Declare one process main that reports exactly one selected entry through the standard Termination trait.
-pub(crate) fn dispatcher(plan: &Plan, span: Span) -> Box<ast::Item> {
+/// Declare one process main that reports exactly one selected entry through Termination, propagating signature-loan
+/// validation failures.
+pub(crate) fn dispatcher(plan: &Plan, span: Span) -> Result<Box<ast::Item>, crate::error::PlanError> {
     let mut arms = ThinVec::new();
     for (index, name) in plan.programs.iter().enumerate() {
         let pattern = ast::Pat {
@@ -60,7 +61,7 @@ pub(crate) fn dispatcher(plan: &Plan, span: Span) -> Box<ast::Item> {
         span,
     );
     let value = expression(ast::ExprKind::Match(selector, arms, ast::MatchKind::Prefix), span);
-    let mut item = crate::declarations::function(&plan.functions[0], span);
+    let mut item = crate::declarations::function(&plan.functions[0], span)?;
     if let ast::ItemKind::Fn(function) = &mut item.kind {
         function.ident = crate::ast_build::ident("main", span);
         function.sig.header = ast::FnHeader::default();
@@ -68,7 +69,7 @@ pub(crate) fn dispatcher(plan: &Plan, span: Span) -> Box<ast::Item> {
         function.sig.decl.output = ast::FnRetTy::Ty(path_ty(global_path(&["std", "process", "ExitCode"], span), span));
         function.body = Some(block(thin_vec![expression_statement(value, span)], span));
     }
-    item
+    Ok(item)
 }
 
 /// Call a standard-library item using an absolute path immune to source declarations.

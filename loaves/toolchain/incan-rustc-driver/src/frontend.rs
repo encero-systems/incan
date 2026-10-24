@@ -99,11 +99,19 @@ fn retain_native_type_identities(modules: &mut [BodyIrModule], native: &[BodyIrM
     }
 }
 
-/// Retain the published runtime facade's canonical declarations for calls introduced by native lowering.
-/// A bootstrap Rust runtime has no Loaf entry and contributes no governed bodies. A native runtime enters through the
-/// ordinary artifact index; its checked public identities select the same body records as source imports.
-fn runtime_declarations(session: &CompilationSession) -> Vec<CanonicalSymbolId> {
-    let Some(manifest) = session.loaves().manifest("incan_native_runtime") else {
+/// Retain the runtime facade's canonical declarations for calls introduced by native lowering.
+///
+/// A bootstrap Rust runtime has no Loaf entry and contributes no governed bodies. A native runtime enters through
+/// Oven's ordinary artifact index; its checked public identities select the same `.incnbody` records as source imports.
+/// A runtime producer uses its own checked export map, so specializing its source needs no external runtime artifact.
+fn runtime_declarations(
+    session: &CompilationSession,
+    local: Option<&LibraryManifest>,
+) -> Vec<incan_semantics_core::body_ir::RuntimeCallableBinding> {
+    let manifest = local
+        .filter(|manifest| manifest.name == "incan_native_runtime")
+        .or_else(|| session.loaves().manifest("incan_native_runtime"));
+    let Some(manifest) = manifest else {
         return Vec::new();
     };
     manifest
@@ -113,12 +121,17 @@ fn runtime_declarations(session: &CompilationSession) -> Vec<CanonicalSymbolId> 
         .iter()
         .filter(|export| export.public_path.len() == 2)
         .filter(|export| {
-            manifest.exports.functions.iter().any(|function| {
-                function.name == export.public_name && !function.type_params.is_empty()
-            })
+            manifest
+                .exports
+                .functions
+                .iter()
+                .any(|function| function.name == export.public_name)
         })
-        .filter_map(|export| export.canonical.as_ref()?.hydrate())
-        .filter(|identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library == "incan_native_runtime"))
+        .filter_map(|export| Some(incan_semantics_core::body_ir::RuntimeCallableBinding {
+            path: format!("incan_native_runtime::{}", export.public_name),
+            canonical: export.canonical.as_ref()?.hydrate()?,
+        }))
+        .filter(|binding| matches!(&binding.canonical.origin, SymbolOrigin::Package { library, .. } if library == "incan_native_runtime"))
         .collect()
 }
 
@@ -192,7 +205,8 @@ fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup, resident: bool
 
     // ---- Declarations the program reaches in its Loaves ----
     let mut requested = required_loaf_identities(&modules, &analysis, package_identity)?;
-    requested.extend(runtime_declarations(&session).into_iter().filter(
+    let runtime_callable_bindings = runtime_declarations(&session, manifest.as_ref());
+    requested.extend(runtime_callable_bindings.iter().map(|binding| binding.canonical.clone()).filter(
         |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity),
     ));
     let mut bodies = load_loaf_modules(session.loaves(), &requested)?;
@@ -232,6 +246,7 @@ fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup, resident: bool
     let entry_module = bodies.get_mut(entry).ok_or("selected Body IR entry is missing")?;
     entry_module.program_entrypoints = program_entrypoints;
     entry_module.string_conversion_contract = string_conversion_contract;
+    entry_module.runtime_callable_bindings = runtime_callable_bindings;
     let program = complete_dependency_context(
         CheckedProgram {
             modules: bodies,

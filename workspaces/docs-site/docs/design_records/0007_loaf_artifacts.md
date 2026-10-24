@@ -59,6 +59,8 @@ Each public model/class with type parameters has one native ADT preserving binde
 
 A callable union member owns its captured environment. Its checked signature and producer-owned callable object type cross the artifact boundary with the union representation; consumers preserve that ownership during injection, narrowing, invocation, and cloning.
 
+A compiled callable retains its checked declaration frame even when its implementation cannot be published as a governed body. That frame authorizes calling the canonical rlib item, never compiling a consumer copy of its implementation.
+
 Every package identity takes this one route. No Body IR record, lowering branch or driver path is specific to the standard packages.
 
 ### The standard library

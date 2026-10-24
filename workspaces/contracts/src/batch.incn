@@ -8,10 +8,8 @@ from group_hints import retain_hint
 from run import Outcome, clear_trace, trace_file, unit_notes
 from workers import Invocation, invoke_many
 
-
 # The largest partition file read back; a bigger one is discarded and discovered again.
 const MAX_PLAN_BYTES: int = 2_000_000
-
 # An expensive shared attempt can split without limiting any case's original command.
 const GROUP_COMPILATION_SECONDS: int = 5
 
@@ -111,10 +109,7 @@ def isolated_fixtures(fixtures: list[Fixture], groups: list[list[Entry]]) -> lis
         if len(group) > 1:
             for candidate in group:
                 shared.add(candidate.fixture.case_name())
-    return [
-        fixture for fixture in fixtures
-        if fixture.case_name() not in shared and fixture.family not in ["format", "graph"]
-    ]
+    return [fixture for fixture in fixtures if fixture.case_name() not in shared and fixture.family not in ["format", "graph"]]
 
 
 def load_groups(plan: Path, hint: Option[Path], entries: list[Entry]) -> tuple[list[list[Entry]], bool]:
@@ -203,12 +198,19 @@ def admit_source(source: str) -> Result[None, str]:
     """Refuse context observations and unproven initialization effects anywhere in a module case."""
     if "__file__" in source or "current_exe" in source or "import this" in source:
         return Err("source paths, executable identity and entry effects require isolated compilation")
+    if observes_module_identity(source):
+        return Err("declaring-module identity requires the original module namespace")
     if "static " in source:
         return Err("computed-static failure precedes canonical main's panic-hook initialization")
     for line in source.split("\n"):
         if line.startswith("@"):
             return Err("decorator initialization has not been proven equivalent before entry setup")
     return Ok(None)
+
+
+def observes_module_identity(source: str) -> bool:
+    """Keep explicit module observations and ordinal encoding schemas in their authored namespace."""
+    return "__module__" in source or ".ordinal_encoding" in source
 
 
 pub def run_separate(
@@ -225,8 +227,7 @@ pub def run_separate(
         if fixture.case_name() in outcomes or fixture.family in ["format", "graph"]:
             continue
         match isolated_request(incan, scratch, fixture):
-            Err(_) =>
-                continue
+            Err(_) => pass
             Ok(request) =>
                 requests.append(request)
                 names.append(fixture.case_name())
@@ -282,13 +283,15 @@ def compile_groups(
             match prepare_group(scratch, entries):
                 Err(_) => split_group(entries, retry, "combined preparation failed")
                 Ok(group) =>
-                    requests.append(Invocation(
-                        program=incan,
-                        arguments=group_arguments("build", group.project, entries),
-                        project=group.project,
-                        selector=None,
-                        deadline_seconds=GROUP_COMPILATION_SECONDS,
-                    ))
+                    requests.append(
+                        Invocation(
+                            program=incan,
+                            arguments=group_arguments("build", group.project, entries),
+                            project=group.project,
+                            selector=None,
+                            deadline_seconds=GROUP_COMPILATION_SECONDS,
+                        ),
+                    )
                     attempts.append(group)
         # 2. Retained original commands join the first wave under the same budget.
         mut names: list[str] = []
@@ -380,7 +383,11 @@ def split_group(entries: list[Entry], mut retry: list[list[Entry]], refusal: str
 
 
 def queue_entries(
-    incan: str, scratch: Path, group: GroupProject, parent: int, mut requests: list[Invocation],
+    incan: str,
+    scratch: Path,
+    group: GroupProject,
+    parent: int,
+    mut requests: list[Invocation],
 ) -> list[str]:
     """Prepare fresh selected executions gated on their group's successful build in the owning worker pool."""
     mut names: list[str] = []
@@ -390,16 +397,23 @@ def queue_entries(
         match materialize(fixture, scratch):
             Err(_) => pass
             Ok(case_project) =>
+                mut trace_ready = false
                 match clear_trace(case_project):
-                    Err(_) =>
-                        continue
-                    Ok(_) => pass
+                    Err(_) => pass
+                    Ok(_) => trace_ready = true
+                if not trace_ready:
+                    continue
                 original = built_program(case_project, fixture.name)
                 arguments = ["_run-built", executable.0, "--argv0", original.0]
-                requests.append(Invocation(
-                    program=incan, arguments=arguments, project=case_project,
-                    selector=Some(str(index)), after=Some(parent),
-                ))
+                requests.append(
+                    Invocation(
+                        program=incan,
+                        arguments=arguments,
+                        project=case_project,
+                        selector=Some(str(index)),
+                        after=Some(parent),
+                    ),
+                )
                 names.append(fixture.case_name())
     return names
 

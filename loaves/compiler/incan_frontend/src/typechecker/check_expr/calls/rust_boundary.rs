@@ -1098,6 +1098,15 @@ impl TypeChecker {
     /// Exact canonical carrier equality also recognizes transparent aliases nested inside owned
     /// containers without changing their passing mode.
     fn rust_arg_boundary_match(&self, arg_ty: &ResolvedType, rust_param_ty: &str) -> RustArgBoundaryMatch {
+        if matches!(arg_ty, ResolvedType::Function(..))
+            && let Some(signature) = self.rust_boxed_callable_signature(rust_param_ty)
+        {
+            return if self.rust_trait_carriers_match(arg_ty, &signature) {
+                RustArgBoundaryMatch::Exact
+            } else {
+                RustArgBoundaryMatch::NoMatch
+            };
+        }
         let display = Self::rust_display_without_lifetimes(rust_param_ty);
         let normalized = Self::compact_rust_display(&display);
         if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(display.as_str())
@@ -1417,7 +1426,8 @@ impl TypeChecker {
         }
     }
 
-    /// Record inspected Rust parameter types so codegen can emit the same borrow shape the typechecker accepted.
+    /// Contextualize Rust arguments from inspected signatures, including noncapturing boxed callbacks. Executable
+    /// boxing still requires its separately retained boundary operation.
     fn rust_params_as_callable_params(
         &self,
         params: &[incan_lang::interop::RustParam],
@@ -1426,8 +1436,14 @@ impl TypeChecker {
         let params: Vec<CallableParam> = params
             .iter()
             .map(|param| {
-                let ty =
-                    self.resolved_param_type_from_rust_display_for_owner_path(param.type_display.as_str(), owner_path);
+                let ty = self
+                    .rust_boxed_callable_signature(&param.type_display)
+                    .unwrap_or_else(|| {
+                        self.resolved_param_type_from_rust_display_for_owner_path(
+                            param.type_display.as_str(),
+                            owner_path,
+                        )
+                    });
                 CallableParam {
                     name: param.name.clone(),
                     ty,

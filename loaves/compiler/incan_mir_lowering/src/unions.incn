@@ -149,8 +149,7 @@ pub def union_members(
                     return Err("unsupported Body IR optional union")
                 mut key = ""
                 match legacy_spelling(member):
-                    Ok(spelling) =>
-                        key = spelling
+                    Ok(spelling) => key = spelling
                     Err(reason) => return Err(f"unsupported Body IR union member {arg}: {reason}")
                 if key not in keys:
                     keys.append(key)
@@ -227,7 +226,13 @@ pub def publish_unions(
                     for variant in declaration.variants:
                         for index in range(len(arguments)):
                             argument = arguments[index]
-                            mut native = retained_source_type(list(module.nominal_declarations), list(module.enum_declarations), [], argument, intrinsics)?
+                            mut native = retained_source_type(
+                                list(module.nominal_declarations),
+                                list(module.enum_declarations),
+                                [],
+                                argument,
+                                intrinsics,
+                            )?
                             for retained in module.native_union_declarations:
                                 if retained.ty == ty.clone():
                                     native = native_union_payload(module, retained, argument, intrinsics)?
@@ -240,33 +245,47 @@ pub def publish_unions(
             mut closure_members: list[RustType] = []
             for member in members:
                 for retained in module.native_union_declarations:
-                    if retained.ty == ty.clone() and member in retained.closure_members and member not in closure_members:
+                    if (
+                        retained.ty == ty.clone()
+                        and member in retained.closure_members
+                        and member not in closure_members
+                    ):
                         closure_members.append(member.clone())
             mut closure_items: list[str] = []
             for item in declaration.closure_items:
                 closure_items.append(item)
-            native = NativeUnionDeclaration(ty=ty.clone(), rust_item=declaration.name, members=members, closure_members=closure_members, closure_items=closure_items)
+            native = NativeUnionDeclaration(
+                ty=ty.clone(),
+                rust_item=declaration.name,
+                members=members,
+                closure_members=closure_members,
+                closure_items=closure_items,
+            )
             published.append(native.clone())
     return Ok(None)
 
 
-pub def require_native_union_signature(ty: &RustType, mut intrinsics: list[EnumDeclaration]) -> Result[None, str]:
-    """Require the selected Loaf's published union owner before crossing a compiled callable boundary."""
+pub def require_native_union_signature(
+    ty: &RustType,
+    mut intrinsics: list[EnumDeclaration],
+    source_carriers: bool = false,
+) -> Result[None, str]:
+    """Require retained union carriers: checked Rust generics admit source carriers; linked Loaves need their owner."""
     match ty:
         RustType.Generic(base=base, args=arguments) =>
             for argument in arguments:
-                _ = require_native_union_signature(argument, intrinsics)?
+                _ = require_native_union_signature(argument, intrinsics, source_carriers)?
             if str(base) != "Union":
                 return Ok(None)
             for declaration in intrinsics:
-                if declaration.source_type == str(ty) and declaration.library_item != "":
+                if declaration.source_type == str(ty) and (source_carriers or declaration.library_item != ""):
                     return Ok(None)
             return Err("unsupported Body IR Loaf union without admitted native representation")
         RustType.Tuple(elements) =>
             for element in elements:
-                _ = require_native_union_signature(element, intrinsics)?
-        RustType.Ref(inner) => return require_native_union_signature(inner, intrinsics)
-        RustType.RefMut(inner) => return require_native_union_signature(inner, intrinsics)
+                _ = require_native_union_signature(element, intrinsics, source_carriers)?
+        RustType.Ref(inner) => return require_native_union_signature(inner, intrinsics, source_carriers)
+        RustType.RefMut(inner) => return require_native_union_signature(inner, intrinsics, source_carriers)
         _ => pass
     return Ok(None)
 
@@ -371,7 +390,13 @@ def native_union_payload(
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Read the declaration's checked ownership once when resolving either a local or a published payload."""
-    payload = retained_source_type(list(module.nominal_declarations), list(module.enum_declarations), [], member, intrinsics)?
+    payload = retained_source_type(
+        list(module.nominal_declarations),
+        list(module.enum_declarations),
+        [],
+        member,
+        intrinsics,
+    )?
     if member not in declaration.closure_members:
         return Ok(payload)
     match payload:
@@ -521,11 +546,7 @@ pub def test_union_tag(mut builder: Builder, tag: Place, slots: list[int], span:
     return RvalueKind.Use(read_place(output, false, span))
 
 
-pub def union_projection(
-    mut builder: Builder,
-    value: &RustPlace,
-    span: SourceSpan,
-) -> Result[Option[Place], str]:
+pub def union_projection(mut builder: Builder, value: &RustPlace, span: SourceSpan) -> Result[Option[Place], str]:
     """Borrow the frame to map a checker-selected union member; ordinary locals never copy declaration tables or frame locals just to decline this projection."""
     if len(value.projection) != 1:
         return Ok(None)

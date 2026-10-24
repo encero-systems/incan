@@ -10,6 +10,8 @@ from frame import Builder, temporary, read_place, text_literal
 pub def frozen_observation_type(ty: PlanType) -> bool:
     """Recognize immutable static carriers whose read-only wrapper observations own no allocation."""
     match ty:
+        PlanType.StaticText => return true
+        PlanType.StaticBytes => return true
         PlanType.FrozenStr => return true
         PlanType.FrozenBytes => return true
         PlanType.FrozenCollection(_name, _elements) => return true

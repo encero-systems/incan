@@ -277,8 +277,8 @@ pub fn write_loaf(
     };
 
     // ---- Executable representation ----
-    // A body with a gap in its Body IR is unrepresentable for every consumer: what a package publishes is a fact
-    // about the package.
+    // A Body IR gap refuses publication of that executable body. A compiled export can independently publish its
+    // declaration frame, because consumers call its rlib item rather than instantiate its implementation.
     let public = public_executable_identities(&manifest);
     let unrepresentable = bodies
         .iter()

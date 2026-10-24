@@ -294,18 +294,23 @@ fn retain_declaration(module: &mut BodyIrModule, declaration: ExecutableDeclarat
         ExecutableDeclaration::Body(body) => {
             module.bodies.push(*body);
         }
-        ExecutableDeclaration::NativeBody { body, callables } => {
-            module.bodies.push(*body);
+        ExecutableDeclaration::CompiledCallableFrame { mut frame, callables } => {
+            crate::body_ir::retain_published_frame(&mut frame);
+            if let Some(callable) = incan_semantics_core::body_ir::LoafCallable::from_body(&frame) {
+                module.loaf_callables.push(callable);
+            }
             for callable in callables {
                 if !module.loaf_callables.contains(&callable) {
                     module.loaf_callables.push(callable);
                 }
             }
         }
-        ExecutableDeclaration::CompiledCallable(mut frame) => {
-            crate::body_ir::retain_published_frame(&mut frame);
-            if let Some(callable) = incan_semantics_core::body_ir::LoafCallable::from_body(&frame) {
-                module.loaf_callables.push(callable);
+        ExecutableDeclaration::NativeBody { body, callables } => {
+            module.bodies.push(*body);
+            for callable in callables {
+                if !module.loaf_callables.contains(&callable) {
+                    module.loaf_callables.push(callable);
+                }
             }
         }
         ExecutableDeclaration::DecoratedBody { body, binding, storage } => {

@@ -213,9 +213,7 @@ fn parameters_of(model: &GenericModelDeclaration, bound: Option<&[&str]>, span: 
 fn uses_parameter(ty: &GenericLayoutType, parameter: &str) -> bool {
     match ty {
         GenericLayoutType::Parameter(name) => name == parameter,
-        GenericLayoutType::Applied(_, arguments)
-        | GenericLayoutType::Tuple(arguments)
-        | GenericLayoutType::FunctionPointer(arguments) => {
+        GenericLayoutType::Applied(_, arguments) | GenericLayoutType::Tuple(arguments) => {
             arguments.iter().any(|argument| uses_parameter(argument, parameter))
         }
         GenericLayoutType::Concrete(_) | GenericLayoutType::FunctionPointer(_) => false,

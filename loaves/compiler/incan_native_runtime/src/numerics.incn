@@ -1,11 +1,25 @@
 """Monomorphic exact-carrier boundaries preserving numeric widths and language display contracts."""
 
 from model_values import display_value
+from rust::incan_std_core::strings import float_to_string
+from rust::std::ops import Neg
+from rust::incan_std_core::conversions import int_from_str, float_from_str
+from rust::incan_std_core::num import (
+    py_mod_signed,
+    py_mod_unsigned,
+    py_floor_div_signed,
+    py_floor_div_unsigned,
+    py_mod_f32 as native_mod_f32,
+    py_mod_f64 as native_mod_f64,
+    py_floor_div_f32 as native_floor_div_f32,
+    py_floor_div_f64 as native_floor_div_f64,
+)
 
 
 pub def format_i8(value: i8) -> str:
-    """Format the exact i8 carrier through the legacy language contract."""
-    return str(value)
+    """Format the exact i8 carrier: 1. Use its native integer spelling."""
+    # 1. Format the original carrier directly.
+    return display_value(value)
 
 
 pub def int_i8(value: i8) -> int:
@@ -19,8 +33,9 @@ pub def float_i8(value: i8) -> float:
 
 
 pub def format_i16(value: i16) -> str:
-    """Format the exact i16 carrier through the legacy language contract."""
-    return str(value)
+    """Format the exact i16 carrier: 1. Use its native integer spelling."""
+    # 1. Format the original carrier directly.
+    return display_value(value)
 
 
 pub def int_i16(value: i16) -> int:
@@ -34,8 +49,9 @@ pub def float_i16(value: i16) -> float:
 
 
 pub def format_i32(value: i32) -> str:
-    """Format the exact i32 carrier through the legacy language contract."""
-    return str(value)
+    """Format the exact i32 carrier: 1. Use its native integer spelling."""
+    # 1. Format the original carrier directly.
+    return display_value(value)
 
 
 pub def int_i32(value: i32) -> int:
@@ -49,8 +65,9 @@ pub def float_i32(value: i32) -> float:
 
 
 pub def format_i128(value: i128) -> str:
-    """Format the exact i128 carrier through the legacy language contract."""
-    return str(value)
+    """Format the exact i128 carrier: 1. Use its native integer spelling."""
+    # 1. Format the original carrier directly.
+    return display_value(value)
 
 
 pub def int_i128(value: i128) -> int:
@@ -64,8 +81,9 @@ pub def float_i128(value: i128) -> float:
 
 
 pub def format_u8(value: u8) -> str:
-    """Format the exact u8 carrier through the legacy language contract."""
-    return str(value)
+    """Format the exact u8 carrier: 1. Use its native integer spelling."""
+    # 1. Format the original carrier directly.
+    return display_value(value)
 
 
 pub def int_u8(value: u8) -> int:
@@ -79,8 +97,9 @@ pub def float_u8(value: u8) -> float:
 
 
 pub def format_u16(value: u16) -> str:
-    """Format the exact u16 carrier through the legacy language contract."""
-    return str(value)
+    """Format the exact u16 carrier: 1. Use its native integer spelling."""
+    # 1. Format the original carrier directly.
+    return display_value(value)
 
 
 pub def int_u16(value: u16) -> int:
@@ -94,8 +113,9 @@ pub def float_u16(value: u16) -> float:
 
 
 pub def format_u32(value: u32) -> str:
-    """Format the exact u32 carrier through the legacy language contract."""
-    return str(value)
+    """Format the exact u32 carrier: 1. Use its native integer spelling."""
+    # 1. Format the original carrier directly.
+    return display_value(value)
 
 
 pub def int_u32(value: u32) -> int:
@@ -109,8 +129,9 @@ pub def float_u32(value: u32) -> float:
 
 
 pub def format_u64(value: u64) -> str:
-    """Format the exact u64 carrier through the legacy language contract."""
-    return str(value)
+    """Format the exact u64 carrier: 1. Use its native integer spelling."""
+    # 1. Format the original carrier directly.
+    return display_value(value)
 
 
 pub def int_u64(value: u64) -> int:
@@ -124,8 +145,9 @@ pub def float_u64(value: u64) -> float:
 
 
 pub def format_u128(value: u128) -> str:
-    """Format the exact u128 carrier through the legacy language contract."""
-    return str(value)
+    """Format the exact u128 carrier: 1. Use its native integer spelling."""
+    # 1. Format the original carrier directly.
+    return display_value(value)
 
 
 pub def int_u128(value: u128) -> int:
@@ -139,7 +161,7 @@ pub def float_u128(value: u128) -> float:
 
 
 pub def format_f32(value: f32) -> str:
-    """Keep an exact f32 visibly floating without widening its shortest carrier-specific digits, including negative zero."""
+    """Keep f32 visibly floating without widening its shortest native digits, including negative zero."""
     text = display_value(value)
     if "." in text or "e" in text or "E" in text:
         return text
@@ -157,8 +179,9 @@ pub def float_f32(value: f32) -> float:
 
 
 pub def format_f64(value: f64) -> str:
-    """Format the exact f64 carrier through the legacy language contract."""
-    return str(value)
+    """Format the exact f64 carrier: 1. Retain visibly floating language spelling."""
+    # 1. Use the existing float spelling primitive.
+    return float_to_string(value)
 
 
 pub def int_f64(value: f64) -> int:
@@ -172,148 +195,177 @@ pub def float_f64(value: f64) -> float:
 
 
 pub def negate_i8(value: i8) -> i8:
-    """Negate with the legacy carrier-specific overflow behavior."""
-    return -value
+    """Negate i8: 1. Invoke its native Neg implementation with inherited overflow behavior."""
+    # 1. Retain the carrier's native overflow policy.
+    return Neg.neg(value)
 
 
 pub def negate_i16(value: i16) -> i16:
-    """Negate with the legacy carrier-specific overflow behavior."""
-    return -value
+    """Negate i16: 1. Invoke its native Neg implementation with inherited overflow behavior."""
+    # 1. Retain the carrier's native overflow policy.
+    return Neg.neg(value)
 
 
 pub def negate_i32(value: i32) -> i32:
-    """Negate with the legacy carrier-specific overflow behavior."""
-    return -value
+    """Negate i32: 1. Invoke its native Neg implementation with inherited overflow behavior."""
+    # 1. Retain the carrier's native overflow policy.
+    return Neg.neg(value)
 
 
 pub def negate_i128(value: i128) -> i128:
-    """Negate with the legacy carrier-specific overflow behavior."""
-    return -value
+    """Negate i128: 1. Invoke its native Neg implementation with inherited overflow behavior."""
+    # 1. Retain the carrier's native overflow policy.
+    return Neg.neg(value)
 
 
 pub def parse_int(value: &str) -> int:
-    """Parse text using the legacy integer conversion and its canonical ValueError panic."""
-    return int(str(value))
+    """Parse an integer: 1. Use the existing conversion and canonical ValueError panic."""
+    # 1. Delegate parsing and error behavior to the original primitive.
+    return int_from_str(value)
 
 
 pub def parse_float(value: &str) -> float:
-    """Parse text using the legacy float conversion and its canonical ValueError panic."""
-    return float(str(value))
+    """Parse a float: 1. Use the existing conversion and canonical ValueError panic."""
+    # 1. Delegate parsing and error behavior to the original primitive.
+    return float_from_str(value)
 
 
 pub def py_mod_i8(left: i8, right: i8) -> i8:
-    """Preserve the legacy i8 py_mod arithmetic and errors."""
-    return left % right
+    """Compute i8 modulo: 1. Use the original signed arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return py_mod_signed(left, right)
 
 
 pub def py_floor_div_i8(left: i8, right: i8) -> i8:
-    """Preserve the legacy i8 py_floor_div arithmetic and errors."""
-    return left // right
+    """Compute i8 floor division: 1. Use the original signed arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return py_floor_div_signed(left, right)
 
 
 pub def py_mod_i16(left: i16, right: i16) -> i16:
-    """Preserve the legacy i16 py_mod arithmetic and errors."""
-    return left % right
+    """Compute i16 modulo: 1. Use the original signed arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return py_mod_signed(left, right)
 
 
 pub def py_floor_div_i16(left: i16, right: i16) -> i16:
-    """Preserve the legacy i16 py_floor_div arithmetic and errors."""
-    return left // right
+    """Compute i16 floor division: 1. Use the original signed arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return py_floor_div_signed(left, right)
 
 
 pub def py_mod_i32(left: i32, right: i32) -> i32:
-    """Preserve the legacy i32 py_mod arithmetic and errors."""
-    return left % right
+    """Compute i32 modulo: 1. Use the original signed arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return py_mod_signed(left, right)
 
 
 pub def py_floor_div_i32(left: i32, right: i32) -> i32:
-    """Preserve the legacy i32 py_floor_div arithmetic and errors."""
-    return left // right
+    """Compute i32 floor division: 1. Use the original signed arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return py_floor_div_signed(left, right)
 
 
 pub def py_mod_i128(left: i128, right: i128) -> i128:
-    """Preserve the legacy i128 py_mod arithmetic and errors."""
-    return left % right
+    """Compute i128 modulo: 1. Use the original signed arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return py_mod_signed(left, right)
 
 
 pub def py_floor_div_i128(left: i128, right: i128) -> i128:
-    """Preserve the legacy i128 py_floor_div arithmetic and errors."""
-    return left // right
+    """Compute i128 floor division: 1. Use the original signed arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return py_floor_div_signed(left, right)
 
 
 pub def py_mod_u8(left: u8, right: u8) -> u8:
-    """Preserve the legacy u8 py_mod arithmetic and errors."""
-    return left % right
+    """Compute u8 modulo: 1. Use the original unsigned arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return py_mod_unsigned(left, right)
 
 
 pub def py_floor_div_u8(left: u8, right: u8) -> u8:
-    """Preserve the legacy u8 py_floor_div arithmetic and errors."""
-    return left // right
+    """Compute u8 floor division: 1. Use the original unsigned arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return py_floor_div_unsigned(left, right)
 
 
 pub def py_mod_u16(left: u16, right: u16) -> u16:
-    """Preserve the legacy u16 py_mod arithmetic and errors."""
-    return left % right
+    """Compute u16 modulo: 1. Use the original unsigned arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return py_mod_unsigned(left, right)
 
 
 pub def py_floor_div_u16(left: u16, right: u16) -> u16:
-    """Preserve the legacy u16 py_floor_div arithmetic and errors."""
-    return left // right
+    """Compute u16 floor division: 1. Use the original unsigned arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return py_floor_div_unsigned(left, right)
 
 
 pub def py_mod_u32(left: u32, right: u32) -> u32:
-    """Preserve the legacy u32 py_mod arithmetic and errors."""
-    return left % right
+    """Compute u32 modulo: 1. Use the original unsigned arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return py_mod_unsigned(left, right)
 
 
 pub def py_floor_div_u32(left: u32, right: u32) -> u32:
-    """Preserve the legacy u32 py_floor_div arithmetic and errors."""
-    return left // right
+    """Compute u32 floor division: 1. Use the original unsigned arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return py_floor_div_unsigned(left, right)
 
 
 pub def py_mod_u64(left: u64, right: u64) -> u64:
-    """Preserve the legacy u64 py_mod arithmetic and errors."""
-    return left % right
+    """Compute u64 modulo: 1. Use the original unsigned arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return py_mod_unsigned(left, right)
 
 
 pub def py_floor_div_u64(left: u64, right: u64) -> u64:
-    """Preserve the legacy u64 py_floor_div arithmetic and errors."""
-    return left // right
+    """Compute u64 floor division: 1. Use the original unsigned arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return py_floor_div_unsigned(left, right)
 
 
 pub def py_mod_u128(left: u128, right: u128) -> u128:
-    """Preserve the legacy u128 py_mod arithmetic and errors."""
-    return left % right
+    """Compute u128 modulo: 1. Use the original unsigned arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return py_mod_unsigned(left, right)
 
 
 pub def py_floor_div_u128(left: u128, right: u128) -> u128:
-    """Preserve the legacy u128 py_floor_div arithmetic and errors."""
-    return left // right
+    """Compute u128 floor division: 1. Use the original unsigned arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return py_floor_div_unsigned(left, right)
 
 
 pub def py_mod_f32(left: f32, right: f32) -> f32:
-    """Preserve the legacy f32 py_mod arithmetic and errors."""
-    return left % right
+    """Compute f32 modulo: 1. Use the original floating-point arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return native_mod_f32(left, right)
 
 
 pub def py_floor_div_f32(left: f32, right: f32) -> f32:
-    """Preserve the legacy f32 py_floor_div arithmetic and errors."""
-    return left // right
+    """Compute f32 floor division: 1. Use the original floating-point arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return native_floor_div_f32(left, right)
 
 
 pub def py_mod_f64(left: f64, right: f64) -> f64:
-    """Preserve the legacy f64 py_mod arithmetic and errors."""
-    return left % right
+    """Compute f64 modulo: 1. Use the original floating-point arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return native_mod_f64(left, right)
 
 
 pub def py_floor_div_f64(left: f64, right: f64) -> f64:
-    """Preserve the legacy f64 py_floor_div arithmetic and errors."""
-    return left // right
+    """Compute f64 floor division: 1. Use the original floating-point arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return native_floor_div_f64(left, right)
 
 
 pub def format_isize(value: isize) -> str:
-    """Preserve the legacy isize format boundary."""
-    return str(value)
+    """Format isize: 1. Use its native integer spelling."""
+    # 1. Format the original carrier directly.
+    return display_value(value)
 
 
 pub def int_isize(value: isize) -> int:
@@ -327,18 +379,21 @@ pub def float_isize(value: isize) -> float:
 
 
 pub def py_mod_isize(left: isize, right: isize) -> isize:
-    """Preserve the legacy isize py_mod boundary."""
-    return left % right
+    """Compute isize modulo: 1. Use the original signed arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return py_mod_signed(left, right)
 
 
 pub def py_floor_div_isize(left: isize, right: isize) -> isize:
-    """Preserve the legacy isize py_floor_div boundary."""
-    return left // right
+    """Compute isize floor division: 1. Use the original signed arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return py_floor_div_signed(left, right)
 
 
 pub def format_usize(value: usize) -> str:
-    """Preserve the legacy usize format boundary."""
-    return str(value)
+    """Format usize: 1. Use its native integer spelling."""
+    # 1. Format the original carrier directly.
+    return display_value(value)
 
 
 pub def int_usize(value: usize) -> int:
@@ -352,18 +407,21 @@ pub def float_usize(value: usize) -> float:
 
 
 pub def py_mod_usize(left: usize, right: usize) -> usize:
-    """Preserve the legacy usize py_mod boundary."""
-    return left % right
+    """Compute usize modulo: 1. Use the original unsigned arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return py_mod_unsigned(left, right)
 
 
 pub def py_floor_div_usize(left: usize, right: usize) -> usize:
-    """Preserve the legacy usize py_floor_div boundary."""
-    return left // right
+    """Compute usize floor division: 1. Use the original unsigned arithmetic and errors."""
+    # 1. Call the existing primitive at the exact width.
+    return py_floor_div_unsigned(left, right)
 
 
 pub def negate_isize(value: isize) -> isize:
-    """Preserve checked negation on the target-sized signed carrier."""
-    return -value
+    """Negate isize: 1. Invoke its native Neg implementation with inherited overflow behavior."""
+    # 1. Retain the carrier's native overflow policy.
+    return Neg.neg(value)
 
 
 # Exact-width integer powers. Legacy emits `base.pow(exponent as u32)` with the base keeping its own carrier, so each

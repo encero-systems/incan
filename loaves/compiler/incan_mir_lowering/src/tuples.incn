@@ -94,6 +94,10 @@ pub def tuple_element(ty: PlanType, source: &RustType) -> Result[TupleElement, s
         PlanType.StringRef => return Ok(TupleElement.Reference(false, [PlanType.String]))
         PlanType.StringMutRef => return Ok(TupleElement.Reference(true, [PlanType.String]))
         PlanType.FrozenStr => return Ok(TupleElement.FrozenStr)
+        PlanType.FrozenBytes => return Ok(TupleElement.FrozenBytes)
+        PlanType.StaticText => return Ok(TupleElement.StaticText)
+        PlanType.StaticBytes => return Ok(TupleElement.StaticBytes)
+        PlanType.FrozenCollection(name, elements) => return Ok(TupleElement.FrozenCollection(name, elements))
         PlanType.List(leaf, depth) => return Ok(TupleElement.List(leaf, depth))
         PlanType.Model(owner, name) => return Ok(TupleElement.Model(owner, name))
         PlanType.Enum(owner, name) => return Ok(TupleElement.Enum(owner, name))
@@ -130,8 +134,7 @@ pub def tuple_slot(projection: &PlaceElem, count: int) -> Result[int, str]:
             match index.as_ref():
                 Operand.Constant(constant) =>
                     match constant:
-                        Constant.Int(value) =>
-                            slot = value.clone()
+                        Constant.Int(value) => slot = value.clone()
                         _ => return Err("unsupported Body IR nonconstant tuple index")
                 _ => return Err("unsupported Body IR nonconstant tuple index")
             if slot < 0:

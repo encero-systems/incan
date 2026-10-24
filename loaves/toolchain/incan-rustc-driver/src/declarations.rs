@@ -81,6 +81,9 @@ fn scalar_reference_ast(elements: &[PlanType], mutable: bool, span: Span) -> ast
 
 /// Construct an admitted native AST type without generating or parsing Rust source.
 pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
+    if let Some(ty) = static_reference_ty(kind, span) {
+        return ty;
+    }
     if let PlanType::TypeToken(elements) = kind {
         return type_token_ty(elements, span);
     }
@@ -118,13 +121,6 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
             ast::TyKind::Path(None, ast::Path::from_ident(ident(&name, span)))
         }
         PlanType::String => ast::TyKind::Path(None, standard_path(&["string", "String"], span)),
-        PlanType::StringRef => ast::TyKind::Ref(
-            None,
-            ast::MutTy {
-                ty: ty(&PlanType::String, span),
-                mutbl: ast::Mutability::Not,
-            },
-        ),
         PlanType::NativeStr => ast::TyKind::Path(None, ast::Path::from_ident(ident("str", span))),
         PlanType::StrRef => ast::TyKind::Ref(
             None,
@@ -188,9 +184,13 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
             ast::TyKind::Path(None, path)
         }
         PlanType::ValidationError => {
-            let mut path = ast::Path::from_ident(ident("incan_native_runtime", span));
-            path.segments
-                .push(ast::PathSegment::from_ident(ident("ValidationErrorCarrier", span)));
+            let mut segments = incan_semantics_core::RuntimeBuiltinType::ValidationError
+                .carrier_path()
+                .split("::");
+            let mut path = ast::Path::from_ident(ident(segments.next().unwrap_or_default(), span));
+            for segment in segments {
+                path.segments.push(ast::PathSegment::from_ident(ident(segment, span)));
+            }
             ast::TyKind::Path(None, path)
         }
         PlanType::ValidationErrorRef => ast::TyKind::Ref(
@@ -300,39 +300,7 @@ fn frozen_collection_ty(name: &str, elements: &[PlanType], span: Span) -> Box<as
     let mut segment = ast::PathSegment::from_ident(ident(name, span));
     let arguments = elements
         .iter()
-        .map(|element| {
-            let input = match element {
-                PlanType::StaticText | PlanType::StaticBytes => {
-                    let inner = if matches!(element, PlanType::StaticText) {
-                        ast::TyKind::Path(None, ast::Path::from_ident(ident("str", span)))
-                    } else {
-                        ast::TyKind::Slice(ty(&PlanType::U8, span))
-                    };
-                    Box::new(ast::Ty {
-                        id: ast::DUMMY_NODE_ID,
-                        span,
-                        tokens: None,
-                        kind: ast::TyKind::Ref(
-                            Some(ast::Lifetime {
-                                id: ast::DUMMY_NODE_ID,
-                                ident: ident("'static", span),
-                            }),
-                            ast::MutTy {
-                                ty: Box::new(ast::Ty {
-                                    id: ast::DUMMY_NODE_ID,
-                                    span,
-                                    tokens: None,
-                                    kind: inner,
-                                }),
-                                mutbl: ast::Mutability::Not,
-                            },
-                        ),
-                    })
-                }
-                _ => ty(element, span),
-            };
-            ast::AngleBracketedArg::Arg(ast::GenericArg::Type(input))
-        })
+        .map(|element| ast::AngleBracketedArg::Arg(ast::GenericArg::Type(ty(element, span))))
         .collect();
     segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
         span,
@@ -364,6 +332,35 @@ fn list_iterator_signature_type(leaf: &ListLeaf, depth: i64, span: Span) -> ast:
     })));
     path.segments.push(segment);
     ast::TyKind::Path(None, path)
+}
+
+/// Declare retained static text and byte loans uniformly inside frozen carriers and ordinary generic frames.
+fn static_reference_ty(kind: &PlanType, span: Span) -> Option<Box<ast::Ty>> {
+    let inner = match kind {
+        PlanType::StaticText => ast::TyKind::Path(None, ast::Path::from_ident(ident("str", span))),
+        PlanType::StaticBytes => ast::TyKind::Slice(ty(&PlanType::U8, span)),
+        _ => return None,
+    };
+    Some(Box::new(ast::Ty {
+        id: ast::DUMMY_NODE_ID,
+        span,
+        tokens: None,
+        kind: ast::TyKind::Ref(
+            Some(ast::Lifetime {
+                id: ast::DUMMY_NODE_ID,
+                ident: ident("'static", span),
+            }),
+            ast::MutTy {
+                ty: Box::new(ast::Ty {
+                    id: ast::DUMMY_NODE_ID,
+                    span,
+                    tokens: None,
+                    kind: inner,
+                }),
+                mutbl: ast::Mutability::Not,
+            },
+        ),
+    }))
 }
 
 /// Name scalar primitives and crate-owned nominal aliases after their exact plan identity has been validated.
@@ -570,7 +567,7 @@ fn placeholder(span: Span) -> Box<ast::Block> {
 
 /// Inject one source-named function's declaration with no authored body in the AST. Future boxing constructors tie
 /// their explicit reference inputs and boxed result to the same lifetime before rustc checks the native call.
-pub fn function(function: &Function, span: Span) -> Box<ast::Item> {
+pub fn function(function: &Function, span: Span) -> Result<Box<ast::Item>, crate::error::PlanError> {
     let inputs = function
         .parameters
         .iter()
@@ -591,6 +588,11 @@ pub fn function(function: &Function, span: Span) -> Box<ast::Item> {
     let output = ast::FnRetTy::Ty(
         crate::futures::constructor_return_type(function, span).unwrap_or_else(|| ty(&function.return_type, span)),
     );
+    let mut declaration = ast::FnDecl { inputs, output };
+    let mut generics = crate::futures::constructor_generics(function, span);
+    generics
+        .params
+        .extend(crate::signature_lifetimes::apply(function, &mut declaration, span)?.params);
     let signature = ast::FnSig {
         header: ast::FnHeader {
             coroutine_kind: function.is_async.then_some(ast::CoroutineKind::Async {
@@ -600,14 +602,14 @@ pub fn function(function: &Function, span: Span) -> Box<ast::Item> {
             }),
             ..ast::FnHeader::default()
         },
-        decl: Box::new(ast::FnDecl { inputs, output }),
+        decl: Box::new(declaration),
         span,
     };
-    item(
+    Ok(item(
         ast::ItemKind::Fn(Box::new(ast::Fn {
             defaultness: ast::Defaultness::Implicit,
             ident: ident(&function.name, span),
-            generics: crate::futures::constructor_generics(function, span),
+            generics,
             sig: signature,
             contract: None,
             define_opaque: None,
@@ -621,7 +623,7 @@ pub fn function(function: &Function, span: Span) -> Box<ast::Item> {
             eii_impls: ThinVec::new(),
         })),
         span,
-    )
+    ))
 }
 
 /// Build an item without source tokens; rustc assigns node identities after injection.

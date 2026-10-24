@@ -4,13 +4,27 @@ from std.derives.collection import Iterator
 from std.derives.copying import Clone
 from std.rust import Static
 from std.traits.callable import Callable1
-from rust::incan_std_core::iter import Generator as NativeGenerator
-from rust::incan_std_core::iter import range as native_range
-from rust::incan_std_core::iter import batch as native_batch
-from rust::incan_std_core::iter import nonnegative_count
-from rust::std::iter import Iterator as NativeIterator, IntoIterator
-from rust::std::iter import once as native_once, successors
+from rust::incan_std_core::iter import (
+    Generator as NativeGenerator,
+    range as native_range,
+    batch as native_batch,
+    nonnegative_count,
+)
+from rust::std::iter import (
+    Iterator as NativeIterator,
+    IntoIterator,
+    FlatMap,
+    Repeat,
+    Map,
+    once as native_once,
+    successors,
+    repeat as native_repeat,
+)
 from rust::std::clone import Clone as NativeClone
+from rust::std::rc import Rc
+from rust::std::cell import Cell, RefCell, RefMut
+from rust::std::ops import DerefMut
+from rust::std::panic import panic_any
 
 
 pub def poll_generator[T with Clone](values: &mut NativeGenerator[T], mut output: list[T]) -> bool:
@@ -28,7 +42,7 @@ pub def poll_generator[T with Clone](values: &mut NativeGenerator[T], mut output
 pub def list_generator[T with (Clone, Static)](values: list[T]) -> Generator[T]:
     """Yield an independent snapshot lazily and in order: 1. Clone the source. 2. Wrap its consuming native iterator."""
     # 1. Clone the source.
-    snapshot = values.clone()
+    snapshot = NativeClone.clone(values)
     # 2. Wrap its consuming native iterator.
     return NativeGenerator.new(IntoIterator.into_iter(snapshot))
 
@@ -84,10 +98,7 @@ pub def int_callable_step_generator[T with (Clone, Static), F with (Callable1[in
 ) -> Generator[T]:
     """1. Forward the integer source and its owned callable to the native lazy chain."""
     # 1. Forward the integer source and its owned callable to the native lazy chain.
-    native: NativeGenerator[int] = source
-    adapted = native.flat_map((item) => step(item))
-    _ = step
-    return NativeGenerator.new(adapted)
+    return item_callable_step_generator(source, step)
 
 
 pub def float_callable_step_generator[T with (Clone, Static), F with (Callable1[float, Generator[T]], Static)](
@@ -96,10 +107,7 @@ pub def float_callable_step_generator[T with (Clone, Static), F with (Callable1[
 ) -> Generator[T]:
     """1. Forward the float source and its owned callable to the native lazy chain."""
     # 1. Forward the float source and its owned callable to the native lazy chain.
-    native: NativeGenerator[float] = source
-    adapted = native.flat_map((item) => step(item))
-    _ = step
-    return NativeGenerator.new(adapted)
+    return item_callable_step_generator(source, step)
 
 
 pub def bool_callable_step_generator[T with (Clone, Static), F with (Callable1[bool, Generator[T]], Static)](
@@ -108,10 +116,7 @@ pub def bool_callable_step_generator[T with (Clone, Static), F with (Callable1[b
 ) -> Generator[T]:
     """1. Forward the boolean source and its owned callable to the native lazy chain."""
     # 1. Forward the boolean source and its owned callable to the native lazy chain.
-    native: NativeGenerator[bool] = source
-    adapted = native.flat_map((item) => step(item))
-    _ = step
-    return NativeGenerator.new(adapted)
+    return item_callable_step_generator(source, step)
 
 
 pub def str_callable_step_generator[T with (Clone, Static), F with (Callable1[str, Generator[T]], Static)](
@@ -120,19 +125,15 @@ pub def str_callable_step_generator[T with (Clone, Static), F with (Callable1[st
 ) -> Generator[T]:
     """1. Forward owned text and its callable to the native lazy chain."""
     # 1. Forward owned text and its callable to the native lazy chain.
-    native: NativeGenerator[str] = source
-    adapted = native.flat_map((item) => step(item))
-    _ = step
-    return NativeGenerator.new(adapted)
+    return item_callable_step_generator(source, step)
 
 
-pub def item_callable_step_generator[
-    S with (Clone, Static), T with (Clone, Static), F with (Callable1[S, Generator[T]], Static),
-](
+pub def item_callable_step_generator[S with (Clone, Static), T with (Clone, Static), F with (Callable1[S, Generator[T]], Static)](
     source: Generator[S],
     step: F,
 ) -> Generator[T]:
-    """Expand source items only as they are polled: 1. Retain the native source. 2. Wrap its lazy flat-map.
+    """
+    Expand source items only as they are polled: 1. Retain the native source. 2. Wrap its lazy flat-map.
 
     The native iterator owns its source and callable without spawning a producer thread. A function pointer and an
     environment-carrying callable both retain their checked native storage throughout the chain.
@@ -140,15 +141,14 @@ pub def item_callable_step_generator[
     # 1. Retain the native source.
     native: NativeGenerator[S] = source
     # 2. Wrap its lazy flat-map.
-    adapted = native.flat_map((item) => step(item))
-    _ = step
+    adapted: FlatMap[NativeGenerator[S], NativeGenerator[T], F] = native.flat_map(step)
     return NativeGenerator.new(adapted)
 
 
 pub def take_generator[T with (Clone, Static)](values: Generator[T], count: int) -> Generator[T]:
     """Stop after at most `count` items, drawing each only when polled; a negative count yields nothing."""
     native: NativeGenerator[T] = values
-    return NativeGenerator.new(NativeIterator.take(native, nonnegative_count(count)))
+    return native.take(count)
 
 
 pub def skip_generator[T with (Clone, Static)](values: Generator[T], count: int) -> Generator[T]:
@@ -176,13 +176,90 @@ pub def chain_generators[T with (Clone, Static)](first: Generator[T], second: Ge
 
 
 pub def take_while_int_generator(values: Generator[int], predicate: (int) -> bool) -> Generator[int]:
-    """Yield the integer items until the predicate first rejects one."""
-    return (value for value in values.take_while(predicate))
+    """Yield until rejection: 1. Retain the cursor. 2. Poll the prefix lazily on the consumer's thread."""
+    # 1. Retain the source and predicate without polling them.
+    cursor = prefix_cursor(values, predicate)
+    # 2. Keep the non-Send iterator on its original thread.
+    return prefix_stream(cursor, take_prefix_next)
 
 
 pub def skip_while_int_generator(values: Generator[int], predicate: (int) -> bool) -> Generator[int]:
-    """Drop the integer items the predicate accepts until it first rejects one, then yield the rest."""
-    return (value for value in values.skip_while(predicate))
+    """Skip accepted items: 1. Retain the cursor. 2. Poll past the prefix lazily on the consumer's thread."""
+    # 1. Retain the source and predicate without polling them.
+    cursor = prefix_cursor(values, predicate)
+    # 2. Stop testing permanently after the first rejected item.
+    return prefix_stream(cursor, skip_prefix_next)
+
+
+# Native cursor storage has no Clone or Debug contract. Its tuple holds source, predicate, then prefix state.
+type PrefixFields = tuple[RefCell[NativeGenerator[int]], (int) -> bool, Cell[bool]]
+
+
+type SharedPrefixCursor = Rc[PrefixFields]
+
+
+def prefix_cursor(values: NativeGenerator[int], predicate: (int) -> bool) -> SharedPrefixCursor:
+    """Own shared cursor storage for function-pointer adapters that do not capture a closure environment."""
+    return Rc.new((RefCell.new(values), predicate, Cell.new(false)))
+
+
+def prefix_stream(cursor: SharedPrefixCursor, poll: (SharedPrefixCursor) -> Option[int]) -> Generator[int]:
+    """Poll shared state without captured callbacks or prefetching the next source item."""
+    repeated: Repeat[SharedPrefixCursor] = native_repeat(cursor)
+    polled: Map[Repeat[SharedPrefixCursor], (SharedPrefixCursor) -> Option[int]] = repeated.map(poll)
+    selected = polled.take_while(prefix_has_value)
+    items = selected.map(prefix_value)
+    return NativeGenerator.new(items)
+
+
+def prefix_has_value(value: &Option[int]) -> bool:
+    """Terminate the native adapter exactly when the prefix poll returns no item."""
+    match value:
+        Some(_item) => return true
+        None => return false
+
+
+def prefix_value(value: Option[int]) -> int:
+    """Read the item already admitted by the preceding native take-while adapter."""
+    match value:
+        Some(item) => return item
+        None => panic_any("invalid empty item after the prefix filter")
+
+
+def take_prefix_next(cell: SharedPrefixCursor) -> Option[int]:
+    """Fuse the prefix after either source exhaustion or its first rejected item."""
+    cursor: &PrefixFields = cell.as_ref()
+    if cursor[2].get():
+        return None
+    match next_prefix_item(cursor):
+        Some(value) =>
+            predicate = cursor[1]
+            if predicate(value):
+                return Some(value)
+        None => pass
+    cursor[2].set(true)
+    return None
+
+
+def skip_prefix_next(cell: SharedPrefixCursor) -> Option[int]:
+    """Test only the initial prefix; retain the source's ordinary behavior after the first rejection."""
+    cursor: &PrefixFields = cell.as_ref()
+    while not cursor[2].get():
+        match next_prefix_item(cursor):
+            Some(value) =>
+                predicate = cursor[1]
+                if not predicate(value):
+                    cursor[2].set(true)
+                    return Some(value)
+            None => return None
+    return next_prefix_item(cursor)
+
+
+def next_prefix_item(cursor: &PrefixFields) -> Option[int]:
+    """Keep the native mutable iterator loan inside one poll; no loan escapes with its owned integer result."""
+    mut loan: RefMut[NativeGenerator[int]] = cursor[0].borrow_mut()
+    mut iterator: &mut NativeGenerator[int] = loan.deref_mut()
+    return iterator.next()
 
 
 pub def flat_map_int_generator[U with (Clone, Static)](
@@ -218,8 +295,12 @@ pub def flat_map_text_callable_generator[U with (Clone, Static), F with (Callabl
     values: Generator[str],
     expand: F,
 ) -> Generator[U]:
-    """Expand each owned text item through a callable returning a list, drawing that list only when polled."""
-    return (item for value in values for item in expand(value))
+    """Expand owned text lazily: 1. Retain the native source. 2. Wrap its exact list-returning flat-map."""
+    # 1. Retain the source and each item's ownership until polling reaches it.
+    native: NativeGenerator[str] = values
+    # 2. Wrap the selected callable without an extra generated closure around its owned input.
+    adapted: FlatMap[NativeGenerator[str], list[U], F] = native.flat_map(expand)
+    return NativeGenerator.new(adapted)
 
 
 pub def any_text_callable_generator[F with Callable1[str, bool]](values: Generator[str], predicate: F) -> bool:
@@ -330,8 +411,13 @@ pub def all_int_generator(values: Generator[int], predicate: (int) -> bool) -> b
 
 
 pub def find_int_generator(values: Generator[int], predicate: (int) -> bool) -> Option[int]:
-    """Return the first accepted integer item, drawing items only until it is found."""
-    return values.find(predicate)
+    """Find the first accepted item: 1. Poll until the predicate accepts. 2. Report exhaustion."""
+    # 1. Stop polling at the first accepted integer.
+    for value in values:
+        if predicate(value):
+            return Some(value)
+    # 2. Preserve the exhausted cursor's result.
+    return None
 
 
 pub def for_each_int_generator(values: Generator[int], action: (int) -> None) -> None:

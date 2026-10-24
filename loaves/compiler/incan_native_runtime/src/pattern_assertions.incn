@@ -2,6 +2,8 @@
 
 from std.derives.string import Debug
 from std.testing import assert_is_some, assert_is_none, assert_is_ok, assert_is_err
+from rust::std::panic import panic_any
+from rust::incan_std_core::frozen import FrozenStr as NativeFrozenStr
 
 
 pub def missing_some() -> None:
@@ -53,12 +55,16 @@ pub def missing_err_with(message: str) -> None:
 
 
 pub def unwrap_none() -> None:
-    """Fail as legacy's `Option.unwrap()` does on None, with the standard library's own message."""
-    nothing: Option[int] = None
-    _ = nothing.unwrap()
+    """Preserve the standard None panic: 1. Retain its static message. 2. Panic with that original text payload."""
+    # 1. Retain the standard library's static message.
+    message = NativeFrozenStr.new("called `Option::unwrap()` on a `None` value")
+    # 2. Panic with that original text payload.
+    panic_any(message.as_str())
 
 
 pub def unwrap_err[E with Debug](error: E) -> None:
-    """Fail as legacy's `Result.unwrap()` does on Err, rendering the error through its Debug implementation."""
-    failed: Result[int, E] = Err(error)
-    _ = failed.unwrap()
+    """Preserve the standard Err panic: 1. Format its error once through Debug. 2. Panic with the owned message."""
+    # 1. Format the error once through its Debug implementation.
+    message = f"called `Result::unwrap()` on an `Err` value: {error:?}"
+    # 2. Panic with the owned message, preserving the standard payload and panic hook.
+    panic_any(message)

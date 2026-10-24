@@ -1467,6 +1467,9 @@ fn source_signature_type(ty: &Scalar) -> bool {
                 | Scalar::FrozenStr
                 | Scalar::FrozenBytes
                 | Scalar::FrozenCollection(_, _)
+                | Scalar::FrozenCollectionRef(_, _)
+                | Scalar::StaticText
+                | Scalar::StaticBytes
                 | Scalar::ValidationError
                 | Scalar::ValidationErrorRef
                 | Scalar::Model(_)
@@ -1494,7 +1497,7 @@ fn external_signature_type(ty: &Scalar) -> bool {
         return *length >= 0 && matches!(elements.as_slice(), [element] if native_sequence_element(element));
     }
     if let Scalar::SliceRef(elements) | Scalar::SliceMutRef(elements) = ty {
-        return matches!(elements.as_slice(), [element] if native_sequence_element(element));
+        return matches!(elements.as_slice(), [element] if native_payload_type(element));
     }
     if let Scalar::ScalarRef(elements) | Scalar::ScalarMutRef(elements) = ty {
         return matches!(elements.as_slice(), [inner] if scalar_referent(inner));
@@ -1533,7 +1536,16 @@ fn scalar_referent(ty: &Scalar) -> bool {
     sized_numeric(ty).is_some()
         || matches!(
             ty,
-            Scalar::Int | Scalar::Float | Scalar::Bool | Scalar::Decimal | Scalar::FrozenStr | Scalar::FrozenBytes
+            Scalar::Int
+                | Scalar::Float
+                | Scalar::Bool
+                | Scalar::Decimal
+                | Scalar::FrozenStr
+                | Scalar::FrozenBytes
+                | Scalar::StrRef
+                | Scalar::Unit
+                | Scalar::StaticText
+                | Scalar::StaticBytes
         )
 }
 
@@ -1847,6 +1859,18 @@ fn shift_result(function: &Function, ty: Scalar, count: &Scalar) -> Result<Scala
 fn signature(plan: &Plan, function: &Function, callee: &Callee) -> Result<(Vec<Scalar>, Scalar), PlanError> {
     span(&callee.span)?;
     match &callee.kind {
+        CalleeKind::InstallPanicHook(signature) => {
+            if signature.len() != 2 || signature.last() != Some(&PlanType::Unit) {
+                return Err(invalid(
+                    function,
+                    "native panic callback requires one input and no result",
+                ));
+            }
+            Ok((
+                vec![scalar(&PlanType::FunctionPointer(signature.clone()))],
+                Scalar::Unit,
+            ))
+        }
         CalleeKind::FormatValue(ty, _) => {
             validate_model_type(plan, ty)?;
             Ok((vec![scalar(ty)], Scalar::String))
@@ -2328,10 +2352,10 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
                     reason: "slice requires one element".into(),
                 });
             };
-            if !native_sequence_element(&scalar(element)) {
+            if !native_payload_type(&scalar(element)) {
                 return Err(PlanError::Unsupported {
                     function: "native slice".into(),
-                    reason: "unsupported slice element".into(),
+                    reason: format!("unsupported slice element {:?}", scalar(element)),
                 });
             }
             validate_model_type(plan, element)?;
@@ -2422,10 +2446,10 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
         }
         _ => {}
     }
-    if matches!(ty, PlanType::Tuple(_)) && !source_signature_type(&scalar(ty)) {
+    if matches!(ty, PlanType::Tuple(_)) && !native_payload_type(&scalar(ty)) {
         return Err(PlanError::Invalid {
             function: "tuple".into(),
-            reason: "tuple elements must retain admitted scalar, owned or frozen text, list, nominal, function-pointer or nested tuple layouts".into(),
+            reason: "tuple elements must retain admitted source or native payload storage".into(),
         });
     }
     if let PlanType::Enum(index, name) | PlanType::EnumRef(index, name) | PlanType::EnumMutRef(index, name) = ty {
@@ -2899,13 +2923,31 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
             for field in &variant.fields {
                 validate_model_type(plan, field)?;
                 let native = !declaration.carrier.is_empty() || !declaration.library_item.is_empty();
-                if !(source_signature_type(&scalar(field)) || (native && external_signature_type(&scalar(field)))) {
-                    return Err(error());
+                let field_type = scalar(field);
+                if !(source_signature_type(&field_type) || (native && native_payload_type(&field_type))) {
+                    return Err(PlanError::Invalid {
+                        function: declaration.name.clone(),
+                        reason: format!("unsupported enum payload carrier {field_type:?}"),
+                    });
                 }
             }
         }
     }
     Ok(())
+}
+
+/// Native payloads and their projected tuple and slice storage retain exact native signature carriers.
+/// Source-owned enum admission remains separate; rustc still verifies the actual native payload type at every use.
+fn native_payload_type(ty: &Scalar) -> bool {
+    if external_signature_type(ty) {
+        return true;
+    }
+    match ty {
+        Scalar::Tuple(elements) | Scalar::TupleRef(elements) | Scalar::TupleMutRef(elements) => {
+            elements.iter().all(native_payload_type)
+        }
+        _ => false,
+    }
 }
 
 /// Admit a member-delegating `Debug` only on a union layout: an ordinary enum that derives no `Debug` of its own and

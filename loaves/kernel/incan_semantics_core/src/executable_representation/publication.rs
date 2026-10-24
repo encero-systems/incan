@@ -74,25 +74,11 @@ pub(super) fn project_callable(
             value.requirements,
         ));
     }
-    if !module.body_requires_instantiation(source)
-        && !source.is_generator()
-        && crate::body_ir::LoafCallable::from_body(source).is_some()
-    {
-        return project_compiled_callable(source, module, library, eligible);
+    if super::publishes_compiled_frame(module, source) {
+        return project_compiled_frame(source, module, library, eligible);
     }
     let value = project_body(source, module, library, eligible)?;
-    let mut callables = Vec::new();
-    for (identity, arguments) in value.native_calls {
-        let callable = native_callables
-            .iter()
-            .copied()
-            .find(|callable| callable.canonical == identity && callable.native_type_arguments == arguments)
-            .cloned()
-            .ok_or(CoverageReason::UnresolvedReference)?;
-        if !callables.contains(&callable) {
-            callables.push(callable);
-        }
-    }
+    let callables = selected_native_calls(&value.native_calls, native_callables)?;
     let declaration = if callables.is_empty() {
         ExecutableDeclaration::Body(Box::new(value.body))
     } else {
@@ -104,9 +90,10 @@ pub(super) fn project_callable(
     Ok((declaration, value.requirements))
 }
 
-/// Publish only the caller-visible frame of an already compiled item, retaining parameter defaults and their local
-/// types. Implementation locals and Rust calls stay in the rlib; they cannot become consumer execution requirements.
-fn project_compiled_callable(
+/// Publish only a compiled export's governed signature, independently of whether its implementation is portable.
+/// Parameter passing and default computations retain their real locals; unused implementation slots are inert unit
+/// placeholders so declaration-local addresses remain stable without publishing private implementation types.
+pub(super) fn project_compiled_frame(
     source: &Body,
     module: &BodyIrModule,
     library: &str,
@@ -137,12 +124,41 @@ fn project_compiled_callable(
             local.ty = IncanType::Tuple(Vec::new());
         }
     }
+    frame.runtime_requirements.clear();
+    frame.panic_facts.clear();
+    frame.extern_delegation = None;
     frame.named_type_identities = audit.used_nominal_types;
     require_module_initialization(module, &mut audit.requirements);
+    let native_callables = module.loaf_callables.iter().collect::<Vec<_>>();
+    let callables = selected_native_calls(&audit.native_calls, &native_callables)?;
     Ok((
-        ExecutableDeclaration::CompiledCallable(Box::new(frame)),
+        ExecutableDeclaration::CompiledCallableFrame {
+            frame: Box::new(frame),
+            callables,
+        },
         audit.requirements,
     ))
+}
+
+/// Recover only checker-authenticated native selections, preserving their exact type arguments for both executable
+/// bodies and declaration defaults.
+fn selected_native_calls(
+    selections: &[(CanonicalSymbolId, Vec<IncanType>)],
+    native_callables: &[&crate::body_ir::LoafCallable],
+) -> Result<Vec<crate::body_ir::LoafCallable>, CoverageReason> {
+    let mut callables = Vec::new();
+    for (identity, arguments) in selections {
+        let callable = native_callables
+            .iter()
+            .copied()
+            .find(|callable| &callable.canonical == identity && &callable.native_type_arguments == arguments)
+            .cloned()
+            .ok_or(CoverageReason::UnresolvedReference)?;
+        if !callables.contains(&callable) {
+            callables.push(callable);
+        }
+    }
+    Ok(callables)
 }
 
 /// Publish a generic wrapper and original atomically without inventing a polymorphic replacement cell.
@@ -795,7 +811,10 @@ impl<'a> PublicationAudit<'a> {
     /// Match and assert patterns can depend on types even when the matching branch is never entered.
     fn pattern(&mut self, pattern: &mut Pattern) -> Result<(), CoverageReason> {
         match pattern {
-            Pattern::Wildcard | Pattern::Var(_) | Pattern::Literal(_) => {}
+            Pattern::Var(local) => {
+                self.local_slots.insert(local.local);
+            }
+            Pattern::Wildcard | Pattern::Literal(_) => {}
             Pattern::Tuple(items) | Pattern::Or(items) | Pattern::Result { fields: items, .. } => {
                 for item in items {
                     self.pattern(item)?;

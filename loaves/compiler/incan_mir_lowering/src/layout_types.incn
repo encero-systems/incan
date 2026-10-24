@@ -41,7 +41,9 @@ pub def native_source_type(
             count = length.clone()
             if count > 9223372036854775807u64:
                 return Err("unsupported Body IR native array length exceeds the plan integer range")
-            return Ok(PlanType.NativeArray([native_source_type(nominals, enums, unions, element, intrinsics)?], int(count)))
+            return Ok(
+                PlanType.NativeArray([native_source_type(nominals, enums, unions, element, intrinsics)?], int(count)),
+            )
         RustType.RustInteropPath(path) =>
             if str(path) == "str":
                 return Ok(PlanType.NativeStr)
@@ -61,7 +63,10 @@ pub def native_source_type(
             signature.append(native_source_type(nominals, enums, unions, result, intrinsics)?)
             return Ok(PlanType.FunctionPointer(signature))
         RustType.Generic(base=base, args=arguments) =>
-            if base == "<owned-callable>" and len(arguments) == 1:
+            constructor: str = str(base)
+            if constructor == "<native-callable>" and len(arguments) == 1:
+                return native_callable_type(nominals, enums, unions, arguments[0], intrinsics)
+            if constructor == "<owned-callable>" and len(arguments) == 1:
                 match native_source_type(nominals, enums, unions, arguments[0], intrinsics)?:
                     PlanType.FunctionPointer(signature) => return Ok(PlanType.Closure(signature))
                     _ => return Err("invalid owned callable storage signature")
@@ -74,6 +79,16 @@ pub def native_source_type(
                 match element:
                     PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))
                     _ => return Ok(PlanType.List(collection_leaf(element)?, 1))
+            if constructor in ["FrozenList", "FrozenSet", "FrozenDict"]:
+                mut elements: list[PlanType] = []
+                for argument in arguments:
+                    mut element = native_source_type(nominals, enums, unions, argument, intrinsics)?
+                    if element == PlanType.String:
+                        element = PlanType.StaticText
+                    elif element == PlanType.List(ListLeaf.U8, 1):
+                        element = PlanType.StaticBytes
+                    elements.append(element)
+                return Ok(PlanType.FrozenCollection(constructor, elements))
             if base == "Set" and len(arguments) == 1:
                 return Ok(PlanType.Set(hashed_leaf(nominals, enums, arguments[0], intrinsics)?))
             if base == "Dict" and len(arguments) == 2:
@@ -121,6 +136,24 @@ pub def stored_field_type(
     return Ok(ty)
 
 
+def native_callable_type(
+    mut nominals: list[NominalDeclaration],
+    mut enums: list[RustEnumDeclaration],
+    mut unions: list[RustType],
+    ty: &RustType,
+    mut intrinsics: list[EnumDeclaration],
+) -> Result[PlanType, str]:
+    """Retain a runtime callable's already selected input ABI without applying source parameter borrowing again."""
+    match ty:
+        RustType.Function(params=parameters, return_type=result) =>
+            mut signature: list[PlanType] = []
+            for parameter in parameters:
+                signature.append(native_source_type(nominals, enums, unions, parameter.ty, intrinsics)?)
+            signature.append(native_source_type(nominals, enums, unions, result, intrinsics)?)
+            return Ok(PlanType.FunctionPointer(signature))
+        _ => return Err("invalid retained native callable signature")
+
+
 def is_native_str(ty: &RustType) -> bool:
     """Recognize the checker's unsized Rust str referent before ordinary owned-text projection."""
     match ty:
@@ -152,7 +185,7 @@ pub def shared_receiver_type(ty: PlanType) -> Result[PlanType, str]:
     collection = list_parameter_type(ty, false)
     if collection != ty:
         return Ok(collection)
-    if ty in [PlanType.Int, PlanType.Float, PlanType.I8, PlanType.I16, PlanType.I32, PlanType.I128, PlanType.ISize, PlanType.USize, PlanType.U8, PlanType.U16, PlanType.U32, PlanType.U64, PlanType.U128, PlanType.F32, PlanType.F64, PlanType.Bool, PlanType.Decimal, PlanType.FrozenStr, PlanType.FrozenBytes]:
+    if ty in [PlanType.Int, PlanType.Float, PlanType.I8, PlanType.I16, PlanType.I32, PlanType.I128, PlanType.ISize, PlanType.USize, PlanType.U8, PlanType.U16, PlanType.U32, PlanType.U64, PlanType.U128, PlanType.F32, PlanType.F64, PlanType.Bool, PlanType.Unit, PlanType.Decimal, PlanType.FrozenStr, PlanType.FrozenBytes, PlanType.StaticText, PlanType.StaticBytes]:
         return Ok(PlanType.ScalarRef([ty]))
     return Err(f"unsupported Body IR shared SDK receiver carrier {ty:?}")
 
@@ -198,7 +231,11 @@ def numeric_newtype_iterator(mut nominals: list[NominalDeclaration], element: &R
                 declaration = nominals[index]
                 if declaration.name != str(name) or declaration.canonical.kind != SemanticSourceTargetKind.Newtype:
                     continue
-                if len(declaration.type_parameters) != 0 or declaration.fields != ["0"] or len(declaration.field_types) != 1:
+                if (
+                    len(declaration.type_parameters) != 0
+                    or declaration.fields != ["0"]
+                    or len(declaration.field_types) != 1
+                ):
                     return None
                 if declaration.field_identities != [declaration.canonical]:
                     return None

@@ -36,13 +36,17 @@ from unions import union_slot
 
 
 pub def model_type(mut declarations: list[NominalDeclaration], ty: &RustType) -> Result[PlanType, str]:
-    """Translate checked types against retained declarations, preserving unsupported types in refusals.
+    """
+    Translate checked types against retained declarations, preserving unsupported types in refusals.
 
-    1. Admit an existing generator representation.
+    1. Admit an existing runtime or generator representation.
     2. Resolve scalar, nominal and callable carriers from their checked types.
     3. Resolve collection elements, keeping exact native frozen storage distinct from source frozen views.
     """
-    # 1. Admit an existing generator representation.
+    # 1. Admit an existing runtime or generator representation.
+    match runtime_storage_marker(ty):
+        Some(storage) => return Ok(storage)
+        None => pass
     match generator_type(ty):
         Some(result) => return result
         None => pass
@@ -89,7 +93,11 @@ pub def model_type(mut declarations: list[NominalDeclaration], ty: &RustType) ->
             retained_name = nominal_symbol(retained_base, arguments)
             mut index = 0
             for declaration in declarations:
-                if declaration.type_parameter_count != 0 and declaration.name == retained_name and template_base(declaration) == retained_base:
+                if (
+                    declaration.type_parameter_count != 0
+                    and declaration.name == retained_name
+                    and template_base(declaration) == retained_base
+                ):
                     return Ok(PlanType.Model(index, model_symbol(str(declaration.name))))
                 index += 1
             if base == "Set" and len(arguments) == 1:
@@ -115,6 +123,22 @@ pub def model_type(mut declarations: list[NominalDeclaration], ty: &RustType) ->
                 PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))
                 _ => return Err(f"unsupported Body IR list element {ty}")
         _ => return Err(f"unsupported Body IR type {type_name(ty)} ({ty})")
+
+
+pub def runtime_storage_marker(ty: &RustType) -> Option[PlanType]:
+    """Preserve closed native storage without inventing source decimal precision or replacing static loans by owners."""
+    match ty:
+        RustType.Generic(base=base, args=arguments) =>
+            if len(arguments) != 0:
+                return None
+            if base == "<native-static-text>":
+                return Some(PlanType.StaticText)
+            if base == "<native-static-bytes>":
+                return Some(PlanType.StaticBytes)
+            if base == "<native-decimal>":
+                return Some(PlanType.Decimal)
+        _ => pass
+    return None
 
 
 def rejected_nominal_name(mut declarations: list[NominalDeclaration], name: str) -> str:
@@ -208,7 +232,15 @@ pub def model_prefix(
                 PlanType.TupleRef(elements) =>
                     if count == 0:
                         return Ok(Place(local=index, projection=Projection.Whole, span=span))
-                    fields = field_path(declarations, PlanType.Tuple(elements), value.projection, count, enums, unions, intrinsics)?
+                    fields = field_path(
+                        declarations,
+                        PlanType.Tuple(elements),
+                        value.projection,
+                        count,
+                        enums,
+                        unions,
+                        intrinsics,
+                    )?
                     return Ok(Place(local=index, projection=Projection.DerefFields(fields), span=span))
                 PlanType.EnumRef(owner, name) =>
                     if count == 0:
@@ -271,7 +303,12 @@ pub def field_projection(
                         return Err("invalid Body IR optional projection carrier")
                     carrier = intrinsics[owner - len(enums)]
                     ty = retained_type(declarations, enums, unions, payload, intrinsics)?
-                    if carrier.carrier != "Option" or len(carrier.variants) != 2 or len(carrier.variants[1].fields) != 1 or carrier.variants[1].fields[0] != ty:
+                    if (
+                        carrier.carrier != "Option"
+                        or len(carrier.variants) != 2
+                        or len(carrier.variants[1].fields) != 1
+                        or carrier.variants[1].fields[0] != ty
+                    ):
                         return Err("invalid Body IR optional projection payload")
                     return Ok(FieldProjection(slot=0, ty=ty, variant=1))
                 _ => return Err("invalid Body IR optional projection carrier")
@@ -314,7 +351,10 @@ pub def field_slot(value: &RustPlaceElem, declaration: &NominalDeclaration) -> R
                 match canonical:
                     Some(identity) =>
                         for slot in range(len(declaration.fields)):
-                            if declaration.fields[slot] == str(name) and declaration.field_identities[slot] == identity.clone():
+                            if (
+                                declaration.fields[slot] == str(name)
+                                and declaration.field_identities[slot] == identity.clone()
+                            ):
                                 return Ok(slot)
                     None => pass
                 return Err(
@@ -342,9 +382,9 @@ pub def constructor_index(
                 declaration = declarations[index]
                 if identity != declaration.direct_declaration_id:
                     continue
-                # Aliases change diagnostic spelling, never the retained constructor identity or physical layout.
-                if target.canonical != Some(declaration.canonical) or target.canonical_field_layout != Some(
-                    declaration.fields,
+                if (
+                    target.canonical != Some(declaration.canonical)
+                    or target.canonical_field_layout != Some(declaration.fields)
                 ):
                     return Err("invalid Body IR model constructor identity or layout")
                 validate_constructor_binding(target.binding, count, len(declaration.fields))?
@@ -417,3 +457,4 @@ def receiver_owner(ty: PlanType) -> Option[tuple[int, str]]:
         PlanType.ModelRef(owner, name) => return Some((owner, name))
         PlanType.ModelMutRef(owner, name) => return Some((owner, name))
         _ => return None
+                # Aliases change diagnostic spelling, never the retained constructor identity or physical layout.

@@ -36,6 +36,8 @@ Source models and newtypes may derive builtin traits or a dependency's inspected
 
 Native trait objects retain their principal identity, arguments, and declaration-ordered associated equalities. Rustc verifies object safety; auto traits require their own retained facts.
 
+Body-local storage erases lifetimes, while native input signatures bind each metadata lifetime independently before rustc checks outlives bounds. This input contract grants no escaping output or field borrow without a retained relationship to its owner.
+
 ## Consequences
 
 - Programs using `from rust::... import ...` compile on the only remaining route, beyond the stdlib facets and Incan-declared externs.

@@ -61,6 +61,10 @@ use crate::{
 /// One module's lowered function/method bodies and direct-execution declaration facts.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BodyIrModule {
+    /// Consumer-selected runtime facades authenticated by the installed Loaf manifest. Public ABI spellings select
+    /// canonical declarations independently of private same-named dependencies; publication never serializes them.
+    #[serde(skip)]
+    pub runtime_callable_bindings: Vec<RuntimeCallableBinding>,
     /// RFC 036 originals retained separately from the initialized, module-visible callable bindings.
     #[serde(default)]
     pub decorated_bindings: Vec<DecoratedBinding>,
@@ -133,6 +137,15 @@ pub struct BodyIrModule {
     pub trait_implementations: Vec<TraitImplementation>,
     /// One [`Body`] per lowered function/method declaration in the module.
     pub bodies: Vec<Body>,
+}
+
+/// One authenticated public runtime facade and the declaration selected by its Loaf identity graph.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuntimeCallableBinding {
+    /// Public runtime ABI path introduced by lowering.
+    pub path: String,
+    /// Exact declaring callable, including its provider and module identity.
+    pub canonical: CanonicalSymbolId,
 }
 
 /// Observable setup retained by the checked frontend for the selected entry module.
@@ -423,6 +436,7 @@ impl BodyIrModule {
     /// program holds (DD-0006). It has no bodies, storage or effects of its own.
     pub fn declarations_only(owner: String) -> Self {
         Self {
+            runtime_callable_bindings: Vec::new(),
             string_conversion_contract: StringConversionContract::Unselected,
             decorated_bindings: Vec::new(),
             entrypoint_effects: Vec::new(),
@@ -4429,6 +4443,8 @@ pub enum HelperOp {
     TextCodecEncodingValid,
     /// Test a builtin decoder's error policy after its encoding guard and before its receiver.
     TextCodecErrorsValid,
+    /// Register a checked native function pointer as the standard panic hook; the native boundary boxes it.
+    InstallPanicHook,
 }
 
 impl HelperOp {
@@ -4472,6 +4488,7 @@ impl HelperOp {
             Self::RaiseValueError => "raise_value_error",
             Self::TextCodecEncodingValid => "text_codec_encoding_valid",
             Self::TextCodecErrorsValid => "text_codec_errors_valid",
+            Self::InstallPanicHook => "install_panic_hook",
             Self::StrConcat => "str_concat",
             Self::StrEq => "str_eq",
             Self::StrNe => "str_ne",
@@ -6007,8 +6024,10 @@ mod tests {
     }
 
     #[test]
+    /// Retain stable module snapshots when consumer-only facade bindings are absent.
     fn body_ir_module_snapshot_wraps_bodies() {
         let module = BodyIrModule {
+            runtime_callable_bindings: Vec::new(),
             decorated_bindings: Vec::new(),
             entrypoint_effects: Vec::new(),
             program_entrypoints: Vec::new(),

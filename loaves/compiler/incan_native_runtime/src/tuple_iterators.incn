@@ -1,12 +1,13 @@
-"""Legacy zip snapshots, materialized builtin enumeration of lists and text, and text iteration items."""
+"""Zip list snapshots, enumerate lists and text, and materialize Unicode scalar strings."""
 
 from std.derives.copying import Clone
-from rust::std::clone import Clone as RuntimeClone
 from std.rust import Static
 from rust::std::vec import Vec
 from rust::std::iter import IntoIterator, Iterator as NativeIterator
 from rust::incan_std_core::iter import Generator as NativeGenerator, nonnegative_count
 from rust::incan_std_core::collections import list_get
+from rust::incan_std_core::strings import str_split as split_native, str_len as length_native
+from native_copying import clone_native
 
 
 @derive(Clone)
@@ -28,7 +29,7 @@ pub def zip_lists[T with Clone, U with Clone](left: list[T], right: list[U]) -> 
 pub def clone_zip[T with Clone, U with Clone](values: &ZipLists[T, U]) -> ZipLists[T, U]:
     """Preserve both cursors and snapshots: 1. Clone their checked native carrier without polling either source."""
     # 1. Clone the checked native carrier without polling either source.
-    return clone_native(values)
+    return clone_native[ZipLists[T, U]](values)
 
 
 pub def poll_zip[T with Clone, U with Clone](mut values: ZipLists[T, U], mut output: list[tuple[T, U]]) -> bool:
@@ -79,25 +80,24 @@ pub def enumerate_text(values: &str) -> list[tuple[int, str]]:
     """Pair Unicode scalar strings with their zero-based positions, matching legacy text enumeration."""
     mut pairs: list[tuple[int, str]] = []
     mut index = 0
-    for value in values:
+    for value in text_items(values):
         pairs.append((index, value))
         index += 1
     return pairs
 
 
 pub def text_items(values: &str) -> list[str]:
-    """List a text's Unicode scalar values as one-character strings, in the order a loop over the text draws them."""
-    mut items: list[str] = []
-    for value in values:
-        items.append(value)
+    """Materialize Unicode scalars: 1. Split at native boundaries. 2. Retain nonempty scalar strings."""
+    # 1. Split at native Unicode boundaries, including the two empty boundary fragments.
+    parts: list[str] = split_native(values, Some(""))
+    mut items: Vec[str] = Vec.new()
+    # 2. Retain scalar strings without invoking this text iteration primitive again.
+    for part in parts:
+        if length_native(part) != 0:
+            items.push(part)
     return items
 
 
 def owned_zip_item[T with Clone](values: &list[T], index: int) -> T:
     """Clone one borrowed zip element through the native collection's retained element binding."""
-    return RuntimeClone.clone(list_get(values, index))
-
-
-def clone_native[T with RuntimeClone](value: &T) -> T:
-    """Select the declared native Clone bound before a concrete source carrier closes the helper's type parameter."""
-    return RuntimeClone.clone(value)
+    return clone_native[T](list_get(values, index))
