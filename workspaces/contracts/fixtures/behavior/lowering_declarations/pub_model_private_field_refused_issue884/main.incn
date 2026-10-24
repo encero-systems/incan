@@ -1,10 +1,21 @@
-# behavior: a pub model's field without pub is private to its declaring module, so another module reading it is refused at check time (#884)
+# behavior: a foreign model's private field remains inaccessible through a list inside a caller type with the same name
 # expect-diagnostic: INCAN-T0001
 
-from vault import Vault
+"""Refuse a private field read despite a colliding caller type name."""
+
+from vault import Bag, make
+
+
+class Vault:
+    """A different type cannot borrow the provider's private access rights."""
+
+    def observe(self, bag: Bag) -> None:
+        """Attempt to read the provider's private field on an unimported element."""
+        for vault in bag.entries:
+            println(vault.label)
+            println(vault.secret)
 
 
 def main() -> None:
-    vault = Vault(label="keys")
-    println(vault.label)
-    println(vault.secret)
+    """Check the private read through the caller's own type."""
+    Vault().observe(make())

@@ -19,7 +19,8 @@ mod publication;
 use crate::CanonicalSymbolId;
 use crate::CompilerNodeId;
 use crate::body_ir::{
-    Body, BodyIrModule, EnumDeclaration, FieldlessEnumDeclaration, NominalDeclaration, ValueEnumDeclaration,
+    Body, BodyIrModule, EnumDeclaration, FieldlessEnumDeclaration, NominalDeclaration, TraitFieldImplementation,
+    ValueEnumDeclaration,
 };
 
 /// Version of the encoded representation, independent of the manifest that ships beside it.
@@ -42,11 +43,19 @@ use crate::body_ir::{
 /// Version 28 retains native default callees alongside compiled callable frames and appends checked panic-hook
 /// registration.
 /// Version 29 retains checked owned callback storage and native Send/Sync capture obligations.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 29;
+/// Version 30 carries checked required-field witnesses in nominal fragment trailers.
+/// Version 31 appends the pure generated field-table operation for closed type parameters.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 31;
 
-/// Accept only the current positional schema; combined changes require regenerated producer artifacts.
-pub fn supported_representation_version(version: u32) -> bool {
-    version == EXECUTABLE_REPRESENTATION_VERSION
+/// Combined positional changes require regenerated providers; no older payload is compatible with this reader.
+const OLDEST_SUPPORTED_VERSION: u32 = EXECUTABLE_REPRESENTATION_VERSION;
+
+/// Required-field witnesses transported separately from the legacy positional nominal layout.
+#[derive(Serialize, Deserialize)]
+struct TraitFieldBindings {
+    owner: CanonicalSymbolId,
+    trait_owner: CanonicalSymbolId,
+    fields: Vec<TraitFieldImplementation>,
 }
 
 /// Largest index this format admits, in bytes.
@@ -126,9 +135,11 @@ pub fn encode_module(module: &BodyIrModule) -> Result<Vec<u8>, ExecutableReprese
         version: EXECUTABLE_REPRESENTATION_VERSION,
         module,
     };
-    postcard::to_allocvec(&framed).map_err(|error| ExecutableRepresentationError::Malformed {
+    let mut bytes = postcard::to_allocvec(&framed).map_err(|error| ExecutableRepresentationError::Malformed {
         reason: format!("could not encode the checked module: {error}"),
-    })
+    })?;
+    append_trait_fields(&mut bytes, &module.nominal_declarations)?;
+    Ok(bytes)
 }
 
 /// Decode an internal whole-module snapshot, refusing an unfamiliar version before decoding its contents.
@@ -138,16 +149,11 @@ pub fn encode_module(module: &BodyIrModule) -> Result<Vec<u8>, ExecutableReprese
 /// encoded; there is no reconstruction step in which a consumer could arrive at a different answer.
 pub fn decode_module(bytes: &[u8]) -> Result<BodyIrModule, ExecutableRepresentationError> {
     require_supported_version(bytes)?;
-    let framed: EncodedModuleRepresentation =
-        postcard::from_bytes(bytes).map_err(|error| ExecutableRepresentationError::Malformed {
+    let (mut framed, remainder): (EncodedModuleRepresentation, _) =
+        postcard::take_from_bytes(bytes).map_err(|error| ExecutableRepresentationError::Malformed {
             reason: format!("could not decode the framed representation: {error}"),
         })?;
-    if framed.version != EXECUTABLE_REPRESENTATION_VERSION {
-        return Err(ExecutableRepresentationError::UnsupportedVersion {
-            found: framed.version,
-            supported: EXECUTABLE_REPRESENTATION_VERSION,
-        });
-    }
+    restore_trait_fields(&mut framed.module.nominal_declarations, remainder)?;
     Ok(framed.module)
 }
 
@@ -169,11 +175,86 @@ pub fn representation_version(bytes: &[u8]) -> Result<u32, ExecutableRepresentat
 /// Reject an unfamiliar encoding from its stable leading version, before decoding any version-specific fields.
 pub fn require_supported_version(bytes: &[u8]) -> Result<(), ExecutableRepresentationError> {
     let found = representation_version(bytes)?;
-    if found != EXECUTABLE_REPRESENTATION_VERSION {
+    if !supports_version(found) {
         return Err(ExecutableRepresentationError::UnsupportedVersion {
             found,
             supported: EXECUTABLE_REPRESENTATION_VERSION,
         });
+    }
+    Ok(())
+}
+
+/// Accept only the current positional schema and its typed optional facts.
+pub fn supports_version(version: u32) -> bool {
+    version == EXECUTABLE_REPRESENTATION_VERSION
+}
+
+/// Append canonical required-field witnesses without changing any positional nominal or adoption field.
+fn append_trait_fields(
+    bytes: &mut Vec<u8>,
+    nominals: &[NominalDeclaration],
+) -> Result<(), ExecutableRepresentationError> {
+    let mut bindings = Vec::new();
+    for nominal in nominals {
+        for adoption in &nominal.trait_adoptions {
+            if !adoption.fields.is_empty() {
+                bindings.push(TraitFieldBindings {
+                    owner: nominal.canonical.clone(),
+                    trait_owner: adoption.trait_identity.clone(),
+                    fields: adoption.fields.clone(),
+                });
+            }
+        }
+    }
+    if !bindings.is_empty() {
+        bindings.sort_by(|left, right| {
+            left.owner
+                .cmp(&right.owner)
+                .then_with(|| left.trait_owner.cmp(&right.trait_owner))
+        });
+        bytes.extend(postcard::to_allocvec(&bindings).map_err(|error| malformed(error.to_string()))?);
+    }
+    Ok(())
+}
+
+/// Restore only fully bounded, owner-matched field witnesses; legacy fragments retain no such authority.
+fn restore_trait_fields(
+    nominals: &mut [NominalDeclaration],
+    bytes: &[u8],
+) -> Result<(), ExecutableRepresentationError> {
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    let (bindings, remainder): (Vec<TraitFieldBindings>, _) =
+        postcard::take_from_bytes(bytes).map_err(|error| malformed(error.to_string()))?;
+    if bindings.is_empty() || !remainder.is_empty() {
+        return Err(malformed("invalid required-field witness trailer"));
+    }
+    for binding in bindings {
+        let nominal = nominals
+            .iter_mut()
+            .find(|nominal| nominal.canonical == binding.owner)
+            .ok_or_else(|| malformed("required-field witness has no nominal owner"))?;
+        let mut requirements = BTreeSet::new();
+        for field in &binding.fields {
+            if field.requirement.namespace != crate::SymbolNamespace::Member
+                || field.requirement.kind != crate::SemanticSourceTargetKind::Field
+                || field.requirement.declaration_name != field.implementation.declaration_name
+                || !nominal.field_identities.contains(&field.implementation)
+                || !requirements.insert(&field.requirement)
+            {
+                return Err(malformed("required-field witness differs from the checked layout"));
+            }
+        }
+        let adoption = nominal
+            .trait_adoptions
+            .iter_mut()
+            .find(|adoption| adoption.trait_identity == binding.trait_owner)
+            .ok_or_else(|| malformed("required-field witness has no trait adoption"))?;
+        if binding.fields.is_empty() || !adoption.fields.is_empty() {
+            return Err(malformed("empty or duplicate required-field witness"));
+        }
+        adoption.fields = binding.fields;
     }
     Ok(())
 }
@@ -947,7 +1028,13 @@ fn encode_surface(
     // ---- Payloads: encode in canonical order across public and implementation declarations ----
     let mut payload = Vec::new();
     for (identity, entry) in admitted {
-        let encoded = postcard::to_allocvec(&entry.declaration).map_err(|error| malformed(error.to_string()))?;
+        let mut encoded = postcard::to_allocvec(&entry.declaration).map_err(|error| malformed(error.to_string()))?;
+        match &entry.declaration {
+            ExecutableDeclaration::Nominal(nominal) | ExecutableDeclaration::NominalWithTraits(nominal, _) => {
+                append_trait_fields(&mut encoded, std::slice::from_ref(nominal))?;
+            }
+            _ => {}
+        }
         declarations.insert(
             identity,
             DeclarationCoverage::Covered {
@@ -1100,8 +1187,15 @@ impl SurfaceIndex {
         if u64::try_from(bytes.len()).ok() != Some(*length) {
             return Err(malformed("selected fragment length differs from its index"));
         }
-        let declaration: ExecutableDeclaration =
-            postcard::from_bytes(bytes).map_err(|error| malformed(error.to_string()))?;
+        let (mut declaration, remainder): (ExecutableDeclaration, _) =
+            postcard::take_from_bytes(bytes).map_err(|error| malformed(error.to_string()))?;
+        match &mut declaration {
+            ExecutableDeclaration::Nominal(nominal) | ExecutableDeclaration::NominalWithTraits(nominal, _) => {
+                restore_trait_fields(std::slice::from_mut(nominal), remainder)?;
+            }
+            _ if !remainder.is_empty() => return Err(malformed("unexpected declaration trailer")),
+            _ => {}
+        }
         if declaration.identity() != Some(identity) {
             return Err(malformed("fragment identity differs from its index"));
         }
@@ -1331,7 +1425,7 @@ mod tests {
     #[test]
     fn version_refusal_precedes_incompatible_header_or_module_decode() -> Result<(), Box<dyn std::error::Error>> {
         for version in [
-            EXECUTABLE_REPRESENTATION_VERSION - 1,
+            super::OLDEST_SUPPORTED_VERSION - 1,
             EXECUTABLE_REPRESENTATION_VERSION + 1,
         ] {
             let bytes = postcard::to_allocvec(&version)?;
@@ -1883,6 +1977,7 @@ mod tests {
                 arguments: Vec::new(),
                 methods: Some(vec![slot.clone()]),
                 primitive_adapter: None,
+                fields: Vec::new(),
             });
         module.trait_implementations.push(crate::body_ir::TraitImplementation {
             owner: owner.clone(),

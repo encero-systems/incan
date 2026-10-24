@@ -62,10 +62,8 @@ pub def lower_reflection(
                 ReflectionOperation.Metadata =>
                     return Err("unsupported Body IR field metadata without a retained declaration")
                 ReflectionOperation.TypedValue => pass
-                ReflectionOperation.TypedItems =>
-                    items = true
-                ReflectionOperation.StringValue =>
-                    string = true
+                ReflectionOperation.TypedItems => items = true
+                ReflectionOperation.StringValue => string = true
                 ReflectionOperation.StringItems =>
                     string = true
                     items = true
@@ -137,7 +135,12 @@ pub def lower_field_metadata(
                                 None => return Err("unsupported Body IR field metadata identity")
                                 Some(identity) =>
                                     declaration = builder.nominals[owner].canonical
-                                    if identity.origin != declaration.origin or identity.declaration_span != declaration.declaration_span or identity.scope_discriminant != declaration.scope_discriminant or identity.declaration_name != "__fields__":
+                                    if (
+                                        identity.origin != declaration.origin
+                                        or identity.declaration_span != declaration.declaration_span
+                                        or identity.scope_discriminant != declaration.scope_discriminant
+                                        or identity.declaration_name != "__fields__"
+                                    ):
                                         return Err("unsupported Body IR field metadata owner mismatch")
                             return emit_field_metadata(builder, owner, destination, span)
                         _ => return Err("unsupported Body IR field metadata receiver carrier")
@@ -168,7 +171,11 @@ pub def lower_static_field_metadata(
                     )?:
                         PlanType.Model(owner, _name) =>
                             declaration = builder.nominals[owner].canonical
-                            if identity.origin != declaration.origin or identity.declaration_span != declaration.declaration_span or identity.scope_discriminant != declaration.scope_discriminant:
+                            if (
+                                identity.origin != declaration.origin
+                                or identity.declaration_span != declaration.declaration_span
+                                or identity.scope_discriminant != declaration.scope_discriminant
+                            ):
                                 return Ok(false)
                             if len(arguments) != 0 or len(target.type_args) != 0:
                                 return Err("unsupported Body IR static field metadata arguments")
@@ -176,7 +183,7 @@ pub def lower_static_field_metadata(
                         _ => return Err("unsupported Body IR static field metadata owner")
 
 
-def emit_field_metadata(
+pub def emit_field_metadata(
     mut builder: Builder,
     owner: int,
     destination: &Option[RustPlace],
@@ -207,13 +214,7 @@ def reflected_field(mut builder: Builder, owner: int, source: Place, slot: int, 
     if slot < 0 or slot >= len(builder.nominals[owner].fields):
         return Err("unsupported Body IR reflection field slot")
     field_type = builder.nominals[owner].field_types[slot]
-    ty = native_source_type(
-        builder.nominals,
-        builder.enums,
-        builder.unions,
-        field_type,
-        builder.intrinsics,
-    )?
+    ty = native_source_type(builder.nominals, builder.enums, builder.unions, field_type, builder.intrinsics)?
     return appended_field(source, FieldProjection(slot=slot, ty=ty), span)
 
 
@@ -236,7 +237,11 @@ def validate_reflection_fields(
         match target.canonical:
             Some(identity) =>
                 declaration = builder.nominals[owner].canonical
-                if identity.origin != declaration.origin or identity.declaration_span != declaration.declaration_span or identity.scope_discriminant != declaration.scope_discriminant:
+                if (
+                    identity.origin != declaration.origin
+                    or identity.declaration_span != declaration.declaration_span
+                    or identity.scope_discriminant != declaration.scope_discriminant
+                ):
                     return Err("unsupported Body IR reflection generated owner mismatch")
             None => return Err("unsupported Body IR reflection generated owner")
         return Ok(None)
@@ -248,8 +253,10 @@ def validate_reflection_fields(
         if scalar_reflection_type(ty):
             continue
         _index, layout = carrier_layout(builder, ty)?
-        if layout.carrier != "Option" or len(layout.variants[1].fields) != 1 or not scalar_reflection_type(
-            layout.variants[1].fields[0],
+        if (
+            layout.carrier != "Option"
+            or len(layout.variants[1].fields) != 1
+            or not scalar_reflection_type(layout.variants[1].fields[0])
         ):
             return Err("unsupported Body IR generic reflection field capability")
     return Ok(None)
@@ -317,14 +324,7 @@ def field_value(
             if not is_union_carrier(builder, owner):
                 return Err("unsupported Body IR reflection typed overlay")
             member = value_type(builder, value)?
-            slot = union_slot(
-                builder.nominals,
-                builder.enums,
-                builder.unions,
-                owner,
-                member,
-                builder.intrinsics,
-            )?
+            slot = union_slot(builder.nominals, builder.enums, builder.unions, owner, member, builder.intrinsics)?
             output = temporary(builder, expected, span)
             replace_owned_destination(builder, output, RvalueKind.Enum(owner, slot, [value]), span)
             return Ok(read_place(output, true, span))

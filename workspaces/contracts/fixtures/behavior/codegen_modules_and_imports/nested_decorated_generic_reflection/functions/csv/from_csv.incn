@@ -1,20 +1,56 @@
+"""Reflect schemas and retain declaration names across cached, module-bound and plain callable values."""
+
 from substrait.schema import reflected_schema_marker
 
 
+static names: list[str] = []
+
+
 def registered_application(parts: list[str]) -> str:
+    """Read the reflected schema component."""
     return parts[0]
 
 
 def register[F]() -> ((F) -> F):
+    """Return the decorator without choosing a callable signature or cache policy."""
     return (func) => remember[F](func)
 
 
 def remember[F](func: F) -> F:
-    if func.__name__ == "":
-        return func
+    """Observe the declaration's name and preserve the exact callable value."""
+    names.append(func.__name__)
     return func
 
 
 @register()
 pub def from_csv[T]() -> str:
+    """Reflect the closed schema with the existing per-instantiation decorator lifetime."""
     return registered_application([reflected_schema_marker[T]()])
+
+
+@register()
+pub def request(path: str) -> str:
+    """Register a callable that has an ordinary argument."""
+    return path
+
+
+@register()
+pub def positive(value: int) -> bool:
+    """Register a callable with an argument and a non-string return type."""
+    return value > 0
+
+
+def double(value: int) -> int:
+    """Provide a plain declaration whose name is observed through a generic callable argument."""
+    return value * 2
+
+
+pub def plain_result() -> int:
+    """Read and invoke a named function value without a decorator."""
+    held = remember(double)
+    return held(4)
+
+
+pub def recorded_names() -> str:
+    """Expose registration order independently of the functions' argument and result signatures."""
+    return ",".join(names)

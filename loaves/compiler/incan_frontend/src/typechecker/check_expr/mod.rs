@@ -521,10 +521,20 @@ impl TypeChecker {
             .map(|(name, info)| (name.clone(), info))
     }
 
-    /// Return whether one checked field is private outside its declaring nominal type.
+    /// Keep type-private field access within the declaring type and module. A caller's equal-spelled owner grants no
+    /// rights to a foreign field, and absent origin evidence cannot prove private access.
     fn private_field_is_inaccessible(&self, type_name: &str, field: &FieldInfo) -> bool {
+        if !field.is_type_private {
+            return false;
+        }
         let owner = field.owner.as_deref().unwrap_or(type_name);
-        field.is_type_private && self.current_method_owner.as_deref() != Some(owner)
+        if self.current_method_owner.as_deref() != Some(owner) {
+            return true;
+        }
+        match (field.identity.as_ref(), self.symbols.module_type_identity(owner)) {
+            (Some(field), Some(owner)) => field.origin != owner.origin,
+            _ => true,
+        }
     }
 
     /// Resolve an expression receiver like `math` to an imported module binding path.

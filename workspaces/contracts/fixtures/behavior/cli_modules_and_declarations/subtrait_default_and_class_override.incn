@@ -1,21 +1,50 @@
-# behavior: a subtrait default satisfies its supertrait slot through direct and supertrait-bounded calls, and a method a class inherits dispatches its self-calls to the override nearest the subclass, at any depth, while the declaring class keeps its own
+# behavior: a subtrait default satisfies its supertrait slot through direct and supertrait-bounded calls, and classes adopting traits preserve inherited fields and nearest subclass overrides (#1442)
 # expect-stdout:
 #   child
 #   child
 #   2
 #   4
 #   1
+#   animal 7
+#   child 3
+#   child 10
 
 trait Root:
     def label(self) -> str: ...
 
 
-trait Child with Root:
+@requires(value: int)
+trait Stored:
+    """Require the field used by a default inherited through a subtrait."""
+
+    def step(mut self) -> None:
+        """Update the concrete adopter's required field."""
+        self.value += 1
+
+
+@requires(value: int)
+trait Child with Root, Stored:
     def label(self) -> str:
+        """Supply the label required by Root."""
         return "child"
+
+    def reading(self) -> str:
+        """Read the field required of the concrete adopter."""
+        return f"child {self.value}"
+
+    def bump(mut self) -> None:
+        """Mutate the field required of the concrete adopter."""
+        self.value += 1
 
 
 model Item with Child:
+    value: int
+
+
+class OffsetItem with Child:
+    """Put the required field after another field to retain the adopter's exact slot."""
+
+    tag: bool
     value: int
 
 
@@ -23,8 +52,14 @@ def describe[T with Root](item: T) -> str:
     return item.label()
 
 
-class Animal:
+class Animal with Root:
+    """Keep a trait adoption beside the inherited fields and instance methods."""
+
     id: int
+
+    def label(self) -> str:
+        """Describe the field retained by every descendant."""
+        return f"animal {self.id}"
 
     def grow(self) -> int:
         return 1
@@ -46,9 +81,24 @@ class Puppy extends Dog:
         return self.twice()
 
 
+def read_stored[T with Child](item: T) -> str:
+    """Read a required field through the checked subtrait default."""
+    return item.reading()
+
+
 def main() -> None:
+    """Print subtrait defaults and the nearest inherited implementations with their receiver fields."""
     println(Item(value=1).label())
     println(describe(Item(value=1)))
     println(Dog(id=1).feed())
     println(Puppy(id=1).total())
     println(Animal(id=1).feed())
+    println(Dog(id=7).label())
+    mut item = Item(value=1)
+    item.step()
+    item.bump()
+    println(read_stored(item))
+    mut offset = OffsetItem(tag=false, value=8)
+    offset.step()
+    offset.bump()
+    println(read_stored(offset))

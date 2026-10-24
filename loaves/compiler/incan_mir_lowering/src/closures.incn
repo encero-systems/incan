@@ -489,17 +489,18 @@ pub def source_function_item(
     mut builder: Builder,
     value: &RustRvalue,
     span: SourceSpan,
-) -> Result[Option[tuple[str, PlanType]], str]:
-    """Select a function item only from the frontend's explicit named-read fact and canonical forwarding identity."""
+) -> Result[Option[tuple[str, PlanType, str]], str]:
+    """Retain a function item's exact signature and declaration name from its checked named-read or original identity."""
     match value:
         RustRvalue.Closure(params=parameters, captured_operands=captures, body=closure) =>
-            match closure.original_callable:
-                Some(_) =>
+            match closure.original_callable.as_ref():
+                Some(identity) =>
                     if len(captures) != 0 or len(closure.capture_locals) != 0 or len(closure.stmts) != 0:
                         return Err("invalid Body IR original callable computation")
                     for binding in module.decorated_bindings:
                         if binding.original_body.canonical == closure.original_callable:
-                            return Ok(Some(original_function_item(module, builder, parameters, binding)?))
+                            item = original_function_item(module, builder, parameters, binding)?
+                            return Ok(Some((item[0], item[1], str(identity.declaration_name))))
                     return Err("unsupported Body IR unretained original callable")
                 None => pass
             if not closure.function_item:
@@ -516,7 +517,7 @@ def checked_function_item(
     parameters: &list[RustParameter],
     statement: &RustStatementKind,
     span: SourceSpan,
-) -> Result[tuple[str, PlanType], str]:
+) -> Result[tuple[str, PlanType, str], str]:
     """Require the same checked declaration and signature as the named read's retained forwarding call."""
     match statement:
         RustStatementKind.Call(destination=_destination, callee=callee, args=_arguments, may_panic=_panic) =>
@@ -524,10 +525,24 @@ def checked_function_item(
                 RustCallee.Function(target) =>
                     match target:
                         RustCallableTarget.Named(named) =>
-                            return function_item_identity(module, builder, parameters, named, span)
+                            return named_function_item(module, builder, parameters, named, span)
                         _ => return Err("invalid Body IR indirect function-item forwarding target")
                 _ => return Err("invalid Body IR nonfunction item forwarding target")
         _ => return Err("invalid Body IR function-item body")
+
+
+def named_function_item(
+    module: &RustModule,
+    mut builder: Builder,
+    parameters: &list[RustParameter],
+    target: &RustNamedTarget,
+    span: SourceSpan,
+) -> Result[tuple[str, PlanType, str], str]:
+    """Attach the canonical declaration name to an authenticated function item without reading its signature for a name."""
+    item = function_item_identity(module, builder, parameters, target, span)?
+    match target.canonical:
+        Some(identity) => return Ok((item[0], item[1], str(identity.declaration_name)))
+        None => return Err("unsupported Body IR unnamed function item")
 
 
 def item_component(mut builder: Builder, ty: &RustType) -> Result[PlanType, str]:

@@ -2496,64 +2496,58 @@ where
     G: Fn(&mut ResolvedType),
     Q: Fn(&[String]) -> Option<ResolvedType>,
 {
+    let resolve = |ty: &Type| {
+        resolve_type_with_rust_arg_renderer(
+            ty,
+            symbols,
+            render_rust_arg,
+            qualify_structured_rust_arg,
+            resolve_qualified_type,
+        )
+    };
     match ty {
         Type::Qualified(segments) => resolve_qualified_rust_type_path(segments, symbols),
         Type::Dotted(segments) => resolve_qualified_type(segments).unwrap_or(ResolvedType::Unknown),
-        Type::Simple(name) => {
-            if let Some(builtin) = ResolvedType::builtin_simple(name) {
-                return builtin;
-            }
-            if let Some(id) = symbols.lookup(name)
-                && let Some(sym) = symbols.get(id)
-                && let SymbolKind::RustItem(info) = &sym.kind
-            {
-                return match info.binding {
-                    RustImportBindingKind::CrateRoot => ResolvedType::Unknown,
-                    RustImportBindingKind::RootedPath | RustImportBindingKind::FromImport => {
-                        ResolvedType::RustPath(info.path.clone())
-                    }
-                };
-            }
-            // Check if it's a known type
-            if symbols.lookup(name).is_some() {
-                ResolvedType::Named(name.clone())
-            } else {
-                // Could be a type variable
-                ResolvedType::TypeVar(name.clone())
-            }
-        }
+        Type::Simple(name) => resolve_simple_type(name, symbols),
         Type::ConstrainedPrimitive(name, _) => {
             let base = Type::Simple(name.clone());
-            resolve_type_with_rust_arg_renderer(
-                &base,
-                symbols,
-                render_rust_arg,
-                qualify_structured_rust_arg,
-                resolve_qualified_type,
-            )
+            resolve(&base)
         }
         Type::Generic(name, args) => {
-            let mut resolved_args: Vec<_> = args
-                .iter()
-                .map(|arg| {
-                    resolve_type_with_rust_arg_renderer(
-                        &arg.node,
-                        symbols,
-                        render_rust_arg,
-                        qualify_structured_rust_arg,
-                        resolve_qualified_type,
-                    )
-                })
-                .collect();
+            let mut resolved_args: Vec<_> = args.iter().map(|arg| resolve(&arg.node)).collect();
             if let Some(id) = symbols.lookup(name)
                 && let Some(symbol) = symbols.get(id)
                 && let SymbolKind::RustItem(info) = &symbol.kind
                 && !matches!(info.binding, RustImportBindingKind::CrateRoot)
             {
-                if rust_generic_preserves_nominal_ir(info) {
+                if rust_generic_preserves_nominal_ir(info)
+                    || resolved_args.iter().any(|arg| source_nominal_argument(arg, symbols))
+                {
+                    // Source facades keep the registry contract for wrapped fields; ordinary native containers keep
+                    // their canonical path across module boundaries.
+                    let source_surface = surface_types::from_str(name.as_str())
+                        .is_some_and(surface_types::field_access_reads_wrapped_value);
+                    if source_surface {
+                        return ResolvedType::Generic(name.clone(), resolved_args);
+                    }
                     for arg in &mut resolved_args {
                         qualify_structured_rust_arg(arg);
+                        if !rust_generic_preserves_nominal_ir(info) {
+                            *arg = crate::resolved_type_subst::map_resolved_type_leaves(arg, &|leaf| {
+                                let ResolvedType::Named(name) = leaf else { return None };
+                                symbols
+                                    .module_type_identity(name)
+                                    .and_then(incan_semantics_core::body_ir::nominal_carrier_key)
+                                    .map(ResolvedType::Named)
+                            });
+                        }
                     }
+                    let base = if rust_generic_preserves_nominal_ir(info) {
+                        name.clone()
+                    } else {
+                        info.path.clone()
+                    };
+                    return ResolvedType::Generic(base, resolved_args);
                 } else {
                     let rendered_args = resolved_args.iter().map(render_rust_arg).collect::<Vec<_>>().join(", ");
                     return ResolvedType::RustPath(format!("{}<{rendered_args}>", info.path));
@@ -2574,18 +2568,7 @@ where
             ResolvedType::Generic(name.clone(), resolved_args)
         }
         Type::DottedGeneric(segments, args) => {
-            let resolved_args = args
-                .iter()
-                .map(|arg| {
-                    resolve_type_with_rust_arg_renderer(
-                        &arg.node,
-                        symbols,
-                        render_rust_arg,
-                        qualify_structured_rust_arg,
-                        resolve_qualified_type,
-                    )
-                })
-                .collect();
+            let resolved_args = args.iter().map(|arg| resolve(&arg.node)).collect();
             // A proven constructor applies its declaration's name; an unproven one keeps the dotted spelling it
             // always had, so nothing downstream sees a new shape for a spelling the checker did not prove.
             match resolve_qualified_type(segments) {
@@ -2603,62 +2586,20 @@ where
                         Type::MutParam(inner) => (&inner.node, true),
                         other => (other, false),
                     };
-                    CallableParam::positional(resolve_type_with_rust_arg_renderer(
-                        param_ty,
-                        symbols,
-                        render_rust_arg,
-                        qualify_structured_rust_arg,
-                        resolve_qualified_type,
-                    ))
-                    .with_mut(is_mut)
+                    CallableParam::positional(resolve(param_ty)).with_mut(is_mut)
                 })
                 .collect();
-            let resolved_ret = resolve_type_with_rust_arg_renderer(
-                &ret.node,
-                symbols,
-                render_rust_arg,
-                qualify_structured_rust_arg,
-                resolve_qualified_type,
-            );
+            let resolved_ret = resolve(&ret.node);
             ResolvedType::Function(resolved_params, Box::new(resolved_ret))
         }
-        Type::Ref(inner) => ResolvedType::Ref(Box::new(resolve_type_with_rust_arg_renderer(
-            &inner.node,
-            symbols,
-            render_rust_arg,
-            qualify_structured_rust_arg,
-            resolve_qualified_type,
-        ))),
+        Type::Ref(inner) => ResolvedType::Ref(Box::new(resolve(&inner.node))),
         // The parser produces the marker only inside a callable type's parameters, handled above; anywhere else it
         // names its type.
-        Type::MutParam(inner) => resolve_type_with_rust_arg_renderer(
-            &inner.node,
-            symbols,
-            render_rust_arg,
-            qualify_structured_rust_arg,
-            resolve_qualified_type,
-        ),
-        Type::RefMut(inner) => ResolvedType::RefMut(Box::new(resolve_type_with_rust_arg_renderer(
-            &inner.node,
-            symbols,
-            render_rust_arg,
-            qualify_structured_rust_arg,
-            resolve_qualified_type,
-        ))),
+        Type::MutParam(inner) => resolve(&inner.node),
+        Type::RefMut(inner) => ResolvedType::RefMut(Box::new(resolve(&inner.node))),
         Type::Unit => ResolvedType::Unit,
         Type::Tuple(elems) => {
-            let resolved_elems: Vec<_> = elems
-                .iter()
-                .map(|element| {
-                    resolve_type_with_rust_arg_renderer(
-                        &element.node,
-                        symbols,
-                        render_rust_arg,
-                        qualify_structured_rust_arg,
-                        resolve_qualified_type,
-                    )
-                })
-                .collect();
+            let resolved_elems: Vec<_> = elems.iter().map(|element| resolve(&element.node)).collect();
             ResolvedType::Tuple(resolved_elems)
         }
         Type::SelfType => ResolvedType::SelfType,
@@ -2666,16 +2607,65 @@ where
     }
 }
 
+/// Resolve builtin and native import names before ordinary source nominal or still-open parameter spellings.
+fn resolve_simple_type(name: &str, symbols: &SymbolTable) -> ResolvedType {
+    if let Some(builtin) = ResolvedType::builtin_simple(name) {
+        return builtin;
+    }
+    if let Some(id) = symbols.lookup(name)
+        && let Some(symbol) = symbols.get(id)
+        && let SymbolKind::RustItem(info) = &symbol.kind
+    {
+        return match info.binding {
+            RustImportBindingKind::CrateRoot => ResolvedType::Unknown,
+            RustImportBindingKind::RootedPath | RustImportBindingKind::FromImport => {
+                ResolvedType::RustPath(info.path.clone())
+            }
+        };
+    }
+    if symbols.lookup(name).is_some() {
+        return ResolvedType::Named(name.to_owned());
+    }
+    ResolvedType::TypeVar(name.to_owned())
+}
+
 /// Return whether one compiler-owned Rust generic keeps its structured semantic IR representation.
 ///
 /// `Box[T]` participates in receiver/method semantics that consume `ResolvedType::Generic`. Other Rust applications,
-/// including standard-library types such as `PhantomData[T]`, retain their complete canonical display for declaration
-/// emission across compiled-library boundaries.
+/// without source-owned arguments retain their complete canonical display. Source-owned arguments instead stay
+/// structural so their declaring identity crosses native generic boundaries.
 fn rust_generic_preserves_nominal_ir(info: &RustItemInfo) -> bool {
     matches!(
         info.path.as_str(),
         "std::boxed::Box" | "alloc::boxed::Box" | "rust::std::boxed::Box" | "rust::alloc::boxed::Box"
     )
+}
+
+/// Keep source-owned generic arguments structural while their declaring symbols still establish their identities.
+fn source_nominal_argument(ty: &ResolvedType, symbols: &SymbolTable) -> bool {
+    match ty {
+        ResolvedType::Named(name) => symbols
+            .module_type_identity(name)
+            .and_then(incan_semantics_core::body_ir::nominal_carrier_key)
+            .is_some(),
+        ResolvedType::Generic(name, arguments) => {
+            symbols
+                .module_type_identity(name)
+                .and_then(incan_semantics_core::body_ir::nominal_carrier_key)
+                .is_some()
+                || arguments.iter().any(|ty| source_nominal_argument(ty, symbols))
+        }
+        ResolvedType::Tuple(elements) => elements.iter().any(|ty| source_nominal_argument(ty, symbols)),
+        ResolvedType::Ref(inner)
+        | ResolvedType::RefMut(inner)
+        | ResolvedType::FrozenList(inner)
+        | ResolvedType::FrozenSet(inner)
+        | ResolvedType::TypeToken(inner) => source_nominal_argument(inner, symbols),
+        ResolvedType::FrozenDict(key, value) => {
+            source_nominal_argument(key, symbols) || source_nominal_argument(value, symbols)
+        }
+        _ => false,
+    }
 }
 
 /// Render one checked type as a Rust generic argument without retaining source-only collection spellings.

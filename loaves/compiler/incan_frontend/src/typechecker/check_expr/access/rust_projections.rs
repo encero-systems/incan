@@ -7,7 +7,6 @@ use crate::resolved_type_subst::map_resolved_type_leaves;
 use crate::symbols::ResolvedType;
 use crate::typechecker::helpers::render_resolved_type_as_rust_arg;
 use incan_lang::interop::{RustFunctionSig, RustImplementedTrait, RustItemKind, ancestral_rust_path};
-use incan_lang::lang::types::numerics;
 use quote::ToTokens;
 
 impl TypeChecker {

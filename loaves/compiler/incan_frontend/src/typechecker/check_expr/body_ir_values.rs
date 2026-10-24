@@ -290,6 +290,7 @@ impl TypeChecker {
 
     /// Propagate exact lexical reads, checked nominal members, canonical Result contracts and comprehension elements.
     /// Incompatible constraints and members without a checked declaration publish no fact.
+    /// Exact lexical reads and projections preserve the selected nominal leaves rather than source-facing names.
     pub(in crate::typechecker) fn retain_body_ir_result_value(
         &mut self,
         expression: &Spanned<Expr>,
@@ -380,13 +381,24 @@ impl TypeChecker {
                         .get(&(expression.span.start, expression.span.end))
                 })
                 .cloned(),
-            Expr::Field(receiver, field) => self.body_ir_newtype_field_type(receiver, field),
+            Expr::Field(receiver, field) => self.body_ir_nominal_field_type(receiver, field),
             Expr::Index(receiver, index) => self.body_ir_indexed_value_type(receiver, index),
             _ => None,
         };
         let Some(actual) = actual else {
             return;
         };
+        // Canonical lexical reads and projections keep the selected owner's nominal leaves.
+        if Self::is_settled_type_argument(&actual)
+            && (matches!(expression.node, Expr::Field(_, _) | Expr::Index(_, _))
+                || matches!(expression.node, Expr::Ident(_)) && same_retained_value_shape(self, recorded, &actual))
+        {
+            self.type_info
+                .expressions
+                .body_ir_expr_types
+                .insert((expression.span.start, expression.span.end), actual);
+            return;
+        }
         let closed = self.body_ir_close_value_parts(recorded, &actual);
         if !self.types_compatible(&closed, &actual) {
             return;
@@ -547,17 +559,19 @@ impl TypeChecker {
         pattern: &Spanned<Pattern>,
         iterable: &Spanned<Expr>,
     ) {
-        let Some(actual) = self
-            .body_ir_checked_value_type(iterable.span)
-            .and_then(Self::body_ir_list_element_type)
-        else {
+        let Some(retained) = self.body_ir_checked_value_type(iterable.span) else {
             return;
         };
+        let actual = self.infer_iterator_element_type(retained);
+        if Self::is_settled_type_argument(&actual) {
+            self.retain_body_ir_for_value(pattern, &actual);
+            return;
+        }
         let Some(recorded) = self.type_info.expr_type(pattern.span) else {
             return;
         };
-        let closed = self.body_ir_close_value_parts(recorded, actual);
-        if closed != *recorded && self.types_compatible(&closed, actual) {
+        let closed = self.body_ir_close_value_parts(recorded, &actual);
+        if closed != *recorded && self.types_compatible(&closed, &actual) {
             self.retain_body_ir_for_value(pattern, &closed);
         }
     }
@@ -667,6 +681,47 @@ impl TypeChecker {
             vec![ok.clone(), error.clone()],
         ))
     }
+}
+
+/// Preserve nominal owners only across the same value shape; contextual wrapping, numeric conversions and narrowing
+/// keep their checked result.
+fn same_retained_value_shape(checker: &TypeChecker, recorded: &ResolvedType, actual: &ResolvedType) -> bool {
+    match (recorded, actual) {
+        (ResolvedType::Named(name), ResolvedType::Named(other)) => same_retained_nominal_head(checker, name, other),
+        (ResolvedType::Generic(name, parts), ResolvedType::Generic(other, values)) => {
+            same_retained_nominal_head(checker, name, other) && same_retained_value_parts(checker, parts, values)
+        }
+        (ResolvedType::Tuple(parts), ResolvedType::Tuple(values)) => same_retained_value_parts(checker, parts, values),
+        (ResolvedType::Ref(inner), ResolvedType::Ref(other))
+        | (ResolvedType::RefMut(inner), ResolvedType::RefMut(other)) => {
+            same_retained_value_shape(checker, inner, other)
+        }
+        _ => recorded == actual,
+    }
+}
+
+/// Require every structural position to retain its own shape before copying a binding's exact nominal leaves.
+fn same_retained_value_parts(checker: &TypeChecker, recorded: &[ResolvedType], actual: &[ResolvedType]) -> bool {
+    recorded.len() == actual.len()
+        && recorded
+            .iter()
+            .zip(actual)
+            .all(|(left, right)| same_retained_value_shape(checker, left, right))
+}
+
+/// Match a retained canonical carrier to its source declaration name without treating a newtype coercion as an
+/// unchanged value.
+fn same_retained_nominal_head(checker: &TypeChecker, recorded: &str, actual: &str) -> bool {
+    if recorded == actual {
+        return true;
+    }
+    let source_name = checker
+        .symbols
+        .module_type_identity(recorded)
+        .map_or(recorded, |identity| identity.declaration_name.as_str());
+    checker.declaration_nominal_scopes.keys().any(|identity| {
+        identity.declaration_name == source_name && nominal_carrier_key(identity).as_deref() == Some(actual)
+    })
 }
 
 /// Preserve expected nominal leaves through their declaration's retained bindings. This only projects a

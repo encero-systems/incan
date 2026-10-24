@@ -17,7 +17,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let receiver_type = self.metadata_receiver_type(receiver, span, owner)?;
         let expected = match operation {
             bir::TypeMetadataOperation::ClassName => "__class_name__",
-            bir::TypeMetadataOperation::FieldCount => "__fields__",
+            bir::TypeMetadataOperation::FieldCount | bir::TypeMetadataOperation::Fields => "__fields__",
         };
         if member.declaration_name != expected {
             return None;
@@ -48,8 +48,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         (parameter_types::retained_nominal_identity(name, self.type_info) == Some(owner)).then_some(ty)
     }
 
-    /// Emit a compiler-generated class name, evaluating an instance receiver once while leaving type receivers pure.
-    pub(super) fn lower_type_class_name(
+    /// Emit a generated class name or field table, keeping type receivers pure through generic closure and evaluating
+    /// an instance receiver exactly once.
+    pub(super) fn lower_type_member_metadata(
         &mut self,
         receiver: &ast::Spanned<ast::Expr>,
         type_args: &[ast::Spanned<ast::Type>],
@@ -61,7 +62,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if !type_args.is_empty() || !args.is_empty() {
             return None;
         }
-        let target = self.checked_type_metadata_target(receiver, span, bir::TypeMetadataOperation::ClassName)?;
+        let operation = match self.type_info.resolved_identity(span)?.declaration_name.as_str() {
+            "__class_name__" => bir::TypeMetadataOperation::ClassName,
+            "__fields__" => bir::TypeMetadataOperation::Fields,
+            _ => return None,
+        };
+        let target = self.checked_type_metadata_target(receiver, span, operation)?;
         if self.static_receiver_type(receiver, span).is_none() {
             self.lower_expr_to_operand(receiver, scope, out);
         }

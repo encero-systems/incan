@@ -247,9 +247,9 @@ def source_nominal_storage(body: &Body, ty: &RustType) -> Result[RustType, str]:
 
 def source_nominal_owner(body: &Body, name: str) -> bool:
     """Require the checker's source declaration identity before separating nominal arguments from native storage."""
-    match body.named_type_identities.get(str(name)):
-        Some(identity) => return source_nominal_identity(identity)
-        None => pass
+    for key, identity in body.named_type_identities.iter():
+        if str(key) == name:
+            return source_nominal_identity(identity)
     for identity in body.named_type_identities.values():
         match nominal_carrier_key(identity):
             Some(key) =>

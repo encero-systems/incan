@@ -357,6 +357,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 ast::FStringPart::Expr { expr, format } => {
                     let operand = self.lower_expr_to_operand(expr, scope, out);
                     let operand = self.retain_evaluated_value_read(expr, operand, scope, out);
+                    let operand = if matches!(format, ast::FStringFormat::Display) {
+                        self.lower_selected_display_operand(expr.span, operand, scope, out)
+                    } else {
+                        operand
+                    };
                     let style = match format {
                         ast::FStringFormat::Display if matches!(self.resolve_ty(expr.span), IncanType::TypeVar(_)) => {
                             bir::FormatStyle::TypeParameterDisplay

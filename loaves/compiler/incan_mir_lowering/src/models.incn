@@ -2,7 +2,7 @@
 
 pub from frame import place_type
 from collections import primitive_leaf
-from rust::incan_semantics_core import IncanType as RustType
+from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId
 from rust::incan_semantics_core::body_ir import (
     NominalDeclaration,
     ConstructorTarget,
@@ -355,17 +355,18 @@ def field_referent(ty: PlanType) -> Option[PlanType]:
 
 
 pub def field_slot(value: &RustPlaceElem, declaration: &NominalDeclaration) -> Result[int, str]:
-    """Require an exact canonical stored field; report the rejected projection and selected layout for diagnosis."""
+    """Require an exact stored field or its checked trait requirement binding; never resolve a missing identity by name."""
     # Legacy #459-like pattern-only imports require the typed enum parameter until dev.8.
     match value:
         RustPlaceElem.Field(name=name, canonical=canonical, structural=structural) =>
             if not structural:
                 match canonical:
                     Some(identity) =>
+                        selected = checked_field_identity(declaration, identity)?
                         for slot in range(len(declaration.fields)):
                             if (
                                 declaration.fields[slot] == str(name)
-                                and declaration.field_identities[slot] == identity.clone()
+                                and declaration.field_identities[slot] == selected
                             ):
                                 return Ok(slot)
                     None => pass
@@ -374,6 +375,24 @@ pub def field_slot(value: &RustPlaceElem, declaration: &NominalDeclaration) -> R
                 )
             return Err("unsupported Body IR structural model projection")
         _ => return Err("unsupported Body IR model index or slice projection")
+
+
+def checked_field_identity(
+    declaration: &NominalDeclaration,
+    identity: &CanonicalSymbolId,
+) -> Result[CanonicalSymbolId, str]:
+    """Apply an exact required-field witness once, refusing conflicting bindings instead of selecting by field name."""
+    mut selected = identity.clone()
+    mut bound = false
+    for adoption in declaration.trait_adoptions:
+        for field in adoption.fields:
+            if field.requirement != identity.clone():
+                continue
+            if bound and selected != field.implementation:
+                return Err("invalid Body IR conflicting required field bindings")
+            selected = field.implementation.clone()
+            bound = true
+    return Ok(selected)
 
 
 pub def constructor_index(

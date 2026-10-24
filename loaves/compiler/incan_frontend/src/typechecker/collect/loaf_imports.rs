@@ -2343,7 +2343,7 @@ impl TypeChecker {
     }
 
     /// Rewrite imported semantic type references through type aliases from the source library manifest.
-    pub(super) fn remap_symbol_kind_with_import_aliases(
+    pub(in crate::typechecker) fn remap_symbol_kind_with_import_aliases(
         &self,
         kind: &mut SymbolKind,
         imported_type_aliases: &HashMap<String, String>,

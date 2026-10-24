@@ -981,6 +981,7 @@ fn checked_trait_adoptions(owner: &str, parameters: &[String], facts: &TypeCheck
                     .collect(),
                 methods: adoption.methods.clone(),
                 primitive_adapter: None,
+                fields: adoption.fields.clone(),
             }
         })
         .collect()
