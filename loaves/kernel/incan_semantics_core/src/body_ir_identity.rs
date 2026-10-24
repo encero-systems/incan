@@ -16,7 +16,7 @@ use crate::body_ir::{
 };
 use crate::{
     CanonicalSymbolId, CompilerNodeId, CompilerNodeKind, IncanPrimitiveType, IncanType, SemanticSourceTargetKind,
-    SymbolNamespace, canonical_module_identity,
+    SymbolNamespace, SymbolOrigin, canonical_module_identity,
 };
 
 /// Match an initialized method's explicit passing reference against its receiver frame's nominal type and mode.
@@ -80,7 +80,8 @@ impl BodyIrModule {
     }
 
     /// Prove an RFC 036 original and wrapper belong to the same source declaration and obey the checked replacement
-    /// lifetime. Only module replacements acquire initialized storage; originals never replace ordinary lookup.
+    /// lifetime. Linked wrappers contribute their authenticated declaration frame for signature validation only.
+    /// Only module replacements acquire initialized storage; originals never replace ordinary lookup.
     pub fn is_well_formed_decorated_binding(&self, binding: &crate::body_ir::DecoratedBinding) -> bool {
         if binding.initialization == crate::body_ir::DecoratedInitialization::PerInvocation {
             return binding.initializer.is_none() && self.is_well_formed_invocation_binding(binding);
@@ -113,7 +114,7 @@ impl BodyIrModule {
             && self.body_has_canonical_direct_call_id(original)
             && initializer.canonical == original.canonical
             && initializer.decl_id == original.decl_id
-            && self.bodies.iter().any(|body| {
+            && self.callable_declaration_frames().any(|body| {
                 body.canonical == original.canonical
                     && matches!(&replacement.ty, IncanType::Function { params, return_type }
                         if params.len() == body.params.len()
@@ -156,7 +157,9 @@ impl BodyIrModule {
         let IncanType::Function { params, return_type } = &initializer.return_type else {
             return false;
         };
-        let mut wrappers = self.bodies.iter().filter(|body| body.canonical == original.canonical);
+        let mut wrappers = self
+            .callable_declaration_frames()
+            .filter(|body| body.canonical == original.canonical);
         let Some(wrapper) = wrappers.next() else {
             return false;
         };
@@ -198,7 +201,7 @@ impl BodyIrModule {
                 crate::body_ir::decorated_signature_uses_parameters(&parameter.ty, &original.type_parameters)
             }) || crate::body_ir::decorated_signature_uses_parameters(&original.return_type, &original.type_parameters);
         uses_parameters
-            && self.bodies.iter().any(|wrapper| {
+            && self.callable_declaration_frames().any(|wrapper| {
                 wrapper.canonical.as_ref() == Some(identity)
                     && wrapper.decl_id == original.decl_id
                     && self.body_has_canonical_direct_call_id(wrapper)
@@ -518,6 +521,10 @@ impl BodyIrModule {
                             || methods[..index].contains(method)
                     })
                 })
+                || adoption
+                    .primitive_adapter
+                    .as_ref()
+                    .is_some_and(|adapter| !adapter.is_well_formed_for(declaration, adoption))
                 || declaration.trait_adoptions[..index].contains(adoption)
         }) {
             return false;
@@ -1103,6 +1110,78 @@ fn literal_static_carrier_matches(ty: &IncanType, value: &Constant) -> bool {
             | (IncanType::Primitive(IncanPrimitiveType::Bool), Constant::Bool(_))
             | (IncanType::Primitive(IncanPrimitiveType::Str), Constant::Str(_))
     )
+}
+
+impl crate::body_ir::PrimitiveTraitAdapter {
+    /// Return the exact source carrier admitted for an adapter family. Checker retention and publication validation
+    /// share this projection so a registered family cannot receive inconsistent payload-field authority.
+    pub fn registered_receiver_type(
+        family: incan_lang::lang::trait_capabilities::TraitCapabilityType,
+    ) -> Option<IncanType> {
+        use crate::IncanPrimitiveType;
+        use incan_lang::lang::trait_capabilities::TraitCapabilityType;
+        match family {
+            TraitCapabilityType::Str => Some(IncanType::Primitive(IncanPrimitiveType::Str)),
+            TraitCapabilityType::Int => Some(IncanType::Primitive(IncanPrimitiveType::Int)),
+            TraitCapabilityType::Bool => Some(IncanType::Primitive(IncanPrimitiveType::Bool)),
+            TraitCapabilityType::Numeric(numeric) => Some(IncanType::Primitive(IncanPrimitiveType::Numeric(numeric))),
+            TraitCapabilityType::Decimal => Some(IncanType::Decimal {
+                precision: 38,
+                scale: 0,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Validate the registered source owner, its sole payload field, exact trait and owned decoder identity.
+    /// Executable consumers must additionally validate the retained method bodies and decoder result signature.
+    pub fn is_well_formed_for(&self, owner: &NominalDeclaration, adoption: &crate::body_ir::TraitAdoption) -> bool {
+        let SymbolOrigin::Package { library, module_path } = &owner.canonical.origin else {
+            return false;
+        };
+        let SymbolOrigin::Package {
+            library: trait_library,
+            module_path: trait_module,
+        } = &adoption.trait_identity.origin
+        else {
+            return false;
+        };
+        let registered = incan_lang::lang::trait_capabilities::PRIMITIVE_SOURCE_ADAPTERS
+            .iter()
+            .any(|specification| {
+                specification.matches_owner(library, module_path, &owner.canonical.declaration_name)
+                    && specification.matches_trait(
+                        trait_library,
+                        trait_module,
+                        &adoption.trait_identity.declaration_name,
+                    )
+                    && Self::registered_receiver_type(specification.receiver).as_ref() == Some(&self.receiver_type)
+                    && self.payload_field.declaration_name == specification.payload_field
+                    && self.decode_slot.declaration_name == specification.decode_slot
+                    && self.decoded_value.declaration_name == specification.decoded_value
+            });
+        registered
+            && owner.canonical.kind == SemanticSourceTargetKind::Model
+            && owner.type_parameters.is_empty()
+            && owner.field_types.as_slice() == [self.receiver_type.clone()]
+            && owner.field_identities.as_slice() == [self.payload_field.clone()]
+            && owner.field_public.as_slice() == [true]
+            && adoption.arguments.is_empty()
+            && adoption.methods.is_some()
+            && adoption
+                .methods
+                .as_ref()
+                .is_some_and(|methods| methods.contains(&self.decode_slot))
+            && self.decode_slot.kind == SemanticSourceTargetKind::Method
+            && self.decode_slot.namespace == SymbolNamespace::Member
+            && self.decode_slot.origin == adoption.trait_identity.origin
+            && declares_member(&adoption.trait_identity, &self.decode_slot)
+            && self.decoded_value.kind == SemanticSourceTargetKind::Method
+            && self.decoded_value.namespace == SymbolNamespace::Member
+            && self.decoded_value.scope_discriminant.is_none()
+            && self.decoded_value.origin == owner.canonical.origin
+            && declares_member(&owner.canonical, &self.decoded_value)
+    }
 }
 
 /// Whether `member` is declared inside `owner`: its declaration site lies within the owner's.

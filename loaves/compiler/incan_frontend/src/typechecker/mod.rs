@@ -3217,23 +3217,29 @@ impl TypeChecker {
                 .symbols
                 .lookup(name)
                 .and_then(|id| self.symbols.identity_of(id))
-                .or_else(|| self.public_library_type_identities.get(name)?.canonical.as_ref())?;
-            match &identity.origin {
+                .or_else(|| self.public_library_type_identities.get(name)?.canonical.as_ref())
+                .cloned()
+                .or_else(|| {
+                    let (module_path, declaration) = self.resolve_bound_trait_path(name)?;
+                    self.package_trait_declaration(&module_path, &declaration)
+                })?;
+            match identity.origin {
                 SymbolOrigin::Package { library, module_path } => {
-                    Some((identity, library.clone(), module_path.clone()))
+                    Some((identity.kind, identity.declaration_name, library, module_path))
                 }
                 _ => None,
             }
         };
-        let (trait_identity, trait_library, trait_module) = package_of(trait_name)?;
-        let (_, type_library, _) = package_of(type_name)?;
-        (trait_identity.kind == SemanticSourceTargetKind::Trait && trait_library == type_library)
-            .then(|| (trait_module, trait_identity.declaration_name.clone()))
+        let (trait_kind, declaration_name, trait_library, trait_module) = package_of(trait_name)?;
+        let (_, _, type_library, _) = package_of(type_name)?;
+        (trait_kind == SemanticSourceTargetKind::Trait && trait_library == type_library)
+            .then_some((trait_module, declaration_name))
     }
 
     /// Return the checked identity of a trait in an admitted package or standard module, as its identity graph
     /// publishes it. Standard and public-package paths select the same declaring identity; an alias export retains
-    /// its target. An unowned module or a non-trait member grants no adoption.
+    /// its target. A canonical physical module path can also select that exact published declaration without
+    /// requiring a consumer import. An unowned module or a non-trait member grants no adoption.
     fn package_trait_declaration(&self, module_path: &[String], name: &str) -> Option<CanonicalSymbolId> {
         let (manifest, rest) = match module_path {
             [root, library, rest @ ..] if root == PUBLIC_LIBRARY_NAMESPACE => (self.loaves.manifest(library)?, rest),
@@ -3248,6 +3254,20 @@ impl TypeChecker {
             .contract_metadata
             .identity_graph
             .canonical_for_public_path(&public_path)
+            .or_else(|| {
+                manifest
+                    .contract_metadata
+                    .identity_graph
+                    .exports
+                    .iter()
+                    .find_map(|export| {
+                        let identity = export.canonical.as_ref()?.hydrate()?;
+                        matches!(&identity.origin, SymbolOrigin::Package { library, module_path }
+                        if library == &manifest.name && module_path.as_slice() == rest)
+                        .then_some(identity)
+                        .filter(|identity| identity.declaration_name == name)
+                    })
+            })
             .filter(|identity| identity.kind == SemanticSourceTargetKind::Trait)
     }
 

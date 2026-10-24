@@ -1,7 +1,7 @@
 """Generic native ADTs published by their declaring Loaf, without consumer-owned replacement structs."""
 
 from rust::incan_semantics_core import IncanType as RustType, SemanticSourceTargetKind, IncanCallableParam, IncanCallableParamKind
-from rust::incan_semantics_core::body_ir import BodyIrModule, NominalDeclaration
+from rust::incan_semantics_core::body_ir import BodyIrModule, Body, NominalDeclaration, StaticInitializer
 from pub::incan_mir_plan import GenericLayoutType, GenericLayoutField, GenericModelDeclaration, SourceSpan
 from nominal_instances import NominalInstance
 from decls import library_item
@@ -14,8 +14,16 @@ pub def generic_models(
     instances: list[NominalInstance],
     file: str,
 ) -> Result[list[GenericModelDeclaration], str]:
-    """Retain public model/class templates; uninstantiated newtypes remain governed, and linked Loaves own their ADTs."""
+    """Retain source model/class templates needed by consumers; linked Loaves own their existing ADTs.
+
+    1. Inventory template references in checked frame and field types.
+    2. Select public, instantiated or referenced source templates.
+    3. Validate their fields and derives before emitting native declarations.
+    """
+    # 1. Inventory references before a consumer closes the producer's governed bodies.
+    referenced = referenced_templates(module)
     mut models: list[GenericModelDeclaration] = []
+    # 2. Keep private templates that a retained source frame or field can instantiate later.
     for declaration in module.nominal_declarations:
         if len(declaration.type_parameters) == 0 or library_item(declaration) != "":
             continue
@@ -23,12 +31,13 @@ pub def generic_models(
         for instance in instances:
             if instance.declaration.canonical == declaration.canonical:
                 instantiated = true
-        if not declaration.public and not instantiated:
+        if not declaration.public and not instantiated and str(declaration.name) not in referenced:
             continue
         if declaration.canonical.kind == SemanticSourceTargetKind.Newtype:
             if not instantiated:
                 continue
             return Err("unsupported Body IR generic Loaf newtype layout")
+        # 3. Validate native layout and derive requirements before publishing this declaration.
         mut fields: list[GenericLayoutField] = []
         for index in range(len(declaration.fields)):
             mut field_type = GenericLayoutType.Parameter("")
@@ -62,6 +71,55 @@ pub def generic_models(
             span=SourceSpan(file=file, line=1, column=1),
         ))
     return Ok(models)
+
+
+def referenced_templates(module: &BodyIrModule) -> list[str]:
+    """Inventory checked template heads without selecting implementations or inferring bindings from source names."""
+    mut referenced: list[str] = []
+    for body in module.bodies:
+        retain_frame_templates(body, referenced)
+    for declaration in module.nominal_declarations:
+        for field in declaration.field_types:
+            retain_type_templates(field, referenced)
+    for declaration in module.type_alias_declarations:
+        retain_type_templates(declaration.ty, referenced)
+    for declaration in module.enum_declarations:
+        for variant in declaration.variants:
+            for field in variant.fields:
+                retain_type_templates(field, referenced)
+    for declaration in module.static_declarations:
+        match declaration.initial:
+            StaticInitializer.Computed(body) => retain_frame_templates(body, referenced)
+            _ => pass
+    return referenced
+
+
+def retain_frame_templates(body: &Body, mut referenced: list[str]) -> None:
+    """Preserve template requirements from checked locals, including parameters, and the frame's return type."""
+    retain_type_templates(body.return_type, referenced)
+    for local in body.locals:
+        retain_type_templates(local.ty, referenced)
+
+
+def retain_type_templates(ty: &RustType, mut referenced: list[str]) -> None:
+    """Record exact checked generic heads through the structural types a retained frame may instantiate."""
+    match ty:
+        RustType.Generic(base=base, args=arguments) =>
+            if str(base) not in referenced:
+                referenced.append(str(base))
+            for argument in arguments:
+                retain_type_templates(argument, referenced)
+        RustType.Tuple(elements) =>
+            for element in elements:
+                retain_type_templates(element, referenced)
+        RustType.Ref(inner) => retain_type_templates(inner, referenced)
+        RustType.RefMut(inner) => retain_type_templates(inner, referenced)
+        RustType.NativeArray(element=element, length=_length) => retain_type_templates(element, referenced)
+        RustType.Function(params=parameters, return_type=result) =>
+            for parameter in parameters:
+                retain_type_templates(parameter.ty, referenced)
+            retain_type_templates(result, referenced)
+        _ => pass
 
 
 def generic_field_type(module: &BodyIrModule, ty: &RustType, parameters: list[str]) -> Result[GenericLayoutType, str]:

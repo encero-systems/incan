@@ -368,6 +368,8 @@ pub(super) fn lower_source_partial(
     let named_type_identities =
         builder.finish_type_identities(facts.type_info.declarations.named_type_identities.clone());
     bir::Body {
+        trait_default_instantiation: None,
+        nominal_instantiation: Vec::new(),
         decl_id: direct_call_id.clone(),
         direct_call_id,
         canonical: binding.and_then(|binding| binding.identity.clone()),

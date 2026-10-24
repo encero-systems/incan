@@ -500,7 +500,8 @@ fn span(source: &SourceSpan) -> Result<(), PlanError> {
 }
 
 /// Check the parameter-local convention and all nodes in one function. Exact shared scalar inputs borrow caller
-/// storage; return types keep their separate lifetime and representation gate.
+/// storage; return types keep their separate lifetime and representation gate. Validated future boxing frames also
+/// admit the exact native inputs whose loans their constructor lifetime retains.
 fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> {
     span(&function.span)?;
     if std::iter::once(&function.return_type)
@@ -536,7 +537,9 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
         if !identifier(&parameter.name) || !parameters.insert(&parameter.name) {
             return Err(invalid(function, "parameter name is invalid or duplicated"));
         }
-        if !source_parameter_type(&scalar(&parameter.ty)) {
+        if !source_parameter_type(&scalar(&parameter.ty))
+            && !(function.future_callee.is_some() && external_signature_type(&scalar(&parameter.ty)))
+        {
             return Err(invalid(
                 function,
                 format!("parameter `{}` has unsupported type {:?}", parameter.name, parameter.ty),
@@ -605,12 +608,6 @@ fn validate_future_constructor(plan: &Plan, function: &Function) -> Result<(), P
     let [output] = outputs.as_slice() else {
         return Err(invalid(function, "unsupported future constructor output arity"));
     };
-    if crate::futures::borrowed_captures(function) > 1 {
-        return Err(invalid(
-            function,
-            "unsupported future constructor with multiple borrowed captures",
-        ));
-    }
     if function.is_async
         || function.locals.len() != function.parameters.len() + 1
         || function.blocks.len() != 1
@@ -651,7 +648,11 @@ fn validate_future_constructor(plan: &Plan, function: &Function) -> Result<(), P
                 }
             }
             if matches!(callee.kind, CalleeKind::FutureMethod(..))
-                && (path.split("::").count() < 3 || crate::futures::borrowed_captures(function) != 1)
+                && (path.split("::").count() < 3
+                    || !function
+                        .parameters
+                        .first()
+                        .is_some_and(|parameter| crate::futures::borrowed_parameter(&parameter.ty)))
             {
                 return Err(invalid(
                     function,
@@ -1107,7 +1108,9 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
         RvalueKind::FunctionItem(callee) => {
             let name = match &callee.kind {
                 CalleeKind::Planned(name) | CalleeKind::External(name) => name,
-                _ => return Err(invalid(function, "function item requires a retained declaration")),
+                _ => {
+                    return Err(invalid(function, "function item requires a retained declaration"));
+                }
             };
             let (mut parameters, result) = signature(plan, function, callee)?;
             parameters.push(result);
@@ -1518,13 +1521,13 @@ fn external_signature_type(ty: &Scalar) -> bool {
         )
 }
 
-/// The scalar reference carrier borrows primitive storage, a function pointer, or a sized shared reference.
-/// Borrowing a reference preserves its referent and does not make that referent writable.
+/// The scalar reference carrier borrows primitive storage, a checked tuple, a function pointer, or a sized shared
+/// reference. Borrowing a reference preserves its referent and does not make that referent writable.
 fn scalar_referent(ty: &Scalar) -> bool {
     if shared_reference(ty) {
         return true;
     }
-    if matches!(ty, Scalar::FunctionPointer(_)) {
+    if matches!(ty, Scalar::FunctionPointer(_) | Scalar::Tuple(_)) {
         return source_signature_type(ty);
     }
     sized_numeric(ty).is_some()
@@ -2355,6 +2358,9 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
                     reason: "scalar reference requires one admitted sized scalar referent".into(),
                 });
             }
+            for element in elements {
+                validate_model_type(plan, element)?;
+            }
         }
         PlanType::FrozenCollection(name, elements) | PlanType::FrozenCollectionRef(name, elements) => {
             let arity = match name.as_str() {
@@ -2444,7 +2450,9 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
         if actual != expected {
             return Err(PlanError::Invalid {
                 function: name.clone(),
-                reason: "function item signature differs from its declaration".into(),
+                reason: format!(
+                    "function item signature differs from its declaration: retained {actual:?}, declared {expected:?}"
+                ),
             });
         }
     }

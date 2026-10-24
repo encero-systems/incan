@@ -143,6 +143,8 @@ pub def shared_receiver_type(ty: PlanType) -> Result[PlanType, str]:
         PlanType.NativeSlice(elements) => return Ok(PlanType.SliceRef(elements))
         PlanType.FunctionPointer(_signature) => return Ok(PlanType.ScalarRef([ty]))
         PlanType.Model(index, name) => return Ok(PlanType.ModelRef(index, name))
+        PlanType.Tuple(_elements) => return Ok(PlanType.ScalarRef([ty]))
+        PlanType.FrozenCollection(name, elements) => return Ok(PlanType.FrozenCollectionRef(name, elements))
         PlanType.Enum(index, name) => return Ok(PlanType.EnumRef(index, name))
         PlanType.ValidationError => return Ok(PlanType.ValidationErrorRef)
         PlanType.String => return Ok(PlanType.StringRef)

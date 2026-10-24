@@ -15,6 +15,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// elements around it exactly as written. Each source is captured into an owned temporary using its checked
     /// ownership fact before later entries run. A spread contributes one [`bir::ArgumentElement::Spread`] whose
     /// length is a runtime fact; surrounding fixed elements keep their positions relative to it.
+    /// Metadata-selected native element adjustments execute before a contextually typed native list is assembled.
     pub(super) fn lower_list_literal(
         &mut self,
         entries: &[ast::ListEntry],
@@ -27,7 +28,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         for entry in entries {
             match entry {
                 ast::ListEntry::Element(item) => {
-                    let value = self.lower_expr_to_operand(item, scope, out);
+                    let value = match self.lower_adjusted_argument(item, scope, out) {
+                        Some(Ok(value)) => value,
+                        Some(Err(reason)) => self.unsupported_operand(reason, scope, hir_span(item.span), out),
+                        None => self.lower_expr_to_operand(item, scope, out),
+                    };
                     let value = self.retain_evaluated_value_read(item, value, scope, out);
                     elements.push(bir::ArgumentElement::One(value));
                 }

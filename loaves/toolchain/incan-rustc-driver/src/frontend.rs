@@ -381,7 +381,7 @@ fn load_loaf_modules(loaves: &LoafIndex, requested: &BTreeSet<CanonicalSymbolId>
         .map_err(|error| format!("unsupported Body IR Loaf declaration: {error}"))
 }
 
-/// Complete the dependency context with the checked comparison slots needed by native bridges, then retain linked
+/// Complete the dependency context with checked comparison slots and source primitive adapters, then retain linked
 /// contracts and held Rust layouts. Install the sole callable inventory before collecting its native signature
 /// carriers. The added defaults introduce no new source checking or invented implementations.
 fn complete_dependency_context(
@@ -390,12 +390,13 @@ fn complete_dependency_context(
     mut requested: BTreeSet<CanonicalSymbolId>,
     package_identity: &str,
 ) -> Result<CheckedProgram, String> {
-    let defaults = incan_frontend::body_ir::required_comparison_defaults(&program.modules[program.own..])
+    let mut defaults = incan_frontend::body_ir::required_comparison_defaults(&program.modules[program.own..])
         .into_iter()
         .filter(
             |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity),
         )
         .collect::<BTreeSet<_>>();
+    defaults.extend(incan_frontend::body_ir::required_primitive_adapters(loaves, &requested));
     if !defaults.is_subset(&requested) {
         requested.extend(defaults);
         let mut expanded = load_loaf_modules(loaves, &requested)?;
@@ -517,8 +518,7 @@ fn take_rust_layouts(modules: &mut [BodyIrModule]) -> Result<Vec<NominalDeclarat
             if !matches!(
                 declaration.canonical.origin,
                 incan_semantics_core::SymbolOrigin::RustCrate(_)
-            ) || (declaration.fields.is_empty() && declaration.derives.is_empty())
-            {
+            ) {
                 module.nominal_declarations.push(declaration);
                 continue;
             }

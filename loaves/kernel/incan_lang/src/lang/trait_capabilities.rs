@@ -73,6 +73,79 @@ pub struct TraitCapabilityInfo {
     pub bridge_hooks: Option<TraitCapabilityBridgeHooks>,
 }
 
+/// One concrete source model implementing a temporary primitive capability. These names locate declarations in
+/// the standard provider; executable consumers require their checked canonical identities and source bodies.
+#[derive(Debug, Clone, Copy)]
+pub struct PrimitiveSourceAdapterInfo {
+    /// Capability contract implemented by the source model.
+    pub capability: TraitCapabilityId,
+    /// Primitive source family whose values the model wraps.
+    pub receiver: TraitCapabilityType,
+    /// Standard provider declaring the model.
+    pub package: &'static str,
+    /// Source module declaring the model.
+    pub module_path: &'static [&'static str],
+    /// Actual model declaration name.
+    pub declaration_name: &'static str,
+    /// The model's single checked payload field.
+    pub payload_field: &'static str,
+    /// Trait slot whose adapter result is projected back to the primitive value.
+    pub decode_slot: &'static str,
+    /// Associated source method returning the primitive payload of a decoded adapter.
+    pub decoded_value: &'static str,
+}
+
+impl PrimitiveSourceAdapterInfo {
+    /// Verify the source location of the registered model independently of its public import aliases.
+    pub fn matches_owner(&self, package: &str, module_path: &[String], name: &str) -> bool {
+        package == self.package
+            && name == self.declaration_name
+            && module_path
+                .iter()
+                .map(String::as_str)
+                .eq(self.module_path.iter().copied())
+    }
+
+    /// Verify the source location of this adapter's capability contract in its standard provider.
+    pub fn matches_trait(&self, package: &str, module_path: &[String], name: &str) -> bool {
+        TRAIT_CAPABILITIES.iter().any(|capability| {
+            capability.id == self.capability
+                && package == self.package
+                && name == capability.trait_name
+                && module_path
+                    .iter()
+                    .map(String::as_str)
+                    .eq(capability.module_path.iter().skip(1).copied())
+        })
+    }
+}
+
+/// Source-owned implementations of temporary primitive capability families. A missing entry grants no adapter.
+pub const PRIMITIVE_SOURCE_ADAPTERS: &[PrimitiveSourceAdapterInfo] = &[
+    ordinal_source_adapter(TraitCapabilityType::Str, "_OrdinalTextKey"),
+    ordinal_source_adapter(TraitCapabilityType::Int, "_OrdinalIntKey"),
+    ordinal_source_adapter(TraitCapabilityType::Numeric(NumericTypeId::I32), "_OrdinalI32Key"),
+    ordinal_source_adapter(TraitCapabilityType::Bool, "_OrdinalBoolKey"),
+    ordinal_source_adapter(TraitCapabilityType::Decimal, "_OrdinalDecimalKey"),
+];
+
+/// Describe one source-owned ordinal adapter without duplicating the authenticated trait and field contract.
+const fn ordinal_source_adapter(
+    receiver: TraitCapabilityType,
+    declaration_name: &'static str,
+) -> PrimitiveSourceAdapterInfo {
+    PrimitiveSourceAdapterInfo {
+        capability: TraitCapabilityId::StableOrdinalKey,
+        receiver,
+        package: "incan_stdlib_data",
+        module_path: &["ordinal_adapters"],
+        declaration_name,
+        payload_field: "value",
+        decode_slot: "from_ordinal_bytes",
+        decoded_value: "decoded_value",
+    }
+}
+
 /// Temporary bridge for the source-owned `std.traits.convert.TryFrom[str]` contract.
 pub const STRING_TRY_FROM_CAPABILITY: TraitCapabilityInfo = TraitCapabilityInfo {
     id: TraitCapabilityId::StringTryFrom,

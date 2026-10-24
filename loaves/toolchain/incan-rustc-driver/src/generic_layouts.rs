@@ -12,6 +12,7 @@ use rustc_span::{Ident, Span, Symbol, kw, respan};
 use thin_vec::{ThinVec, thin_vec};
 
 /// Declare the generic ADT and its source-shaped Debug implementation, excluding its private marker from output.
+/// The compiled ABI exposes every retained layout; the checked manifest governs source visibility separately.
 pub(crate) fn items(
     model: &GenericModelDeclaration,
     generator: &ast::attr::AttrIdGenerator,

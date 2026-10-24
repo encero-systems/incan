@@ -191,19 +191,57 @@ fn alias_with_lifetime(output: &PlanType, borrowed: bool, span: Span) -> Box<ast
     )
 }
 
-/// Count retained nominal loans captured by a native SDK future constructor.
+/// Identify an explicit input loan from its exact AST carrier, including text, slices and nominal references.
+pub(crate) fn borrowed_parameter(ty: &PlanType) -> bool {
+    matches!(declarations::ty(ty, rustc_span::DUMMY_SP).kind, ast::TyKind::Ref(..))
+}
+
+/// Count every explicit input loan captured by a native SDK future constructor.
 pub(crate) fn borrowed_captures(function: &Function) -> usize {
     function
         .parameters
         .iter()
-        .filter(|parameter| matches!(parameter.ty, PlanType::ModelRef(..) | PlanType::ModelMutRef(..)))
+        .filter(|parameter| borrowed_parameter(&parameter.ty))
         .count()
 }
 
-/// Tie a single receiver's boxed future to its input loan through ordinary native lifetime elision.
+/// Give a borrowing constructor one lifetime shared by its input reborrows and boxed result. Callers shorten each
+/// independent input loan to their intersection; the future cannot outlive any captured argument.
+pub(crate) fn constructor_generics(function: &Function, span: Span) -> ast::Generics {
+    let mut generics = ast::Generics::default();
+    if function.future_callee.is_some() && borrowed_captures(function) != 0 {
+        generics.params.push(ast::GenericParam {
+            id: ast::DUMMY_NODE_ID,
+            ident: Ident::new(Symbol::intern("'future"), span),
+            attrs: ThinVec::new(),
+            bounds: Vec::new(),
+            is_placeholder: false,
+            kind: ast::GenericParamKind::Lifetime,
+            colon_span: None,
+        });
+    }
+    generics
+}
+
+/// Preserve a constructor parameter's exact carrier while tying each explicit loan to the boxed future's lifetime.
+/// Owned inputs retain their ordinary storage and introduce no lifetime parameter.
+pub(crate) fn constructor_parameter_type(function: &Function, parameter: &PlanType, span: Span) -> Box<ast::Ty> {
+    let mut ty = declarations::ty(parameter, span);
+    if function.future_callee.is_some()
+        && let ast::TyKind::Ref(lifetime, _) = &mut ty.kind
+    {
+        *lifetime = Some(ast::Lifetime {
+            id: ast::DUMMY_NODE_ID,
+            ident: Ident::new(Symbol::intern("'future"), span),
+        });
+    }
+    ty
+}
+
+/// Bound a constructor's boxed future by all captured input loans using the explicit constructor lifetime.
 pub(crate) fn constructor_return_type(function: &Function, span: Span) -> Option<Box<ast::Ty>> {
     function.future_callee.as_ref()?;
-    if borrowed_captures(function) != 1 {
+    if borrowed_captures(function) == 0 {
         return None;
     }
     let PlanType::Future(outputs) = &function.return_type else {
@@ -218,7 +256,7 @@ pub(crate) fn constructor_return_type(function: &Function, span: Span) -> Option
         span,
         args: thin_vec![ast::AngleBracketedArg::Arg(ast::GenericArg::Lifetime(ast::Lifetime {
             id: ast::DUMMY_NODE_ID,
-            ident: Ident::new(Symbol::intern("'_"), span),
+            ident: Ident::new(Symbol::intern("'future"), span),
         }))],
     })));
     Some(Box::new(ast::Ty {

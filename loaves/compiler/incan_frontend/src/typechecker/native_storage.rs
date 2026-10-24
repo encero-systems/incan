@@ -32,6 +32,7 @@ impl TypeChecker {
         let mut calls = std::mem::take(&mut self.type_info.rust.checked_calls);
         let mut awaits = std::mem::take(&mut self.type_info.rust.await_conversions);
         let mut arguments = std::mem::take(&mut self.type_info.rust.argument_adjustments);
+        let mut elements = std::mem::take(&mut self.type_info.rust.element_adjustments);
         let mut fields = std::mem::take(&mut self.type_info.rust.field_adjustments);
         let mut function_values = std::mem::take(&mut self.type_info.rust.checked_function_values);
         let mut hooks = std::mem::take(&mut self.type_info.rust.iteration_hooks);
@@ -40,6 +41,7 @@ impl TypeChecker {
             .values_mut()
             .chain(awaits.values_mut())
             .chain(arguments.values_mut().flatten())
+            .chain(elements.values_mut())
             .chain(fields.values_mut().flatten())
             .chain(function_values.values_mut())
         {
@@ -74,6 +76,7 @@ impl TypeChecker {
         self.type_info.rust.checked_calls = calls;
         self.type_info.rust.await_conversions = awaits;
         self.type_info.rust.argument_adjustments = arguments;
+        self.type_info.rust.element_adjustments = elements;
         self.type_info.rust.field_adjustments = fields;
         self.type_info.rust.checked_function_values = function_values;
         self.type_info.rust.iteration_hooks = hooks;
@@ -372,6 +375,32 @@ impl TypeChecker {
         parameters: &[String],
     ) -> ResolvedType {
         let base = self.rust_public_type_path(base);
+        // These internal constructors retain exact native element storage. Source frozen views additionally freeze
+        // text and bytes, so reusing those public constructor names would change FrozenList<String> into a list of
+        // static text. The lowering reads this storage decision rather than resolving a native owner again.
+        let frozen = match (base.as_str(), arguments.len()) {
+            ("incan_std_core::frozen::FrozenList", 1) => Some("$FrozenList"),
+            ("incan_std_core::frozen::FrozenSet", 1) => Some("$FrozenSet"),
+            ("incan_std_core::frozen::FrozenDict", 2) => Some("$FrozenDict"),
+            _ => None,
+        };
+        if let Some(constructor) = frozen {
+            return ResolvedType::Generic(
+                constructor.into(),
+                arguments
+                    .iter()
+                    .map(|argument| self.rust_storage_resolved(argument, parameters))
+                    .collect(),
+            );
+        }
+        if base == "incan_std_core::num::Decimal128" && arguments.is_empty() {
+            // Decimal precision and scale constrain source expressions; all such expressions and this native
+            // definition share the runtime's Decimal128 storage. Do not invent a separate nominal MIR carrier.
+            return ResolvedType::Generic(
+                "decimal".into(),
+                vec![ResolvedType::TypeVar("38".into()), ResolvedType::TypeVar("0".into())],
+            );
+        }
         if body_ir::rust_item_identity(&base).is_some()
             && let Some(incan_lang::interop::RustItemMetadata {
                 kind: incan_lang::interop::RustItemKind::Type(info),

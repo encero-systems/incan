@@ -1,0 +1,280 @@
+"""Source implementations used by the checked primitive OrdinalKey capability bridge."""
+
+from rust::std::string import String as RustString
+from rust::incan_std_core::num import Decimal128 as NativeDecimal
+from collections import OrdinalKey, OrdinalMapError
+
+
+pub model _OrdinalTextKey with OrdinalKey:
+    """Adapt a primitive text value to the source-owned canonical UTF-8 key contract."""
+
+    pub value: str
+
+    @staticmethod
+    def ordinal_encoding() -> str:
+        """Return the canonical UTF-8 wire identifier.
+
+        1. Return the stable identifier of the source encoder.
+        """
+        # 1. Return the source encoder's stable wire identifier.
+        return "str:utf8"
+
+    @staticmethod
+    def from_ordinal_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
+        """Decode strict UTF-8 and preserve malformed input as the public structured key error.
+
+        1. Decode the complete byte payload as strict UTF-8.
+        2. Wrap the text or return the structured key error.
+        """
+        # 1. Decode the complete payload as strict UTF-8.
+        decoded = RustString.from_utf8(data)
+        # 2. Wrap the text or preserve the structured key error.
+        match decoded:
+            Ok(value) => return Ok(_OrdinalTextKey(value=str(value)))
+            Err(error) => return Err(OrdinalMapError.invalid_key_record(str(error)))
+
+    @staticmethod
+    def decoded_value(data: bytes) -> Result[str, OrdinalMapError]:
+        """Return the primitive payload of a successfully decoded source adapter.
+
+        1. Decode through the same source-owned OrdinalKey implementation.
+        2. Project its primitive payload or propagate its structured error.
+        """
+        # 1. Decode through the source-owned key implementation.
+        decoded = _OrdinalTextKey.from_ordinal_bytes(data)
+        # 2. Project its primitive payload or propagate the structured error.
+        match decoded:
+            Ok(key) => return Ok(key.value)
+            Err(error) => return Err(error)
+
+    def ordinal_bytes(self) -> bytes:
+        """Encode exactly the receiver's UTF-8 bytes.
+
+        1. Encode the wrapped primitive with the standard UTF-8 operation.
+        """
+        # 1. Encode the primitive with the standard UTF-8 operation.
+        return self.value.encode()
+
+
+def _signed_bytes(value: i128, width: int) -> bytes:
+    """Encode a signed integer in exactly width little-endian two's-complement bytes."""
+    mut remaining = value
+    mut result: list[u8] = []
+    for _index in range(width):
+        byte: u8 = (remaining & 255i128).wrapping_resize()
+        result.append(byte)
+        remaining = remaining >> 8
+    return result
+
+
+def _signed_value(data: bytes, width: int) -> Result[i128, OrdinalMapError]:
+    """Decode one exact-width signed integer, sign-extending its most significant byte."""
+    if len(data) != width:
+        return Err(OrdinalMapError.invalid_key_record("integer key has an incorrect byte width"))
+    mut result: i128 = 0
+    if data[width - 1] & 128u8 != 0u8:
+        result = -1
+    for index in range(width - 1, -1, -1):
+        byte: i128 = data[index].wrapping_resize()
+        result = (result << 8) | byte
+    return Ok(result)
+
+
+pub model _OrdinalI32Key with OrdinalKey:
+    """Implement the canonical signed 32-bit key wire format in source."""
+
+    pub value: i32
+
+    @staticmethod
+    def ordinal_encoding() -> str:
+        """Return the signed 32-bit wire identifier.
+
+        1. Return the stable little-endian encoding name.
+        """
+        # 1. Return the stable encoding name.
+        return "int:i32:le"
+
+    @staticmethod
+    def from_ordinal_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
+        """Decode exactly four bytes into the wrapped signed carrier.
+
+        1. Decode and resize the exact-width payload.
+        2. Wrap the signed value.
+        """
+        # 1. Decode and resize the exact-width payload.
+        value: i32 = _signed_value(data, 4)?.wrapping_resize()
+        # 2. Wrap the signed value.
+        return Ok(_OrdinalI32Key(value=value))
+
+    @staticmethod
+    def decoded_value(data: bytes) -> Result[i32, OrdinalMapError]:
+        """Project the decoded primitive through the same checked decoder.
+
+        1. Decode and project the wrapped value.
+        """
+        # 1. Decode and project the wrapped value.
+        return Ok(_OrdinalI32Key.from_ordinal_bytes(data)?.value)
+
+    def ordinal_bytes(self) -> bytes:
+        """Encode the wrapped signed value as four little-endian bytes.
+
+        1. Widen the signed value without changing its sign.
+        2. Encode exactly four bytes.
+        """
+        # 1. Preserve the signed value in the shared encoder's carrier.
+        value: i128 = self.value.wrapping_resize()
+        # 2. Encode exactly four bytes.
+        return _signed_bytes(value, 4)
+
+
+pub model _OrdinalIntKey with OrdinalKey:
+    """Implement the canonical signed 64-bit key wire format in source."""
+
+    pub value: int
+
+    @staticmethod
+    def ordinal_encoding() -> str:
+        """Return the signed 64-bit wire identifier.
+
+        1. Return the stable little-endian encoding name.
+        """
+        # 1. Return the stable encoding name.
+        return "int:i64:le"
+
+    @staticmethod
+    def from_ordinal_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
+        """Decode exactly eight bytes into the wrapped signed carrier.
+
+        1. Decode and resize the exact-width payload.
+        2. Wrap the signed value.
+        """
+        # 1. Decode and resize the exact-width payload.
+        value: int = _signed_value(data, 8)?.wrapping_resize()
+        # 2. Wrap the signed value.
+        return Ok(_OrdinalIntKey(value=value))
+
+    @staticmethod
+    def decoded_value(data: bytes) -> Result[int, OrdinalMapError]:
+        """Project the decoded primitive through the same checked decoder.
+
+        1. Decode and project the wrapped value.
+        """
+        # 1. Decode and project the wrapped value.
+        return Ok(_OrdinalIntKey.from_ordinal_bytes(data)?.value)
+
+    def ordinal_bytes(self) -> bytes:
+        """Encode the wrapped signed value as eight little-endian bytes.
+
+        1. Widen the signed value without changing its sign.
+        2. Encode exactly eight bytes.
+        """
+        # 1. Preserve the signed value in the shared encoder's carrier.
+        value: i128 = self.value.wrapping_resize()
+        # 2. Encode exactly eight bytes.
+        return _signed_bytes(value, 8)
+
+
+pub model _OrdinalBoolKey with OrdinalKey:
+    """Implement the canonical boolean key wire format in source."""
+
+    pub value: bool
+
+    @staticmethod
+    def ordinal_encoding() -> str:
+        """Return the boolean wire identifier.
+
+        1. Return the stable single-byte encoding name.
+        """
+        # 1. Return the stable encoding name.
+        return "bool:u8"
+
+    @staticmethod
+    def from_ordinal_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
+        """Accept only the exact false and true byte representations.
+
+        1. Require one byte.
+        2. Decode zero or one, preserving malformed input as a structured error.
+        """
+        # 1. Require one byte.
+        if len(data) != 1:
+            return Err(OrdinalMapError.invalid_key_record("boolean key must contain one byte"))
+        # 2. Decode zero or one and reject every other byte.
+        if data[0] == 0u8:
+            return Ok(_OrdinalBoolKey(value=false))
+        if data[0] == 1u8:
+            return Ok(_OrdinalBoolKey(value=true))
+        return Err(OrdinalMapError.invalid_key_record("boolean key must be zero or one"))
+
+    @staticmethod
+    def decoded_value(data: bytes) -> Result[bool, OrdinalMapError]:
+        """Project the decoded primitive through the same checked decoder.
+
+        1. Decode and project the wrapped value.
+        """
+        # 1. Decode and project the wrapped value.
+        return Ok(_OrdinalBoolKey.from_ordinal_bytes(data)?.value)
+
+    def ordinal_bytes(self) -> bytes:
+        """Encode false as zero and true as one.
+
+        1. Select the receiver's canonical byte.
+        """
+        # 1. Select the receiver's canonical byte.
+        if self.value:
+            return [1u8]
+        return [0u8]
+
+
+pub model _OrdinalDecimalKey with OrdinalKey:
+    """Implement the decimal coefficient and scale wire format through its existing native carrier."""
+
+    pub value: decimal[38, 0]
+
+    @staticmethod
+    def ordinal_encoding() -> str:
+        """Return the stable coefficient and scale wire identifier.
+
+        1. Return the stable signed coefficient and scale encoding name.
+        """
+        # 1. Return the stable encoding name.
+        return "decimal128:coefficient-i128-le:scale-u8"
+
+    @staticmethod
+    def from_ordinal_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
+        """Decode the signed coefficient and require a supported decimal scale.
+
+        1. Require the exact width and a supported scale.
+        2. Decode the coefficient and construct its existing native decimal carrier.
+        """
+        # 1. Require the exact width and a supported scale.
+        if len(data) != 17 or data[16] > 38u8:
+            return Err(OrdinalMapError.invalid_key_record("decimal key requires 17 bytes and scale at most 38"))
+        # 2. Decode the coefficient and preserve its stored scale.
+        coefficient = _signed_value(data[:16], 16)?
+        value = NativeDecimal.new(coefficient, data[16])
+        return Ok(_OrdinalDecimalKey(value=value))
+
+    @staticmethod
+    def decoded_value(data: bytes) -> Result[decimal[38, 0], OrdinalMapError]:
+        """Project the decoded primitive through the same checked decoder.
+
+        1. Decode and project the wrapped value.
+        """
+        # 1. Decode and project the wrapped value.
+        return Ok(_OrdinalDecimalKey.from_ordinal_bytes(data)?.value)
+
+    def ordinal_bytes(self) -> bytes:
+        """Encode the exact coefficient followed by its written scale.
+
+        1. Encode the signed coefficient in sixteen bytes.
+        2. Append its stored scale byte.
+        """
+        # 1. Encode the signed coefficient in sixteen bytes.
+        coefficient = _signed_bytes(NativeDecimal.coefficient(self.value), 16)
+        mut result: list[u8] = []
+        for byte in coefficient:
+            narrow: u8 = byte.wrapping_resize()
+            result.append(narrow)
+        # 2. Append its stored scale byte.
+        result.append(NativeDecimal.scale(self.value))
+        return result

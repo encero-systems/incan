@@ -260,6 +260,8 @@ pub(super) fn finish_static_initializer_body(
     let direct_call_id = CompilerNodeId::declaration_span(builder.module_identity, span.start, span.end);
     bir::Body {
         type_parameters: Vec::new(),
+        trait_default_instantiation: None,
+        nominal_instantiation: Vec::new(),
         decl_id: direct_call_id.clone(),
         direct_call_id,
         canonical: Some(canonical.clone()),
@@ -417,6 +419,8 @@ pub(super) fn lower_function_body(
         builder.finish_type_identities(parameter_types::retained_type_identities(lowering_facts.type_info));
     bir::Body {
         type_parameters: builder.type_parameters,
+        trait_default_instantiation: None,
+        nominal_instantiation: Vec::new(),
         decl_id,
         direct_call_id,
         canonical: binding.and_then(|binding| binding.identity.clone()),
@@ -629,6 +633,8 @@ pub(super) fn lower_method_body(
     let named_type_identities =
         builder.finish_type_identities(parameter_types::retained_type_identities(lowering_facts.type_info));
     Some(bir::Body {
+        trait_default_instantiation: None,
+        nominal_instantiation: Vec::new(),
         // Nominal receiver frames close their owner through layout specialization. Trait defaults instead retain
         // their owner binders until the checked adoption specializes them; publication must know the exact scope.
         type_parameters: if method.receiver.is_none() || *receiver_ty == IncanType::SelfType {

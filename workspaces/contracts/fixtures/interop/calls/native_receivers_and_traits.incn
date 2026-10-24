@@ -1,4 +1,4 @@
-# behavior: native receivers retain owners, bounds, items, borrow modes and Unix CommandExt callees (#2256)
+# behavior: native receivers retain owners, bounds, items, borrows, CommandExt and collection length calls (#2256)
 # expect-stdout:
 #   allocated
 #   1
@@ -90,6 +90,7 @@ def show_trait_methods() -> None:
     println(Duration.from_secs(3).eq(Duration.from_secs(3)))
     mut queue: VecDeque[i64] = VecDeque.new()
     queue.push_back(3i64)
+    assert len(queue) == 1
     mut seen = 0
     for index, _value in enumerate(queue.iter()):
         seen += index + 1

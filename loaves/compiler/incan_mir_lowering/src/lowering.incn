@@ -216,6 +216,7 @@ from decorator_caches import (
     reified_pointer,
 )
 from traits import (
+    close_trait_dispatch_arguments,
     is_default_body,
     append_default_type_bindings,
     is_lazy_method_body,
@@ -422,6 +423,7 @@ from defaults import (
 from type_parameters import Instance, instantiate, substitute, callable_storage_arguments
 from runtime_calls import retain_runtime_instances
 from runtime_layouts import runtime_zip_carriers
+from primitive_traits import normalized_primitive_call, has_adapter_slot
 from generic_callables import owned_callable_slots
 from sdk_generic_callables import sdk_owned_callable_bindings, sdk_callable_type, sdk_callable_type_arguments
 from shared_callables import record_scalar_closure, scalar_capture, shared_sdk_operands
@@ -477,7 +479,7 @@ pub type BodyIrModule = rusttype RustBodyIrModule:
 
 def validate_project_module(module: &BodyIrModule, modules: &list[BodyIrModule]) -> Result[int, str]:
     """Validate one module of a project, resolving its trait implementations against every module of the project."""
-    count = validate_declarations_and_bodies(module)?
+    count = validate_project_declarations(module, modules)?
     for implementation in module.trait_implementations:
         match validate_project_implementation(module, implementation, modules):
             Ok(_valid) => pass
@@ -486,6 +488,26 @@ def validate_project_module(module: &BodyIrModule, modules: &list[BodyIrModule])
                     return Err("unsupported Body IR open trait default type arguments")
                 return Err(f"{reason}; owner={implementation.owner:?}; slot={implementation.method:?}; implementation={implementation.implementation:?}")
     return Ok(count)
+
+
+def validate_project_declarations(module: &BodyIrModule, modules: &list[BodyIrModule]) -> Result[int, str]:
+    """Validate decorated declarations with their owning compiled frames from the shared callable inventory.
+
+    The driver moves linked callables into one inventory. This view supplies declaration facts only; it does not
+    restore a native wrapper as an executable source body or duplicate the program's callable inventory.
+    """
+    if len(module.decorated_bindings) == 0:
+        return validate_declarations_and_bodies(module)
+    mut view = module.clone()
+    for source in modules:
+        for index in range(len(source.loaf_callables)):
+            callable = source.loaf_callables[index]
+            match canonical_module_identity(callable.canonical):
+                Some(owner) =>
+                    if str(owner) == str(module.module_id.path()):
+                        view.loaf_callables.push(callable.clone())
+                None => pass
+    return validate_declarations_and_bodies(view)
 
 
 def validate_declarations_and_bodies(module: &BodyIrModule) -> Result[int, str]:
@@ -786,7 +808,7 @@ def target_read(mut builder: Builder, target: Place, fact: &OwnershipFact, span:
             if frozen_observation_type(place_type(builder.locals, target)):
                 return Ok(read_place(target, false, span))
             ty = place_type(builder.locals, target)
-            if numeric_carrier(ty) or ty == PlanType.Bool or ty == PlanType.Unit or ty == PlanType.RangeValue:
+            if numeric_carrier(ty) or ty in [PlanType.Bool, PlanType.Unit, PlanType.Decimal, PlanType.RangeValue]:
                 return Ok(Operand(kind=OperandKind.Copy(target), span=span))
             if is_tuple_type(place_type(builder.locals, target)):
                 return clone_tuple_operand(builder, target, span)
@@ -825,7 +847,7 @@ def target_read(mut builder: Builder, target: Place, fact: &OwnershipFact, span:
                 Projection.VariantField(_variant, _slot, _ty) => return enum_payload_read(builder, target, fact, span)
                 _ =>
                     selected_type = place_type(builder.locals, target)
-                    if numeric_carrier(selected_type) or selected_type == PlanType.Bool or selected_type == PlanType.Unit:
+                    if numeric_carrier(selected_type) or selected_type in [PlanType.Bool, PlanType.Unit, PlanType.Decimal]:
                         return Ok(Operand(kind=OperandKind.Copy(target), span=span))
                     site = f"{builder.file}:{span.line}:{span.column} in {builder.name}"
                     detail = f"projection {target.projection:?}; selected type {selected_type:?}"
@@ -2566,6 +2588,7 @@ def lifted_frame(mut builder: Builder, name: str, arguments: list[PlanType], res
         unions=builder.unions,
         type_parameters=builder.type_parameters,
         type_arguments=builder.type_arguments,
+        trait_environment=builder.trait_environment.clone(),
         instances=[],
         function_pointer_locals=pointer_locals,
         name=name,
@@ -3087,6 +3110,18 @@ def lower_call(
     statement: &RustStatement,
     span: SourceSpan,
 ) -> Result[None, str]:
+    """Normalize checked primitive adapters before the existing dispatcher consumes the complete call record."""
+    match normalized_primitive_call(module, builder, statement, span)?:
+        Some(selected) => return lower_checked_call(module, builder, selected, span)
+        None => return lower_checked_call(module, builder, statement, span)
+
+
+def lower_checked_call(
+    module: &BodyIrModule,
+    mut builder: Builder,
+    statement: &RustStatement,
+    span: SourceSpan,
+) -> Result[None, str]:
     """Dispatch by the retained callee kind, preserving the call's operand and result facts."""
     match statement.kind:
         RustStatementKind.Call(destination=destination, callee=callee, args=arguments, may_panic=_may_panic) =>
@@ -3138,8 +3173,13 @@ def lower_value_enum_method(
     return select_value_enum_raw(builder, owner, source, output, span)
 
 
-def ordinal_value_owner(mut builder: Builder, ty: PlanType) -> Option[int]:
-    """Locate a value enum by its retained native layout identity, including a borrowed receiver."""
+pub def ordinal_value_owner(mut builder: Builder, ty: PlanType) -> Option[int]:
+    """Locate a source value enum by its retained layout identity, including a borrowed receiver.
+
+    1. Read the enum's checked layout slot.
+    2. Match its exact retained source identity.
+    """
+    # 1. Read the enum's checked layout slot.
     mut index = -1
     match ty:
         PlanType.Enum(owner, _name) =>
@@ -3149,73 +3189,13 @@ def ordinal_value_owner(mut builder: Builder, ty: PlanType) -> Option[int]:
         _ => return None
     if index < 0 or index >= len(builder.enums):
         return None
+    # 2. Match its exact retained source identity.
     for owner in range(len(builder.value_enums)):
         if builder.enums[index].canonical == builder.value_enums[owner].canonical and library_enum_item(
             builder.enums[index],
         ) == "":
             return Some(owner)
     return None
-
-
-def lower_value_enum_ordinal(
-    module: &BodyIrModule,
-    mut builder: Builder,
-    target: &MethodTarget,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
-    span: SourceSpan,
-) -> Result[bool, str]:
-    """Encode a source value enum through its retained raw getter and the SDK's proven scalar OrdinalKey implementation."""
-    match target.loaf_trait:
-        None => return Ok(false)
-        Some(dispatch) =>
-            if str(dispatch.native_item) != "incan_stdlib_data::collections::OrdinalKey::ordinal_bytes":
-                return Ok(false)
-    match target.canonical:
-        None => return Ok(false)
-        Some(identity) =>
-            if identity.declaration_name != "ordinal_bytes":
-                return Ok(false)
-    if len(arguments) != 1:
-        return Err("unsupported Body IR value enum ordinal bytes arguments")
-    if receiver_fills_retained_slot(module, target, builder, arguments[0], span):
-        return Ok(false)
-    source = argument_place(builder, arguments, 0, span)?
-    match ordinal_value_owner(builder, place_type(builder.locals, source)):
-        None => return Ok(false)
-        Some(owner) =>
-            raw_type = value_enum_raw_type(builder, owner)
-            raw = temporary(builder, raw_type, span)
-            select_value_enum_raw(builder, owner, source, raw, span)?
-            mut reference_type = PlanType.ScalarRef([raw_type])
-            if raw_type == PlanType.String:
-                reference_type = PlanType.StringRef
-            reference = temporary(builder, reference_type, span)
-            builder.emit(plan_assign(reference, RvalueKind.Borrow(raw), span))
-            result = PlanType.List(ListLeaf.U8, 1)
-            output = call_destination(builder, destination, result, span)?
-            instantiated_external_call(
-                builder,
-                "incan_stdlib_data::collections::OrdinalKey::ordinal_bytes",
-                [raw_type],
-                [reference_type],
-                result,
-                [read_place(reference, true, span)],
-                output,
-                span,
-            )?
-            return Ok(true)
-
-
-def ordinal_encoding_identity(identity: &RustCanonicalSymbolId) -> bool:
-    """Whether `identity` is the standard `OrdinalKey`'s associated ordinal encoding, not a source callable spelled
-    the same way."""
-    if identity.declaration_name != "OrdinalKey.ordinal_encoding":
-        return false
-    match identity.origin:
-        SymbolOrigin.Package(library=library, module_path=path) =>
-            return library == "incan_stdlib_data" and len(path) == 1 and path[0] == "collections"
-        _ => return false
 
 
 def lower_value_enum_ordinal_encoding(
@@ -3226,13 +3206,12 @@ def lower_value_enum_ordinal_encoding(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[bool, str]:
-    """Retain legacy's source-module and ordered raw-value schema for an authenticated associated OrdinalKey call."""
-    mut authenticated = false
-    for callable in module.loaf_callables:
-        if Some(callable.canonical.clone()) == target.canonical and ordinal_encoding_identity(callable.canonical):
-            authenticated = true
-    if not authenticated:
-        return Ok(false)
+    """Retain the declaring module and ordered raw-value schema for an authenticated source OrdinalKey slot."""
+    match target.canonical:
+        None => return Ok(false)
+        Some(identity) =>
+            if identity.declaration_name != "ordinal_encoding" or not has_adapter_slot(module, identity):
+                return Ok(false)
     match target.receiver_type:
         None => return Ok(false)
         Some(receiver) =>
@@ -3280,26 +3259,37 @@ def value_enum_ordinal_schema(mut builder: Builder, owner: int) -> Result[str, s
     return Ok(schema + ":v1")
 
 
-def value_enum_raw_type(mut builder: Builder, owner: int) -> PlanType:
-    """The raw value a value enum's variants carry: text or an integer."""
+pub def value_enum_raw_type(mut builder: Builder, owner: int) -> PlanType:
+    """Return the checked scalar backing of a value enum.
+
+    1. Read its retained text or integer backing.
+    """
+    # 1. Read its retained scalar backing.
     match builder.value_enums[owner].backing:
         ValueEnumBacking.Str => return PlanType.String
         ValueEnumBacking.Int => return PlanType.Int
 
 
-def select_value_enum_raw(
+pub def select_value_enum_raw(
     mut builder: Builder,
     owner: int,
     source: Place,
     output: Place,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Write the raw value of the variant `source` holds into `output`, selected by its native tag."""
+    """Write the raw value of the variant source holds into output, selected by its native tag.
+
+    1. Allocate a branch per checked variant.
+    2. Materialize that variant's retained scalar value.
+    3. Join the branches and retain owned text for cleanup.
+    """
+    # 1. Allocate a branch per checked variant.
     declaration = builder.value_enums[owner]
     result_type = value_enum_raw_type(builder, owner)
     join = builder.new_block(span)
     owners = builder.owned
     branches = tag_branches(builder, source, len(declaration.variants), span)
+    # 2. Materialize that variant's retained scalar value.
     for slot in range(len(branches)):
         builder.current = branches[slot]
         raw_value: RustConstant = declaration.variants[slot].raw_value.clone()
@@ -3312,6 +3302,7 @@ def select_value_enum_raw(
             builder.emit(plan_assign(output, RvalueKind.Use(value), span))
         builder.finish(TerminatorKind.Goto(join), span)
         builder.owned = owners
+    # 3. Join the branches and retain owned text for cleanup.
     builder.current = join
     if result_type == PlanType.String:
         builder.owned.append(output.local)
@@ -3554,8 +3545,6 @@ def lower_checked_method_call(
     if lower_reflection(builder, target, arguments, destination, span)?:
         return Ok(None)
     if lower_standard_slot(module, builder, target, arguments, destination, span)?:
-        return Ok(None)
-    if lower_value_enum_ordinal(module, builder, target, arguments, destination, span)?:
         return Ok(None)
     if lower_compiled_method(module, builder, target, arguments, destination, span, true)?:
         return Ok(None)
@@ -4736,12 +4725,15 @@ def lower_type_parameter_call(
 
 
 def checked_type_arguments(mut builder: Builder, arguments: list[RustType]) -> Result[list[RustType], str]:
-    """Close checker-recorded call arguments in the active declaration binding and require admitted carriers."""
+    """Close checked call arguments in their trait scope and method scope, then require admitted carriers."""
     mut closed: list[RustType] = []
-    for argument in arguments:
-        concrete: RustType = substitute(argument, builder.type_parameters, builder.type_arguments)?
-        _ = native_source_type(builder.nominals, builder.enums, builder.unions, concrete, builder.intrinsics)?
-        closed.append(concrete.clone())
+    retained = close_trait_dispatch_arguments(builder.trait_environment, arguments)
+    for argument in retained:
+        match substitute(argument, builder.type_parameters, builder.type_arguments):
+            Err(reason) => return Err(f"{reason} in checked call arguments of {builder.name}")
+            Ok(concrete) =>
+                _ = native_source_type(builder.nominals, builder.enums, builder.unions, concrete, builder.intrinsics)?
+                closed.append(concrete.clone())
     return Ok(closed)
 
 
@@ -4821,7 +4813,12 @@ pub def lower_callable_result(
     result_type: PlanType,
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Preserve owned return replacement and unwind cleanup identically for declared and locally held callees."""
+    """Replace an owned return through its checked destination carrier, preserving unwind cleanup.
+
+    1. Materialize owned results in their declared return carrier.
+    2. Apply the ordinary checked value-boundary conversions before dropping the old destination.
+    3. Transfer the converted owner to the destination; trivial results use their destination directly.
+    """
     mut owned_closure = false
     match result_type:
         PlanType.Closure(_signature) =>
@@ -4833,12 +4830,17 @@ pub def lower_callable_result(
     if result_type == PlanType.String or is_nominal_type(result_type) or is_owned_collection(result_type) or owned_closure or is_future(
         result_type,
     ):
+        # 1. Materialize the result in its declared return carrier.
         result = temporary(builder, result_type, span)
         terminate_call(builder, callee, operands, result, span)
         builder.owned.append(result.local)
+        # 2. Convert the checked boundary before replacing the old destination.
+        target_type = place_type(builder.locals, output)
+        value = boundary_plan_operand(builder, read_place(result, true, span), target_type, span)?
         drop_owned(builder, output.local, span)
-        forget_owned(builder, result.local)
-        builder.emit(plan_assign(output, RvalueKind.Use(read_place(result, true, span)), span))
+        # 3. Transfer exactly the selected owner to its destination.
+        forget_moved_arguments(builder, [value])
+        builder.emit(plan_assign(output, RvalueKind.Use(value), span))
         builder.owned.append(output.local)
     else:
         terminate_call(builder, callee, operands, output, span)
@@ -5438,12 +5440,18 @@ pub def call_argument_operand(
         PlanType.ScalarRef(elements) => return borrow_scalar_operand(builder, value, elements, false, span)
         PlanType.ScalarMutRef(elements) => return borrow_scalar_operand(builder, value, elements, true, span)
         PlanType.FrozenCollectionRef(_name, _elements) =>
+            match value:
+                RustOperand.Place(read) =>
+                    existing = scalar_place(builder, read.place, span)?
+                    if place_type(builder.locals, existing) == ty:
+                        return Ok(read_place(existing, false, span))
+                _ => pass
             match frozen_place(builder, value, span)?:
                 Some(storage) =>
                     if frozen_reference_type(place_type(builder.locals, storage))? != ty:
                         return Err("unsupported Body IR frozen argument owner mismatch")
                     return borrow_frozen(builder, storage, span)
-                None => return Err("unsupported Body IR frozen argument without storage")
+                None => return Err("unsupported Body IR native frozen argument without exact storage")
         _ => pass
     if owned_collection(ty):
         return value_operand(builder, value, span)
@@ -8340,6 +8348,7 @@ def lower_function(
         type_parameters=names,
         type_arguments=bindings,
         callable_type_arguments=callable_arguments,
+        trait_environment=body.trait_default_instantiation.clone(),
         function_pointer_locals=function_pointer_storage(body),
         reference_values=reference_value_storage(body, names, bindings)?,
         name=selected_name,
@@ -8463,7 +8472,9 @@ def reference_value_storage(
     parameter representations do not change a source value's logical type and therefore add no slot here."""
     mut slots: list[int] = []
     for local in body.locals:
-        closed: RustType = substitute(local.ty, names, arguments)?
+        closed: RustType = substitute(local.ty, names, arguments).map_err(
+            (reason) => f"{reason} in reference storage of {body.name}",
+        )?
         match closed:
             RustType.Ref(_inner) => slots.append(int(local.id.index()) + 1)
             RustType.RefMut(_inner) => slots.append(int(local.id.index()) + 1)
@@ -9278,15 +9289,21 @@ def append_tuple_fields(
     return Ok(None)
 
 
-def argument_place(
+pub def argument_place(
     mut builder: Builder,
     arguments: &list[RustArgumentElement],
     index: int,
     span: SourceSpan,
 ) -> Result[Place, str]:
-    """Require a retained single local receiver before constructing a runtime borrow."""
+    """Require one retained local receiver before constructing a runtime borrow.
+
+    1. Check the argument position.
+    2. Retain its exact local projection, refusing constants and spreads.
+    """
+    # 1. Check the argument position.
     if index >= len(arguments):
         return Err("invalid Body IR list call arity")
+    # 2. Retain its exact local projection.
     match arguments[index].as_one():
         Some(value) =>
             match value:
@@ -13186,7 +13203,11 @@ pub def argument_type(
 
 
 pub def source_operand_type(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[PlanType, str]:
-    """Read a retained place's carrier without materialization; constants retain the existing value conversion path."""
+    """Read a retained carrier without materializing its value.
+
+    1. Select an exact local, field or global carrier, or preserve a constant's ordinary typed conversion.
+    """
+    # 1. Select the exact place carrier or the constant's ordinary typed conversion.
     match value:
         RustOperand.Place(read) =>
             match read.place.global():
