@@ -38,56 +38,26 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.retain_evaluated_value_read(index, value, scope, out)
     }
 
-    /// Retain a known web carrier's tuple payload before its checked source field. The runtime owner comes from the
-    /// independent native declaration whitelist, and the payload member keeps the checker's identity; a source model
-    /// with the same spelling follows the ordinary field path. Missing facts stay unresolved rather than selecting
-    /// storage from a field name.
+    /// Copy the accepting checker's physical field path, including native extractor forwarding.
+    /// Ordinary fields retain their existing checked projection; no wrapper is recognized from its name or shape.
     fn lower_checked_field_projections(
         &self,
         base: &ast::Spanned<ast::Expr>,
         name: &str,
         span: ast::Span,
     ) -> Vec<bir::PlaceElem> {
-        let ty = self
-            .published_expression_type(base)
-            .unwrap_or_else(|| self.resolve_ty(base.span));
-        let IncanType::Generic { base: owner, args } = &ty else {
-            return vec![self.lower_checked_field_projection(base, name, span)];
-        };
-        let [payload] = args.as_slice() else {
-            return vec![self.lower_checked_field_projection(base, name, span)];
-        };
-        let native = self.local_nominal_declarations.values().find(|declaration| {
-            declaration.name == *owner
-                && declaration.fields == ["0"]
-                && matches!(
-                    declaration.canonical.origin,
-                    incan_semantics_core::SymbolOrigin::RustCrate(_)
-                )
-                && bir::native_carrier_nominal(&declaration.canonical).as_ref() == Some(declaration)
-        });
-        let Some(declaration) = native else {
-            return vec![self.lower_checked_field_projection(base, name, span)];
-        };
-        let Some(slot) = declaration.field_identities.first() else {
-            return vec![self.lower_checked_field_projection(base, name, span)];
-        };
-        let tuple = bir::PlaceElem::field("0", Some(slot.clone()));
-        if name == "value" {
-            return vec![tuple];
-        }
-        let identity = self
-            .type_info
-            .resolved_identity(span)
-            .filter(|identity| {
-                identity.namespace == SymbolNamespace::Member && identity.kind == SemanticSourceTargetKind::Field
-            })
-            .cloned()
-            .or_else(|| self.retained_field_identity(payload, name));
-        let field_name = identity
-            .as_ref()
-            .map_or_else(|| name.to_owned(), |field| field.declaration_name.clone());
-        vec![tuple, bir::PlaceElem::field(field_name, identity)]
+        self.type_info
+            .rust
+            .field_projection_paths
+            .get(&(span.start, span.end))
+            .map_or_else(
+                || vec![self.lower_checked_field_projection(base, name, span)],
+                |path| {
+                    path.iter()
+                        .map(|identity| bir::PlaceElem::field(&identity.declaration_name, Some(identity.clone())))
+                        .collect()
+                },
+            )
     }
 
     /// Classify tuple projections and retain the declaration name selected for a checked nominal field alias.
@@ -105,6 +75,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// but its own return binding and retained layout must agree; conflicting copies or bindings deny the projection.
     /// A checked nongeneric newtype identity also authenticates its wrapped slot before its declaring module's body
     /// is built. Final layout validation still requires that exact owner; module ordering supplies no second identity.
+    /// A checked wrapped-slot reference carries the newtype owner's identity directly, including after a method call.
     pub(super) fn lower_checked_field_projection(
         &self,
         base: &ast::Spanned<ast::Expr>,
@@ -126,6 +97,15 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             ty
         };
         if name == "0"
+            && matches!(ty, IncanType::Named(_))
+            && let Some(identity) = self.type_info.resolved_identity(span).filter(|identity| {
+                identity.namespace == SymbolNamespace::OrdinaryLexical
+                    && identity.kind == SemanticSourceTargetKind::Newtype
+            })
+        {
+            return bir::PlaceElem::field(name, Some(identity.clone()));
+        }
+        if name == "0"
             && let IncanType::Generic { base: owner, args } = &ty
             && let Some(identity) = parameter_types::retained_nominal_identity(owner, self.type_info)
                 .filter(|identity| identity.kind == SemanticSourceTargetKind::Newtype)
@@ -136,6 +116,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     && declaration.type_parameters.len() == args.len()
                     && declaration.fields == ["0"]
             }) && (self.type_info.body_ir_newtypes.field_owner(span, self.type_info) == Some(identity)
+                || self.newtype_implementation.as_ref() == Some(identity)
+                    && self.type_info.resolved_identity(span) == Some(identity)
                 || checked_json::has_checked_string_payload(declaration, args, self.type_info, self.module_identity))
             {
                 return bir::PlaceElem::field(name, Some(declaration.canonical.clone()));

@@ -204,7 +204,24 @@ pub(super) fn unsupported_tuple_destructure(value_ty: &IncanType, arity: usize) 
     }
     None
 }
+/// Preserve a tuple reference's borrow on each component binding, including native iterator items. An invalid
+/// arity retains unknown elements for diagnostic recovery rather than authorizing a projection.
 pub(super) fn tuple_element_types(ty: &IncanType, count: usize) -> Vec<IncanType> {
+    match ty {
+        IncanType::Ref(inner) => {
+            return tuple_element_types(inner, count)
+                .into_iter()
+                .map(|ty| IncanType::Ref(Box::new(ty)))
+                .collect();
+        }
+        IncanType::RefMut(inner) => {
+            return tuple_element_types(inner, count)
+                .into_iter()
+                .map(|ty| IncanType::RefMut(Box::new(ty)))
+                .collect();
+        }
+        _ => {}
+    }
     match tuple_type_elements(ty) {
         Some(items) if items.len() == count => items.to_vec(),
         _ => vec![IncanType::Unknown; count],
@@ -212,10 +229,12 @@ pub(super) fn tuple_element_types(ty: &IncanType, count: usize) -> Vec<IncanType
 }
 /// The element types of a tuple-shaped [`IncanType`], in either spelling, or `None` when `ty` is not a tuple at
 /// all. Backs both [`tuple_element_types`] and [`unsupported_for_pattern`], so the "is this a tuple, and of what
-/// arity" question is answered in exactly one place rather than once per caller.
+/// arity" question is answered in exactly one place rather than once per caller. A reference keeps the referent's
+/// shape; `tuple_element_types` separately retains the borrow on projected component bindings.
 pub(super) fn tuple_type_elements(ty: &IncanType) -> Option<&[IncanType]> {
     match ty {
         IncanType::Tuple(items) => Some(items),
+        IncanType::Ref(inner) | IncanType::RefMut(inner) => tuple_type_elements(inner),
         IncanType::Generic { base, args } if collections::from_str(base) == Some(CollectionTypeId::Tuple) => Some(args),
         _ => None,
     }

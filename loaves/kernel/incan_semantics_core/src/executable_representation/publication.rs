@@ -586,6 +586,8 @@ impl<'a> PublicationAudit<'a> {
                 if incan_lang::lang::types::collections::from_str(base).is_none()
                     && base != incan_lang::lang::types::UNION_TYPE_NAME
                     && base != "[]"
+                    && !(incan_lang::lang::traits::from_str(base) == Some(incan_lang::lang::traits::TraitId::Awaitable)
+                        && args.len() == 1)
                 {
                     self.named_type(base)?;
                 }

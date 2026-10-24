@@ -791,6 +791,12 @@ pub(crate) struct BodyIrEmptyListRequirement {
 /// Expression-local resolution facts keyed by source spans.
 #[derive(Debug, Default, Clone)]
 pub struct ExpressionArtifacts {
+    /// Unbounded source call binders awaiting constraints from their exact lexical result values.
+    pub(crate) body_ir_open_calls: Vec<BodyIrOpenCall>,
+    /// Symbolic results tied to one source call's binder scope, including tuple elements and method results.
+    pub(crate) body_ir_open_values: HashMap<(usize, usize), BodyIrOpenValue>,
+    /// Lexical aliases of a symbolic result; spelling never joins independent factory calls.
+    pub(crate) body_ir_open_bindings: HashMap<CanonicalSymbolId, BodyIrOpenValue>,
     /// Candidate empty-list constraints collected during checking and consumed by successful final publication.
     /// Legacy never reads this state; overload transactions preserve it with the rest of TypeCheckInfo.
     pub(crate) body_ir_empty_list_requirements: HashMap<CanonicalSymbolId, BodyIrEmptyListRequirement>,
@@ -902,6 +908,23 @@ pub struct ExpressionArtifacts {
     pub local_partial_method_targets: HashMap<(usize, usize), String>,
 }
 
+/// One accepted source call's independent inference scope; unresolved and conflicting groups grant no storage.
+#[derive(Debug, Clone)]
+pub(crate) struct BodyIrOpenCall {
+    pub span: Span,
+    pub parameters: Vec<String>,
+    pub result: ResolvedType,
+    pub bindings: HashMap<String, ResolvedType>,
+    pub invalidated: bool,
+}
+
+/// A value template whose placeholders belong only to the indexed source call.
+#[derive(Debug, Clone)]
+pub(crate) struct BodyIrOpenValue {
+    pub group: usize,
+    pub ty: ResolvedType,
+}
+
 /// Source-reference resolution facts keyed by source spans.
 #[derive(Debug, Default, Clone)]
 pub struct ReferenceArtifacts {
@@ -972,6 +995,8 @@ pub struct RustInteropArtifacts {
     /// Metadata-selected shared dereference steps before a native public field read, keyed by the field expression.
     /// Field identity and payload remain in their ordinary checked-field facts.
     pub field_adjustments: HashMap<(usize, usize), Vec<RustCheckedCall>>,
+    /// Exact physical field paths selected for source extractor forwarding, including the native tuple slot.
+    pub field_projection_paths: HashMap<(usize, usize), Vec<CanonicalSymbolId>>,
     /// Exact native values of public field expressions before source collection and scalar projection.
     pub field_values: HashMap<(usize, usize), RustCheckedFieldValue>,
     /// Safe closed native functions selected as values, keyed by the read span rather than an application span.
@@ -1804,7 +1829,7 @@ pub struct CallArtifacts {
     /// The retained canonical method prevents a speculative or subsequently replaced overload from authorizing
     /// receiver-carrier propagation; legacy keeps its existing substituted expression result unchanged.
     pub body_ir_self_result_methods: HashMap<(usize, usize), CanonicalSymbolId>,
-    /// Validated async function calls, keyed by complete call span and selected canonical function. Body IR
+    /// Validated async function and method calls, keyed by complete call span and selected canonical callable. Body IR
     /// uses their eventual output as a future argument; legacy expression snapshots retain the eventual output alone.
     pub body_ir_async_call_targets: HashMap<(usize, usize), CanonicalSymbolId>,
     /// Body IR-only tuple constructor facts selected by an active std.web surface binding. Legacy keeps its existing
@@ -1830,6 +1855,8 @@ pub struct CallArtifacts {
     /// Checked static factory constraints that conflict with their destination. Only Body IR reads this denial;
     /// later supplemental value propagation cannot authorize a closed result at the same call span.
     pub body_ir_factory_result_conflicts: HashSet<(usize, usize)>,
+    /// The exact nominal owner closed by a checked static factory, independent of wrappers in its return type.
+    pub body_ir_factory_owner_types: HashMap<(usize, usize), ResolvedType>,
     /// Executable constructor carriers recovered from original declared fields and checked values after contextual
     /// checking substituted a callee's open parameters into those fields. Only Body IR reads this additive fact.
     pub body_ir_constructor_types: HashMap<(usize, usize), ResolvedType>,
@@ -2149,6 +2176,7 @@ pub(crate) struct CallSiteFacts {
     body_ir_constructor_type: Option<ResolvedType>,
     body_ir_call_type_arguments: Option<Vec<ResolvedType>>,
     body_ir_call_result_type: Option<ResolvedType>,
+    body_ir_factory_owner_type: Option<ResolvedType>,
     body_ir_async_call_target: Option<CanonicalSymbolId>,
     body_ir_self_result_method: Option<CanonicalSymbolId>,
     body_ir_self_method_identity: Option<CanonicalSymbolId>,
@@ -3662,6 +3690,7 @@ impl TypeCheckInfo {
             body_ir_constructor_type: self.calls.body_ir_constructor_types.remove(&key),
             body_ir_call_type_arguments: self.calls.body_ir_call_type_arguments.remove(&key),
             body_ir_call_result_type: self.calls.body_ir_call_result_types.remove(&key),
+            body_ir_factory_owner_type: self.calls.body_ir_factory_owner_types.remove(&key),
             body_ir_async_call_target: self.calls.body_ir_async_call_targets.remove(&key),
             body_ir_self_result_method: self.calls.body_ir_self_result_methods.remove(&key),
             body_ir_self_method_identity: self.traits.self_method_identities.remove(&key),
@@ -3682,6 +3711,7 @@ impl TypeCheckInfo {
         self.calls.body_ir_constructor_types.remove(&key);
         self.calls.body_ir_call_type_arguments.remove(&key);
         self.calls.body_ir_call_result_types.remove(&key);
+        self.calls.body_ir_factory_owner_types.remove(&key);
         self.calls.body_ir_async_call_targets.remove(&key);
         self.calls.body_ir_self_result_methods.remove(&key);
         self.traits.self_method_identities.remove(&key);
@@ -3755,6 +3785,11 @@ impl TypeCheckInfo {
             &mut self.calls.body_ir_call_result_types,
             key,
             facts.body_ir_call_result_type,
+        );
+        put(
+            &mut self.calls.body_ir_factory_owner_types,
+            key,
+            facts.body_ir_factory_owner_type,
         );
         put(
             &mut self.calls.body_ir_async_call_targets,

@@ -1,7 +1,9 @@
-# behavior: a str literal appended to a Deque[str] built from a list lands in the deque (#1494)
+# behavior: Deque[str] keeps appended str literals and applies constructor owner arguments once (#1494, #2256)
 # expect-stdout:
 #   3
 #   default
+#   1
+#   fresh
 
 from std.collections import Deque
 
@@ -16,3 +18,7 @@ def main() -> None:
     pending = probe(["a", "b"])
     println(len(pending))
     println(pending.to_list()[2])
+    mut empty = Deque[str]()
+    empty.append("fresh")
+    println(len(empty))
+    println(empty.to_list()[0])

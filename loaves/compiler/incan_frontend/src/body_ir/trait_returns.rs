@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, HashMap};
 /// A retained callable's original source result and its current concrete representation witness.
 #[derive(Clone)]
 struct ReturnSignature {
+    is_async: bool,
     original: IncanType,
     carrier: IncanType,
     parameters: Vec<String>,
@@ -164,6 +165,7 @@ fn return_annotation_span(program: &ast::Program, body: &bir::Body) -> Option<as
 /// Snapshot the checked callable frame before refinement so only its declared result authorizes an opaque return.
 fn signature(body: &bir::Body) -> ReturnSignature {
     ReturnSignature {
+        is_async: body.is_async,
         original: body.return_type.clone(),
         carrier: body.return_type.clone(),
         parameters: body.type_parameters.clone(),
@@ -382,7 +384,20 @@ fn method_return_witness(
         bindings.insert(parameter.clone(), argument.clone());
     }
     let carrier = instantiate_witness(&signature.carrier, &bindings, &receiver)?;
-    retain_witness_identities(&carrier, &signature.identities, identities).then_some(carrier)
+    retain_witness_identities(&carrier, &signature.identities, identities)
+        .then(|| async_call_carrier(signature.is_async, carrier))
+}
+
+/// A callable's logical return refines the future's output; it never replaces an async call's owned future storage.
+fn async_call_carrier(is_async: bool, carrier: IncanType) -> IncanType {
+    if is_async {
+        IncanType::Generic {
+            base: "Awaitable".into(),
+            args: vec![carrier],
+        }
+    } else {
+        carrier
+    }
 }
 
 /// Carry only a selected executable return's named owners into the receiving frame, including generic heads.
@@ -506,6 +521,7 @@ fn call_carrier(
         bir::Callee::Function(bir::CallableTarget::Named(target)) => {
             let signature = signatures.get(target.canonical.as_ref()?)?;
             substitute(&signature.carrier, &signature.parameters, &target.type_args)
+                .map(|carrier| async_call_carrier(signature.is_async, carrier))
         }
         bir::Callee::Method(target) => {
             let selected = target.canonical.as_ref()?;
@@ -519,7 +535,12 @@ fn call_carrier(
             let bir::ArgumentElement::One(receiver) = args.first()? else {
                 return None;
             };
-            operand_type(receiver, locals)
+            operand_type(receiver, locals).map(|carrier| {
+                async_call_carrier(
+                    signatures.get(selected).is_some_and(|signature| signature.is_async),
+                    carrier,
+                )
+            })
         }
         _ => None,
     }

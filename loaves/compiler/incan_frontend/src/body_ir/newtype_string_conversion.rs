@@ -25,7 +25,7 @@ pub(super) fn automatic_candidate(
     let supported = matches!(
         underlying,
         IncanType::Primitive(IncanPrimitiveType::Int | IncanPrimitiveType::Str)
-    ) || matches!(&underlying, IncanType::Named(name) if info.declarations.named_type_identities.get(name).is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Newtype && identity.declaration_name == *name));
+    ) || matches!(&underlying, IncanType::Named(name) if info.declarations.named_type_identities.get(name).is_some_and(|identity| newtype_binding(name, identity)));
     if source.is_rusttype
         || !source.type_params.is_empty()
         || !source.traits.is_empty()
@@ -79,10 +79,7 @@ fn closed_candidate(declarations: &[bir::NominalDeclaration], mut index: usize) 
                 let Some(identity) = owner.named_type_identities.get(name) else {
                     return false;
                 };
-                if identity.origin != owner.canonical.origin
-                    || identity.kind != SemanticSourceTargetKind::Newtype
-                    || identity.declaration_name != *name
-                {
+                if identity.origin != owner.canonical.origin || !newtype_binding(name, identity) {
                     return false;
                 }
                 let mut matches = declarations
@@ -100,6 +97,13 @@ fn closed_candidate(declarations: &[bir::NominalDeclaration], mut index: usize) 
             _ => return false,
         }
     }
+}
+
+/// Authenticate a named newtype edge under its authored name or its exact canonical carrier key. Checked storage
+/// projection may already have retained the carrier; arbitrary aliases and decoded spelling fragments grant nothing.
+fn newtype_binding(name: &str, identity: &CanonicalSymbolId) -> bool {
+    identity.kind == SemanticSourceTargetKind::Newtype
+        && (identity.declaration_name == name || bir::nominal_carrier_key(identity).as_deref() == Some(name))
 }
 
 /// Project exactly the frozen emitter's source import grammar using the common capability registry.

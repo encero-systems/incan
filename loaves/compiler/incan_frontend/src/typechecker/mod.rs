@@ -1860,10 +1860,14 @@ impl TypeChecker {
     ///
     /// Returns the mutability flag plus the remaining inner type spelling so [`Self::resolved_type_from_rust_display`]
     /// can preserve borrow semantics for Rust-backed values instead of collapsing them into plain path types.
+    /// Rust permits a tuple or slice delimiter immediately after `mut`; identifier continuations stay part of a name.
     fn rust_display_borrow_kind(display: &str) -> Option<(bool, &str)> {
         let after_amp = display.trim().strip_prefix('&')?.trim_start();
         if let Some(inner) = after_amp.strip_prefix("mut")
-            && inner.chars().next().is_none_or(char::is_whitespace)
+            && inner
+                .chars()
+                .next()
+                .is_none_or(|next| next.is_whitespace() || matches!(next, '(' | '[' | '&' | '*'))
         {
             return Some((true, inner.trim_start()));
         }
@@ -1991,7 +1995,7 @@ impl TypeChecker {
     /// Return compact Rust display text for comparison. Bring a Rust type display into the one normal form every
     /// lookup and comparison in the checker uses.
     ///
-    /// Lifetimes and formatting whitespace are removed, except the single space that follows a `dyn` or `impl`
+    /// Lifetimes and formatting whitespace are removed, except the single space that follows a `dyn`, `impl` or `mut`
     /// token: that space is what distinguishes a trait object (`dyn Trait`) from an ordinary path, and generic
     /// arguments are split from this string, so dropping it turns the `T` of `Arc<dyn Trait>` into `dynTrait`. Every
     /// route that compacts a display must go through here; when parameters and arguments were normalized by
@@ -2010,7 +2014,7 @@ impl TypeChecker {
         let mut chars = display.chars().peekable();
         while let Some(ch) = chars.next() {
             if ch == ' ' {
-                let keep = matches!(word.as_str(), "dyn" | "impl")
+                let keep = matches!(word.as_str(), "dyn" | "impl" | "mut")
                     && chars
                         .peek()
                         .is_some_and(|next| next.is_alphanumeric() || *next == '_' || *next == ':');
@@ -3225,17 +3229,15 @@ impl TypeChecker {
             .then(|| (trait_module, trait_identity.declaration_name.clone()))
     }
 
-    /// Return the checked identity of the trait `name` names in the `pub::` package module `module_path`
-    /// (`["pub", library, ...]`), as the package's identity graph publishes it: an alias export (`pub Tagging = Tag`)
-    /// has the identity of the trait it names. `None` for any other module or member.
+    /// Return the checked identity of a trait in an admitted package or standard module, as its identity graph
+    /// publishes it. Standard and public-package paths select the same declaring identity; an alias export retains
+    /// its target. An unowned module or a non-trait member grants no adoption.
     fn package_trait_declaration(&self, module_path: &[String], name: &str) -> Option<CanonicalSymbolId> {
-        let [root, library, rest @ ..] = module_path else {
-            return None;
+        let (manifest, rest) = match module_path {
+            [root, library, rest @ ..] if root == PUBLIC_LIBRARY_NAMESPACE => (self.loaves.manifest(library)?, rest),
+            [root, rest @ ..] if root == "std" => (self.loaves.owner_of(module_path)?.artifact.manifest.as_ref(), rest),
+            _ => return None,
         };
-        if root != PUBLIC_LIBRARY_NAMESPACE {
-            return None;
-        }
-        let manifest = self.loaves.manifest(library)?;
         let public_path = std::iter::once(manifest.name.clone())
             .chain(rest.iter().cloned())
             .chain(std::iter::once(name.to_string()))
@@ -7321,6 +7323,7 @@ impl TypeChecker {
                 }
             }
         }
+        self.settle_open_value_destinations();
         // Split fatal errors from non-fatal diagnostics.
         let all = std::mem::take(&mut self.errors);
         let (fatal, non_fatal): (Vec<_>, Vec<_>) = all

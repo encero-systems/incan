@@ -369,7 +369,7 @@ fn required_loaf_identities(
             modules
                 .iter()
                 .filter_map(|module| analysis.type_info_for_path(&module.file_path))
-                .filter_map(incan_frontend::body_ir::registry_description_helper_identity),
+                .flat_map(incan_frontend::body_ir::registry_helper_identities),
         )
         .filter(
             |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity),

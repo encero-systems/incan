@@ -92,11 +92,11 @@ pub struct BodyIrContext<'a> {
     pub library_package: Option<&'a str>,
 }
 
-/// Return the checked SDK helper required by compiler-generated method registrations, before loading package bodies.
-/// This reuses registration admission so dependency discovery cannot select a helper the Body IR producer would not
-/// call.
-pub fn registry_description_helper_identity(info: &TypeCheckInfo) -> Option<CanonicalSymbolId> {
-    registry_descriptions::helper_identity(info)
+/// Return every checked registry helper required by generated registrations and explicit subject materialization.
+/// Dependency discovery uses the same selected helper identities as the Body IR producer, including function and
+/// method descriptions, so loading cannot omit a checked call or select an unaccepted helper by spelling.
+pub fn registry_helper_identities(info: &TypeCheckInfo) -> Vec<CanonicalSymbolId> {
+    registry_effects::helper_identities(info)
 }
 
 /// Build Body IR v0 for every top-level function declaration and every non-abstract class/model/trait method in a

@@ -1,4 +1,4 @@
-# behavior: native receivers, associated functions and traits keep their owners: Rust associated functions infer owner arguments, select alias Default and preserve transparent rusttype fields, native method receivers retain checked borrows, associated constructors remain callable as stored values and imported method defaults retain native carriers, Rust From accepts borrowed text while blanket traits preserve reusable values, declared native bounds retain generic calls and native iteration retains enumeration positions, and native argument iterators yield their declared Item through loops and list comprehensions
+# behavior: native calls retain owner arguments, trait bounds, iterator items and declared borrow modes (#2256)
 # expect-stdout:
 #   allocated
 #   1
@@ -8,6 +8,7 @@
 #   hello
 #   hello
 #   true
+#   11 24
 
 """Observe native receivers through associated functions, inherent methods, blanket traits and iterators."""
 
@@ -15,6 +16,7 @@ from rust::std::collections import VecDeque
 from rust::std::env import args, args_os
 from rust::std::hash import Hash as NativeHash, Hasher, DefaultHasher
 from rust::std::os::raw import c_int
+from rust::std::ops import Range
 from rust::std::rc import Rc
 from rust::std::string import String as RustString
 from rust::std import time as native_time
@@ -93,9 +95,24 @@ def show_trait_methods() -> None:
     assert native_hash(7) == native_hash(7)
 
 
+def show_mutable_tuple_fields() -> None:
+    """Mutate disjoint native fields through each component of a borrowed tuple."""
+    mut rows: VecDeque[tuple[Range[int], Range[int]]] = VecDeque.new()
+    rows.push_back((Range(start=1, end=2), Range(start=3, end=4)))
+    for left, right in rows.iter_mut():
+        left.start += 10
+        right.end += 20
+    match rows.pop_front():
+        Some(pair) =>
+            left, right = pair
+            println(f"{left.start} {right.end}")
+        None => println("missing")
+
+
 def main() -> None:
     """Run each receiver observation in the order of the cases it carries."""
     show_associated_functions()
     show_argument_iteration()
     show_receiver_methods()
     show_trait_methods()
+    show_mutable_tuple_fields()

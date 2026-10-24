@@ -53,11 +53,12 @@ fn declaration_key(identity: &CanonicalSymbolId) -> NominalDeclarationKey {
     NominalDeclarationKey::Declared(identity.origin.clone(), identity.declaration_name.clone())
 }
 
-/// Convert the exported type parameters of a compiled model or class into their plain trait bounds.
-///
-/// A library trait's recorded module path need not match the path the consumer imports it under, so each bound is
-/// recorded by its declaration name alone; the check accepts a consumer bound of that declaration name.
-fn exported_type_param_bounds(type_params: &[TypeParamExport]) -> NominalTypeParamBounds {
+/// Retain exported plain bounds with their declaring package paths. Consumer aliases must not erase the provenance
+/// used by capability and nominal conformance checks; builtin bounds retain their unqualified declaration names.
+fn exported_type_param_bounds(
+    type_params: &[TypeParamExport],
+    owner: &NominalDeclarationKey,
+) -> NominalTypeParamBounds {
     type_params
         .iter()
         .map(|param| {
@@ -70,7 +71,21 @@ fn exported_type_param_bounds(type_params: &[TypeParamExport]) -> NominalTypePar
                         .source_name
                         .clone()
                         .unwrap_or_else(|| bound.name.rsplit('.').next().unwrap_or(&bound.name).to_string());
-                    builtin_bound(&declaration)
+                    let mut retained = builtin_bound(&declaration);
+                    retained.source_name = bound.source_name.clone();
+                    retained.module_path = bound.module_path.as_ref().map(|path| {
+                        if let NominalDeclarationKey::Declared(SymbolOrigin::Package { library, .. }, _) = owner
+                            && !matches!(path.first().map(String::as_str), Some("std" | "pub" | "rust"))
+                        {
+                            return ["pub".to_string(), library.clone()]
+                                .into_iter()
+                                .chain(path.iter().cloned())
+                                .collect();
+                        }
+                        path.clone()
+                    });
+                    retained.inferred = bound.inferred;
+                    retained
                 })
                 .collect();
             (param.name.clone(), bounds)
@@ -180,7 +195,8 @@ impl TypeChecker {
             return;
         }
         let key = self.nominal_declaration_key(local_name);
-        self.record_nominal_type_param_bounds(key, exported_type_param_bounds(type_params));
+        let bounds = exported_type_param_bounds(type_params, &key);
+        self.record_nominal_type_param_bounds(key, bounds);
     }
 
     /// Record the plain trait bounds a compiled standard-library provider publishes for one of its models or classes,
@@ -199,7 +215,9 @@ impl TypeChecker {
             _ => return,
         };
         if let Some(identity) = identity.filter(|_| !type_params.is_empty()) {
-            self.record_nominal_type_param_bounds(declaration_key(identity), exported_type_param_bounds(type_params));
+            let key = declaration_key(identity);
+            let bounds = exported_type_param_bounds(type_params, &key);
+            self.record_nominal_type_param_bounds(key, bounds);
         }
     }
 

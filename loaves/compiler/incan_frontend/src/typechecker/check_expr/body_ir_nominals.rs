@@ -36,9 +36,6 @@ impl TypeChecker {
         if member.identity.as_ref() != Some(selected) {
             return None;
         }
-        if member.is_async {
-            return None;
-        }
         let bindings = self.body_ir_member_bindings(&parameters, arguments, &member, args)?;
         for (name, bounds) in &member.type_param_bound_details {
             let ty = bindings.get(name)?;

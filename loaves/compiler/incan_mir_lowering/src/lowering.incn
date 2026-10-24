@@ -1304,7 +1304,7 @@ def newtype_equality(
     right: &RustOperand,
     span: SourceSpan,
 ) -> Result[Option[Operand], str]:
-    """Compare a checked newtype place or immutable numeric value through its retained PartialEq implementation."""
+    """Compare a source or linked newtype through its retained PartialEq selection, which native metadata verifies."""
     match left:
         RustOperand.Place(_read) => pass
         RustOperand.Constant(RustConstant.NumericNewtype(_value)) => pass
@@ -1324,7 +1324,7 @@ def newtype_equality(
     if owner < 0 or owner >= len(builder.nominals):
         return Err("unsupported Body IR equality without retained nominal declaration")
     declaration = builder.nominals[owner]
-    if declaration.canonical.kind != SemanticSourceTargetKind.Newtype or declaration.native_item != "":
+    if declaration.canonical.kind != SemanticSourceTargetKind.Newtype:
         return Ok(None)
     if "PartialEq" not in declaration.derives:
         return Err("unsupported Body IR newtype equality without retained PartialEq")
@@ -2133,8 +2133,9 @@ def in_place_iteration_binding(
     value: &RustRvalue,
     span: SourceSpan,
 ) -> Result[bool, str]:
-    """Consume a checked exclusive pattern binding as a view of its polled element, preserving ordinary owned aliases."""
-    if destination.local in builder.iteration_locals:
+    """Consume a checked exclusive pattern binding as a view of its polled element. Only a whole binding can change
+    its frame carrier; a later field write must keep the owner and its earlier assignments intact."""
+    if destination.projection != Projection.Whole or destination.local in builder.iteration_locals:
         return Ok(false)
     match value:
         RustRvalue.Use(RustOperand.Place(read)) =>
@@ -3712,12 +3713,18 @@ def call_method_body(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Call the selected method body with its already borrowed receiver and the bound ordinary arguments."""
+    """Invoke the selected method with its checked receiver and arguments, retaining async captures in a future."""
     body = instantiated_method_body(module, builder, target, index, arguments, span)?
     retain_sdk_factory_result(module, builder, target, body, destination, span)?
     ordinary = method_ordinary_operands(module, builder, target, arguments, body, span)?
     mut operands = [read_place(reference, true, span)]
     operands.extend(ordinary)
+    if body.is_async:
+        match destination:
+            Some(place) =>
+                output = scalar_place(builder, place, span)?
+                return construct_future(module, builder, body, operands, output, span)
+            None => return Err("unsupported Body IR async method call without carrier")
     callee = CalleeKind.Planned(source_method_symbol(module, builder, target, body, span))
     return emit_selected_body_call(builder, body, callee, operands, destination, span)
 
@@ -4638,7 +4645,7 @@ def lower_named_target(
                         return lower_type_parameter_call(module, builder, target, body, arguments, destination, span)
                     if len(target.type_args) != 0:
                         return Err("unsupported Body IR type arguments on a function without type parameters")
-                    _ = validate_static_receiver(module, target)?
+                    _ = validate_static_receiver(module, target, builder.type_parameters, builder.type_arguments)?
                     return lower_local_call(module, builder, target, body, arguments, destination, span)
 
 
@@ -4652,7 +4659,7 @@ def lower_type_parameter_call(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Schedule the checker-selected closed frame, refusing every unadmitted type argument before use."""
-    _ = validate_static_receiver(module, target)?
+    _ = validate_static_receiver(module, target, builder.type_parameters, builder.type_arguments)?
     closed = checked_type_arguments(builder, static_type_arguments(module, target)?)?
     typed_body = instantiate(body, closed, [])?
     owned = owned_callable_slots(builder, body, typed_body, arguments, target.binding, 0)?

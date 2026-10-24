@@ -312,11 +312,6 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
             if !model.checked_deserialize.is_empty() {
                 krate.items.push(crate::checked_json::forwarding_impl(model, span));
             }
-            if !model.string_conversion_root.is_empty() {
-                krate
-                    .items
-                    .push(crate::checked_json::source_forwarding_impl(model, span));
-            }
         }
         for function in &self.plan.functions {
             let span = match sources.span(&function.span) {
@@ -336,7 +331,7 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
                     function,
                     span,
                 ));
-                item.tokens = Some(crate::native_attributes::function_tokens(function, span));
+                item.tokens = Some(crate::native_attributes::function_tokens(&self.plan, function, span));
             }
             if self.plan.tests.contains(&function.name) {
                 item.attrs.push(crate::test_unit::attribute(

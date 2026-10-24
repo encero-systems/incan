@@ -32,7 +32,6 @@ pub(crate) fn link_externs(
                 .iter()
                 .map(|model| &model.library_item)
                 .chain(plan.enums.iter().map(|value| &value.library_item))
-                .chain(plan.models.iter().map(|model| &model.string_conversion_trait))
                 .filter_map(|item| item.split("::").next()),
         )
         .filter(|root| !matches!(*root, "" | "std" | "core" | "alloc" | "crate"))
