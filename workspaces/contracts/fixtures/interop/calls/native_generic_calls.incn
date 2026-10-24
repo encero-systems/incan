@@ -1,4 +1,4 @@
-# behavior: Rust generic functions retain concrete instantiations, source binders and tuple-typed factory results (#2256), scalar references borrow caller storage while mutable references update both bindings, text loans retain shared String receivers while indexing observes Unicode scalars through locals and fields, and imported functions retain direct and stored callable results plus nonreturning results in source return expressions
+# behavior: Native generic calls preserve loans, source binders, owned callbacks and independent owners (#2256)
 # expect-stdout:
 #   7
 #   leaf
@@ -13,17 +13,23 @@
 #   leaf
 #   ea
 #   typed channel
+#   thread 42
+#   stored 3
 #   false
 
 """Retain generic instantiations, scalar and text loans, and a nonreturning native result in one case."""
 
 from rust::incan_std_core::strings import str_slice_byte_range
 from rust::std::convert import identity
+from rust::std::collections import HashMap
+from rust::std::hash import DefaultHasher, Hash, Hasher
 from rust::std::mem import size_of_val, swap
+from rust::std::path import Path
 from rust::std::process import exit
-from rust::std::sync import Arc
+from rust::std::string import String as RustString
+from rust::std::sync import Arc, Mutex
 from rust::std::sync::mpsc import Sender as NativeSender, Receiver as NativeReceiver, channel as native_channel
-from rust::std::thread import panicking
+from rust::std::thread import panicking, spawn
 
 
 model Pair:
@@ -104,10 +110,75 @@ def show_typed_factory() -> None:
     tx, rx = pair
     match tx.send("typed channel"):
         Ok(_) => pass
-        Err(_) => assert false
+        Err(_) =>
+            assert false
     match rx.recv():
         Ok(value) => println(value)
-        Err(_) => assert false
+        Err(_) =>
+            assert false
+
+
+def retained_callback() -> () -> str:
+    """Return an owned callback whose captured string outlives its creating frame."""
+    text = "retained"
+    return () => text
+
+
+def show_thread_capture() -> None:
+    """Join direct and locally retained Rust callbacks that own integer and string captures."""
+    number = 42
+    text = "thread"
+    worker = spawn(() => f"{text} {number}")
+    match worker.join():
+        Ok(value) => println(value)
+        Err(_) =>
+            assert false
+    count = 3
+    label = "stored"
+    callback = () => f"{label} {count}"
+    retained_worker = spawn(callback)
+    match retained_worker.join():
+        Ok(value) => println(value)
+        Err(_) =>
+            assert false
+
+
+def native_mapping() -> HashMap[RustString, int]:
+    """Return an imported map without changing another foreign owner's receiver frame."""
+    return HashMap.new()
+
+
+def borrowed_tuple_is_poisoned(value: &Tuple[Mutex[int], int]) -> bool:
+    """Borrow a foreign element through the checked shared tuple-parameter frame."""
+    handle: &Mutex[int] = value[0]
+    return handle.is_poisoned()
+
+
+def check_foreign_values() -> None:
+    """Verify escaping captures, tuple field loans, concrete trait returns, and independent native frames."""
+    callback = retained_callback()
+    assert callback() == "retained"
+    assert callback() == "retained"
+    handles = (Mutex.new(3), 7)
+    assert not handles.0.is_poisoned()
+    assert not handles.0.is_poisoned()
+    handle: &Mutex[int] = handles.0
+    assert not handle.is_poisoned()
+    assert not handles.0.is_poisoned()
+    indexed: &Mutex[int] = handles[0]
+    assert not indexed.is_poisoned()
+    typed_tuple: Tuple[Mutex[int], int] = (Mutex.new(4), 8)
+    typed_view: &Mutex[int] = typed_tuple[0]
+    assert not typed_view.is_poisoned()
+    assert not borrowed_tuple_is_poisoned(handles)
+    mut state = DefaultHasher.new()
+    Hash.hash(RustString.from("item"), state)
+    value: u64 = Hasher.finish(state)
+    assert value > 0u64
+    method_value: u64 = state.finish()
+    assert method_value == value
+    assert Path.new(".").exists()
+    assert native_mapping().len() == 0usize
 
 
 def show_nonreturning_call() -> None:
@@ -121,9 +192,22 @@ def show_nonreturning_call() -> None:
 
 
 def main() -> None:
-    """Run the nonreturning observation last, because it ends the program."""
+    """
+    Observe checked native calls and keep the nonreturning observation last.
+
+    1. Exercise generic instantiations and scalar references.
+    2. Exercise text references and typed native factories.
+    3. Check owned captures, joined Rust callbacks, tuple loans, trait returns, and independent native frames.
+    4. Observe a native nonreturning call, which ends the program.
+    """
+    # 1. Exercise generic instantiations and scalar references.
     show_generic_instantiations()
     show_scalar_references()
+    # 2. Exercise text references and typed native factories.
     show_text_references()
     show_typed_factory()
+    # 3. Check owned captures, joined Rust callbacks, tuple loans, trait returns, and independent native frames.
+    check_foreign_values()
+    show_thread_capture()
+    # 4. Observe a native nonreturning call, which ends the program.
     show_nonreturning_call()

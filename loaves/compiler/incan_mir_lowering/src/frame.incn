@@ -351,6 +351,11 @@ pub def appended_field(source: Place, field: FieldProjection, span: SourceSpan) 
     return Ok(Place(local=source.local, projection=Projection.Fields(fields), span=span))
 
 
+pub def dereferenced_place(source: Place, referent: PlanType, span: SourceSpan) -> Result[Place, str]:
+    """Append a typed dereference while preserving the complete path to the stored reference."""
+    return appended_field(source, FieldProjection(slot=-1, ty=referent, dereferences=1), span)
+
+
 pub def external_call(
     mut builder: Builder,
     name: str,

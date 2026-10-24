@@ -607,6 +607,7 @@ impl<'a> PublicationAudit<'a> {
                 [element] => self.ty(element),
                 _ => Err(CoverageReason::UnresolvedReference),
             },
+            IncanType::NativeTraitObject { path, .. } if crate::body_ir::rust_item_identity(path).is_some() => Ok(()),
             IncanType::Named(name) => self.named_type(name),
             IncanType::Generic { base, args } => {
                 // Compiler collections have no declaration requirement; a generic nominal retains its checked base.
@@ -641,6 +642,7 @@ impl<'a> PublicationAudit<'a> {
             IncanType::TypeVar(_)
             | IncanType::SelfType
             | IncanType::RustInteropPath(_)
+            | IncanType::NativeTraitObject { .. }
             | IncanType::Infer
             | IncanType::Unknown
             | IncanType::Unsupported(_) => Err(CoverageReason::UnresolvedReference),

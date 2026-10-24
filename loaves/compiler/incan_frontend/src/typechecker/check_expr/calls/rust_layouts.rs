@@ -248,7 +248,7 @@ impl TypeChecker {
         selected: &[String],
         span: Span,
     ) -> Option<ResolvedType> {
-        if args.len() != info.fields.len() || selected.len() != args.len() || info.fields.is_empty() {
+        if args.len() != info.fields.len() || selected.len() != args.len() {
             return None;
         }
         self.retain_rust_layout(path, info);
@@ -280,7 +280,11 @@ impl TypeChecker {
         {
             return None;
         }
-        let result = ResolvedType::Generic(base.to_owned(), arguments);
+        let result = if arguments.is_empty() {
+            ResolvedType::RustPath(base.to_owned())
+        } else {
+            ResolvedType::Generic(base.to_owned(), arguments)
+        };
         self.type_info
             .calls
             .body_ir_constructor_types

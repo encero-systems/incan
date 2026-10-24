@@ -139,6 +139,15 @@ impl TypeChecker {
             if !parameters.iter().any(|parameter| parameter == name) {
                 continue;
             }
+            // Borrow coercion belongs to a written value argument. A binder supplied only by a callback's output
+            // owns that output; an auto-trait blanket impl for a borrow cannot change the callback's result ABI.
+            if !signature
+                .params
+                .iter()
+                .any(|parameter| parameter.type_display.trim() == name)
+            {
+                continue;
+            }
             let Some((owned, borrowed)) = bindings.get(name).and_then(Self::borrowed_native_carrier) else {
                 continue;
             };

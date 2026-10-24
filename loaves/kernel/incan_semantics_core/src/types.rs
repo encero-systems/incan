@@ -98,6 +98,12 @@ pub enum IncanType {
         element: Box<IncanType>,
         length: u64,
     },
+    /// A checked nongeneric native trait object with independently retained auto traits.
+    NativeTraitObject {
+        path: String,
+        send: bool,
+        sync: bool,
+    },
 }
 
 /// Builtin runtime storage admitted by the direct route without impersonating a same-spelled source declaration.
@@ -211,9 +217,10 @@ impl IncanType {
             Self::TypeVar(_) => AbiV0Representation::TypeParameter,
             Self::SelfType => AbiV0Representation::SelfType,
             Self::Ref(_) | Self::RefMut(_) => AbiV0Representation::Borrow,
-            Self::RustInteropPath(_) | Self::NativeBuiltin(_) | Self::NativeArray { .. } => {
-                AbiV0Representation::RustInterop
-            }
+            Self::RustInteropPath(_)
+            | Self::NativeBuiltin(_)
+            | Self::NativeArray { .. }
+            | Self::NativeTraitObject { .. } => AbiV0Representation::RustInterop,
             Self::Never | Self::Infer | Self::Unknown | Self::Unsupported(_) => AbiV0Representation::Unknown,
         }
     }
@@ -254,6 +261,12 @@ impl fmt::Display for IncanType {
             Self::Ref(inner) => write!(f, "&{inner}"),
             Self::RefMut(inner) => write!(f, "&mut {inner}"),
             Self::RustInteropPath(path) => write!(f, "rust::{path}"),
+            Self::NativeTraitObject { path, send, sync } => write!(
+                f,
+                "dyn {path}{}{}",
+                if *send { " + Send" } else { "" },
+                if *sync { " + Sync" } else { "" }
+            ),
             Self::NativeBuiltin(builtin) => write!(f, "runtime::{}", builtin.binding_name()),
             Self::Unsupported(description) => write!(f, "unsupported[{description}]"),
             Self::Infer => write!(f, "_"),

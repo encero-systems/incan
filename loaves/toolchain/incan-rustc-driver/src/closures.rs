@@ -63,7 +63,9 @@ fn block(stmts: ThinVec<ast::Stmt>, span: Span) -> Box<ast::Block> {
 /// replaces its MIR. Preflight proves the constructor's object kind and exact capture parameters.
 pub fn declaration_body(function: &Function, span: Span) -> Option<Box<ast::Block>> {
     constructor(function)?;
-    let (PlanType::Closure(signature) | PlanType::ClosureOnce(signature)) = &function.return_type else {
+    let (PlanType::Closure(signature) | PlanType::ClosureOnce(signature) | PlanType::NativeClosure(signature, _, _)) =
+        &function.return_type
+    else {
         return None;
     };
     let consumes_environment = matches!(function.return_type, PlanType::ClosureOnce(_));

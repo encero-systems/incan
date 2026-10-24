@@ -34,6 +34,11 @@ impl TypeChecker {
         ty: &ResolvedType,
         span: crate::ast::Span,
     ) -> bool {
+        if matches!(ty, ResolvedType::Generic(name, _) if crate::typechecker::helpers::collection_type_id(name).is_some())
+            || matches!(ty, ResolvedType::RustPath(path) if self.rust_array_parts(path).is_some())
+        {
+            return false;
+        }
         let Some((path, _, _, _)) = self.rust_identity_for_type(ty) else {
             return false;
         };
@@ -51,7 +56,7 @@ impl TypeChecker {
             return false;
         }
         let previous_errors = self.errors.len();
-        self.resolve_rust_path_method_call(RustPathMethodCall {
+        let result = self.resolve_rust_path_method_call(RustPathMethodCall {
             rust_path: &path,
             method: "len",
             receiver_metadata: Some(&metadata),
@@ -64,22 +69,37 @@ impl TypeChecker {
             expected_return_ty: None,
             span,
         });
-        let invalid_return = self
-            .type_info
-            .rust
-            .checked_calls
-            .get(&(span.start, span.end))
-            .filter(|call| {
-                !matches!(
-                    call.return_type,
-                    ResolvedType::Int | ResolvedType::Numeric(NumericTypeId::USize)
-                )
-            })
-            .map(|call| call.return_type.to_string());
-        if let Some(actual) = invalid_return {
-            self.errors.push(errors::type_mismatch("int or usize", &actual, span));
+        if self.errors.len() != previous_errors {
+            return true;
         }
-        self.errors.len() != previous_errors || self.type_info.rust.checked_calls.contains_key(&(span.start, span.end))
+        let key = (span.start, span.end);
+        let Some(call) = self.type_info.rust.checked_calls.get_mut(&key) else {
+            return true;
+        };
+        let shared = matches!(
+            call.parameters.first().map(|parameter| &parameter.ty),
+            Some(ResolvedType::Ref(_))
+        );
+        let sized_length = matches!(
+            result,
+            Some(ResolvedType::Int | ResolvedType::Numeric(NumericTypeId::USize))
+        );
+        if !shared || !sized_length {
+            self.errors.push(errors::rust_item_shape_not_supported(
+                &path,
+                "length requires a shared `len(&self)` method returning int or usize",
+                span,
+            ));
+            return true;
+        }
+        call.has_receiver = false;
+        if matches!(result, Some(ResolvedType::Numeric(NumericTypeId::USize))) {
+            self.type_info
+                .expressions
+                .numeric_conversion_destinations
+                .insert(key, ResolvedType::Int);
+        }
+        true
     }
 
     /// Dispatch one native method request without reconstructing receiver or declaration facts.

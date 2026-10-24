@@ -41,7 +41,8 @@ use crate::body_ir::{
 /// Version 27 retains checked native callable signatures with deferred executable bodies.
 /// Version 28 retains native default callees alongside compiled callable frames and appends checked panic-hook
 /// registration.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 28;
+/// Version 29 retains checked owned callback storage and native Send/Sync capture obligations.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 29;
 
 /// Accept only the current positional schema; combined changes require regenerated producer artifacts.
 pub fn supported_representation_version(version: u32) -> bool {

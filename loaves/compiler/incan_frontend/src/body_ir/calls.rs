@@ -105,6 +105,29 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         Some(type_args.iter().map(|argument| self.checked_type(argument)).collect())
     }
 
+    /// Materialize a native owned argument's planned copy before later arguments can transfer its original owner.
+    /// Borrowing display and formatting operations never acquire an owned snapshot from this boundary rule.
+    fn retain_owned_native_argument(
+        &mut self,
+        expression: &ast::Spanned<ast::Expr>,
+        value: bir::Operand,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let ty = self.resolve_ty(expression.span);
+        let IncanType::Named(name) = &ty else { return value };
+        let bir::Operand::Place(read) = &value else {
+            return value;
+        };
+        if read.fact != bir::OwnershipFact::Clone
+            || bir::rust_item_identity(name).is_none()
+            || !self.type_info.rust.storage_types.values().any(|storage| storage == &ty)
+        {
+            return value;
+        }
+        self.push_assign_temp(bir::Rvalue::Use(value), ty, scope, hir_span(expression.span), out)
+    }
+
     /// Project only the checked core ValueError function into its existing runtime operation. A foreign or shadowed
     /// spelling grants nothing; metadata-checked imports instead require the private validated diverging-call path
     /// because their legacy reference identity is absent. Unsupported arguments retain the ordinary refusal path. No
@@ -380,6 +403,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 operand = self.borrow_for_mut_parameter(operand);
             } else {
                 operand = self.owned_parameter_operand(expr, operand);
+                operand = self.retain_owned_native_argument(expr, operand, scope, out);
                 operand = self.retain_evaluated_value_read(expr, operand, scope, out);
             }
             self.retain_pending_operand_read(&operand);

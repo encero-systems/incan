@@ -938,7 +938,7 @@ impl TypeChecker {
                 {
                     self.constrain_open_value_destination(expr.span, expected);
                 }
-                return ty;
+                return self.retain_declared_conversion(expr, &ty, expected);
             }
         };
 
@@ -950,7 +950,7 @@ impl TypeChecker {
         self.retain_body_ir_result_value(expr, &ty);
         self.retain_body_ir_value_destination(expr, &ty, expected);
         self.refuse_capturing_callables_held_in(expr);
-        ty
+        self.retain_declared_conversion(expr, &ty, expected)
     }
 
     /// Typecheck an explicitly suffixed integer token, preserving its named type and validating its signed value.

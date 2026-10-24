@@ -258,6 +258,7 @@ fn retain_checked_nominal_names(ty: IncanType, facts: &TypeCheckInfo) -> IncanTy
 
 /// Copy checked carrier bindings and preserve unambiguous short names selected by standard storage projection.
 /// A projected name carries its original canonical owner; conflicting owners never grant a short binding.
+/// Native paths from structural storage add their declaration identities without replacing a source binding.
 pub(super) fn retained_type_identities(
     facts: &TypeCheckInfo,
 ) -> std::collections::BTreeMap<String, super::CanonicalSymbolId> {
@@ -277,6 +278,13 @@ pub(super) fn retained_type_identities(
             && matches!(&identity.origin, incan_semantics_core::SymbolOrigin::Package { library, .. } if library.starts_with("incan_stdlib_"))
         {
             identities.entry(name).or_insert(identity);
+        }
+    }
+    for storage in facts.rust.storage_types.values() {
+        if let IncanType::Named(name) = storage
+            && let Some(identity) = bir::rust_item_identity(name)
+        {
+            identities.entry(name.clone()).or_insert(identity);
         }
     }
     for call in facts.rust.checked_calls.values().chain(

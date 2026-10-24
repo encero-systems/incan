@@ -1,0 +1,97 @@
+"""Preserve checked callback environments in their exact native generic argument positions."""
+
+from rust::incan_semantics_core::body_ir import (
+    ArgumentBinding as RustBinding,
+    ArgumentElement as RustArgument,
+    BoundArgument as RustBoundArgument,
+    LoafCallable,
+)
+from pub::incan_mir_plan import PlanType
+from frame import Builder
+from generic_callables import argument_storage
+
+
+pub def native_callable_storage(
+    mut builder: Builder,
+    declaration: &LoafCallable,
+    arguments: &list[RustArgument],
+    binding: &RustBinding,
+    parameters: list[PlanType],
+    type_arguments: list[PlanType],
+) -> Result[tuple[list[PlanType], list[PlanType]], str]:
+    """
+    Keep the environment representation chosen by checking at each native callback boundary.
+
+    1. Read each callback's already evaluated storage from its checked slot.
+    2. Replace only the generic position retained for that parameter, preserving the checked signature.
+    """
+    mut inputs = parameters
+    mut generics = type_arguments
+    for positions in declaration.native_callable_parameters:
+        slot = int(positions.0)
+        generic = int(positions.1)
+        if slot < 0 or slot >= len(inputs) or generic < 0 or generic >= len(generics):
+            return Err("invalid Body IR native callback generic position")
+        # 1. Read the callback's already evaluated storage from its checked slot.
+        storage = callback_storage(builder, arguments, binding, slot)?
+        match storage:
+            Some(held) =>
+                if not owns_callback(held):
+                    continue
+                # 2. Refine only the retained generic position; no callee or bound is inferred here.
+                expected = pointer_signature(held)?
+                if inputs[slot] != expected or (generics[generic] != expected and generics[generic] != held):
+                    return Err("invalid Body IR native callback signature or mixed storage")
+                inputs[slot] = held
+                generics[generic] = held
+            None => pass
+    return Ok((inputs, generics))
+
+
+def owns_callback(ty: PlanType) -> bool:
+    """Select owned environments, leaving copied function items and function pointers to ordinary coercion."""
+    match ty:
+        PlanType.Closure(_signature) => return true
+        PlanType.NativeClosure(_signature, _send, _sync) => return true
+        _ => return false
+
+
+def pointer_signature(ty: PlanType) -> Result[PlanType, str]:
+    """Read the unchanged call signature from a checked owned environment."""
+    match ty:
+        PlanType.Closure(signature) => return Ok(PlanType.FunctionPointer(signature))
+        PlanType.NativeClosure(signature, _send, _sync) => return Ok(PlanType.FunctionPointer(signature))
+        _ => return Err("invalid Body IR native callback without owned storage")
+
+
+def callback_storage(
+    mut builder: Builder,
+    arguments: &list[RustArgument],
+    binding: &RustBinding,
+    slot: int,
+) -> Result[Option[PlanType], str]:
+    """Use the checked slot map rather than source argument order, including named calls."""
+    match binding:
+        RustBinding.Resolved(arguments=bound, defaulted_slots=_defaults) =>
+            return bound_callback_storage(builder, arguments, bound, slot)
+        RustBinding.ResolvedDeclarationOrder(arguments=bound, defaulted_slots=_defaults) =>
+            return bound_callback_storage(builder, arguments, bound, slot)
+        RustBinding.UnresolvedPositional =>
+            if slot >= len(arguments):
+                return Err("invalid Body IR native callback argument position")
+            return argument_storage(builder, arguments[slot])
+
+
+def bound_callback_storage(
+    mut builder: Builder,
+    arguments: &list[RustArgument],
+    bound: &list[RustBoundArgument],
+    slot: int,
+) -> Result[Option[PlanType], str]:
+    """Locate the materialized value belonging to one declaration slot without evaluating it again."""
+    for index in range(len(bound)):
+        if int(bound[index].slot) == slot:
+            if index >= len(arguments):
+                return Err("invalid Body IR native callback binding position")
+            return argument_storage(builder, arguments[index])
+    return Err("invalid Body IR missing native callback argument")

@@ -368,6 +368,7 @@ impl BodyBuilder<'_, '_> {
                 params: frame.parameters,
                 captured_operands: frame.captured_operands,
                 body: Box::new(bir::ClosureBody {
+                    native_storage: None,
                     function_item: false,
                     consumes_environment: false,
                     original_callable: None,

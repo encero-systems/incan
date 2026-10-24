@@ -250,7 +250,7 @@ struct RustExternItem {
 /// A trivial body may contain:
 /// - an optional leading string-literal expression statement (function docstring), and
 /// - only `Pass` statements after that (which the parser generates for `...` and `pass`), or be empty.
-fn is_trivial_body(body: &[Spanned<Statement>]) -> bool {
+pub(crate) fn is_trivial_body(body: &[Spanned<Statement>]) -> bool {
     if body.is_empty() {
         return true;
     }

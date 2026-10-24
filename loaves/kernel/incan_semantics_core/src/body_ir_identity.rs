@@ -1254,6 +1254,7 @@ fn is_owner_bound_type(ty: &IncanType, parameters: &[String]) -> bool {
         | IncanType::Named(_)
         | IncanType::Decimal { .. }
         | IncanType::RustInteropPath(_)
+        | IncanType::NativeTraitObject { .. }
         | IncanType::NativeBuiltin(_) => true,
     }
 }
