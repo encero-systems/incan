@@ -1,14 +1,24 @@
-# behavior: a model field declared with a keyword-spelled alias is read and constructed through the alias from another module, through an import alias of the model, and through self in its own module
+# behavior: Field aliases and unimported nominal payloads retain producer-owned storage across modules (#2256)
 # expect-stdout:
 #   x
 #   y
 #   z
 
-from store.json_store import get_type, make, make_aliased
+"""Observe field aliases and nested nominal values without importing their payload types."""
+
+from store.json_store import Envelope, get_type, make, make_aliased, make_envelope
 from db.schema import Account
 
 
 def main() -> None:
+    """Print alias observations, then read an unimported payload through a local binding."""
     println(get_type(make()))
     println(make_aliased().get_type())
     println(Account(type="z").type)
+    assert payload_value(make_envelope()) == 7
+
+
+def payload_value(envelope: Envelope) -> int:
+    """Preserve the aliased field's producer-owned nominal type when copying it into a local."""
+    payload = envelope.payload
+    return payload.value

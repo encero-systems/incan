@@ -1046,11 +1046,9 @@ impl TypeChecker {
         }
     }
 
-    /// Match a closed native input signature using exact carriers and the already admitted borrowed views. The cost
-    /// ranks receiver-compatible candidates; it grants no new conversion or trait implementation. An already borrowed
-    /// argument matches its complete target before considering an automatic borrow of an owned value. An unsuffixed
-    /// integer literal may take an exact-width integer parameter's type only when the existing literal bounds allow
-    /// it; final argument validation still records that contextual destination before native call retention.
+    /// Match a closed native input signature using exact carriers and admitted input adjustments. Exact carriers
+    /// rank before automatic borrows or fitting integer contexts for unsuffixed literals. Final validation records
+    /// each selected argument's contextual type; this ranking grants no new conversion or trait implementation.
     fn rust_trait_input_borrow_cost(
         &self,
         signature: &RustFunctionSig,
@@ -1069,11 +1067,11 @@ impl TypeChecker {
             let native = self.rust_argument_native_type(Self::call_arg_expr(expression));
             let argument = native.as_ref().unwrap_or(argument);
             let target = self.native_rust_signature_type(&parameter.type_display, call.rust_path);
+            let expression = Self::call_arg_expr(expression);
             if self.rust_trait_carriers_match(&target, argument) {
                 continue;
             }
-            let source = Self::call_arg_expr(expression);
-            if is_unsuffixed_integer_literal(source) && integer_literal_fits(source, &target) {
+            if is_unsuffixed_integer_literal(expression) && integer_literal_fits(expression, &target) {
                 cost += 1;
                 continue;
             }

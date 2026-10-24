@@ -9757,7 +9757,9 @@ def lower_list_method(
         return lower_list_helper(builder, false, arguments, destination, span)
     if is_collection(receiver_ty):
         return collection_method(builder, member, arguments, destination, span)
-    leaf, depth = require_list_shape(receiver_ty, "unsupported Body IR list Method on non-list")?
+    description = f"unsupported Body IR list Method {member} on non-list in {builder.name}"
+    source_location = f"{span.file}:{span.line}:{span.column}"
+    leaf, depth = require_list_shape(receiver_ty, f"{description} at {source_location}")?
     element = list_element(leaf, depth)
     mut name = ""
     mut mutable = false

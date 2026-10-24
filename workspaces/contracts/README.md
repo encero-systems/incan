@@ -84,3 +84,5 @@ incan run workspaces/contracts/src/main.incn -- INCAN workspaces/contracts/fixtu
 ```
 
 A selector is `<family>`, `<family>/<area>` or `<family>/<area>/<name>`. The runner prints `PASS`, `FAIL` with each broken expectation, or `PEND` with its reason for every case, a summary per area and a total, and exits 1 when a case fails or a family cannot be read.
+
+For the installed dev.8 workflow, pinned release bundles, and the committed PASS-key regression gate, see [Verify an installed dev.8 toolchain](dev8-ci.md).

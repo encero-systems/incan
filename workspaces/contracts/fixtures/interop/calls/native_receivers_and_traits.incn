@@ -1,4 +1,4 @@
-# behavior: native calls retain owner arguments, trait bounds, iterator items and declared borrow modes (#2256)
+# behavior: native receivers retain owners, bounds, items, borrow modes and Unix CommandExt callees (#2256)
 # expect-stdout:
 #   allocated
 #   1
@@ -17,6 +17,8 @@ from rust::std::env import args, args_os
 from rust::std::hash import Hash as NativeHash, Hasher, DefaultHasher
 from rust::std::os::raw import c_int
 from rust::std::ops import Range
+from rust::std::os::unix::process import CommandExt as UnixCommandExt
+from rust::std::process import Command
 from rust::std::rc import Rc
 from rust::std::string import String as RustString
 from rust::std import time as native_time
@@ -116,3 +118,12 @@ def main() -> None:
     show_receiver_methods()
     show_trait_methods()
     show_mutable_tuple_fields()
+    configure_process_group()
+
+
+def configure_process_group() -> None:
+    """Keep an aliased Unix extension trait's exact callee on a mutable command receiver."""
+    mut command = Command.new("true")
+    command.process_group(0)
+    command.process_group((0))
+    command.process_group(-0)

@@ -8,7 +8,8 @@ entries are skipped; anything else, and an area with nothing in it, is refused: 
 nothing is what the families exist to prevent.
 """
 
-from std.fs import IoError, Path
+from std.fs import Path
+from std.io import IoError
 
 
 # The manifest every single-file and module fixture runs under.

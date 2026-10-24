@@ -2960,11 +2960,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: ast::Span,
     ) -> Result<Option<bir::HelperOp>, String> {
         let checked = self.type_info.resolved_string_helper_call(span);
-        let runtime_string_receiver = matches!(
+        let string_receiver = matches!(
             self.resolve_ty(receiver.span),
-            IncanType::Primitive(IncanPrimitiveType::Str)
+            IncanType::Primitive(IncanPrimitiveType::Str | IncanPrimitiveType::FrozenStr)
         );
-        if !runtime_string_receiver {
+        if !string_receiver {
             return match checked {
                 Some(_) => Err("checked string helper identity has a non-string receiver".to_string()),
                 None => Ok(None),

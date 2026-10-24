@@ -15,7 +15,7 @@ use crate::typechecker::derive_requirements::DeriveSupport;
 use crate::typechecker::helpers::{
     collection_name, collection_type_id, generator_ty, is_frozen_bytes, is_frozen_str, is_intlike_for_index,
     is_str_like, list_ty, option_ty, render_resolved_type_as_rust_arg, runtime_string_method_identity_and_return,
-    string_method_return,
+    string_method_identity_and_return,
 };
 use crate::typechecker::receiver_change::ReceiverChange;
 use crate::typechecker::type_info::{
@@ -7036,11 +7036,17 @@ impl TypeChecker {
             );
         }
 
-        // Every `str` method other than `encode` (checked above) takes its arguments by position (#1561).
-        if matches!(base_ty, ResolvedType::Str)
-            && let Some((id, ret)) = runtime_string_method_identity_and_return(method)
-        {
-            self.refuse_non_positional_builtin_args(&format!("str.{}", string_methods::as_str(id)), args);
+        // Runtime and frozen text share selected helper signatures; the frozen surface also admits len/is_empty.
+        let selected_string_method = if matches!(base_ty, ResolvedType::Str) {
+            runtime_string_method_identity_and_return(method)
+        } else if is_frozen_str(&base_ty) {
+            string_method_identity_and_return(method, true)
+        } else {
+            None
+        };
+        if let Some((id, ret)) = selected_string_method {
+            let owner = if is_frozen_str(&base_ty) { "FrozenStr" } else { "str" };
+            self.refuse_non_positional_builtin_args(&format!("{owner}.{}", string_methods::as_str(id)), args);
             if type_args.is_empty()
                 && HelperOp::for_selected_string_method(id).is_some()
                 && self.validate_selected_string_helper_call(id, args, &arg_types, span)
@@ -7050,12 +7056,6 @@ impl TypeChecker {
             return ret;
         }
 
-        if is_frozen_str(&base_ty)
-            && let Some(ret) = string_method_return(method, true)
-        {
-            self.refuse_non_positional_builtin_args(&format!("FrozenStr.{method}"), args);
-            return ret;
-        }
         if is_frozen_bytes(&base_ty)
             && let Some(id) = frozen_bytes_methods::from_str(method)
         {

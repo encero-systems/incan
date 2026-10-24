@@ -1,5 +1,17 @@
+"""Own the nominal declarations that a separate module exposes through fields and factories."""
+
+
 pub model Account:
+    """Expose a keyword-spelled field alias."""
+
     pub type_ [alias="type"]: str
 
     def get_type(self) -> str:
+        """Read the same stored field through its alias."""
         return self.type
+
+
+pub model Profile:
+    """A payload the consumer receives without importing its declaration."""
+
+    pub value: int
