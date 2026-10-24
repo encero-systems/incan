@@ -14,18 +14,20 @@ else is answered `fallback`, and the command prepares it in its own process.
 from std.fs import Path
 from std.environ import get_or
 from features import FeatureRequest
+from compiler_worker import generation_for
 from files import discard_file
 from home import owners_dir, standard_packages, unit_ledger
 from incan_units import compile_executable, program_binary
 from intake import intake
 from loaf_local_graph import unique
-from observation import SETTLE_SECONDS, Ledger, load_ledger, now_seconds
+from observation import SETTLE_SECONDS, Ledger, load_ledger, now_seconds, trace_boundary
 from owner_protocol import Reply, Request, prepares_executable
 from rust_units import rust_facet
 from testing import tests_binary
 from toolchain import Toolchain, load_toolchain, toolchain_file
 from unit import UnitDescription, describe
 from unit_freshness import Key, artifact_identity, compiler_fingerprint, description_digest, ledger_name, reconciled_key
+from apple_sdk import sdk_paths
 from unit_rust import prepare_native
 
 
@@ -128,6 +130,7 @@ pub model Owner:
     def prepare(mut self, request: Request) -> Reply:
         """Make the executable a run, build or test request needs, and say how that went."""
         reset_trace()
+        trace_boundary("owner_received")
         mut reply = self.respond("refused")
         match self.try_prepare(request):
             Ok(found) => reply = found
@@ -151,6 +154,7 @@ pub model Owner:
             return Err(f"{request.path}: no such source file")
         # 2. The toolchain is the one installed now, and a changed one has dropped every retained entry.
         toolchain = self.current_toolchain()?
+        trace_boundary("toolchain_current")
         id = entry_id(request)
         # 3. An entry the owner does not serve is answered `fallback`, and the command prepares it itself.
         match self.held_entry(id, request, toolchain)?:
@@ -158,20 +162,29 @@ pub model Owner:
             Some(found) =>
                 # 4. The executable is kept or built for the key its inputs reconcile to, as without an owner.
                 mut held = found
+                trace_boundary("unit_prepared")
                 key = held.key(self.compiler)?
+                trace_boundary("source_key")
                 self.held[id] = held
                 return built(held.unit, toolchain, key, request, self.generation)
 
     def current_toolchain(mut self) -> Result[Toolchain, str]:
-        """The toolchain, loaded again when it or anything it names changed. A new toolchain drops every entry."""
+        """The toolchain and worker selection, held while their complete observations match. Derivation must see
+        stable inputs; a changed toolchain drops every entry and a racing update refuses this request."""
         match self.toolchain:
             Some(loaded) =>
                 if unchanged(self.toolchain_watched):
                     return Ok(loaded)
             None => pass
-        loaded = load_toolchain()?
-        self.compiler = compiler_fingerprint(loaded)?
-        self.toolchain_watched = watch(toolchain_paths(loaded)?)
+        manifest = watch([toolchain_file()?.0])
+        mut loaded = load_toolchain()?
+        watched = watch(toolchain_paths(loaded)?)
+        compiler = compiler_fingerprint(loaded)?
+        loaded.worker_generation = generation_for(compiler)?
+        if not unchanged(manifest) or not unchanged(watched):
+            return Err("toolchain inputs changed while selecting the compiler worker")
+        self.compiler = compiler
+        self.toolchain_watched = watched
         self.toolchain = Some(loaded)
         self.held = {}
         self.unsupported = {}
@@ -252,7 +265,7 @@ def toolchain_paths(toolchain: Toolchain) -> Result[list[str], str]:
         paths.append(native.path)
     for cache in toolchain.rust_abi:
         paths.append(cache)
-    return Ok(paths)
+    return Ok(paths + sdk_paths(toolchain.sysroot)?)
 
 
 def guard_paths(unit: UnitDescription) -> Result[list[str], str]:
@@ -309,7 +322,8 @@ def built(
     mut capturing = toolchain
     capturing.console = prefix
     # 3. An executable whose key is unchanged is kept, and a changed one is compiled.
-    code = compile_executable(unit, capturing, output, key)?
+    development = request.command == "run" or request.command == "test"
+    code = compile_executable(unit, capturing, output, key, development)?
     # 4. The client learns how the compile ended, where the executable is, and everything the compiler printed.
     return Ok(
         Reply(

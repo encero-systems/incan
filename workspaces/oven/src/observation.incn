@@ -19,7 +19,7 @@ from rust::std::os::unix::fs import MetadataExt
 from rust::std::string import String as RustString
 from rust::std::time import SystemTime, UNIX_EPOCH
 from std.encoding.hex import hexlify
-from std.environ import get_or
+from std.environ import get_optional, get_or
 from std.fs import Path
 from std.hash import sha256
 from std.json import JsonValue, parse
@@ -297,6 +297,15 @@ def text_of(row: JsonValue, name: str) -> Result[str, str]:
 def refusal(failed: list[str]) -> str:
     """The field path that failed, as text."""
     return ".".join(failed)
+
+
+pub def trace_boundary(boundary: str) -> None:
+    """Record an opt-in preparation boundary on the launch clock; ordinary invocations read no clock here."""
+    if get_optional("INCAN_NATIVE_TIMING") is None or get_or("OVEN_TRACE", "") == "":
+        return
+    match SystemTime.now().duration_since(UNIX_EPOCH):
+        Ok(now) => trace(f"prepare epoch={now.as_secs_f64()} boundary={boundary}")
+        Err(_) => trace(f"prepare epoch=unavailable boundary={boundary}")
 
 
 pub def trace_launch(program: str) -> None:

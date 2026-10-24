@@ -20,7 +20,7 @@ pub def tests_binary(unit: UnitDescription) -> Path:
 pub def run_tests(unit: UnitDescription, toolchain: Toolchain) -> Result[i32, str]:
     """Compile once, unless the stored executable is current, and run the collected tests."""
     binary = tests_binary(unit)
-    compiled = compile_unit(unit, toolchain, binary)?
+    compiled = compile_unit(unit, toolchain, binary, true)?
     if compiled != 0:
         return Ok(compiled)
     return run_collected(binary, Path(unit.source).name())

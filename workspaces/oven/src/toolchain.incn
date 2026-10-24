@@ -50,6 +50,9 @@ pub model Toolchain:
     # When set, a path prefix: the compiler writes its standard output to `<prefix>.out` and its standard error to
     # `<prefix>.err` instead of the caller's streams, so a resident owner can report them without owning a terminal.
     pub console: str = ""
+    # A resident owner's worker selection, held only while it watches the compiler inputs and its inherited
+    # environment stays unchanged. Ordinary toolchain loading leaves this empty and derives the selection afresh.
+    pub worker_generation: str = ""
 
 
 pub def rust_compiler(toolchain: Toolchain) -> str:
