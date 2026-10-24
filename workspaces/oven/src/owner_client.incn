@@ -13,7 +13,7 @@ from rust::std::io import Write, stderr, stdout
 from rust::std::string import String as RustString
 from std.environ import get_or
 from std.fs import Path
-from observation import trace
+from observation import trace, trace_boundary
 from owner_endpoint import ask, endpoint_for
 from owner_protocol import Reply, Request
 from unit import project_root_of
@@ -65,8 +65,10 @@ def asked(
     # 1. The entry is an absolute path, and the project it belongs to is known.
     absolute = entry.absolute().map_err((error) => f"{entry.0}: {error.message()}")?
     root = project_of(absolute)
+    trace_boundary("project_resolved")
     # 2. The owner is the one for this project, and the request states what the command resolved.
     endpoint = endpoint_for(root.0)?
+    trace_boundary("owner_selected")
     request = Request(
         command=command,
         generation=endpoint.generation,

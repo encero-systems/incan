@@ -1,0 +1,70 @@
+"""Select local debug linkage and validate every shared library before reusing a development executable."""
+
+from std.fs import Path
+from files import read_json
+from home import home
+from json_fields import required_items, required_text
+from unit import UnitDescription
+from unit_freshness import Key, artifact_identity, fingerprint
+
+
+const SCHEMA: str = "incan.native-shared/1"
+
+
+pub def development_link(unit: UnitDescription, requested: bool) -> bool:
+    """Only debug run and test requests select shared linkage; libraries and build requests retain static linkage."""
+    return requested and unit.profile == "debug" and unit.kind != "library"
+
+
+pub def linkage_key(key: Key, shared: bool) -> Result[Key, str]:
+    """Keep source and artifact evidence while separating shared development outputs from ordinary build outputs."""
+    if not shared:
+        return Ok(key)
+    return Ok(Key(digest=fingerprint([SCHEMA, key.digest])?, parts=key.parts + [f"linkage {SCHEMA}"]))
+
+
+pub def shared_arguments(unit: UnitDescription, requested: bool) -> Result[list[str], str]:
+    """Select the home's immutable native store only for a requested development executable."""
+    if not development_link(unit, requested):
+        return Ok([])
+    directory = home()?.joinpath("store").joinpath("native-shared").absolute().map_err((error) => error.message())?
+    return Ok(["--shared-native", directory.0])
+
+
+pub def library_witness(binary: Path) -> Path:
+    """The native compiler's exact dynamic-library generations beside a completed development executable."""
+    return Path(f"{binary.0}.native-shared.json")
+
+
+pub def shared_current(binary: Path) -> bool:
+    """
+    Admit a stored executable only while all of its dynamic library generations still match.
+
+    1. Require a complete, schema-checked loader witness.
+    2. Compare every library's followed filesystem identity without reading its bytes.
+    """
+    # 1. A missing or malformed witness requires compilation; it never authorizes execution.
+    match loaded_libraries(library_witness(binary)):
+        Err(_) => return false
+        Ok(libraries) =>
+            if len(libraries) == 0:
+                return false
+            # 2. Replacement, removal and in-place rewrites all invalidate the stored executable.
+            for path, expected in libraries:
+                match artifact_identity(Path(path)):
+                    Err(_) => return false
+                    Ok(actual) =>
+                        if actual != expected:
+                            return false
+            return true
+
+
+def loaded_libraries(witness: Path) -> Result[list[tuple[str, str]], str]:
+    """Read exact loader paths and identities; differently typed fields are refused without coercion."""
+    document = read_json(witness)?
+    if required_text(document, "schema")? != SCHEMA:
+        return Err("unsupported shared native witness")
+    mut libraries: list[tuple[str, str]] = []
+    for row in required_items(document, "libraries")?:
+        libraries.append((required_text(row, "path")?, required_text(row, "identity")?))
+    return Ok(libraries)

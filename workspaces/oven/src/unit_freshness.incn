@@ -26,6 +26,7 @@ from observation import Ledger, SETTLE_SECONDS, load_ledger, observe, trace
 from publication import place, publish
 from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription
+from apple_sdk import sdk_identity
 
 
 const UNIT_DOMAIN: str = "incan.oven.unit/1"
@@ -106,7 +107,7 @@ pub def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
     natives = native_identities(toolchain.externs)?
     caches = cache_identities(toolchain.rust_abi)?
     # 3. The directories the crates' own dependencies live in are part of the compiler's reach.
-    return fingerprint(driver + natives + caches + toolchain.search)
+    return fingerprint(driver + natives + caches + toolchain.search + [sdk_identity(toolchain.sysroot)?])
 
 
 pub def native_identities(externs: list[NativeCrate]) -> Result[list[str], str]:

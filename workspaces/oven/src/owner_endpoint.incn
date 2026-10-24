@@ -20,7 +20,7 @@ from rust::std::os::unix::process import CommandExt
 from rust::std::process import Child, Command, Stdio
 from rust::std::thread import sleep
 from rust::std::time import Duration
-from std.environ import get_or
+from std.environ import get_optional, get_or
 from std.fs import Path
 from std.json import JsonValue
 from files import discard_file
@@ -91,7 +91,7 @@ pub def endpoint_for(root: str) -> Result[Endpoint, str]:
 
 def generation_of(root: str) -> Result[str, str]:
     """The first sixteen digits of the digest of the protocol, this executable, the project, the home, the standard
-    library and the toolchain description."""
+    library, toolchain description, selected SDK configuration and requested compiler diagnostics."""
     exe = executable()?
     configuration = [
         PROTOCOL,
@@ -101,8 +101,20 @@ def generation_of(root: str) -> Result[str, str]:
         home()?.0,
         get_or("INCAN_STDLIB", ""),
         identity_of(toolchain_file()?),
+        inherited_setting("DEVELOPER_DIR"),
+        inherited_setting("TOOLCHAINS"),
+        inherited_setting("SDKROOT"),
+        inherited_setting("INCAN_NATIVE_TIMING"),
+        inherited_setting("INCAN_TRACE_DIR"),
     ]
     return Ok(fingerprint(configuration)?[0:16])
+
+
+def inherited_setting(name: str) -> str:
+    """Bind an owner's inherited selection to its caller's setting, distinguishing absent and explicitly empty."""
+    match get_optional(name):
+        Some(value) => return f"set:{value}"
+        None => return "unset"
 
 
 def endpoint_at(directory: str, generation: str) -> Endpoint:

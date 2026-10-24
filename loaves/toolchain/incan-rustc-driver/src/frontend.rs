@@ -1090,6 +1090,8 @@ pub(crate) struct Dependencies {
     library: bool,
     /// Arguments Oven passes to rustc unchanged (`--rustc-arg`): the pinned target's link policy (DD-0008).
     rustc_args: Vec<String>,
+    /// A development executable may link exact native carriers from this immutable store.
+    shared_native: Option<PathBuf>,
 }
 
 impl Dependencies {
@@ -1127,6 +1129,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
     }
     let mut library = false;
     let mut rustc_args = Vec::new();
+    let mut shared_native = None;
     let mut remaining = arguments.iter();
     while let Some(option) = remaining.next() {
         if option == "--library" {
@@ -1136,8 +1139,12 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
         let value = remaining.next().ok_or_else(|| format!("missing value for {option}"))?;
         match option.as_str() {
             "--rustc-arg" => rustc_args.push(value.clone()),
+            "--shared-native" => shared_native = Some(PathBuf::from(value)),
             _ => return Err(format!("unknown native source option {option}")),
         }
+    }
+    if shared_native.is_some() && (unit.profile != "debug" || unit.kind == UnitKind::Library || library) {
+        return Err("shared native linking requires a debug executable".into());
     }
     Ok(Dependencies {
         externs,
@@ -1145,6 +1152,7 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
         rust_abi: unit.rust_abi.clone(),
         library,
         rustc_args,
+        shared_native,
     })
 }
 
@@ -1170,7 +1178,9 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     }
 
     // ---- Checked source and Incan plan ----
+    let mut timing = crate::native_timing::Timing::requested();
     let mut unit = UnitDescription::read(Path::new(&arguments[0])).map_err(|error| error.message)?;
+    timing.mark("unit_descriptor");
     let source_path = unit.source.clone();
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::compile_unit", input = %source_path.display()).entered();
     let identity = crate::identity::verify(Path::new(&arguments[3]))?;
@@ -1238,6 +1248,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         &native_externs,
         &dependencies.directories,
         &dependencies.rustc_args,
+        dependencies.shared_native.as_deref(),
         kind,
         program.manifest.as_ref(),
     )

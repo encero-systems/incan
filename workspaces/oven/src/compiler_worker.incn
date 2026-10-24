@@ -12,11 +12,12 @@ from std.json import JsonValue
 from files import discard_file
 from home import owners_dir
 from json_fields import required_text
-from observation import trace
+from observation import trace, trace_boundary
 from owner_endpoint import Endpoint, attach, prepare_directory
 from owner_protocol import Connection, Listener, listen
 from toolchain import Toolchain
 from unit_freshness import compiler_fingerprint, fingerprint
+from apple_sdk import configure_sdk
 
 
 const SCHEMA: str = "incan.compiler-worker/1"
@@ -114,11 +115,13 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
 def connection_for(toolchain: Toolchain) -> Result[tuple[Connection, str], str]:
     """Select the compiler generation once and connect before any source request is submitted."""
     endpoint = endpoint_for(toolchain)?
-    connected = selected_connection(toolchain.driver, endpoint)?
+    trace_boundary("worker_selected")
+    connected = selected_connection(toolchain, endpoint)?
+    trace_boundary("worker_connected")
     return Ok((connected, endpoint.generation))
 
 
-def selected_connection(driver: str, endpoint: Endpoint) -> Result[Connection, str]:
+def selected_connection(toolchain: Toolchain, endpoint: Endpoint) -> Result[Connection, str]:
     """
     Connect to the selected worker, starting one under an exclusive lock when none exists.
 
@@ -136,7 +139,7 @@ def selected_connection(driver: str, endpoint: Endpoint) -> Result[Connection, s
         Some(found) => return Ok(found)
         None => pass
     # 3. The child must acknowledge this generation before it can receive a unit.
-    launch(driver, endpoint)?
+    launch(toolchain, endpoint)?
     match attach(endpoint)?:
         Some(found) => return Ok(found)
         None => return Err("the compiler worker disappeared after readiness")
@@ -144,7 +147,9 @@ def selected_connection(driver: str, endpoint: Endpoint) -> Result[Connection, s
 
 def endpoint_for(toolchain: Toolchain) -> Result[Endpoint, str]:
     """A private endpoint bound to the complete compiler fingerprint and inherited nonincidental environment."""
-    generation = fingerprint([SCHEMA, compiler_fingerprint(toolchain)?] + environment()?)?[0:16]
+    mut generation = toolchain.worker_generation
+    if generation == "":
+        generation = generation_for(compiler_fingerprint(toolchain)?)?
     directory = Path(toolchain.console).parent()
     prefix = directory.joinpath(f"c-{generation}").0
     ready = f"{prefix}.{id()}.ready"
@@ -158,6 +163,15 @@ def endpoint_for(toolchain: Toolchain) -> Result[Endpoint, str]:
         ready=ready,
         mailbox="",
     ))
+
+
+pub def generation_for(compiler: str) -> Result[str, str]:
+    """Bind a worker to the complete observed compiler identity and this process's inherited configuration.
+
+    A resident owner may retain this digest only while it watches all compiler inputs and its environment remains
+    unchanged. Every other caller derives it for the request; source, checking and compilation are never retained.
+    """
+    return Ok(fingerprint([SCHEMA, compiler] + environment()?)?[0:16])
 
 
 def environment() -> Result[list[str], str]:
@@ -182,10 +196,10 @@ def unicode_environment(value: OsString) -> Result[str, str]:
     return value.into_string().map_err((_) => "a compiler environment entry is not Unicode")
 
 
-def launch(driver: str, endpoint: Endpoint) -> Result[None, str]:
+def launch(toolchain: Toolchain, endpoint: Endpoint) -> Result[None, str]:
     """Start the exact driver detached from the owner, with protocol and console on separate streams."""
     mut listener = listen(f"{endpoint.ready}", false)?
-    mut command = Command.new(driver)
+    mut command = configure_sdk(Command.new(toolchain.driver), toolchain.sysroot)?
     command.arg("--resident").arg(f"{endpoint.socket}").arg(f"{endpoint.generation}")
     command.arg(f"{endpoint.ready}").arg(str(IDLE_SECONDS))
     command.env_remove("RUSTC_BOOTSTRAP")

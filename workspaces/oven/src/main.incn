@@ -41,6 +41,7 @@ from testing import run_collected, run_tests
 from owner_client import owned, status_code
 from owner_protocol import Reply
 from owner_endpoint import stop_owners
+from observation import trace_boundary
 from owner_service import serve_owner
 from graph_inspection import inspect_codegraph
 from graph_mcp import serve_graph
@@ -60,6 +61,7 @@ pub model Options:
 
 def main() -> None:
     """Run the command the first argument names; each command exits the process with its own status."""
+    trace_boundary("command_entered")
     mut arguments: list[str] = []
     for argument in args():
         arguments.append(argument)
@@ -242,7 +244,7 @@ def ran(options: Options, passed: list[str]) -> Result[i32, str]:
     unit.program_entries = options.program_entries
     toolchain = load_toolchain()?
     binary = program_binary(unit)
-    compiled = compile_unit(unit, toolchain, binary)?
+    compiled = compile_unit(unit, toolchain, binary, true)?
     if compiled != 0:
         return Ok(compiled)
     # 3. The process becomes the program, so its exit status is the run's.

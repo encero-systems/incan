@@ -6,6 +6,7 @@ from rust::std::string import String as RustString
 from std.environ import get_or
 from std.fs import Path
 from std.io import BytesIO
+from apple_sdk import configure_sdk
 from files import open_stream
 from observation import trace
 from publication import publish_binary
@@ -49,7 +50,7 @@ pub def compile_or_replay(
     certificate = Path(f"{path.0}.{id()}.certificate")
     if certificate.is_file():
         certificate.unlink().map_err((error) => error.message())?
-    mut command = Command.new(toolchain.driver)
+    mut command = configure_sdk(Command.new(toolchain.driver), toolchain.sysroot)?
     command.env_remove("RUSTC_BOOTSTRAP")
     command.env("INCAN_COMPILER_REFUSAL", f"{certificate.0}")
     command.stdin(Stdio.inherit())
