@@ -4,7 +4,7 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::super::ops::{integer_literal_fits, is_unsuffixed_integer_literal};
+use super::super::ops::contextual_integer_literal_fits;
 use super::{RustPathMethodCall, RustTraitQualifiedCall, TypeChecker};
 use crate::ast::{Expr, Spanned};
 use crate::resolved_type_subst::{map_resolved_type_leaves, substitute_resolved_type};
@@ -1247,7 +1247,7 @@ impl TypeChecker {
             if self.rust_trait_carriers_match(&target, argument) {
                 continue;
             }
-            if is_unsuffixed_integer_literal(expression) && integer_literal_fits(expression, &target) {
+            if contextual_integer_literal_fits(expression, &target) {
                 cost += 1;
                 continue;
             }

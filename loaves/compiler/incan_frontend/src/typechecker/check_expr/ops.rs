@@ -113,6 +113,13 @@ pub(super) fn integer_literal_fits(expr: &Spanned<Expr>, ty: &ResolvedType) -> b
     }
 }
 
+/// Admit a contextual exact-width integer candidate only for an unsuffixed literal within its declared range.
+/// Native trait selection uses the same literal rules as operators; ordinary arguments and suffixed literals
+/// retain their fixed checked carriers and cannot use this contextual match.
+pub(super) fn contextual_integer_literal_fits(expr: &Spanned<Expr>, ty: &ResolvedType) -> bool {
+    is_exact_integer_type(ty) && is_unsuffixed_integer_literal(expr) && integer_literal_fits(expr, ty)
+}
+
 /// Fully resolved hook pair for one structural iteration protocol.
 struct ResolvedIterationHooks {
     iterator_type: ResolvedType,

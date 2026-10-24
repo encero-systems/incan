@@ -793,7 +793,10 @@ fn retain_selected_returns(
                 };
                 retain_declared_return_type(&mut local.ty, &carrier.ty, &carrier.identities, identities);
             }
-            bir::StatementKind::Assign { rvalue, .. } => match rvalue {
+            bir::StatementKind::Assign { place, rvalue } => match rvalue {
+                bir::Rvalue::Use(bir::Operand::Place(read)) => {
+                    retain_local_value_carrier(place, &read.place, false, locals, identities);
+                }
                 bir::Rvalue::Closure { body, .. } => retain_selected_returns(&body.stmts, locals, identities, returns),
                 bir::Rvalue::Generator { body, .. } => {
                     retain_selected_returns(&body.stmts, locals, identities, returns)
@@ -817,6 +820,13 @@ fn retain_selected_returns(
                 }
                 _ => {}
             },
+            bir::StatementKind::IterNext {
+                destination,
+                iterator: bir::Operand::Place(read),
+                protocol: bir::IterProtocol::Builtin,
+            } => {
+                retain_local_value_carrier(destination, &read.place, true, locals, identities);
+            }
             bir::StatementKind::If {
                 then_block, else_block, ..
             } => {
@@ -835,6 +845,41 @@ fn retain_selected_returns(
             }
             _ => {}
         }
+    }
+}
+
+/// Transfer a whole local's checked carrier through an assignment or builtin list poll. The source has already
+/// received its selected declaration's owner; no display spelling or consumer namespace grants a new identity.
+fn retain_local_value_carrier(
+    destination: &bir::Place,
+    source: &bir::Place,
+    element: bool,
+    locals: &mut [bir::LocalDecl],
+    identities: &Identities,
+) {
+    if !destination.projection.is_empty() || !source.projection.is_empty() {
+        return;
+    }
+    let Some(source) = source.local_id().and_then(|id| locals.get(id.index())) else {
+        return;
+    };
+    let mut retained = &source.ty;
+    while let IncanType::Ref(inner) | IncanType::RefMut(inner) = retained {
+        retained = inner;
+    }
+    if element {
+        let IncanType::Generic { base, args } = retained else {
+            return;
+        };
+        if collection_type(base) != Some(CollectionTypeId::List) {
+            return;
+        }
+        let [item] = args.as_slice() else { return };
+        retained = item;
+    }
+    let retained = retained.clone();
+    if let Some(local) = destination.local_id().and_then(|id| locals.get_mut(id.index())) {
+        qualify_type(&mut local.ty, Some(&retained), identities);
     }
 }
 

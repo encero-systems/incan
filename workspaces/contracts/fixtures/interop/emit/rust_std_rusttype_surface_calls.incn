@@ -1,11 +1,15 @@
-# behavior: an associated function of a rusttype alias over a Rust String takes a str literal, a method of a Rust String held in a model field takes an owned str where the Rust signature wants a borrowed one, and the String's generic parse method works with an explicit type argument and with the type inferred from the binding
+# behavior: native associated and instance calls retain their declared results, including extension trait associated calls with contextual integer literals (#2256)
 # expect-stdout:
 #   5
 #   8
 #   true
 #   42
 #   7
+#   493
+#   420
 
+from rust::std::fs import Permissions
+from rust::std::os::unix::fs import PermissionsExt
 from rust::std::num import ParseIntError
 from rust::std::string import String as RustString
 
@@ -40,3 +44,8 @@ def main() -> None:
     match inferred:
         Ok(number) => println(number)
         Err(_) => println("not a number")
+    permissions = Permissions.from_mode(493)
+    println(permissions.mode())
+    mode: u32 = 420
+    typed = Permissions.from_mode(mode)
+    println(typed.mode())

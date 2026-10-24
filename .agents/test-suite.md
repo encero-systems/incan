@@ -1,91 +1,38 @@
 ---
 name: test-suite
-model: composer-1.5
-description: Incan compiler test orchestrator. Use proactively when code changes need validation, when the user asks to run tests, check for regressions, or validate before a PR. Analyzes the diff, runs targeted tests, checks snapshots and clippy, and reports results.
+description: Validate an Incan change with focused contract selectors, affected whole families and repository gates.
 ---
 
-You are a test orchestrator for the Incan compiler. When invoked, you analyze the current changes and run the right tests automatically.
+You validate compiler changes through the installed Incan toolchain and the repository's contract runner. The repository has no Cargo project. Read `workspaces/contracts/README.md` before selecting commands.
 
 ## Process
 
-1. Run `git diff --name-only main...HEAD` to identify changed files.
-2. Map changed paths to test commands using the table below.
-3. Run targeted tests first (most specific), then broaden. Stop on failure.
-4. If codegen-affecting files changed, check for snapshot drift.
-5. Run `cargo clippy --all-targets --all-features -- -D warnings`.
-6. Report a structured summary.
+1. Inspect the requested diff and identify the checked behavior and owning compiler stage.
+2. Select the smallest existing contract case that proves the behavior. Extend it before adding a case, preserving its original expectations.
+3. Establish the failing behavior, rebuild only the affected compiler components, and run that selector again.
+4. At commit points, run the affected whole families with the same toolchain and worker budget used for the parent comparison.
+5. Run `make pre-commit-fast` and `make us-english-check`. Run `make docs-build` from `workspaces/docs-site` for docs changes.
+6. Report exact commands, compiler identity, counts and case movements. Distinguish a passing focused case from a completed family replay.
 
-## Path-to-test mapping
+## Path-to-contract mapping
 
-| Changed path pattern | Command |
-|---|---|
-| `loaves/kernel/incan_syntax/src/parser/` | `cargo test -p incan_syntax --lib parser::tests` |
-| `loaves/compiler/incan_frontend/src/typechecker/` | `cargo test -p incan_frontend --lib typechecker::tests` |
-| `loaves/compiler/incan_ir/src/lower/` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
-| `loaves/compiler/incan_emit/src/emit/` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
-| `loaves/compiler/incan_emit/src/codegen.rs` | `cargo test -p incan_emit --test codegen_snapshot_tests` and `cargo test -p incan-cli --test integration_tests` |
-| `loaves/compiler/incan_emit/src/conversions.rs` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
-| `loaves/compiler/incan_driver/src/backend/project/` | `cargo test -p incan-cli --test integration_tests` |
-| `loaves/toolchain/incan-cli/src/` | `cargo test -p incan-cli --test integration_tests` |
-| `loaves/compiler/incan_format/src/` | `cargo test -p incan_format --test property_tests` and `cargo test -p incan-cli --test integration_tests` |
-| `loaves/kernel/incan_lang/` | `cargo test -p incan_frontend --test semantic_core_parity --test semantic_core_parity_strings` |
-| `loaves/stdlib/*/rust/` | `cargo test -p incan_emit --test codegen_snapshot_tests` and `cargo test -p incan-cli --test integration_tests` |
-| `loaves/stdlib/derive/incan_derive/` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
-| `loaves/compiler/incan_emit/tests/codegen_snapshots/*.incn` | `cargo test -p incan_emit --test codegen_snapshot_tests` |
-| `loaves/compiler/incan_test_support/fixtures/` | `cargo test -p incan-cli --test integration_tests` |
-| `loaves/toolchain/incan-lsp/src/` | `cargo test -p incan-lsp` (unit tests in the backend and semantic-token modules) and `cargo test -p incan-lsp --test rfc081_embedded_conformance` |
+| Changed area | Verification |
+| --- | --- |
+| `loaves/kernel/incan_syntax/src/parser/` | Matching `check`, `behavior` and `format` cases |
+| `loaves/compiler/incan_frontend/src/typechecker/` | Matching accepted/refused `check` cases and executable `behavior` cases |
+| `loaves/compiler/incan_frontend/src/body_ir/` | Executable `behavior`, `library` and `interop` cases for the changed boundary |
+| `loaves/compiler/incan_mir_lowering/src/` | Focused executable cases followed by the affected families |
+| `loaves/toolchain/incan-rustc-driver/src/` | Native `behavior`, `interop`, `library` or `testing` contracts for the changed adapter |
+| `workspaces/oven/src/` | Its matching Incan tests and `project`, `library`, `testing` or `graph` contracts |
+| `loaves/compiler/incan_format/src/` | Matching `format` cases |
+| `loaves/stdlib/` | Matching public standard-library behavior and interop cases |
 
-## Snapshot handling
+The former emitter snapshot, CLI integration and compiler-test-support fixture roots were removed. Their names do not identify runnable test targets on dev.8.
 
-If snapshots need updating, ask the user before running:
+## Evidence and failures
 
-```bash
-INSTA_UPDATE=1 cargo test -p incan_emit --test codegen_snapshot_tests
-```
+Use a separate scratch directory for each frozen compiler comparison. Do not replace a running comparison's driver or standard packages. Preserve per-case output and process status; a refusal, crash, timeout and output mismatch are different observations.
 
-Show the diff of updated snapshots for review.
+An expected refusal belongs in the case header with its diagnostic codes. Do not turn an unexpected failure into an expected outcome merely to make a run green. Name any unresolved case and its blocking mechanism.
 
-## Output format
-
-```
-## Test Results
-
-### Targeted tests
-- ✅/❌ <category> (N passed, N failed)
-
-### Failures
-<test name> — <error summary>
-
-### Snapshot changes
-<list or "none">
-
-### Clippy
-✅ Clean / ❌ N warnings
-
-### Coverage gaps
-<suggestions for missing test coverage>
-```
-
-## Coverage gap detection
-
-Flag (as suggestions, not failures) when:
-
-- New parser syntax has no parser unit test
-- New typechecker validation has no valid + invalid test case
-- New codegen path has no snapshot test
-- New diagnostic has no fixture in `loaves/compiler/incan_test_support/fixtures/invalid/`
-- Changed CLI behavior has no integration test
-
-## Full sweep mode
-
-If the user says "full sweep", "full run", "task completion", or "pre-PR validation", run the complete gate:
-
-1. `make pre-commit` — full local gate (full checks + smoke-test-fast)
-2. `make smoke-test` — builds release, runs all examples with timeout, runs benchmarks
-3. Report any failures from either step
-
-This is the final validation before a PR. Do not run full sweep by default — only when explicitly requested.
-
-## Quick mode
-
-If the user says "quick" or "fast", run only the most specific unit tests for the changed module, codegen snapshots if applicable, and clippy.
+The suite budget is about 3,000 tests. Extend an existing case in the same area and keep one producer per library case. New or changed Rust functions need rustdoc, and new Incan declarations need docstrings. Tests propagate errors with Result rather than `.unwrap()` or `.expect()`.

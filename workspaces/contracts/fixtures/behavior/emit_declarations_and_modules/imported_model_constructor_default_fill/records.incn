@@ -92,3 +92,13 @@ pub def refused() -> Result[int, Reply]:
 pub def reply_table() -> Dict[str, Reply]:
     """Return nominal dictionary values without exporting their type into the consumer's imports."""
     return {"kept": Reply(value=12)}
+
+
+pub model Entry:
+    """Keep a source-owned element whose type the consumer never imports."""
+    pub value: str
+
+
+pub def entries() -> list[Entry]:
+    """Return records for consuming loops and comprehensions in the importing module."""
+    return [Entry(value="visible")]

@@ -4,12 +4,12 @@ Use an installed dev.8 compiler. Keep compiler, source, dependency artifacts and
 
 ## Build and measure
 
-From a project with `src/main.incn`:
+From the repository root, measure the hello example:
 
 ```bash
-incan build src/main.incn
-time incan run src/main.incn
-OVEN_TRACE=- incan run src/main.incn
+incan build examples/simple/hello.incn
+time incan run examples/simple/hello.incn
+OVEN_TRACE=- incan run examples/simple/hello.incn
 ```
 
 The default profile is `debug`. For optimized measurements use `--profile release` with a toolchain containing release-profile standard packages. Do not compare a first compilation with an unchanged executable run.

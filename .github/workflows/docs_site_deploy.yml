@@ -20,6 +20,8 @@ permissions:
   contents: write
 
 jobs:
+  # Native docs gates require the published dev.8 Oven/toolchain and Rust 1.98.0 with rustc-dev (DD-0010).
+  # Publication and its CI installation recipe are prerequisites; these gates remain enabled while they are pending.
   deploy:
     name: Deploy (GitHub Pages via mike)
     runs-on: ubuntu-latest

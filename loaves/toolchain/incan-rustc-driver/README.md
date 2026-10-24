@@ -7,7 +7,7 @@ The compiler: a second front end to the pinned rustc (DD-0004). Oven runs it onc
 - `--identity SYSROOT` verifies the driver's identity against the sysroot, without compiling, and prints its host target.
 - `--rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR]` writes the ABI cache of the named crates: every public item's Rust facts, read from rustc's crate metadata (DD-0009).
 
-Checking reads the Rust facts of `rust::` imports from the ABI caches it is given, and reads any path they do not cover from rustc's metadata of the unit's own crates, with the same extractor (`src/rust_facts.rs`).
+Checking reads the Rust facts of `rust::` imports from the ABI caches it is given, and reads any path they do not cover from rustc's metadata of the unit's own crates, with the same extractor (`loaves/toolchain/incan-rustc-driver/src/rust_facts.rs`).
 
 The plan types and the lowering's entry points come from `incan_mir_lowering::caller::incan`; no Rust mirror of the plan is kept. Declarations are injected AST items with diverging placeholders, and bodies are supplied through `mir_built`.
 
@@ -25,4 +25,4 @@ The toolchain home is trusted installation state: its owner can replace the exec
 
 The manifest declares `rustc_private`, `rustc-dev` and `rustc_driver` on the executable; Oven requires the pinned rustc 1.98.0 with rustc-dev installed.
 
-`sh tests/verify_identity.sh DRIVER SYSROOT UNIT NEW_SCRATCH_DIRECTORY` exercises proof reuse, invalidation, storage failures, concurrent starts and startup refusals. Run it from this Loaf's directory with a program unit description produced by Oven. It copies the driver into its own scratch installation and leaves the supplied toolchain and sysroot unchanged. The test requires `jq` and `xxd`; supported loader tests run on macOS and Linux.
+`sh loaves/toolchain/incan-rustc-driver/tests/verify_identity.sh DRIVER SYSROOT UNIT NEW_SCRATCH_DIRECTORY` exercises proof reuse, invalidation, storage failures, concurrent starts and startup refusals. Run it from the repository root with a program unit description produced by Oven. It copies the driver into its own scratch installation and leaves the supplied toolchain and sysroot unchanged. The test requires `jq` and `xxd`; supported loader tests run on macOS and Linux.

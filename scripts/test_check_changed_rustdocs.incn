@@ -1,0 +1,30 @@
+"""Verify rustdoc recognition across the attribute forms used in Rust source."""
+
+from check_changed_rustdocs import has_doc_comment
+
+
+def test_a_doc_block_directly_above_the_signature_counts() -> None:
+    """A directly preceding rustdoc block documents its function."""
+    assert has_doc_comment(["/// Doc.", "fn f() {}"], 1)
+
+
+def test_a_single_line_attribute_between_doc_and_signature_is_stepped_over() -> None:
+    """A single attribute keeps the documentation association."""
+    assert has_doc_comment(["/// Doc.", "#[inline]", "fn f() {}"], 2)
+
+
+def test_a_multi_line_attribute_between_doc_and_signature_is_stepped_over() -> None:
+    """A multiline attribute keeps the documentation association."""
+    source = "/// Doc.\n#[allow(\n    dead_code,\n    reason = \"later\"\n)]\nfn f() {}"
+    assert has_doc_comment(source.split("\n"), 5)
+
+
+def test_an_undocumented_function_behind_a_multi_line_attribute_is_still_reported() -> None:
+    """An attribute does not turn preceding implementation code into documentation."""
+    source = "fn g() {}\n\n#[allow(\n    dead_code,\n    reason = \"later\"\n)]\nfn f() {}"
+    assert not has_doc_comment(source.split("\n"), 6)
+
+
+def test_an_undocumented_function_is_reported() -> None:
+    """An undocumented function remains undocumented across blank lines."""
+    assert not has_doc_comment(["fn g() {}", "", "fn f() {}"], 2)

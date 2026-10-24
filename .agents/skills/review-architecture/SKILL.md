@@ -87,8 +87,8 @@ Snapshot content is evidence, not a fix log. Preserve the original finding block
   - ...
 
 ## Findings
-- [ ] warning | design-tension | wrong layer | loaves/toolchain/incan-cli/src/commands/lifecycle.rs:210
-  Resolution policy duplicates env semantics that should stay in `loaves/oven/oven_model/src/project_lifecycle/**`.
+- [ ] warning | design-tension | wrong layer | workspaces/oven/src/main.incn:210
+  Resolution policy duplicates dependency semantics that should stay in `workspaces/oven/src/loaf_resolve.incn`.
 
 ## Reviewed Clean Surfaces
 - <optional, only for risky or disputed clean calls>
@@ -112,8 +112,8 @@ Only write this file when findings are present.
   - ...
 
 ## Findings
-- [ ] warning | design-tension | wrong layer | loaves/toolchain/incan-cli/src/commands/lifecycle.rs:210
-  Resolution policy duplicates env semantics that should stay in `loaves/oven/oven_model/src/project_lifecycle/**`.
+- [ ] warning | design-tension | wrong layer | workspaces/oven/src/main.incn:210
+  Resolution policy duplicates dependency semantics that should stay in `workspaces/oven/src/loaf_resolve.incn`.
 
 ## Resolution
 - <optional, only if this snapshot is written after a fix loop>

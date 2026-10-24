@@ -7807,8 +7807,12 @@ def test_return_type(ty: PlanType, enums: list[EnumDeclaration]) -> bool:
         return true
     match ty:
         PlanType.Enum(owner, _name) =>
+            if owner < 0 or owner >= len(enums):
+                return false
             declaration = enums[owner]
-            return declaration.carrier == "Result" and declaration.variants[0].fields == [PlanType.Unit]
+            if declaration.carrier != "Result" or len(declaration.variants) != 2:
+                return false
+            return declaration.variants[0].fields == [PlanType.Unit] and len(declaration.variants[1].fields) == 1
         _ => return false
 
 
@@ -10307,7 +10311,7 @@ def lower_list_helper(
     """Keep Body IR's haystack-first membership argument order and explicit negation."""
     if len(arguments) != 2:
         return Err("unsupported Body IR list membership arity")
-    receiver = membership_receiver(builder, arguments, span)?
+    receiver = shared_sequence_receiver(builder, arguments, span)?
     leaf, depth = require_list_shape(place_type(builder.locals, receiver), "unsupported Body IR membership on non-list")?
     argument = argument_value(builder, arguments, 1, span)?
     reference = list_borrow(builder, receiver, false, span)?
@@ -10462,7 +10466,7 @@ def initialize_text_iterator(
         _ => return Err("unsupported Body IR text iterator initialization")
 
 
-def membership_receiver(
+def shared_sequence_receiver(
     mut builder: Builder,
     arguments: &list[RustArgumentElement],
     span: SourceSpan,
@@ -13069,14 +13073,14 @@ def lower_sequence_builtin(
     """Classify homogeneous list sorting and integer summation without projecting an indexed input as storage."""
     if len(arguments) != 1:
         return Err("unsupported Body IR sequence builtin arity")
-    source_type = argument_type(builder, arguments, 0, span)?
-    leaf, depth = require_list_shape(source_type, "unsupported Body IR sequence builtin type")?
+    receiver = shared_sequence_receiver(builder, arguments, span)?
+    leaf, depth = require_list_shape(place_type(builder.locals, receiver), "unsupported Body IR sequence builtin type")?
     if depth != 1 and builtin == RustBuiltin.Sum:
         return Err("unsupported Body IR nested sequence builtin")
     if builtin == RustBuiltin.Sorted:
         if leaf != ListLeaf.Float or depth != 1:
             require_sort_order(builder, list_element(leaf, depth))?
-    reference = borrowed_list_argument(builder, arguments, 0, false, span)?
+    reference = list_borrow(builder, receiver, false, span)?
     if builtin == RustBuiltin.Sum:
         mut name = "sum_int"
         if leaf == ListLeaf.Bool:
@@ -13401,14 +13405,14 @@ def lower_join_helper(
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Classify a flat string list before borrowing its value, including an indexed or sliced input."""
+    """Join an admitted flat string list, materializing a projected element or slice once before borrowing it."""
     if len(arguments) != 2:
         return Err("invalid Body IR str_join arity")
-    source_type = argument_type(builder, arguments, 1, span)?
-    leaf, depth = require_list_shape(source_type, "unsupported Body IR str_join input")?
+    values = shared_receiver_place(builder, arguments, 1, span)?
+    leaf, depth = require_list_shape(place_type(builder.locals, values), "unsupported Body IR str_join input")?
     if leaf != ListLeaf.Str or depth != 1:
         return Err("unsupported Body IR str_join element")
-    operands = [text_argument(builder, arguments, 0, span)?, borrowed_list_argument(builder, arguments, 1, false, span)?]
+    operands = [text_argument(builder, arguments, 0, span)?, list_borrow(builder, values, false, span)?]
     output = call_destination(builder, destination, PlanType.String, span)?
     external_call(
         builder,

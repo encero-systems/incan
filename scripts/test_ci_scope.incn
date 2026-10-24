@@ -1,0 +1,150 @@
+"""Exercise CI scope classification through its shell command and isolated Git responses."""
+
+from rust::std::env import var
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from rust::std::fs import Permissions, set_permissions
+from rust::std::os::unix::fs import PermissionsExt
+from std.fs import Path
+from std.tempfile import TemporaryDirectory
+from check_support import repository_root, source_lines
+
+
+def test_reference_only_dispatch_does_not_enable_heavy_work() -> Result[None, str]:
+    """A reference-only dispatch selects its consumer without heavy work."""
+    assert scope(reference=True)? == expected(False, False, True)
+    return Ok(None)
+
+
+def test_default_light_dispatch_does_not_enable_reference() -> Result[None, str]:
+    """A default dispatch remains light."""
+    assert scope()? == expected(False, False, False)
+    return Ok(None)
+
+
+def test_every_heavy_event_also_selects_the_producer() -> Result[None, str]:
+    """Heavy dispatches, integration branches and the full-ci label select the producer."""
+    heavy = expected(False, True, True)
+    assert scope(heavy=True)? == heavy
+    assert scope(event="pull_request", base="main")? == heavy
+    assert scope(event="pull_request", base="release/0.6")? == heavy
+    assert scope(event="pull_request", labels="compiler,full-ci")? == heavy
+    assert scope(event="push", branch="main")? == heavy
+    assert scope(event="push", branch="release/0.6")? == heavy
+    return Ok(None)
+
+
+def test_reference_input_does_not_change_ordinary_push_or_pr_scope() -> Result[None, str]:
+    """The reference input belongs only to workflow dispatch."""
+    for event in ["push", "pull_request"]:
+        assert scope(event=event, reference=True)? == scope(event=event)?
+    return Ok(None)
+
+
+def test_registry_and_verified_example_prs_still_select_reference() -> Result[None, str]:
+    """Registry sources and generated or verified references retain their producer."""
+    for path in [
+        "loaves/kernel/incan_lang/src/lang/example.rs",
+        "workspaces/docs-site/docs/language/reference/language.md",
+        "workspaces/docs-site/docs/_snippets/language/examples/verified_web.incn",
+    ]:
+        assert scope(event="pull_request", files=[path])? == expected(False, False, True)
+    return Ok(None)
+
+
+def test_generated_test_inventory_page_is_not_docs_only() -> Result[None, str]:
+    """The test inventory keeps the gate that regenerates it."""
+    path = "workspaces/docs-site/docs/contributing/reference/test_corpus_inventory.md"
+    assert scope(event="pull_request", files=[path])? == expected(False, False, False)
+    return Ok(None)
+
+
+def test_ordinary_docs_only_pr_stays_docs_only() -> Result[None, str]:
+    """An ordinary documentation change remains docs-only."""
+    assert scope(event="pull_request", files=["workspaces/docs-site/docs/index.md"])? == expected(True, False, False)
+    return Ok(None)
+
+
+def test_empty_change_set_is_not_misreported_as_docs_only() -> Result[None, str]:
+    """An empty diff does not prove a documentation-only change."""
+    assert scope(event="pull_request", files=[])? == expected(False, False, False)
+    return Ok(None)
+
+
+def scope(
+    event: str = "workflow_dispatch",
+    heavy: bool = False,
+    reference: bool = False,
+    base: str = "0.6.0-dev.4",
+    branch: str = "0.6.0-dev.4",
+    labels: str = "",
+    files: list[str] = ["src/main.rs"],
+) -> Result[Dict[str, str], str]:
+    """
+    Return the scope command's fields using an isolated Git executable and changed-path fixture.
+
+    1. Create the Git response and output paths.
+    2. Invoke the real scope command with the event environment.
+    3. Require success and parse its public output fields.
+    """
+    # 1. Prepare isolated command inputs.
+    temporary = TemporaryDirectory.try_new().map_err((error) => error.message())?
+    root = temporary.path()
+    git = root.joinpath("git")
+    mut mock = "#!/bin/sh\nif [ \"$1\" = fetch ]; then exit 0; fi\n"
+    mock += "if [ \"$1\" = diff ] && [ \"$2\" = --name-only ]; then cat \"$PROBE_CHANGED_PATHS\"; "
+    mock += "else echo 'unexpected Git command' >&2; exit 1; fi\n"
+    write(git, mock)?
+    set_permissions(git.0, Permissions.from_mode(493)).map_err((error) => error.to_string())?
+    changes = root.joinpath("changes")
+    nul = RustString.from_utf8(b"\0").map_err((error) => error.to_string())?
+    mut paths = ""
+    for path in files:
+        paths += path + nul
+    write(changes, paths)?
+    output = root.joinpath("outputs")
+
+    # 2. Run the actual scope command.
+    script = repository_root()?.joinpath("scripts/ci_scope.sh")
+    inherited = var("PATH").map_err((error) => error.to_string())?
+    mut command = Command.new("bash")
+    command.arg(script.0).current_dir(root.0)
+    command.env("PATH", f"{root.0}:{inherited}").env("EVENT_NAME", event)
+    command.env("DISPATCH_HEAVY", boolean(heavy)).env("DISPATCH_REFERENCE", boolean(reference))
+    command.env("BASE_REF", base).env("REF_NAME", branch).env("PR_LABELS", labels)
+    command.env("GITHUB_OUTPUT", output.0).env("PROBE_CHANGED_PATHS", changes.0)
+    result = command.output().map_err((error) => error.to_string())?
+
+    # 3. Parse the command's result independently of field order.
+    if not result.status.success():
+        return Err(RustString.from_utf8(result.stderr).map_err((error) => error.to_string())?)
+    text = output.read_text("utf-8", "strict").map_err((error) => error.message())?
+    return output_fields(text)
+
+
+def output_fields(text: str) -> Result[Dict[str, str], str]:
+    """Read the same name/value mapping as the original test without constraining field order."""
+    mut fields: Dict[str, str] = {}
+    for line in source_lines(text)?:
+        parts = line.split("=")
+        if len(parts) < 2:
+            return Err(f"malformed CI output: {line}")
+        fields[parts[0]] = "=".join(parts[1:])
+    return Ok(fields)
+
+
+def expected(docs_only: bool, heavy: bool, reference: bool) -> Dict[str, str]:
+    """Return the expected public fields without assigning significance to their order."""
+    return {"docs_only": boolean(docs_only), "heavy": boolean(heavy), "reference": boolean(reference)}
+
+
+def boolean(value: bool) -> str:
+    """Use the lowercase booleans the workflow consumes."""
+    if value:
+        return "true"
+    return "false"
+
+
+def write(path: Path, text: str) -> Result[None, str]:
+    """Write a UTF-8 fixture and retain filesystem errors."""
+    return path.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())

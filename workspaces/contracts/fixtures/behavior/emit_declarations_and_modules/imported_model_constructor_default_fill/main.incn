@@ -1,4 +1,4 @@
-# behavior: imported models retain defaults, factories, collection owners and generated enum-field methods (#1530, #2256)
+# behavior: imported models retain defaults, factories, enum fields and unimported collection owners (#1530, #2256)
 # expect-stdout:
 #   7 none 0
 #   0 named 1
@@ -30,9 +30,11 @@
 #   true
 #   7
 #   11
+#   visible
+#   ["visible"]
 
 from records import (
-    BufferedRecord, Record, State, make_factory, packet, refused, reply, replies, reply_table, wrapped_replies,
+    BufferedRecord, Record, State, entries, make_factory, packet, refused, reply, replies, reply_table, wrapped_replies,
 )
 from std.testing import fail_t
 
@@ -68,6 +70,7 @@ def main() -> None:
     println(make_factory().value)
     show_composed_replies()
     assert packet().domain.value() == "target"
+    show_unimported_entries()
 
 
 def show_replies() -> Result[None, str]:
@@ -133,3 +136,11 @@ def show_intrinsic_payloads() -> None:
     match refused().map_err((error) => error.message()):
         Ok(value) => println(value)
         Err(error) => println(error)
+
+
+def show_unimported_entries() -> None:
+    """Keep producer-owned elements through consuming loops and comprehensions."""
+    for item in entries():
+        println(item.value)
+    values = [item.value for item in entries()]
+    println(f"{values:?}")

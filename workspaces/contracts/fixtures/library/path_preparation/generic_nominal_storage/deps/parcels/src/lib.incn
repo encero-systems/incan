@@ -18,3 +18,13 @@ pub def wrap(value: int) -> Parcel[int]:
 pub def unpack(value: Parcel[str]) -> str:
     """Read a different concrete instance constructed by the consumer."""
     return value.value
+
+
+pub model Entry:
+    """Keep a nominal element whose name the consumer never imports."""
+    pub value: str
+
+
+pub def entries() -> list[Entry]:
+    """Return records that consuming iteration must retain through its Option poll."""
+    return [Entry(value="visible")]

@@ -1,10 +1,10 @@
 # Trace Oven reuse decisions
 
-Run a source program once, then observe another invocation:
+From the repository root, run the hello example once, then observe another invocation:
 
 ```sh
-incan run src/main.incn
-OVEN_TRACE=- incan run src/main.incn
+incan run examples/simple/hello.incn
+OVEN_TRACE=- incan run examples/simple/hello.incn
 ```
 
 `OVEN_TRACE=-` writes trace lines to stderr. A nonempty path writes them to that file. Leave the variable unset for normal timing measurements.
