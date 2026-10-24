@@ -8,7 +8,10 @@
     incan build PATH [--substitute NAME=DIR] [UNIT OPTIONS]
     incan fmt [--check] PATH...
     incan owner stop
-    incan inspect codegraph PATH [--format json|jsonl] [--query KIND TERM] [--limit N] [--strict]
+    incan inspect codegraph PATH [--format json|jsonl] [--query KIND TERM] [--limit N] [--strict] [--risk]
+    incan inspect codegraph PATH --task TASK [--budget N] [--format compact|json|jsonl]
+    incan inspect codegraph PATH --stale SNAPSHOT
+    incan mcp PATH
     incan toolchain pack OUT
     incan toolchain install ARCHIVE
     incan --version
@@ -39,6 +42,7 @@ from owner_protocol import Reply
 from owner_endpoint import stop_owners
 from owner_service import serve_owner
 from graph_inspection import inspect_codegraph
+from graph_mcp import serve_graph
 from toolchain_archive import toolchain_command
 
 
@@ -95,6 +99,9 @@ def main() -> None:
     if command == "inspect":
         finish("inspect", inspect_codegraph(rest))
         return
+    if command == "mcp":
+        finish("mcp", serve_graph(rest))
+        return
     if command == "toolchain":
         finish("toolchain", toolchain_command(rest))
         return
@@ -111,7 +118,10 @@ def usage() -> str:
         "       incan build PATH [--substitute NAME=DIR] [--program-entry PATH]... [UNIT OPTIONS]",
         "       incan fmt [--check] PATH...",
         "       incan owner stop",
+        "       incan inspect codegraph PATH [--query KIND TERM|--task TASK|--stale SNAPSHOT] [GRAPH OPTIONS]",
+        "       incan mcp PATH",
         "UNIT OPTIONS: --profile NAME, --features A,B, --no-default-features, --all-features",
+        "GRAPH OPTIONS: --format json|jsonl|compact, --budget N, --limit N, --strict, --risk, --substitute NAME=DIR"
     ]
     return "\n".join(lines)
 

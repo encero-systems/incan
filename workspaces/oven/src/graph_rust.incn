@@ -139,7 +139,7 @@ def library_graph(
         arguments = library_arguments(declared) + linking(facet, prepared.request, prepared.built, search)?
         environment = package_environment(facet.project, declared, declared.crate_name)
         observe(graph, facet, declared.package, arguments, environment, false, toolchain)?
-    return Ok(GraphUnit(path=graph, root=Path(facet.project)))
+    return Ok(GraphUnit(path=graph, root=Path(facet.project), source_root=facet.project))
 
 
 def binary_graph(
@@ -164,7 +164,7 @@ def binary_graph(
             arguments = arguments + ["--extern", f"{declared.crate_name}={prepared.built[facet.key()].artifact}"]
         environment = binary_environment(prepared.request.rustc, facet.project, declared, crate_id)?
         observe(graph, facet, f"{declared.package}:{name}", arguments, environment, declared.unstable, toolchain)?
-    return Ok(GraphUnit(path=graph, root=root))
+    return Ok(GraphUnit(path=graph, root=root, source_root=root.0))
 
 
 def observe(

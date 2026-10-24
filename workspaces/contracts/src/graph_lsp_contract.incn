@@ -1,0 +1,111 @@
+"""Optional live-editor parity checks within the existing Incan graph relationship case."""
+
+from rust::std::env import var
+from rust::std::process import Command
+from std.fs import Path
+from std.json import JsonValue, parse
+from protocol_peer import decode, start
+
+
+pub def check_lsp(incan: str, project: Path) -> Result[None, str]:
+    """
+    When INCAN_LSP is supplied, require real stdio navigation over the Incan graph case.
+
+    1. Prepare and open the consumer in a real LSP session.
+    2. Check definitions, references and call hierarchy against its graph.
+    3. Edit the buffer, reject stale items and close the session.
+    """
+    source_path = project.joinpath("src").joinpath("main.incn")
+    if not project.joinpath("src").joinpath("provider.incn").is_file():
+        return Ok(None)
+    mut binary = ""
+    environment_key: str = "INCAN_LSP"
+    match var(environment_key):
+        Ok(value) => binary = str(value)
+        Err(_) => return Ok(None)
+    # 1. Prepare declared Loaves and analyze the opened source.
+    prepare(incan, project)?
+    source = source_path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    uri = file_uri(source_path)
+    mut peer = start(binary, project)?
+    initialized = peer.request(1, "initialize", JsonValue.object({
+        "processId": JsonValue.null(), "rootUri": JsonValue.string(file_uri(project)),
+        "capabilities": JsonValue.object({}),
+    }))?
+    if "callHierarchyProvider" not in initialized.to_json().map_err((error) => error.message())?:
+        return Err("LSP did not advertise graph call hierarchy")
+    peer.notify("initialized", JsonValue.object({}))?
+    peer.notify("textDocument/didOpen", JsonValue.object({"textDocument": JsonValue.object({
+        "uri": JsonValue.string(uri), "languageId": JsonValue.string("incan"),
+        "version": JsonValue.int(1), "text": JsonValue.string(source),
+    })}))?
+    peer.diagnostics(uri, 1)?
+    # 2. Navigation projects the same declaration and proved caller relationships.
+    at_helper = cursor(uri, source, "println(helper())", "helper")?
+    definition = peer.request(2, "textDocument/definition", at_helper)?
+    if "/src/provider.incn" not in definition.to_json().map_err((error) => error.message())?:
+        return Err("LSP definition did not use the graph's provider declaration")
+    mut references = at_helper.expect_object().map_err((error) => error.message())?
+    references["context"] = JsonValue.object({"includeDeclaration": JsonValue.bool(true)})
+    found = peer.request(3, "textDocument/references", JsonValue.object(references))?
+    if len(found.expect_array().map_err((error) => error.message())?) < 2:
+        return Err("LSP graph references omitted the definition or call site")
+    helper_hierarchy = peer.request(4, "textDocument/prepareCallHierarchy", at_helper)?
+    prepared = helper_hierarchy.expect_array().map_err((error) => error.message())?
+    if len(prepared) != 1:
+        return Err("LSP could not prepare the graph's helper declaration")
+    incoming = peer.request(5, "callHierarchy/incomingCalls", JsonValue.object({"item": prepared[0]}))?
+    if "main" not in incoming.to_json().map_err((error) => error.message())?:
+        return Err("LSP incoming calls omitted the recorded main caller")
+    at_main = cursor(uri, source, "def main()", "main")?
+    main_hierarchy = peer.request(6, "textDocument/prepareCallHierarchy", at_main)?
+    main = main_hierarchy.expect_array().map_err((error) => error.message())?
+    if len(main) != 1:
+        return Err("LSP could not prepare the main declaration")
+    outgoing = peer.request(7, "callHierarchy/outgoingCalls", JsonValue.object({"item": main[0]}))?
+    if "helper" not in outgoing.to_json().map_err((error) => error.message())?:
+        return Err("LSP outgoing calls omitted the recorded helper target")
+    # 3. An edited buffer invalidates the old hierarchy item before shutdown.
+    peer.notify("textDocument/didChange", JsonValue.object({
+        "textDocument": JsonValue.object({"uri": JsonValue.string(uri), "version": JsonValue.int(2)}),
+        "contentChanges": JsonValue.array([JsonValue.object({"text": JsonValue.string(f"\n{source}")})]),
+    }))?
+    peer.diagnostics(uri, 2)?
+    stale = peer.request(8, "callHierarchy/incomingCalls", JsonValue.object({"item": prepared[0]}))?
+    if not stale.is_null():
+        return Err("LSP reused a hierarchy item from an earlier live snapshot")
+    ignored = peer.request(9, "shutdown", JsonValue.null())?
+    peer.notify("exit", JsonValue.null())?
+    peer.finish()?
+    return Ok(None)
+
+
+def prepare(incan: str, project: Path) -> Result[None, str]:
+    """Prepare the consumer's declared Loaves through Oven before a live session reads their compiled interfaces."""
+    mut command = Command.new(incan)
+    command.env("OVEN_OWNER", "off")
+    command.arg("build").arg("src/main.incn").current_dir(project.0)
+    output = command.output().map_err((error) => str(error))?
+    if not output.status.success():
+        return Err(f"cannot prepare the LSP consumer: {decode(output.stderr)?}")
+    return Ok(None)
+
+
+def file_uri(path: Path) -> str:
+    """Encode reserved path characters in a local fixture URI; JSON serialization handles the protocol quoting."""
+    return "file://" + path.0.replace("%", "%25").replace("#", "%23").replace("?", "%3F").replace(" ", "%20")
+
+
+def cursor(uri: str, source: str, line_fragment: str, name: str) -> Result[JsonValue, str]:
+    """Locate a fixture's known ASCII identifier rather than hard-code source line numbers."""
+    lines = source.split("\n")
+    for line in range(len(lines)):
+        if line_fragment not in lines[line]:
+            continue
+        for column in range(len(lines[line])):
+            if lines[line][column:column + len(name)] == name:
+                return Ok(JsonValue.object({
+                    "textDocument": JsonValue.object({"uri": JsonValue.string(uri)}),
+                    "position": JsonValue.object({"line": JsonValue.int(line), "character": JsonValue.int(column)}),
+                }))
+    return Err(f"fixture has no {line_fragment}")

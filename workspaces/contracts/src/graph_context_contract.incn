@@ -1,0 +1,73 @@
+"""Context packing expectations extend the existing cross-language graph cases."""
+
+from std.fs import Path
+from std.json import JsonValue, parse
+from run import invoke
+
+
+pub def check_context(incan: str, project: Path) -> Result[None, str]:
+    """
+    Require bounded, deterministic task context over proved graph relationships.
+
+    1. Compare repeated compact context and its call neighborhood.
+    2. Check natural-language, unmatched and invalid-budget requests.
+    3. Compare the structured output formats.
+    """
+    # 1. The complete compact response fits the budget and repeats byte for byte.
+    arguments = ["inspect", "codegraph", ".", "--task", "helper", "--budget", "4096", "--format", "compact"]
+    first = invoke(incan, arguments, project)?
+    repeated = invoke(incan, arguments, project)?
+    if first.code != Some(0) or first.stdout != repeated.stdout or len(first.stdout.encode("utf-8")) > 4096:
+        return Err(f"context packing is refused, nondeterministic or over budget: {first.stderr}")
+    if (
+        "incan.context/1 snapshot:" not in first.stdout
+        or "helper" not in first.stdout
+        or " -calls-> " not in first.stdout
+    ):
+        return Err("context omitted the declaration, source snapshot or proved call neighborhood")
+    # 2. Task matching and budget refusals preserve their public behavior.
+    natural = invoke(incan, [
+        "inspect", "codegraph", ".", "--task", "adjust helper call", "--budget", "4096", "--format", "compact",
+    ], project)?
+    if natural.code != Some(0) or "helper" not in natural.stdout:
+        return Err("natural-language task terms failed to seed graph context")
+    empty = invoke(incan, [
+        "inspect", "codegraph", ".", "--task", "zzzz_no_such_declaration", "--budget", "512", "--format", "compact",
+    ], project)?
+    if empty.code != Some(0) or len(empty.stdout.strip().split("\n")) != 1:
+        return Err("an unmatched task manufactured graph context")
+    refused = invoke(incan, [
+        "inspect", "codegraph", ".", "--task", "helper", "--budget", "8", "--format", "compact",
+    ], project)?
+    if refused.code == Some(0):
+        return Err("a context budget too small for the header was accepted")
+    # 3. Structured formats carry the same selected context.
+    return check_context_formats(incan, project)
+
+
+def check_context_formats(incan: str, project: Path) -> Result[None, str]:
+    """JSON and JSONL preserve the same context records, including local edge direction, provenance and reasons."""
+    arguments = ["inspect", "codegraph", ".", "--task", "helper", "--budget", "32000", "--format"]
+    json = invoke(incan, arguments + ["json"], project)?
+    jsonl = invoke(incan, arguments + ["jsonl"], project)?
+    if json.code != Some(0) or jsonl.code != Some(0):
+        return Err(f"context format refused: {json.stderr}{jsonl.stderr}")
+    value = parse(json.stdout).map_err((error) => error.message())?
+    mut lines: list[JsonValue] = []
+    for line in jsonl.stdout.split("\n"):
+        if line != "":
+            lines.append(parse(line).map_err((error) => error.message())?)
+    expected = value.to_json().map_err((error) => error.message())?
+    actual = JsonValue.array(lines).to_json().map_err((error) => error.message())?
+    if expected != actual:
+        return Err("JSON and JSONL context records disagree")
+    mut exports = false
+    for record in lines:
+        match record.get("kind"):
+            Some(kind) =>
+                if kind.as_str() == Some("exports"):
+                    exports = true
+            None => pass
+    if not exports and project.joinpath("src").joinpath("provider.incn").is_file():
+        return Err("context omitted recorded export edges between selected modules and declarations")
+    return Ok(None)

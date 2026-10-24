@@ -17,6 +17,10 @@ impl IncanLanguageServer {
             .write()
             .await
             .insert(uri.clone(), Arc::clone(&ticket));
+        {
+            let mut documents = self.documents.write().await;
+            super::graph_navigation::invalidate(uri, &mut documents);
+        }
         let open_sources = self.open_sources(uri, source).await;
         let analysis_uri = uri.clone();
         let source = source.to_owned();
@@ -162,8 +166,11 @@ fn analyze(
     open_sources: &HashMap<PathBuf, String>,
 ) -> (Vec<Diagnostic>, Option<DocumentState>) {
     let mut diagnostics = Vec::new();
+    trace_graph("describe unit");
     let session = match unit_description(path).and_then(|unit| {
+        trace_graph("prepare Rust caches");
         let setup = cached_rust_facts(&unit)?;
+        trace_graph("open compilation session");
         CompilationSession::new(&unit)?.with_rust_facts(&setup)
     }) {
         Ok(session) => session,
@@ -208,11 +215,13 @@ fn analyze(
         }
     };
     let mut facts = None;
+    trace_graph("check collected modules");
     let analysis = session.analyze_unit(&modules, None, &mut |module, checker| {
         if module.file_path == path {
             facts = Some(DocumentFacts::read(module, checker));
         }
     });
+    trace_graph("checking completed");
     let (Some(facts), Some(document)) = (facts, modules.iter().find(|module| module.file_path == path)) else {
         return (diagnostics, None);
     };
@@ -235,35 +244,23 @@ fn analyze(
         &related,
     );
     let checked = !failures.iter().any(|failure| Path::new(&failure.file_path) == path);
-    for warning in &facts.warnings {
-        diagnostics.push(compile_error_to_diagnostic_with_rust_context(
-            warning,
-            source,
-            uri,
-            phase_for_typecheck_span(&document.ast, warning.span),
-            &facts.rust_origin_symbols,
-            &related,
-        ));
-    }
-    let api_metadata_previews = if checked {
-        for diagnostic in validate_checked_api_docstrings(std::slice::from_ref(&facts.api_metadata)) {
-            diagnostics.push(compile_error_to_diagnostic_with_phase_and_sources(
-                &diagnostic.error,
-                source,
-                uri,
-                DiagnosticPhase::Typecheck,
-                &related,
-            ));
-        }
-        api_metadata_previews(&document.ast, &facts.api_metadata)
-    } else {
-        Vec::new()
-    };
+    let api_metadata_previews = document_previews(&facts, document, uri, source, &related, checked, &mut diagnostics);
 
+    trace_graph("project live graph");
+    let graph_navigation =
+        match super::graph_navigation::GraphSnapshot::from_analysis(&session, &modules, analysis.as_ref(), version) {
+            Ok(graph) => Some(graph),
+            Err(error) => {
+                diagnostics.push(lsp_root_error_diagnostic(format!("graph projection failed: {error}")));
+                None
+            }
+        };
+    trace_graph("live graph ready");
     let state = DocumentState {
         source: source.to_string(),
         ast: Some(source_ast),
         version,
+        graph_navigation,
         checked_identities: CheckedIdentitySnapshot {
             type_info: facts.type_info,
             declaration_sources: related,
@@ -280,6 +277,48 @@ fn analyze(
         active_features: session.active_features.clone(),
     };
     (diagnostics, Some(state))
+}
+
+/// Trace editor analysis boundaries only when explicitly requested, keeping normal protocol diagnostics quiet.
+fn trace_graph(phase: &str) {
+    if std::env::var_os("INCAN_TRACE_GRAPH").is_some() {
+        eprintln!("LSP graph: {phase}");
+    }
+}
+
+/// Render nonfatal checker warnings and validated API previews without promoting unchecked declarations.
+fn document_previews(
+    facts: &DocumentFacts,
+    document: &ParsedModule,
+    uri: &Url,
+    source: &str,
+    related: &RelatedDeclarationSources,
+    checked: bool,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Vec<ApiMetadataPreview> {
+    for warning in &facts.warnings {
+        diagnostics.push(compile_error_to_diagnostic_with_rust_context(
+            warning,
+            source,
+            uri,
+            phase_for_typecheck_span(&document.ast, warning.span),
+            &facts.rust_origin_symbols,
+            related,
+        ));
+    }
+    if !checked {
+        return Vec::new();
+    }
+    for diagnostic in validate_checked_api_docstrings(std::slice::from_ref(&facts.api_metadata)) {
+        diagnostics.push(compile_error_to_diagnostic_with_phase_and_sources(
+            &diagnostic.error,
+            source,
+            uri,
+            DiagnosticPhase::Typecheck,
+            related,
+        ));
+    }
+    api_metadata_previews(&document.ast, &facts.api_metadata)
 }
 
 /// Report collection and checking failures: the document's own with their Rust context, and one note per other

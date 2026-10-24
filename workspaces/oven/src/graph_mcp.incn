@@ -1,0 +1,310 @@
+"""A local stdio MCP consumer of Oven's graph service, using the 2025-11-25 protocol revision."""
+
+from rust::std::io import BufRead, Write, stdin, stdout
+from std.fs import Path
+from std.json import JsonValue, parse
+from graph_inspection import graph_response
+from graph_queries import display, nested, text
+from graph_memory import TaskMemory
+from home import TOOLCHAIN
+
+
+pub def serve_graph(arguments: list[str]) -> Result[i32, str]:
+    """Serve one project: 1. Validate selection. 2. Read requests. 3. Flush protocol-only replies."""
+    # 1. Validate the fixed project selection.
+    if len(arguments) != 1:
+        return Err("usage: incan mcp PATH")
+    root = Path(arguments[0]).resolve().map_err((error) => error.message())?
+    if not root.is_file() and not root.is_dir():
+        return Err("MCP PATH does not exist")
+    mut server = GraphServer(root=root.0)
+    # 2. Read requests serially.
+    for incoming in stdin().lock().lines():
+        mut line = ""
+        match incoming:
+            Ok(value) => line = str(value)
+            Err(error) => return Err(f"cannot read MCP input: {error}")
+        if line.strip() == "":
+            continue
+        mut reply = JsonValue.null()
+        match parse(line):
+            Err(_) => reply = failure(JsonValue.null(), -32700, "Parse error")
+            Ok(request) => reply = server.handle(request)
+        if not reply.is_null():
+            # 3. Flush protocol-only replies.
+            println(reply.to_json().map_err((error) => error.message())?)
+            match stdout().flush():
+                Ok(_) => pass
+                Err(error) => return Err(f"cannot flush MCP output: {error}")
+    return Ok(0)
+
+
+model GraphServer:
+    """Session protocol state; graph truth always comes from a current inspection, never retained request output."""
+
+    root: str
+    initialized: bool = false
+    ready: bool = false
+    memory: TaskMemory = TaskMemory()
+
+    def handle(mut self, request: JsonValue) -> JsonValue:
+        """Validate JSON-RPC envelopes, negotiate legacy MCP, and suppress notification responses."""
+        identifier = nested(request, "id")
+        method = text(request, "method")
+        if text(request, "jsonrpc") != "2.0" or method == "":
+            return failure(JsonValue.null(), -32600, "Invalid Request")
+        if method == "notifications/initialized":
+            if self.initialized:
+                self.ready = true
+            return JsonValue.null()
+        if request.get("id") is None:
+            return JsonValue.null()
+        if method == "ping":
+            return success(identifier, JsonValue.object({}))
+        if method == "initialize":
+            self.initialized = true
+            result = JsonValue.object({
+                "protocolVersion": JsonValue.string("2025-11-25"),
+                "capabilities": JsonValue.object({"tools": JsonValue.object({}), "resources": JsonValue.object({})}),
+                "serverInfo": JsonValue.object({
+                    "name": JsonValue.string("incan-graph"), "version": JsonValue.string(TOOLCHAIN)
+                })
+            })
+            return success(identifier, result)
+        if not self.ready:
+            return failure(identifier, -32002, "Send initialize and notifications/initialized first")
+        if method == "tools/list":
+            match catalog():
+                Ok(tools) => return success(identifier, JsonValue.object({"tools": tools}))
+                Err(reason) => return failure(identifier, -32603, reason)
+        if method == "resources/list":
+            return success(identifier, JsonValue.object({"resources": resources()}))
+        if method == "resources/read":
+            return self.read_resource(identifier, text(nested(request, "params"), "uri"))
+        if method != "tools/call":
+            return failure(identifier, -32601, "Method not found")
+        params = nested(request, "params")
+        name = text(params, "name")
+        if name not in tool_names():
+            return failure(identifier, -32602, "Unknown tool")
+        match self.call(name, nested(params, "arguments")):
+            Ok(content) => return success(identifier, tool_content(content, false))
+            Err(reason) => return success(identifier, tool_content(reason, true))
+
+    def call(mut self, name: str, arguments: JsonValue) -> Result[str, str]:
+        """Share CLI retrieval, ranking and freshness; arguments cannot change this server's selected project."""
+        validate_arguments(name, arguments)?
+        mut command = ["codegraph", self.root]
+        if name in ["context_for_task", "context_for_declaration"]:
+            mut task = text(arguments, "task")
+            if name == "context_for_declaration":
+                task = text(arguments, "declaration")
+            if task.strip() == "":
+                return Err("a nonempty task or declaration is required")
+            budget = nested(arguments, "budget").expect_int().map_err((_) => "budget must be an integer")?
+            snapshot = self.current_snapshot()?
+            return graph_response(
+                command + ["--task", task, "--budget", str(budget), "--format", "compact"],
+                self.memory.preferences(task, snapshot)
+            )
+        if name == "record_feedback":
+            return self.record_feedback(arguments)
+        if name == "task_memory":
+            retained = self.memory.read(text(arguments, "task"), self.current_snapshot()?)
+            return retained.to_json().map_err((error) => error.message())
+        if name == "process_risk":
+            document = graph_response(command + ["--risk", "--format", "json"])?
+            records = parse_records(document)?
+            observations = JsonValue.array([record for record in records if text(record, "record") == "risk_signal"])
+            return observations.to_json().map_err((error) => error.message())
+        if name == "graph_query":
+            kind = text(arguments, "kind")
+            term = text(arguments, "term")
+            if term == "" or kind == "":
+                return Err("kind and term must be nonempty")
+            return graph_response(command + ["--query", kind, term])
+        if name == "snapshot_status":
+            return graph_response(command + ["--stale", text(arguments, "snapshot")])
+        return self.summary()
+
+    def current_snapshot(self) -> Result[str, str]:
+        """Refresh current source inputs without decoding the full graph just to compare a retained snapshot."""
+        status = graph_response(["codegraph", self.root, "--stale", "snapshot:probe"])?
+        return Ok(text(parse(status).map_err((error) => error.message())?, "snapshot_id"))
+
+    def record_feedback(mut self, arguments: JsonValue) -> Result[str, str]:
+        """Accept explicit feedback only for a declaration proved in the client's still-current graph snapshot."""
+        snapshot = self.current_snapshot()?
+        if text(arguments, "snapshot") != snapshot:
+            return Err("feedback snapshot is stale; read the current graph summary")
+        document = graph_response(["codegraph", self.root, "--format", "json"])?
+        records = parse_records(document)?
+        mut keys: list[str] = []
+        wanted = text(arguments, "declaration")
+        for record in records:
+            selectors = [text(record, "id"), text(record, "stable_key"), display(record)]
+            if text(record, "record") == "declaration" and wanted in selectors:
+                key = text(record, "stable_key")
+                if key != "" and key not in keys:
+                    keys.append(key)
+        if len(keys) != 1:
+            return Err("feedback requires a unique proved declaration ID, stable_key or qualified label")
+        ttl = nested(arguments, "ttl_seconds").expect_int().map_err((_) => "ttl_seconds must be an integer")?
+        retained = self.memory.record(text(arguments, "task"), keys[0], snapshot, ttl)?
+        return retained.to_json().map_err((error) => error.message())
+
+    def summary(self) -> Result[str, str]:
+        """Expose record counts, language/package context, degraded state and the current snapshot."""
+        document = graph_response(["codegraph", self.root, "--format", "json"])?
+        records = parse_records(document)?
+        mut counts: Dict[str, JsonValue] = {}
+        for record in records:
+            kind = text(record, "record")
+            mut count = 0
+            if kind in counts:
+                count = counts[kind].expect_int().map_err((error) => error.message())?
+            counts[kind] = JsonValue.int(count + 1)
+        summary = JsonValue.object({
+            "snapshot_id": nested(records[0], "snapshot_id"), "degraded": nested(records[0], "degraded"),
+            "languages": nested(records[0], "languages"), "semantic_contexts": nested(records[0], "semantic_contexts"),
+            "counts": JsonValue.object(counts)
+        })
+        return summary.to_json().map_err((error) => error.message())
+
+    def read_resource(self, identifier: JsonValue, uri: str) -> JsonValue:
+        """Read orientation resources without granting feedback, reindexing or execution authority."""
+        if uri not in ["incan://graph/summary", "incan://graph/snapshot", "incan://graph/schema"]:
+            return failure(identifier, -32002, "Unknown resource")
+        mut content = "incan.context/1; graph JSONL is authoritative; absent targets are unresolved, not absent edges"
+        if uri != "incan://graph/schema":
+            match self.summary():
+                Ok(value) => content = value
+                Err(reason) => return failure(identifier, -32603, reason)
+        item = JsonValue.object({
+            "uri": JsonValue.string(uri), "mimeType": JsonValue.string("text/plain"), "text": JsonValue.string(content)
+        })
+        return success(identifier, JsonValue.object({"contents": JsonValue.array([item])}))
+
+
+def success(identifier: JsonValue, result: JsonValue) -> JsonValue:
+    """A JSON-RPC success preserves the caller's request ID exactly."""
+    return JsonValue.object({"jsonrpc": JsonValue.string("2.0"), "id": identifier, "result": result})
+
+
+def failure(identifier: JsonValue, code: int, message: str) -> JsonValue:
+    """Protocol errors remain distinct from tool execution failures."""
+    return JsonValue.object({
+        "jsonrpc": JsonValue.string("2.0"), "id": identifier,
+        "error": JsonValue.object({"code": JsonValue.int(code), "message": JsonValue.string(message)})
+    })
+
+
+def tool_content(content: str, error: bool) -> JsonValue:
+    """MCP tools return textual graph output or an actionable execution error."""
+    block = JsonValue.object({"type": JsonValue.string("text"), "text": JsonValue.string(content)})
+    return JsonValue.object({"content": JsonValue.array([block]), "isError": JsonValue.bool(error)})
+
+
+def validate_arguments(name: str, arguments: JsonValue) -> Result[None, str]:
+    """Enforce the published object shape at execution time, including rejection of unknown project/path arguments."""
+    if arguments.is_null() and name in ["graph_summary", "process_risk"]:
+        return Ok(None)
+    fields = arguments.expect_object().map_err((_) => "arguments must be an object")?
+    allowed = [key for key in properties(name).keys()]
+    for key in fields.keys():
+        if key not in allowed:
+            return Err(f"unexpected argument `{key}`")
+    for key in allowed:
+        if key not in fields:
+            return Err(f"missing argument `{key}`")
+        if key not in ["budget", "ttl_seconds"] and fields[key].as_str() is None:
+            return Err(f"{key} must be a string")
+    return Ok(None)
+
+
+def catalog() -> Result[JsonValue, str]:
+    """Publish fixed JSON Schemas and read-only annotations for graph tools."""
+    mut tools: list[JsonValue] = []
+    for name in tool_names():
+        fields = properties(name)
+        tools.append(JsonValue.object({
+            "name": JsonValue.string(name), "description": JsonValue.string(description(name)),
+            "inputSchema": JsonValue.object({
+                "type": JsonValue.string("object"), "properties": JsonValue.object(fields),
+                "required": JsonValue.array([JsonValue.string(key) for key in fields.keys()]),
+                "additionalProperties": JsonValue.bool(false)
+            }),
+            "annotations": JsonValue.object({
+                "readOnlyHint": JsonValue.bool(name != "record_feedback"), "openWorldHint": JsonValue.bool(false)
+            })
+        }))
+    return Ok(JsonValue.array(tools))
+
+
+def resources() -> JsonValue:
+    """List local read-only orientation resources; graph input refresh stays inside ordinary inspection."""
+    return JsonValue.array([
+        JsonValue.object({
+            "uri": JsonValue.string(f"incan://graph/{name}"), "name": JsonValue.string(name),
+            "mimeType": JsonValue.string("text/plain")
+        }) for name in ["summary", "snapshot", "schema"]
+    ])
+
+
+def parse_records(document: str) -> Result[list[JsonValue], str]:
+    """Decode the shared graph's JSON sequence once at the MCP presentation boundary."""
+    return parse(document).map_err((error) => error.message())?.expect_array().map_err((error) => error.message())
+
+
+def tool_names() -> list[str]:
+    """Share the offered tool set between discovery and dispatch."""
+    return [
+        "context_for_task", "context_for_declaration", "graph_query", "graph_summary",
+        "snapshot_status", "process_risk", "task_memory", "record_feedback"
+    ]
+
+
+def description(name: str) -> str:
+    """Describe each public tool without exposing implementation details."""
+    descriptions = {
+        "context_for_task": "Pack task-ranked current graph context within a token budget",
+        "context_for_declaration": "Pack a declaration and its graph neighborhood",
+        "graph_query": "Explore checked definitions, references, callers, callees or imports",
+        "graph_summary": "Read current snapshot, provenance and record counts",
+        "snapshot_status": "Compare a retained snapshot with current graph inputs",
+        "process_risk": "Read optional local git churn, ownership and co-change observations",
+        "task_memory": "Read unexpired feedback for this exact task and current snapshot",
+        "record_feedback": "Record explicit session-only usefulness feedback with snapshot and TTL expiry"
+    }
+    return descriptions[name]
+
+
+def properties(name: str) -> Dict[str, JsonValue]:
+    """Use one argument schema for advertised fields and runtime object validation."""
+    string = JsonValue.object({"type": JsonValue.string("string")})
+    budget = integer_schema(128, 1000000)
+    if name == "context_for_task":
+        return {"task": string, "budget": budget}
+    if name == "context_for_declaration":
+        return {"declaration": string, "budget": budget}
+    if name == "graph_query":
+        kinds = ["defs", "refs", "callers", "callees", "imports"]
+        kind = JsonValue.object({
+            "type": JsonValue.string("string"),
+            "enum": JsonValue.array([JsonValue.string(item) for item in kinds])
+        })
+        return {"kind": kind, "term": string}
+    if name == "snapshot_status":
+        return {"snapshot": string}
+    if name == "task_memory":
+        return {"task": string}
+    if name == "record_feedback":
+        return {"task": string, "declaration": string, "snapshot": string, "ttl_seconds": integer_schema(1, 86400)}
+    return {}
+
+
+def integer_schema(minimum: int, maximum: int) -> JsonValue:
+    """Express the same bounded integer contract accepted by the tool implementation."""
+    return JsonValue.object({
+        "type": JsonValue.string("integer"), "minimum": JsonValue.int(minimum), "maximum": JsonValue.int(maximum)
+    })

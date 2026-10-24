@@ -1,12 +1,20 @@
-# behavior: Unknown graph queries and invalid limits are refused before exporting or changing source.
+# behavior: Unknown queries, invalid limits, context budgets and conflicting selectors are refused before export.
 # graph-commands:
 #   src/main.incn --query unknown helper
 #   src/main.incn --query defs helper --limit -1
 #   src/main.incn --query defs helper --limit 1.5
+#   src/main.incn --task helper --query defs helper
+#   src/main.incn --task helper --budget 127
+#   src/main.incn --format compact
+#   src/main.incn --stale invalid
 # expect-exit: 1
 # expect-stderr-contains:
 #   unknown graph query `unknown`
 #   --limit needs a nonnegative integer
+#   --task cannot be combined with --query or --stale
+#   --budget must be between 128 and 1000000
+#   --format compact requires --task
+#   --stale needs an exported snapshot: identity
 def main() -> None:
     """A valid source that the invalid command must not analyze."""
     pass
