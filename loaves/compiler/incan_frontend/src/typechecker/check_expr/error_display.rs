@@ -1,4 +1,4 @@
-//! Display of `Error` adopters that define no `__str__` (#1778).
+//! Checked source display methods and the message fallback for `Error` adopters (#1778).
 //!
 //! A model, class, enum or newtype has a textual form of its own only through `__str__`, an enum's declared values, or
 //! a `Display` adoption. An `Error` adopter without one carries its human-readable text in `message()` instead, so
@@ -29,6 +29,39 @@ use crate::typechecker::type_info::{ErrorMessageDisplay, ResolvedMethodCall};
 const ERROR_MESSAGE_METHOD: &str = "message";
 
 impl TypeChecker {
+    /// Select a source nominal's string method while the checker still owns method resolution and receiver provenance.
+    pub(in crate::typechecker::check_expr) fn record_source_display_method(&mut self, span: Span, ty: &ResolvedType) {
+        let retained = self.body_ir_checked_value_type(span).unwrap_or(ty).clone();
+        let mut source = &retained;
+        while let ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) = source {
+            source = inner;
+        }
+        let (ResolvedType::Named(name) | ResolvedType::Generic(name, _)) = source else {
+            return;
+        };
+        if !matches!(
+            self.lookup_semantic_type_info(name),
+            Some(
+                crate::symbols::TypeInfo::Model(_)
+                    | crate::symbols::TypeInfo::Class(_)
+                    | crate::symbols::TypeInfo::Enum(_)
+                    | crate::symbols::TypeInfo::Newtype(_)
+            )
+        ) {
+            return;
+        }
+        let method = magic_methods::as_str(MagicMethodId::Str);
+        if let Some(identity) = self
+            .resolve_display_method_call(method, span, source)
+            .and_then(|selected| selected.identity)
+        {
+            self.type_info
+                .calls
+                .source_display_methods
+                .insert((span.start, span.end), identity);
+        }
+    }
+
     /// Record that one display operand renders through `message()` when its checked type adopts `Error` and has no
     /// `Display` of its own.
     ///
@@ -61,7 +94,7 @@ impl TypeChecker {
         if !self.displays_through_error_message(operand_ty) {
             return;
         }
-        if let Some(display) = self.resolve_error_message_call(operand_span, operand_ty) {
+        if let Some(display) = self.resolve_display_method_call(ERROR_MESSAGE_METHOD, operand_span, operand_ty) {
             self.type_info.record_error_message_display(operand_span, display);
         }
     }
@@ -81,7 +114,7 @@ impl TypeChecker {
         if !self.displays_through_error_message(self_ty) {
             return;
         }
-        if let Some(display) = self.resolve_error_message_call(decl_span, self_ty) {
+        if let Some(display) = self.resolve_display_method_call(ERROR_MESSAGE_METHOD, decl_span, self_ty) {
             self.type_info.record_error_message_display_type(type_name, display);
         }
     }
@@ -134,7 +167,8 @@ impl TypeChecker {
             && self.type_implements_trait(type_name, core_traits::as_str(TraitId::Error))
     }
 
-    /// Resolve the `message()` call one display operand renders through, the way a written `value.message()` is.
+    /// Resolve a string-returning display method exactly as a written instance call, retaining its declaration and
+    /// trait dispatch.
     ///
     /// The ordinary method resolution records its facts at the call's span, in exactly four maps:
     /// `calls.resolved_method_calls` (the trait dispatch), `references.resolved_identities` (the selected
@@ -144,8 +178,9 @@ impl TypeChecker {
     /// probe wrote there afterwards, and puts the earlier entries back, so the probe leaves the facts as it found them
     /// at the cost of four map operations. Diagnostics raised while probing are discarded: the probe is not something
     /// the program wrote.
-    fn resolve_error_message_call(
+    fn resolve_display_method_call(
         &mut self,
+        method: &str,
         operand_span: Span,
         operand_ty: &ResolvedType,
     ) -> Option<ErrorMessageDisplay> {
@@ -155,30 +190,15 @@ impl TypeChecker {
         let probe = Span::new(operand_span.end, operand_span.start);
         let before = ProbeFacts::take(&mut self.type_info, probe);
         let first_error = self.errors.len();
-        // The two resolutions a written `value.message()` goes through, in the same order: the owner's sole direct or
+        // The two resolutions a written instance call goes through, in the same order: the owner's sole direct or
         // adopted method first, then the general resolution that also covers a type parameter's bounds.
-        let message_ty = self
-            .resolve_synthesized_source_method_call(
-                ERROR_MESSAGE_METHOD,
-                operand_ty,
-                operand_span,
-                probe,
-                Some(&ResolvedType::Str),
-            )
-            .or_else(|| {
-                self.resolve_operator_dunder(
-                    operand_ty,
-                    ERROR_MESSAGE_METHOD,
-                    &[],
-                    &[],
-                    probe,
-                    Some(&ResolvedType::Str),
-                )
-            });
+        let result_ty = self
+            .resolve_synthesized_source_method_call(method, operand_ty, operand_span, probe, Some(&ResolvedType::Str))
+            .or_else(|| self.resolve_operator_dunder(operand_ty, method, &[], &[], probe, Some(&ResolvedType::Str)));
         self.errors.truncate(first_error);
         let probed = ProbeFacts::take(&mut self.type_info, probe);
         before.restore(&mut self.type_info, probe);
-        let renders_text = message_ty.is_some_and(|ty| self.types_compatible(&ty, &ResolvedType::Str));
+        let renders_text = result_ty.is_some_and(|ty| self.types_compatible(&ty, &ResolvedType::Str));
         renders_text.then(|| ErrorMessageDisplay {
             identity: probed.identity,
             dispatch: probed.method_call.map(|call| call.dispatch),

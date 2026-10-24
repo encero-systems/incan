@@ -1127,6 +1127,7 @@ impl TypeChecker {
                 continue;
             };
             let fact = super::type_info::BodyIrCheckedTraitAdoption {
+                fields: self.body_ir_required_fields(owner, adoption, &trait_identity),
                 trait_identity,
                 arguments: adoption.args.clone(),
                 methods: self.body_ir_adoption_method_identities(adoption),
@@ -1140,6 +1141,49 @@ impl TypeChecker {
             .declarations
             .body_ir_trait_adoptions
             .insert(owner.to_owned(), retained);
+    }
+
+    /// Retain only stored field identities already proven by required-field conformance; absent metadata grants no
+    /// projection authority. Inherited class fields retain their original declaring identities.
+    fn body_ir_required_fields(
+        &self,
+        owner: &str,
+        adoption: &ResolvedTraitAdoption,
+        trait_identity: &CanonicalSymbolId,
+    ) -> Vec<incan_semantics_core::body_ir::TraitFieldImplementation> {
+        let fields = match self.lookup_type_info(owner) {
+            Some(TypeInfo::Model(info)) => &info.fields,
+            Some(TypeInfo::Class(info)) => &info.fields,
+            _ => return Vec::new(),
+        };
+        let mut traits = vec![(trait_identity, &adoption.info)];
+        for (name, _) in self.supertrait_closure.get(&adoption.name).into_iter().flatten() {
+            let Some(identity) = self
+                .symbols
+                .lookup(name)
+                .and_then(|symbol| self.symbols.identity_of(symbol))
+            else {
+                continue;
+            };
+            let Some(info) = self.lookup_trait_info(name) else {
+                continue;
+            };
+            traits.push((identity, info));
+        }
+        let mut bindings = traits
+            .into_iter()
+            .flat_map(|(identity, info)| {
+                info.requires.iter().filter_map(move |(name, _)| {
+                    Some(incan_semantics_core::body_ir::TraitFieldImplementation {
+                        requirement: Self::synthetic_member_identity(identity, name, SemanticSourceTargetKind::Field),
+                        implementation: fields.get(name)?.identity.clone()?,
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+        bindings.sort_by(|left, right| left.requirement.cmp(&right.requirement));
+        bindings.dedup();
+        bindings
     }
 
     /// Retain the complete checked slot set, distinguishing a real marker from incomplete imported metadata.

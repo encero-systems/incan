@@ -89,7 +89,16 @@ pub def source_generator(mut builder: Builder, value: Operand, span: SourceSpan)
         PlanType.Set(leaf) =>
             result = PlanType.Generator(leaf, 0)
             output = temporary(builder, result, span)
-            generator_runtime_call(builder, "set_generator", generator_element(leaf, 0), [ty], result, [value], output, span)
+            generator_runtime_call(
+                builder,
+                "set_generator",
+                generator_element(leaf, 0),
+                [ty],
+                result,
+                [value],
+                output,
+                span,
+            )
             builder.owned.append(output.local)
             return Ok(read_place(output, true, span))
         PlanType.ZipIterator(left, right) =>
@@ -149,7 +158,7 @@ def item_family(item: PlanType) -> Result[str, str]:
     """
     Name the runtime chain family for a first-source item the step takes by value.
 
-    A tuple or owned list item goes through the chain generic over its item, preserving the step's by-value ownership.
+    A tuple, owned list, or model item uses the chain generic over its item, preserving the step's by-value ownership.
     """
     match item:
         PlanType.Int => return Ok("int")
@@ -157,11 +166,12 @@ def item_family(item: PlanType) -> Result[str, str]:
         PlanType.Bool => return Ok("bool")
         PlanType.String => return Ok("str")
         PlanType.Tuple(_elements) => return Ok("item")
+        PlanType.Model(_owner, _name) => return Ok("item")
         _ =>
             if is_owned_list(item):
                 return Ok("item")
             return Err(
-                "unsupported Body IR generator expression item outside int, float, bool, str, tuples and owned lists",
+                "unsupported Body IR generator expression item outside scalars, text, tuples, owned lists and models",
             )
 
 

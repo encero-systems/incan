@@ -8,16 +8,34 @@
 #   Vault
 #   made
 #   Vault
+#   wire_label
+#   Vault
+#   1
 
 pub model Vault:
     secret: str = "sealed"
-    pub label: str
+    pub label as "wire_label": str
 
 
 def make_vault() -> Vault:
     """Make receiver evaluation visible before metadata is read."""
     println("made")
     return Vault(label="fresh")
+
+
+def columns[T]() -> list[str]:
+    """Read the schema selected only by the explicit type argument."""
+    return [str(info.wire_name) for info in T.__fields__()]
+
+
+def class_name[T]() -> str:
+    """Read the same explicitly selected schema's source name."""
+    return T.__class_name__()
+
+
+def column_count[T]() -> int:
+    """Count the selected schema's public fields without constructing an instance."""
+    return len(T.__fields__())
 
 
 def main() -> None:
@@ -31,3 +49,6 @@ def main() -> None:
     println(vault.label)
     println(Vault.__class_name__())
     println(make_vault().__class_name__())
+    println(", ".join(columns[Vault]()))
+    println(class_name[Vault]())
+    println(column_count[Vault]())

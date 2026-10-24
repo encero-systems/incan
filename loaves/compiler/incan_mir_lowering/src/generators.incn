@@ -138,10 +138,8 @@ def swap_operand(value: Operand, handle: int) -> Operand:
     """Keep ownership facts intact when permuting the completed producer frame."""
     mut kind = value.kind
     match kind:
-        OperandKind.Copy(place) =>
-            kind = OperandKind.Copy(swap_place(place, handle))
-        OperandKind.Move(place) =>
-            kind = OperandKind.Move(swap_place(place, handle))
+        OperandKind.Copy(place) => kind = OperandKind.Copy(swap_place(place, handle))
+        OperandKind.Move(place) => kind = OperandKind.Move(swap_place(place, handle))
         _ => pass
     return Operand(kind=kind, span=value.span)
 
@@ -185,6 +183,7 @@ def swap_rvalue(value: RvalueKind, handle: int) -> RvalueKind:
         RvalueKind.FrozenCollection(ty, values) => return RvalueKind.FrozenCollection(ty, values)
         RvalueKind.FunctionItem(callee) => return RvalueKind.FunctionItem(swap_callee(callee, handle))
         RvalueKind.ReifyFunction(value) => return RvalueKind.ReifyFunction(swap_operand(value, handle))
+        RvalueKind.FunctionAddress(value) => return RvalueKind.FunctionAddress(swap_operand(value, handle))
         RvalueKind.ClosureObject(place) => return RvalueKind.ClosureObject(swap_place(place, handle))
 
 

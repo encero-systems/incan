@@ -1498,6 +1498,8 @@ pub struct BodyIrCheckedTraitAdoption {
     pub arguments: Vec<ResolvedType>,
     /// Complete checked method identities; `None` cannot authorize an empty native marker.
     pub methods: Option<Vec<CanonicalSymbolId>>,
+    /// Exact stored fields selected when checking this trait's required fields against the adopter.
+    pub fields: Vec<incan_semantics_core::body_ir::TraitFieldImplementation>,
     /// Physical adoption or derive clause used to select the final Body IR-only inferred argument witness.
     pub span: Span,
 }
@@ -2015,6 +2017,9 @@ pub struct CallArtifacts {
     /// argument of `str(value)`, and each `print`/`println` argument. The value is the `message()` call the checker
     /// resolved for the operand, so lowering emits the same call a written `value.message()` would.
     pub error_message_displays: HashMap<(usize, usize), ErrorMessageDisplay>,
+    /// Exact source string methods selected for display operands. Body IR emits these as ordinary shared-receiver
+    /// calls; native Rust formatting never supplies a source method by guesswork.
+    pub source_display_methods: HashMap<(usize, usize), CanonicalSymbolId>,
     /// Types this module declares whose values display through `message()`, keyed by type name.
     ///
     /// A model, class, enum or newtype that adopts `Error` and has no `Display` of its own displays its `message()`,

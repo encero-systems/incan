@@ -605,13 +605,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     /// The item type a `for` loop's pattern binds, falling back to a range value's own element type.
     ///
-    /// Normally this is just the typechecker's recorded type for the pattern span. The generic `Range[T]` spelling
-    /// carries its item type, so it supplies the recovery fallback only when the checker has no fact. That type
-    /// fallback never grants aggregate-layout authority; [`Self::range_loop_source`] separately requires local
-    /// materialization provenance before field projection.
+    /// A builtin list's retained closed element type supplies its declaring owner's identity even when that owner
+    /// is not imported in this module. An open element keeps the checker's contextual pattern type. The generic
+    /// `Range[T]` spelling carries its item type, so it supplies the recovery fallback only when the checker has no
+    /// fact. That type fallback never grants aggregate-layout authority; [`Self::range_loop_source`] separately
+    /// requires local materialization provenance before field projection.
     pub(super) fn for_item_type(&self, pattern: &ast::Spanned<ast::Pattern>, iter_ty: &IncanType) -> IncanType {
         let checked = self.resolve_ty(pattern.span);
         if let Some([element]) = collection_member_types(iter_ty, CollectionTypeId::List) {
+            if !self.leaves_type_open(element) {
+                return element.clone();
+            }
             return self.refine_task_storage(&checked, element);
         }
         if !matches!(checked, IncanType::Unknown) {

@@ -1155,6 +1155,15 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             };
             Ok(Scalar::FunctionPointer(signature))
         }
+        RvalueKind::FunctionAddress(value) => {
+            if !matches!(operand(plan, function, value)?, Scalar::FunctionPointer(_)) {
+                return Err(invalid(
+                    function,
+                    "function address requires a checked function pointer",
+                ));
+            }
+            Ok(Scalar::USize)
+        }
         RvalueKind::IntToFloat(value) => {
             require(function, operand(plan, function, value)?, &Scalar::Int, "int-to-float")?;
             Ok(Scalar::Float)

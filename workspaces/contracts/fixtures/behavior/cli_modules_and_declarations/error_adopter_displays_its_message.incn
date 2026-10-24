@@ -1,4 +1,4 @@
-# behavior: a value whose type adopts Error and has no Display of its own renders its message() in an f-string, through str() and through println, including a value of a type parameter bounded by Error and self inside an Error subtrait's default method
+# behavior: Error message fallback and authored string methods agree across display positions and provider boundaries
 # expect-stdout:
 #   1
 #   error buffer ended before read_exact size
@@ -9,50 +9,73 @@
 #   failed: cannot parse age: not a number
 #   reported: disk full: /tmp
 #   reported: LOUD
+#   00000000-0000-0000-0000-000000000000
+
+"""Observe checked message fallback and authored string methods on local and provider-owned values."""
 
 from std.io import BytesIO
 from std.traits.error import Error
+from std.uuid import UUID
 
 
 model ParseFailure with Error:
+    """Display a structured parse failure through its Error message."""
     field: str
     reason: str
 
     def message(self) -> str:
+        """Describe the rejected field and value."""
         return f"cannot parse {self.field}: {self.reason}"
 
 
 trait Reported with Error:
+    """Render an adopter from within a trait default method."""
     def report(self) -> str:
+        """Use the concrete adopter's checked display."""
         return f"reported: {self}"
 
 
 model DiskFull with Reported:
+    """Adopt the default report with only an Error message."""
     path: str
 
     def message(self) -> str:
+        """Describe the path that has no free space."""
         return f"disk full: {self.path}"
 
 
 model Loud with Reported:
+    """Prefer an authored string method over the Error fallback."""
     def message(self) -> str:
+        """Return the Error fallback text."""
         return "loud"
 
     def __str__(self) -> str:
+        """Return the explicitly authored display text."""
         return "LOUD"
 
 
 def describe[E with Error](error: E) -> str:
+    """Render an Error-bound type parameter through its checked display."""
     return f"failed: {error}"
 
 
 def main() -> None:
+    """
+    Observe checked display selection across each supported boundary.
+
+    1. Display errors returned by a compiled provider.
+    2. Compare local, generic and trait-default display positions.
+    3. Display a provider-owned newtype through its authored string method.
+    """
+    # 1. Compiled Error values retain their messages.
     match BytesIO(b"ab").read(1):
         Ok(data) => println(len(data))
         Err(error) => println(f"error {error}")
     match BytesIO(b"ab").read_exact(4):
         Ok(data) => println(len(data))
         Err(error) => println(f"error {error}")
+    # 2. Source values share the checked display rule.
     failure = ParseFailure(field="age", reason="not a number")
     println(f"error {failure}")
     println(str(failure))
@@ -61,3 +84,5 @@ def main() -> None:
     println(describe(failure))
     println(DiskFull(path="/tmp").report())
     println(Loud().report())
+    # 3. The provider supplies the newtype's selected string method.
+    println(UUID.nil())

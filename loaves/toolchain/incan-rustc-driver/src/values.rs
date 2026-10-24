@@ -402,6 +402,11 @@ pub fn rvalue<'tcx>(
             operand(tcx, sources, value)?,
             native_type(tcx, destination_type)?,
         ),
+        RvalueKind::FunctionAddress(value) => mir::Rvalue::Cast(
+            mir::CastKind::PointerExposeProvenance,
+            operand(tcx, sources, value)?,
+            tcx.types.usize,
+        ),
         RvalueKind::IntToFloat(value) => {
             mir::Rvalue::Cast(mir::CastKind::IntToFloat, operand(tcx, sources, value)?, tcx.types.f64)
         }

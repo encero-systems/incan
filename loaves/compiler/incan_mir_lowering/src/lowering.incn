@@ -2084,17 +2084,19 @@ def lower_local_assignment(
         return Ok(None)
     match source_function_item(module, builder, value, span)?:
         Some(item) =>
-            name, ty = item
+            name, ty, declaration_name = item
             if target.projection != Projection.Whole:
                 return Err("unsupported Body IR projected function-item construction")
             if is_owned_callable(place_type(builder.locals, target)):
                 held = temporary(builder, ty, span)
                 callee = function_item_callee(builder, name, span)
                 builder.emit(plan_assign(held, RvalueKind.FunctionItem(callee), span))
+                register_callable_item(builder, read_place(held, false, span), declaration_name, span)?
                 return assign_callable(builder, target, read_place(held, false, span), false, span)
             builder.locals[target.local].ty = ty
             callee = function_item_callee(builder, name, span)
             builder.emit(plan_assign(target, RvalueKind.FunctionItem(callee), span))
+            register_callable_item(builder, read_place(target, false, span), declaration_name, span)?
             return Ok(None)
         None => pass
     match value:
@@ -2426,7 +2428,7 @@ def hold_closure(
     return Ok(None)
 
 
-def synthesize(mut builder: Builder, function: Function) -> None:
+pub def synthesize(mut builder: Builder, function: Function) -> None:
     """Retain one synthesized function per name; a forwarding environment for one item is shared."""
     for retained in builder.synthesized:
         if retained.name == function.name:
@@ -2778,7 +2780,7 @@ def lower_generator_expression(
     return Ok(None)
 
 
-def step_callable(
+pub def step_callable(
     mut builder: Builder,
     name: str,
     item: PlanType,
@@ -5781,32 +5783,65 @@ def lower_numeric_helper(
     return Ok(None)
 
 
+def callable_address(mut builder: Builder, value: Operand, span: SourceSpan) -> Result[Operand, str]:
+    """Expose the address of the exact checked pointer, reifying an item without replacing its signature."""
+    mut pointer = value
+    match operand_type(builder, value)?:
+        PlanType.FunctionItem(_name, signature) =>
+            held = temporary(builder, PlanType.FunctionPointer(signature), span)
+            builder.emit(plan_assign(held, RvalueKind.ReifyFunction(value), span))
+            pointer = read_place(held, false, span)
+        PlanType.FunctionPointer(_signature) => pass
+        _ => return Err("unsupported Body IR callable-name receiver without a retained function pointer")
+    address = temporary(builder, PlanType.USize, span)
+    builder.emit(plan_assign(address, RvalueKind.FunctionAddress(pointer), span))
+    return Ok(read_place(address, false, span))
+
+
+def register_callable_item(mut builder: Builder, value: Operand, name: str, span: SourceSpan) -> Result[None, str]:
+    """Register an authenticated named read before a decorator or ordinary argument can observe its name."""
+    address = callable_address(builder, value, span)?
+    module = owned_literal(builder, builder.module_identity, span)
+    label = owned_literal(builder, name, span)
+    forget_owned(builder, module.local)
+    forget_owned(builder, label.local)
+    output = temporary(builder, PlanType.Unit, span)
+    external_call(
+        builder,
+        "incan_native_runtime::register_callable_name",
+        [PlanType.String, PlanType.USize, PlanType.String],
+        PlanType.Unit,
+        [read_place(module, true, span), address, read_place(label, true, span)],
+        output,
+        span,
+    )
+    return Ok(None)
+
+
 def lower_callable_name(
     mut builder: Builder,
     arguments: &list[RustArgumentElement],
     destination: &Option[RustPlace],
     span: SourceSpan,
 ) -> Result[None, str]:
-    """Resolve the explicit callable-name operation only within the verified dynamic registration profile."""
+    """Resolve a registered declaration name independently of the pointer's argument and result signature."""
     if not builder.callable_name_dynamic_profile:
-        return Err("unsupported Body IR callable-name lookup with unretained static or cross-module candidates")
+        return Err("unsupported Body IR callable-name lookup across registration modules")
     if len(arguments) != 1:
         return Err("invalid Body IR callable-name operand count")
     match arguments[0].as_one():
         Some(value) =>
             callback = value_operand(builder, value, span)?
-            pointer = PlanType.FunctionPointer([PlanType.String])
-            if operand_type(builder, callback)? != pointer:
-                return Err("unsupported Body IR callable-name receiver outside a zero-argument text function pointer")
+            address = callable_address(builder, callback, span)?
             module = owned_literal(builder, builder.module_identity, span)
             forget_owned(builder, module.local)
             output = call_destination(builder, destination, PlanType.String, span)?
             external_call(
                 builder,
-                "incan_native_runtime::callable_text_name",
-                [PlanType.String, pointer],
+                "incan_native_runtime::callable_name",
+                [PlanType.String, PlanType.USize],
                 PlanType.String,
-                [read_place(module, true, span), callback],
+                [read_place(module, true, span), address],
                 output,
                 span,
             )
@@ -9938,7 +9973,7 @@ def lower_generator_member(
         operands.append(argument_value(builder, arguments, index, span)?)
     source = read_place(receiver, true, span)
     if is_generator_consumer(method):
-        output = call_destination(builder, destination, consumer_result(method), span)?
+        output = call_destination(builder, destination, consumer_result(method, receiver_ty), span)?
         drop_owned(builder, output.local, span)
         return generator_consumer(builder, method, source, operands, output, span)
     output = call_destination(builder, destination, receiver_ty, span)?
@@ -12038,11 +12073,12 @@ def read_generic_decorator(
     pointer = PlanType.FunctionPointer([PlanType.String])
     initializer = reified_pointer(builder, frame_name(builder.name, DecoratorFrame.Initializer), [pointer], span)
     original = reified_pointer(builder, frame_name(builder.name, DecoratorFrame.Original), [PlanType.String], span)
+    original_address = callable_address(builder, original, span)?
     module = owned_literal(builder, builder.module_identity, span)
     declaration = owned_literal(builder, str(binding.original_body.direct_call_id), span)
     instance = owned_literal(builder, builder.name, span)
     name = owned_literal(builder, str(global.identity.declaration_name), span)
-    operands = [read_place(module, true, span), read_place(declaration, true, span), read_place(instance, true, span), initializer, original, read_place(
+    operands = [read_place(module, true, span), read_place(declaration, true, span), read_place(instance, true, span), initializer, original_address, read_place(
         name,
         true,
         span,
@@ -12053,7 +12089,7 @@ def read_generic_decorator(
     external_call(
         builder,
         "incan_native_runtime::cached_text_binding",
-        [PlanType.String, PlanType.String, PlanType.String, PlanType.FunctionPointer([pointer]), pointer, PlanType.String],
+        [PlanType.String, PlanType.String, PlanType.String, PlanType.FunctionPointer([pointer]), PlanType.USize, PlanType.String],
         pointer,
         operands,
         output,

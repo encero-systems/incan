@@ -388,13 +388,16 @@ impl OpenSurface {
             .executable_representation
             .as_ref()
             .ok_or_else(|| package.unusable(malformed("manifest descriptor disappeared")))?;
-        if descriptor.representation_version
-            != incan_semantics_core::executable_representation::EXECUTABLE_REPRESENTATION_VERSION
-        {
+        if !incan_semantics_core::executable_representation::supports_version(descriptor.representation_version) {
             return Err(package.unusable(ExecutableRepresentationError::UnsupportedVersion {
                 found: descriptor.representation_version,
                 supported: incan_semantics_core::executable_representation::EXECUTABLE_REPRESENTATION_VERSION,
             }));
+        }
+        let encoded_version = incan_semantics_core::executable_representation::representation_version(&version)
+            .map_err(|error| package.unusable(error))?;
+        if descriptor.representation_version != encoded_version {
+            return Err(package.unusable(malformed("manifest and executable representation versions differ")));
         }
         let mut length = [0u8; 8];
         file.read_exact(&mut length)

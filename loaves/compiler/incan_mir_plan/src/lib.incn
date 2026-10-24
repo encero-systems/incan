@@ -487,6 +487,8 @@ pub enum RvalueKind:
     UnsizeSlice(Operand)
     FunctionItem(Callee)
     ReifyFunction(Operand)
+    # Expose a checked function pointer's address without changing its argument or return signature.
+    FunctionAddress(Operand)
     # Borrow an owned closure's callable object as the shared view a call or closure-holding parameter takes.
     ClosureObject(Place)
     # Test the selected variant using Rust's actual discriminant type and value, including explicit repr values.

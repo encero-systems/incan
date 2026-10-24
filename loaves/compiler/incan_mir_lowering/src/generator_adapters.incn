@@ -1,20 +1,28 @@
 """Lazy iterator adapters chained onto an owned generator through the runtime's own Incan iterator surface."""
 
 from pub::incan_mir_plan import (
+    Callee,
     CalleeKind,
     ExternalFunction,
+    Function,
     ListLeaf,
+    Local,
     Operand,
     OperandKind,
+    Parameter,
     Place,
     PlanType,
     RvalueKind,
     SourceSpan,
+    TerminatorKind,
     TupleElement,
+    Unwind,
 )
-from pub::incan_mir_plan import assign as plan_assign
+from pub::incan_mir_plan import assign as plan_assign, block as plan_block, place as plan_place
 from frame import Builder, temporary, read_place, value_type, external_call, terminate_call
 from generators import generator_shape, generator_element, generator_runtime_call
+from generator_expressions import construct_chain
+from lowering import step_callable, synthesize
 
 
 pub def iterator_method(member: str) -> str:
@@ -160,6 +168,10 @@ def map_adapter(
     element = source_element(source_type)?
     signature = [element, mapped]
     pointer = adapter_callable(builder, transform, signature, span)?
+    match element:
+        PlanType.Model(_owner, _name) =>
+            return map_model_adapter(builder, source, pointer, element, mapped, result, output, span)
+        _ => pass
     if element == PlanType.String:
         return text_callable_adapter(
             builder,
@@ -184,6 +196,65 @@ def map_adapter(
         span,
     )
     return Ok(None)
+
+
+def map_model_adapter(
+    mut builder: Builder,
+    source: Operand,
+    transform: Operand,
+    element: PlanType,
+    mapped: PlanType,
+    result: PlanType,
+    output: Place,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Keep a model mapper lazy by forwarding each polled owned element through the existing generic step chain."""
+    name = f"__incan_map_step_{builder.name}_{len(builder.synthesized)}"
+    pointer = PlanType.FunctionPointer([element, mapped])
+    synthesize(builder, mapping_step(name, element, mapped, result, span))
+    builder.externals.append(
+        ExternalFunction(
+            path="incan_native_runtime::once_generator",
+            type_arguments=[mapped],
+            parameters=[mapped],
+            return_type=result,
+            span=span,
+        ),
+    )
+    step = step_callable(builder, name, element, result, [pointer], [transform], span)
+    return construct_chain(builder, source, step, output, span)
+
+
+def mapping_step(name: str, element: PlanType, mapped: PlanType, result: PlanType, span: SourceSpan) -> Function:
+    """Call the retained mapper once for an owned item, then yield its owned result through a single-item generator."""
+    pointer = PlanType.FunctionPointer([element, mapped])
+    parameters = [Parameter(name="transform", ty=pointer, span=span), Parameter(name="item", ty=element, span=span)]
+    locals = [Local(ty=result, span=span), Local(ty=pointer, span=span), Local(ty=element, span=span), Local(
+        ty=mapped,
+        span=span,
+    )]
+    call = TerminatorKind.Call(
+        Callee(kind=CalleeKind.Value(read_place(plan_place(1, span), false, span)), span=span),
+        [read_place(plan_place(2, span), true, span)],
+        plan_place(3, span),
+        1,
+        Unwind.Continue,
+    )
+    yield_item = TerminatorKind.Call(
+        Callee(kind=CalleeKind.Instantiated("incan_native_runtime::once_generator", [mapped]), span=span),
+        [read_place(plan_place(3, span), true, span)],
+        plan_place(0, span),
+        2,
+        Unwind.Continue,
+    )
+    return Function(
+        name=name,
+        parameters=parameters,
+        return_type=result,
+        locals=locals,
+        blocks=[plan_block([], call, span), plan_block([], yield_item, span), plan_block([], TerminatorKind.Return, span)],
+        span=span,
+    )
 
 
 def flat_map_adapter(

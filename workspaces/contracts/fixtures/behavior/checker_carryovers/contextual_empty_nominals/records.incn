@@ -1,3 +1,9 @@
+"""Declare identifiers and containers whose element identity belongs to this module."""
+
+from rust::std::sync import Arc
+
+
+@derive(Clone)
 pub model EvidenceId:
     """An identifier owned by this module."""
     pub text: str
@@ -18,3 +24,18 @@ pub def count(values: list[EvidenceId], first: Option[EvidenceId], by_name: Dict
 pub def make() -> EvidenceId:
     """Return a populated identifier owned by this module."""
     return EvidenceId(text="foreign")
+
+
+pub def text_of(value: EvidenceId) -> str:
+    """Read an identifier under its own declaring module's field identity."""
+    return value.text
+
+
+pub model Shared:
+    """Hold identifiers inside a shared native container without exporting its element binding."""
+    pub evidence_ids: Arc[list[EvidenceId]]
+
+
+pub def make_shared() -> Shared:
+    """Return a shared collection whose element belongs to this module."""
+    return Shared(evidence_ids=Arc.new([make()]))

@@ -1,9 +1,18 @@
-# behavior: a model holding a newtype over str builds and reads it back, since a newtype carries Clone and Debug when its underlying type does
+# behavior: a model's newtype field retains its payload and authored string display through list projections
 # expect-stdout:
 #   ada@example.com
 #   2
+#   email:ada@example.com
+#   email:bo@example.com
+#   email:ada@example.com
+#   ada@example.com
 
-type Email = newtype str
+"""Observe an authored newtype display through model and list projections."""
+
+type Email = newtype str:
+    def __str__(self) -> str:
+        """Render the address with its authored label."""
+        return "email:" + self.0
 
 
 model User:
@@ -11,8 +20,22 @@ model User:
 
 
 def main() -> None:
+    """
+    Read stored addresses and their authored display without consuming them.
+
+    1. Construct users holding addresses.
+    2. Read the raw field and collection size.
+    3. Render projected newtypes through each display form and read their payload again.
+    """
+    # 1. Keep addresses inside model and list storage.
     user = User(email=Email("ada@example.com"))
     mut users: list[User] = [user]
     users.append(User(email=Email("bo@example.com")))
+    # 2. Original field reads keep their existing values.
     println(users[0].email.0)
     println(len(users))
+    # 3. Source display calls borrow the same projected values.
+    println(users[0].email)
+    println(str(users[1].email))
+    println(f"{users[0].email}")
+    println(users[0].email.0)

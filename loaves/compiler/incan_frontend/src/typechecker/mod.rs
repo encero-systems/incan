@@ -2282,6 +2282,22 @@ impl TypeChecker {
         if normalized == RUST_NEVER_TYPE_DISPLAY {
             return ResolvedType::Never;
         }
+        if let Some((_, name, _)) = self.symbols.active_module_source_bindings().find(|(_, name, _)| {
+            self.symbols
+                .module_type_identity(name)
+                .and_then(incan_semantics_core::body_ir::nominal_carrier_key)
+                .as_deref()
+                == Some(normalized.as_str())
+        }) {
+            return ResolvedType::Named(name.to_owned());
+        }
+        if self.transitive_pub_types.contains_key(&normalized)
+            && self.declaration_nominal_scopes.keys().any(|identity| {
+                incan_semantics_core::body_ir::nominal_carrier_key(identity).as_deref() == Some(normalized.as_str())
+            })
+        {
+            return ResolvedType::Named(normalized);
+        }
         // Native scalar names are metadata vocabulary, independent of same-spelled source imports.
         if let Some(id) = numerics::from_str(&normalized)
             && numerics::as_str(id) == normalized
@@ -3442,6 +3458,20 @@ impl TypeChecker {
             && (infos.len() == 1 || split_canonical_public_library_type_name(name).is_some())
         {
             return Some(first);
+        }
+        for (id, symbol) in self.symbols.all_symbols().iter().enumerate() {
+            let SymbolKind::Type(info) = &symbol.kind else { continue };
+            if symbol.scope == 0
+                && self.symbols.is_active_lookup_binding(id)
+                && self
+                    .symbols
+                    .identity_of(id)
+                    .and_then(incan_semantics_core::body_ir::nominal_carrier_key)
+                    .as_deref()
+                    == Some(name)
+            {
+                return Some(info);
+            }
         }
         None
     }
@@ -5157,11 +5187,21 @@ impl TypeChecker {
 
     /// Resolve a required field type for the active trait default method, if any.
     ///
-    /// Emits a dedicated diagnostic if a trait body accesses an undeclared required field.
+    /// Retain the declaring trait's member identity for the adopter's checked field binding. Emit a dedicated
+    /// diagnostic if a trait body accesses an undeclared required field.
     pub fn trait_required_field_type(&mut self, field: &str, span: Span) -> Option<ResolvedType> {
         let requires = self.current_trait_requires.as_ref()?;
-        if let Some(ty) = requires.get(field) {
-            return Some(ty.clone());
+        if let Some(ty) = requires.get(field).cloned() {
+            if let Some(owner) = self
+                .current_trait_name
+                .as_deref()
+                .and_then(|name| self.symbols.lookup(name))
+                .and_then(|symbol| self.symbols.identity_of(symbol))
+            {
+                let identity = Self::synthetic_member_identity(owner, field, SemanticSourceTargetKind::Field);
+                self.type_info.record_resolved_identity(span, identity);
+            }
+            return Some(ty);
         }
         if let Some(seen) = self.current_trait_missing_requires_emitted.as_ref()
             && seen.contains(field)
@@ -5711,6 +5751,11 @@ impl TypeChecker {
         render_resolved_type_as_rust_arg(&qualified)
     }
 
+    /// Freeze provider-owned native generic arguments while source annotations keep their local lexical spelling.
+    fn qualify_native_source_argument(&self, ty: &mut ResolvedType) {
+        self.canonicalize_public_library_nominals(ty);
+    }
+
     /// Replace locally aliased public-library nominals with their source-unspellable canonical provider path.
     ///
     /// Emitted Rust displays and compiled manifests must retain provider identity independently of the aliases that
@@ -5816,7 +5861,7 @@ impl TypeChecker {
             &ty.node,
             &self.symbols,
             &|arg| self.render_provider_aware_rust_arg(arg),
-            &|arg| self.canonicalize_public_library_nominals(arg),
+            &|arg| self.qualify_native_source_argument(arg),
             &|segments| self.qualified_type_annotation_resolved_type(segments),
         );
         let resolved = self.normalize_union_member_identity(resolved);
@@ -5884,7 +5929,7 @@ impl TypeChecker {
                     &argument.node,
                     &self.symbols,
                     &|arg| self.render_provider_aware_rust_arg(arg),
-                    &|arg| self.canonicalize_public_library_nominals(arg),
+                    &|arg| self.qualify_native_source_argument(arg),
                     &|segments| self.qualified_type_annotation_resolved_type(segments),
                 )
             })
@@ -8055,7 +8100,8 @@ impl TypeChecker {
         }
     }
 
-    /// Cache direct declarations owned by one dependency module.
+    /// Cache dependency declarations and their canonical semantic type keys while their declaring scope still owns
+    /// field and native generic argument resolution.
     fn cache_dependency_direct_member_symbols(&mut self, module_name: &str, module_ast: &Program, public_only: bool) {
         let mut direct_symbols = HashMap::new();
         let mut direct_type_aliases = HashMap::new();
@@ -8078,6 +8124,19 @@ impl TypeChecker {
         for (name, kind) in &direct_symbols {
             if let Some(identity) = direct_identities.get(name) {
                 self.retain_declaration_nominal_scope(identity, kind, &scope);
+                if let Some(key) = incan_semantics_core::body_ir::nominal_carrier_key(identity) {
+                    let remapping = scope
+                        .iter()
+                        .filter_map(|(name, identity)| {
+                            incan_semantics_core::body_ir::nominal_carrier_key(identity).map(|key| (name.clone(), key))
+                        })
+                        .collect();
+                    let mut qualified = kind.clone();
+                    self.remap_symbol_kind_with_import_aliases(&mut qualified, &remapping);
+                    if let SymbolKind::Type(info) = qualified {
+                        self.transitive_pub_types.entry(key).or_insert_with(|| vec![info]);
+                    }
+                }
             }
         }
         for declaration in &module_ast.declarations {

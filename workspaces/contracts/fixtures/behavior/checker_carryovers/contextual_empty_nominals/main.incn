@@ -1,4 +1,4 @@
-# behavior: empty fields and arguments retain the declaring module's nominal owners despite same-named caller types
+# behavior: plain and shared list elements retain declaring field owners despite unimported or same-named caller types
 # expect-stdout:
 #   0
 #   true
@@ -6,8 +6,14 @@
 #   0
 #   local
 #   1
+#   foreign
+#   foreign
+#   foreign
+#   foreign
 
-from records import Decision, count, make
+"""Read provider collections beside a distinct caller model with the same name."""
+
+from records import Decision, Shared, count, make, make_shared, text_of
 
 
 model EvidenceId:
@@ -16,13 +22,34 @@ model EvidenceId:
 
 
 def main() -> None:
-    """Use empty values in fields and parameters without importing their nominal leaves."""
+    """
+    Read provider values without importing their element declaration.
+
+    1. Construct empty collections under the provider's declared owners.
+    2. Read the caller's own identifier independently.
+    3. Read populated plain and shared collections through their declaring fields.
+    """
+    # 1. Empty values take their field and parameter context.
     decision = Decision(evidence_ids=[], first=None, by_name={})
     println(len(decision.evidence_ids))
     println(decision.first is None)
     println(len(decision.by_name))
     println(count([], None, {}))
+    # 2. The local identifier keeps its own field declaration.
     own = EvidenceId(text="local")
     println(own.text)
+    # 3. Foreign elements keep their fields through iteration, indexing and a shared native container.
     populated = Decision(evidence_ids=[make()], first=None, by_name={})
     println(len(populated.evidence_ids))
+    for evidence in populated.evidence_ids:
+        println(text_of(evidence))
+        println(evidence.text)
+    println(populated.evidence_ids[0].text)
+    observe_shared(make_shared())
+
+
+def observe_shared(shared: Shared) -> None:
+    """Read unimported elements through a cloned Arc and its borrowed collection view."""
+    entries = shared.evidence_ids.clone()
+    for evidence in entries.as_ref():
+        println(evidence.text)

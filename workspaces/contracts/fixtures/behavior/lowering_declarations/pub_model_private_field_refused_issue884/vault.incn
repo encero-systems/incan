@@ -1,6 +1,20 @@
+"""Publish vault containers while keeping each vault's secret private."""
+
 pub model Vault:
+    """A public label and a module-private secret."""
     secret: str = "sealed"
     pub label: str
 
     def reveal(self) -> str:
+        """Read the secret within its declaring module."""
         return self.secret
+
+
+pub model Bag:
+    """Expose vaults without importing their element declaration into the caller."""
+    pub entries: list[Vault]
+
+
+pub def make() -> Bag:
+    """Return one vault whose private field must remain protected."""
+    return Bag(entries=[Vault(label="keys")])

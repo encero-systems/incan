@@ -1,9 +1,16 @@
-# behavior: a decorated generic function in a nested module reflects its type argument's class name and field count through a helper imported from another nested module
+# behavior: nested generic reflection and callable names retain their signatures and initialization lifetimes
 # expect-stdout:
 #   Row:2:clone
 #   Point:3:clone
+#   Row:2:clone
+#   /orders
+#   true
+#   8
+#   request,positive,from_csv,from_csv,double
 
-from functions.csv.from_csv import from_csv
+"""Observe schema reflection and the names of callable values with different signatures."""
+
+from functions.csv.from_csv import from_csv, request, positive, plain_result, recorded_names
 
 
 @derive(Clone)
@@ -20,5 +27,20 @@ model Point:
 
 
 def main() -> None:
+    """
+    Read reflected schemas and registered declarations.
+
+    1. Invoke each cached generic instance.
+    2. Invoke module-bound and plain functions with arguments and distinct result types.
+    3. Read the exact names observed during registration.
+    """
+    # 1. Each closed schema initializes its cached callable once.
     println(from_csv[Row]())
     println(from_csv[Point]())
+    println(from_csv[Row]())
+    # 2. Named functions retain their callable signatures after introspection.
+    println(request("/orders"))
+    println(positive(2))
+    println(plain_result())
+    # 3. Declaration names survive each registration path.
+    println(recorded_names())

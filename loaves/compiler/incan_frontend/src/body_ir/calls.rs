@@ -1893,6 +1893,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 return self.unsupported_operand(description, scope, hir_span_value, out);
             }
         };
+        self.display_selected_arguments(args, &mut operands, scope, out);
         if declaration.builtin == Some(BuiltinFnId::Print) {
             self.display_type_parameter_arguments(args, &mut operands, scope, out);
         }
@@ -1937,6 +1938,70 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             ty,
             scope,
             hir_span_value,
+            false,
+            out,
+        )
+    }
+
+    /// Replace only operands whose source display method was already selected by the accepting checker.
+    fn display_selected_arguments(
+        &mut self,
+        args: &[ast::CallArg],
+        operands: &mut [bir::ArgumentElement],
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) {
+        if args.len() != operands.len() {
+            return;
+        }
+        for (argument, element) in args.iter().zip(operands) {
+            let ast::CallArg::Positional(expression) = argument else {
+                continue;
+            };
+            let bir::ArgumentElement::One(operand) = element else {
+                continue;
+            };
+            *operand = self.lower_selected_display_operand(expression.span, operand.clone(), scope, out);
+        }
+    }
+
+    /// Emit the exact checked string method as an ordinary call, borrowing the evaluated receiver once and retaining
+    /// its field projection.
+    pub(super) fn lower_selected_display_operand(
+        &mut self,
+        span: ast::Span,
+        operand: bir::Operand,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let Some(canonical) = self
+            .type_info
+            .calls
+            .source_display_methods
+            .get(&(span.start, span.end))
+            .cloned()
+        else {
+            return operand;
+        };
+        let place = self.materialize_operand_to_place(operand, self.resolve_ty(span), scope, hir_span(span), out);
+        let receiver = bir::Operand::place(place, bir::OwnershipFact::Borrow, false);
+        let target = bir::MethodTarget {
+            name: canonical.declaration_name.clone(),
+            canonical: Some(canonical),
+            trait_arguments: None,
+            native_trait_delegation: None,
+            reflection: None,
+            intrinsic_carrier: None,
+            loaf_trait: None,
+            type_args: Vec::new(),
+            binding: bir::ArgumentBinding::resolved_positional(0),
+        };
+        self.push_call_temp(
+            bir::Callee::Method(target),
+            vec![bir::ArgumentElement::One(receiver)],
+            IncanType::Primitive(IncanPrimitiveType::Str),
+            scope,
+            hir_span(span),
             false,
             out,
         )
@@ -2448,7 +2513,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let Some(lowered) = self.lower_module_qualified_call(recv, name, type_args, args, span, scope, out) {
             return lowered;
         }
-        if let Some(value) = self.lower_type_class_name(recv, type_args, args, span, scope, out) {
+        if let Some(value) = self.lower_type_member_metadata(recv, type_args, args, span, scope, out) {
             return value;
         }
         if self.static_receiver_type(recv, span).is_some() {

@@ -9,7 +9,7 @@ use incan_driver::loaf_publication::{PublicationFacts, publish_native_unions, wr
 use incan_driver::modules::{collect_library_modules_detailed_with_session, collect_modules_detailed_with_session};
 use incan_driver::session::{CompilationAnalysis, CompilationSession, RustFactsSetup};
 use incan_driver::unit::{UnitDescription, UnitKind};
-use incan_frontend::ast::{DecoratorArg, Expr, Literal};
+use incan_frontend::ast::{DecoratorArg, DecoratorArgValue, Expr, Literal};
 use incan_frontend::library_manifest::LibraryManifest;
 use incan_frontend::loaf_index::{LoafIndex, LoafNativeClosure};
 use incan_frontend::parsed_module::ParsedModule;
@@ -353,6 +353,12 @@ fn required_loaf_identities(
                 .iter()
                 .filter_map(|module| analysis.type_info_for_path(&module.file_path))
                 .flat_map(|info| info.calls.body_ir_async_call_targets.values().cloned()),
+        )
+        .chain(
+            modules
+                .iter()
+                .filter_map(|module| analysis.type_info_for_path(&module.file_path))
+                .flat_map(|info| info.calls.source_display_methods.values().cloned()),
         )
         .chain(
             modules
@@ -940,9 +946,18 @@ fn refused_decorator_feature(
     Some(format!("decorator @{}({arguments})", decorator.node.name))
 }
 
-/// Admit only builtin native derive markers with no executable decorator behavior; adopter effects are checked
-/// separately.
-fn retained_trait_derive_marker(decorator: &incan_frontend::ast::Decorator) -> bool {
+/// Admit builtin trait markers with no executable decorator behavior. The checker validates required field types
+/// and each adopter's conformance before admission; default method bodies retain their checked field accesses.
+fn retained_trait_marker(decorator: &incan_frontend::ast::Decorator) -> bool {
+    if decorator.path.segments == ["requires"]
+        && decorator.type_args.is_empty()
+        && decorator
+            .args
+            .iter()
+            .all(|argument| matches!(argument, DecoratorArg::Named(_, DecoratorArgValue::Type(_))))
+    {
+        return true;
+    }
     decorator.path.segments == ["rust", "derive"] && decorator.type_args.is_empty() && !decorator.args.is_empty()
         && decorator.args.iter().all(|argument| matches!(argument,
             DecoratorArg::Positional(value) if matches!(&value.node,
@@ -962,7 +977,7 @@ fn trait_refusal_feature(item: &incan_frontend::ast::TraitDecl) -> Option<&'stat
     if item
         .decorators
         .iter()
-        .any(|decorator| !retained_trait_derive_marker(&decorator.node))
+        .any(|decorator| !retained_trait_marker(&decorator.node))
     {
         return Some("decorators");
     }

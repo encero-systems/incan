@@ -694,6 +694,15 @@ impl TypeChecker {
             .get(&key)
             .map(|call| call.return_type.clone())
             .or_else(|| self.type_info.calls.body_ir_call_result_types.get(&key).cloned())
+            .or_else(|| {
+                let retained = self.type_info.expressions.body_ir_expr_types.get(&key)?;
+                let ResolvedType::Generic(owner, _) = retained else {
+                    return None;
+                };
+                self.rust_item_metadata_for_path(owner)
+                    .is_some_and(|metadata| matches!(metadata.kind, RustItemKind::Type(_)))
+                    .then(|| retained.clone())
+            })
     }
 
     /// Compare canonical native carriers for trait selection. The source compatibility relation deliberately admits
@@ -708,9 +717,13 @@ impl TypeChecker {
     fn rust_trait_comparison_type(&self, ty: &ResolvedType) -> ResolvedType {
         let ty = self.rust_inference_type(ty, &[]);
         map_resolved_type_leaves(&ty, &|leaf| {
+            if self.active_type_param_name(leaf).is_some() {
+                return None;
+            }
             if let ResolvedType::Generic(path, arguments) = leaf
                 && path.contains("::")
                 && arguments.is_empty()
+                && self.source_trait_carrier_key(path).is_none()
             {
                 return Some(ResolvedType::RustPath(self.rust_native_type_identity_path(path)));
             }
@@ -737,11 +750,13 @@ impl TypeChecker {
                             .collect(),
                     ));
                 }
-                let base = if base.contains("::") {
-                    self.rust_native_type_identity_path(base)
-                } else {
-                    base.clone()
-                };
+                let base = self.source_trait_carrier_key(base).unwrap_or_else(|| {
+                    if base.contains("::") {
+                        self.rust_native_type_identity_path(base)
+                    } else {
+                        base.clone()
+                    }
+                });
                 return Some(ResolvedType::Generic(
                     base,
                     arguments
@@ -749,6 +764,11 @@ impl TypeChecker {
                         .map(|argument| self.rust_trait_comparison_type(argument))
                         .collect(),
                 ));
+            }
+            if let ResolvedType::Named(name) = leaf
+                && let Some(key) = self.source_trait_carrier_key(name)
+            {
+                return Some(ResolvedType::Named(key));
             }
             let path = match leaf {
                 ResolvedType::RustPath(path) => path,
@@ -773,6 +793,16 @@ impl TypeChecker {
             }
             Some(ResolvedType::RustPath(self.rust_native_type_identity_path(path)))
         })
+    }
+
+    /// Normalize an own-source nominal through its checked identity. Package aliases keep their existing native
+    /// defining-path comparison.
+    fn source_trait_carrier_key(&self, name: &str) -> Option<String> {
+        let identity = self.symbols.module_type_identity(name)?;
+        if !matches!(identity.origin, incan_semantics_core::SymbolOrigin::Module(_)) {
+            return None;
+        }
+        incan_semantics_core::body_ir::nominal_carrier_key(identity)
     }
 
     /// Compare public type reexports through their retained defining path within the same bound crate. Distinct

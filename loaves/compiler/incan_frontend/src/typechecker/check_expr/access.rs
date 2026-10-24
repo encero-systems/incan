@@ -2143,7 +2143,7 @@ impl TypeChecker {
     }
 
     /// Build a compiler-synthesized member identity from the canonical identity of its owning declaration.
-    pub(in crate::typechecker::check_expr) fn synthetic_member_identity(
+    pub(in crate::typechecker) fn synthetic_member_identity(
         owner: &CanonicalSymbolId,
         member: &str,
         kind: SemanticSourceTargetKind,
@@ -5454,7 +5454,8 @@ impl TypeChecker {
         Some(ret)
     }
 
-    /// Type-check a field access (`base.field`) and return the field type.
+    /// Type-check a field access against its retained value owner before consulting source-facing inference. Foreign
+    /// collection elements keep their declaring fields even when a caller binds the same type name.
     pub(in crate::typechecker::check_expr) fn check_field(
         &mut self,
         base: &Spanned<Expr>,
@@ -5465,6 +5466,7 @@ impl TypeChecker {
             return result;
         }
         let base_ty = self.check_type_receiver_expr(base);
+        let base_ty = self.retained_source_field_receiver(base.span).unwrap_or(base_ty);
 
         // Field lookup follows explicit references without changing the checked receiver's ownership facts.
         let mut field_owner = &base_ty;
@@ -5510,6 +5512,24 @@ impl TypeChecker {
         }
 
         self.check_nominal_field(base, base_ty, field, span)
+    }
+
+    /// Retain a source declaration's exact field owner without replacing a source surface wrapper with its native
+    /// storage type.
+    fn retained_source_field_receiver(&self, span: Span) -> Option<ResolvedType> {
+        let retained = self.body_ir_checked_value_type(span)?;
+        let mut referent = retained;
+        while let ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) = referent {
+            referent = inner;
+        }
+        let (ResolvedType::Named(name) | ResolvedType::Generic(name, _)) = referent else {
+            return None;
+        };
+        matches!(
+            self.lookup_semantic_type_info(name),
+            Some(TypeInfo::Model(_) | TypeInfo::Class(_) | TypeInfo::Enum(_) | TypeInfo::Newtype(_))
+        )
+        .then(|| retained.clone())
     }
 
     /// Resolve imported module members from checked symbol metadata before treating a receiver as a value.

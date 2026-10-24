@@ -596,6 +596,9 @@ pub struct TraitAdoption {
     /// An authenticated marker protocol has `Some([])`; missing metadata cannot masquerade as an empty protocol.
     #[serde(default)]
     pub methods: Option<Vec<CanonicalSymbolId>>,
+    /// Checked required fields bound to this adopter's exact stored fields, transported in the nominal trailer.
+    #[serde(skip)]
+    pub fields: Vec<TraitFieldImplementation>,
     /// Checked source-model adapter for a compiler-provided primitive family. Ordinary source adoptions carry None;
     /// this record changes only capability dispatch, never the primitive's storage or general type compatibility.
     #[serde(default)]
@@ -613,6 +616,15 @@ pub struct PrimitiveTraitAdapter {
     pub decode_slot: CanonicalSymbolId,
     /// Checked associated decoder returning the primitive value rather than the adapter model.
     pub decoded_value: CanonicalSymbolId,
+}
+
+/// One required field of a trait bound to the exact stored field that satisfied conformance checking.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraitFieldImplementation {
+    /// Checker-minted required field identity under the declaring trait.
+    pub requirement: CanonicalSymbolId,
+    /// Canonical stored field identity in the adopting model or class, including an inherited field.
+    pub implementation: CanonicalSymbolId,
 }
 
 /// Immutable presentation values of one checked reflection-visible field, in declaration order.
@@ -3790,6 +3802,8 @@ pub enum TypeMetadataOperation {
     ClassName,
     /// The length of the generated reflection-visible field table; no table elements escape this operation.
     FieldCount,
+    /// The immutable table of reflection-visible field metadata for the concrete nominal type.
+    Fields,
 }
 
 impl Callee {
@@ -3805,6 +3819,7 @@ impl Callee {
                 match target.operation {
                     TypeMetadataOperation::ClassName => "class_name",
                     TypeMetadataOperation::FieldCount => "field_count",
+                    TypeMetadataOperation::Fields => "fields",
                 },
                 target.receiver_type
             ),

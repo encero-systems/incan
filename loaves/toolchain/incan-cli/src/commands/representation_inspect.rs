@@ -185,7 +185,7 @@ fn build_report(manifest_path: &Path, manifest: &LibraryManifest) -> CliResult<R
     // question a reader facing an unsupported package most needs answered. Only the index read is skipped.
     let index = match SurfaceReader::open(&bytes) {
         Ok(reader) => Some(reader.index().clone()),
-        Err(_) if version != EXECUTABLE_REPRESENTATION_VERSION => None,
+        Err(_) if !incan_semantics_core::executable_representation::supports_version(version) => None,
         Err(error) => {
             return Err(CliError::failure(format!(
                 "`{}` declares a supported version but its index cannot be read: {error}",

@@ -102,9 +102,9 @@ impl TypeChecker {
 }
 
 /// Bound inheritance to concrete ordinary instance methods and fields whose executable frames are proven here.
+/// Checked trait adoptions remain independent of the parent layout and nearest implementation identities.
 fn plain_class(info: &ClassInfo) -> bool {
     info.type_params.is_empty()
-        && info.traits.is_empty()
         && info.properties.is_empty()
         && info.method_aliases.is_empty()
         && info.field_defaults.is_empty()
