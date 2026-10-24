@@ -2,10 +2,10 @@
 
 from rust::incan_semantics_core::body_ir import Operand as RustOperand
 from rust::incan_semantics_core import SymbolOrigin
-from pub::incan_mir_plan import PlanType, Place, Operand, SourceSpan, RvalueKind, ExternalFunction, CalleeKind
+from pub::incan_mir_plan import PlanType, Place, Operand, SourceSpan, RvalueKind
 from pub::incan_mir_plan import assign as plan_assign
-from frame import Builder, temporary, place_type, read_place, terminate_call
-from lowering import scalar_place, runtime_text
+from frame import Builder, temporary, place_type, read_place
+from lowering import scalar_place, native_format_text
 from element_places import is_element_place
 from decls import library_enum_item
 
@@ -30,10 +30,10 @@ pub def display_enum_operand(mut builder: Builder, value: &RustOperand, span: So
                         return Ok(None)
                     if library_enum_item(builder.enums[owner]) != "":
                         argument = enum_reference(builder, place, owner, name, span)
-                        return Ok(Some(runtime_text(builder, "incan_native_runtime::display_value", argument, span)?))
+                        return Ok(Some(native_format_text(builder, argument, false, span)?))
                     if "Display" not in builder.enums[owner].derives:
                         return Ok(None)
-                    return Ok(Some(borrowed_enum_debug(builder, place, ty, owner, name, span)?))
+                    return Ok(Some(borrowed_enum_debug(builder, place, owner, name, span)?))
                 _ => pass
         _ => pass
     return Ok(None)
@@ -61,10 +61,7 @@ pub def native_enum_text(
                     if not native_enum_owner(builder, owner):
                         return Ok(None)
                 _ => return Ok(None)
-            mut path = "incan_native_runtime::display_value"
-            if debug:
-                path = "incan_native_runtime::debug_value"
-            return Ok(Some(runtime_text(builder, path, argument, span)?))
+            return Ok(Some(native_format_text(builder, argument, debug, span)?))
         _ => return Ok(None)
 
 
@@ -80,28 +77,13 @@ pub def native_enum_owner(mut builder: Builder, owner: int) -> bool:
 pub def borrowed_enum_debug(
     mut builder: Builder,
     value: Place,
-    ty: PlanType,
     owner: int,
     name: str,
     span: SourceSpan,
 ) -> Result[Place, str]:
     """Format an enum through its retained Debug implementation without cloning or consuming its payload."""
-    reference_type = PlanType.EnumRef(owner, name)
     argument = enum_reference(builder, value, owner, name, span)
-    result = temporary(builder, PlanType.String, span)
-    path = "incan_native_runtime::debug_model"
-    builder.externals.append(
-        ExternalFunction(
-            path=path,
-            type_arguments=[ty],
-            parameters=[reference_type],
-            return_type=PlanType.String,
-            span=span,
-        ),
-    )
-    terminate_call(builder, CalleeKind.Instantiated(path, [ty]), [argument], result, span)
-    builder.owned.append(result.local)
-    return Ok(result)
+    return native_format_text(builder, argument, true, span)
 
 
 def enum_reference(mut builder: Builder, value: Place, owner: int, name: str, span: SourceSpan) -> Operand:

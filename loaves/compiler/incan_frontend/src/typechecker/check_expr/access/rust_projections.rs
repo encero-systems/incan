@@ -6,7 +6,7 @@ use super::TypeChecker;
 use crate::resolved_type_subst::map_resolved_type_leaves;
 use crate::symbols::ResolvedType;
 use crate::typechecker::helpers::render_resolved_type_as_rust_arg;
-use incan_lang::interop::{RustFunctionSig, RustItemKind, ancestral_rust_path};
+use incan_lang::interop::{RustFunctionSig, RustImplementedTrait, RustItemKind, ancestral_rust_path};
 use incan_lang::lang::types::numerics;
 use quote::ToTokens;
 
@@ -46,6 +46,8 @@ impl TypeChecker {
     /// Scalar carriers select their native primitive cache entry; the associated value still requires an impl fact.
     /// A named Deref target retains its native owner before source collection projection so method lookup can select
     /// that owner's metadata and preserve each executable adjustment.
+    /// Unanchored Self templates require bound filtering before their associated values compete with concrete owner
+    /// templates. Native signature and predicate validation remains authoritative for a selected concrete call.
     fn rust_associated_type_at_depth(
         &self,
         ty: &ResolvedType,
@@ -110,7 +112,7 @@ impl TypeChecker {
             if ancestral_rust_path(&implementation_identity) != ancestral_rust_path(&trait_identity) {
                 continue;
             }
-            if matches!(owner, ResolvedType::Ref(_) | ResolvedType::RefMut(_))
+            if Self::rust_projection_needs_bounds(implementation, &owner)
                 && !self.rust_impl_may_apply(implementation, &owner)
             {
                 continue;
@@ -162,6 +164,17 @@ impl TypeChecker {
             selected = Some(value);
         }
         selected
+    }
+
+    /// Filter borrowed owners and blanket Self binders before selecting an associated value. A bare binder can match
+    /// any owner, so its bounds must exclude unrelated collections; concrete owner templates retain their existing
+    /// native predicate verification rather than requiring the partial metadata cache to prove every hidden bound.
+    fn rust_projection_needs_bounds(implementation: &RustImplementedTrait, owner: &ResolvedType) -> bool {
+        matches!(owner, ResolvedType::Ref(_) | ResolvedType::RefMut(_))
+            || implementation
+                .type_params
+                .iter()
+                .any(|name| name == &implementation.self_type)
     }
 
     /// Read generic projection equalities from active bounds and their metadata-defined supertraits. A Future also
@@ -238,7 +251,9 @@ impl TypeChecker {
                 if qualified.position == 0 || path.path.segments.len() != qualified.position + 1 {
                     return None;
                 }
-                let owner = self.rust_projected_type(&qualified.ty.to_token_stream().to_string(), depth + 1)?;
+                let owner_display = qualified.ty.to_token_stream().to_string();
+                let owner = self.rust_projected_type(&owner_display, depth + 1)?;
+                let owner = self.rust_projection_owner(&owner_display, owner);
                 let trait_path = path
                     .path
                     .segments
@@ -285,5 +300,23 @@ impl TypeChecker {
             value
         });
         (!failed.get()).then_some(resolved)
+    }
+
+    /// Select an associated impl through its retained native item before source collection projection erases that
+    /// owner's path. Declared placeholders keep their bound lookup; metadata supplies every concrete owner and arity.
+    fn rust_projection_owner(&self, display: &str, owner: ResolvedType) -> ResolvedType {
+        if matches!(&owner, ResolvedType::Ref(_) | ResolvedType::RefMut(_))
+            || self.generic_placeholder_name(&owner).is_some()
+            || self.rust_canonical_path_for_receiver_type(&owner).is_some()
+        {
+            return owner;
+        }
+        let Some(path) = self.rust_result_item_path(display, "") else {
+            return owner;
+        };
+        if let Some(arguments) = self.rust_owner_type_args(&owner, &path) {
+            return ResolvedType::Generic(path, arguments);
+        }
+        owner
     }
 }

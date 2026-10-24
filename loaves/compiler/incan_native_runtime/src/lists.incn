@@ -117,9 +117,11 @@ pub def repeat_list[T with Clone](value: T, count: int) -> list[T]:
 
 
 pub def sorted_list[T with (Clone, Ord)](values: &list[T]) -> list[T]:
-    """Copy and sort ordered elements through legacy builtin emission."""
-    owned: list[T] = RuntimeClone.clone(values)
-    return sorted(owned)
+    """Stably sort a fresh snapshot through the native slice method, leaving the source unchanged."""
+    mut owned: Vec[T] = RuntimeClone.clone(values)
+    mut view = owned.as_mut_slice()
+    view.sort()
+    return owned
 
 
 pub def sorted_float(values: &list[float]) -> list[float]:

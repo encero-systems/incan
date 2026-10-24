@@ -522,8 +522,11 @@ fn validate_function(plan: &Plan, function: &Function) -> Result<(), PlanError> 
     if function.locals.len() <= function.parameters.len() {
         return Err(invalid(function, "locals must include return place and all parameters"));
     }
-    if scalar(&function.locals[0].ty) != scalar(&function.return_type)
-        || !source_signature_type(&scalar(&function.return_type))
+    let returned = scalar(&function.return_type);
+    // A checked element reborrow may return an exclusive model reference; the lifetime-contract guard above still
+    // applies.
+    if scalar(&function.locals[0].ty) != returned
+        || !(source_signature_type(&returned) || matches!(returned, Scalar::ModelMutRef(_)))
     {
         return Err(invalid(function, "return local must match a scalar return type"));
     }
@@ -1831,6 +1834,10 @@ fn shift_result(function: &Function, ty: Scalar, count: &Scalar) -> Result<Scala
 fn signature(plan: &Plan, function: &Function, callee: &Callee) -> Result<(Vec<Scalar>, Scalar), PlanError> {
     span(&callee.span)?;
     match &callee.kind {
+        CalleeKind::FormatValue(ty, _) => {
+            validate_model_type(plan, ty)?;
+            Ok((vec![scalar(ty)], Scalar::String))
+        }
         CalleeKind::SpawnGenerator(name, leaf, depth) => {
             let producer = plan
                 .functions

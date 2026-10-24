@@ -551,6 +551,8 @@ pub enum CalleeKind:
     StaticMethod(int, str)
     # Clone the captured concrete environment behind an authenticated shared callable object.
     CloneClosure(list[PlanType])
+    # Format the exact native carrier through rustc's Debug (true) or Display (false) implementation.
+    FormatValue(PlanType, bool)
 
 
 @derive(Clone, PartialEq)

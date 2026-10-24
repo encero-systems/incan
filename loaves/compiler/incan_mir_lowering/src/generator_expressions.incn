@@ -167,7 +167,7 @@ def item_family(item: PlanType) -> Result[str, str]:
 
 pub def step_capture_type(ty: PlanType) -> bool:
     """
-    Admit captures reusable by every step: Copy scalars and function pointers, owned text, lists or zip snapshots.
+    Admit reusable step captures: Copy scalars and function pointers, or owned text, list, callable and zip snapshots.
 
     Owned values are cloned out of the environment for each call, because the step runs once per item. A zip clone
     preserves both cursors without polling; borrowed zip handles and arbitrary generators remain refused.
@@ -175,6 +175,7 @@ pub def step_capture_type(ty: PlanType) -> bool:
     match ty:
         PlanType.Model(_owner, _name) => return false
         PlanType.FunctionPointer(_signature) => return true
+        PlanType.Closure(_signature) => return true
         PlanType.ZipIterator(_left, _right) => return true
         PlanType.Tuple(elements) =>
             # Destructured loop items remain bound as a tuple in each nested step. Only scalar Copy tuples cross here.

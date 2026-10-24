@@ -554,6 +554,15 @@ pub def carrier_payload_value(mut builder: Builder, place: Place, span: SourceSp
     match ty:
         PlanType.FunctionPointer(_signature) => return Ok(read_place(place, false, span))
         PlanType.ScalarRef(_elements) => return Ok(read_place(place, false, span))
+        PlanType.StringRef => return Ok(read_place(place, false, span))
+        PlanType.ListRef(_leaf, _depth) => return Ok(read_place(place, false, span))
+        PlanType.SetRef(_leaf) => return Ok(read_place(place, false, span))
+        PlanType.DictRef(_key, _value) => return Ok(read_place(place, false, span))
+        PlanType.TupleRef(_elements) => return Ok(read_place(place, false, span))
+        PlanType.ModelRef(_owner, _name) => return Ok(read_place(place, false, span))
+        PlanType.EnumRef(_owner, _name) => return Ok(read_place(place, false, span))
+        PlanType.ValidationErrorRef => return Ok(read_place(place, false, span))
+        PlanType.Tuple(_elements) => return clone_tuple_operand(builder, place, span)
         _ => pass
     mut reference_type = PlanType.StringRef
     match ty:
@@ -570,7 +579,7 @@ pub def carrier_payload_value(mut builder: Builder, place: Place, span: SourceSp
             reference_type = PlanType.EnumRef(owner, name)
         PlanType.Model(owner, name) =>
             reference_type = PlanType.ModelRef(owner, name)
-        _ => return Err("unsupported Body IR intrinsic payload clone type")
+        _ => return Err(f"unsupported Body IR intrinsic payload clone type {ty:?}")
     output = borrowed_native_value(builder, "core::clone::Clone::clone", place, ty, reference_type, ty, span)
     return Ok(read_place(output, true, span))
 

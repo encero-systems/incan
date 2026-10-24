@@ -169,6 +169,12 @@ pub(crate) fn call_instance<'tcx>(
     if let crate::plan::CalleeKind::Instantiated(_, types) = &callee.kind {
         arguments.extend(callees::arguments(tcx, callees::resolve(tcx, callee)?, types)?.iter());
     }
+    if let crate::plan::CalleeKind::FormatValue(ty, _) = &callee.kind {
+        let definition = callees::resolve(tcx, callee)?;
+        let closed = callees::arguments(tcx, definition, std::slice::from_ref(ty))?;
+        callees::verify_bounds(tcx, definition, closed)?;
+        arguments.extend(closed.iter());
+    }
     if let crate::plan::CalleeKind::External(_) = &callee.kind {
         arguments.extend(callees::arguments(tcx, callees::resolve(tcx, callee)?, &[])?.iter());
     }

@@ -19,7 +19,7 @@ from type_parameters import substitute
 from unions import native_source_type
 from options import carrier_layout
 from text_ownership import drop_borrowed_text_temporaries
-from lowering import scalar_place, text_argument, lower_callable_result, runtime_text, materialized_receiver
+from lowering import scalar_place, text_argument, lower_callable_result, native_format_text, materialized_receiver
 from decls import library_item
 from element_places import is_element_place, element_place_type
 
@@ -85,9 +85,7 @@ pub def debug_model(mut builder: Builder, value: Place, span: SourceSpan) -> Res
     """Render with the nominal's derived Debug implementation rather than reconstructing field text."""
     ty = place_type(builder.locals, value)
     operand = borrow_model(builder, value, ty, span)?
-    result = temporary(builder, PlanType.String, span)
-    model_call(builder, "debug_model", ty, PlanType.String, [operand], result, span)?
-    return Ok(result)
+    return native_format_text(builder, operand, true, span)
 
 
 pub def debug_model_operand(mut builder: Builder, value: &RustOperand, span: SourceSpan) -> Result[Place, str]:
@@ -175,7 +173,7 @@ pub def display_model_operand(
                         None => pass
                     if library_item(builder.nominals[owner]) != "":
                         argument = borrow_model(builder, place, place_type(builder.locals, place), span)?
-                        return Ok(Some(runtime_text(builder, "incan_native_runtime::display_value", argument, span)?))
+                        return Ok(Some(native_format_text(builder, argument, false, span)?))
                     if "Display" not in builder.nominals[owner].derives:
                         return Err("unsupported Body IR model display without derived Display")
                 _ => return Err("unsupported Body IR model display carrier")

@@ -259,6 +259,7 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
     }
 
     /// Add function signatures and load the declared external crates, without parsing generated source.
+    /// Structural slice owners use the implicit standard core crate rather than introducing another extern.
     fn after_crate_root_parsing(
         &mut self,
         compiler: &interface::Compiler,
@@ -273,6 +274,7 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
             Ok(items) => krate.items.extend(items),
             Err(error) => compiler.sess.dcx().fatal(error.to_string()),
         }
+        krate.items.extend(crate::formatting::items(&self.plan, span));
         for output in crate::futures::outputs(&self.plan) {
             krate.items.push(crate::futures::alias(&output, krate.spans.inner_span));
             krate

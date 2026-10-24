@@ -1,4 +1,4 @@
-# behavior: an empty inner list beside str-typed siblings is a list of str: the literal passes where list[list[str]] is expected and its str elements iterate (#1471)
+# behavior: empty list elements retain sibling str types, and Rust slice calls preserve nested rows (#1471, #2256)
 # expect-stdout:
 #   0
 #   1
@@ -6,6 +6,9 @@
 #   x!
 #   2
 #   0
+#   4
+
+from rust::incan_std_core::collections import list_concat
 
 def count_rows(rows: list[list[str]]) -> int:
     return len(rows)
@@ -22,6 +25,8 @@ def run() -> None:
     println(count_rows([[], ["x"]]))
     deep = [[[]], [["x"]]]
     println(len(deep[0][0]))
+    joined: list[list[str]] = list_concat(rows, rows)
+    println(len(joined))
 
 
 def main() -> None:

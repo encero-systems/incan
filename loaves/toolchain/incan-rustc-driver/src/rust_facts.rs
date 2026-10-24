@@ -729,8 +729,8 @@ fn type_parameters(tcx: TyCtxt<'_>, def: DefId) -> (Vec<String>, Vec<Option<Stri
     )
 }
 
-/// Read public inherent methods through one extractor for nominal and primitive impl owners. Impl binders and Self
-/// remain native templates; the checker must close them before retaining an executable call.
+/// Read public methods from metadata-selected impls, preserving impl binders and exact self types for candidate
+/// checking.
 fn inherent_methods(tcx: TyCtxt<'_>, implementations: &[DefId], named: &mut HashSet<DefId>) -> Vec<RustMethodSig> {
     implementations
         .iter()

@@ -736,6 +736,7 @@ impl TypeChecker {
     }
 
     /// Close omitted native owner defaults once, before matching either impl members or associated type templates.
+    /// Native slices retain the signature parser's structural owner instead of acquiring nominal generic syntax.
     pub(super) fn rust_closed_owner(&self, ty: &ResolvedType, info: &RustTypeInfo, path: &str) -> ResolvedType {
         if matches!(ty, ResolvedType::Generic(base, _) if base == "[]") {
             return ty.clone();
@@ -744,6 +745,9 @@ impl TypeChecker {
             ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => *inner.clone(),
             other => other.clone(),
         };
+        if path == "[]" {
+            return self.native_rust_signature_type(&render_resolved_type_as_rust_arg(&owner), "");
+        }
         if let Some(mut arguments) = self.rust_owner_type_args(&owner, path)
             && self.complete_rust_owner_arguments(info, &mut arguments)
         {

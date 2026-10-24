@@ -1,17 +1,39 @@
-# behavior: keeps an unconsumed generator function out of execution evidence
+# behavior: unconsumed generators defer list snapshots and captured callbacks returning generators (#2256)
 # expect-stdout:
 #   42
 
 
 """Keeps an unconsumed generator function out of execution evidence."""
 def counter() -> Generator[int]:
-  """Yield the sequence consumed or retained by this fixture."""
-  yield 1
+    """Yield the sequence consumed or retained by this fixture."""
+    yield 1
+
+
+def snapshot[T](values: list[T]) -> Generator[T]:
+    """Own the source snapshot across a deferred generic producer frame."""
+    for value in values:
+        yield value
+
+
+def counted(value: int) -> Generator[int]:
+    """Defer one captured scalar until the producer is polled."""
+    yield value
+
+
+def defer(callback: (int) -> Generator[int]) -> None:
+    """Call a borrowed captured callback whose result owns its producer."""
+    unused = callback(1)
 
 def program_result() -> int:
-  """Compute and return `42`."""
-  unused = counter()
-  return 42
+    """Construct deferred producers and return without polling them."""
+    unused = counter()
+    mut values = [3, 7]
+    saved = snapshot(values)
+    values[0] = 99
+    offset = 5
+    callback: (int) -> Generator[int] = (value) => counted(value + offset)
+    defer(callback)
+    return 42
 
 
 def main() -> None:

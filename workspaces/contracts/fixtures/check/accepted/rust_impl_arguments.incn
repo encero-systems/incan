@@ -1,9 +1,16 @@
-# behavior: a Rust associated function infers its owner's type parameters from its arguments
+# behavior: Rust associated functions infer owner arguments and normalize instantiated iterator outputs
 # expect-accepted:
 
 """Rust associated functions infer their owner's type parameters."""
 
 from rust::std::rc import Rc
+from rust::std::vec import Vec, IntoIter
+from rust::std::iter import IntoIterator
+
+
+def iterator(values: Vec[int]) -> IntoIter[int]:
+    """Check the owned iterator's associated output before assigning its concrete return type."""
+    return values.into_iter()
 
 
 def main() -> None:

@@ -1995,11 +1995,10 @@ impl TypeChecker {
     /// Return compact Rust display text for comparison. Bring a Rust type display into the one normal form every
     /// lookup and comparison in the checker uses.
     ///
-    /// Lifetimes and formatting whitespace are removed, except the single space that follows a `dyn`, `impl` or `mut`
-    /// token: that space is what distinguishes a trait object (`dyn Trait`) from an ordinary path, and generic
-    /// arguments are split from this string, so dropping it turns the `T` of `Arc<dyn Trait>` into `dynTrait`. Every
-    /// route that compacts a display must go through here; when parameters and arguments were normalized by
-    /// different routes, `Arc<dyn TableProvider>` stopped matching itself (#1229).
+    /// Lifetimes and formatting whitespace are removed while preserving keyword separation around `as` and after `dyn`,
+    /// `impl` or `mut`. These spaces keep qualified associated types, trait objects and exclusive borrows parseable.
+    /// Every route that compacts a display must use this normalization; different parameter and argument normalization
+    /// previously made `Arc<dyn TableProvider>` fail to match itself (#1229).
     fn compact_rust_display(rust_ty: &str) -> String {
         let display = Self::rust_display_without_lifetimes(rust_ty);
         let display = display.as_str();
@@ -2007,6 +2006,9 @@ impl TypeChecker {
         let mut word = String::new();
         let flush = |word: &mut String, out: &mut String| {
             if !word.is_empty() {
+                if word == "as" && !out.ends_with('#') {
+                    out.push(' ');
+                }
                 out.push_str(word);
                 word.clear();
             }
@@ -2014,7 +2016,7 @@ impl TypeChecker {
         let mut chars = display.chars().peekable();
         while let Some(ch) = chars.next() {
             if ch == ' ' {
-                let keep = matches!(word.as_str(), "dyn" | "impl" | "mut")
+                let keep = matches!(word.as_str(), "dyn" | "impl" | "mut" | "as")
                     && chars
                         .peek()
                         .is_some_and(|next| next.is_alphanumeric() || *next == '_' || *next == ':');

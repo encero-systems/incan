@@ -1,4 +1,4 @@
-# behavior: registry crates add receivers to native values: imported Rust extension traits add ordinary and generic binary methods to a standard cursor, generic receivers retain checked native views, internal source layouts and captured callbacks returned by source methods, preserve independent binders, infer trait-bound results, adapt source ranges with once-only endpoints and retain approved borrowed owner arguments, and an encoding's native byte slice exposes its inherent methods through a shared Cow receiver
+# behavior: generic native receivers retain owners, iterator outputs, views and captured callbacks (#2256)
 # expect-stdout:
 #   1
 #   770
@@ -8,6 +8,11 @@
 #   2
 #   97
 #   2
+#   11
+#   word
+#   [1, 2, 3]
+#   [3, 1, 2]
+#   ["a", "z"]
 
 """Keep generic inherent, trait and extension receiver calls of registry crates in one area case."""
 
@@ -20,14 +25,23 @@ from rust::sha2 import Digest, Sha224
 from rust::sha3 import Shake128
 from rust::sha3::digest import ExtendableOutputReset, Update, XofReader
 from rust::std::cell import Cell
+from rust::std::clone import Clone as NativeClone
+from rust::std::collections import HashSet
+from rust::std::collections::hash_set import Iter as SetIter
+from rust::std::iter import Iterator
 from rust::std::io import Cursor
 from rust::std::mem import size_of_val
 from rust::std::net import Ipv4Addr
 from rust::std::ops import Range
 from rust::std::time import Duration
+from rust::std::vec import Vec
 from rust::xxhash_rust::xxh32 import Xxh32, xxh32
 from rust::xxhash_rust::xxh64 import Xxh64, xxh64
 from rust::xxhash_rust::xxh3 import Xxh3Default, xxh3_64, xxh3_128
+from rust::incan_std_core::iter import nonnegative_count
+from rust::incan_std_core::errors import raise_index_error
+from std.derives.copying import Clone
+from std.derives.comparison import Ord
 from std.traits.callable import Callable1
 
 
@@ -201,8 +215,41 @@ def show_slice_methods() -> None:
     assert len(encoded_bytes()) == 2
 
 
+def sorted_snapshot[T with (Clone, Ord)](values: &list[T]) -> list[T]:
+    """Sort a copied generic vector through its exclusive native slice."""
+    mut owned: Vec[T] = NativeClone.clone(values)
+    mut view = owned.as_mut_slice()
+    view.sort()
+    return owned
+
+
+def set_cursor[T with Clone](values: &HashSet[T], index: int) -> T:
+    """Copy an indexed native iterator item without reentering a language set loop."""
+    mut iterator: SetIter[T] = values.iter()
+    match iterator.nth(nonnegative_count(index)):
+        Some(value) =>
+            element: &T = value
+            return element.clone()
+        None => return raise_index_error("set cursor outside collection")
+
+
+def first_set_item(values: &HashSet[int]) -> int:
+    """Read a borrowed iterator's normalized associated item without consuming its set."""
+    mut iterator = values.iter()
+    match iterator.next():
+        Some(value) => return value.clone()
+        None => return 0
+
+
 def main() -> None:
     """Run each registry-crate observation in the order of the cases it carries."""
     show_extension_traits()
     show_generic_receivers()
     show_slice_methods()
+    println(first_set_item({11}))
+    println(set_cursor[str]({"word"}, 0))
+    values = [3, 1, 2]
+    println(f"{sorted_snapshot[int](values):?}")
+    println(f"{values:?}")
+    words = ["z", "a"]
+    println(f"{sorted_snapshot[str](words):?}")

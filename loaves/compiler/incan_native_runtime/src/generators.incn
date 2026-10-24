@@ -4,6 +4,8 @@ from std.derives.collection import Iterator
 from std.derives.copying import Clone
 from std.rust import Static
 from std.traits.callable import Callable1
+from rust::std::iter import IntoIterator
+from rust::std::vec import Vec
 
 
 pub def poll_generator[T with Clone](mut values: Generator[T], mut output: list[T]) -> bool:
@@ -17,7 +19,9 @@ pub def poll_generator[T with Clone](mut values: Generator[T], mut output: list[
 
 pub def list_generator[T with (Clone, Static)](values: list[T]) -> Generator[T]:
     """Yield an owned list snapshot's items lazily and in order, as a generator expression's first source."""
-    return (value for value in values)
+    native: Vec[T] = values
+    for value in native.into_iter():
+        yield value
 
 
 pub def set_generator[T with (Clone, Static)](values: set[T]) -> Generator[T]:
