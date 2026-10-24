@@ -92,6 +92,19 @@ pub(in crate::typechecker) struct ResolvedPublicModuleSymbol {
 }
 
 impl TypeChecker {
+    /// Resolve the ambient logger through its ordinary factory's checked return type. This keeps its nominal
+    /// identity and method parameter context independent of whether the caller explicitly imports `Logger`.
+    pub(in crate::typechecker) fn ambient_logger_type(&mut self) -> Option<ResolvedType> {
+        let module = vec!["std".to_string(), "logging".to_string()];
+        let (library, path) = self.loaf_module(&module)?;
+        let (SymbolKind::Function(factory), _) =
+            self.lookup_pub_library_module_symbol_member(&library, &path, "get_logger")?
+        else {
+            return None;
+        };
+        Some(factory.return_type)
+    }
+
     /// The trait a Loaf publishes as `<module_path>.<name>`, read from its manifest.
     pub(in crate::typechecker) fn loaf_trait(&mut self, module_path: &[String], name: &str) -> Option<TraitInfo> {
         let (library, rest) = self.loaf_module(module_path)?;

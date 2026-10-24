@@ -18,6 +18,7 @@ from rust_units import (
     target_configuration,
 )
 from toolchain import NativeCrate, Toolchain, load_toolchain, located, rust_compiler
+from standalone_rust import standalone_crates
 from unit import UnitDescription, UnitLoaf, describe
 
 
@@ -35,7 +36,7 @@ pub def prepare_native(described: UnitDescription, toolchain: Toolchain) -> Resu
     same descriptor boundary as ordinary programs. No source graph or feature request is selected again here.
 
     1. The unit searches the toolchain's directories and reads its Rust ABI caches.
-    2. A project resolves its Rust dependencies into exact artifacts.
+    2. Projects resolve declared Rust dependencies; standalone programs resolve their source imports.
     3. The toolchain's native crates are bound to the unit, and those that are Loaves join its Loaves.
     4. Every Loaf the unit links contributes its library, its search directories and its macro crates.
     5. Each search directory is listed once.
@@ -47,6 +48,13 @@ pub def prepare_native(described: UnitDescription, toolchain: Toolchain) -> Resu
     # 2. A project's Rust edges name exact artifacts, never a directory to be scanned.
     if Path(unit.project_root).joinpath("loaf.toml").is_file():
         unit = resolve_dependencies(unit, toolchain)?
+    else:
+        externs, search = standalone_crates(unit, toolchain)?
+        for native in externs:
+            unit = add_extern(unit, native)?
+            if native.name not in unit.rust_crates:
+                unit.rust_crates.append(native.name)
+        unit.search = unit.search + search
     # 3. Every unit may name the toolchain's runtime and support crates, and a crate with an interface is a Loaf too.
     unit = with_toolchain_crates(unit, toolchain)
     # 4. A unit links the Loaves it reaches, with the directories and macro crates their closures name.
