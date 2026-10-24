@@ -1,0 +1,261 @@
+"""Submit changed units to one serial compiler worker per home, compiler generation and inherited environment."""
+
+from rust::std::env import current_dir, vars_os
+from rust::std::ffi import OsString
+from rust::std::io import Error as IoError, Write, stderr, stdout
+from rust::std::os::unix::process import CommandExt
+from rust::std::process import Child, Command, Stdio, id
+from rust::std::thread import sleep
+from rust::std::time import Duration
+from std.fs import Path
+from std.json import JsonValue
+from files import discard_file
+from home import owners_dir
+from json_fields import required_text
+from observation import trace
+from owner_endpoint import Endpoint, attach, prepare_directory
+from owner_protocol import Connection, Listener, listen
+from toolchain import Toolchain
+from unit_freshness import compiler_fingerprint, fingerprint
+
+
+const SCHEMA: str = "incan.compiler-worker/1"
+const READINESS_POLLS: int = 7500
+const IDLE_SECONDS: int = 600
+const MAX_SOCKET_PATH: int = 100
+
+
+pub def compile_resident(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32], str]:
+    """
+    Compile a unit through the shared worker, or keep the cold path when startup is unavailable.
+
+    1. Select private request console sinks, retaining a project owner's existing sinks.
+    2. Submit the ordinary compiler invocation without replaying a submitted request.
+    3. A foreground command relays its original console bytes and removes its temporary sinks.
+    """
+    # 1. A foreground command owns private sinks; a project owner already supplied its request's sinks.
+    match capture_for(toolchain):
+        Err(reason) =>
+            trace(f"compiler worker: cold path ({reason})")
+            return Ok(None)
+        Ok(capturing) =>
+            # 2. Only a failure before submission permits the original single-process path.
+            compiled = compile_at(capturing, arguments)
+            # 3. Foreground console bytes stay outside the protocol, exactly as for a project owner.
+            if toolchain.console == "":
+                relay_console(capturing.console)?
+            return compiled
+
+
+def capture_for(toolchain: Toolchain) -> Result[Toolchain, str]:
+    """The original owner sinks, or private request-local sinks for a foreground native compilation."""
+    if toolchain.console != "":
+        return Ok(toolchain)
+    directory = owners_dir()?
+    prepare_directory(directory.0)?
+    mut capturing = toolchain
+    capturing.console = directory.joinpath(f"r-{id()}").0
+    discard_file(Path(f"{capturing.console}.out"))
+    discard_file(Path(f"{capturing.console}.err"))
+    return Ok(capturing)
+
+
+def relay_console(prefix: str) -> Result[None, str]:
+    """Relay exact diagnostic bytes before withdrawing foreground request files, including on a compile refusal."""
+    relay_file(Path(f"{prefix}.out"), false)?
+    relay_file(Path(f"{prefix}.err"), true)?
+    return Ok(None)
+
+
+def relay_file(path: Path, error_stream: bool) -> Result[None, str]:
+    """Copy a completed compiler stream without changing its encoding or adding a newline."""
+    if not path.is_file():
+        return Ok(None)
+    contents = path.read_bytes().map_err((error) => error.message())?
+    if error_stream:
+        mut stream = stderr()
+        console_result(stream.write_all(contents))?
+        console_result(stream.flush())?
+    else:
+        mut stream = stdout()
+        console_result(stream.write_all(contents))?
+        console_result(stream.flush())?
+    discard_file(path)
+    return Ok(None)
+
+
+def console_result(result: Result[None, IoError]) -> Result[None, str]:
+    """Report a standard-stream write or flush failure through the command's existing error boundary."""
+    return result.map_err((error) => f"cannot relay compiler console: {error}")
+
+
+def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32], str]:
+    """
+    Compile through a shared worker for a project owner, or return `None` before submission for the cold path.
+
+    1. Select and connect the worker for this compiler and environment.
+    2. Submit the ordinary compiler arguments and this request's console paths and working directory.
+    3. Read its completion; a submitted request is never replayed after a transport failure.
+    """
+    # 1. Unsupported observations and failed startup retain the existing one-process compilation path.
+    match connection_for(toolchain):
+        Err(reason) =>
+            trace(f"compiler worker: cold path ({reason})")
+            return Ok(None)
+        Ok(found) =>
+            connected_socket, generation = found
+            mut connected = connected_socket
+            # 2. Once submission begins, failure cannot silently run the same compilation twice.
+            connected.send(request(toolchain, arguments, generation)?)?
+            # 3. A completed request grants only its actual exit code, never a retained checking result.
+            return completion(connected.receive()?)
+
+
+def connection_for(toolchain: Toolchain) -> Result[tuple[Connection, str], str]:
+    """Select the compiler generation once and connect before any source request is submitted."""
+    endpoint = endpoint_for(toolchain)?
+    connected = selected_connection(toolchain.driver, endpoint)?
+    return Ok((connected, endpoint.generation))
+
+
+def selected_connection(driver: str, endpoint: Endpoint) -> Result[Connection, str]:
+    """
+    Connect to the selected worker, starting one under an exclusive lock when none exists.
+
+    1. Select the private endpoint and try its existing worker.
+    2. Lock startup and try again, so simultaneous owners start one worker.
+    3. Start the selected driver and connect after its readiness acknowledgment.
+    """
+    # 1. Every project owner of the same compiler and environment shares this endpoint.
+    match attach(endpoint)?:
+        Some(found) => return Ok(found)
+        None => pass
+    # 2. The lock remains held through startup, and a worker started meanwhile is reused.
+    arbitration = Path(endpoint.lock).lock_exclusive().map_err((error) => error.message())?
+    match attach(endpoint)?:
+        Some(found) => return Ok(found)
+        None => pass
+    # 3. The child must acknowledge this generation before it can receive a unit.
+    launch(driver, endpoint)?
+    match attach(endpoint)?:
+        Some(found) => return Ok(found)
+        None => return Err("the compiler worker disappeared after readiness")
+
+
+def endpoint_for(toolchain: Toolchain) -> Result[Endpoint, str]:
+    """A private endpoint bound to the complete compiler fingerprint and inherited nonincidental environment."""
+    generation = fingerprint([SCHEMA, compiler_fingerprint(toolchain)?] + environment()?)?[0:16]
+    directory = Path(toolchain.console).parent()
+    prefix = directory.joinpath(f"c-{generation}").0
+    ready = f"{prefix}.{id()}.ready"
+    if len(f"{prefix}.sock") > MAX_SOCKET_PATH or len(ready) > MAX_SOCKET_PATH:
+        return Err("the compiler worker socket path is too long")
+    return Ok(Endpoint(
+        generation=generation,
+        directory=directory.0,
+        socket=f"{prefix}.sock",
+        lock=f"{prefix}.lock",
+        ready=ready,
+        mailbox="",
+    ))
+
+
+def environment() -> Result[list[str], str]:
+    """Hash inherited configuration without recording its values; non-Unicode inputs keep the cold path."""
+    mut entries: list[str] = []
+    for key, value in vars_os():
+        name = unicode_environment(key)?
+        if incidental_environment(name):
+            continue
+        text = unicode_environment(value)?
+        entries.append(f"{name}={text}")
+    return Ok(sorted(entries))
+
+
+def incidental_environment(name: str) -> bool:
+    """Exclude console routing and the removed bootstrap switch from compiler configuration identity."""
+    return name == "OVEN_TRACE" or name == "RUSTC_BOOTSTRAP"
+
+
+def unicode_environment(value: OsString) -> Result[str, str]:
+    """Require exact Unicode for an environment observation, so lossy replacement cannot alias two configurations."""
+    return value.into_string().map_err((_) => "a compiler environment entry is not Unicode")
+
+
+def launch(driver: str, endpoint: Endpoint) -> Result[None, str]:
+    """Start the exact driver detached from the owner, with protocol and console on separate streams."""
+    mut listener = listen(f"{endpoint.ready}", false)?
+    mut command = Command.new(driver)
+    command.arg("--resident").arg(f"{endpoint.socket}").arg(f"{endpoint.generation}")
+    command.arg(f"{endpoint.ready}").arg(str(IDLE_SECONDS))
+    command.env_remove("RUSTC_BOOTSTRAP")
+    command.stdin(Stdio.null()).stdout(Stdio.null()).stderr(Stdio.null())
+    command.process_group(0)
+    child = command.spawn().map_err((error) => f"cannot start compiler worker: {error}")?
+    started = await_ready(listener, child, endpoint)
+    discard_file(Path(endpoint.ready))
+    return started
+
+
+def await_ready(mut listener: Listener, mut child: Child, endpoint: Endpoint) -> Result[None, str]:
+    """Require the child's protocol, generation and PID; a silent or failed child never receives a request."""
+    for poll in range(READINESS_POLLS):
+        match listener.poll()?:
+            Some(waiting) =>
+                mut connected = waiting
+                connected.wait_at_most(5)
+                document = connected.receive()?
+                if required_text(document, "schema")? != SCHEMA:
+                    return Err("compiler worker readiness protocol mismatch")
+                if required_text(document, "generation")? != endpoint.generation:
+                    return Err("compiler worker readiness generation mismatch")
+                if integer_field(document, "pid")? != int(child.id()):
+                    return Err("compiler worker readiness PID mismatch")
+                if required_text(document, "status")? != "ready":
+                    return Err("compiler worker did not acknowledge readiness")
+                trace(f"compiler worker: started pid {child.id()}")
+                return Ok(None)
+            None => pass
+        if child.try_wait().map_err((error) => f"compiler worker readiness: {error}")? is not None:
+            return Err("the compiler worker exited before readiness")
+        sleep(Duration.from_millis(2))
+    _ = child.kill()
+    return Err("the compiler worker did not acknowledge readiness")
+
+
+def request(toolchain: Toolchain, arguments: list[str], generation: str) -> Result[JsonValue, str]:
+    """The original unit invocation plus its owner's current working directory and request-local console sinks."""
+    directory = current_dir().map_err((error) => f"compiler working directory: {error}")?
+    return Ok(JsonValue.object({
+        "schema": JsonValue.string(SCHEMA),
+        "generation": JsonValue.string(generation),
+        "arguments": JsonValue.array([JsonValue.string(argument) for argument in arguments]),
+        "cwd": JsonValue.string(directory.to_string_lossy().into_owned()),
+        "stdout": JsonValue.string(f"{toolchain.console}.out"),
+        "stderr": JsonValue.string(f"{toolchain.console}.err"),
+    }))
+
+
+def completion(document: JsonValue) -> Result[Option[i32], str]:
+    """The actual completion code; malformed replies and transport failures authorize no cold replay."""
+    if required_text(document, "schema")? != SCHEMA:
+        return Err("compiler worker completion protocol mismatch")
+    if let Some(reason) = document.get("reason"):
+        if let Some(text) = reason.as_str():
+            if text != "":
+                return Err(text)
+    if let Some(value) = document.get("exit"):
+        if let Some(code) = value.as_int():
+            if code == 0:
+                return Ok(Some(0))
+            if code == 1:
+                return Ok(Some(1))
+    return Err("compiler worker returned no valid completion code")
+
+
+def integer_field(document: JsonValue, name: str) -> Result[int, str]:
+    """A required integer field of a worker reply, refusing missing and differently typed fields."""
+    if let Some(value) = document.get(name):
+        if let Some(number) = value.as_int():
+            return Ok(number)
+    return Err(f"compiler worker reply has no integer `{name}`")

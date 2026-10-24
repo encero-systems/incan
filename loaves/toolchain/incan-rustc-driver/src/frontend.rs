@@ -134,10 +134,17 @@ fn runtime_declarations(session: &CompilationSession) -> Vec<CanonicalSymbolId> 
 /// A library unit collects every authored module, checks each with its package identity and builds its manifest
 /// from the same pass. Bodies with function or nominal-owner type parameters remain governed; other linked
 /// callables name their compiled items.
-fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup) -> Result<CheckedProgram, String> {
+fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup, resident: bool) -> Result<CheckedProgram, String> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::checked_modules", input = %unit.source.display()).entered();
     let path = unit.source.canonicalize().map_err(|error| error.to_string())?;
-    let mut session = CompilationSession::for_native_program(unit)
+    // The resident process already keeps immutable readings. Its full canonical index needs no on-disk lookup
+    // footprint, whose directory census would otherwise be repeated before and after every source edit.
+    let session = if resident {
+        CompilationSession::new(unit)
+    } else {
+        CompilationSession::for_native_program(unit)
+    };
+    let mut session = session
         .and_then(|session| session.with_rust_facts(rust))
         .map_err(|error| error.to_string())?;
     let library = unit.kind == UnitKind::Library;
@@ -199,27 +206,15 @@ fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup) -> Result<Chec
     let entry = entry + loaf_modules;
 
     // ---- The program's own modules ----
-    let provider_operations = incan_frontend::body_ir::ProviderOperationCatalog::from_loaves(session.loaves())?;
-    for module in &modules {
-        let type_info = analysis
-            .type_info_for_path(&module.file_path)
-            .ok_or("module analysis is missing")?;
-        let body_ir = incan_frontend::body_ir::build_body_ir_module(
-            &module.ast,
-            &module.path_segments,
-            type_info,
-            &incan_frontend::body_ir::BodyIrContext {
-                modules: &bodies,
-                provider_operations: &provider_operations,
-                registry_package: Some(package_identity),
-                library_package: library.then_some(package_identity),
-            },
-        );
-        validate_retained_storage(&module.ast, &body_ir)
-            .map_err(|error| format!("{}: {error}", module.file_path.display()))?;
-        bodies.push(body_ir);
-        files.push(module.file_path.to_string_lossy().into_owned());
-    }
+    lower_authored_modules(
+        &modules,
+        &analysis,
+        &session,
+        package_identity,
+        library,
+        &mut bodies,
+        &mut files,
+    )?;
     let graph = if library {
         let records = incan_driver::inspect::codegraph::collect_checked_unit_codegraph(
             unit,
@@ -1104,6 +1099,18 @@ pub(crate) fn dependencies(unit: &UnitDescription, arguments: &[String]) -> Resu
 /// refusal classification instead of appearing as debug-form plan errors.
 /// An exact-body census selection reports only that diagnostic lowering pass and returns without compiling an artifact.
 pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    compile_unit(arguments, false)
+}
+
+/// Compile through the same native pipeline with a full canonical session, borrowing only generation-guarded
+/// immutable readings. A resident worker has no use for a persisted unchanged-source lookup footprint.
+pub(crate) fn compile_resident(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    compile_unit(arguments, true)
+}
+
+/// Compile one unit with the invocation's immutable-input retention policy; source checking and native execution
+/// remain fresh for both short-lived and resident callers.
+fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std::error::Error>> {
     if arguments.len() < 4 {
         return Err("usage: --unit UNIT CRATE OUTPUT SYSROOT [--rustc-arg ARG] [--library]".into());
     }
@@ -1129,7 +1136,7 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let parent = tracing::Span::current();
     let checked = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         let _parent = parent.enter();
-        checked_modules(&unit, &rust)
+        checked_modules(&unit, &rust, resident)
     });
     let program = match checked {
         Ok(program) => program,
@@ -1138,27 +1145,8 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
             return Err(error.into());
         }
     };
-    if std::env::var_os(REFUSAL_REPORT).is_some() {
-        let selection = std::env::var("INCAN_DIRECT_CENSUS_BODY").unwrap_or_default();
-        let selected = !selection.is_empty();
-        let refusals = program_refusals(
-            &program.modules,
-            SourceInputs {
-                sources: program.sources.clone(),
-                files: program.files.clone(),
-                tests: Vec::new(),
-            },
-            program.entry.try_into()?,
-            std::env::var_os("INCAN_DIRECT_CENSUS_PROGRESS").is_some(),
-            selection,
-        );
-        write_refusal_report(&refusals)?;
-        if selected {
-            if let Some(refusal) = refusals.first() {
-                return Err(refusal.clone().into());
-            }
-            return Ok(());
-        }
+    if census_complete(&program)? {
+        return Ok(());
     }
     let mut published_unions = Vec::new();
     let plan = {
@@ -1221,6 +1209,67 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+/// Lower authored modules from their checked facts and the canonical provider catalog. Dependency bodies already
+/// present in `bodies` supply context; every source body is built anew and remains outside immutable worker caches.
+fn lower_authored_modules(
+    modules: &[ParsedModule],
+    analysis: &CompilationAnalysis,
+    session: &CompilationSession,
+    package_identity: &str,
+    library: bool,
+    bodies: &mut Vec<BodyIrModule>,
+    files: &mut Vec<String>,
+) -> Result<(), String> {
+    let provider_operations = incan_frontend::body_ir::ProviderOperationCatalog::from_loaves(session.loaves())?;
+    for module in modules {
+        let type_info = analysis
+            .type_info_for_path(&module.file_path)
+            .ok_or("module analysis is missing")?;
+        let body_ir = incan_frontend::body_ir::build_body_ir_module(
+            &module.ast,
+            &module.path_segments,
+            type_info,
+            &incan_frontend::body_ir::BodyIrContext {
+                modules: bodies,
+                provider_operations: &provider_operations,
+                registry_package: Some(package_identity),
+                library_package: library.then_some(package_identity),
+            },
+        );
+        validate_retained_storage(&module.ast, &body_ir)
+            .map_err(|error| format!("{}: {error}", module.file_path.display()))?;
+        bodies.push(body_ir);
+        files.push(module.file_path.to_string_lossy().into_owned());
+    }
+    Ok(())
+}
+
+/// Report an optional exact-body census and decide whether it completed the invocation without native compilation.
+/// Ordinary invocations retain their current checked program and proceed through the single lowering path.
+fn census_complete(program: &CheckedProgram) -> Result<bool, Box<dyn std::error::Error>> {
+    if std::env::var_os(REFUSAL_REPORT).is_none() {
+        return Ok(false);
+    }
+    let selection = std::env::var("INCAN_DIRECT_CENSUS_BODY").unwrap_or_default();
+    let selected = !selection.is_empty();
+    let refusals = program_refusals(
+        &program.modules,
+        SourceInputs {
+            sources: program.sources.clone(),
+            files: program.files.clone(),
+            tests: Vec::new(),
+        },
+        program.entry.try_into()?,
+        std::env::var_os("INCAN_DIRECT_CENSUS_PROGRESS").is_some(),
+        selection,
+    );
+    write_refusal_report(&refusals)?;
+    if selected && let Some(refusal) = refusals.first() {
+        return Err(refusal.clone().into());
+    }
+    Ok(selected)
 }
 
 /// The crates a consumer must name directly when this library exports attribute macros, else none.

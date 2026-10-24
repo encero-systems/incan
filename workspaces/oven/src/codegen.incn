@@ -1,0 +1,24 @@
+"""Select optimization flags for native units and frame the flags the Incan compiler receives."""
+
+
+pub def optimization_level(profile: str) -> str:
+    """Release units optimize fully; other profiles retain Rust's unoptimized development behavior."""
+    if profile == "release":
+        return "3"
+    return "0"
+
+
+pub def native_arguments(profile: str) -> list[str]:
+    """Bind optimization into the unit identity while preserving the native driver's debug assertion policy."""
+    if profile == "debug":
+        return [f"-Copt-level={optimization_level(profile)}", "-Cdebug-assertions=no"]
+    return [f"-Copt-level={optimization_level(profile)}"]
+
+
+pub def driver_arguments(profile: str) -> list[str]:
+    """Frame each native argument for the compiler's existing `--rustc-arg` boundary."""
+    mut forwarded: list[str] = []
+    for argument in native_arguments(profile):
+        forwarded.append("--rustc-arg")
+        forwarded.append(argument)
+    return forwarded

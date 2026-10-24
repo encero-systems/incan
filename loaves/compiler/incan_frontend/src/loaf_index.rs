@@ -20,6 +20,8 @@ use incan_vocab::{KeywordActivation, KeywordRegistration, KeywordSpec};
 mod decoded_manifest;
 mod lazy_entry;
 mod manifest_input;
+mod retained;
+
 use lazy_entry::IndexedLoaf;
 
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
@@ -71,6 +73,11 @@ pub struct LoafArtifact {
 impl LoafArtifact {
     /// Read and validate the Loaf `name`, deriving its identity from the exact bytes decoded into the manifest.
     pub fn read(dir: &Path, name: &str) -> Result<Self, LoafIndexError> {
+        retained::artifact(dir, name)
+    }
+
+    /// Read and validate one current generation; process-local reuse must observe every dependent file around it.
+    fn read_current(dir: &Path, name: &str) -> Result<Self, LoafIndexError> {
         let _invocation =
             tracing::trace_span!(target: "incan::invocation", "incan_frontend::read_loaf_manifest", loaf = name)
                 .entered();
@@ -100,7 +107,8 @@ impl LoafArtifact {
     }
 
     /// Verify the declared cache's exact bytes before exposing its indexed facts; absent declarations retain legacy
-    /// embedded metadata, while missing, altered, or incompatible declared assets refuse the Loaf.
+    /// embedded metadata, while missing, altered, or incompatible declared assets refuse the Loaf. Content identities
+    /// share manifests' generation-guarded reader; current ABI bytes are still decoded and checked on every load.
     fn read_rust_abi_cache(
         dir: &Path,
         name: &str,
@@ -114,8 +122,11 @@ impl LoafArtifact {
             path: path.clone(),
             reason,
         };
-        let bytes = std::fs::read(&path).map_err(|error| unreadable(error.to_string()))?;
-        if format!("sha256:{:x}", Sha256::digest(&bytes)) != *expected {
+        let _invocation =
+            tracing::trace_span!(target: "incan::invocation", "incan_frontend::read_loaf_rust_facts", loaf = name)
+                .entered();
+        let (bytes, digest) = manifest_input::read_bytes(&path).map_err(|error| unreadable(error.to_string()))?;
+        if digest != *expected {
             return Err(unreadable("native ABI cache digest differs from the manifest".into()));
         }
         let cache = RustAbiCache::decode(&bytes).map_err(unreadable)?;
@@ -252,10 +263,10 @@ impl LoafEntry {
 /// A Loaf the index cannot hold.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LoafIndexError {
-    /// The artifact's manifest is missing, unreadable or names another Loaf.
+    /// An artifact or native fact cache is missing, unreadable, malformed, or names another Loaf.
     #[error("cannot read the Loaf artifact {}: {reason}", path.display())]
     Unreadable {
-        /// The manifest path.
+        /// The artifact path.
         path: PathBuf,
         /// What failed.
         reason: String,
@@ -292,6 +303,15 @@ pub struct LoafIndex {
 }
 
 impl LoafIndex {
+    /// Read an immutable Rust ABI index under current file-generation guards. The returned index owns no session or
+    /// resolved source state; each compilation installs it into its own fresh lookup environment.
+    pub fn read_rust_abi_cache(path: &Path) -> Result<Arc<RustAbiCache>, LoafIndexError> {
+        retained::abi(path).map_err(|reason| LoafIndexError::Unreadable {
+            path: path.to_owned(),
+            reason,
+        })
+    }
+
     /// Index `entries`, refusing two entries under one key.
     pub fn new(entries: impl IntoIterator<Item = LoafEntry>) -> Result<Self, LoafIndexError> {
         let mut indexed = BTreeMap::new();

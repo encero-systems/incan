@@ -246,8 +246,13 @@ struct Callbacks<'manifest> {
 }
 
 impl rustc_driver::Callbacks for Callbacks<'_> {
-    /// Install the source-free root and the MIR query override; cap lints that only see placeholder bodies.
+    /// Install the source-free root and the MIR query override. `INCAN_NATIVE_TIMING` opts into rustc's phase timings
+    /// on stderr without enabling unstable command-line options or changing compilation policy.
     fn config(&mut self, config: &mut interface::Config) {
+        if std::env::var_os("INCAN_NATIVE_TIMING").is_some() {
+            config.opts.unstable_opts.time_passes = true;
+            config.opts.unstable_opts.time_passes_format = rustc_data_structures::profiling::TimePassesFormat::Json;
+        }
         config.input = Input::Str {
             name: FileName::Custom(self.plan.span.file.clone()),
             input: String::new(),
@@ -765,6 +770,7 @@ fn instantiate_generic_externals(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Option<
 /// `INCAN_DIRECT_VALIDATION_REPORT` optionally records each function's first preflight refusal before normal
 /// validation. `INCAN_DIRECT_PLAN_REPORT` optionally records the complete plan for native ownership diagnostics.
 /// A library manifest lends its already checked public facade names for aliases of the canonical native items.
+/// Executables leave debug information in their object files instead of packing a macOS bundle during each edit.
 pub fn compile(
     plan: Plan,
     crate_name: &str,
@@ -827,6 +833,9 @@ pub fn compile(
     }
     if kind == UnitKind::Test {
         args.push("--test".into());
+    }
+    if kind != UnitKind::Library {
+        args.push("-Csplit-debuginfo=unpacked".into());
     }
     for (name, path) in externs {
         args.push("--extern".into());

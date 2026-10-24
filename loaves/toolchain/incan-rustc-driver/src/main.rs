@@ -57,6 +57,8 @@ mod union_debug;
 mod validation;
 mod value_enum_serde;
 mod values;
+#[cfg(unix)]
+mod worker;
 
 use std::path::Path;
 
@@ -76,6 +78,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     incan_driver::invocation_trace::initialize()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
+        #[cfg(unix)]
+        Some("--resident") => worker::serve(&args[1..]),
         Some("--unit") => frontend::compile(&args[1..]),
         Some("--check") => check(&args[1..]),
         Some("--fmt") => format(&args[1..]),

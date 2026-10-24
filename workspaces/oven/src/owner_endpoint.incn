@@ -219,7 +219,7 @@ def connect_or_clear(path: str) -> Result[Option[Connection], str]:
             return Err(f"cannot connect to {path}: {error}")
 
 
-def prepare_directory(directory: str) -> Result[None, str]:
+pub def prepare_directory(directory: str) -> Result[None, str]:
     """
     Make the owners directory, private to the user, and refuse one that anyone else can enter.
 

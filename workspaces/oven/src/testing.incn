@@ -7,6 +7,7 @@ from std.json import JsonValue
 from files import parse_json, read
 from incan_units import compile_unit, stored_executable, test_report
 from json_fields import array, text_field
+from observation import trace_launch
 from toolchain import Toolchain
 from unit import UnitDescription
 
@@ -77,6 +78,7 @@ def run_test(binary: Path, file: str, test: JsonValue) -> Result[bool, str]:
     # 2. The test runs in a process of its own, so a panic ends only that test.
     mut command = Command.new(binary.0)
     command.arg("--exact").arg(native).arg("--nocapture")
+    trace_launch(binary.0)
     output = command.output().map_err((error) => f"cannot run {binary.0}: {error}")?
     passed = output.status.success()
     # 3. A test expected to fail holds when it fails, and does not when it unexpectedly passes.
