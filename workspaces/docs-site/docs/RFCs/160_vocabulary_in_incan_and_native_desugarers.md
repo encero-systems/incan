@@ -21,17 +21,17 @@
 
 ## Summary
 
-This RFC defines how package-owned vocabulary enters Incan's canonical semantic pipeline. A Loaf names one Incan module as its **vocabulary entry**. That module registers the Loaf's DSL surfaces through `std.vocab` and, when a surface needs custom lowering, defines the desugarer that lowers parsed vocabulary syntax into Incan's canonical syntax tree. Oven compiles the entry for the host through the native compilation route, like any other unit, and records the registered descriptors in the Loaf's published metadata. When a consumer's source uses a surface that needs desugaring, the compiler runs the compiled desugarer as a separate worker process. The worker receives the module's vocabulary nodes as structured data and returns canonical syntax with a source map back to the original spans. Generated source text is never the interchange. Desugarers are no longer packaged as WebAssembly, and the compiler no longer embeds a WebAssembly runtime. This replaces the Rust companion crate of RFC 027 and the WebAssembly artifact contract that RFC 081 kept for Incan-authored desugarers. File-scoped activation, alternate grammars and foreign-language frontends are separate surfaces, which a later RFC specifies on top of this contract.
+This RFC defines how package-owned vocabulary enters Incan's canonical semantic pipeline. A Loaf names one Incan module as its **vocabulary entry**. That module registers the Loaf's DSL surfaces through `std.vocab` and, when a surface needs custom lowering, defines the desugarer that lowers parsed vocabulary syntax into Incan's **canonical surface representation**. That representation is a versioned, structured contract; it is not the compiler's private syntax tree. Oven compiles the entry for the host through the native compilation route, like any other unit, and records the registered descriptors in the Loaf's published metadata. When a consumer's source uses a surface that needs desugaring, the compiler runs the compiled desugarer as a separate worker process, once the build's provider policy admits it. The worker receives the module's vocabulary nodes and returns canonical surface representation with a source map back to the original spans. Generated source text is never the interchange. Desugarers are no longer packaged as WebAssembly, and the compiler no longer embeds a WebAssembly runtime. This replaces the Rust companion crate of RFC 027 and the WebAssembly artifact contract that RFC 081 kept for Incan-authored desugarers. This RFC is the provider substrate: execution, trust, evidence, workers and structured output. RFC 162 builds file-scoped surfaces, alternate grammars and foreign-language frontends on top of it. Both exist for RFC 161's single-authority rule: every surface normalizes into one semantic representation, and the backend never re-derives surface meaning.
 
 ## Core model
 
 1. **Vocabulary is Incan.** Registration and desugaring are written in Incan against `std.vocab`. No Rust companion crate, manifest file or build script is involved.
 2. **The vocabulary entry is a unit.** Oven builds it for the host through the native route and identifies, caches and publishes it under RFC 124 and RFC 125 like any compiled unit.
 3. **Registration runs at the producer.** Descriptors are computed when the Loaf is built and recorded in its published metadata. A consumer reads descriptors and never runs registration code.
-4. **Desugaring runs out of process.** The compiler sends a module's vocabulary nodes to the desugarer as structured data and receives canonical syntax in return. A failing, crashing or overdue desugarer produces a diagnostic, never a compiler failure.
+4. **Desugaring runs out of process.** The compiler sends a module's vocabulary nodes to the desugarer and receives canonical surface representation in return. A failing, crashing or overdue desugarer produces a diagnostic, never a compiler failure.
 5. **Output carries provenance.** Every node a desugarer returns maps back to the input span it was derived from, so diagnostics point at what the author wrote.
 6. **A desugarer is a pure function of its request.** Tooling may reuse a response for the same desugarer unit and the same request, and may keep workers running between requests.
-7. **A desugarer is a trusted build-time unit.** It runs only when reached through the consumer's resolved dependencies, and the build's evidence records which unit lowered which module.
+7. **A desugarer runs only when admitted.** A locked dependency is necessary but not sufficient. The build's provider policy admits a desugarer by its identity, its declared authority and host policy. A desugarer invocation is granted no capabilities, and the build's evidence records the admission decision and which unit lowered which module.
 8. **There is one execution route.** Desugarers are native programs built by the same compiler as everything else; there is no second target, no WebAssembly runtime and no interpreter.
 
 ## Motivation
@@ -59,7 +59,7 @@ A desugarer written in Incan and compiled like any other Incan program removes t
 - Let a Loaf define its desugarer in Incan, against a public syntax model exposed by `std.vocab`.
 - Build the vocabulary entry through the native route, as an ordinary unit that Oven caches and `incan.pub` publishes.
 - Run desugarers outside the compiler's process, with bounded time and diagnostics for every failure.
-- Exchange structured canonical syntax with source maps, never generated source text.
+- Exchange a versioned canonical surface representation with source maps, never generated source text and never the compiler's private syntax tree.
 - Allow tooling to batch a module's nodes, reuse desugarer responses and keep workers running, so editing in the language server does not start a process per keystroke.
 - Record in the build's evidence which provider unit lowered which module.
 - Remove the WebAssembly packaging, the embedded WebAssembly runtime and the fuel budget.
@@ -69,7 +69,7 @@ A desugarer written in Incan and compiled like any other Incan program removes t
 - Changing the vocabulary surface model of RFC 027, RFC 040, RFC 045 or RFC 081: declarations, clauses, activation on import and embedded fragments keep their meaning.
 - Changing RFC 108's `pub vocab` extension properties. Whether registration should be written as source declarations of that kind is an open question below.
 - File-scoped surface activation (a header that selects a surface for a whole file), project-level surface defaults, alternate grammars with Incan semantics, and foreign-language frontends. RFC 162 specifies them; see "Relationship to source surfaces".
-- Sandboxing desugarers. A desugarer has the trust of the dependency that ships it; see "Trust and evidence".
+- An operating-system sandbox for desugarers. Admission, the absence of granted capabilities, and evidence are this RFC's controls; see "Trust and evidence".
 - Loading previously published WebAssembly desugarers.
 - Defining how a consumer selects among competing vocabularies; activation rules are unchanged.
 
@@ -104,7 +104,7 @@ pub def library_vocab() -> VocabRegistration:
     return VocabRegistration.new().with_surface(DslSurface.on_import("querykit").with_declaration(query))
 ```
 
-Because `query` desugars, the same module defines the desugarer. It receives the parsed block as `std.vocab` syntax values and returns canonical Incan syntax values. Nodes built from input values keep those values' spans, so the source map follows without extra work:
+Because `query` desugars, the same module defines the desugarer. It receives the parsed block as `std.vocab` values and returns values of the canonical surface representation. Nodes built from input values keep those values' spans, so the source map follows without extra work:
 
 ```incan
 from std.vocab import DesugarError, DesugarOutput, DesugarRequest, DesugarResponse, IncanExpr, VocabSyntaxNode
@@ -162,7 +162,7 @@ The language server desugars blocks as the consumer edits them. Workers stay run
 - When any registered surface declares custom desugaring, the entry module must export `desugar(request: DesugarRequest) -> Result[DesugarResponse, DesugarError]`. A registration that requires desugaring without that export must be refused when the Loaf is built.
 - The compiler must run a desugarer outside its own process.
 - A request must contain one or more public syntax nodes from one module, the requesting module's path, and nothing else. The compiler may batch all of a module's nodes for one desugarer into one request. A desugarer's output for a node must not depend on the other nodes in the same request.
-- For each node, the response must contain canonical Incan statements or one canonical expression, matching the surface's declared output position. The interchange is the structured `std.vocab` syntax model; source text is not an accepted output.
+- For each node, the response must contain statements or one expression of the canonical surface representation, matching the surface's declared output position. Source text is not an accepted output.
 - The compiler must check desugared output exactly as it checks authored source.
 
 ### Source maps
@@ -189,9 +189,20 @@ The language server desugars blocks as the consumer edits them. Workers stay run
 
 ### Trust and evidence
 
-- A desugarer must run only when its Loaf is reached through the consumer's resolved and locked dependencies. Activating a vocabulary adds no trust root beyond that dependency.
-- A vocabulary unit declares no capabilities under this RFC. Any capability beyond a pure function of the request, such as declared file inputs, requires a later contract.
-- Oven must record in the build's evidence, for each module it desugared, the providing Loaf, the vocabulary unit's identity, and whether each response was computed or reused.
+- A desugarer must run only after the build's provider policy admits it. Admission considers:
+    - the provider's identity: its Loaf, reached through the consumer's resolved and locked dependencies, and its vocabulary unit identity;
+    - its declared authority;
+    - host policy.
+
+  Being a locked dependency is necessary but not sufficient.
+- The default policy admits providers reached through locked dependencies. A host or project policy may restrict admission further, for example to named providers or to providers with published units.
+- A vocabulary unit declares no authority under this RFC. Any authority beyond a pure function of the request, such as declared file inputs, requires a later contract.
+- A desugarer invocation is an RFC 104 execution boundary that grants no capabilities. Where governed enforcement is active, any authority-bearing operation a desugarer attempts must be denied and recorded.
+- Oven must record in the build's evidence, for each module it desugared:
+    - the admission decision and the policy that made it;
+    - the providing Loaf;
+    - the vocabulary unit's identity;
+    - whether each response was computed or reused.
 
 ### Building and publication
 
@@ -222,11 +233,11 @@ The language server desugars blocks as the consumer edits them. Workers stay run
 - `VocabRegistration`, `DslSurface`, `DeclarationSurface`, `ClauseSurface` and the low-level keyword metadata of RFC 027;
 - the library manifest metadata.
 
-It also contains the public syntax model a desugarer reads and writes:
+It also contains the canonical surface representation a desugarer reads and writes:
 - `VocabSyntaxNode`, `VocabDeclaration`, `VocabClause`, `IncanExpr`, `IncanStatement`, `Span`;
 - `DesugarRequest`, `DesugarResponse`, `DesugarOutput`, `DesugarError`.
 
-These carry the shapes RFC 027 and RFC 081 define, expressed as Incan models and enums, with constructors and accessors for authoring desugarers. The types are part of the public standard library contract and evolve under the schema version above.
+These carry the shapes RFC 027 and RFC 081 define, expressed as Incan models and enums, with constructors and accessors for authoring desugarers. The representation is initially syntax-shaped, but it is deliberately not the compiler's private syntax tree. It is a published, versioned contract that the compiler translates from and into its own representations. Changing the compiler's internal syntax tree therefore never changes a package's interface. A later schema version may target RFC 161's semantic core directly.
 
 ### Relationship to source surfaces
 
@@ -235,16 +246,15 @@ This RFC defines package-owned vocabulary registration and lowering. Vocabulary 
 - **dialect:** a different grammar with Incan's semantics;
 - **frontend:** another source language, with its own parser, lowerability rules, runtime assumptions and source maps.
 
-File-scoped activation of a surface, project-level surface defaults, dialects and frontends are separate concerns, specified by RFC 162. It selects a provider before ordinary parsing, and it owns the provider's identity, version, compatibility level, lowerability diagnostics, and runtime and ABI requirements. Those providers are expected to reuse this RFC's mechanisms:
-- the vocabulary unit;
-- out-of-process workers;
-- structured canonical output with source maps;
-- reuse;
-- the trust and evidence rules.
+This RFC is the provider substrate: the vocabulary unit, admission, out-of-process workers, the canonical surface representation with source maps, reuse, and evidence. RFC 162 specifies file-scoped activation, project-level surface defaults, dialects and frontends on top of that substrate. It selects a provider before ordinary parsing, and adds:
+- the source-surface registration records;
+- the whole-file request and response shapes;
+- each provider kind's execution shape;
+- compatibility levels, lowerability diagnostics, and runtime and ABI requirements.
 
 Import-activated vocabulary keeps the surface model of RFC 027, RFC 040, RFC 045 and RFC 081.
 
-The canonical syntax model in `std.vocab` is this RFC's interchange. Incan's semantic pipeline is headed toward a semantic core, which RFC 161 defines. A later schema version may let providers return that representation directly. Generated source text is not an interchange at any point.
+Both RFCs exist for RFC 161's single-authority rule. Every surface normalizes into one semantic representation, and the backend never re-derives surface meaning. Generated source text is not an interchange at any point.
 
 ### Interaction with existing features
 
@@ -265,7 +275,7 @@ The canonical syntax model in `std.vocab` is this RFC's interchange. Incan's sem
 3. **Interpret desugarers.** This was rejected because the native route is the only execution route; an interpreter would be a second semantics for Incan.
 4. **Keep the Rust companion crate.** This was rejected because RFC 081 retired Rust desugarer authoring, and the native route has no Cargo build for it.
 5. **Return generated source text.** This was rejected because text loses spans, comments and structure. Diagnostics would then point at generated code, and every provider would have to reproduce Incan's printer exactly.
-6. **Keep a sandbox as the trust boundary.** This was rejected for now. Compile-time code from dependencies already runs natively through Rust procedural macros. The out-of-process boundary already isolates the compiler and the language server from crashes, and the locked dependency graph plus build evidence make the trust explicit. An operating-system sandbox around the worker can be added later without changing the contract.
+6. **Keep a sandbox as the trust boundary.** This was rejected for now. Compile-time code from dependencies already runs natively through Rust procedural macros. The out-of-process boundary already isolates the compiler and the language server from crashes. Admission policy, invocations granted no capabilities, and evidence of each decision make the trust explicit. An operating-system sandbox around the worker can be added later without changing the contract.
 
 ## Drawbacks
 
@@ -279,7 +289,7 @@ The canonical syntax model in `std.vocab` is this RFC's interchange. Incan's sem
 - **Manifest / Oven**: the `[vocab] entry` key, the vocabulary unit's build and identity, running registration at build time, recording descriptors in published metadata, and keeping desugarer workers running.
 - **Stdlib / Runtime**: the new `std.vocab` Loaf with the registration and public syntax models.
 - **Desugar pass**: batched requests to out-of-process workers, response validation, source maps, the time bound, reuse, and diagnostics; the WebAssembly runtime and its fuel budget are removed.
-- **Build evidence**: records of which vocabulary unit lowered which module, and whether each response was reused.
+- **Build evidence**: provider admission decisions, which vocabulary unit lowered which module, and whether each response was reused.
 - **Registry**: publication of vocabulary units per host target.
 - **LSP / Tooling**: desugaring through retained workers while editing; diagnostics for desugarer failures.
 - **Formatter**: none beyond reading published descriptors.

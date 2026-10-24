@@ -23,16 +23,22 @@ This RFC lets a whole source file be written in a surface other than canonical I
 - a **dialect** has a different grammar with Incan's semantics;
 - a **frontend** is another source language, parsed by its own parser and lowered through an explicit compatibility boundary.
 
-A file selects its surface with a header directive (`#!vocab`, `#!dialect` or `#!frontend`) on its first line, and a project may set a default in `loaf.toml`. Surfaces are provided by Loaves through RFC 160's mechanism: an Incan-authored provider, built natively, run as an out-of-process worker. Here the provider receives the whole file. Its output is canonical Incan syntax, and later SCIR under RFC 161, with a source map back to the original bytes. A frontend also declares its compatibility level and reports constructs it cannot lower as diagnostics, never as silent changes of meaning.
+A file selects its surface with a header directive (`#!vocab`, `#!dialect` or `#!frontend`) on its first line, and a project may set a default in `loaf.toml`. Surfaces are provided by Loaves on RFC 160's provider substrate: Incan-authored providers, built natively, admitted by policy, run as out-of-process workers and recorded in build evidence. This RFC adds the source-surface registration records and the whole-file request and response to that substrate. It also gives each kind its own execution shape:
+- a vocabulary can be a static word table that needs no worker;
+- a dialect needs a parsing and lowering worker;
+- a frontend also needs lowerability diagnostics, a compatibility declaration and runtime requirements.
+
+Every provider's output is RFC 160's canonical surface representation, and later SCIR under RFC 161, with a source map back to the original bytes. A construct a provider cannot lower faithfully is reported as a diagnostic, never as a silent change of meaning.
 
 ## Core model
 
 1. **Many surfaces, one semantics.** Every surface lowers into canonical Incan and is checked by the ordinary Incan checker. No surface brings its own type system or backend.
 2. **The kind is honest.** A vocabulary changes words, a dialect changes grammar, and a frontend translates a language. A provider declares its kind, and a frontend declares how much of its source language it accepts.
 3. **Selection is explicit and file-scoped.** A file's surface is chosen by its header or its project's default, never as a side effect of an ordinary import.
-4. **Providers are package-owned.** A surface comes from a Loaf, written in Incan, under RFC 160's build, execution, reuse, trust and evidence rules.
-5. **Source maps are mandatory.** Every lowered node maps to a byte span in the original file, so diagnostics, the editor and receipts point at what the author wrote.
-6. **Unsupported means a diagnostic.** A construct a provider cannot lower faithfully is reported in the source language's terms. It is never approximated.
+4. **Providers are package-owned.** A surface comes from a Loaf, written in Incan, on RFC 160's substrate for building, admission, execution, reuse and evidence.
+5. **A surface that cannot be resolved stops the file.** A missing, unadmitted or incompatible provider fails before the body is parsed. A file is never silently read as canonical Incan instead.
+6. **Source maps are mandatory.** Every lowered node maps to a byte span in the original file, so diagnostics, the editor and receipts point at what the author wrote.
+7. **Unsupported means a diagnostic.** A construct a provider cannot lower faithfully is reported in the source language's terms. It is never approximated.
 
 ## Motivation
 
@@ -45,19 +51,25 @@ Making ordinary imports change how a whole file parses would make a file's meani
 
 The three kinds are kept distinct because they make different promises. A vocabulary that renames `def` promises nothing about another language. A dialect that reads like TypeScript must not be mistaken for TypeScript compatibility. A frontend that accepts a Python subset must say which subset, and must refuse what it cannot lower rather than guess.
 
-RFC 160 already provides the mechanism such surfaces need:
-- Incan-authored providers, built natively;
-- out-of-process workers with structured output and source maps;
-- reuse, trust and build evidence.
+RFC 160 provides the substrate such surfaces need:
+- Incan-authored providers, built natively and admitted by policy;
+- out-of-process workers with a structured representation and source maps;
+- reuse and build evidence.
 
-Native workers are what make real frontends practical, because a provider can use an existing parser for its source language through Incan's Rust interop. RFC 161 gives all surfaces one destination: the semantic core, where ownership and authority are explicit whatever surface produced the code.
+Native workers are what make real frontends practical, because a provider can use an existing parser for its source language through Incan's Rust interop. RFC 161 gives all surfaces one destination: the semantic core, where ownership and authority are explicit whatever surface produced the code. That single-authority rule is why this RFC exists. However a file is written, its meaning enters one semantic representation, and the backend never re-derives surface meaning.
 
 ## Goals
 
 - Define vocabulary, dialect and frontend as the three kinds of source surface, with the promise each makes.
 - Define file-scoped selection through a header directive, and project defaults in `loaf.toml`.
-- Define the provider contract: identity, kind, version, compatibility level, input, output, source map and lowerability diagnostics.
-- Reuse RFC 160's provider mechanism unchanged for building, running, reusing, trusting and recording providers.
+- Define the source-surface provider contract on top of RFC 160:
+    - registration records;
+    - the whole-file request and response;
+    - each kind's execution shape;
+    - identity, version and compatibility level;
+    - source maps and lowerability diagnostics.
+- Use RFC 160's substrate for building, admitting, running, reusing and recording providers, without redefining it.
+- Fail before parsing whenever a selected surface cannot be resolved.
 - Keep checking, ownership and authority in Incan's semantics, so RFC 104 capabilities apply to code from any surface.
 
 ## Non-Goals
@@ -106,7 +118,7 @@ A project whose files mostly use one surface may set a default:
 surface = "vocab:incan_es.espanol"
 ```
 
-A file header overrides the project default, and a file with neither is canonical Incan.
+A file header overrides the project default, and a file with neither is canonical Incan. If the selected surface's provider is missing, not admitted or incompatible, the build stops with an error on that file before its body is read. It never quietly treats the file as canonical Incan.
 
 ### What authors see
 
@@ -120,7 +132,7 @@ The editor colors, navigates and diagnoses the file through the provider's descr
 
 ### Providing a surface
 
-A surface provider is a Loaf whose RFC 160 vocabulary entry registers a source surface:
+A surface provider is a Loaf whose RFC 160 vocabulary entry registers a source surface. `SourceSurface` and `VocabRegistration.with_source_surface` are this RFC's additions to `std.vocab`:
 
 ```incan
 from std.vocab import SourceSurface, VocabRegistration
@@ -132,13 +144,13 @@ pub def library_vocab() -> VocabRegistration:
     return VocabRegistration.new().with_source_surface(surface)
 ```
 
-A vocabulary whose mapping is a plain table of words needs no desugarer code: the compiler applies the table while lexing. A dialect or frontend defines the provider function that receives the whole file and returns canonical syntax with a source map.
+A vocabulary whose mapping is a plain table of words needs no provider code: the compiler applies the table while lexing. A dialect or frontend defines the provider function that receives the whole file and returns canonical surface representation with a source map.
 
 ## Reference-level explanation
 
 ### Kinds
 
-- A **vocabulary** must accept Incan's grammar with substituted words, symbols and small forms, and must lower to the same canonical syntax the corresponding canonical Incan would produce.
+- A **vocabulary** must accept Incan's grammar with substituted words, symbols and small forms, and must lower to the same canonical surface representation that the corresponding canonical Incan would produce.
 - A **dialect** may define its own grammar, and must lower to canonical Incan whose semantics the dialect documents as the meaning of its constructs.
 - A **frontend** parses another language. It must declare:
     - the source language and version it accepts;
@@ -147,18 +159,31 @@ A vocabulary whose mapping is a plain table of words needs no desugarer code: th
 
   A frontend's surface name must include a version or a compatibility marker such as `subset`.
 
+### Provider shapes
+
+Each kind has a fixed execution shape. A provider must register as exactly one kind and meet that kind's requirements:
+
+| Kind | Registration | Worker | Response must contain | Provider must declare |
+| --- | --- | --- | --- | --- |
+| vocabulary | a complete word and symbol table, optionally with small forms | none for a complete table; required for small forms | for small forms: canonical surface representation and a source map. For a table, the compiler produces both. | identity and version |
+| dialect | a grammar provider | required | canonical surface representation, a source map for every node, diagnostics | identity, version, and the documented Incan meaning of each construct |
+| frontend | a language provider | required | canonical surface representation, a source map for every node, lowerability diagnostics | identity, version, source language and version, compatibility level, runtime, standard-library and ABI requirements |
+
+A response that lacks a field its kind requires must be refused as malformed under RFC 160's failure rules.
+
 ### Selection
 
 - A file selects its surface with exactly one of `#!vocab NAME`, `#!dialect NAME` or `#!frontend NAME` as its first line that is neither blank nor a comment. The directive kind must match the provider's declared kind.
 - `NAME` must resolve to a surface registered by a dependency in the project's resolved and locked dependencies, or by the project itself.
 - A project may set `[source] surface = "KIND:NAME"` in `loaf.toml`. A file header must take precedence over the project default; a file with neither is canonical Incan.
+- If the selected surface cannot be resolved, the file must fail with a diagnostic before its body is parsed. This applies to a surface selected by header or by project default, and covers a missing provider, one the build's provider policy does not admit, a kind mismatch, and an unsupported schema version. The compiler must not fall back to canonical Incan.
 - An ordinary import must not change the surface of a file.
 
 ### Providers
 
-- Surface providers must be built, run, reused and recorded under RFC 160.
-- A provider request must contain the file's source bytes, its path relative to the project and the selected surface name.
-- A provider response must contain the file's canonical syntax, a source map and any diagnostics.
+- Surface providers must be built, admitted, run, reused and recorded under RFC 160.
+- A whole-file request must contain the file's source bytes, its path relative to the project and the selected surface name.
+- A whole-file response must contain the file's canonical surface representation, a source map and any diagnostics, as the provider's kind requires.
 - Every output node must map to a byte span of the original file. Diagnostics must be rendered at the original span, naming the surface and its provider.
 - A construct the provider cannot lower faithfully must produce a diagnostic. A provider must not substitute different semantics for it.
 - A vocabulary whose registration is a complete word table may omit the provider function. The compiler then applies the table, with the same source map guarantees.
@@ -178,7 +203,13 @@ A vocabulary whose mapping is a plain table of words needs no desugarer code: th
 
 ### Relationship to RFC 160 and RFC 161
 
-RFC 160 defines how a vocabulary Loaf is built, run and trusted, and the structured canonical interchange. This RFC widens the request from a block to a file, and adds kinds, selection, compatibility levels and lowerability. RFC 161 is the common destination: once the semantic core exists, every surface's output normalizes into it, and authority and ownership are explicit whatever surface produced the code.
+RFC 160 is the substrate: how a provider Loaf is built, admitted, run, reused and recorded, and the versioned canonical surface representation it returns. This RFC adds to it, without redefining it:
+- source-surface registration records in `std.vocab`;
+- the whole-file request and response;
+- each kind's execution shape;
+- selection, compatibility levels and lowerability.
+
+RFC 161 is the common destination: once the semantic core exists, every surface's output normalizes into it, and authority and ownership are explicit whatever surface produced the code.
 
 ### Relationship to block vocabulary
 

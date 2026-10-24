@@ -20,7 +20,7 @@
 
 ## Summary
 
-This RFC defines SCIR, the semantic core of Incan: a small, checked, explicitly owned core language that every Incan program normalizes into before backend lowering. SCIR has records, enums, traits, implementations and functions. Its bodies are made of places, explicit copies, moves and loans, calls and structured control flow. Its operations that need authority name the capability they require. Surface constructs are named normalizations onto that core:
+This is a strategic RFC. It defines SCIR, the semantic core of Incan: a small, checked, explicitly owned core language that every Incan program normalizes into before backend lowering. SCIR has records, enums, traits, implementations and functions. Its bodies are made of places, explicit copies, moves and loans, calls and structured control flow. Its operations that need authority name the capability they require. Surface constructs are named normalizations onto that core:
 - a `model` becomes a record with derived behavior and a constructor;
 - a `class` becomes a record with its implementations and trait adoptions;
 - an `error` becomes an enum or record with its error implementation.
