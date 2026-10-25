@@ -96,28 +96,25 @@ from std.vocab import ClauseSurface, DeclarationSurface, DslSurface, VocabRegist
 
 pub def library_vocab() -> VocabRegistration:
     """Register the `query` block, active wherever `querykit` is imported."""
-    clauses = [
-        ClauseSurface.expr("FROM").required(),
-        ClauseSurface.expr_list("SELECT").required().after("FROM"),
-    ]
-    query = DeclarationSurface.named("query").with_clause_body().desugars_to_expression().with_clauses(clauses)
-    return VocabRegistration.new().with_surface(DslSurface.on_import("querykit").with_declaration(query))
+    query = DeclarationSurface.named("query").with_clause_body().desugars_to_expression()
+    query = query.with_clause(ClauseSurface.expr("FROM").required())
+    surface = DslSurface.on_import("querykit").with_declaration(query)
+    return VocabRegistration.new().with_surface(surface).with_desugarer()
 ```
 
 Because `query` desugars, the same module defines the desugarer. It receives the parsed block as `std.vocab` values and returns values of the canonical surface representation. Nodes built from input values keep those values' spans, so the source map follows without extra work:
 
 ```incan
-from std.vocab import DesugarError, DesugarOutput, DesugarRequest, DesugarResponse, IncanExpr, VocabSyntaxNode
+from std.vocab import DesugarError, DesugarOutput, DesugarRequest, DesugarResponse, VocabSyntaxNode
 
 
 pub def desugar(request: DesugarRequest) -> Result[DesugarResponse, DesugarError]:
-    """Rewrite a `query` block into a call to `querykit.select` over its source."""
+    """Return the FROM expression with its original source range."""
     match request.node:
         VocabSyntaxNode.Declaration(declaration) =>
-            source = declaration.clause("FROM").head(0)?
-            columns = declaration.clause("SELECT").head_list()
-            call = IncanExpr.call(IncanExpr.path("querykit.select"), [source, IncanExpr.list(columns)])
-            return Ok(DesugarResponse(output=DesugarOutput.Expression(call)))
+            clause = declaration.clause("FROM")?
+            expression = clause.expression()?
+            return Ok(DesugarResponse(output=DesugarOutput.Expression(expression)))
         _ => return Err(DesugarError.at(request.node.span(), "query expects a declaration"))
 ```
 
@@ -128,14 +125,15 @@ The library builds as usual. Oven compiles `src/vocab.incn` and what it imports 
 Nothing changes in consumer source. Importing `querykit` activates `query`, and the compiler desugars each `query` block before checking:
 
 ```incan
-from querykit import query
+from pub::querykit import marker
 
-rows = query:
-    FROM orders
-    SELECT id, total
+def main() -> None:
+    value = query:
+        FROM marker() + 1
+    println(value)
 ```
 
-If the desugarer reports an error, takes too long or exits abnormally, the consumer sees a diagnostic on the `query` block that names `querykit` as the providing Loaf. The rest of the module is still checked. A type error inside the desugared call points at the `FROM` or `SELECT` expression it came from, not at generated code.
+Here `marker()` is an ordinary function the library exports from `src/lib.incn`, and the consumer lists `querykit` as a dependency. If the desugarer reports an error, takes too long or exits abnormally, the consumer sees a diagnostic on the `query` block that names `querykit` as the providing Loaf. The rest of the module is still checked. A type error inside the expanded expression points at the `FROM` expression it came from, not at generated code.
 
 ### In the editor
 
@@ -148,7 +146,7 @@ The language server desugars blocks as the consumer edits them. Workers stay run
 - A Loaf that provides vocabulary must declare `[vocab] entry = "<path>"`, where the path names an Incan module inside the Loaf.
 - The `[vocab] crate` key must be refused with a diagnostic that names `entry` as its replacement.
 - A Loaf declares at most one vocabulary entry. The entry and the modules it imports form the Loaf's vocabulary unit, which is distinct from the library's public units.
-- The vocabulary unit must not activate the vocabulary it registers. A cycle in which the entry, directly or through its imports, uses its own surfaces must be refused with a diagnostic naming the cycle.
+- The vocabulary unit must not activate the vocabulary it registers. An import of the Loaf's own surfaces, in the entry or any module it imports, is refused with a diagnostic naming that Loaf: `vocabulary activation cycle: querykit entry imports its own surfaces`.
 
 ### Registration
 
@@ -161,8 +159,8 @@ The language server desugars blocks as the consumer edits them. Workers stay run
 
 - When any registered surface declares custom desugaring, the entry module must export `desugar(request: DesugarRequest) -> Result[DesugarResponse, DesugarError]`. A registration that requires desugaring without that export must be refused when the Loaf is built.
 - The compiler must run a desugarer outside its own process.
-- A request must contain one or more public syntax nodes from one module, the requesting module's path, and nothing else. The compiler may batch all of a module's nodes for one desugarer into one request. A desugarer's output for a node must not depend on the other nodes in the same request.
-- For each node, the response must contain statements or one expression of the canonical surface representation, matching the surface's declared output position. Source text is not an accepted output.
+- Each `DesugarRequest` must contain the representation's schema version (`schema_version`), one public syntax node (`node: VocabSyntaxNode`), the requesting module's path (`module_path: str`), and nothing else. The compiler may send all of a module's requests for one desugarer as one batch and must receive the responses in the same order. A desugarer's output for a node must not depend on the other nodes in the same batch.
+- For each node, the response must contain compilation-unit declarations, statements or one expression of the canonical surface representation, matching the surface's declared output position. `DesugarOutput` has `Declarations(list[IncanDeclaration])`, `Statements(list[IncanStatement])` and `Expression(IncanExpr)`. Source text is not an accepted output.
 - The compiler must check desugared output exactly as it checks authored source.
 
 ### Source maps
@@ -186,16 +184,17 @@ The language server desugars blocks as the consumer edits them. Workers stay run
 - A desugarer's response must be a function of its vocabulary unit's identity and its request.
 - Tooling may reuse a response for the same unit identity and the same request, and may keep worker processes running across requests.
 - A desugarer must not depend on the environment, the clock, the file system or the network. The toolchain does not prevent such access; it is unsupported, and its results may be reused.
+- The compiler clears the worker's inherited environment before starting it. This removes ambient environment inputs; it does not provide an operating-system sandbox.
 
 ### Trust and evidence
 
 - A desugarer must run only after the build's provider policy admits it. Admission considers:
-    - the provider's identity: its Loaf, reached through the consumer's resolved and locked dependencies, and its vocabulary unit identity;
+    - the provider's identity: its Loaf, reached through the consumer's resolved and locked dependencies, with its checked manifest digest, worker digest and vocabulary unit identity;
     - its declared authority;
     - host policy.
 
-  Being a locked dependency is necessary but not sufficient.
-- The default policy admits providers reached through locked dependencies. A host or project policy may restrict admission further, for example to named providers or to providers with published units.
+  Being a locked dependency is necessary but not sufficient. The compiler must verify the admitted identity against the worker artifact it starts.
+- The default policy admits providers reached through locked dependencies. A host or project policy may restrict admission further, for example to named providers or to providers with published units. The lock and the invocation evidence must record the policy that admitted each provider.
 - A vocabulary unit declares no authority under this RFC. Any authority beyond a pure function of the request, such as declared file inputs, requires a later contract.
 - A desugarer invocation is an RFC 104 execution boundary that grants no capabilities. Where governed enforcement is active, any authority-bearing operation a desugarer attempts must be denied and recorded.
 - Oven must record in the build's evidence, for each module it desugared:
@@ -240,7 +239,7 @@ The language server desugars blocks as the consumer edits them. Workers stay run
 - the library manifest metadata.
 
 It also contains the canonical surface representation a desugarer reads and writes:
-- `VocabSyntaxNode`, `VocabDeclaration`, `VocabClause`, `IncanExpr`, `IncanStatement`, `Span`;
+- `VocabSyntaxNode`, `VocabDeclaration`, `VocabClause`, `IncanExpr`, `IncanStatement`, `IncanDeclaration`, `Span`;
 - `DesugarRequest`, `DesugarResponse`, `DesugarOutput`, `DesugarError`.
 
 These carry the shapes RFC 027 and RFC 081 define, expressed as Incan models and enums, with constructors and accessors for authoring desugarers. The representation is initially syntax-shaped, but it is deliberately not the compiler's private syntax tree. It is a published, versioned contract that the compiler translates from and into its own representations. Changing the compiler's internal syntax tree therefore never changes a package's interface. A later schema version may target RFC 161's semantic core directly.
