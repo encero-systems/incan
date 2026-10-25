@@ -75,6 +75,22 @@ impl CliDiagnosticFailure {
         }
     }
 
+    /// Whether the failure consists only of source diagnostics (lexing, parsing, import resolution and typechecking),
+    /// which unchanged inputs reproduce exactly. Resource, tooling and source-reading failures stay retryable, so no
+    /// caller may retain them as a deterministic outcome.
+    pub fn reproducible(&self) -> bool {
+        !self.diagnostics.is_empty()
+            && self.diagnostics.iter().all(|diagnostic| {
+                matches!(
+                    diagnostic.phase,
+                    diagnostics::DiagnosticPhase::Lex
+                        | diagnostics::DiagnosticPhase::Parse
+                        | diagnostics::DiagnosticPhase::Typecheck
+                        | diagnostics::DiagnosticPhase::Import
+                )
+            })
+    }
+
     /// Render the failing diagnostics through the existing source-highlighted human diagnostic formatter.
     ///
     /// Warnings are deliberately excluded: they were already shown when they were produced.

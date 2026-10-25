@@ -5,7 +5,7 @@ from std.fs import Path
 from apple_sdk import configure_sdk
 from codegen import driver_arguments
 from compiler_refusals import compile_or_replay
-from compiler_worker import compile_resident
+from compiler_worker import compile_resident, served_resident
 from files import open_stream
 from observation import trace_boundary
 from publication import publish
@@ -42,10 +42,10 @@ pub def compile_prepared_unit(
     output.parent().mkdir(true, true).map_err((error) => f"{output.parent().0}: {error.message()}")?
     # 2. Native flags match the profile and the caller's explicit linkage request.
     native = driver_arguments(unit.profile) + shared_arguments(unit, development)?
-    arguments = ["--unit", path.0, compiled, output.0, toolchain.sysroot] + native
+    invocation = ["--unit", path.0, compiled, output.0, toolchain.sysroot]
     # 3. Refusal replay preserves the owner's request-local console routing.
     trace_boundary("compiler_request")
-    return compile_or_replay(unit, toolchain, arguments, Path(f"{output.0}.oven-refusal"), key, reason)
+    return compile_or_replay(unit, toolchain, invocation, native, Path(f"{output.0}.oven-refusal"), key, reason)
 
 
 pub def crate_name(unit: UnitDescription) -> str:
@@ -90,7 +90,7 @@ pub def write_unit(
     return Ok(path)
 
 
-def described_by(key: Key) -> str:
+pub def described_by(key: Key) -> str:
     """Read the already reconciled description identity; an absent part disables descriptor reuse."""
     for part in key.parts:
         if part.startswith("description "):
@@ -123,12 +123,12 @@ pub def run_compiler(toolchain: Toolchain, arguments: list[str]) -> Result[i32, 
     """
     Run the installed compiler without an inherited bootstrap override, preserving its stream destinations.
 
-    1. Use the resident worker for ordinary native requests when it is available.
+    1. Use the resident worker for unit compilation, checking and formatting when it is available.
     2. Otherwise bind the original driver, SDK configuration and request-local streams.
     3. Preserve the process status without retrying a submitted worker request.
     """
     # 1. A submitted worker request is never replayed through another compiler process.
-    if len(arguments) > 0 and arguments[0] == "--unit":
+    if served_resident(arguments):
         match compile_resident(toolchain, arguments)?:
             Some(code) => return Ok(code)
             None => pass

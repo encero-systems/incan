@@ -500,6 +500,7 @@ def build_project(options: Options) -> Result[list[str], str]:
         default_features=options.request.default_features,
         substitutes=options.substitutes,
         incan_compiler=Some(compile_incan_library),
+        toolchain_search=toolchain.search,
     )
     return build_rust(request)
 

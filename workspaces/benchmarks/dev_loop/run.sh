@@ -114,6 +114,7 @@ for round in $(seq "$first_round" "$samples"); do
         (( generation += 1 ))
         write_value "$project" "$subject" "$generation"
         measure "$subject" run_edit "$round" 250 "$generation" "$oven" run "$entry"
+        "$oven" check "$entry" > "$output/$subject-condition-check.log" 2>&1 || true
         measure "$subject" check_unchanged "$round" - - "$oven" check "$entry"
         (( generation += 1 ))
         write_value "$project" "$subject" "$generation"

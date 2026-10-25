@@ -1,5 +1,6 @@
 //! A serial native compiler worker. Oven owns its generation, startup and retirement policy; this boundary retains
-//! immutable artifact readings only. Each request runs the ordinary compiler with a fresh session and rustc context.
+//! immutable artifact readings only. Each request (a unit compilation, a check or a formatting run) runs the same
+//! entry point as the short-lived command, with a fresh session and rustc context, and reports the same status.
 //! A panic retires the process instead of exposing possibly poisoned native state to another request.
 
 use std::fs::{self, Permissions};
@@ -16,6 +17,8 @@ mod console;
 
 const SCHEMA: &str = "incan.compiler-worker/1";
 const MAX_FRAME: usize = 16 * 1024 * 1024;
+/// The status Rust gives a process whose main thread panics; a request that panics reports the same status.
+const PANIC_STATUS: i32 = 101;
 
 /// Remove only the socket inode this worker created, leaving any replacement untouched.
 struct SocketFile {
@@ -101,26 +104,37 @@ fn waiting(listener: &UnixListener, idle: Duration) -> io::Result<bool> {
     }
 }
 
-/// Admit only ordinary unit compilation for this worker generation, then scope diagnostics around the request.
+/// Admit a unit compilation, check or formatting request for this worker generation, then scope diagnostics around
+/// it. The reported status is the one the short-lived command exits with: its own status, one for a returned error
+/// (printed as `main` prints it), and Rust's panic status.
 fn execute(request: serde_json::Value, generation: &str) -> (serde_json::Value, bool) {
     let admitted = admit(&request, generation);
     let result = admitted.and_then(|(arguments, stdout, stderr, cwd)| {
         let _console = console::Capture::open(&stdout, &stderr, &cwd).map_err(|error| error.to_string())?;
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            crate::frontend::compile_resident(&arguments)
-        }));
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&arguments)));
         match outcome {
-            Ok(Ok(())) => Ok((0, false)),
+            Ok(Ok(code)) => Ok((code, false)),
             Ok(Err(error)) => {
                 eprintln!("Error: {error:?}");
                 Ok((1, false))
             }
-            Err(_) => Ok((1, true)),
+            Err(_) => Ok((PANIC_STATUS, true)),
         }
     });
     match result {
         Ok((exit, retire)) => (json!({"schema": SCHEMA, "exit": exit, "reason": ""}), retire),
         Err(reason) => (json!({"schema": SCHEMA, "exit": 1, "reason": reason}), false),
+    }
+}
+
+/// Run one admitted request through the entry point its short-lived command uses, returning that command's status.
+fn run(arguments: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
+    let (command, rest) = arguments.split_first().ok_or("an empty compiler worker request")?;
+    match command.as_str() {
+        "--unit" => crate::frontend::compile_resident(rest).map(|()| 0),
+        "--check" => crate::check(rest),
+        "--fmt" => crate::format(rest),
+        other => Err(format!("a compiler worker does not serve {other}").into()),
     }
 }
 
@@ -131,10 +145,7 @@ fn admit(request: &serde_json::Value, generation: &str) -> Result<(Vec<String>, 
     }
     let arguments: Vec<String> =
         serde_json::from_value(request["arguments"].clone()).map_err(|error| error.to_string())?;
-    if arguments.len() < 5 || arguments.first().map(String::as_str) != Some("--unit") {
-        return Err("a compiler worker accepts only --unit requests".into());
-    }
-    for index in [1, 3, 4] {
+    for &index in absolute_arguments(&arguments)? {
         if !Path::new(&arguments[index]).is_absolute() {
             return Err("compiler worker unit, output and sysroot paths must be absolute".into());
         }
@@ -142,7 +153,23 @@ fn admit(request: &serde_json::Value, generation: &str) -> Result<(Vec<String>, 
     let stdout = output_path(request, "stdout")?;
     let stderr = output_path(request, "stderr")?;
     let cwd = output_path(request, "cwd")?;
-    Ok((arguments.into_iter().skip(1).collect(), stdout, stderr, cwd))
+    Ok((arguments, stdout, stderr, cwd))
+}
+
+/// The positions of the paths a served request must name absolutely, because the worker's directory is not its
+/// caller's: `--unit UNIT CRATE OUTPUT SYSROOT ...`, `--check UNIT SYSROOT ...` and `--fmt UNIT PATH ...`. A formatted
+/// path resolves against the caller's directory, which each request installs. Every other command is refused.
+fn absolute_arguments(arguments: &[String]) -> Result<&'static [usize], String> {
+    let (minimum, absolute): (usize, &'static [usize]) = match arguments.first().map(String::as_str) {
+        Some("--unit") => (5, &[1, 3, 4]),
+        Some("--check") => (3, &[1, 2]),
+        Some("--fmt") => (3, &[1]),
+        _ => return Err("a compiler worker accepts only --unit, --check and --fmt requests".into()),
+    };
+    if arguments.len() < minimum {
+        return Err(format!("a compiler worker {} request is incomplete", arguments[0]));
+    }
+    Ok(absolute)
 }
 
 /// Require an absolute diagnostic sink supplied by Oven, never a process-global cached diagnostic buffer.

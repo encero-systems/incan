@@ -13,30 +13,28 @@ from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription
 
 
-pub def standalone_crates(
-    described: UnitDescription,
-    toolchain: Toolchain,
-) -> Result[tuple[list[NativeCrate], list[str]], str]:
+pub def standalone_crates(described: UnitDescription, toolchain: Toolchain) -> Result[list[NativeCrate], str]:
     """
-    Resolve standalone Rust imports against the toolchain's compiled registry.
+    Resolve standalone Rust imports against the toolchain's compiled registry. Their transitive dependencies are found
+    through the toolchain's search index, which names every registry directory.
 
     1. Ask the compiler for import syntax from the ordinary source graph.
     2. Merge each crate's version and feature requests, using known defaults for omitted versions.
-    3. Bind one exact registry artifact per crate and retain its transitive search directories.
+    3. Bind one exact registry artifact per crate.
     """
     # 1. Parsing, including local module discovery, belongs to the compiler.
     requests = source_requests(described, toolchain)?
     # 2. A crate has one version requirement and the union of its requested features.
     selections = merged_requests(requests)?
     if len(selections) == 0:
-        return Ok(([], []))
+        return Ok([])
     # 3. The ordinary registry resolver selects exact artifacts and refuses missing or ambiguous units.
     registry = read_registry_units(Path(toolchain.registry_units))?
     mut externs: list[NativeCrate] = []
     for name in sorted([name for name in selections.keys()]):
         artifact = registry.artifact_for(selections[name], "target")?
         externs.append(NativeCrate(name=name, path=artifact))
-    return Ok((externs, registry.search))
+    return Ok(externs)
 
 
 def source_requests(unit: UnitDescription, toolchain: Toolchain) -> Result[list[JsonValue], str]:
@@ -72,6 +70,7 @@ def merged_requests(requests: list[JsonValue]) -> Result[dict[str, RegistrySelec
         requirement = match version.as_str():
             Some(text) => text
             None => return Err("invalid Rust import version")
+
         if name in versions and versions[name] != requirement:
             return Err(f"Rust crate `{name}` has conflicting inline versions: {versions[name]} and {requirement}")
         versions[name] = requirement
@@ -79,7 +78,9 @@ def merged_requests(requests: list[JsonValue]) -> Result[dict[str, RegistrySelec
     for name in sorted([name for name in features.keys()]):
         if name in versions:
             selections[name] = RegistrySelection(
-                loaf=f"crates-io/{name}", requirement=versions[name], features=features[name],
+                loaf=f"crates-io/{name}",
+                requirement=versions[name],
+                features=features[name],
             )
         else:
             mut selected = known_request(name)?

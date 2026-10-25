@@ -8,21 +8,45 @@ which directives a family admits is the family's rule (`families.incn`).
 
 # The directives the header accepts.
 const DIRECTIVES: FrozenList[str] = [
-    "cli-commands", "graph-commands", "behavior", "retires", "expect-stdout", "expect-stdout-contains",
-    "expect-stderr-contains", "expect-exit", "expect-diagnostic", "expect-accepted", "expect-dependencies",
-    "expect-std-packages", "expect-active-features", "expect-formatted", "pending",
+    "cli-commands",
+    "graph-commands",
+    "check-edits",
+    "behavior",
+    "retires",
+    "expect-stdout",
+    "expect-stdout-contains",
+    "expect-stderr-contains",
+    "expect-exit",
+    "expect-diagnostic",
+    "expect-accepted",
+    "expect-dependencies",
+    "expect-std-packages",
+    "expect-active-features",
+    "expect-formatted",
+    "pending",
 ]
 # The directives whose lines follow them as an indented block.
 const BLOCKS: FrozenList[str] = [
-    "cli-commands", "graph-commands", "expect-formatted", "expect-stdout", "expect-stdout-contains",
-    "expect-stderr-contains", "expect-dependencies", "expect-std-packages", "expect-active-features",
+    "cli-commands",
+    "graph-commands",
+    "check-edits",
+    "expect-formatted",
+    "expect-stdout",
+    "expect-stdout-contains",
+    "expect-stderr-contains",
+    "expect-dependencies",
+    "expect-std-packages",
+    "expect-active-features",
 ]
 # Blocks every item of which must be present, so an empty one checks nothing. `expect-dependencies:` and
 # `expect-active-features:` are exact: an empty block means none.
 const SUBSET_BLOCKS: FrozenList[str] = ["expect-stdout-contains", "expect-stderr-contains", "expect-std-packages"]
 # Blocks whose items are compared as a set, so an item listed twice checks nothing.
 const SET_BLOCKS: FrozenList[str] = [
-    "expect-stdout-contains", "expect-stderr-contains", "expect-dependencies", "expect-std-packages",
+    "expect-stdout-contains",
+    "expect-stderr-contains",
+    "expect-dependencies",
+    "expect-std-packages",
     "expect-active-features",
 ]
 
@@ -261,9 +285,7 @@ def finish(header: Header) -> Result[Header, str]:
 
 
 pub def lines_of(text: str) -> list[str]:
-    """
-    Split output at line feeds, remove a trailing carriage return from each line and add no empty final line.
-    """
+    """Split output at line feeds, remove a trailing carriage return from each line and add no empty final line."""
     mut lines: list[str] = []
     for line in text.split("\n"):
         if line.endswith("\r"):

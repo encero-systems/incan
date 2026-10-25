@@ -1,5 +1,54 @@
 # Development-loop measurements
 
+## Resident compilation and indexed search directories (#2256)
+
+These rows come from the harness with 15 samples per row on the integration lane's source-built toolchain, not a packed seed: the lane home with its relinked release driver and standard packages, and the native Oven built from the measured checkout. Before is `4bfc6a496` (driver `57adf7231869`, Oven `9dcf79dc`). After is `f984397e2` (driver `a17fe76401c8`, Oven `796aa335`), with the debug standard packages republished by that driver, so their native closures list only the directories beyond the toolchain's search index. Both runs use this checkout's harness, which conditions the unchanged check like every other unchanged row. Each side's load is the median one-minute load average of its samples' `uptime`. The reports were generated on 2026-10-25 at 01:12 and 02:52 UTC on Darwin arm64; the raw samples are `dev-loop.ewk6b9` (before) and `dev-loop.p4kPp5` (after) under the lane's `BENCH_SCRATCH`. All 1,350 samples of the two runs succeeded.
+
+| Subject | Metric | Target ms | Before median ms | Before spread | Before load | After median ms | After spread | After load | After met target | After successful |
+| --- | --- | ---: | ---: | --- | ---: | ---: | --- | ---: | --- | --- |
+| single | check_unchanged | - | 290.9 | 286.1-292.9 | 2.57 | 16.5 | 16.1-18.6 | 2.69 | n/a | 15/15 |
+| single | check_edit | - | 291.3 | 285.1-295.3 | 2.57 | 28.6 | 28.1-29.4 | 2.69 | n/a | 15/15 |
+| single | fmt_check | - | 41.5 | 35.6-46.2 | 2.57 | 15.3 | 12.4-22.4 | 2.68 | n/a | 15/15 |
+| single | run_unchanged | 50 | 260.5 | 257.1-517.7 | 2.57 | 14.2 | 9.8-30.9 | 2.69 | 15/15 | 15/15 |
+| single | run_edit | 250 | 829.5 | 805.1-1041.9 | 2.57 | 207.8 | 195.0-335.5 | 2.69 | 12/15 | 15/15 |
+| single | test_unchanged | 100 | 264.6 | 257.0-270.5 | 2.57 | 17.4 | 12.9-19.6 | 2.69 | 15/15 | 15/15 |
+| single | test_edit | 400 | 836.7 | 814.7-1071.3 | 2.57 | 219.2 | 208.3-291.3 | 2.69 | 15/15 | 15/15 |
+| single | direct_first_launch | - | 156.6 | 144.3-222.3 | 2.44 | 146.4 | 143.5-212.8 | 2.58 | n/a | 15/15 |
+| single | direct_repeat_launch | - | 3.6 | 3.0-4.8 | 2.44 | 3.5 | 2.4-4.2 | 2.58 | n/a | 15/15 |
+| modules | check_unchanged | - | 292.3 | 284.2-294.2 | 2.65 | 16.3 | 15.3-16.9 | 2.58 | n/a | 15/15 |
+| modules | check_edit | - | 292.3 | 284.2-294.7 | 2.65 | 28.6 | 27.9-29.1 | 2.58 | n/a | 15/15 |
+| modules | fmt_check | - | 42.1 | 40.1-47.8 | 2.71 | 15.2 | 12.5-17.3 | 2.58 | n/a | 15/15 |
+| modules | run_unchanged | 50 | 260.2 | 248.6-514.6 | 2.65 | 13.7 | 10.6-33.0 | 2.58 | 15/15 | 15/15 |
+| modules | run_edit | 250 | 824.3 | 807.6-964.3 | 2.65 | 206.3 | 203.5-244.1 | 2.58 | 15/15 | 15/15 |
+| modules | test_unchanged | 100 | 261.6 | 258.1-268.2 | 2.65 | 16.7 | 15.2-20.3 | 2.58 | 15/15 | 15/15 |
+| modules | test_edit | 400 | 841.6 | 807.2-1028.1 | 2.71 | 224.2 | 212.7-266.6 | 2.58 | 15/15 | 15/15 |
+| modules | direct_first_launch | - | 167.3 | 146.7-312.0 | 2.59 | 147.5 | 142.9-204.2 | 2.64 | n/a | 15/15 |
+| modules | direct_repeat_launch | - | 3.7 | 3.4-4.8 | 2.59 | 3.6 | 2.7-4.1 | 2.64 | n/a | 15/15 |
+| library | check_unchanged | - | 849.5 | 829.9-857.2 | 2.57 | 28.9 | 28.1-30.4 | 2.64 | n/a | 15/15 |
+| library | check_edit | - | 1265.9 | 1240.7-1278.9 | 2.57 | 68.5 | 67.3-72.5 | 2.64 | n/a | 15/15 |
+| library | fmt_check | - | 45.2 | 41.4-46.3 | 2.60 | 18.4 | 13.9-19.8 | 2.68 | n/a | 15/15 |
+| library | run_unchanged | 50 | 1084.8 | 1070.3-1876.3 | 2.71 | 44.3 | 40.2-72.2 | 2.62 | 14/15 | 15/15 |
+| library | run_edit | 250 | 2286.5 | 2257.7-2461.5 | 2.71 | 465.3 | 441.1-546.0 | 2.62 | 0/15 | 15/15 |
+| library | test_unchanged | 100 | 1088.5 | 1068.7-1133.7 | 2.68 | 48.0 | 43.7-50.4 | 2.68 | 15/15 | 15/15 |
+| library | test_edit | 400 | 2333.4 | 2255.7-2528.1 | 2.68 | 467.1 | 450.5-524.0 | 2.68 | 0/15 | 15/15 |
+| library | direct_first_launch | - | 166.9 | 144.5-1106.1 | 2.69 | 145.3 | 142.7-186.5 | 2.68 | n/a | 15/15 |
+| library | direct_repeat_launch | - | 3.8 | 3.1-4.9 | 2.66 | 3.5 | 3.2-4.0 | 2.68 | n/a | 15/15 |
+
+An unchanged check replays its report in 16.5 ms for one file and for two modules, and in 28.9 ms with a path dependency, whose preparation describes and keys two units. `fmt --check` takes 15.2 to 18.4 ms through the resident worker. Edited runs, tests and checks compile in the resident worker: an edited check takes 28.6 ms, or 68.5 ms when the edit is in the path dependency, which is compiled again.
+
+An edited run or test ends with the system's first launch of a new executable, about 145 ms against 3.5 ms for a repeated launch, and a library subject's run also loads a newly compiled shared library. Incan's own share is the time from the command's start to the program launch Oven traces. Measured separately with 15 edited samples per row (`OVEN_TRACE`), before is the parent of the resident-compilation change (driver `32e389f6e6ca`, Oven `7ad35c8a`):
+
+| Subject | Metric | Before to launch ms | Before completed ms | After to launch ms | After completed ms |
+| --- | --- | ---: | ---: | ---: | ---: |
+| single | run_edit | 212.6 | 357.3 | 71.5 | 219.9 |
+| single | test_edit | 211.6 | 373.4 | 71.4 | 218.6 |
+| modules | run_edit | 208.2 | 357.4 | 66.7 | 212.0 |
+| modules | test_edit | 212.3 | 360.5 | 70.8 | 214.4 |
+| library | run_edit | 577.7 | 873.0 | 184.7 | 484.9 |
+| library | test_edit | 586.4 | 877.9 | 194.1 | 482.9 |
+
+## Packed seed controls (2026-10-24)
+
 These are controls on the packed seed identified in [analysis.md](analysis.md), with 675 successful command samples: 45 rows, 15 samples each. They do not certify the refused integrated source rebuild or its resident compiler.
 
 The configured ABI file disappeared during rounds 14–15. Its cause is unestablished. The restored archive copy and a new extraction by the selected driver have identical SHA-256 `967c1162700d00313efbcd027b9d1b96c318c4f64f422ed64016d957e2db05d8`. Whole rounds 14–15 were recollected in `dev-loop.yGDgGu`, and the original interrupted table remains intact. `final-times.tsv` combines the first 13 rounds with those replacements, without selecting samples by elapsed time.

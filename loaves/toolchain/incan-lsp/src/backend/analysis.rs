@@ -432,7 +432,7 @@ fn package_source_path(root: &Path, module_path: &[String]) -> Option<PathBuf> {
 }
 
 /// The description of the unit that owns `path`, from the Oven (`incan describe-unit PATH`), which is the only reader
-/// of project manifests (DD-0008). The `incan` beside this server answers it.
+/// of project manifests (DD-0008). The `incan` beside this server answers it; the search index it names is merged.
 pub(super) fn unit_description(path: &Path) -> incan_driver::error::CliResult<UnitDescription> {
     use incan_driver::error::CliError;
     let incan = std::env::current_exe()
@@ -448,6 +448,8 @@ pub(super) fn unit_description(path: &Path) -> incan_driver::error::CliResult<Un
             String::from_utf8_lossy(&output.stderr).trim().to_string(),
         ));
     }
-    serde_json::from_slice(&output.stdout)
-        .map_err(|error| CliError::failure(format!("`incan describe-unit` printed no unit description: {error}")))
+    let mut unit: UnitDescription = serde_json::from_slice(&output.stdout)
+        .map_err(|error| CliError::failure(format!("`incan describe-unit` printed no unit description: {error}")))?;
+    unit.merge_search_index()?;
+    Ok(unit)
 }

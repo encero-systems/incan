@@ -1,4 +1,11 @@
-"""Replay compiler-certified deterministic refusals under the same complete identity as compiled outputs."""
+"""
+Replay compiler-certified deterministic outcomes under the same complete identity as compiled outputs.
+
+Two outcomes are retained with their exact stdout and stderr bytes and their status: a unit compilation the compiler
+refuses with source diagnostics, and a check whose report unchanged inputs reproduce. A normal repeat of the same
+identity replays them without starting a compiler. Crashes, signals, uncertified failures, missing linked artifacts and
+inputs that changed while the compiler ran are never retained.
+"""
 
 from rust::std::io import Write, stderr, stdout
 from rust::std::process import Command, Stdio, id
@@ -7,26 +14,27 @@ from std.environ import get_or
 from std.fs import Path
 from std.io import BytesIO
 from apple_sdk import configure_sdk
+from compiler_worker import Completion, captured_resident
 from files import open_stream
 from observation import trace
+from owner_client import status_code
 from publication import publish_binary
 from toolchain import Toolchain
 from unit import UnitDescription
-from unit_freshness import Key, artifact_files, unit_key
+from unit_freshness import Key, artifact_files, fingerprint, unit_key
 
-
-model Refusal:
-    """The exact streams and normal failure status of a compiler-certified refusal."""
-
-    code: i32
-    output: bytes
-    error: bytes
+const RECORD_SCHEMA: str = "incan.oven.outcome/1"
+const REFUSAL_RECEIPT: str = "incan.compiler-refusal/1\n"
+const CHECK_RECEIPT: str = "incan.compiler-check/1\n"
+const CHECK_DOMAIN: str = "incan.oven.check/1"
+const MAX_STATUS: int = 255
 
 
 pub def compile_or_replay(
     unit: UnitDescription,
     toolchain: Toolchain,
-    arguments: list[str],
+    invocation: list[str],
+    options: list[str],
     path: Path,
     key: Key,
     reason: str,
@@ -34,46 +42,87 @@ pub def compile_or_replay(
     """
     Preserve compiler outcomes and retain only certified, normally exited refusals of unchanged inputs.
 
+    `invocation` is the compiler command with its positional arguments and `options` its native options; the
+    certification path goes between them, where the compiler reads it.
+
     1. Replay a complete matching refusal unless a caller requested compiler side effects.
-    2. Run the compiler with a fresh, private certification path and capture its exact streams.
+    2. Compile through the resident worker, or one compiler process, with a fresh, private certification path.
     3. Publish a certified refusal only if the complete input identity is still unchanged.
     """
     # 1. Replay a complete matching refusal unless a caller requested compiler side effects.
     cacheable = ordinary_compilation() and complete_artifacts(unit)
     if cacheable:
-        saved = load_refusal(path, key.digest)
-        if let Some(refusal) = saved:
+        if let Some(refusal) = load_outcome(path, key.digest):
             trace(f"unit {unit.package} {unit.kind}: replayed refusal")
             return show(refusal, toolchain.console)
-    # 2. Run the compiler with a fresh, private certification path and capture its exact streams.
+    # 2. The worker and a single process capture the same streams; only the compiler's receipt certifies a refusal.
     trace(f"unit {unit.package} {unit.kind}: compiled ({reason})")
-    certificate = Path(f"{path.0}.{id()}.certificate")
-    if certificate.is_file():
-        certificate.unlink().map_err((error) => error.message())?
-    mut command = Command.new(toolchain.driver)
-    configure_sdk(command, toolchain.sysroot)?
-    command.env_remove("RUSTC_BOOTSTRAP")
-    command.env("INCAN_COMPILER_REFUSAL", f"{certificate.0}")
-    command.stdin(Stdio.inherit())
-    for argument in arguments:
-        command.arg(argument)
-    result = command.output().map_err((error) => f"cannot run {toolchain.driver}: {error}")?
-    mut code: i32 = 1
-    mut diagnostic_exit = false
-    if let Some(status) = result.status.code():
-        code = status
-        diagnostic_exit = status == 1
-    refusal = Refusal(code=code, output=result.stdout, error=result.stderr)
+    certificate = fresh_certificate(path)?
+    refusal = completed(toolchain, invocation + ["--certify", certificate.0] + options)?
     # 3. Publish a certified refusal only if the complete input identity is still unchanged.
-    if cacheable and diagnostic_exit and certified(certificate):
-        match unit_key(unit, toolchain):
-            Ok(current) =>
-                if current.digest == key.digest:
-                    saved = save_refusal(path, key.digest, refusal)
-            Err(_) => pass
-    if certificate.is_file():
-        removed = certificate.unlink()
+    if cacheable and refusal.exited and refusal.code == 1 and certified(certificate, REFUSAL_RECEIPT):
+        if still_keyed(unit, toolchain, key):
+            _ = save_outcome(path, key.digest, refusal)
+    withdraw(certificate)
     return show(refusal, toolchain.console)
+
+
+pub def check_or_replay(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    arguments: list[str],
+    path: Path,
+    key: Key,
+) -> Result[i32, str]:
+    """
+    Replay the report of an unchanged check, or check and retain a certified report under the same identity rules.
+
+    The record's identity is the unit's key and the complete check invocation, which names the report format.
+
+    1. Replay a complete record of this identity unless a caller requested compiler side channels.
+    2. Check through the resident worker, or one compiler process, with a fresh certification path.
+    3. Retain a certified, normally completed report only while the unit's inputs are still those of the key.
+    """
+    label = f"unit {unit.package} check"
+    identity = fingerprint([CHECK_DOMAIN, key.digest] + arguments)?
+    # 1. A stored report of this identity is shown exactly as the compiler printed it.
+    cacheable = ordinary_compilation() and complete_artifacts(unit)
+    if cacheable:
+        if let Some(report) = load_outcome(path, identity):
+            trace(f"{label}: replayed")
+            return show(report, toolchain.console)
+    # 2. The compiler certifies only a pass or a refusal by source diagnostics.
+    trace(f"{label}: checked ({check_reason(path)})")
+    certificate = fresh_certificate(path)?
+    report = completed(toolchain, arguments + ["--certify", certificate.0])?
+    # 3. A crash, a signal, an uncertified failure or an edit made meanwhile is checked again next time.
+    if cacheable and reported(report) and certified(certificate, CHECK_RECEIPT):
+        if still_keyed(unit, toolchain, key):
+            _ = save_outcome(path, identity, report)
+    withdraw(certificate)
+    return show(report, toolchain.console)
+
+
+def completed(toolchain: Toolchain, arguments: list[str]) -> Result[Completion, str]:
+    """
+    Run a unit compilation or a check in the resident worker, or in one compiler process when no worker can start.
+    A request submitted to the worker is never run again in another process, whatever its outcome.
+    """
+    match captured_resident(toolchain, arguments)?:
+        Some(found) => return Ok(found)
+        None => return cold_completion(toolchain, arguments)
+
+
+def reported(report: Completion) -> bool:
+    """Whether a check exited normally with a report's own status: zero for a pass, one for a refusal."""
+    return report.exited and (report.code == 0 or report.code == 1)
+
+
+def check_reason(path: Path) -> str:
+    """Why a check runs: no report was stored for the unit yet, or the stored one is for other inputs."""
+    if path.is_file():
+        return "inputs changed"
+    return "no stored report"
 
 
 def ordinary_compilation() -> bool:
@@ -90,65 +139,107 @@ def complete_artifacts(unit: UnitDescription) -> bool:
     return true
 
 
-def certified(path: Path) -> bool:
+def cold_completion(toolchain: Toolchain, arguments: list[str]) -> Result[Completion, str]:
+    """
+    Run one compiler process with its exact streams captured; a process ended by a signal has status one and no
+    normal exit.
+    """
+    mut command = Command.new(toolchain.driver)
+    configure_sdk(command, toolchain.sysroot)?
+    command.env_remove("RUSTC_BOOTSTRAP")
+    command.stdin(Stdio.inherit())
+    for argument in arguments:
+        command.arg(argument)
+    result = command.output().map_err((error) => f"cannot run {toolchain.driver}: {error}")?
+    mut code: i32 = 1
+    mut exited = false
+    if let Some(status) = result.status.code():
+        code = status
+        exited = true
+    return Ok(Completion(code=code, exited=exited, output=result.stdout, error=result.stderr))
+
+
+def fresh_certificate(path: Path) -> Result[Path, str]:
+    """A private receipt path beside the record, in an existing directory and empty before the compiler runs."""
+    path.parent().mkdir(true, true).map_err((error) => f"{path.parent().0}: {error.message()}")?
+    certificate = Path(f"{path.0}.{id()}.certificate")
+    if certificate.is_file():
+        certificate.unlink().map_err((error) => error.message())?
+    return Ok(certificate)
+
+
+def certified(path: Path, receipt: str) -> bool:
     """An absent, unreadable or unrecognized certificate never authorizes retention."""
     if not path.is_file():
         return false
     match path.read_text("utf-8", "strict"):
         Err(_) => return false
-        Ok(text) => return text == "incan.compiler-refusal/1\n"
+        Ok(text) => return text == receipt
 
 
-def show(refusal: Refusal, console: str) -> Result[i32, str]:
+def still_keyed(unit: UnitDescription, toolchain: Toolchain, key: Key) -> bool:
+    """Whether the unit's inputs are still those the compiler ran for; a failed reconciliation counts as a change."""
+    match unit_key(unit, toolchain):
+        Ok(current) => return current.digest == key.digest
+        Err(_) => return false
+
+
+def withdraw(certificate: Path) -> None:
+    """Remove a receipt once it has been read; one that stays is replaced by the next run."""
+    if certificate.is_file():
+        _ = certificate.unlink()
+
+
+def show(outcome: Completion, console: str) -> Result[i32, str]:
     """Forward exact bytes to the foreground streams or the project owner's request-local console sinks."""
     if console != "":
         mut out = open_stream(f"{console}.out")?
-        match out.write_all(refusal.output):
+        match out.write_all(outcome.output):
             Err(error) => return Err(str(error))
             Ok(_) => pass
         mut err = open_stream(f"{console}.err")?
-        match err.write_all(refusal.error):
+        match err.write_all(outcome.error):
             Err(error) => return Err(str(error))
             Ok(_) => pass
-        return Ok(refusal.code)
+        return Ok(outcome.code)
     mut out = stdout()
-    match out.write_all(refusal.output):
+    match out.write_all(outcome.output):
         Err(error) => return Err(str(error))
         Ok(_) => pass
     mut err = stderr()
-    match err.write_all(refusal.error):
+    match err.write_all(outcome.error):
         Err(error) => return Err(str(error))
         Ok(_) => pass
-    return Ok(refusal.code)
+    return Ok(outcome.code)
 
 
-def save_refusal(path: Path, digest: str, refusal: Refusal) -> Result[None, str]:
-    """Publish framed raw streams in one atomic file; replay never decodes or re-encodes diagnostic bytes."""
-    header = f"incan.oven.refusal/2\n{digest}\n{len(refusal.output)}:{len(refusal.error)}\n"
+def save_outcome(path: Path, identity: str, outcome: Completion) -> Result[None, str]:
+    """Publish the status and framed raw streams in one atomic file; replay never decodes or re-encodes their bytes."""
+    header = f"{RECORD_SCHEMA}\n{identity}\n{outcome.code}:{len(outcome.output)}:{len(outcome.error)}\n"
     content = BytesIO(header.encode("utf-8"))
     content.seek(0, 2).map_err((error) => error.message())?
-    content.write_bytes(refusal.output).map_err((error) => error.message())?
-    content.write_bytes(refusal.error).map_err((error) => error.message())?
+    content.write_bytes(outcome.output).map_err((error) => error.message())?
+    content.write_bytes(outcome.error).map_err((error) => error.message())?
     return publish_binary(path, content.getvalue())
 
 
-def load_refusal(path: Path, digest: str) -> Option[Refusal]:
+def load_outcome(path: Path, identity: str) -> Option[Completion]:
     """Missing, obsolete and malformed records are cache misses, never compiler outcomes."""
     if not path.is_file():
         return None
-    match read_refusal(path, digest):
+    match read_outcome(path, identity):
         Err(_) => return None
-        Ok(refusal) => return refusal
+        Ok(outcome) => return outcome
 
 
-def read_refusal(path: Path, digest: str) -> Result[Option[Refusal], str]:
-    """Validate the bounded header and both byte lengths before releasing either stream to the caller."""
+def read_outcome(path: Path, identity: str) -> Result[Option[Completion], str]:
+    """Validate the bounded header, the status and both byte lengths before releasing either stream to the caller."""
     content = path.read_bytes().map_err((error) => error.message())?
-    prefix = f"incan.oven.refusal/2\n{digest}\n".encode("utf-8")
+    prefix = f"{RECORD_SCHEMA}\n{identity}\n".encode("utf-8")
     if content[:len(prefix)] != prefix:
         return Ok(None)
     mut end = len(prefix)
-    while end < len(content) and end - len(prefix) < 20 and content[end:end + 1] != b"\x0a":
+    while end < len(content) and end - len(prefix) < 24 and content[end:end + 1] != b"\x0a":
         end += 1
     if end >= len(content) or content[end:end + 1] != b"\x0a":
         return Ok(None)
@@ -156,22 +247,25 @@ def read_refusal(path: Path, digest: str) -> Result[Option[Refusal], str]:
     match RustString.from_utf8(content[len(prefix):end]):
         Err(_) => return Ok(None)
         Ok(text) => header = str(text)
-    sizes = header.split(":")
-    if len(sizes) != 2:
+    fields = header.split(":")
+    if len(fields) != 3:
         return Ok(None)
-    output = stream_size(sizes[0])?
-    error = stream_size(sizes[1])?
+    code = decimal(fields[0])?
+    output = decimal(fields[1])?
+    error = decimal(fields[2])?
     first = end + 1
-    if len(content) != first + output + error:
+    if code > MAX_STATUS or len(content) != first + output + error:
         return Ok(None)
-    return Ok(Some(Refusal(code=1, output=content[first:first + output], error=content[first + output:])))
+    printed = content[first:first + output]
+    complained = content[first + output:]
+    return Ok(Some(Completion(code=status_code(code), exited=true, output=printed, error=complained)))
 
 
-def stream_size(text: str) -> Result[int, str]:
-    """Accept only bounded decimal lengths before converting an untrusted cache header."""
+def decimal(text: str) -> Result[int, str]:
+    """Accept only bounded decimal numbers before converting an untrusted record header."""
     if len(text) == 0 or len(text) > 9:
-        return Err("invalid refusal stream length")
+        return Err("invalid outcome record number")
     for character in text:
         if character not in "0123456789":
-            return Err("invalid refusal stream length")
+            return Err("invalid outcome record number")
     return Ok(int(text))

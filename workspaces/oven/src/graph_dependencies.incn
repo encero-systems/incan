@@ -160,6 +160,7 @@ pub def prepare_graph(
         features=features.features,
         default_features=features.default_features,
         substitutes=substitutes,
+        toolchain_search=toolchain.search,
     )
     # 3. Native libraries exist before the Incan units are checked, and each unit is checked after its dependencies.
     built = native_units(root, facets, request, toolchain)?
@@ -216,7 +217,8 @@ def build_native_units(
        links, which must exist already.
     """
     mut built: Dict[str, BuiltUnit] = {}
-    mut search = request.registry.search
+    # The libraries built for the graph; `linking` adds the registry's and the toolchain's directories.
+    mut search: list[str] = []
     for facet in facets:
         declared = rust_facet(facet.project, false)?
         # 1. A facet with no Rust library binds the native library recorded for its crate, if any, and builds nothing.

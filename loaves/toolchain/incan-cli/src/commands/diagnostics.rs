@@ -7,7 +7,6 @@ use clap::ValueEnum;
 use serde::Serialize;
 
 use crate::{CliError, CliResult, ExitCode};
-use incan_driver::unit::UnitDescription;
 use incan_frontend::diagnostics::{self, DIAGNOSTIC_SCHEMA_VERSION};
 
 /// Output format for stable diagnostics commands.
@@ -22,15 +21,6 @@ struct ExplainReport {
     schema_version: u32,
     found: bool,
     entry: diagnostics::DiagnosticCatalogEntry,
-}
-
-/// Check one described unit, with its Rust facts from `rust`, and render its report.
-pub fn check(
-    unit: &UnitDescription,
-    rust: &incan_driver::session::RustFactsSetup,
-    format: DiagnosticOutputFormat,
-) -> CliResult<ExitCode> {
-    render_check_report(incan_driver::check::check_unit(unit, rust)?, format)
 }
 
 /// Print a catalog-backed diagnostic explanation.
@@ -72,8 +62,9 @@ pub fn explain_diagnostic(code: &str, format: DiagnosticOutputFormat) -> CliResu
     }
 }
 
-/// Render one already-evaluated check result in either human text or the stable JSON report shape.
-fn render_check_report(
+/// Render one already-evaluated check result (see `incan_driver::check::check_unit`) in either human text or the
+/// stable JSON report shape.
+pub fn render_check_report(
     report: incan_driver::check::CheckOutput,
     format: DiagnosticOutputFormat,
 ) -> CliResult<ExitCode> {

@@ -4,7 +4,7 @@ from rust::std::fs import OpenOptions, metadata
 from rust::std::process import Command
 from std.fs import Path
 from files import make_directory, read, remove, write as write_file
-from compiler_refusals import compile_or_replay
+from compiler_refusals import check_or_replay, compile_or_replay
 from incan_units import executable_outputs, install_executable, test_report
 from observation import load_ledger
 from scratch import scratch_directory
@@ -95,12 +95,10 @@ def fixture(scratch: Path) -> Result[Fixture, str]:
         profile="debug",
         declared_features=[],
         active_features=[],
-        loaves=[UnitLoaf(key="dep", name="dep", dir=dependency.0, standard=false), UnitLoaf(
-            key="std",
-            name="std",
-            dir=standard.0,
-            standard=true,
-        )],
+        loaves=[
+            UnitLoaf(key="dep", name="dep", dir=dependency.0, standard=false),
+            UnitLoaf(key="std", name="std", dir=standard.0, standard=true),
+        ],
         rust_crates=[],
         contract_models=[],
         c_headers=[],
@@ -164,12 +162,15 @@ pub def test_source_edit_rekeys_and_hashes_only_what_changed() -> Result[None, s
     helper = reconcile(scratch.path(), testing)?
     assert helper.key != before.key
     verify_refusal_replay(scratch.path().joinpath("refusals"))?
+    verify_check_replay(scratch.path().joinpath("checks"))?
     return Ok(None)
 
 
 def verify_refusal_replay(scratch: Path) -> Result[None, str]:
     """
-    Exercise certified replay, edited input, malformed storage and abnormal failures with a counted compiler.
+    Exercise certified replay, edited input, malformed storage and abnormal failures with a counted compiler that
+    cannot start a worker, so every compilation is one process. Its receipt path arrives as `--certify PATH` right
+    after the sysroot, as the worker would receive it.
 
     1. Replay an unchanged refusal with exact binary streams.
     2. Recompile edited sources and malformed records.
@@ -180,27 +181,31 @@ def verify_refusal_replay(scratch: Path) -> Result[None, str]:
     attempts = scratch.joinpath("attempts")
     source = Path(setup.unit.source)
     cache = scratch.joinpath("refusal.json")
-    mut script = "#!/bin/sh\n" + f"printf x >> '{attempts.0}'\nmode=$(cat '{source.0}')\n"
+    mut script = "#!/bin/sh\n[ \"$1\" = --resident ] && exit 1\n"
+    script += "[ \"$6\" = --certify ] && [ \"$8\" = --library ] || exit 2\n"
+    script += f"printf x >> '{attempts.0}'\nmode=$(cat '{source.0}')\n"
     script += "case \"$mode\" in\nio) printf 'I/O failure' >&2; exit 1;;\nmissing) exit 0;;\nesac\n"
-    script += "printf 'incan.compiler-refusal/1\\n' > \"$INCAN_COMPILER_REFUSAL\"\n"
+    script += "printf 'incan.compiler-refusal/1\\n' > \"$7\"\n"
     script += "printf '\\377out'; printf 'named refusal\\000tail' >&2\n"
     script += "case \"$mode\" in\ncrash) exit 101;;\nsignal) kill -TERM $$;;\nesac\nexit 1\n"
     write(driver, script)?
     mut chmod = Command.new("/bin/chmod")
     assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
+    invocation = ["--unit", "unit.json", "app", "app.rlib", setup.toolchain.sysroot]
+    options = ["--library"]
     # 1. Replay an unchanged refusal with exact binary streams.
     write(source, "refuse")?
     key = unit_key(setup.unit, setup.toolchain)?
-    assert compile_or_replay(setup.unit, setup.toolchain, [], cache, key, "test")? == 1
-    assert compile_or_replay(setup.unit, setup.toolchain, [], cache, key, "test")? == 1
+    assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, key, "test")? == 1
+    assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, key, "test")? == 1
     retained = cache.read_bytes().map_err((error) => error.message())?
     expected = b"\xffoutnamed refusal\x00tail"
     assert retained[len(retained) - len(expected):] == expected
     assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "x"
     mut capturing = setup.toolchain
     capturing.console = scratch.joinpath("console").0
-    assert compile_or_replay(setup.unit, capturing, [], cache, key, "test")? == 1
-    assert compile_or_replay(setup.unit, capturing, [], cache, key, "test")? == 1
+    assert compile_or_replay(setup.unit, capturing, invocation, options, cache, key, "test")? == 1
+    assert compile_or_replay(setup.unit, capturing, invocation, options, cache, key, "test")? == 1
     output = Path(f"{capturing.console}.out").read_bytes().map_err((error) => error.message())?
     error = Path(f"{capturing.console}.err").read_bytes().map_err((error) => error.message())?
     assert output == b"\xffout\xffout"
@@ -209,22 +214,22 @@ def verify_refusal_replay(scratch: Path) -> Result[None, str]:
     # 2. Recompile edited sources and malformed records.
     write(source, "refuse edited")?
     edited = unit_key(setup.unit, setup.toolchain)?
-    assert compile_or_replay(setup.unit, setup.toolchain, [], cache, edited, "test")? == 1
+    assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, edited, "test")? == 1
     assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xx"
     write(cache, "incomplete document")?
-    assert compile_or_replay(setup.unit, setup.toolchain, [], cache, edited, "test")? == 1
+    assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, edited, "test")? == 1
     assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xxx"
     framed = cache.read_bytes().map_err((error) => error.message())?
     cache.write_bytes(framed[:len(framed) - 1]).map_err((error) => error.message())?
-    assert compile_or_replay(setup.unit, setup.toolchain, [], cache, edited, "test")? == 1
+    assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, edited, "test")? == 1
     assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xxxx"
     # 3. Retry crashes, signals, I/O failures and success without artifacts.
     for mode in ["crash", "signal", "io", "missing"]:
         write(source, mode)?
         changed = unit_key(setup.unit, setup.toolchain)?
         before = attempts.read_text("utf-8", "strict").map_err((error) => error.message())?
-        first_status = compile_or_replay(setup.unit, setup.toolchain, [], cache, changed, "test")?
-        second_status = compile_or_replay(setup.unit, setup.toolchain, [], cache, changed, "test")?
+        first_status = compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, changed, "test")?
+        second_status = compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, changed, "test")?
         assert first_status == second_status
         after = attempts.read_text("utf-8", "strict").map_err((error) => error.message())?
         assert after == before + "xx", mode
@@ -233,10 +238,70 @@ def verify_refusal_replay(scratch: Path) -> Result[None, str]:
     linked[0].unlink().map_err((error) => error.message())?
     incomplete = unit_key(setup.unit, setup.toolchain)?
     before_missing = attempts.read_text("utf-8", "strict").map_err((error) => error.message())?
-    assert compile_or_replay(setup.unit, setup.toolchain, [], cache, incomplete, "test")? == 1
-    assert compile_or_replay(setup.unit, setup.toolchain, [], cache, incomplete, "test")? == 1
+    assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, incomplete, "test")? == 1
+    assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, incomplete, "test")? == 1
     after_missing = attempts.read_text("utf-8", "strict").map_err((error) => error.message())?
     assert after_missing == before_missing + "xx"
+    return Ok(None)
+
+
+def verify_check_replay(scratch: Path) -> Result[None, str]:
+    """
+    Exercise check replay with a counted compiler that cannot start a worker, so every check is one process.
+
+    1. Replay an unchanged pass and an unchanged refusal with exact binary streams and status.
+    2. Check again for another report format and after an edit.
+    3. Check again after crashes, signals, uncertified failures and statuses no report has.
+    """
+    setup = fixture(scratch)?
+    driver = Path(setup.toolchain.driver)
+    attempts = scratch.joinpath("attempts")
+    source = Path(setup.unit.source)
+    record = scratch.joinpath("main.text.oven-check")
+    mut script = "#!/bin/sh\n[ \"$1\" = --resident ] && exit 1\n"
+    script += f"printf x >> '{attempts.0}'\nmode=$(cat '{source.0}')\nprevious=''\n"
+    script += "for argument in \"$@\"; do\n[ \"$previous\" = --certify ] && receipt=$argument\n"
+    script += "previous=$argument\ndone\n"
+    script += "case \"$mode\" in\nio) printf 'I/O failure' >&2; exit 1;;\nstatus) exit 2;;\nesac\n"
+    script += "printf 'incan.compiler-check/1\\n' > \"$receipt\"\nprintf '\\377report'; printf 'warning\\000tail' >&2\n"
+    script += "case \"$mode\" in\ncrash) exit 101;;\nsignal) kill -TERM $$;;\nrefuse*) exit 1;;\nesac\nexit 0\n"
+    write(driver, script)?
+    mut chmod = Command.new("/bin/chmod")
+    assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
+    text = ["--check", "unit.json", setup.toolchain.sysroot, "--format", "text"]
+    # 1. Replay an unchanged pass and an unchanged refusal with exact binary streams and status.
+    write(source, "pass")?
+    passing = unit_key(setup.unit, setup.toolchain)?
+    assert check_or_replay(setup.unit, setup.toolchain, text, record, passing)? == 0
+    assert check_or_replay(setup.unit, setup.toolchain, text, record, passing)? == 0
+    write(source, "refuse")?
+    refused = unit_key(setup.unit, setup.toolchain)?
+    assert check_or_replay(setup.unit, setup.toolchain, text, record, refused)? == 1
+    assert check_or_replay(setup.unit, setup.toolchain, text, record, refused)? == 1
+    mut expected = "xx"
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == expected
+    mut capturing = setup.toolchain
+    capturing.console = scratch.joinpath("console").0
+    assert check_or_replay(setup.unit, capturing, text, record, refused)? == 1
+    assert Path(f"{capturing.console}.out").read_bytes().map_err((error) => error.message())? == b"\xffreport"
+    assert Path(f"{capturing.console}.err").read_bytes().map_err((error) => error.message())? == b"warning\x00tail"
+    # 2. Check again for another report format and after an edit.
+    json = ["--check", "unit.json", setup.toolchain.sysroot, "--format", "json"]
+    assert check_or_replay(setup.unit, setup.toolchain, json, record, refused)? == 1
+    write(source, "refuse edited")?
+    edited = unit_key(setup.unit, setup.toolchain)?
+    assert check_or_replay(setup.unit, setup.toolchain, text, record, edited)? == 1
+    assert check_or_replay(setup.unit, setup.toolchain, text, record, edited)? == 1
+    expected += "xx"
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == expected
+    # 3. Check again after crashes, signals, uncertified failures and statuses no report has.
+    for mode in ["crash", "signal", "io", "status"]:
+        write(source, mode)?
+        changed = unit_key(setup.unit, setup.toolchain)?
+        first_status = check_or_replay(setup.unit, setup.toolchain, text, record, changed)?
+        assert check_or_replay(setup.unit, setup.toolchain, text, record, changed)? == first_status
+        expected += "xx"
+        assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == expected, mode
     return Ok(None)
 
 
@@ -252,6 +317,13 @@ pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
     write(artifact_files(Path(setup.unit.loaves[1].dir), "std")[1], "standard package recompiled")?
     recompiled = reconcile(scratch.path(), setup)?
     assert recompiled.key != rebuilt.key
+    # A manifest that declares a vocabulary worker adds it to the artifact set; rewritten without one, it does not.
+    standard = Path(setup.unit.loaves[1].dir)
+    manifest = standard.joinpath("std.incnlib")
+    write(manifest, "{\"vocab\": {\"desugarer_artifact\": {\"artifact_kind\": \"NativeWorker\"}}}")?
+    assert "vocab-worker" in [artifact.name() for artifact in artifact_files(standard, "std")]
+    write(manifest, "{}")?
+    assert "vocab-worker" not in [artifact.name() for artifact in artifact_files(standard, "std")]
     verify_completed_library_abi(scratch.path().joinpath("publication"))?
     return Ok(None)
 
@@ -260,7 +332,8 @@ def verify_completed_library_abi(scratch: Path) -> Result[None, str]:
     """
     Reuse a library whose first compilation creates its indexed Rust ABI cache.
 
-    1. Count a compiler that publishes the complete library artifact set, including a new ABI cache.
+    1. Count a compiler that cannot start a worker and publishes the complete library artifact set, including a new
+       ABI cache.
     2. Compile the prepared library twice without changing its inputs.
     3. Require one compiler invocation and retain the published ABI cache.
     """
@@ -268,7 +341,7 @@ def verify_completed_library_abi(scratch: Path) -> Result[None, str]:
     setup = fixture(scratch)?
     attempts = scratch.joinpath("attempts")
     driver = Path(setup.toolchain.driver)
-    mut script = "#!/bin/sh\nset -eu\n" + f"printf x >> '{attempts.0}'\n"
+    mut script = "#!/bin/sh\nset -eu\n[ \"$1\" = --resident ] && exit 1\n" + f"printf x >> '{attempts.0}'\n"
     script += "directory=${4%/*}\nmkdir -p \"$directory\"\n"
     script += "for name in libapp.rlib app.incnlib app.incnbody app.native.json app.incngraph app.rustabi; do\n"
     script += "printf published > \"$directory/$name\"\ndone\n"

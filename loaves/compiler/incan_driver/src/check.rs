@@ -24,6 +24,9 @@ pub struct CheckOutput {
     pub exit_code: i32,
     /// Existing formatted warnings, in production order, for this client's stderr only.
     pub warnings: Vec<String>,
+    /// Whether unchanged inputs reproduce exactly this outcome: a passing check or one refused by source
+    /// diagnostics, never an import, resource or tooling failure.
+    pub reproducible: bool,
 }
 
 /// Check one unit, capturing the warnings it prints alongside its report.
@@ -35,12 +38,14 @@ pub fn check_unit(unit: &UnitDescription, rust: &RustFactsSetup) -> CliResult<Ch
             human_message: report.human_message,
             exit_code: if report.ok { 0 } else { 1 },
             warnings,
+            reproducible: report.reproducible,
         }),
         Err(error) => Ok(CheckOutput {
             json: None,
             human_message: Some(error.message),
             exit_code: error.exit_code.0,
             warnings,
+            reproducible: false,
         }),
     }
 }
@@ -67,6 +72,9 @@ pub struct DiagnosticReport {
     diagnostics: Vec<StableDiagnostic>,
     #[serde(skip_serializing)]
     human_message: Option<String>,
+    /// Whether unchanged inputs reproduce this report; never part of the public JSON report.
+    #[serde(skip_serializing)]
+    reproducible: bool,
 }
 
 impl DiagnosticReport {
@@ -84,8 +92,10 @@ impl DiagnosticReport {
 /// Check one unit without rendering the result: its stable diagnostics, warnings included, and whether it passed.
 pub fn check_report(unit: &UnitDescription, rust: &RustFactsSetup) -> CliResult<DiagnosticReport> {
     let _trace = tracing::trace_span!(target: "incan::invocation", "incan_driver::check_pipeline").entered();
-    let import_failure = |error: CliError| {
-        diagnostic_report_from_failure(CliDiagnosticFailure::single(
+    // Opening the session and extracting Rust facts read artifacts and run rustc, so their failures stay retryable.
+    let import_failure = |error: CliError| DiagnosticReport {
+        reproducible: false,
+        ..diagnostic_report_from_failure(CliDiagnosticFailure::single(
             unit.source.to_string_lossy(),
             "",
             diagnostics::CompileError::new(error.to_string(), incan_frontend::ast::Span::default()),
@@ -110,6 +120,7 @@ pub fn check_report(unit: &UnitDescription, rust: &RustFactsSetup) -> CliResult<
             ok: true,
             diagnostics: stable_diagnostics_from(&checked.warnings),
             human_message: None,
+            reproducible: true,
         }),
         Err(failure) => Ok(diagnostic_report_from_failure(failure)),
     }
@@ -149,5 +160,6 @@ fn diagnostic_report_from_failure(failure: CliDiagnosticFailure) -> DiagnosticRe
         ok: false,
         diagnostics,
         human_message: Some(human_message),
+        reproducible: failure.reproducible(),
     }
 }

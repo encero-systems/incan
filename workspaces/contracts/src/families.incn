@@ -16,14 +16,29 @@ from fixture import Fixture
 from header import Header, parse_header
 
 pub const FAMILIES: FrozenList[str] = [
-    "behavior", "check", "library", "interop", "testing", "project", "format", "graph",
+    "behavior",
+    "check",
+    "library",
+    "interop",
+    "testing",
+    "project",
+    "format",
+    "graph",
 ]
 # The expectations a run compares.
 const RUN: FrozenList[str] = ["expect-stdout", "expect-stdout-contains", "expect-stderr-contains", "expect-exit"]
 # Every expectation a header can declare; `behavior:`, `retires:` and `pending:` belong to every family.
 const EXPECTATIONS: FrozenList[str] = [
-    "expect-formatted", "expect-stdout", "expect-stdout-contains", "expect-stderr-contains", "expect-exit",
-    "expect-diagnostic", "expect-accepted", "expect-dependencies", "expect-std-packages", "expect-active-features",
+    "expect-formatted",
+    "expect-stdout",
+    "expect-stdout-contains",
+    "expect-stderr-contains",
+    "expect-exit",
+    "expect-diagnostic",
+    "expect-accepted",
+    "expect-dependencies",
+    "expect-std-packages",
+    "expect-active-features",
 ]
 
 
@@ -66,8 +81,11 @@ def admitted(family: str, cli: bool = false) -> list[str]:
         if cli:
             return list(RUN)
         return [
-            "expect-dependencies", "expect-std-packages", "expect-active-features",
-            "expect-stderr-contains", "expect-exit",
+            "expect-dependencies",
+            "expect-std-packages",
+            "expect-active-features",
+            "expect-stderr-contains",
+            "expect-exit",
         ]
     mut run = list(RUN)
     run.append("expect-diagnostic")
@@ -94,10 +112,25 @@ pub def admit(fixture: Fixture, header: Header) -> Result[None, str]:
         commands = header.items("cli-commands")
         if len(commands) == 0 or "" in commands:
             return Err("`cli-commands:` requires nonempty command lines")
+    if header.declares("check-edits"):
+        check_edits(fixture, header)?
     # 2. The header declares at least one expectation, and only ones its family compares.
     check_expectations(fixture, header)?
     # 3. The fixture has the shape its family runs.
     return check_shape(fixture, header)
+
+
+def check_edits(fixture: Fixture, header: Header) -> Result[None, str]:
+    """Refuse `check-edits:` outside the check family, and a file list that is empty or leaves the case project."""
+    if fixture.family != "check":
+        return Err("only check fixtures declare `check-edits:`")
+    edits = header.items("check-edits")
+    if len(edits) == 0 or "" in edits:
+        return Err("`check-edits:` requires nonempty file lines")
+    for item in edits:
+        if item.startswith("/") or ".." in item.split("/"):
+            return Err(f"`check-edits:` names files inside the case project, not `{item}`")
+    return Ok(None)
 
 
 def check_expectations(fixture: Fixture, header: Header) -> Result[None, str]:

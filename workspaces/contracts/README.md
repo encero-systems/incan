@@ -15,7 +15,7 @@ The whole test suite stays under about 3,000 tests (#2255).
 | Family | Runs | Compares |
 | --- | --- | --- |
 | `behavior` | `incan run src/main.incn`, or `incan check src/main.incn --format json` when the header declares diagnostics | stdout, stderr, exit code; or the refusal's diagnostic codes |
-| `check` | `incan check src/main.incn --format json` | acceptance (`expect-accepted:`, warnings allowed) or the refusal's codes |
+| `check` | `incan check src/main.incn --format json`, repeated unchanged and after each `check-edits:` entry | acceptance (`expect-accepted:`, warnings allowed) or the refusal's codes; an unchanged repeat's exact replay; a fresh check after each edit |
 | `library` | as `behavior`, for a project with path dependencies; Oven bakes them | as `behavior` |
 | `interop` | as `behavior`, for programs that import through `rust::` | as `behavior` |
 | `testing` | `incan test tests/<name>.incn` | the per-test outcome lines, stderr, exit code |
@@ -52,7 +52,7 @@ When multiple families are selected with at least two jobs, the runner supervise
 
 Full-family runs retain case-name partition hints under an explicit absolute `INCAN_HOME/cache/contract-groups-v2`, scoped to the canonical fixture root. A new scratch directory can use those partitions immediately. Oven validates each group's current compilation inputs, and every selected case executes. Partial-family selections retain only their local scratch plan. Missing or unusable hints trigger partition discovery; optional hint-storage errors preserve ordinary planning. `--no-group-hints` disables shared hints; combine it with fresh scratch to measure discovery. First discovery and fresh compilation with an existing hint are separate timing conditions.
 
-Oven retains compiler-certified deterministic refusals under the same complete input identity as successful builds. An unchanged refusal replays the exact stdout, stderr and normal exit status; editing a source or changing the compiler, features or linked artifacts requires another compilation. Crashes, signals, uncertified failures and missing linked artifacts always retry. The runner reports replayed refusals separately from compiled and reused units; every successful case still executes afresh.
+Oven retains compiler-certified deterministic refusals under the same complete input identity as successful builds. An unchanged refusal replays the exact stdout, stderr and normal exit status; editing a source or changing the compiler, features or linked artifacts requires another compilation. Crashes, signals, uncertified failures and missing linked artifacts always retry. The runner reports replayed refusals separately from compiled and reused units; every successful case still executes afresh. A check is retained the same way: an unchanged `incan check` replays the report and status of its last compiler-certified check, for each report format.
 
 ## Header
 
@@ -75,6 +75,7 @@ The header is the unbroken run of `#` comment lines at the top of the program.
 | `# pending: <reason>` | The case does not hold yet, and why. A pending case that holds fails: its line is stale. |
 | `# graph-commands:` | Inspection arguments, one invocation per indented line, without `incan inspect codegraph`. Only the `graph` family admits this directive. Paths are relative to the fixture project. |
 | `# cli-commands:` | Complete CLI arguments, one whitespace-separated invocation per indented line, without `incan`. Only the `project` family admits this directive. Every invocation independently meets the same stream and exit expectations; unit-description expectations are refused. |
+| `# check-edits:` | Files of the case project, one relative path per indented line. Only the `check` family admits this directive. The check runs again unchanged: it must show the same stdout, stderr and exit code, and Oven must trace it as replayed. Then a comment line is appended to each file in turn and the check runs again: it must show the same output, and Oven must trace that it checked the unit again. Each file's original text is restored. |
 
 A directive is `#`, one space, the key, a colon. Block lines follow their directive, each `#` and at least two spaces; the first line sets the indentation. A bare `#` inside a block is an empty line. A blank line or any other non-comment line ends the header, and a directive after it is refused. Every case declares at least one expectation its family compares; a family refuses the expectations it does not compare.
 

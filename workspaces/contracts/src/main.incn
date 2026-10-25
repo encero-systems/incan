@@ -25,6 +25,7 @@ from fixture import Fixture, discover_family, materialize
 from run import Outcome, clear_trace, invoke, set_timeout, trace_file, unit_notes
 from formatting import compare_format
 from graph import compare_graph
+from check_edits import compare_check_edits
 from cli import compare_cli
 from batch import run_batches, run_separate
 from group_hints import hint_path
@@ -528,6 +529,10 @@ def case_failures(
     mut failures: list[str] = []
     if fixture.family == "project" and header.declares("cli-commands"):
         match compare_cli(incan, project, header):
+            Err(reason) => failures.append(reason)
+            Ok(found) => failures = found
+    elif fixture.family == "check" and header.declares("check-edits"):
+        match compare_check_edits(incan, project, header, command(fixture, header)):
             Err(reason) => failures.append(reason)
             Ok(found) => failures = found
     elif fixture.family == "format":

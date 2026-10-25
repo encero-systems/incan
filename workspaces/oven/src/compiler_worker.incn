@@ -1,4 +1,7 @@
-"""Submit changed units to one serial compiler worker per home, compiler generation and inherited environment."""
+"""
+Submit unit compilations, checks and formatting runs to one serial compiler worker per home, compiler generation and
+inherited environment.
+"""
 
 from rust::std::env import current_dir, vars_os
 from rust::std::ffi import OsString
@@ -13,6 +16,7 @@ from files import discard_file
 from home import owners_dir
 from json_fields import required_text
 from observation import trace, trace_boundary
+from owner_client import status_code
 from owner_endpoint import Endpoint, attach, prepare_directory
 from owner_protocol import Connection, Listener, listen
 from toolchain import Toolchain
@@ -23,11 +27,30 @@ const SCHEMA: str = "incan.compiler-worker/1"
 const READINESS_POLLS: int = 7500
 const IDLE_SECONDS: int = 600
 const MAX_SOCKET_PATH: int = 100
+const MAX_STATUS: int = 255
+
+
+pub model Completion:
+    """A finished compiler invocation: its status, whether it exited normally, and the exact bytes of each stream."""
+
+    pub code: i32
+    # False when the process ended by a signal; its status is then one.
+    pub exited: bool
+    pub output: bytes
+    pub error: bytes
+
+
+pub def served_resident(arguments: list[str]) -> bool:
+    """Whether the worker serves this compiler invocation: a unit compilation, a check or a formatting run."""
+    if len(arguments) == 0:
+        return false
+    command = arguments[0]
+    return command == "--unit" or command == "--check" or command == "--fmt"
 
 
 pub def compile_resident(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32], str]:
     """
-    Compile a unit through the shared worker, or keep the cold path when startup is unavailable.
+    Run a served invocation through the shared worker, or keep the cold path when startup is unavailable.
 
     1. Select private request console sinks, retaining a project owner's existing sinks.
     2. Submit the ordinary compiler invocation without replaying a submitted request.
@@ -45,6 +68,39 @@ pub def compile_resident(toolchain: Toolchain, arguments: list[str]) -> Result[O
             if toolchain.console == "":
                 relay_console(capturing.console)?
             return compiled
+
+
+pub def captured_resident(toolchain: Toolchain, arguments: list[str]) -> Result[Option[Completion], str]:
+    """
+    Run a served invocation through the shared worker and return its completion with the exact bytes it wrote,
+    relaying nothing; `None` keeps the cold path when startup is unavailable.
+
+    1. Select private request console sinks, even for a project owner, so the caller decides where the bytes go.
+    2. Submit the ordinary compiler invocation without replaying a submitted request.
+    3. Collect and withdraw both sinks; a failed submission relays what it wrote to this command's streams.
+    """
+    # 1. Private sinks hold exactly this request's bytes.
+    mut foreground = toolchain
+    foreground.console = ""
+    match capture_for(foreground):
+        Err(reason) =>
+            trace(f"compiler worker: cold path ({reason})")
+            return Ok(None)
+        Ok(capturing) =>
+            # 2. Only a failure before submission permits the original single-process path.
+            compiled = compile_at(capturing, arguments)
+            # 3. A completed request hands its bytes to the caller; any other ending shows them here.
+            match compiled:
+                Ok(Some(code)) =>
+                    output = collected(Path(f"{capturing.console}.out"))?
+                    error = collected(Path(f"{capturing.console}.err"))?
+                    return Ok(Some(Completion(code=code, exited=true, output=output, error=error)))
+                Ok(None) =>
+                    relay_console(capturing.console)?
+                    return Ok(None)
+                Err(reason) =>
+                    relay_console(capturing.console)?
+                    return Err(reason)
 
 
 def capture_for(toolchain: Toolchain) -> Result[Toolchain, str]:
@@ -69,9 +125,7 @@ def relay_console(prefix: str) -> Result[None, str]:
 
 def relay_file(path: Path, error_stream: bool) -> Result[None, str]:
     """Copy a completed compiler stream without changing its encoding or adding a newline."""
-    if not path.is_file():
-        return Ok(None)
-    contents = path.read_bytes().map_err((error) => error.message())?
+    contents = collected(path)?
     if error_stream:
         mut stream = stderr()
         console_result(stream.write_all(contents))?
@@ -80,8 +134,16 @@ def relay_file(path: Path, error_stream: bool) -> Result[None, str]:
         mut stream = stdout()
         console_result(stream.write_all(contents))?
         console_result(stream.flush())?
-    discard_file(path)
     return Ok(None)
+
+
+def collected(path: Path) -> Result[bytes, str]:
+    """The exact bytes a request wrote to one console sink, which is then withdrawn; an absent sink holds none."""
+    if not path.is_file():
+        return Ok(b"")
+    contents = path.read_bytes().map_err((error) => error.message())?
+    discard_file(path)
+    return Ok(contents)
 
 
 def console_result(result: Result[None, IoError]) -> Result[None, str]:
@@ -91,7 +153,7 @@ def console_result(result: Result[None, IoError]) -> Result[None, str]:
 
 def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32], str]:
     """
-    Compile through a shared worker for a project owner, or return `None` before submission for the cold path.
+    Run an invocation through a shared worker, or return `None` before submission for the cold path.
 
     1. Select and connect the worker for this compiler and environment.
     2. Submit the ordinary compiler arguments and this request's console paths and working directory.
@@ -137,7 +199,7 @@ def selected_connection(toolchain: Toolchain, endpoint: Endpoint) -> Result[Conn
     match attach(endpoint)?:
         Some(found) => return Ok(found)
         None => pass
-    # 3. The child must acknowledge this generation before it can receive a unit.
+    # 3. The child must acknowledge this generation before it can receive a request.
     launch(toolchain, endpoint)?
     match attach(endpoint)?:
         Some(found) => return Ok(found)
@@ -189,8 +251,14 @@ def environment() -> Result[list[str], str]:
 
 
 def incidental_environment(name: str) -> bool:
-    """Exclude console routing and the removed bootstrap switch from compiler configuration identity."""
-    return name == "OVEN_TRACE" or name == "RUSTC_BOOTSTRAP"
+    """
+    Exclude console routing, the removed bootstrap switch and the shell's own bookkeeping from compiler configuration
+    identity. A shell rewrites `_`, `PWD`, `OLDPWD` and `SHLVL` for every command and directory; each request carries
+    its actual working directory, so commands from any directory share one worker.
+    """
+    if name == "OVEN_TRACE" or name == "RUSTC_BOOTSTRAP":
+        return true
+    return name == "_" or name == "PWD" or name == "OLDPWD" or name == "SHLVL"
 
 
 def unicode_environment(value: OsString) -> Result[str, str]:
@@ -241,22 +309,23 @@ def await_ready(mut listener: Listener, mut child: Child, endpoint: Endpoint) ->
 
 
 def request(toolchain: Toolchain, arguments: list[str], generation: str) -> Result[JsonValue, str]:
-    """The original unit invocation plus its owner's current working directory and request-local console sinks."""
+    """The original compiler invocation plus its owner's current working directory and request-local console sinks."""
     directory = current_dir().map_err((error) => f"compiler working directory: {error}")?
-    return Ok(
-        JsonValue.object(
-            {"schema": JsonValue.string(SCHEMA), "generation": JsonValue.string(generation),
-            "arguments": JsonValue.array(
-                [JsonValue.string(argument) for argument in arguments],
-            ), "cwd": JsonValue.string(directory.to_string_lossy().into_owned()), "stdout": JsonValue.string(
-                f"{toolchain.console}.out",
-            ), "stderr": JsonValue.string(f"{toolchain.console}.err")},
-        ),
-    )
+    mut fields: Dict[str, JsonValue] = {}
+    fields["schema"] = JsonValue.string(SCHEMA)
+    fields["generation"] = JsonValue.string(generation)
+    fields["arguments"] = JsonValue.array([JsonValue.string(argument) for argument in arguments])
+    fields["cwd"] = JsonValue.string(directory.to_string_lossy().into_owned())
+    fields["stdout"] = JsonValue.string(f"{toolchain.console}.out")
+    fields["stderr"] = JsonValue.string(f"{toolchain.console}.err")
+    return Ok(JsonValue.object(fields))
 
 
 def completion(document: JsonValue) -> Result[Option[i32], str]:
-    """The actual completion code; malformed replies and transport failures authorize no cold replay."""
+    """
+    The actual exit status, which the worker reports as its command would exit; malformed replies and transport
+    failures authorize no cold replay.
+    """
     if required_text(document, "schema")? != SCHEMA:
         return Err("compiler worker completion protocol mismatch")
     if let Some(reason) = document.get("reason"):
@@ -265,10 +334,8 @@ def completion(document: JsonValue) -> Result[Option[i32], str]:
                 return Err(text)
     if let Some(value) = document.get("exit"):
         if let Some(code) = value.as_int():
-            if code == 0:
-                return Ok(Some(0))
-            if code == 1:
-                return Ok(Some(1))
+            if code >= 0 and code <= MAX_STATUS:
+                return Ok(Some(status_code(code)))
     return Err("compiler worker returned no valid completion code")
 
 

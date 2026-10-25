@@ -1,0 +1,9 @@
+[project]
+name = "replay_after_edits"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+values = { path = "deps/values" }

@@ -8,11 +8,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::error::{CliError, CliResult};
 
 /// The schema of a unit description.
 pub const UNIT_DESCRIPTION_SCHEMA: &str = "incan.unit/1";
+
+/// The schema of a toolchain generation's search index, which a unit description names.
+pub const SEARCH_INDEX_SCHEMA: &str = "incan.search-index/1";
 
 /// The entry contract of a compilation unit; all kinds share source analysis and Body IR lowering.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,10 +98,30 @@ pub struct UnitDescription {
     pub vocab_desugarer: bool,
     /// The exact Rust libraries this unit links, including its toolchain and reached Loaves.
     pub externs: Vec<UnitNativeCrate>,
-    /// Directories containing the transitive dependencies of the named libraries.
+    /// Directories containing the transitive dependencies of the named libraries. Once read, this also holds the
+    /// directories of the search index, sorted by their bytes without repeats.
     pub search: Vec<PathBuf>,
+    /// The toolchain generation's search index (`incan.search-index/1`): the directories of the toolchain's crates
+    /// and of its compiled registry, published once by Oven and named by the SHA-256 of its content. The description
+    /// lists in `search` only the directories beyond it.
+    #[serde(default)]
+    pub search_index: Option<PathBuf>,
     /// Rust ABI caches supplied by the toolchain for this unit.
     pub rust_abi: Vec<PathBuf>,
+    /// The `search` directories the description itself lists, without the index's. A library unit's native closure
+    /// publishes these; a consumer of the same toolchain generation adds the index through its own description.
+    #[serde(skip)]
+    pub own_search: Vec<PathBuf>,
+}
+
+/// A toolchain generation's search index, as Oven publishes it.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SearchIndex {
+    /// Always [`SEARCH_INDEX_SCHEMA`].
+    schema: String,
+    /// The directories every unit of the generation searches.
+    search: Vec<PathBuf>,
 }
 
 /// Preserve the default policy when reading unit descriptions written before explicit provider evidence.
@@ -135,7 +159,7 @@ impl UnitDescription {
         let bytes = fs::read(path).map_err(|error| {
             CliError::failure(format!("cannot read the unit description {}: {error}", path.display()))
         })?;
-        let unit: Self = serde_json::from_slice(&bytes)
+        let mut unit: Self = serde_json::from_slice(&bytes)
             .map_err(|error| CliError::failure(format!("{} is not a unit description: {error}", path.display())))?;
         if unit.schema != UNIT_DESCRIPTION_SCHEMA {
             return Err(CliError::failure(format!(
@@ -144,7 +168,51 @@ impl UnitDescription {
                 unit.schema
             )));
         }
+        unit.merge_search_index()?;
         crate::loaf_publication::vocab::prepared_registration(&unit)?;
         Ok(unit)
     }
+
+    /// Keep the description's own directories in `own_search` and merge the search index it names into `search`.
+    /// The merged list is sorted by its bytes without repeats, the order Oven writes a description's directories in.
+    /// [`UnitDescription::read`] does this; a caller that decodes a description itself does it once afterward.
+    pub fn merge_search_index(&mut self) -> CliResult<()> {
+        self.own_search = self.search.clone();
+        let Some(index) = &self.search_index else {
+            return Ok(());
+        };
+        let mut merged = read_search_index(index)?;
+        merged.extend(self.own_search.iter().cloned());
+        merged.sort_by(|left, right| {
+            left.as_os_str()
+                .as_encoded_bytes()
+                .cmp(right.as_os_str().as_encoded_bytes())
+        });
+        merged.dedup();
+        self.search = merged;
+        Ok(())
+    }
+}
+
+/// Read a search index, refusing one whose bytes are not those its name, their SHA-256, promises.
+fn read_search_index(path: &Path) -> CliResult<Vec<PathBuf>> {
+    let bytes = fs::read(path)
+        .map_err(|error| CliError::failure(format!("cannot read the search index {}: {error}", path.display())))?;
+    let named = path.file_stem().and_then(|stem| stem.to_str()).unwrap_or_default();
+    if hex::encode(Sha256::digest(&bytes)) != named {
+        return Err(CliError::failure(format!(
+            "the search index {} does not match the digest it is named by",
+            path.display()
+        )));
+    }
+    let index: SearchIndex = serde_json::from_slice(&bytes)
+        .map_err(|error| CliError::failure(format!("{} is not a search index: {error}", path.display())))?;
+    if index.schema != SEARCH_INDEX_SCHEMA {
+        return Err(CliError::failure(format!(
+            "{} has schema `{}`; this compiler reads `{SEARCH_INDEX_SCHEMA}`",
+            path.display(),
+            index.schema
+        )));
+    }
+    Ok(index.search)
 }

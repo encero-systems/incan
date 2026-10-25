@@ -74,8 +74,11 @@ use std::path::Path;
 use incan_cli::commands::DiagnosticOutputFormat;
 use incan_driver::unit::UnitDescription;
 
-const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [OPTIONS] | --check UNIT SYSROOT [--format \
-                     text|json] [OPTIONS] | --fmt UNIT PATH [--check] | --rust-imports UNIT | --codegraph UNIT SYSROOT OUTPUT | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --identity SYSROOT\n\
+/// The receipt `--check --certify PATH` writes when unchanged inputs reproduce the check's exact report.
+const CHECK_CERTIFICATE: &str = "incan.compiler-check/1\n";
+
+const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [OPTIONS] | \
+                     --check UNIT SYSROOT [--format text|json] [--certify PATH] [OPTIONS] | --fmt UNIT PATH [--check] | --rust-imports UNIT | --codegraph UNIT SYSROOT OUTPUT | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --identity SYSROOT\n\
                      OPTIONS: --rustc-arg ARG, --library (native artifacts and ABI caches come from UNIT)";
 
 /// Compile an Incan unit (`--unit`) or check one (`--check`), each from the unit description Oven wrote, or write the
@@ -90,8 +93,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(unix)]
         Some("--resident") => worker::serve(&args[1..]),
         Some("--unit") => frontend::compile(&args[1..]),
-        Some("--check") => check(&args[1..]),
-        Some("--fmt") => format(&args[1..]),
+        Some("--check") => exit_with(check(&args[1..])?),
+        Some("--fmt") => exit_with(format(&args[1..])?),
         Some("--codegraph") => codegraph::incan(&args[1..]),
         Some("--read-codegraph") => codegraph::read(&args[1..]),
         Some("--rust-codegraph") => rust_codegraph::export(&args[1..]),
@@ -114,8 +117,30 @@ fn verify_sysroot(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
-/// Format a source through the compiler's command function using the unit vocabulary supplied by Oven.
-fn format(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+/// End the process with a command's nonzero status; status zero returns, so `main` completes normally.
+fn exit_with(code: i32) -> Result<(), Box<dyn std::error::Error>> {
+    if code != 0 {
+        std::process::exit(code);
+    }
+    Ok(())
+}
+
+/// Print a failed command's message to stderr and return its status; a command that succeeded has status zero.
+fn status_of<T>(result: incan_cli::CliResult<T>) -> i32 {
+    match result {
+        Ok(_) => 0,
+        Err(error) => {
+            if !error.message.is_empty() {
+                eprintln!("{}", error.message);
+            }
+            error.exit_code.0
+        }
+    }
+}
+
+/// Format a source through the compiler's command function using the unit vocabulary supplied by Oven, and return
+/// the command's status. A short-lived process and the resident worker share this exact path.
+pub(crate) fn format(arguments: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
     let [unit_path, source, options @ ..] = arguments else {
         return Err("usage: incan-rustc-driver --fmt UNIT PATH [--check]".into());
     };
@@ -125,13 +150,8 @@ fn format(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         _ => return Err("usage: incan-rustc-driver --fmt UNIT PATH [--check]".into()),
     };
     let unit = UnitDescription::read(Path::new(unit_path)).map_err(|error| error.message)?;
-    if let Err(error) = incan_cli::commands::format_files(source, &unit, check, false) {
-        if !error.message.is_empty() {
-            eprintln!("{}", error.message);
-        }
-        std::process::exit(error.exit_code.0);
-    }
-    Ok(())
+    let formatted = incan_cli::commands::format_files(source, &unit, check, false);
+    Ok(status_of(formatted))
 }
 
 /// Write the ABI cache of the named Rust crates: every public item, described from rustc's crate metadata.
@@ -166,27 +186,42 @@ fn rust_abi(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Check one unit and exit with the check's status; the report goes to stdout, a refusal's message to stderr. The
-/// unit's crates and their ABI caches supply its Rust facts, as for `--unit`.
-fn check(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+/// Check one unit and return the check's status; the report goes to stdout, a refusal's message to stderr. The
+/// unit's crates and their ABI caches supply its Rust facts, as for `--unit`. A short-lived process and the resident
+/// worker share this exact path.
+///
+/// With `--certify PATH`, a report that unchanged inputs reproduce exactly (a pass, or a refusal by source
+/// diagnostics) also writes the check receipt there, which lets Oven replay it; any other outcome writes none.
+pub(crate) fn check(arguments: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
     let [path, sysroot, rest @ ..] = arguments else {
         return Err(USAGE.into());
     };
-    let (format, options) = match rest {
-        [flag, format, options @ ..] if flag == "--format" => match format.as_str() {
-            "text" => (DiagnosticOutputFormat::Text, options),
-            "json" => (DiagnosticOutputFormat::Json, options),
+    let (format, rest) = match rest {
+        [flag, format, rest @ ..] if flag == "--format" => match format.as_str() {
+            "text" => (DiagnosticOutputFormat::Text, rest),
+            "json" => (DiagnosticOutputFormat::Json, rest),
             _ => return Err(USAGE.into()),
         },
-        options => (DiagnosticOutputFormat::Text, options),
+        rest => (DiagnosticOutputFormat::Text, rest),
     };
+    let (certificate, options) = certified_options(rest);
     let unit = UnitDescription::read(Path::new(path)).map_err(|error| error.message)?;
     let rust = frontend::dependencies(&unit, options)?.rust_facts(&unit, Path::new(sysroot));
-    if let Err(error) = incan_cli::commands::check(&unit, &rust, format) {
-        if !error.message.is_empty() {
-            eprintln!("{}", error.message);
-        }
-        std::process::exit(error.exit_code.0);
+    let checked = incan_driver::check::check_unit(&unit, &rust);
+    let reproducible = checked.as_ref().is_ok_and(|report| report.reproducible);
+    let status = status_of(checked.and_then(|report| incan_cli::commands::render_check_report(report, format)));
+    if reproducible && let Some(certificate) = certificate {
+        // A receipt that cannot be written only means the next unchanged check runs again.
+        let _ = std::fs::write(certificate, CHECK_CERTIFICATE);
     }
-    Ok(())
+    Ok(status)
+}
+
+/// Split a leading `--certify PATH` from a command's native options. The path is where `--check` and `--unit` write
+/// their receipt when unchanged inputs reproduce the outcome exactly; the remaining options are returned as they are.
+pub(crate) fn certified_options(options: &[String]) -> (Option<&Path>, &[String]) {
+    match options {
+        [flag, certificate, options @ ..] if flag == "--certify" => (Some(Path::new(certificate)), options),
+        options => (None, options),
+    }
 }

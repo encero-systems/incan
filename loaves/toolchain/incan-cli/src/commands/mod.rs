@@ -17,6 +17,6 @@ pub mod representation_inspect;
 pub use binding_inspect::{BindingInspectionFormat, inspect_bindings};
 pub use codegraph::{CodegraphInspectionFormat, inspect_codegraph};
 pub use debug::{lex_file, parse_file};
-pub use diagnostics::{DiagnosticOutputFormat, check, explain_diagnostic};
+pub use diagnostics::{DiagnosticOutputFormat, explain_diagnostic, render_check_report};
 pub use format::format_files;
 pub use representation_inspect::{RepresentationInspectionFormat, inspect_representation};

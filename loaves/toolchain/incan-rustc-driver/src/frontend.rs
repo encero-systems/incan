@@ -11,7 +11,6 @@ use incan_driver::modules::{collect_library_modules_detailed_with_session, colle
 use incan_driver::session::{CompilationAnalysis, CompilationSession, RustFactsSetup};
 use incan_driver::unit::{UnitDescription, UnitKind};
 use incan_frontend::ast::{DecoratorArg, DecoratorArgValue, Expr, Literal};
-use incan_frontend::diagnostics::DiagnosticPhase;
 use incan_frontend::library_manifest::LibraryManifest;
 use incan_frontend::loaf_index::{LoafIndex, LoafNativeClosure};
 use incan_frontend::parsed_module::ParsedModule;
@@ -28,26 +27,31 @@ const REFUSAL_REPORT: &str = "INCAN_DIRECT_REFUSAL_REPORT";
 /// An optional side channel for semantic CLI failures, distinct from unsupported lowering or malformed plans.
 const SEMANTIC_REPORT: &str = "INCAN_DIRECT_SEMANTIC_REPORT";
 
-/// A compiler-owned receipt permits Oven to retain only a known deterministic refusal, never an arbitrary failure.
-fn deterministic_refusal() {
-    if let Some(path) = std::env::var_os("INCAN_COMPILER_REFUSAL") {
-        let _ = std::fs::write(path, "incan.compiler-refusal/1\n");
-    }
-}
+/// The receipt `--unit --certify PATH` writes when unchanged inputs reproduce the compilation's refusal exactly.
+const REFUSAL_CERTIFICATE: &str = "incan.compiler-refusal/1\n";
 
-/// Keep resource and source-reading failures retryable; only source diagnostics authorize replay.
-fn diagnostic_refusal(failure: CliDiagnosticFailure) -> String {
-    if !failure.diagnostics.is_empty()
-        && failure.diagnostics.iter().all(|diagnostic| {
-            matches!(
-                diagnostic.phase,
-                DiagnosticPhase::Lex | DiagnosticPhase::Parse | DiagnosticPhase::Typecheck | DiagnosticPhase::Import
-            )
-        })
-    {
-        deterministic_refusal();
+/// Where a compilation certifies a known deterministic refusal, which permits Oven to retain it; never an arbitrary
+/// failure. Without `--certify PATH` it certifies nothing. The path travels with the request, so a short-lived process
+/// and the resident worker certify the same outcomes.
+#[derive(Clone)]
+struct RefusalReceipt(Option<PathBuf>);
+
+impl RefusalReceipt {
+    /// Certify a refusal that unchanged inputs reproduce. A receipt that cannot be written only means the next
+    /// unchanged compilation runs again.
+    fn deterministic(&self) {
+        if let Some(path) = &self.0 {
+            let _ = std::fs::write(path, REFUSAL_CERTIFICATE);
+        }
     }
-    failure.render_human()
+
+    /// Keep resource and source-reading failures retryable; only source diagnostics authorize replay.
+    fn diagnostic(&self, failure: CliDiagnosticFailure) -> String {
+        if failure.reproducible() {
+            self.deterministic();
+        }
+        failure.render_human()
+    }
 }
 
 /// A checked program failure that occurs before an executable can exist.
@@ -171,7 +175,14 @@ fn runtime_declarations(
 /// A library unit collects every authored module, checks each with its package identity and builds its manifest
 /// from the same pass. Bodies with function or nominal-owner type parameters remain governed; other linked
 /// callables name their compiled items.
-fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup, resident: bool) -> Result<CheckedProgram, String> {
+///
+/// A refusal by source diagnostics or by declaration validation is certified through `receipt`.
+fn checked_modules(
+    unit: &UnitDescription,
+    rust: &RustFactsSetup,
+    resident: bool,
+    receipt: &RefusalReceipt,
+) -> Result<CheckedProgram, String> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::checked_modules", input = %unit.source.display()).entered();
     let path = unit.source.canonicalize().map_err(|error| error.to_string())?;
     // The resident process already keeps immutable readings. Its full canonical index needs no on-disk lookup
@@ -190,7 +201,7 @@ fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup, resident: bool
     } else {
         collect_modules_detailed_with_session(path.clone(), &session)
     }
-    .map_err(diagnostic_refusal)?;
+    .map_err(|failure| receipt.diagnostic(failure))?;
     session
         .resolve_rust_facts(&modules)
         .map_err(|error| error.to_string())?;
@@ -205,13 +216,13 @@ fn checked_modules(unit: &UnitDescription, rust: &RustFactsSetup, resident: bool
                     publication.visit(module, checker, module.file_path == path);
                 }
             })
-            .map_err(diagnostic_refusal)?
+            .map_err(|failure| receipt.diagnostic(failure))?
     };
     let entry = modules
         .iter()
         .position(|module| module.file_path == path)
         .ok_or("entry module is missing")?;
-    validate_module_declarations(&modules, &analysis).inspect_err(|_| deterministic_refusal())?;
+    validate_module_declarations(&modules, &analysis).inspect_err(|_| receipt.deterministic())?;
     let manifest = match publication {
         Some(publication) => {
             let manifest = publication
@@ -1174,10 +1185,11 @@ pub(crate) fn compile_resident(arguments: &[String]) -> Result<(), Box<dyn std::
 }
 
 /// Compile one unit with the invocation's immutable-input retention policy; source checking and native execution
-/// remain fresh for both short-lived and resident callers.
+/// remain fresh for both short-lived and resident callers. A leading `--certify PATH` option names where a refusal
+/// that unchanged inputs reproduce writes its receipt.
 fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std::error::Error>> {
     if arguments.len() < 4 {
-        return Err("usage: --unit UNIT CRATE OUTPUT SYSROOT [--rustc-arg ARG] [--library]".into());
+        return Err("usage: --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [--rustc-arg ARG] [--library]".into());
     }
 
     // ---- Checked source and Incan plan ----
@@ -1188,7 +1200,9 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::compile_unit", input = %source_path.display()).entered();
     let identity = crate::identity::verify(Path::new(&arguments[3]))?;
     let output = Path::new(&arguments[2]);
-    let dependencies = dependencies(&unit, &arguments[4..])?;
+    let (certificate, options) = crate::certified_options(&arguments[4..]);
+    let receipt = RefusalReceipt(certificate.map(Path::to_path_buf));
+    let dependencies = dependencies(&unit, options)?;
     if dependencies.library {
         if unit.kind == UnitKind::Test {
             return Err("a test unit cannot also be a library".into());
@@ -1198,13 +1212,16 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     let kind = unit.kind;
     let overflow_checks = unit.profile != "release";
     let loaves = unit.loaves.clone();
+    // A library's closure publishes only the directories beyond the toolchain generation's search index.
+    let published_search = unit.own_search.clone();
     let loaf_links: std::collections::BTreeSet<String> =
         unit.loaves.iter().map(|loaf| loaf.name.replace('-', "_")).collect();
     let rust = dependencies.rust_facts(&unit, Path::new(&arguments[3]));
     let parent = tracing::Span::current();
+    let checking = receipt.clone();
     let checked = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         let _parent = parent.enter();
-        checked_modules(&unit, &rust, resident)
+        checked_modules(&unit, &rust, resident, &checking)
     });
     let program = match checked {
         Ok(program) => program,
@@ -1234,11 +1251,11 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
             kind.as_str().to_owned(),
             &mut published_unions,
         )
-        .inspect_err(|_| deterministic_refusal())?
+        .inspect_err(|_| receipt.deterministic())?
     };
     let Some(plan) = plan else {
         report_missing_entrypoint(&source_path)?;
-        deterministic_refusal();
+        receipt.deterministic();
         return Err(SourceFailure::MissingEntrypoint.into());
     };
     let tests = crate::test_unit::report(&program.tests, &plan.tests)?;
@@ -1259,7 +1276,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     )
     .map_err(|error| {
         if matches!(error, crate::adapter::DriverError::Plan(_)) {
-            deterministic_refusal();
+            receipt.deterministic();
         }
         error.to_string()
     })?;
@@ -1273,7 +1290,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         let directory = output.parent().ok_or("library output has no directory")?;
         let closure = LoafNativeClosure {
             externs: native_externs,
-            search: dependencies.directories.clone(),
+            search: published_search,
             macro_externs: macro_externs(&manifest, &dependencies.externs, &loaf_links),
         };
         write_loaf(

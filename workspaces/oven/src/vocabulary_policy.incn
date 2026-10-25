@@ -1,12 +1,11 @@
 """Lock exact vocabulary provider units and apply the build's explicit native-provider admission policy."""
 
 from std.environ import get_or
-from std.encoding.hex import hexlify
 from std.fs import Path
-from std.hash import sha256
 from std.json import JsonValue
-from files import json_text, read_json
+from files import json_text
 from graph_queries import nested, text
+from manifest_vocabulary import manifest_vocabulary
 from publication import publish
 from unit import UnitDescription
 
@@ -28,8 +27,8 @@ pub def admit_vocabulary(unit: UnitDescription) -> Result[UnitDescription, str]:
         manifest = Path(loaf.dir).joinpath(f"{loaf.name}.incnlib")
         if not manifest.is_file():
             continue
-        document = read_json(manifest)?
-        artifact = nested(nested(document, "vocab"), "desugarer_artifact")
+        declared = manifest_vocabulary(manifest)?
+        artifact = declared.desugarer
         if text(artifact, "artifact_kind") != "NativeWorker":
             continue
         identity = text(artifact, "unit_identity")
@@ -37,10 +36,7 @@ pub def admit_vocabulary(unit: UnitDescription) -> Result[UnitDescription, str]:
             JsonValue.object(
                 {"dependency": JsonValue.string(loaf.key), "loaf": JsonValue.string(loaf.name), "unit_identity": JsonValue.string(
                     identity,
-                ), "manifest_sha256": JsonValue.string(manifest_digest(manifest)?), "worker_sha256": nested(
-                    artifact,
-                    "sha256",
-                )},
+                ), "manifest_sha256": JsonValue.string(declared.digest), "worker_sha256": nested(artifact, "sha256")},
             ),
         )
         # 2. A host may deny all providers even when they are locked dependencies.
@@ -57,9 +53,3 @@ pub def admit_vocabulary(unit: UnitDescription) -> Result[UnitDescription, str]:
         )
         publish(directory.joinpath("providers.lock.json"), json_text(locked)?)?
     return Ok(ready)
-
-
-def manifest_digest(path: Path) -> Result[str, str]:
-    """Lock the exact published manifest bytes, independently of filesystem placement."""
-    bytes = path.read_bytes().map_err((error) => error.message())?
-    return Ok(hexlify(sha256.digest(bytes)))

@@ -63,7 +63,7 @@ A library source named `lib.incn` produces an rlib and checked library sidecars.
 
 ## `incan describe-unit`
 
-Writes the selected source's unit description as JSON with `schema: "incan.unit/1"`. Fields include `source`, `kind`, `program_entries`, `project_root`, `source_root`, `package`, `version`, `profile`, `declared_features`, `active_features`, `loaves`, `rust_crates`, `contract_models`, `c_headers`, `externs`, `search` and `rust_abi`. Each Loaf entry has `key`, `name`, `dir` and `standard`. Execution-only options are refused.
+Writes the selected source's unit description as JSON with `schema: "incan.unit/1"`. Fields include `source`, `kind`, `program_entries`, `project_root`, `source_root`, `package`, `version`, `profile`, `declared_features`, `active_features`, `loaves`, `rust_crates`, `contract_models`, `c_headers`, `externs`, `search`, `search_index` and `rust_abi`. `search_index` names the toolchain generation's search index (`incan.search-index/1`, named by the SHA-256 of its content), and `search` lists only the directories beyond it. Each Loaf entry has `key`, `name`, `dir` and `standard`. Execution-only options are refused.
 
 ## `incan fmt`
 

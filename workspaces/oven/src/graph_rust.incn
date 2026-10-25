@@ -24,7 +24,6 @@ from rust_units import (
 from toolchain import Toolchain
 from unit_freshness import artifact_identity, fingerprint
 
-
 # The version of the key a Rust export is cached under; changing it discards every cached export.
 const EXPORT_DOMAIN: str = "incan.codegraph.rust/4"
 
@@ -79,7 +78,8 @@ def native_context(prepared: GraphDependencies, toolchain: Toolchain) -> Result[
     of the libraries Oven's last build compiled.
     """
     mut inputs = [EXPORT_DOMAIN, artifact_identity(Path(toolchain.driver))?, toolchain.sysroot]
-    mut search = prepared.request.registry.search
+    # The libraries built for the graph; `linking` adds the registry's and the toolchain's directories.
+    mut search: list[str] = []
     for key in sorted([key for key in prepared.built.keys()]):
         library = prepared.built[key]
         inputs = inputs + [library.artifact, artifact_identity(Path(library.artifact))?]

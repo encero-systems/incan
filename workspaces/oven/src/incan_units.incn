@@ -14,12 +14,13 @@ replays them; crashes, signals, resource failures and missing successful outputs
 from rust::std::os::unix::process import CommandExt
 from rust::std::process import Command
 from std.fs import Path
+from compiler_refusals import check_or_replay
 from files import discard_file
 from observation import trace, trace_launch
 from publication import place
 from toolchain import Toolchain
 from unit import UnitDescription
-from unit_compiler import compile_prepared_unit, crate_name, run_compiler, write_unit
+from unit_compiler import compile_prepared_unit, crate_name, described_by, run_compiler, write_unit
 from unit_freshness import Key, install_all, reusable, staleness, unit_key
 from unit_rust import prepare_native
 from shared_link import development_link, library_witness, linkage_key, shared_current
@@ -27,11 +28,23 @@ from vocabulary import stage_vocabulary
 
 
 pub def check_unit(unit: UnitDescription, toolchain: Toolchain, format: str) -> Result[i32, str]:
-    """Check the unit against its crates and their Rust facts; the compiler prints the report. Returns the exit code."""
+    """
+    Check the unit against its crates and their Rust facts; the compiler prints the report. Returns the exit code.
+
+    A unit whose key is unchanged replays the report and status of its last certified check (see `check_or_replay`).
+
+    1. Prepare the dependencies and exact native inputs, and key the prepared unit.
+    2. Publish its description under that key.
+    3. Replay the stored report for this key and format, or check and retain a certified report.
+    """
+    # 1. A dependency whose sources changed is compiled again, which changes the key of the unit checked against it.
     ready = prepare_native(unit, toolchain)?
-    path = write_unit(ready, crate_name(ready))?
+    key = unit_key(ready, toolchain)?
+    # 2. An unchanged description is kept as it is.
+    path = write_unit(ready, crate_name(ready), None, described_by(key))?
+    # 3. The record's identity covers the key and the complete invocation, so text and JSON reports are kept apart.
     arguments = ["--check", path.0, toolchain.sysroot, "--format", format]
-    return run_compiler(toolchain, arguments)
+    return check_or_replay(ready, toolchain, arguments, check_record(ready, format), key)
 
 
 pub def format_unit(unit: UnitDescription, toolchain: Toolchain, source: str, check: bool) -> Result[i32, str]:
@@ -210,3 +223,9 @@ pub def stored_executable(unit: UnitDescription, directory: str) -> Path:
     """Where an executable of a unit is stored: `target/incan/<profile>/<directory>/<crate>` in its project."""
     profile = Path(unit.project_root).joinpath("target").joinpath("incan").joinpath(unit.profile)
     return profile.joinpath(directory).joinpath(crate_name(unit))
+
+
+def check_record(unit: UnitDescription, format: str) -> Path:
+    """Where a unit's last certified check report is retained: `target/incan/<profile>/check/<crate>.<format>`."""
+    stored = stored_executable(unit, "check")
+    return Path(f"{stored.0}.{format}.oven-check")
