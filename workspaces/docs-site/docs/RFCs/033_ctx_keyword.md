@@ -21,6 +21,7 @@
     - RFC 135 (lazy Option defaults)
     - RFC 141 (type matching and named type operations)
     - RFC 143 (clone with field overrides; excludes ctx values)
+    - RFC 163 (compile-time conditions; distinct from runtime ctx contributions)
 - **Issue:** [#167](https://github.com/encero-systems/incan/issues/167)
 - **RFC PR:** —
 - **Written against:** v0.2
@@ -112,6 +113,8 @@ ctx AppConfig(env_prefix="APP_"):
 ```
 
 `env` is an ordinary typed field, mapped to `APP_ENV`. There is no implicit enum selector or special interpretation of a type name. `when` uses a Boolean condition; `==` compares values and `=` contributes configuration values during resolution. The block does not mutate a published instance. No block needs to match when the defaults and external inputs already provide a complete configuration.
+
+RFC 163's proposed compilation `when` is separate: it selects compiled declarations, type members or executable statements using compiler-provided target and feature facts. Within a `ctx` contribution body, `when` keeps this RFC's runtime-resolution semantics and ordinary typed field lookup; it does not acquire the compilation predicate namespace or exclude fields from the declared configuration contract.
 
 ### Model-like access without eager construction
 

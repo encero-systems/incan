@@ -5,7 +5,9 @@
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
     - RFC 020 (offline, locked, and reproducible builds)
+    - RFC 033 (runtime configuration contexts)
     - RFC 036 (declaration decorators)
+    - RFC 114 (package features and compilation-unit feature conditions)
     - RFC 116 (typed C ABI interop)
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 118 (Incan and Oven command-line surfaces)
@@ -22,7 +24,7 @@
 
 ## Summary
 
-Incan compiles for the machine it runs on. RFC 117 already lets a Loaf declare the targets it supports, RFC 118 gives `incan` and `oven` a `--target <triple>` flag, and RFC 119 requires a plan to report its build host and its target separately, but no contract says what an installed toolchain must hold to compile for a target other than its host, or how compilation, conditional compilation, linking, artifacts and execution behave across that split. This RFC supplies that contract. A toolchain release supports a declared set of targets, and support for one target is an installable component. Every unit is compiled either for the host, when it runs during the build, or for the target, when it ships. Conditional compilation uses `when condition:` for groups and `@when(condition)` for individual declarations, with a dedicated compile-time predicate namespace evaluated against the domain a unit is compiled for. A link that needs platform files the host does not hold is refused before any work starts, and a cross-built program is built but never run unless the target executes on the host.
+Incan compiles for the machine it runs on. RFC 117 already lets a Loaf declare the targets it supports, RFC 118 gives `incan` and `oven` a `--target <triple>` flag, and RFC 119 requires a plan to report its build host and its target separately, but no contract says what an installed toolchain must hold to compile for a target other than its host, or how compilation, conditional compilation, linking, artifacts and execution behave across that split. This RFC supplies that contract. A toolchain release supports a declared set of targets, and support for one target is an installable component. Every unit is compiled either for the host, when it runs during the build, or for the target, when it ships. Conditional compilation uses `when condition:` for declaration or statement groups and `@when(condition)` for individual declarations, with a dedicated compile-time predicate namespace evaluated against the domain a unit is compiled for. A link that needs platform files the host does not hold is refused before any work starts, and a cross-built program is built but never run unless the target executes on the host.
 
 ## Core model
 
@@ -152,9 +154,57 @@ def report_startup() -> None:
 
 `features` is the enabled package feature set supplied by the build. `unix`, `target_family`, `target_arch` and `features` are contextual predicate names here, not application variables or imported functions. Conditions support `and`, `or`, `not` and parentheses; for example, `when unix and (x86_64 or aarch64):` selects either listed architecture in the Unix family.
 
+### Inside models and classes
+
+Compilation conditions can select fields and methods inside a model or class. This complete proposed model has a telemetry field only when that package feature is enabled, and a Unix-only method:
+
+```incan
+model WorkerSettings:
+    workers: int = 4
+
+    when "telemetry" in features:
+        trace_enabled: bool = false
+
+    @when(unix)
+    def backend_name(self) -> str:
+        return "unix"
+```
+
+Without telemetry, `trace_enabled` is absent; supplying it to the constructor or accessing it is a checked error. On other target families, `backend_name` is absent. Constructor parameters, reflection, schema, validation and serialization are derived from the selected members. They must not expose placeholder fields or methods for excluded source. Retained members still have to satisfy the type's ordinary composition and trait obligations.
+
+### Inside functions and methods
+
+In an executable body, `when` selects statements in the surrounding lexical scope. This independent example has one retained return for every target:
+
+```incan
+model WorkerSettings:
+    workers: int = 4
+
+    def describe(self) -> str:
+        when unix:
+            return f"Unix worker pool: {self.workers}"
+
+        when not unix:
+            return f"Other worker pool: {self.workers}"
+```
+
+For a Unix-family target, the method is checked as if its body contained only the first return. The selected statements remain at the position of their block, without a new runtime branch or an extra lexical scope. Ordinary binding, ownership, control-flow and return checks apply after selection. For example, omitting the second block would leave a missing-return diagnostic on other targets. Nesting compilation conditions requires all enclosing conditions to hold.
+
+A method's application data does not become a compilation predicate:
+
+```incan
+# Rejected condition inside a method:
+# when self.workers > 4:
+#     ...
+# Diagnostic: compilation conditions cannot read self or application values.
+# Use if self.workers > 4: for this runtime decision.
+```
+
+This does not change RFC 033's `ctx` contribution blocks. A `when env == "prod":` inside a `ctx` declaration evaluates during runtime configuration resolution and retains ordinary typed field lookup. It does not select compiled declarations or acquire this RFC's predicate namespace.
+
 ### Selection and declaration annotations
 
-RFC 148's `@must_use` composes with selection:
+`@when` and RFC 148's `@must_use` are compiler-defined annotations written using decorator syntax. They are not callable wrappers under RFC 036 and do not add runtime wrapper calls. Their distinct compiler semantics compose as follows:
 
 ```incan
 @when(unix)
@@ -220,11 +270,14 @@ error: cannot link for x86_64-pc-windows-msvc on this host
 ### Conditional compilation
 
 - Rust `cfg` predicates in Rust facets and in RFC 119 predicates must be evaluated against the configuration of the unit's domain: the target's configuration for target-domain units, the build host's for host-domain units.
-- Incan must accept `when condition:` for groups of imports and declarations and compiler-owned `@when(condition)` for an individual declaration. Both forms must use the same compile-time condition grammar and evaluation rules. This does not introduce a runtime conditional or an ordinary decorator function.
+- Incan must accept `when condition:` at module declaration scope, in model and class member bodies, and within ordinary synchronous or asynchronous function and method statement bodies. The content must be legal in the surrounding context: member bodies may select fields and methods; executable bodies may select statements. `when` must not admit otherwise invalid forms. Compiler-owned `@when(condition)` must select an individual declaration, including a model, class or method declaration; it must not decorate arbitrary expressions or statements. Both forms must use the same compile-time condition grammar and evaluation rules. This does not introduce a runtime conditional or an ordinary decorator function.
 - The condition grammar must accept target-property comparisons using `==`, membership of a feature name in `features`, the contextual shorthands listed above, Boolean composition with `and`, `or` and `not`, and parentheses. It must not evaluate arbitrary application expressions, attribute lookup or function calls. The existing `feature("name")` compatibility spelling described below is recognized grammar, not a callable expression.
 - Explicit target properties are `target_os`, `target_family`, `target_arch`, `target_env`, `target_vendor`, `target_endian` and `target_pointer_width`. Their comparison values must follow the corresponding Rust target configuration. Family matching must preserve Rust's reported family memberships when a target belongs to more than one family. `features` must represent the unit's enabled package features.
 - Predicate names must be resolved within the compiler's dedicated condition namespace. They require no import and must not be shadowed by application bindings. Outside compilation conditions these contextual spellings must not acquire special meaning from this RFC. Unknown predicate names and unsupported condition expressions must produce source-level diagnostics.
 - Conditions must be evaluated against the domain the module is compiled for before ordinary name resolution, type checking, derives, declaration-metadata checks or user-defined decorator application. Excluded source must remain syntactically valid, but its declarations and imports must not contribute semantic facts or annotation obligations. This ordering must not depend on the written order of annotations.
+- A retained block's contents must occupy its source position in the surrounding lexical scope; compilation selection must not introduce a runtime branch or an extra scope. Nested compilation conditions must require every enclosing condition to hold. Ordinary name binding, ownership, control-flow and return analysis must check the resulting body. A selection that leaves a required return path uncovered or a referenced name absent must produce the ordinary diagnostic for that selected configuration.
+- Model and class construction, member lookup, reflection, schema, validation, serialization and derives must use only retained members. Excluded members must have no constructor argument, stored slot or published member metadata. Retained types must still satisfy ordinary trait, composition and validation contracts; selection must not waive an obligation.
+- Compilation conditions inside a method must retain the dedicated predicate namespace. They must not read `self`, parameters, local values or runtime environment settings; a diagnostic for such use must explain that an ordinary `if` is needed. RFC 033 configuration-contribution `when` blocks retain their separate runtime-resolution semantics and ordinary typed field lookup.
 - A retained declaration's annotations must keep their own contracts. In particular, RFC 148 must check discarded expressions against retained must-use declarations; selection must not change its severity, defaults, exemption rules or deliberate-discard contract.
 - A module compiled in both domains must be checked once per domain; each compilation sees only the declarations its conditions admit. If retained definitions collide, ordinary duplicate-declaration diagnostics must apply; `when` must not choose a winner by source order.
 - The formatter must preserve condition meaning and give both forms a consistent spelling. Explicit property comparisons and their documented shorthands must have identical selection behavior.
@@ -256,11 +309,17 @@ error: cannot link for x86_64-pc-windows-msvc on this host
 
 ### Syntax
 
-`when condition:` and `@when(condition)` share a bounded compile-time condition language. Compiler-provided target properties, enabled package features and documented shorthands live in its dedicated namespace. The syntax reads like a Boolean expression without introducing globally visible `TARGET` or `features` bindings or ordinary `target(...)` calls. The block groups imports and declarations; the annotation selects one declaration under RFC 036's compiler-owned annotation boundary.
+`when condition:` and `@when(condition)` share a bounded compile-time condition language. Compiler-provided target properties, enabled package features and documented shorthands live in its dedicated namespace. The syntax reads like a Boolean expression without introducing globally visible `TARGET` or `features` bindings or ordinary `target(...)` calls. The block selects declarations, members or executable statements according to its surrounding context; the annotation selects one declaration under RFC 036's compiler-owned annotation boundary.
 
 ### Semantics
 
 The truth of a target condition comes from the unit's domain configuration, and feature membership comes from that unit's enabled package features. Declarations in an excluded group or under a false `@when` do not exist for that compilation: they are not checked, not visible to other modules, and not part of the unit's public surface. A module's public surface can therefore differ by target; RFC 124's external identity already includes the target, so consumers compiled for one target never see another target's surface.
+
+### Interaction with RFC 033 and RFC 114
+
+RFC 033 uses `when` within `ctx` declarations to contribute runtime configuration defaults. That is a different grammatical context with a different namespace and evaluation time; this RFC must not reinterpret its selectors as compilation predicates.
+
+RFC 114 defines additive package-feature resolution and its existing positive, compilation-unit declaration conditions. This RFC extends the source condition grammar and the permitted locations; it does not add feature disabling, precedence or a separate feature resolver. Explicitly conditional model or class members make that type's member set configuration-dependent, a scoped extension to RFC 114's restriction on feature-dependent changes to an unconditional type. This must be visible in the selected constructor and published type metadata, with consumers checked against that same selected configuration. It must not silently rewrite a retained field's declared type, waive an unconditional trait obligation or relax provider verification of supported feature projections.
 
 ### Interaction with RFC 036 and RFC 148
 
@@ -317,9 +376,9 @@ Every installation would hold every supported target's standard library and stan
 
 ## Layers affected
 
-- **Parser / AST**: the shared condition grammar for compilation `when` blocks and compiler-owned `@when` annotations, with contextual predicate names.
-- **Typechecker / Symbol resolution**: conditions evaluated per domain before semantic facts or annotation obligations become visible; a module checked once per domain it is compiled in.
-- **IR Lowering**: none beyond compiling a unit for its domain's configuration.
+- **Parser / AST**: the shared compilation condition grammar at module, type-member and executable-body positions, with contextual predicate names and compiler-owned declaration annotations; RFC 033 contribution bodies retain their separate grammar.
+- **Typechecker / Symbol resolution**: conditions evaluated per domain before semantic facts or annotation obligations become visible; selected members determine construction and metadata; selected statement bodies receive ordinary scope, ownership and control-flow checks.
+- **IR Lowering**: only selected declarations, members and statements may reach ordinary lowering; compilation `when` must not become a runtime branch.
 - **Emission**: the selected target reaches the Rust compiler for target-domain units; host-domain units compile for the host.
 - **Stdlib / Runtime (the `incan_std_<component>` facets)**: standard Loaves compiled and published per supported target; platform-specific standard modules written with target predicates.
 - **Formatter**: canonical spelling of target predicates.
@@ -327,9 +386,11 @@ Every installation would hold every supported target's standard library and stan
 
 ## Design Decisions
 
-- **Compile-time conditional with a dedicated namespace:** `when condition:` groups imports and declarations; `@when(condition)` selects one declaration. Both read compiler-provided domain facts and package features rather than application variables.
+- **Compile-time conditional with a dedicated namespace:** `when condition:` selects declaration, member or statement groups according to its surrounding context; `@when(condition)` selects one declaration. Both read compiler-provided domain facts and package features rather than application variables.
 - **Readable conditions:** contextual platform and architecture shorthands have explicit `target_family`, `target_os` and `target_arch` equivalents. Feature selection uses membership in `features`. Boolean `and`, `or`, `not` and parentheses are supported; the condition language does not execute arbitrary application code.
 - **Selection precedes annotations:** excluded source must parse but contributes no ordinary semantic facts. Selection runs before type checking, must-use checks, derives and user-defined decorator application, independent of annotation order. RFC 148 keeps ownership of must-use diagnostic policy.
+
+- **Member and statement contexts:** compilation selection is valid within models, classes, functions and methods. Selected statements share their enclosing scope and receive ordinary control-flow checks; selected members determine the actual type contract and generated metadata. Runtime `ctx` contributions remain governed by RFC 033.
 
 ## Unresolved questions
 

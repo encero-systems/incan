@@ -325,6 +325,8 @@ when feature("json"):
 
 At compilation-unit scope, the block may contain imports, reexports, declarations, registry entries, or other forms that are otherwise valid at that scope. The condition is evaluated while the active source projection is built; it does not execute user code. `when` is the general compile-time conditional form and `feature(...)` is one typed compiler predicate, so the language does not acquire a narrowly scoped `feature` statement. The initial grammar accepts only positive feature predicates and conjunctions of positive feature predicates. Negation, disjunction, target predicates, values, and runtime expressions remain outside this RFC.
 
+RFC 163 proposes a separate extension to this implemented baseline: contextual target and feature predicates, Boolean conditions, compiler-owned `@when`, and selection within type-member and executable bodies. Explicit conditional members would determine a configuration-specific type shape under that RFC's selected-metadata contract. These additions are proposed, not implementation claims for RFC 114. This RFC continues to own additive feature resolution and provider projection verification.
+
 ### Implementation facets
 
 A provider may declare deterministic mappings from active semantic facts to implementation facets. For example, use of `std.web` may require one web facet, and that facet may map to a Cargo crate feature and several Rust dependencies for the current backend. The mapping belongs to the provider artifact and is validated when the provider is built.

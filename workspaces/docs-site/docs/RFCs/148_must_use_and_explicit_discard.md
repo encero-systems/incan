@@ -17,7 +17,7 @@
 
 ## Summary
 
-Propose `@must_use` on value types and callable declarations, with source-level diagnostics when an expression statement discards a protected result. `@may_discard` is the candidate callable-specific exemption. The proposal covers discarded expressions; it does not claim that a bound resource was finalized or that a variable was subsequently used. Diagnostic severity, the explicit-discard spelling, and exemption precedence remain open.
+Propose compiler-defined `@must_use` annotations on value types and callable declarations, with source-level diagnostics when an expression statement discards a protected result. `@may_discard` is the candidate callable-specific exemption. The proposal covers discarded expressions; it does not claim that a bound resource was finalized or that a variable was subsequently used. Diagnostic severity, the explicit-discard spelling, and exemption precedence remain open.
 
 ## Motivation
 
@@ -39,7 +39,7 @@ A checked conversion can fail correctly while the application accidentally ignor
 
 ## Guide-level explanation
 
-These decorators are proposed. The application function below is fully defined; Result and ordinary control flow are existing language facilities.
+These compiler-defined annotations use decorator syntax; they do not resolve to ordinary decorator functions or add runtime wrapper calls. They are proposed. The application function below is fully defined; Result and ordinary control flow are existing language facilities.
 
 ```incan
 @must_use(message="check whether the requested count is valid")
@@ -76,11 +76,12 @@ Here the returned Price matters because the method constructs a replacement. The
 
 ## Reference-level explanation
 
+- `@must_use` and the candidate `@may_discard` must be compiler-defined declaration annotations, not ordinary callable decorators under RFC 036. They must not add runtime wrappers.
 - A must-use check must apply to an expression statement whose resolved callable or resulting type carries the obligation.
 - A binding, return, argument, or enclosing expression must not be diagnosed as a direct discard merely because its value may later go unused.
 - Annotation arguments must be compile-time metadata. Messages must remain subject to RFC 103's non-disclosure rules.
 - The obligation must follow canonical declaration identity across imports, aliases, and package metadata.
-- RFC 163 compilation selection must happen before must-use annotation checks, regardless of annotation order. An excluded declaration or type must contribute no must-use obligation. A retained declaration must follow this RFC unchanged; the compilation predicate namespace must not change ordinary metadata argument lookup.
+- RFC 163 compilation selection must happen before must-use annotation checks, regardless of annotation order. An excluded declaration, type, member or statement must contribute no must-use obligation. Calls retained in selected method or function bodies must receive the same discard checks as ordinary calls. A retained declaration must follow this RFC unchanged; the compilation predicate namespace must not change ordinary metadata argument lookup.
 - A container must not implicitly become must-use because its element or field type is marked.
 - Result and Option are proposed built-in must-use types; this default requires an explicit compatibility decision before acceptance.
 - If both a callable and its result type carry an obligation, one diagnostic must identify both relevant declarations rather than emitting duplicates.
