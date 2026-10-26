@@ -5,12 +5,14 @@
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
     - RFC 020 (offline, locked, and reproducible builds)
+    - RFC 036 (declaration decorators)
     - RFC 116 (typed C ABI interop)
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 118 (Incan and Oven command-line surfaces)
     - RFC 119 (Oven-native Rust build facets and Cargo interoperation)
     - RFC 124 (Oven store unit identity and cross-plan artifact sharing)
     - RFC 125 (`incan.pub` Loaf registry and baked asset distribution)
+    - RFC 148 (must-use values and deliberate discard)
     - RFC 159 (Cloves and the managed C toolchain)
     - RFC 160 (vocabulary in Incan and native desugarers)
 - **Issue:** —
@@ -20,7 +22,7 @@
 
 ## Summary
 
-Incan compiles for the machine it runs on. RFC 117 already lets a Loaf declare the targets it supports, RFC 118 gives `incan` and `oven` a `--target <triple>` flag, and RFC 119 requires a plan to report its build host and its target separately, but no contract says what an installed toolchain must hold to compile for a target other than its host, or how compilation, conditional compilation, linking, artifacts and execution behave across that split. This RFC supplies that contract. A toolchain release supports a declared set of targets, and support for one target is an installable component. Every unit is compiled either for the host, when it runs during the build, or for the target, when it ships. Conditional compilation, including a new target predicate for Incan's `when` blocks, evaluates against the domain a unit is compiled for. A link that needs platform files the host does not hold is refused before any work starts, and a cross-built program is built but never run unless the target executes on the host.
+Incan compiles for the machine it runs on. RFC 117 already lets a Loaf declare the targets it supports, RFC 118 gives `incan` and `oven` a `--target <triple>` flag, and RFC 119 requires a plan to report its build host and its target separately, but no contract says what an installed toolchain must hold to compile for a target other than its host, or how compilation, conditional compilation, linking, artifacts and execution behave across that split. This RFC supplies that contract. A toolchain release supports a declared set of targets, and support for one target is an installable component. Every unit is compiled either for the host, when it runs during the build, or for the target, when it ships. Conditional compilation uses `when condition:` for groups and `@when(condition)` for individual declarations, with a dedicated compile-time predicate namespace evaluated against the domain a unit is compiled for. A link that needs platform files the host does not hold is refused before any work starts, and a cross-built program is built but never run unless the target executes on the host.
 
 ## Core model
 
@@ -45,7 +47,7 @@ Incan source also has no way to express platform differences. `when feature("nam
 
 - Define what an installed toolchain holds to compile for a target other than its host, and how that support is installed and identified.
 - Define which units compile for the host and which for the target, so build-time code runs on the build host and shipped code runs on the target.
-- Make Rust `cfg` predicates and Incan conditional compilation evaluate against the right domain, and add a target predicate to Incan's `when` conditions.
+- Make Rust `cfg` predicates and Incan conditional compilation evaluate against the right domain, and expose platform, architecture and feature conditions through Incan's compile-time `when` forms.
 - Refuse, before execution, a link whose platform files are not available on the build host, and name what is missing.
 - Name and place artifacts by the target's conventions.
 - Keep a target-domain unit interchangeable across build hosts, so a unit cross-built on one host and the same unit built on the target are one RFC 124 unit when their identity inputs match.
@@ -94,23 +96,80 @@ Selecting a triple the Loaf does not list is refused with a diagnostic naming th
 
 ### Code that differs by platform
 
-Incan's `when` blocks gain a target predicate:
+The proposed `when` form is a compile-time conditional with a dedicated predicate namespace. The block form groups imports and declarations:
 
 ```incan
-when target(family="unix"):
+when unix:
     from rust::std::os::unix::fs import symlink
 
-    def link_file(source: Path, link: Path) -> Result[None, str]:
-        return symlink(source, link).map_err((error) => error.to_string())
+    def platform_label() -> str:
+        return "Unix"
 
-when target(os="windows"):
+when windows:
     from rust::std::os::windows::fs import symlink_file
 
-    def link_file(source: Path, link: Path) -> Result[None, str]:
-        return symlink_file(source, link).map_err((error) => error.to_string())
+    def platform_label() -> str:
+        return "Windows"
 ```
 
-The condition is evaluated when the module is compiled, for the target it is compiled for. Only the matching block's declarations and imports exist for that compilation. A build for a target that matches neither block refuses any use of `link_file` with an ordinary unresolved-name diagnostic.
+The Rust imports name the platform APIs directly; they exist only in the selected block. Each selected `platform_label` is a complete function. A use of `platform_label` on a target matching neither block receives an ordinary unresolved-name diagnostic naming the active target.
+
+For one declaration, `@when(condition)` expresses the same selection:
+
+```incan
+@when(macos and aarch64)
+def platform_label() -> str:
+    return "macOS on ARM64"
+
+@when(linux and x86_64)
+def platform_label() -> str:
+    return "Linux on x86-64"
+```
+
+These examples are separate modules illustrating alternatives, not declarations to append to the previous example. The compiler selects declarations before ordinary name resolution and type checking. Excluded code must still be syntactically valid.
+
+Common contextual shorthands have explicit equivalents:
+
+| Shorthand | Equivalent condition |
+| --- | --- |
+| `unix` | `target_family == "unix"` |
+| `windows` | `target_family == "windows"` |
+| `macos` | `target_os == "macos"` |
+| `linux` | `target_os == "linux"` |
+| `x86_64` | `target_arch == "x86_64"` |
+| `aarch64` | `target_arch == "aarch64"` |
+| `wasm32` | `target_arch == "wasm32"` |
+
+A macOS target satisfies both `unix` and `macos`. Family and operating system are distinct facts. Architecture names identify exact architectures; `aarch64` does not mean 32-bit ARM.
+
+Several package features can be enabled together, so feature conditions use membership:
+
+```incan
+@when(unix and "telemetry" in features)
+def report_startup() -> None:
+    println("Application started")
+```
+
+`features` is the enabled package feature set supplied by the build. `unix`, `target_family`, `target_arch` and `features` are contextual predicate names here, not application variables or imported functions. Conditions support `and`, `or`, `not` and parentheses; for example, `when unix and (x86_64 or aarch64):` selects either listed architecture in the Unix family.
+
+### Selection and declaration annotations
+
+RFC 148's `@must_use` composes with selection:
+
+```incan
+@when(unix)
+@must_use(message="use the selected backend name")
+def backend_name() -> str:
+    return "unix"
+
+when unix:
+    def show_backend() -> None:
+        backend_name()           # RFC 148 diagnostic: discarded expression.
+        println(backend_name())  # Value passed to another function.
+        name = backend_name()    # Binding is outside RFC 148's discard check.
+```
+
+On other targets, neither function exists. Selection happens before annotation semantics, derives or user-defined decorator application, regardless of annotation order. The predicate namespace belongs only to compilation `when` conditions; it does not change ordinary argument lookup for other annotations. RFC 148 continues to own must-use defaults, severity and deliberate-discard spelling.
 
 ### What runs where
 
@@ -161,10 +220,14 @@ error: cannot link for x86_64-pc-windows-msvc on this host
 ### Conditional compilation
 
 - Rust `cfg` predicates in Rust facets and in RFC 119 predicates must be evaluated against the configuration of the unit's domain: the target's configuration for target-domain units, the build host's for host-domain units.
-- Incan `when` conditions must accept a target predicate, `target(key="value", ...)`, alongside `feature("name")`. The keys are `os`, `family`, `arch`, `env`, `vendor`, `endian` and `pointer_width`, with the values Rust's target configuration reports for those keys. A predicate holds when every named key has the named value. Unknown keys must be refused.
-- A target predicate must be evaluated against the domain the module is compiled for, before semantic facts become visible, exactly as feature predicates are. It combines with `and` and nests like a feature predicate.
-- A module compiled in both domains must be checked once per domain; each compilation sees only the declarations its conditions admit.
-- The formatter must give equivalent target predicates one canonical spelling, as it does for feature predicates.
+- Incan must accept `when condition:` for groups of imports and declarations and compiler-owned `@when(condition)` for an individual declaration. Both forms must use the same compile-time condition grammar and evaluation rules. This does not introduce a runtime conditional or an ordinary decorator function.
+- The condition grammar must accept target-property comparisons using `==`, membership of a feature name in `features`, the contextual shorthands listed above, Boolean composition with `and`, `or` and `not`, and parentheses. It must not evaluate arbitrary application expressions, attribute lookup or function calls. The existing `feature("name")` compatibility spelling described below is recognized grammar, not a callable expression.
+- Explicit target properties are `target_os`, `target_family`, `target_arch`, `target_env`, `target_vendor`, `target_endian` and `target_pointer_width`. Their comparison values must follow the corresponding Rust target configuration. Family matching must preserve Rust's reported family memberships when a target belongs to more than one family. `features` must represent the unit's enabled package features.
+- Predicate names must be resolved within the compiler's dedicated condition namespace. They require no import and must not be shadowed by application bindings. Outside compilation conditions these contextual spellings must not acquire special meaning from this RFC. Unknown predicate names and unsupported condition expressions must produce source-level diagnostics.
+- Conditions must be evaluated against the domain the module is compiled for before ordinary name resolution, type checking, derives, declaration-metadata checks or user-defined decorator application. Excluded source must remain syntactically valid, but its declarations and imports must not contribute semantic facts or annotation obligations. This ordering must not depend on the written order of annotations.
+- A retained declaration's annotations must keep their own contracts. In particular, RFC 148 must check discarded expressions against retained must-use declarations; selection must not change its severity, defaults, exemption rules or deliberate-discard contract.
+- A module compiled in both domains must be checked once per domain; each compilation sees only the declarations its conditions admit. If retained definitions collide, ordinary duplicate-declaration diagnostics must apply; `when` must not choose a winner by source order.
+- The formatter must preserve condition meaning and give both forms a consistent spelling. Explicit property comparisons and their documented shorthands must have identical selection behavior.
 
 ### Linking and platform files
 
@@ -193,11 +256,15 @@ error: cannot link for x86_64-pc-windows-msvc on this host
 
 ### Syntax
 
-`target(...)` is a new predicate inside the existing `when` form; no new statement is introduced. Keyword arguments name configuration keys rather than taking one Rust `cfg` string, so the formatter can sort and deduplicate them and diagnostics can name the key that did not match. `family="unix"` and `family="windows"` cover the common split; `os` distinguishes `macos`, `linux` and `windows` when the family is not enough.
+`when condition:` and `@when(condition)` share a bounded compile-time condition language. Compiler-provided target properties, enabled package features and documented shorthands live in its dedicated namespace. The syntax reads like a Boolean expression without introducing globally visible `TARGET` or `features` bindings or ordinary `target(...)` calls. The block groups imports and declarations; the annotation selects one declaration under RFC 036's compiler-owned annotation boundary.
 
 ### Semantics
 
-A `when target(...)` block behaves like a `when feature(...)` block whose truth comes from the domain's target configuration instead of the package's feature set. Declarations in a block whose condition is false do not exist for that compilation: they are not checked, not visible to other modules, and not part of the unit's public surface. A module's public surface can therefore differ by target; RFC 124's external identity already includes the target, so consumers compiled for one target never see another target's surface.
+The truth of a target condition comes from the unit's domain configuration, and feature membership comes from that unit's enabled package features. Declarations in an excluded group or under a false `@when` do not exist for that compilation: they are not checked, not visible to other modules, and not part of the unit's public surface. A module's public surface can therefore differ by target; RFC 124's external identity already includes the target, so consumers compiled for one target never see another target's surface.
+
+### Interaction with RFC 036 and RFC 148
+
+Compilation selection precedes declaration annotation semantics. `@when` is a compiler-owned selector, not a callable wrapper under RFC 036. RFC 148's `@must_use` records an obligation only on a retained declaration or type; an excluded declaration has no must-use obligation. The predicate namespace is local to selection conditions, and does not turn other annotations' arguments into compilation predicates. This RFC settles composition and ordering, not RFC 148's remaining diagnostic-policy decisions.
 
 ### Interaction with RFC 117 and RFC 118
 
@@ -221,7 +288,7 @@ Vocabulary desugarers run during the build, so they are host-domain units. A cro
 
 ### Compatibility / migration
 
-Builds that select no target are unchanged: the target is the host, and outputs keep their location. Existing `when feature(...)` blocks are unchanged. Code that today assumes it runs on the build host, such as reading the host's operating system at compile time, keeps working for host builds and must use a target predicate to be correct in a cross build.
+Builds that select no target are unchanged: the target is the host, and outputs keep their location. Existing `when feature("name"):` blocks retain their feature-selection behavior as a compatibility spelling within the condition grammar; `"name" in features` is the preferred new spelling. The compatibility form is a compiler predicate, not ordinary function lookup, and must not permit arbitrary calls. Code that today assumes it runs on the build host, such as reading the host's operating system at compile time, keeps working for host builds and must use domain-aware target conditions to be correct in a cross build.
 
 ## Alternatives considered
 
@@ -231,7 +298,7 @@ This is the current state. It needs a machine of every target to build anything 
 
 ### Accept Rust `cfg` strings in `when`
 
-`when cfg('target_os = "windows"'):` would reuse Rust's predicate language directly. It puts a second expression language inside a string, gives the formatter nothing to normalize, and lets unrelated Rust configuration keys into Incan source. Keyword arguments over a closed key set are checkable and formattable; whether to also accept `any`/`not` combinators is left open below.
+`when cfg('target_os = "windows"'):` would reuse Rust's predicate language directly. It puts a second expression language inside a string, gives the formatter nothing to normalize, and lets unrelated Rust configuration keys into Incan source. A dedicated condition namespace with explicit properties and Boolean operators is checkable and formattable without embedding Rust grammar in a string.
 
 ### Download target support on demand
 
@@ -250,18 +317,23 @@ Every installation would hold every supported target's standard library and stan
 
 ## Layers affected
 
-- **Parser / AST**: the `target(...)` predicate in `when` conditions.
-- **Typechecker / Symbol resolution**: target predicates evaluated per domain before semantic facts become visible; a module checked once per domain it is compiled in.
+- **Parser / AST**: the shared condition grammar for compilation `when` blocks and compiler-owned `@when` annotations, with contextual predicate names.
+- **Typechecker / Symbol resolution**: conditions evaluated per domain before semantic facts or annotation obligations become visible; a module checked once per domain it is compiled in.
 - **IR Lowering**: none beyond compiling a unit for its domain's configuration.
 - **Emission**: the selected target reaches the Rust compiler for target-domain units; host-domain units compile for the host.
 - **Stdlib / Runtime (the `incan_std_<component>` facets)**: standard Loaves compiled and published per supported target; platform-specific standard modules written with target predicates.
 - **Formatter**: canonical spelling of target predicates.
 - **LSP / Tooling**: analysis for a selected target; diagnostics that name the target of a missing declaration; `incan toolchain target add` and `incan toolchain target list`; plans and receipts that show both domains.
 
+## Design Decisions
+
+- **Compile-time conditional with a dedicated namespace:** `when condition:` groups imports and declarations; `@when(condition)` selects one declaration. Both read compiler-provided domain facts and package features rather than application variables.
+- **Readable conditions:** contextual platform and architecture shorthands have explicit `target_family`, `target_os` and `target_arch` equivalents. Feature selection uses membership in `features`. Boolean `and`, `or`, `not` and parentheses are supported; the condition language does not execute arbitrary application code.
+- **Selection precedes annotations:** excluded source must parse but contributes no ordinary semantic facts. Selection runs before type checking, must-use checks, derives and user-defined decorator application, independent of annotation order. RFC 148 keeps ownership of must-use diagnostic policy.
+
 ## Unresolved questions
 
 - Which target should the language server analyze a module for when its Loaf declares several targets: the host, the first declared target, or each declared target in turn?
-- Should target predicates accept `any(...)` and `not(...)` combinators, or stay positive-only like feature predicates?
 - Does a Loaf that declares no `[targets.*]` block support every target its toolchain supports, or only its build host?
 - Should `--target` also accept the name of a `[targets.<name>]` block, building every triple it lists?
 - What exit status should `run` and `test` use when execution is skipped on an incompatible host?

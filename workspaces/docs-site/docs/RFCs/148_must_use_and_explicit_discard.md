@@ -9,6 +9,7 @@
     - RFC 103 (secret-safe diagnostics)
     - RFC 128 (callable signatures)
     - RFC 131 (typed error propagation)
+    - RFC 163 (cross-target builds and compile-time declaration selection)
 - **Issue:** [#1286](https://github.com/encero-systems/incan/issues/1286)
 - **RFC PR:** —
 - **Written against:** v0.6
@@ -79,6 +80,7 @@ Here the returned Price matters because the method constructs a replacement. The
 - A binding, return, argument, or enclosing expression must not be diagnosed as a direct discard merely because its value may later go unused.
 - Annotation arguments must be compile-time metadata. Messages must remain subject to RFC 103's non-disclosure rules.
 - The obligation must follow canonical declaration identity across imports, aliases, and package metadata.
+- RFC 163 compilation selection must happen before must-use annotation checks, regardless of annotation order. An excluded declaration or type must contribute no must-use obligation. A retained declaration must follow this RFC unchanged; the compilation predicate namespace must not change ordinary metadata argument lookup.
 - A container must not implicitly become must-use because its element or field type is marked.
 - Result and Option are proposed built-in must-use types; this default requires an explicit compatibility decision before acceptance.
 - If both a callable and its result type carry an obligation, one diagnostic must identify both relevant declarations rather than emitting duplicates.
@@ -105,6 +107,10 @@ Built-in Result and Option protection will surface existing silent discards. An 
 - **Checked declaration metadata:** obligations, reasons, and exemptions across package boundaries.
 - **Typechecker / diagnostics:** expression-discard checks and source locations.
 - **LSP / documentation:** visible obligations and deliberate-discard guidance.
+
+## Design Decisions
+
+- **Composition with compile-time selection:** RFC 163's `@when(condition)` and `when condition:` select declarations before annotation semantics. `@must_use` applies only to retained declarations and types. This ordering does not decide the diagnostic defaults or discard mechanisms still open below.
 
 ## Unresolved questions
 
