@@ -265,11 +265,11 @@ error FixtureError:
 
 def read_fixture(path: str) -> Result[str, FixtureError]:
     return Path(path).read_text("utf-8", "strict").map_err(
-        (error) => FixtureError.ReadFailed(path=path, cause=error)
+        FixtureError.ReadFailed, path=path
     )
 ```
 
-`map_err` receives the error inside `Err`, calls the supplied function, and wraps its returned value in `Err`. It leaves `Ok` untouched. The expression above has the same Result branch and payload behavior as:
+`map_err` leaves `Ok` untouched. On `Err`, this constructor form binds the supplied `path`, fills the one remaining compatible field `cause` from the incoming error, and constructs the replacement. It has the same Result branch and payload behavior as:
 
 ```incan
 match Path(path).read_text("utf-8", "strict"):
@@ -281,17 +281,17 @@ match Path(path).read_text("utf-8", "strict"):
 
 The original `IoError` is retained as a field. The rendering declaration adds the failed operation's path without automatically appending the cause's message. This Draft does not assign a shared traversal role based only on the field name.
 
-The constructor overload expresses the same mapping without a closure:
+A custom callback remains available when the mapping needs application logic:
 
 ```incan
 return Path(path).read_text("utf-8", "strict").map_err(
-    FixtureError.ReadFailed, path=path
+    (error) => FixtureError.ReadFailed(path=path, cause=error)
 )
 ```
 
-Supplying `path` leaves exactly one required field, `cause`. The overload checks that it accepts the incoming `IoError` and constructs the replacement only on failure. The closure form remains available for more customized mappings. Both forms are proposed source behavior for declared error case constructors.
+In the constructor form, supplying `path` leaves exactly one required field, `cause`. The overload checks that it accepts the incoming `IoError` and constructs the replacement only on failure. The closure form remains available for more customized mappings. Both forms are proposed source behavior for declared error case constructors.
 
-There are two ways to establish a diagnostic relationship. `caused_by = cause` declares that a stored field is an upstream error; the compiler checks the declaration, and the actual field value supplies the relationship at runtime. An error-to-error `map_err` conversion also knows which incoming failure produced the outgoing failure, so it is a candidate automatic linkage boundary. The word `cause` in this example is an ordinary payload field, not a reserved keyword or a second diagnostic declaration.
+There are two ways to establish a diagnostic relationship. `caused_by = cause` declares that a stored field is an upstream error; the compiler checks the declaration, and the actual field value supplies the relationship at runtime. An error-to-error `map_err` conversion also knows which incoming failure produced the outgoing failure, so it must retain that observed diagnostic relationship automatically in both constructor and callback forms. The word `cause` in this example is an ordinary payload field, not a reserved keyword or a second diagnostic declaration.
 
 The declaration still matters when constructing a wrapper directly rather than through a combinator:
 
@@ -300,6 +300,47 @@ return Err(FixtureError.ReadFailed(path=path, cause=original))
 ```
 
 It also expresses several upstream relationships, such as `caused_by = read_failure, fallback_failure`, where one conversion input is insufficient to describe the diagnostic. Both declarative and conversion-established relationships connect runtime error values. The distinction is where the relationship is specified, rather than whether the error itself exists at compile time or runtime. A relationship exposed through both mechanisms should appear only once in traversal; automatic retention and duplicate handling require the contract described under runtime provenance.
+
+### Add a diagnostic wrapper without repeating an original field
+
+A wrapper may supply all of its own fields and leave the upstream link to the observed conversion boundary. This complete independent example uses no closure or manually repeated cause declaration:
+
+```incan
+error ReadError:
+    Denied:
+        path: str
+        message = f"Read denied: {path}"
+
+error LoadError:
+    Failed:
+        path: str
+        message = f"Cannot load {path}."
+
+error StartupError:
+    Failed:
+        message = "Application cannot start."
+
+def read_settings(path: str) -> Result[str, ReadError]:
+    return Err(ReadError.Denied(path=path))
+
+def load_settings(path: str) -> Result[str, LoadError]:
+    return read_settings(path).map_err(LoadError.Failed, path=path)
+
+def main() -> Result[None, StartupError]:
+    settings = load_settings("settings.cfg").map_err(StartupError.Failed)?
+    println(settings)
+    return Ok(None)
+```
+
+Both mapping constructors have no unfilled required fields. Each adds its wrapper and automatically retains the incoming diagnostic chain. The standard entrypoint report shows all available upstream links:
+
+```text
+Application cannot start.
+  upstream: Cannot load settings.cfg.
+    upstream: Read denied: settings.cfg
+```
+
+The report also includes available origins and enabled captured stacks at their corresponding failures. Showing the whole retained chain does not enable stack capture, reconstruct unavailable frames or bypass secret non-disclosure. No manual traversal is required for this report. Automatic retention guarantees diagnostics; actual typed payload retention through a constructor-owned cause slot remains an open umbrella proposal, separate from this zero-unfilled-field mapping rule.
 
 ### Diagnose causes and execution locations together
 
@@ -530,7 +571,7 @@ The rules below define the agreed declaration model and required integration out
 8. Native error classification and dispatch must use the defining case's typed identity. Diagnostic labels identifying a case must derive from its definition rather than require a separately authored string code. This RFC must not introduce an additional code declaration for error classification. Composition and widening must preserve the original case identity independently of message wording.
 9. `caused_by = expression` must explicitly declare upstream diagnostic relationships. The accepted value must be one error, an optional error, or a tuple of errors conforming to the common error interface; tuple members may have different concrete error types. An optional error must contribute its retained member for Some(error) and no member for None, without changing the payload field's Option type. This rule must not erase the separately declared payload types or require a first-class trait-object type in source.
 10. A single error must normalize to a one-member cause view. Comma-separated expressions must form the tuple without requiring parentheses: `caused_by = first, second` and `caused_by = (first, second)` must be equivalent. The declaration must be evaluated once when the error value is constructed, and its selected relationships must be retained. Traversal must preserve declaration order and must not permit adding, removing, or replacing declared members, or reevaluate the declaration to select different causes. This membership guarantee must not imply deep immutability of all retained payloads.
-11. Runtime diagnostic retention should preserve known upstream failures at supported wrapping, decoding, and aggregation boundaries even without an explicit cause declaration. It must not infer causal relationships solely from field names or nearby control flow. Its interaction with declared causes and the shared traversal interface remains open.
+11. Runtime diagnostic retention should preserve known upstream failures at supported wrapping, decoding, and aggregation boundaries even without an explicit cause declaration. It must not infer causal relationships solely from field names or nearby control flow. At native error-to-error `map_err`, automatic linkage is required. Declared direct relationships must precede other distinct automatic links; matching relationship occurrences must be deduplicated without merging independent failures. Additional automatic boundaries remain open.
 12. Diagnostic metadata must distinguish an error's known failure origin, an available captured stack, and any recorded propagation or conversion sites. A cause declaration must not be presented as a stack frame. Missing, disabled, or unsupported trace capture must not be represented as a complete trace.
 13. Propagation and wrapping must preserve available upstream origin and trace information. An additional wrapper location must not replace an upstream failure's origin. Aggregates must preserve each retained member's available diagnostics rather than substituting the final reporting location for every member.
 14. The common `Error` interface must expose `caused_by() -> CauseView`, with CauseView supplied by proposed std.diagnostics, as an ordered, read-only borrowed view of direct upstream errors. Reading the view must not consume or copy the retained errors or permit replacing its members. Each member must expose the common error interface so callers can traverse further upstream. An error with no exposed upstream relationships must provide an empty view. The existing `source() -> Option[str]` contract must remain available for compatibility; an old textual source must not silently become a synthetic error value. The view must not outlive its owning failure. The owner must retain any computed causes selected once at construction; iteration must not add an implicit Clone requirement. Provider adapters must expose only the diagnostics actually available to them.
@@ -553,7 +594,7 @@ The rules below define the agreed declaration model and required integration out
 6. Generated callables must publish their checked success and error types and payload/diagnostic capability obligations through the ordinary callable/provider metadata before consumers use them. The emitted body must be checked against that contract; a derive must not silently widen its public Result or substitute a string for a promised typed error. Imported callers, documentation and the LSP must consume the same checked facts. Diagnostics must identify the authored derive site and generated callable origin. Unsupported payload capabilities must receive a concrete obligation diagnostic rather than implicit cloning or stringification. Original error payloads must be retained before textual adaptation can discard them. Validation and JSON policy remain owned by RFC 122 and RFC 146.
 7. Locations accompanying retained failures must remain structured data, independently inspectable from messages. Display may render them as text; inspection, tooling, and selected serialization must not recover location structure by parsing rendered text. Domain-specific path and position APIs belong to their owning integration.
 8. Error serialization must be opt-in and obey the chosen serialization trait's payload constraints. Derives must not automatically expose causes, input values, or diagnostics that were not selected for the wire representation.
-9. `map_err` must support a declared error case constructor with explicitly supplied payload arguments as an alternative to its existing callback form. After supplied arguments are bound, exactly one required constructor field must remain, and it must accept the incoming error type. Zero or several remaining required fields, incompatible types, and a family name without a selected case must be rejected. Optional fields not supplied must use their declared defaults. The constructor must be invoked only for Err; ordinary supplied argument expressions must retain normal call evaluation behavior.
+9. `map_err` must support a declared error case constructor with explicitly supplied payload arguments as an alternative to its existing callback form. After supplied arguments are bound, zero or one required constructor field may remain. If one remains, it must accept the incoming error type and must receive that value. If none remains, the case must be constructed from the supplied arguments and defaults, with automatic upstream diagnostic retention. Several remaining required fields, an incompatible remaining field, and a family name without a selected case must be rejected. Optional fields not supplied must use their declared defaults. The constructor must be invoked only for Err; ordinary supplied argument expressions must retain normal call evaluation behavior.
 
 ### Lazy evaluation and aggregation
 
@@ -604,11 +645,11 @@ The declaration is evaluated once when the error value is constructed, and fixes
 
 Runtime-dependent aggregates need a separate mechanism; the explicit declaration does not accept arbitrary lists or require authors to expand a runtime collection into a statically sized tuple. Runtime and generated integrations should retain available upstream diagnostic information even when the relationship is not declared through `caused_by`. The aggregate inspection mechanism remains open; CauseView and optional single-error normalization are settled.
 
-An explicit declaration identifies relationships from authored data. Runtime retention identifies relationships already known at supported failure boundaries, such as wrapping an incoming Result error or retaining failures during decoding and collection. It must not attach every recently encountered error to an unrelated failure. Automatic retention preserves a diagnostic record: the original message, available origin and stack information, and upstream diagnostic links. It does not guarantee that the original typed payload survives an arbitrary consuming callback or impose a hidden Clone requirement. Keeping that payload requires an explicit typed field, with `caused_by` declaring its diagnostic role. When explicit relationships and automatic retention identify the same direct upstream failure occurrence, traversal exposes that relationship once. Independent failures remain distinct even when their messages, payloads, and case identities are equal. Ordering between distinct declared and automatically retained relationships remains open.
+An explicit declaration identifies relationships from authored data. Runtime retention identifies relationships already known at supported failure boundaries, such as wrapping an incoming Result error or retaining failures during decoding and collection. It must not attach every recently encountered error to an unrelated failure. Automatic retention preserves a diagnostic record: the original message, available origin and stack information, and upstream diagnostic links. It does not guarantee that the original typed payload survives an arbitrary consuming callback or impose a hidden Clone requirement. Keeping that payload requires an explicit typed field, with `caused_by` declaring its diagnostic role. When explicit relationships and automatic retention identify the same direct upstream failure occurrence, traversal exposes that relationship once. Independent failures remain distinct even when their messages, payloads, and case identities are equal. Declared direct relationships precede other distinct automatically retained links; each group retains its original order. Independent failure occurrences must not be merged.
 
 If a consuming conversion does not retain the original error, its message must be captured before the callback can discard it. This is an explicit exception to rendering a live retained error's message on demand. A diagnostic snapshot supports message and upstream traversal through the common interface, but does not claim to expose the original error's typed fields or provide a reconstructed value for matching. Available upstream origins and captures are preserved rather than replaced with the translation location. The storage representation remains implementation work; the source contract must distinguish automatic diagnostic retention from explicitly retained typed payloads.
 
-The intended first automatic linkage boundary is error-to-error `map_err`: the incoming Err and the produced replacement identify the actual conversion relationship without inspecting field names or guessing from control flow. Repeated conversions can preserve an upstream diagnostic chain. A declaration is still needed to expose stored relationships in a directly constructed error and to identify several independent causes. The compiler checks those declarations and conversion types; traversal follows retained runtime values or diagnostic records rather than manufacturing typed payloads. Case identity identifies a declared error category; occurrence identity distinguishes individual failures of that category. Mapping a failure to that same occurrence must not create a self-cause. The representation of occurrence identity and treatment of arbitrary non-error Result payloads remain open. Borrowed CauseView ownership follows the owner-lifetime contract above.
+Automatic linkage is required at native error-to-error `map_err` in constructor and callback forms: the incoming Err and the produced replacement identify the actual conversion relationship without inspecting field names or guessing from control flow. Repeated conversions can preserve an upstream diagnostic chain. A declaration is still needed to expose stored relationships in a directly constructed error and to identify several independent causes. The compiler checks those declarations and conversion types; traversal follows retained runtime values or diagnostic records rather than manufacturing typed payloads. Case identity identifies a declared error category; occurrence identity distinguishes individual failures of that category. Mapping a failure to that same occurrence must not create a self-cause. The runtime representation of occurrence identity remains implementation work. Result payloads that do not implement Error, such as str, retain their existing generic map_err behavior and must not acquire fabricated Error identity. Borrowed CauseView ownership follows the owner-lifetime contract above.
 
 ### Failure origins, stack traces, and propagation sites
 
@@ -703,7 +744,7 @@ The overload accepts a specific error case constructor and explicitly supplied p
 result.map_err(FixtureError.ReadFailed, path=path)
 ```
 
-For FixtureError.ReadFailed, binding `path` leaves one required field, `cause`, which accepts the incoming IoError. The overload constructs that case only on the Err branch. Its binding rule requires exactly one remaining required constructor field and checks its type against the incoming error; zero or several remaining required fields require an explicit closure. Optional fields use their defaults unless supplied. Passing a whole family does not select a case automatically. The existing closure form remains available for transformations and conditional mappings.
+For FixtureError.ReadFailed, binding `path` leaves one required field, `cause`, which accepts the incoming IoError. The overload constructs that case only on the Err branch. Its binding rule permits zero or one remaining required field. One remaining field receives the compatible incoming error; zero remaining fields constructs the supplied case while preserving the upstream diagnostic chain. Several remaining fields or an incompatible remaining field are diagnosed with the missing or incompatible arguments; no field is guessed. Optional fields use their defaults unless supplied. Passing a whole family does not select a case automatically. The existing closure form remains available for transformations and conditional mappings.
 
 The overload extends the accepted call forms without changing existing callback behavior. Ordinary supplied argument expressions still follow call evaluation rules; lazy computation of operation data requires a closure or another explicitly lazy surface. Integration through library or callable machinery is an implementation detail; this Draft specifies the source contract without claiming an existing implementation.
 
@@ -844,7 +885,7 @@ The existing vocabulary mechanism can produce class declarations, but this does 
 - Supported task and thread boundaries retain observed creation and result-handoff locations when available, alongside preserved worker origins and stacks. Handoff records are labeled separately from captured frames; missing evidence must not be replaced with inferred causal links.
 - Governance by design makes structured diagnostic evidence, shared human/tooling views, and explicit coverage and retention gaps acceptance requirements. Useful provenance can justify measured runtime and storage overhead. Full stack capture remains opt-in. Identity correlation, receipt integration, durable evidence, and sensitivity follow their owning contracts in RFC 104, RFC 120, and RFC 126; a terminal report does not itself establish a complete or durable audit history.
 - Secret non-disclosure is an Incan-wide invariant owned by RFC 103. Error retention, upstream traversal, source excerpts, stack traces, verbose output, and audit export must uphold it, including failures before secret construction. Details that cannot be established safe to expose are omitted or redacted.
-- Existing Result combinators remain part of the intended source vocabulary. `map_err` additionally accepts a specific case constructor with supplied arguments when exactly one compatible required field remains; existing callbacks retain their behavior.
+- Existing Result combinators remain part of the intended source vocabulary. `map_err` additionally accepts a specific case constructor with supplied arguments when zero or one compatible required field remains; existing callbacks retain their behavior.
 - Umbrella capture preserves the declared family, nested case identity, typed payload, and upstream hierarchy. Callers may optionally use ordinary nested match patterns to recognize a retained concrete failure; its identity is checked before fields are bound. Open umbrella contents require a fallback. Matching follows explicit value structure without implicitly searching a cause chain. Runtime identity checks extend RFC 029's closed-union narrowing; representation and compiler integration remain open.
 - Generated callables publish checked success/error types and payload/diagnostic capability obligations through ordinary callable/provider metadata. Emitted bodies, imported callers and the LSP use the same contract; incompatible generated returns and missing capabilities are diagnosed at the authored derive site with generated-source mapping, without implicit cloning, stringification or public Result widening. Validation/JSON policy remains with RFC 122/146.
 - Uniform inspection of one or several retained failures belongs to the shared umbrella and aggregate contract. It preserves the retained hierarchy and distinguishes aggregate membership from upstream causes. RFC 146 consumes this contract; the public spelling and interface are deliberately deferred, with no `failures()` method or direct error iteration selected.
@@ -854,9 +895,11 @@ The existing vocabulary mechanism can produce class declarations, but this does 
 - New `raise` semantics and failure-return or success-return shorthand are outside this RFC; explicit `Err(...)`, `Ok(...)`, and existing propagation remain the examples' return vocabulary.
 - Lazy row outcomes and explicit accumulation belong in the design. Batch failures retain original row failures and partial successes, and source interruption remains distinguishable from completion.
 
+- Native error-to-error `map_err` in constructor and callback forms automatically preserves the available upstream diagnostic chain, which the ordinary entrypoint formatter shows without manual traversal. Constructor mapping accepts zero or one remaining compatible required field; arbitrary non-Error Result payloads retain their generic behavior. Declared direct links precede distinct automatic links, independent failures remain distinct, and identity mapping adds no self-cause. This does not settle typed automatic retention in a new constructor cause slot.
+
 ## Unresolved questions
 
-- **Runtime provenance:** which additional boundaries retain upstream diagnostics automatically, how are non-error Result payloads treated, and how are distinct declared and automatically retained relationships ordered? Diagnostic rather than implicit full-payload retention and duplicate direct relationships are settled.
+- **Runtime provenance:** which boundaries beyond native error-to-error `map_err` retain upstream diagnostics automatically? Native map_err retention, declared-first ordering of distinct direct links, duplicate occurrence handling, diagnostic rather than implicit full-payload retention, and unchanged non-Error payload behavior are settled.
 - **Evidence integration:** what structured record and export interfaces expose failure occurrences, task or thread handoffs, capture coverage and gaps, redaction, and verified correlations to execution, source, artifact, receipt, and investigation identities under RFC 104, RFC 120, and RFC 126? Structured evidence and retention of supported handoff observations are required; the interfaces remain open.
 - **Umbrella representation:** how does an umbrella retain original typed values and implement runtime identity checks for the settled optional nested matching behavior, including legacy and foreign errors? Broad handling, retained hierarchy, and checked payload access are settled.
 - **Umbrella and aggregate inspection:** what shared interface uniformly exposes one or several retained failures, including runtime-sized aggregates, without consuming or copying them or erasing their typed identity and hierarchy? How are aggregate membership and upstream causes distinguished, and what structured information identifies completed, interrupted, or truncated retention? The public spelling, whether it uses a method, and any typed library views remain open; `failures()` is only an explored spelling. RFC 146 reuses this contract rather than defining a separate JSON mechanism. Specific iterator, concurrent, and JSONL collector policies belong to their owning APIs.
