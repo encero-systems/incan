@@ -150,13 +150,9 @@ All declarations in this example are application-defined and describe proposed b
 
 ```incan
 error ContractError:
-    EmptyLabel:
-        message = "A label cannot be empty."
-    ReservedLabel:
-        value: str
-    ReversedWindow:
-        minimum: int
-        maximum: int
+    EmptyLabel = "A label cannot be empty."
+    ReservedLabel(value: str)
+    ReversedWindow(minimum: int, maximum: int)
 
 def non_empty(value: str) -> Result[None, ContractError]:
     if value == "":
@@ -208,13 +204,9 @@ The following proposed example combines a shared field check, two source normali
 
 ```incan
 error AccountError:
-    EmptyName:
-        message = "An account name cannot be empty."
-    ReservedName:
-        value: str
-    ReversedLimits:
-        minimum: int
-        maximum: int
+    EmptyName = "An account name cannot be empty."
+    ReservedName(value: str)
+    ReversedLimits(minimum: int, maximum: int)
 
 def non_empty(value: str) -> Result[None, AccountError]:
     if value == "":

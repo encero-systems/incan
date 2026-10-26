@@ -235,7 +235,7 @@ Allowing both forms supports small local cases and existing positional call site
 
 ### Relationship to errors
 
-RFC 131 deliberately owns the `error` declaration, immutable authored error fields, messages, causes, and error-set operations. This RFC provides a named payload surface for ordinary enums, without importing those error-specific guarantees. Shared compiler support for field metadata and matching is desirable, but the dedicated error source contract must remain separate.
+RFC 131 uses the same named payload header spelling for dedicated error cases and deliberately owns immutable error fields, error-specific defaults, compact message expressions, optional declaration bodies, causes and error-set operations. This RFC provides a named payload surface for ordinary enums, without importing those error-specific guarantees. Shared compiler support for field metadata and matching is desirable, but the dedicated error source contract must remain separate.
 
 ## Alternatives considered
 

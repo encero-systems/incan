@@ -431,9 +431,7 @@ Keyword `new` must not bypass a model's canonical validation contract. Registere
 
 ```incan
 error RangeError:
-    Reversed:
-        start: int
-        end: int
+    Reversed(start: int, end: int)
 
 model PortRange:
     start: int
@@ -703,15 +701,11 @@ For whole-model checks retained through a from header, traverse sources recursiv
 
 ```incan
 error WindowError:
-    Reversed:
-        start: int
-        end: int
-    NegativeStart:
-        value: int
+    Reversed(start: int, end: int)
+    NegativeStart(value: int)
 
 error CapacityError:
-    NonPositive:
-        value: int
+    NonPositive(value: int)
 
 model Window:
     start: int

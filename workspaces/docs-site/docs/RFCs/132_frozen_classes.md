@@ -300,9 +300,7 @@ RFC 131 authors continue to write dedicated error declarations:
 
 ```incan
 error InputError:
-    InvalidInput:
-        atoms: int
-        quarks: int
+    InvalidInput(atoms: int, quarks: int)
 ```
 
 Its candidate desugaring may mark the generated case class with `@derive(Frozen, Error)` and use a frozen `BaseError`. Generated payload fields and retained declared causes stay fixed. A fixed private diagnostic handle can support runtime initialization of its contents through checked internal APIs. Freezing does not determine message formatting, cause traversal, or the public visibility of native error payloads; those contracts belong to RFC 131.

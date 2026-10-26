@@ -117,8 +117,7 @@ Registered checks make canonical model construction return `Result[Self, Validat
 
 ```incan
 error PortError:
-    OutOfRange:
-        value: int
+    OutOfRange(value: int)
 
 @derive(Clone)
 model Port:

@@ -149,25 +149,16 @@ Suppose an application helper `parse_count(text: str)` returns `Result[int, Pars
 
 ```incan
 error ParseError:
-    InvalidInteger:
-        text: str
-        message = f"'{text}' is not an integer."
+    InvalidInteger(text: str) = f"'{text}' is not an integer."
 
 error InputError:
-    Missing:
-        field: str
-        message = f"Required field '{field}' is missing."
+    Missing(field: str) = f"Required field '{field}' is missing."
 
-    Invalid:
-        field: str
-        original: ParseError
+    Invalid(field: str, original: ParseError):
         message = f"Invalid value for '{field}'."
         caused_by = original
 
-    OutOfRange:
-        field: str
-        value: int
-        message = f"'{field}' must be positive; received {value}."
+    OutOfRange(field: str, value: int) = f"'{field}' must be positive; received {value}."
 
 def require_count(candidate: Option[str]) -> Result[int, InputError]:
     let Some(text) = candidate

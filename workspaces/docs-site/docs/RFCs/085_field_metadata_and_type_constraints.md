@@ -263,8 +263,7 @@ The following application declarations describe proposed behavior:
 
 ```incan
 error LabelError:
-    Empty:
-        message = "A label cannot be empty."
+    Empty = "A label cannot be empty."
 
 def non_empty(value: str) -> Result[None, LabelError]:
     if value == "":

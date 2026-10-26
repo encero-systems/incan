@@ -74,9 +74,7 @@ from std.serde import json
 from std.traits.error import Error
 
 error IdentifierError:
-    InvalidSymbol:
-        value: str
-        message = "Identifier must use lowercase letters, digits, '_' or '-'."
+    InvalidSymbol(value: str) = "Identifier must use lowercase letters, digits, '_' or '-'."
 
 
 type SymbolicId = newtype str:
@@ -106,8 +104,7 @@ Model validation can use a domain error too:
 
 ```incan
 error PackageError:
-    BlankTitle:
-        message = "Package title cannot be empty."
+    BlankTitle = "Package title cannot be empty."
 
 
 @derive(json)
@@ -135,33 +132,19 @@ Typed JSON decoding uses a standard, non-generic `JsonDecodeError` umbrella fami
 
 ```incan
 error JsonDecodeError extends JsonError:
-    MissingField:
-        path: InputPath
-        message = f"Required field '{path}' is missing."
+    MissingField(path: InputPath) = f"Required field '{path}' is missing."
 
-    UnknownField:
-        path: InputPath
-        accepted_fields: FrozenList[str]
-        message = f"Unknown field '{path}'."
+    UnknownField(path: InputPath, accepted_fields: FrozenList[str]) = f"Unknown field '{path}'."
 
-    DuplicateField:
-        path: InputPath
-        message = f"Field '{path}' was supplied more than once."
+    DuplicateField(path: InputPath) = f"Field '{path}' was supplied more than once."
 
-    WrongType:
-        path: InputPath
-        expected: str
-        message = f"Field '{path}' must be {expected}."
+    WrongType(path: InputPath, expected: str) = f"Field '{path}' must be {expected}."
 
-    InvalidValue:
-        path: InputPath
-        cause: Error
+    InvalidValue(path: InputPath, cause: Error):
         message = f"Invalid value at {path}."
         caused_by = cause
 
-    Multiple:
-        failures: FrozenList[JsonDecodeError]
-        message = f"{len(failures)} decoding failures."
+    Multiple(failures: FrozenList[JsonDecodeError]) = f"{len(failures)} decoding failures."
 ```
 
 For this test drive, the decoding method returns `Result[PackageSnapshot, JsonDecodeError]`. An application boundary therefore needs only the umbrella:
@@ -269,22 +252,15 @@ A row result can be an ordinary iterator item. A bad row is then retained while 
 
 ```incan
 error JsonlRowError[E with Error]:
-    BlankRecord:
-        line: int
-        message = f"JSONL line {line} contains a blank record."
+    BlankRecord(line: int) = f"JSONL line {line} contains a blank record."
 
-    Invalid:
-        line: int
-        cause: E
+    Invalid(line: int, cause: E):
         message = f"Could not decode JSONL line {line}."
         caused_by = cause
 
 
 error JsonlError[T, E with Error]:
-    InvalidRows:
-        parsed: list[T]
-        failures: list[JsonlRowError[E]]
-        message = f"{len(failures)} JSONL rows failed."
+    InvalidRows(parsed: list[T], failures: list[JsonlRowError[E]]) = f"{len(failures)} JSONL rows failed."
 ```
 
 An authored collection helper can express the policy without changing `?`:
@@ -399,7 +375,7 @@ RFC 131 owns error declarations, closed error composition, umbrella capture, che
 
 The candidate `Multiple` case and InputPath name are illustrative API spellings. The settled requirements are one JsonDecodeError umbrella, individually retained failures, structured locations, and complete reporting of applicable checks. Concrete aggregate and coverage surfaces remain open; the candidate case must not be mistaken for a separately implemented aggregation facility.
 
-Uniform inspection of one or several retained failures is shared umbrella behavior owned by RFC 131. JsonDecodeError must reuse that contract while preserving its members' typed identity, hierarchy, payloads, causes, and diagnostics. Aggregate membership remains distinguishable from upstream causation. The inspection spelling, whether it is a method, and any typed JsonDecodeError view are deferred to RFC 131; this RFC does not select a JSON-only `failures()` API.
+Uniform inspection of one or several retained failures is shared umbrella behavior owned by RFC 131. JsonDecodeError must reuse that contract while preserving its members' typed identity, hierarchy, payloads, causes, and diagnostics. Aggregate membership remains distinguishable from upstream causation. RFC 131 supplies the shared diagnostics() -> DiagnosticReport reader and format_error overloads for one error or an ordinary tuple/iterable of errors. This RFC reuses those readers without a JSON-only failures() API; the typed view of a propagatable aggregate remains part of its own callable contract.
 
 ### Validated construction and nested failures
 
@@ -484,7 +460,7 @@ A stable umbrella simplifies signatures but leaves concrete domain matching open
 - The existing `std.json.parse_jsonl` name adopts lazy per-record Result outcomes as an intentional breaking change. Eager collection is explicit; a record error does not itself stop iteration. Old list-returning callers receive clear migration guidance, and no implicit collection is introduced.
 - Incremental file- and reader-backed parsing is recorded for follow-up design. Lazy decoding of a complete source string must not be described as bounded-memory file streaming. Future source-backed APIs must read incrementally, retain physical locations, and distinguish read failures from record failures without requiring whole-file materialization.
 - Collect-all has no hidden cap that discards outcomes. Protective collection limits are explicit and return an incomplete outcome retaining prior successes, failures, and a structured stopping reason when exhaustion is not established. Intentional prefix selection may complete normally for the selected scope and does not claim full-source validation. Pydantic's aggregate validation and opt-in early failure are prior art, alongside ordinary iterator scope selection.
-- Uniform inspection of retained failures reuses RFC 131's shared umbrella and aggregate contract. Its spelling and interface are deferred there; this RFC does not independently introduce a `failures()` method or direct error iteration.
+- Uniform inspection of retained failures reuses RFC 131's shared umbrella and aggregate contract. Its diagnostics() reader and tuple/iterable formatting overload are shared directly; this RFC does not independently introduce a failures() method, a mandatory grouping container or direct error iteration.
 - The proposed typed JSONL surface and the replacement `std.json.parse_jsonl` contract are strict by default. Blank and whitespace-only records produce a distinct BlankRecord error with the one-based physical line number and no fabricated upstream cause. Explicit tolerant skipping may be requested without renumbering later records. A final record terminator is not an extra record, and empty input contains zero records. Other JSONL entrypoints still require an explicit compatibility disposition before their defaults change.
 
 ## Unresolved questions

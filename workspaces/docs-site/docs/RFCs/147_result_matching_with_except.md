@@ -60,13 +60,9 @@ An application checks a requested batch size against a positive maximum:
 
 ```incan
 error BatchError:
-    InvalidRequest:
-        requested: int
-    InvalidLimit:
-        maximum: int
-    TooLarge:
-        requested: int
-        maximum: int
+    InvalidRequest(requested: int)
+    InvalidLimit(maximum: int)
+    TooLarge(requested: int, maximum: int)
 
 
 def checked_batch_size(requested: int, maximum: int) -> Result[int, BatchError]:
@@ -106,8 +102,7 @@ When every failure should become one application-level error, a combinator remai
 
 ```incan
 error JobError:
-    InvalidBatch:
-        original: BatchError
+    InvalidBatch(original: BatchError):
         caused_by = original
 
 

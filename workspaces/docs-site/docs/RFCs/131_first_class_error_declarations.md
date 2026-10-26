@@ -32,11 +32,11 @@
 
 ## Summary
 
-Introduce `error` as a dedicated declaration for closed families of typed failures, with named variants, field payloads, and declarative messages. Error families can nest, select existing cases through `error Name = A | B`, and include existing cases while adding new ones through `extends`. These errors work with explicit `Result`, `?`, pattern matching, and the existing Result combinators. Umbrella capture preserves specific failures and their hierarchy without requiring callers to enumerate every underlying type. Common diagnostics and aggregation preserve original failures, structured locations, and available execution evidence. Library-specific decoding and collection APIs are defined separately.
+Introduce `error` as a dedicated declaration for closed families of typed failures, with enum-style named payload headers and optional declarative messages, such as `FailedInput(field: str) = f"Invalid field: {field}"`. Error families can nest, select existing cases through `error Name = A | B`, and include existing cases while adding new ones through `extends`. These errors work with explicit `Result`, `?`, pattern matching, and the existing Result combinators. Umbrella capture preserves specific failures and their hierarchy without requiring callers to enumerate every underlying type. The common `diagnostics()` reader exposes a borrowed structured report; ordinary formatting accepts one error or a tuple or iterable of errors while preserving their separate diagnostic graphs. Library-specific decoding and collection APIs are defined separately.
 
 ## Core model
 
-1. An error declaration defines a family of cases. Fields belong inside a named case, including in a family with only one case.
+1. An error declaration defines a family of cases. Fields belong in the named case's parameter list, including in a family with only one case. A compact `= expression` or optional case body supplies its message.
 2. A case has an identity and structured payload independent of its human-readable message. Its authored payload fields are fixed at construction and cannot be reassigned.
 3. Composition selects existing cases. Extension forms a larger family without changing the parent family's cases.
 4. Propagation between compatible closed error sets preserves the original case and payload. Domain translation remains an explicit operation.
@@ -93,14 +93,9 @@ All new declarations and integration APIs in this Draft are proposed behavior. E
 
 ```incan
 error ConfigError:
-    Missing:
-        path: Path
-        message = f"Configuration file '{path}' was not found."
+    Missing(path: Path) = f"Configuration file '{path}' was not found."
 
-    Invalid:
-        path: Path
-        detail: str
-        message = f"Invalid configuration in '{path}': {detail}"
+    Invalid(path: Path, detail: str) = f"Invalid configuration in '{path}': {detail}"
 ```
 
 Construct the case that occurred:
@@ -109,7 +104,30 @@ Construct the case that occurred:
 return Err(ConfigError.Missing(path=config_path))
 ```
 
-`message` is a rendering declaration, not another constructor argument. Callers can inspect `path` and `detail` independently of the rendered message.
+The expression after `=` declares the generated message; it is not a constructor default, a stored message field or a value-enum discriminant. It is evaluated when rendered. Interpolation uses ordinary `f"..."` syntax; a plain string keeps its literal meaning. Callers can inspect `path` and `detail` independently of the rendered message.
+
+Named payloads follow RFC 137's header spelling and named/positional construction and pattern rules. Error declarations additionally support their already-defined field defaults and message expressions:
+
+```incan
+error InputError:
+    FailedInput(field: str) = f"Field {field} produced wrong input"
+    RetryLimit(attempts: int, limit: int = 3) = f"Stopped after {attempts} attempts; limit is {limit}"
+    Unavailable = "Input is unavailable"
+    InvalidInput(atoms: int, quarks: int)
+```
+
+All payload fields remain in the header when a case needs a longer body:
+
+```incan
+error DetailedInputError:
+    FailedInput(field: str):
+        message = (
+            f"Field {field} produced wrong input. "
+            + "Check its declared format before trying again."
+        )
+```
+
+The body can declare `message = expression` and explicit `caused_by` relationships. A case must choose the compact message or the body form; it cannot declare both or move payload fields into the body. This is one payload spelling with an optional declaration body, rather than a second record-style case form.
 
 Error cases are immutable records without an additional annotation. Their authored fields are fixed at construction. A mutable binding may be replaced with another error value, but does not permit assigning to a field of the existing value:
 
@@ -125,9 +143,7 @@ A message declaration is optional. Without one, the case reuses model-style stru
 
 ```incan
 error ParticleError:
-    InvalidInput:
-        atoms: int
-        quarks: int
+    InvalidInput(atoms: int, quarks: int)
 ```
 
 The proposed default message for `ParticleError.InvalidInput(atoms=2, quarks=3)` is:
@@ -144,14 +160,13 @@ The declaration automatically supplies `message()` for callers using the common 
 message = describe_invalid_input(atoms, quarks)
 ```
 
-`describe_invalid_input` is an application helper that returns str. New error declarations must not define a handwritten `message()` override; existing legacy types implementing Error retain their methods. The author-facing construct remains `error`, independently of how its generated behavior is implemented.
+`describe_invalid_input` is an application helper that returns str. The helper expression can be written after the compact `=` or as the body's `message =` declaration. New error declarations must not define a handwritten `message()` override; existing legacy types implementing Error retain their methods. The author-facing construct remains `error`, independently of how its generated behavior is implemented.
 
 A family with one case uses the same structure:
 
 ```incan
 error SessionStateError:
-    NoActiveSession:
-        message = "No session is active."
+    NoActiveSession = "No session is active."
 ```
 
 `SessionStateError.NoActiveSession` is a payload-free value, following ordinary unit-variant construction. No base family or `extends` clause is required.
@@ -160,9 +175,7 @@ Authors can deliberately preserve an older case spelling using the existing enum
 
 ```incan
 error ParticleError:
-    InvalidInput:
-        atoms: int
-        quarks: int
+    InvalidInput(atoms: int, quarks: int)
 
     BadInput = alias InvalidInput
 ```
@@ -178,8 +191,7 @@ A library can move a definition while deliberately retaining the old public acce
 ```incan
 # src/new_errors.incn
 pub error ParseError:
-    InvalidInput:
-        detail: str
+    InvalidInput(detail: str)
 
 
 # src/errors.incn: the existing public module
@@ -194,21 +206,14 @@ Private declarations remain subject to ordinary access checks. A public alias or
 
 ```incan
 error SessionError:
-    UnknownTable:
-        name: str
-        message = f"Table '{name}' is not registered."
+    UnknownTable(name: str) = f"Table '{name}' is not registered."
 
-    NoActiveSession:
-        message = "No session is active."
+    NoActiveSession = "No session is active."
 
     error Backend:
-        Planning:
-            detail: str
-            message = f"Backend planning failed: {detail}"
+        Planning(detail: str) = f"Backend planning failed: {detail}"
 
-        Execution:
-            detail: str
-            message = f"Backend execution failed: {detail}"
+        Execution(detail: str) = f"Backend execution failed: {detail}"
 ```
 
 A function can return the whole family, a nested group, or one specific case:
@@ -243,9 +248,7 @@ The `=` form selects existing cases; it does not copy their definitions or wrap 
 
 ```incan
 error ImportError extends SessionError:
-    InvalidSource:
-        uri: str
-        message = f"Unsupported import source '{uri}'."
+    InvalidSource(uri: str) = f"Unsupported import source '{uri}'."
 ```
 
 `ImportError` admits every `SessionError` case plus `ImportError.InvalidSource`. A `SessionError` can propagate into `Result[T, ImportError]`; `ImportError.InvalidSource` cannot propagate into `Result[T, SessionError]`.
@@ -256,9 +259,7 @@ The parent remains closed. Adding this declaration does not change the cases a f
 
 ```incan
 error FixtureError:
-    ReadFailed:
-        path: str
-        cause: IoError
+    ReadFailed(path: str, cause: IoError):
         message = f"Could not read fixture '{path}'."
         caused_by = cause
 
@@ -307,18 +308,13 @@ A wrapper may supply all of its own fields and leave the upstream link to the ob
 
 ```incan
 error ReadError:
-    Denied:
-        path: str
-        message = f"Read denied: {path}"
+    Denied(path: str) = f"Read denied: {path}"
 
 error LoadError:
-    Failed:
-        path: str
-        message = f"Cannot load {path}."
+    Failed(path: str) = f"Cannot load {path}."
 
 error StartupError:
-    Failed:
-        message = "Application cannot start."
+    Failed = "Application cannot start."
 
 def read_settings(path: str) -> Result[str, ReadError]:
     return Err(ReadError.Denied(path=path))
@@ -340,7 +336,7 @@ Application cannot start.
     upstream: Read denied: settings.cfg
 ```
 
-The report also includes available origins and enabled captured stacks at their corresponding failures. Showing the whole retained chain does not enable stack capture, reconstruct unavailable frames or bypass secret non-disclosure. No manual traversal is required for this report. Automatic retention guarantees diagnostics; actual typed payload retention through a constructor-owned cause slot remains an open umbrella proposal, separate from this zero-unfilled-field mapping rule.
+The report also includes available origins and enabled captured stacks at their corresponding failures. Showing the whole retained chain does not enable stack capture, reconstruct unavailable frames or bypass secret non-disclosure. No manual traversal is required for this report. Automatic retention guarantees diagnostics; this guarantee does not imply that an arbitrary consuming callback preserves the original typed payload. An explicit typed field remains available when application code needs it; the optional constructor-owned cause slot is separate from this mapping rule.
 
 ### Diagnose causes and execution locations together
 
@@ -366,9 +362,7 @@ Some failures have a cause only in some circumstances:
 
 ```incan
 error CodecError:
-    TruncatedPayload:
-        detail: str
-        cause: Option[IoError] = None
+    TruncatedPayload(detail: str, cause: Option[IoError] = None):
         message = f"{detail}"
         caused_by = cause
 ```
@@ -381,8 +375,7 @@ The explicit `caused_by = cause` declaration accepts an optional error. Some(err
 
 ```incan
 error ContentValidationError:
-    Empty:
-        message = "Content cannot be empty."
+    Empty = "Content cannot be empty."
 
 
 error ContentError = FixtureError | ContentValidationError
@@ -461,15 +454,13 @@ A caller can handle a broad failure family without listing every concrete upstre
 from std.traits.error import Error
 
 error ValidationError:
-    Invalid:
-        original: Error
+    Invalid(original: Error):
         message = "Validation failed."
         caused_by = original
 
 
 error LabelError:
-    Blank:
-        message = "Label cannot be blank."
+    Blank = "Label cannot be blank."
 
 
 def validate_label(value: str) -> Result[str, LabelError]:
@@ -495,16 +486,44 @@ Validated construction uses the ValidationError umbrella while authored validato
 
 Canonical newtype `from_underlying` hooks likewise keep `Result[Self, ValidationError]`, with original domain failures retained inside the validation umbrella. Authored helpers may expose precise domain errors before capture at the canonical boundary. Explicit hook calls and JSON integration remain recoverable; ordinary implicit coercion keeps RFC 017's existing failure behavior. RFC 146 records this integration contract and migration from legacy validation representations.
 
+### Report several errors using an ordinary tuple
+
+Grouping values for a report requires no special error container. The proposed `format_error` overload accepts one Error or a tuple or iterable of errors. Each member keeps its own upstream graph:
+
+```incan
+from std.diagnostics import format_error
+
+error ReadError:
+    Denied(path: str) = f"Read denied: {path}"
+
+def main() -> None:
+    first = ReadError.Denied(path="part-a")
+    second = ReadError.Denied(path="part-b")
+    failures = first, second
+    println(format_error(failures))
+    for failure in failures:
+        println(failure.message())
+```
+
+Illustrative output from the combined formatter is:
+
+```text
+2 failures:
+  Read denied: part-a
+  Read denied: part-b
+```
+
+This example constructs values for inspection; it does not claim earlier failure origins or captured stacks. When an actual member has upstream links, its report includes them. Tuple membership does not mean one member caused another, and nested hierarchies must not be flattened into a single cause chain. Ordinary tuple iteration remains available for custom handling.
+
+The overload does not make a tuple implement Error or give `Err(failures)` a new error identity. A separately named, propagatable aggregate is justified only by an operation's actual Error contract; this RFC requires no special ErrorGroup for routine reporting and adds no `errors()` or `failures()` method to every error. Completion, interruption, truncation and partial-success facts remain with the operation that consumed the source. Formatting a tuple cannot establish that an external stream finished.
+
 ### Retain several failures without discarding successes
 
 An aggregate can retain multiple independent errors as payload. This application-defined example collects already produced outcomes; it is not a proposed standard collector API:
 
 ```incan
 error BatchError[T, E with Error]:
-    FailedItems:
-        accepted: list[T]
-        failures: list[E]
-        message = f"{len(failures)} items failed."
+    FailedItems(accepted: list[T], failures: list[E]) = f"{len(failures)} items failed."
 
 
 def collect_outcomes[T, E with Error](
@@ -528,7 +547,7 @@ def collect_outcomes[T, E with Error](
 
 Callers can inspect retained outcomes without converting errors to strings. Retaining a successful value does not commit an application effect. Each original failure keeps its own identity, hierarchy, and diagnostics. Runtime-sized aggregate traversal requires a common integration contract; an ordinary list is not accepted by the authored fixed `caused_by` tuple declaration.
 
-Umbrella inspection should provide a uniform, read-only way to visit retained failures whether the umbrella represents one failure or several. This shared contract serves ValidationError, JsonDecodeError, and application-defined umbrellas rather than introducing a separate JSON-only reading mechanism. Inspection must preserve each original failure's typed identity, payload, hierarchy, causes, and diagnostics without consuming or copying the retained values. Aggregate membership and upstream causation remain distinguishable; visiting aggregate members must not implicitly replace them with their deepest causes. The public inspection spelling and interface remain open: neither a `failures()` method nor direct iteration of an error value is settled.
+Umbrella inspection should provide a uniform, read-only way to visit retained failures whether the umbrella represents one failure or several. This shared contract serves ValidationError, JsonDecodeError, and application-defined umbrellas rather than introducing a separate JSON-only reading mechanism. Inspection must preserve each original failure's typed identity, payload, hierarchy, causes, and diagnostics without consuming or copying the retained values. Aggregate membership and upstream causation remain distinguishable; visiting aggregate members must not implicitly replace them with their deepest causes. The common diagnostic reading interface is `diagnostics()`; routine reporting accepts ordinary tuples and iterables through `format_error`. A particular umbrella or first-class aggregate still owns the typed member view its callable contract promises. Ordinary error values do not acquire implicit iteration, an `errors()` method or automatic traversal of a payload merely because its field is called failures.
 
 Laziness determines when an outcome is produced. The consuming operation separately chooses whether to return early, collect failures, or ignore them. A failed source advancement remains distinct from a failed item, and cancellation or interruption must not be reported as complete consumption. RFC 115 and RFC 142 own iterator and concurrent consumption behavior; RFC 146 owns JSONL-specific APIs.
 
@@ -539,12 +558,12 @@ The rules below define the agreed declaration model and required integration out
 ### Declarations, payloads, and namespaces
 
 1. `error Name:` must define a closed family of named cases. A one-case family must use the same structure as a multi-case family; a flat field-only error body must not be accepted.
-2. Cases may be payload-free or contain field declarations with explicit types and optional defaults. Payload construction must use the existing field argument and default checking rules. Authored payload fields must be fixed at construction; assignment to those fields must be rejected, including through a mutable binding or a method with a mutable receiver. Replacing a mutable binding with a new compatible error value must remain valid. This field-binding guarantee must not impose deep immutability on retained values. No implicit payload may be supplied by an outer family.
-3. Unit cases must be values. Payload cases must expose constructors, support named arguments, and bind fields in declaration order in enum-style patterns. Case names must also be usable in type position to describe a single-case error set.
+2. A payload case must declare all named fields in `Case(field: Type, ...)`, with explicit types and optional defaults. A payload-free case must use its bare name. Compact cases may use `Case(...) = expression` or `Case = expression` for a message; cases may instead use an indented declaration body with `message = expression` and/or `caused_by` declarations. Payload fields inside that body must be rejected. Supplying both an inline message and a body message, or repeating message declarations, must be rejected. Payload construction must use the existing field argument and default checking rules. Authored payload fields must be fixed at construction; assignment to those fields must be rejected, including through a mutable binding or a method with a mutable receiver. Replacing a mutable binding with a new compatible error value must remain valid. This field-binding guarantee must not impose deep immutability on retained values. No implicit payload may be supplied by an outer family.
+3. Unit cases must be values. Payload cases must expose constructors and follow RFC 137's named/positional construction and pattern rules, including named patterns that omit unneeded fields. Error-specific defaults must follow ordinary checked default-argument behavior. Case names must also be usable in type position to describe a single-case error set.
 4. Nested `error` declarations must create qualified family names. The outer family must admit all of its local and nested cases; the nested family must admit only its own descendants.
 5. Error declarations must support visibility, generic parameters and bounds, and explicit trait adoption through the existing declaration conventions. Ordinary methods must follow the existing method and receiver rules.
 6. The parser must recognize `error` contextually at a declaration boundary without reserving it as an ordinary binding name. Existing expressions, parameters, and fields named `error` must remain valid. Symbol resolution must distinguish family names, case type names, constructors, and instance payload access. Duplicate declarations and unresolvable case paths must produce source-anchored diagnostics.
-7. A case alias using `Name = alias Case` in an error family must name an existing case of that family and preserve its identity, payload type, constructor signature, and message. The alias must be usable wherever the case name is accepted, including construction, case type positions, and patterns. It must not add an admitted case or an additional exhaustiveness obligation. Aliases must follow existing name resolution, visibility, target checking, and cycle rejection rules.
+7. The explicit `alias` marker must distinguish `Name = alias Case` from a compact message declaration. A case alias using that form in an error family must name an existing case of that family and preserve its identity, payload type, constructor signature, and message. The alias must be usable wherever the case name is accepted, including construction, case type positions, and patterns. It must not add an admitted case or an additional exhaustiveness obligation. Aliases must follow existing name resolution, visibility, target checking, and cycle rejection rules.
 8. Error families, compositions, and case aliases must participate in ordinary module imports, symbol aliases, and public re-exports. Declaration visibility must follow the existing `pub` and private rules; case visibility must follow enum-style family visibility. Authored payload fields must be inspectable wherever their case is accessible, including through payload patterns, and must not accept field-level visibility modifiers. Referencing a private target through error composition, extension, or a qualified path must not bypass its access checks. Public aliases and re-exports must obey the same target visibility restrictions as other declarations.
 9. Case identity must distinguish separate definitions across namespaces and preserve checked generic type arguments rather than rely on the short case name or payload shape. An alias or re-export must resolve to its target's identity without adding a case. Public access paths and visibility are part of the source API; preserving an old access path after relocation must be an explicit author choice.
 
@@ -562,7 +581,7 @@ The rules below define the agreed declaration model and required integration out
 ### Messages and trait participation
 
 1. Every declared error case and family, including compositions, must provide the common `Error` message contract without requiring authors to write `with Error` for each declaration.
-2. `message = expression` inside a case must be a rendering declaration, not a payload field or constructor parameter. The expression must type-check as `str` in a scope containing the case's payload fields and ordinary resolvable names. Unknown fields must produce declaration-site diagnostics.
+2. The compact case `= expression` and a body's `message = expression` must be equivalent rendering declarations, not a payload field, constructor parameter or value-enum discriminant. Ordinary f-string rules must apply without implicit interpolation of plain strings. The expression must type-check as `str` in a scope containing the case's payload fields and ordinary resolvable names. Unknown fields must produce declaration-site diagnostics.
 3. Rendering must preserve the error payload and must not consume a stored cause. A rendered message must not determine case identity, matching, or propagation compatibility.
 4. A composition or extension must preserve the defining case's rendering. A wider view must not silently substitute a different message.
 5. A case without a message declaration must receive a default message using the same structural formatting as model-derived Display: the case name, named payload fields in declaration order, and existing field rendering and Debug capability rules. A payload-free case must render its case name. This RFC must not introduce separate truncation or opaque-placeholder rules for error fields. The fallback must use structural formatting directly, rather than calling the error's own Display and recursing through `message()`.
@@ -596,12 +615,19 @@ The rules below define the agreed declaration model and required integration out
 8. Error serialization must be opt-in and obey the chosen serialization trait's payload constraints. Derives must not automatically expose causes, input values, or diagnostics that were not selected for the wire representation.
 9. `map_err` must support a declared error case constructor with explicitly supplied payload arguments as an alternative to its existing callback form. After supplied arguments are bound, zero or one required constructor field may remain. If one remains, it must accept the incoming error type and must receive that value. If none remains, the case must be constructed from the supplied arguments and defaults, with automatic upstream diagnostic retention. Several remaining required fields, an incompatible remaining field, and a family name without a selected case must be rejected. Optional fields not supplied must use their declared defaults. The constructor must be invoked only for Err; ordinary supplied argument expressions must retain normal call evaluation behavior.
 
+### Structured diagnostic reading and collection formatting
+
+1. The common Error interface must provide `diagnostics() -> DiagnosticReport` as the structured inspection entrypoint. The report and its diagnostic nodes must be borrowed and read-only, and must not outlive their retained owner. Obtaining or traversing them must not consume the error, clone its payload, rerun the failed operation or capture a new stack.
+2. `DiagnosticReport.root` must expose a DiagnosticNode whose `message`, `origin`, `stacktrace` and `upstream` readers follow the guide-level contract. Messages use existing rendering and secrecy rules; upstream entries must preserve declared-first ordering and occurrence deduplication. Diagnostic snapshots must not masquerade as retained typed values.
+3. `format_error(error)` must render that same retained graph. A tuple/iterable overload must render each member graph as an independent member in source order, with membership distinguished from causation. An ordinary collection must not acquire Error identity, implicit propagation, a fabricated completeness status or a requirement to wrap in a new grouping type.
+4. Existing diagnostic convenience accessors must project the same retained facts. Legacy and foreign adapters must expose only diagnostics they actually possess; absent source, disabled capture, unsupported capture, redaction and unavailable identity correlations must remain distinguishable. Selected exports must obey RFC 103 and their owning evidence contracts rather than serialize every payload automatically.
+
 ### Lazy evaluation and aggregation
 
 1. Error declarations and aggregation must not silently change `?`, existing Result combinators, or early-return terminals into collect-all operations. Failure policy belongs to the consuming operation.
 2. A retained failed item must remain distinct from a failed source advancement. Lazy production must not imply that unconsumed items were processed or validated.
 3. An aggregate must retain each original failure's identity, typed payload, hierarchy, structured locations, and available diagnostics. Retained successes must remain accessible when the operation promises partial outcomes; their retention must not imply acceptance, commit, or rollback of effects.
-4. Runtime-sized aggregate members must participate in common inspection and combined diagnostic reporting without being flattened into strings or replacing their origins with the aggregate's reporting location. The concrete traversal integration remains open.
+4. Runtime-sized aggregate members must participate in common inspection and combined diagnostic reporting without being flattened into strings or replacing their origins with the aggregate's reporting location. `format_error` must accept an ordinary tuple or iterable whose members provide the Error interface; heterogeneous tuple members must be checked individually. Rendering must preserve input order and each member's graph without requiring Clone or changing retained payloads. Advancing a supplied iterator follows its ordinary consumption contract. Formatting must not implicitly make the collection an Error value or supply a stream-completion guarantee.
 5. Interruption, cancellation, limits, and truncated retention must remain distinguishable from completed collection. An operation must preserve the source failure and accumulated information promised by its callable contract, without implicit source retries.
 
 ## Design details
@@ -610,7 +636,7 @@ The rules below define the agreed declaration model and required integration out
 
 The public forms are `error Family:`, `error Selection = ...`, and `error Child extends Parent:`. All defining bodies use variants. An underlying representation may resemble enums, unions, and ordinary aliases, but that does not make errors ordinary type aliases in the source language.
 
-Named field blocks are new syntax for errors. RFC 137 separately proposes compact named payloads for ordinary enums, such as `Finished(path: str, size: int)`. The shared field names, construction, matching, and metadata requirements should agree where applicable, while error declarations retain their dedicated case blocks and error-specific guarantees. Neither proposal makes ordinary enums extensible.
+Named payload headers share RFC 137's spelling, such as `Finished(path: str, size: int)`. Error cases additionally support field defaults, compact `= expression` messages, and optional declaration bodies for longer messages or explicit causes. A body does not introduce another payload spelling. The shared field names, construction, matching and metadata rules must agree where applicable; errors retain their dedicated identity, propagation and diagnostic guarantees. Neither proposal makes ordinary enums extensible.
 
 ### Methods, derives, and custom messages
 
@@ -675,26 +701,54 @@ INCAN_STACKTRACE=1 ./pipeline
 
 The common inspection methods are `origin() -> Option[SourceLocation]` and `stacktrace() -> StackTrace`. SourceLocation exposes a known file and line; missing origin metadata yields None. StackTrace has Disabled, Unsupported, and Captured(trace) cases. A captured trace provides read-only frame information and display using whatever source metadata is available. These are inspections of the retained failure occurrence, not requests to capture a fresh stack at the current call site. Native error authors do not declare storage fields or write these methods.
 
-The following application helper demonstrates the proposed accessors. Error is an existing trait. CauseView, SourceLocation, StackTrace and format_error belong to the proposed `std.diagnostics` module; they are not existing APIs:
+The common structured inspection entrypoint is `diagnostics() -> DiagnosticReport`, supplied by proposed `std.diagnostics`. Native authors do not declare its storage or write an implementation. The report borrows the owning failure's diagnostic graph; it cannot outlive that owner, consume its payload or require Clone. It does not rerun the failed operation or capture a new stack at the reading site.
+
+The initial public reading surface is:
+
+| Reader | Result |
+| --- | --- |
+| `failure.diagnostics()` | Borrowed, read-only `DiagnosticReport` |
+| `report.root` | The root `DiagnosticNode` |
+| `node.message` | `str` under the existing rendering rules |
+| `node.origin` | `Option[SourceLocation]` |
+| `node.stacktrace` | `StackTrace`, including Disabled and Unsupported |
+| `node.upstream` | Ordered borrowed view of direct upstream diagnostic nodes |
+
+Existing `message()`, `origin()`, `stacktrace()` and `caused_by()` remain convenience readers of the same retained failure and graph. They do not create another capture or reporting mechanism. A diagnostic node may describe an automatically retained snapshot; it must not claim access to discarded typed fields. Typed cause values remain accessible only when the actual error is retained. The shared report must preserve checked case/occurrence identities, distinguish relationship kinds, and expose available handoff/correlation facts and explicit gaps under the evidence requirements below; this table does not choose an export wire encoding.
+
+This complete proposed example reads the graph without repeating an `original` field or a `caused_by` declaration:
 
 ```incan
-from std.traits.error import Error
-from std.diagnostics import StackTrace
+from std.diagnostics import DiagnosticReport, format_error
 
-def show_diagnostics[E with Error](failure: E) -> None:
-    println(failure.message())
+error ReadError:
+    Denied(path: str) = f"Read denied: {path}"
 
-    match failure.origin():
-        Some(site) => println(f"Origin: {site.file}:{site.line}")
-        None => println("Origin unavailable")
+error LoadError:
+    Failed = "Cannot load settings."
 
-    match failure.stacktrace():
-        StackTrace.Captured(trace) => println(trace)
-        StackTrace.Disabled => println("Stack capture was disabled")
-        StackTrace.Unsupported => println("Stack capture is unsupported")
+def read_settings() -> Result[str, ReadError]:
+    return Err(ReadError.Denied(path="settings.cfg"))
+
+def load_settings() -> Result[str, LoadError]:
+    return read_settings().map_err(LoadError.Failed)
+
+def show_diagnostics(failure: LoadError) -> None:
+    report: DiagnosticReport = failure.diagnostics()
+    println(report.root.message)
+    for upstream in report.root.upstream:
+        match upstream.origin:
+            Some(site) => println(f"{upstream.message} at {site.file}:{site.line}")
+            None => println(upstream.message)
+    println(format_error(failure))
+
+def main() -> None:
+    match load_settings():
+        Ok(settings) => println(settings)
+        Err(failure) => show_diagnostics(failure)
 ```
 
-Captured traces and their frame information are read-only retained evidence. They preserve available worker frames while separately labeling observed task/thread handoffs. They do not capture every local variable or reconstruct values that were never retained; live and snapshot variable inspection belong to RFC 126 and RFC 140. Ownership/storage of retained traces, native/generated first-Err integration and exact frame-carrier details remain engineering or integration obligations. This RFC sets the preservation and availability requirements without selecting a new debugger or changing panic semantics.
+`format_error(failure)` is the human rendering of this same retained graph. Captured frames and handoff facts are read-only evidence. They do not capture every local variable or reconstruct values that were never retained; live and snapshot variable inspection belong to RFC 126 and RFC 140. Default adapters for legacy Error implementations expose the message and any diagnostics actually supplied, rather than inventing native origins or stacks. Ownership/storage of retained traces, native/generated first-Err integration and exact frame-carrier details remain engineering or integration obligations. This RFC does not select a new debugger or change panic semantics.
 
 ### Combined diagnostics and application boundaries
 
@@ -702,9 +756,7 @@ A Result-returning application entrypoint reports a failure automatically. When 
 
 ```incan
 error StartupError:
-    MissingConfiguration:
-        path: str
-        message = f"Required configuration '{path}' is missing."
+    MissingConfiguration(path: str) = f"Required configuration '{path}' is missing."
 
 def main() -> Result[None, StartupError]:
     return Err(StartupError.MissingConfiguration(path="settings.json"))
@@ -728,7 +780,7 @@ Diagnostic completeness and auditability are acceptance requirements. The runtim
 
 The evidence should support questions such as which failure occurrence began a chain, which worker produced it, where that worker was created and its result handed back, which source and executable the observations describe, and which parts of the history are unavailable. Case identity follows checked declarations and namespaces; occurrence identity distinguishes repeated failures. RFC 120's compilation-specific identities must be correlated with the relevant source and artifact evidence rather than assumed stable across edits or builds.
 
-RFC 104 supplies authority decisions and effect receipts; an error record may correlate with them but must not infer an operation was authorized or completed merely because an error mentions it. RFC 126 supplies durable evidence and investigation contracts. A transient diagnostic is not itself a durable audit record, and a captured stack is not complete execution history or replay. Capture coverage, sampling, loss, truncation, redaction, and unavailable correlations must remain visible. Structured export respects declared sensitivity and selected exposure rather than automatically dumping retained payloads. The shared record, correlation, and export interfaces require further design with those owning RFCs.
+RFC 104 supplies authority decisions and effect receipts; an error record may correlate with them but must not infer an operation was authorized or completed merely because an error mentions it. RFC 126 supplies durable evidence and investigation contracts. A transient diagnostic is not itself a durable audit record, and a captured stack is not complete execution history or replay. Capture coverage, sampling, loss, truncation, redaction, and unavailable correlations must remain visible. Structured export respects declared sensitivity and selected exposure rather than automatically dumping retained payloads. The public reader is the borrowed DiagnosticReport returned by diagnostics(). Detailed correlation and export carriers require integration with those owning RFCs, without introducing another competing error-inspection entrypoint.
 
 Secret non-disclosure follows RFC 103 as an Incan-wide invariant across diagnostic capture, retention, traversal, formatting, stack traces, and human or machine export. Retaining an original typed failure does not authorize revealing secret payloads or copying them into ordinary diagnostic strings. Source excerpts, upstream messages, and diagnostic metadata must obey the same boundary, including failures before a secret wrapper exists. If a detail cannot be established safe to expose, the diagnostic must omit or redact it. Verbose output and audit completeness cannot override this invariant; reports must make redaction observable without disclosing the protected material.
 
@@ -783,6 +835,8 @@ RFC 070 already supplies the Result composition vocabulary. RFC 115 distinguishe
 ## Alternatives considered
 
 - **Keep a kind enum plus an error model.** This remains compatible with existing code, but separates each category from its payload and message and makes an error look like general application data.
+- **Keep fields inside indented case bodies as well as named headers.** Rejected: the header already identifies the case's payload and agrees with RFC 137. Optional bodies are for additional declarations, not a second field notation.
+- **Require a special error-group container for ordinary reporting.** Rejected: a tuple or iterable already holds independent errors. A named aggregate is useful only when a callable needs to propagate one Error with its own contract.
 - **Support both flat record errors and variant families.** Rejected for this proposal: fields directly under `error` make readers determine whether the body describes one payload or a family. A one-case family keeps one structure.
 - **Use ordinary `type` aliases as the public error composition spelling.** Rejected for this proposal: `error` expresses the author's purpose and permits dedicated member validation and diagnostics. Internal type machinery may still be reused.
 - **Make extending a family add values admissible as the original parent.** Rejected: downstream extension would change the parent's effective cases and exhaustiveness. Extension instead creates a larger child family.
@@ -848,7 +902,7 @@ The existing vocabulary mechanism can produce class declarations, but this does 
 
 ## Layers affected
 
-- **Parser / AST:** dedicated declaration forms, nested families, payload blocks, case rendering declarations, and error case names in type positions.
+- **Parser / AST:** dedicated declaration forms, nested families, named payload headers, compact messages and optional declaration bodies, and error case names in type positions.
 - **Typechecker / symbol resolution:** closed error sets, composition, extension, checked widening, generic constraints, constructors, patterns, and trait coherence.
 - **IR lowering / emission:** preserved case identities, payloads, generated message behavior, and compatible propagation across family views.
 - **Stdlib / runtime:** the common error interface, umbrella retention, legacy and foreign adaptation, aggregate traversal, and origin and stack preservation.
@@ -859,14 +913,14 @@ The existing vocabulary mechanism can produce class declarations, but this does 
 ## Design Decisions
 
 - `error` is a dedicated public declaration construct; ordinary type machinery may be an internal implementation detail.
-- Defining bodies are always enum-style families, including single-case errors. Payload fields belong inside a named case.
+- Defining bodies are always enum-style families, including single-case errors. Payload fields live in the named case's parameter list. Compact `= expression` messages and optional case bodies share one generated rendering contract; body declarations do not provide another payload spelling.
 - Error cases are immutable records by default, without an additional annotation. Authored fields cannot be reassigned, even through a mutable binding; replacing the binding with another compatible error remains allowed. This does not recursively freeze retained values or prevent runtime diagnostic initialization.
 - `error Name = A | B` selects or combines existing cases and preserves their original identities.
 - `error Child extends Parent:` forms a larger closed family without changing the parent's admitted cases.
 - Nested families provide qualified groupings and narrower signatures; they do not create cause chains or capture outer payloads.
 - Messages are rendering declarations, not constructor data. Original failures may be retained in ordinary typed fields.
 - Message declarations are optional. A case without a custom message uses the existing model-style Debug-based derived Display behavior for its case name and named fields, including the existing field capability rules.
-- `message()` is generated as the common reading interface. New error declarations use `message = expression` or the structural default, with ordinary helper calls for complex formatting; they do not provide handwritten message overrides.
+- `message()` is generated as the common reading interface. New error declarations use compact `= expression`, a body's `message = expression`, or the structural default, with ordinary helper calls for complex formatting; they do not provide handwritten message overrides.
 - Error classification uses typed case identity. No additional string code declaration is introduced; diagnostic case labels derive from the defining declaration.
 - Renaming a public case is a deliberate compatibility change. Explicit enum-style case aliases can retain older source names without introducing a new case or a second identity.
 - Namespace, public access paths, and visibility are part of the error API. Existing symbol aliases and public re-exports can deliberately retain an old public path after a definition moves; private access checks remain in force.
@@ -888,7 +942,7 @@ The existing vocabulary mechanism can produce class declarations, but this does 
 - Existing Result combinators remain part of the intended source vocabulary. `map_err` additionally accepts a specific case constructor with supplied arguments when zero or one compatible required field remains; existing callbacks retain their behavior.
 - Umbrella capture preserves the declared family, nested case identity, typed payload, and upstream hierarchy. Callers may optionally use ordinary nested match patterns to recognize a retained concrete failure; its identity is checked before fields are bound. Open umbrella contents require a fallback. Matching follows explicit value structure without implicitly searching a cause chain. Runtime identity checks extend RFC 029's closed-union narrowing; representation and compiler integration remain open.
 - Generated callables publish checked success/error types and payload/diagnostic capability obligations through ordinary callable/provider metadata. Emitted bodies, imported callers and the LSP use the same contract; incompatible generated returns and missing capabilities are diagnosed at the authored derive site with generated-source mapping, without implicit cloning, stringification or public Result widening. Validation/JSON policy remains with RFC 122/146.
-- Uniform inspection of one or several retained failures belongs to the shared umbrella and aggregate contract. It preserves the retained hierarchy and distinguishes aggregate membership from upstream causes. RFC 146 consumes this contract; the public spelling and interface are deliberately deferred, with no `failures()` method or direct error iteration selected.
+- Structured inspection uses one common `diagnostics() -> DiagnosticReport` entrypoint, with borrowed root/node reading and human formatting of the same graph. Existing convenience readers remain views of those facts. `format_error` accepts an ordinary tuple or iterable for multiple failures, preserving each graph without adding Error identity or implying source completion. No ErrorGroup wrapper, per-error errors()/failures() method or implicit error iteration is required for routine reporting. RFC 146 consumes this shared contract.
 - Locations accompanying retained failures remain structured data through capture and traversal. Readable text is display only; tooling and selected serialization preserve structure. RFC 146 owns document path segments, source-position conventions, and automatic decoder path construction.
 - Canonical registered-check construction uses a non-generic ValidationError umbrella; authored checks keep specific domain error types, retained with their typed payloads and available diagnostics. RFC 122 specifies the deliberate breaking migration from legacy Validate registration and constructor return types, with clear diagnostics rather than automatic adaptation. RFC 146 owns JSON integration. The new language version applies the new contract directly: no legacy migration framework, automatic adapter subsystem, or dual constructor dispatch is required. This decision does not remove explicit adaptation needed at a foreign error boundary.
 - Canonical newtype hooks retain `Result[Self, ValidationError]` and capture domain failures inside that umbrella. JSON decoding uses recoverable hooks and preserves the retained hierarchy; ordinary implicit coercion continues to follow RFC 017. RFC 146 specifies the integration and validation migration contract.
@@ -900,8 +954,8 @@ The existing vocabulary mechanism can produce class declarations, but this does 
 ## Unresolved questions
 
 - **Runtime provenance:** which boundaries beyond native error-to-error `map_err` retain upstream diagnostics automatically? Native map_err retention, declared-first ordering of distinct direct links, duplicate occurrence handling, diagnostic rather than implicit full-payload retention, and unchanged non-Error payload behavior are settled.
-- **Evidence integration:** what structured record and export interfaces expose failure occurrences, task or thread handoffs, capture coverage and gaps, redaction, and verified correlations to execution, source, artifact, receipt, and investigation identities under RFC 104, RFC 120, and RFC 126? Structured evidence and retention of supported handoff observations are required; the interfaces remain open.
+- **Evidence integration:** which detailed correlation and selected export carriers connect DiagnosticReport to execution, source, artifact, receipt and investigation identities under RFC 104, RFC 120 and RFC 126? The diagnostics() entrypoint, report/node reading surface, shared human rendering, required structured facts and explicit coverage/redaction gaps are settled; these integration carriers must preserve that one public reader.
 - **Umbrella representation:** how does an umbrella retain original typed values and implement runtime identity checks for the settled optional nested matching behavior, including legacy and foreign errors? Broad handling, retained hierarchy, and checked payload access are settled.
-- **Umbrella and aggregate inspection:** what shared interface uniformly exposes one or several retained failures, including runtime-sized aggregates, without consuming or copying them or erasing their typed identity and hierarchy? How are aggregate membership and upstream causes distinguished, and what structured information identifies completed, interrupted, or truncated retention? The public spelling, whether it uses a method, and any typed library views remain open; `failures()` is only an explored spelling. RFC 146 reuses this contract rather than defining a separate JSON mechanism. Specific iterator, concurrent, and JSONL collector policies belong to their owning APIs.
+- **Propagatable aggregate integration:** when an operation needs a single Error value containing multiple failures, what named aggregate or umbrella contract exposes its retained typed members and collection-completion facts? Ordinary tuple/iterable reporting through format_error is settled and requires no special container. A first-class aggregate must be justified by an operation's propagation contract, preserve member hierarchy separately from upstream causes and retain honest completion/interruption/truncation facts. RFC 146 reuses the shared diagnostics contract; iterator, concurrent and JSONL policies remain with their owning APIs.
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->

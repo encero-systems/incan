@@ -159,10 +159,7 @@ The candidates appear in deterministic order and come from checked callable cont
 
 ```incan
 error ImportError:
-    InvalidRow:
-        row: int
-        detail: str
-        message = f"Invalid row {row}: {detail}"
+    InvalidRow(row: int, detail: str) = f"Invalid row {row}: {detail}"
 
 def reject_row(row: int) -> Result[int, ImportError]:
     return Err(ImportError.InvalidRow(row=row, detail=???))
