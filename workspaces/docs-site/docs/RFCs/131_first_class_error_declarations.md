@@ -332,9 +332,11 @@ Both mapping constructors have no unfilled required fields. Each adds its wrappe
 
 ```text
 Application cannot start.
-  upstream: Cannot load settings.cfg.
-    upstream: Read denied: settings.cfg
+  Cannot load settings.cfg.
+    Read denied: settings.cfg
 ```
+
+Indentation shows the retained hierarchy without repeating an `upstream:` label on each message. A combined report likewise groups independent failures under their collection heading and preserves each member's nested diagnostics; human output needs no repeated relationship labels. The structured reader retains those relationships for inspection.
 
 The report also includes available origins and enabled captured stacks at their corresponding failures. Showing the whole retained chain does not enable stack capture, reconstruct unavailable frames or bypass secret non-disclosure. No manual traversal is required for this report. Automatic retention guarantees diagnostics; this guarantee does not imply that an arbitrary consuming callback preserves the original typed payload. An explicit typed field remains available when application code needs it; the optional constructor-owned cause slot is separate from this mapping rule.
 

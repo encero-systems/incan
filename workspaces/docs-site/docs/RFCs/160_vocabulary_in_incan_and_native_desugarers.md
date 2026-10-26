@@ -177,9 +177,7 @@ The language server desugars blocks as the consumer edits them. Workers stay run
     - an exit other than success;
     - a malformed response;
     - a response in the wrong output position;
-    - a crash;
-    - an invocation that exceeds its time bound.
-- Every invocation must be bounded in time. The diagnostic for an exceeded bound must state the bound.
+    - a crash.
 
 ### Purity and reuse
 
@@ -305,7 +303,7 @@ RFC 160 and RFC 162 exist for RFC 161's single-authority rule. Every surface nor
 
 - **Manifest / Oven**: the `[vocab] entry` key, the vocabulary unit's build and identity, running registration at build time, recording descriptors in published metadata, and keeping desugarer workers running.
 - **Stdlib / Runtime**: the new `std.vocab` Loaf with the registration and public syntax models.
-- **Desugar pass**: batched requests to out-of-process workers, response validation, source maps, the time bound, reuse, and diagnostics; the WebAssembly runtime and its fuel budget are removed.
+- **Desugar pass**: batched requests to out-of-process workers, response validation, source maps, reuse, and diagnostics; the WebAssembly runtime and its fuel budget are removed.
 - **Build evidence**: provider admission decisions, which vocabulary unit lowered which module, and whether each response was reused.
 - **Registry**: publication of vocabulary units per host target.
 - **LSP / Tooling**: desugaring through retained workers while editing; diagnostics for desugarer failures.
@@ -317,9 +315,4 @@ RFC 160 and RFC 162 exist for RFC 161's single-authority rule. Every surface nor
 - Keep `[vocab] entry` and the typed `library_vocab() -> VocabRegistration` function. Registration executes at the producer; consumers read its published descriptors. Producer registration uses RFC 104's existing authority and receipt contract, without introducing another grant mechanism or implicit package authority.
 - An operating-system sandbox is not required. Correct capability enforcement under RFC 104 is the authority boundary, including native and interop paths. Process separation remains worker-failure isolation. Unknown enforcement coverage must be diagnosed before governed execution rather than hidden behind an empty capability declaration or an audit claim.
 
-## Unresolved questions
-
-- What is the default time bound per invocation, and may a Loaf declare a larger one for heavy surfaces?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- No desugarer-specific timeout, invocation budget, or package timeout declaration is required. Authoring a desugarer in Incan does not introduce an additional timing contract. This does not alter independently configured host policies or RFC 104 capability constraints.
