@@ -8,6 +8,7 @@
     - RFC 040 (scoped DSL surface forms)
     - RFC 045 (scoped DSL symbol surfaces)
     - RFC 081 (language-shaped DSL embeddings; Incan-authored desugarers)
+    - RFC 104 (ambient runtime capabilities and receipts)
     - RFC 108 (import-scoped extension properties; `pub vocab` blocks)
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 124 (Oven store unit identity and cross-plan artifact sharing)
@@ -154,6 +155,7 @@ The language server desugars blocks as the consumer edits them. Workers stay run
 - Oven must run `library_vocab()` when the Loaf is built, and record the resulting descriptors, with the `std.vocab` schema version they were built against, in the Loaf's published metadata.
 - A consumer must obtain descriptors only from that metadata. A consumer build must not run registration code.
 - Registration must be deterministic. Oven may reuse the recorded descriptors for an unchanged vocabulary unit.
+- Producer-side registration must participate in the build's RFC 104 authority boundary, using its selected mode, effective grants, and any host-supplied ceiling. Building or importing the Loaf must not grant the registration function authority by implication. Pure descriptor construction requires no host capability. In reporting modes, attempted authority-bearing operations must retain RFC 104 receipts, including denials; in governed mode, an ungranted operation must fail before its authority-bearing behavior. A grant must not waive deterministic registration or the build's declared-input and identity rules.
 
 ### Desugaring
 
@@ -308,11 +310,14 @@ RFC 160 and RFC 162 exist for RFC 161's single-authority rule. Every surface nor
 - **LSP / Tooling**: desugaring through retained workers while editing; diagnostics for desugarer failures.
 - **Formatter**: none beyond reading published descriptors.
 
+## Design Decisions
+
+- Desugaring remains a function of its vocabulary unit identity and its request. Declared external file inputs and their additional authority, schema, dependency, and reuse contracts are outside this RFC. Naming a file in a syntax node or in `module_path` must not grant permission to read it.
+- Keep `[vocab] entry` and the typed `library_vocab() -> VocabRegistration` function. Registration executes at the producer; consumers read its published descriptors. Producer registration uses RFC 104's existing authority and receipt contract, without introducing another grant mechanism or implicit package authority. This does not decide the separate operating-system isolation question below.
+
 ## Unresolved questions
 
 - What is the default time bound per invocation, and may a Loaf declare a larger one for heavy surfaces?
-- Should a desugarer be able to declare file inputs, such as a schema it reads, that become part of the reuse identity, or must every desugarer stay a function of its request alone?
-- Should registration be written as source declarations, in the style of RFC 108's `pub vocab` blocks, instead of a `library_vocab()` function that builds a registration value?
 - Should workers run under an operating-system sandbox where the host provides one, and if so, should that be the default or an opt-in?
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved.
