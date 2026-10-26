@@ -47,7 +47,7 @@ Three things have changed since then.
 
 **The sandbox no longer buys what it was chosen for.** RFC 027 chose WebAssembly for portability, isolation and determinism.
 - **Portability:** `incan.pub` already builds every Loaf for each host target, so one more compiled unit per target is ordinary.
-- **Isolation:** the native route already loads Rust procedural macros from Loaves into the compiler as native code, so compile-time code from dependencies is already trusted by its published identity, and a sandbox around vocabulary alone does not change that.
+- **Isolation:** a separate worker isolates crashes and lets the toolchain terminate stuck work. Authority is a different boundary: RFC 104's capabilities must be enforced across the selected provider's operations, including native and interop paths. Published identity establishes which provider is admitted, not permission to bypass those checks. This RFC therefore requires correct capability enforcement without requiring an operating-system sandbox.
 - **Determinism:** reuse of compiled work already relies on compile-time code being a function of its inputs; desugarers fall under the same rule.
 
 A desugarer written in Incan and compiled like any other Incan program removes the second target, the embedded engine, the Cargo dependency and the Rust authoring surface at once. Library authors write their vocabulary in the language their library is written in.
@@ -70,7 +70,7 @@ A desugarer written in Incan and compiled like any other Incan program removes t
 - Changing the vocabulary surface model of RFC 027, RFC 040, RFC 045 or RFC 081: declarations, clauses, activation on import and embedded fragments keep their meaning.
 - Changing RFC 108's `pub vocab` extension properties. Whether registration should be written as source declarations of that kind is an open question below.
 - File-scoped surface activation (a header that selects a surface for a whole file), project-level surface defaults, alternate grammars with Incan semantics, and foreign-language frontends. RFC 162 specifies them; see "Relationship to source surfaces".
-- An operating-system sandbox for desugarers. Admission, the absence of granted capabilities, and evidence are this RFC's controls; see "Trust and evidence".
+- An operating-system sandbox for desugarers. Provider admission, enforced RFC 104 capabilities, and execution evidence are this RFC's controls; see "Trust and evidence".
 - Loading previously published WebAssembly desugarers.
 - Defining how a consumer selects among competing vocabularies; activation rules are unchanged.
 
@@ -185,7 +185,7 @@ The language server desugars blocks as the consumer edits them. Workers stay run
 
 - A desugarer's response must be a function of its vocabulary unit's identity and its request.
 - Tooling may reuse a response for the same unit identity and the same request, and may keep worker processes running across requests.
-- A desugarer must not depend on the environment, the clock, the file system or the network. The toolchain does not prevent such access; it is unsupported, and its results may be reused.
+- A desugarer must not depend on the environment, the clock, the file system or the network. Governed execution must enforce its empty capability grant under RFC 104 rather than merely declare these accesses unsupported. A permitted native dependency must not introduce an unmediated authority-bearing path around that contract. Clearing the environment alone is not evidence of enforcement.
 - The compiler clears the worker's inherited environment before starting it. This removes ambient environment inputs; it does not provide an operating-system sandbox.
 
 ### Trust and evidence
@@ -198,7 +198,8 @@ The language server desugars blocks as the consumer edits them. Workers stay run
   Being a locked dependency is necessary but not sufficient. The compiler must verify the admitted identity against the worker artifact it starts.
 - The default policy admits providers reached through locked dependencies. A host or project policy may restrict admission further, for example to named providers or to providers with published units. The lock and the invocation evidence must record the policy that admitted each provider.
 - A vocabulary unit declares no authority under this RFC. Any authority beyond a pure function of the request, such as declared file inputs, requires a later contract.
-- A desugarer invocation is an RFC 104 execution boundary that grants no capabilities. Where governed enforcement is active, any authority-bearing operation a desugarer attempts must be denied and recorded.
+- A desugarer invocation must run as a governed RFC 104 execution boundary with an empty effective capability grant. A containing build's mode or broader grants must not widen that grant. Any authority-bearing operation a desugarer attempts must be denied before its effect and recorded under RFC 104.
+- Capability enforcement, rather than an operating-system sandbox, is the required authority boundary. Enforcement must cover authority-bearing paths through native dependencies and Rust interop as well as ordinary Incan calls; declaring a capability or admitting a provider is not enforcement by itself. If the selected provider path cannot satisfy that contract, governed execution must be refused with a diagnostic identifying the uncovered boundary. The toolchain must not execute that path under an empty grant while claiming its authority is governed. This RFC does not prescribe the internal enforcement mechanism or claim that the required coverage is already implemented.
 - Oven must record in the build's evidence, for each module it desugared:
     - the admission decision and the policy that made it;
     - the providing Loaf;
@@ -291,11 +292,11 @@ RFC 160 and RFC 162 exist for RFC 161's single-authority rule. Every surface nor
 3. **Interpret desugarers.** This was rejected because the native route is the only execution route; an interpreter would be a second semantics for Incan.
 4. **Keep the Rust companion crate.** This was rejected because RFC 081 retired Rust desugarer authoring, and the native route has no Cargo build for it.
 5. **Return generated source text.** This was rejected because text loses spans, comments and structure. Diagnostics would then point at generated code, and every provider would have to reproduce Incan's printer exactly.
-6. **Keep a sandbox as the trust boundary.** This was rejected for now. Compile-time code from dependencies already runs natively through Rust procedural macros. The out-of-process boundary already isolates the compiler and the language server from crashes. Admission policy, invocations granted no capabilities, and evidence of each decision make the trust explicit. An operating-system sandbox around the worker can be added later without changing the contract.
+6. **Require an operating-system sandbox for vocabulary workers.** Rejected. RFC 104 owns the capability and receipt contract, and this RFC requires that contract to be enforced across the selected provider's authority-bearing paths. A separate process isolates worker failures; it is not the authority boundary. An operating-system sandbox may be a host implementation measure, but is not an additional requirement of this RFC or a replacement for capability enforcement.
 
 ## Drawbacks
 
-- Desugarers are not sandboxed. A malicious or careless desugarer can read files or the network at compile time. This is the same trust a dependency's Rust procedural macros already receive; the evidence records make it auditable, not prevented.
+- Enforcing capabilities through native dependencies and Rust interop requires complete boundary coverage. An uncovered path cannot be admitted for governed execution merely because the provider is locked or trusted by identity; until its required coverage exists, that path is unavailable in governed execution. This is an implementation obligation, not a claim that arbitrary native code is already constrained or that receipts themselves prevent access.
 - A vocabulary unit is compiled per host target, and a consumer on a host without a published unit compiles it from source.
 - Starting a worker costs a process launch, which on some hosts includes a system security assessment of a newly built program. Retained workers keep this off the editing path.
 - Any WebAssembly desugarer built for RFC 027 or RFC 081 must be rebuilt.
@@ -313,12 +314,12 @@ RFC 160 and RFC 162 exist for RFC 161's single-authority rule. Every surface nor
 ## Design Decisions
 
 - Desugaring remains a function of its vocabulary unit identity and its request. Declared external file inputs and their additional authority, schema, dependency, and reuse contracts are outside this RFC. Naming a file in a syntax node or in `module_path` must not grant permission to read it.
-- Keep `[vocab] entry` and the typed `library_vocab() -> VocabRegistration` function. Registration executes at the producer; consumers read its published descriptors. Producer registration uses RFC 104's existing authority and receipt contract, without introducing another grant mechanism or implicit package authority. This does not decide the separate operating-system isolation question below.
+- Keep `[vocab] entry` and the typed `library_vocab() -> VocabRegistration` function. Registration executes at the producer; consumers read its published descriptors. Producer registration uses RFC 104's existing authority and receipt contract, without introducing another grant mechanism or implicit package authority.
+- An operating-system sandbox is not required. Correct capability enforcement under RFC 104 is the authority boundary, including native and interop paths. Process separation remains worker-failure isolation. Unknown enforcement coverage must be diagnosed before governed execution rather than hidden behind an empty capability declaration or an audit claim.
 
 ## Unresolved questions
 
 - What is the default time bound per invocation, and may a Loaf declare a larger one for heavy surfaces?
-- Should workers run under an operating-system sandbox where the host provides one, and if so, should that be the default or an opt-in?
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved.
      An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
