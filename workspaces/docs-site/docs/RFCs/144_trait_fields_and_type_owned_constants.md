@@ -1,6 +1,6 @@
 # RFC 144: Trait fields and type-owned constants
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-11
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -17,7 +17,7 @@
     - RFC 129 (bindings and writable aliases)
     - RFC 132 (frozen classes)
     - RFC 143 (cloning with field overrides)
-- **Issue:** —
+- **Issue:** [#2454](https://github.com/encero-systems/incan/issues/2454)
 - **RFC PR:** —
 - **Written against:** v0.6
 - **Shipped in:** —

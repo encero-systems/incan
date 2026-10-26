@@ -1,6 +1,6 @@
 # RFC 098: Native associated types for traits
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-05-15
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
