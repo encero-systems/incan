@@ -1,7 +1,7 @@
 name: CI
 
-# Steps that run `incan` install the pinned dev.8 release bundle (DEV8_TOOLCHAINS) with Rust 1.98.0 and rustc-dev
-# through .github/actions/install-dev8-toolchain (DD-0010); the job fails while no bundle is pinned for its host.
+# Steps that run `incan` install the pinned dev.8 release bundle (BUILD_TOOLCHAIN) with Rust 1.98.0 and rustc-dev
+# through .github/actions/install-build-toolchain (DD-0010); the job fails while no bundle is pinned for its host.
 
 on:
   push:
@@ -35,9 +35,9 @@ jobs:
       - name: Check Rust formatting
         run: make fmt-check
       - name: Install dev.8
-        uses: ./.github/actions/install-dev8-toolchain
+        uses: ./.github/actions/install-build-toolchain
         with:
-          reference: ${{ fromJSON(vars.DEV8_TOOLCHAINS || '{}')['x86_64-unknown-linux-gnu'] }}
+          reference: ${{ fromJSON(vars.BUILD_TOOLCHAIN || '{}')['x86_64-unknown-linux-gnu'] }}
           token: ${{ secrets.GITHUB_TOKEN }}
       - name: Check changed Rust docs
         shell: bash

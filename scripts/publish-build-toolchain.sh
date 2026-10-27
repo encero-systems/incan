@@ -1,13 +1,26 @@
 #!/usr/bin/env bash
-# Publish the two real release bundles only after the maintainer proves self-hosting.
-# Usage: publish-dev8-toolchain.sh COMMIT MAC_ARCHIVE MAC_OVEN MAC_LSP LINUX_ARCHIVE LINUX_OVEN LINUX_LSP OUTPUT_JSON
-# Authenticate oras and gh first. OUTPUT_JSON retains the DEV8_TOOLCHAINS repository variable value.
+# Publish the real release bundles only after the release proves self-hosting.
+# Usage: publish-build-toolchain.sh COMMIT MAC_ARCHIVE MAC_OVEN MAC_LSP LINUX_ARCHIVE LINUX_OVEN LINUX_LSP OUTPUT_JSON
+# Both hosts' bundles are built from COMMIT; CI installs each host's bundle from the one pin.
+# Authenticate oras and gh first. OUTPUT_JSON retains the BUILD_TOOLCHAIN repository variable value.
 # A packed compiler omits the tools; ship matching Oven and LSP executables in the same pinned OCI artifact.
 set -euo pipefail
 
 fail() {
-    echo "publish-dev8: $*" >&2
+    echo "publish-build-toolchain: $*" >&2
     exit 1
+}
+
+# Refuse a host's bundle before anything is pushed.
+check_host() {
+    local archive=$1 oven=$2 lsp=$3 input
+    for input in "$archive" "$oven" "$lsp"; do
+        [[ -f "$input" ]] || fail "missing release input: $input"
+    done
+    [[ "$archive" == *.tar.zst ]] || fail "compiler archives must be .tar.zst: $archive"
+    for input in "$oven" "$lsp"; do
+        [[ -x "$input" ]] || fail "release tool is not executable: $input"
+    done
 }
 
 # Publish one bundle, deriving the pin from the manifest returned by this push, never a second tag lookup.
@@ -24,7 +37,7 @@ publish_host() {
         oras push "$reference" \
             --artifact-type application/vnd.incan.toolchain.v1 \
             --annotation 'org.opencontainers.image.source=https://github.com/encero-systems/incan' \
-            --annotation 'org.opencontainers.image.version=0.6.0-dev.8' \
+            --annotation "org.opencontainers.image.version=$version" \
             --annotation "org.opencontainers.image.revision=$commit" \
             --annotation "dev.incan.toolchain.commit=$commit" \
             --annotation "dev.incan.toolchain.target=$target" \
@@ -38,26 +51,22 @@ publish_host() {
         > "$directory/pin.json"
 }
 
-[[ $# == 8 ]] || fail 'usage: publish-dev8-toolchain.sh COMMIT MAC_ARCHIVE MAC_OVEN MAC_LSP LINUX_ARCHIVE LINUX_OVEN LINUX_LSP OUTPUT_JSON'
+[[ $# == 8 ]] || fail 'usage: publish-build-toolchain.sh COMMIT MAC_ARCHIVE MAC_OVEN MAC_LSP LINUX_ARCHIVE LINUX_OVEN LINUX_LSP OUTPUT_JSON'
 commit=$1
-[[ "$commit" =~ ^[0-9a-f]{40}$ ]] || fail 'COMMIT must be a full source commit shared by both bundles'
+version=0.6.0-dev.8
+output=$8
+[[ "$commit" =~ ^[0-9a-f]{40}$ ]] || fail 'COMMIT must be the full source commit every bundle is built from'
 command -v oras >/dev/null || fail 'oras 1.3 is required'
 command -v jq >/dev/null || fail 'jq is required'
 command -v gh >/dev/null || fail 'gh is required to pin the repository variable'
-for input in "$2" "$3" "$4" "$5" "$6" "$7"; do
-    [[ -f "$input" ]] || fail "missing release input: $input"
-done
-[[ "$2" == *.tar.zst && "$5" == *.tar.zst ]] || fail 'both compiler archives must be .tar.zst'
-for executable in "$3" "$4" "$6" "$7"; do
-    [[ -x "$executable" ]] || fail "release tool is not executable: $executable"
-done
-output=$8
+check_host "$2" "$3" "$4"
+check_host "$5" "$6" "$7"
 [[ ! -e "$output" ]] || fail "refusing to replace existing pins: $output"
-stage=$(mktemp -d "${TMPDIR:-/tmp}/publish-dev8.XXXXXX")
+stage=$(mktemp -d "${TMPDIR:-/tmp}/publish-build-toolchain.XXXXXX")
 trap 'rm -rf "$stage"' EXIT
 publish_host aarch64-apple-darwin "$2" "$3" "$4"
 publish_host x86_64-unknown-linux-gnu "$5" "$6" "$7"
-# Replace the single repository variable only after both immutable pins exist; retain the receipt if that update fails.
-jq -s '.[0] + .[1]' "$stage/aarch64-apple-darwin/pin.json" "$stage/x86_64-unknown-linux-gnu/pin.json" > "$output"
-gh variable set DEV8_TOOLCHAINS --repo encero-systems/incan < "$output"
-echo "Published both bundles and pinned DEV8_TOOLCHAINS; receipt: $output"
+# Replace the single repository variable only after every immutable pin exists; retain the receipt if that update fails.
+jq -s --arg version "$version" '{version: $version} + add' "$stage"/*/pin.json > "$output"
+gh variable set BUILD_TOOLCHAIN --repo encero-systems/incan < "$output"
+echo "Published both bundles and pinned BUILD_TOOLCHAIN; receipt: $output"
