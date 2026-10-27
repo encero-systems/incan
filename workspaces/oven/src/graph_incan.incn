@@ -85,7 +85,10 @@ def prepared_unit(
     reaches is linked to its checked interface.
     """
     mut selected = unit
-    selected.loaves = linked_loaves([loaf for loaf in unit.loaves if loaf.standard] + source_loaves, interfaces)?
+    selected.loaves = linked_loaves(
+        [loaf for loaf in unit.loaves if not loaf.is_dependency()] + source_loaves,
+        interfaces,
+    )?
     mut ready = prepare_linked(selected, toolchain, [loaf.name for loaf in source_loaves])?
     for name in sorted([key for key in built.keys()]):
         native = built[name]
@@ -99,7 +102,7 @@ def linked_loaves(loaves: list[UnitLoaf], interfaces: Dict[str, Path]) -> Result
     mut linked = loaves
     for index in range(len(linked)):
         mut loaf = linked[index]
-        if not loaf.standard:
+        if loaf.is_dependency():
             if loaf.name not in interfaces:
                 return Err(f"inspection needs the checked interface of {loaf.name}")
             loaf.dir = interfaces[loaf.name].0

@@ -30,8 +30,9 @@ The checker needs Rust facts for `rust::` imports: types, generics, methods, fie
    - **Who writes them:** the same extractor, run as `incan-rustc-driver --rust-abi`, when a crate is compiled or a toolchain is installed.
    - **Coverage:** the toolchain ships the cache of `std`, `core` and `alloc`. A compiled Rust unit carries its own cache, from incan.pub's bake or Oven's build.
    - **How they reach the compiler:** Oven passes the caches with the unit's native closure (`--rust-abi`).
-3. **Check-time extraction is the fallback.** Lookup is ordered: the Loaf's shipped ABI, caches, then the same extractor over the unit's crates; covered paths are never re-extracted. Selected public layouts include transitive records through Options and collections, while method-signature expansion is independently bounded.
+3. **Check-time extraction is the fallback.** Lookup is ordered: the Loaf's shipped ABI, caches, then the same extractor over the unit's crates; covered paths are never re-extracted. For a crate the unit declares, private indexed Loaf facts yield to the unit's own caches and extraction; explicit dependency reexports retain their declared ABI. Selected public layouts include transitive records through Options and collections, while method-signature expansion is independently bounded.
    Bounded fallback results may be retained in the same indexed layout for the exact request and native generation, including absent paths; they remain separate from shipped complete-crate caches and grant no crate-wide coverage.
+   Loaf publication does not republish private foreign-trait snapshots from the producer's closure; those lookups use the consumer's own native closure, which may add implementations and associated definitions.
 4. **Storage.**
    - **Layout:** a cache uses `.incnbody`'s layout. A version comes first, then a postcard index of each path's payload range, then one postcard payload per item.
    - **Reading:** a reader decodes the index once, and decodes an item only when checking asks for it.

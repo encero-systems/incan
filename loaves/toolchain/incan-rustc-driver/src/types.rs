@@ -2,6 +2,7 @@
 
 use crate::error::PlanError;
 use crate::plan::{ListLeaf, PlanType, SizedNumeric, list_leaf_type, range_field_types, tuple_element_type};
+use incan_semantics_core::RuntimeCarrier;
 use rustc_middle::ty::{ExistentialPredicateStableCmpExt as _, Ty, TyCtxt};
 
 /// Construct an unsized trait object from its principal arguments followed by declaration-ordered associated
@@ -276,11 +277,15 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
                 _ => slice,
             }
         }
-        PlanType::Decimal => decimal_type(tcx)?,
-        PlanType::ValidationError => validation_error_type(tcx)?,
-        PlanType::ValidationErrorRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, validation_error_type(tcx)?),
-        PlanType::FrozenStr => frozen_type(tcx)?,
-        PlanType::FrozenBytes => frozen_bytes_type(tcx)?,
+        PlanType::Decimal => runtime_carrier_type(tcx, RuntimeCarrier::Decimal)?,
+        PlanType::ValidationError => runtime_carrier_type(tcx, RuntimeCarrier::ValidationError)?,
+        PlanType::ValidationErrorRef => Ty::new_imm_ref(
+            tcx,
+            tcx.lifetimes.re_erased,
+            runtime_carrier_type(tcx, RuntimeCarrier::ValidationError)?,
+        ),
+        PlanType::FrozenStr => runtime_carrier_type(tcx, RuntimeCarrier::FrozenStr)?,
+        PlanType::FrozenBytes => runtime_carrier_type(tcx, RuntimeCarrier::FrozenBytes)?,
         PlanType::FrozenCollection(name, elements) => frozen_collection_type(tcx, name, elements)?,
         PlanType::FrozenCollectionRef(name, elements) => Ty::new_imm_ref(
             tcx,
@@ -537,47 +542,10 @@ fn string_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
     Ok(tcx.type_of(definition).instantiate_identity().skip_normalization())
 }
 
-/// Recover Decimal128 from the canonical runtime constructor's return type, preserving its dependency identity.
-fn decimal_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
-    let definition = crate::callees::external(tcx, "incan_native_runtime::decimal_from_parts")?;
-    Ok(tcx.fn_sig(definition).instantiate_identity().skip_binder().output())
-}
-
-/// Recover the builtin error from its retained owner, independently of runtime wrapper exports or their calls.
-fn validation_error_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
-    let path = incan_semantics_core::RuntimeBuiltinType::ValidationError.carrier_path();
-    let definition = crate::callees::native_type_item(tcx, path)?;
+/// Read builtin storage from its canonical Rust definition without inspecting a runtime function being compiled.
+fn runtime_carrier_type(tcx: TyCtxt<'_>, carrier: RuntimeCarrier) -> Result<Ty<'_>, PlanError> {
+    let definition = crate::callees::native_type_item(tcx, carrier.path())?;
     Ok(tcx.type_of(definition).instantiate_identity().skip_normalization())
-}
-
-/// Recover the dependency-owned FrozenStr identity from its canonical observation wrapper.
-fn frozen_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
-    let definition = crate::callees::external(tcx, "incan_native_runtime::format_frozen")?;
-    tcx.fn_sig(definition)
-        .instantiate_identity()
-        .skip_binder()
-        .inputs()
-        .first()
-        .copied()
-        .ok_or_else(|| PlanError::Invalid {
-            function: "FrozenStr".into(),
-            reason: "the frozen observation wrapper has no carrier argument".into(),
-        })
-}
-
-/// Recover the dependency-owned static byte wrapper from the canonical length observation function's input.
-fn frozen_bytes_type(tcx: TyCtxt<'_>) -> Result<Ty<'_>, PlanError> {
-    let definition = crate::callees::external(tcx, "incan_native_runtime::length_frozen_bytes")?;
-    tcx.fn_sig(definition)
-        .instantiate_identity()
-        .skip_binder()
-        .inputs()
-        .first()
-        .copied()
-        .ok_or_else(|| PlanError::Invalid {
-            function: "FrozenBytes".into(),
-            reason: "the frozen byte observation wrapper has no carrier argument".into(),
-        })
 }
 
 /// Translate a checked exact array length without a signed or truncating conversion.

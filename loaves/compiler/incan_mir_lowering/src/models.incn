@@ -23,7 +23,7 @@ from pub::incan_mir_plan import (
     FieldProjection,
     EnumDeclaration,
 )
-from tuples import tuple_type, generic_tuple_type, type_name, tuple_slot
+from tuples import generic_tuple_type, type_name, tuple_slot
 from pub::incan_mir_plan import tuple_element_type
 from generators import generator_type
 from nominal_instances import nominal_symbol, template_base
@@ -72,25 +72,26 @@ pub def model_type(declarations: &list[NominalDeclaration], ty: &RustType) -> Re
                     return Ok(PlanType.TypeToken([model_type(declarations, represented)?]))
                 _ => return Err("unsupported Body IR nonprimitive TypeToken carrier")
         RustType.Function(params=parameters, return_type=result) => return function_pointer_type(parameters, result)
-        RustType.Tuple(elements) => return tuple_type(elements)
+        RustType.Tuple(_elements) => return retained_model_type(declarations, ty)
         RustType.Decimal(precision=_precision, scale=_scale) => return Ok(PlanType.Decimal)
         RustType.Generic(base=base, args=arguments) =>
-            # 3. Native frozen constructors preserve exact elements; source frozen views freeze text and bytes.
-            if base in ["$FrozenList", "$FrozenSet", "$FrozenDict"]:
-                mut storage: list[PlanType] = []
-                for argument in arguments:
-                    storage.append(model_type(declarations, argument)?)
-                return Ok(PlanType.FrozenCollection(str(base)[1:], storage))
-            if base in ["FrozenList", "FrozenSet", "FrozenDict"]:
-                mut storage: list[PlanType] = []
-                for argument in arguments:
-                    mut element = model_type(declarations, argument)?
-                    if element == PlanType.String:
-                        element = PlanType.StaticText
-                    elif element == PlanType.List(ListLeaf.U8, 1):
-                        element = PlanType.StaticBytes
-                    storage.append(element)
-                return Ok(PlanType.FrozenCollection(str(base), storage))
+            # 3. Collection elements use the same recursive layout boundary as ordinary frame locals.
+            if (
+                base in ["List", "Set"]
+                and len(arguments) == 1
+                or base == "Dict"
+                and len(arguments) == 2
+                or base in [
+                    "Tuple",
+                    "FrozenList",
+                    "FrozenSet",
+                    "FrozenDict",
+                    "$FrozenList",
+                    "$FrozenSet",
+                    "$FrozenDict",
+                ]
+            ):
+                return retained_model_type(declarations, ty)
             retained_base = str(base)
             retained_name = nominal_symbol(retained_base, arguments)
             mut index = 0
@@ -103,29 +104,16 @@ pub def model_type(declarations: &list[NominalDeclaration], ty: &RustType) -> Re
                 ):
                     return Ok(PlanType.Model(index, model_symbol(str(declaration.name))))
                 index += 1
-            if base == "Set" and len(arguments) == 1:
-                return Ok(PlanType.Set(hashed_element(declarations, arguments[0])?))
-            if base == "Dict" and len(arguments) == 2:
-                return Ok(
-                    PlanType.Dict(hashed_element(declarations, arguments[0])?, primitive_leaf(arguments[1], false)?),
-                )
-            if base != "List" or len(arguments) != 1:
-                return generic_tuple_type(ty)
-            element = model_type(declarations, arguments[0])?
-            match element:
-                PlanType.Int => return Ok(PlanType.List(ListLeaf.Int, 1))
-                PlanType.Float => return Ok(PlanType.List(ListLeaf.Float, 1))
-                PlanType.Bool => return Ok(PlanType.List(ListLeaf.Bool, 1))
-                PlanType.String => return Ok(PlanType.List(ListLeaf.Str, 1))
-                PlanType.U8 => return Ok(PlanType.List(ListLeaf.U8, 1))
-                PlanType.Decimal => return Ok(PlanType.List(ListLeaf.Decimal, 1))
-                PlanType.FrozenStr => return Ok(PlanType.List(ListLeaf.FrozenStr, 1))
-                PlanType.FrozenBytes => return Ok(PlanType.List(ListLeaf.FrozenBytes, 1))
-                PlanType.Tuple(elements) => return Ok(PlanType.List(ListLeaf.Tuple(elements), 1))
-                PlanType.Model(index, name) => return Ok(PlanType.List(ListLeaf.Model(index, name), 1))
-                PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))
-                _ => return Err(f"unsupported Body IR list element {ty}")
+            return generic_tuple_type(ty)
         _ => return Err(f"unsupported Body IR type {type_name(ty)} ({ty})")
+
+
+def retained_model_type(declarations: &list[NominalDeclaration], ty: &RustType) -> Result[PlanType, str]:
+    """Resolve a model carrier with typed empty borrowed inventories for the unavailable enum and union context."""
+    enums: list[RustEnumDeclaration] = []
+    unions: list[RustType] = []
+    intrinsics: list[EnumDeclaration] = []
+    return retained_type(declarations, enums, unions, ty, intrinsics)
 
 
 pub def runtime_storage_marker(ty: &RustType) -> Option[PlanType]:

@@ -1,4 +1,4 @@
-# behavior: checked C bindings preserve scalar carriers, initialized output slots and bounded UTF-8 text, and a bounded copy refuses a nonpositive bound with its own message (incan-4.10)
+# behavior: checked C carriers, initialized slots and bounded UTF-8 text avoid recursive sized display and refuse a nonpositive bound with its own message (incan-4.10)
 # expect-stdout:
 #   5
 #   7
@@ -13,13 +13,13 @@
 
 from std.interop import c
 
+
 binding LibC:
     header = "stdlib.h"
     link = c.system_library("c")
 
     symbol absolute(value: c.i32) -> c.i32:
         native = "abs"
-
     enum Status:
         OK: c.i32 = EXIT_SUCCESS
         ONE: c.i32 = EXIT_FAILURE
@@ -120,7 +120,7 @@ def main() -> None:
     match string_length("hello"):
         Ok(length) => println(length)
         Err(error) => println(f"error {error}")
-    interior_nul = b"a\0b".decode("utf-8").unwrap_or("")
+    interior_nul = b"a\x00b".decode("utf-8").unwrap_or("")
     match string_length(interior_nul):
         Ok(length) => println(length)
         Err(_) => println("interior nul refused")

@@ -1479,11 +1479,14 @@ impl TypeChecker {
             {
                 continue;
             }
-            let actual = self.instantiate_rust_signature_type(
+            let mut actual = self.instantiate_rust_signature_type(
                 &self.native_rust_signature_type(&bound.self_type, ""),
                 &implementation.type_params,
                 &bindings,
             );
+            if bound.self_type == implementation.self_type {
+                actual = self.rust_native_self_binding(owner, actual);
+            }
             if self.active_type_param_name(&actual).is_some() {
                 if !self.type_satisfies_explicit_bound(&actual, &bound.path) {
                     return false;
@@ -1520,6 +1523,20 @@ impl TypeChecker {
             }
         }
         true
+    }
+
+    /// Recover an inspected native Self only when source inference lost its metadata owner. Existing native
+    /// identities keep their inference representation, preserving ordinary receiver and associated-output selection.
+    pub(in crate::typechecker::check_expr) fn rust_native_self_binding(
+        &self,
+        owner: &ResolvedType,
+        inferred: ResolvedType,
+    ) -> ResolvedType {
+        if self.rust_bound_owner_item_path(&inferred).is_none() && self.rust_bound_owner_item_path(owner).is_some() {
+            owner.clone()
+        } else {
+            inferred
+        }
     }
 
     /// Locate primitive and nominal metadata for a closed trait obligation without changing ordinary method priority.

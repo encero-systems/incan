@@ -45,7 +45,7 @@ from lists import is_list, parameter_storage_type, is_exclusive_borrow
 from numerics import numeric_carrier
 from generators import generator_type, is_generator_type
 from frame import Builder
-from type_parameters import Instance, instantiate, substitute
+from type_parameters import Instance, instantiate, substitute, request_instance
 from lowering import call_parameter_type
 
 
@@ -773,9 +773,7 @@ def original_function_item(
         mut signature_body = body.clone()
         signature_body.params = inputs
         name, ty = item_signature(module, builder, signature_body.params, concrete)?
-        builder.instances.append(
-            Instance(body=body.clone(), arguments=arguments, owned_callable_slots=[], original_callable=true),
-        )
+        request_instance(builder.instances, body, arguments, [], true)
         match ty:
             PlanType.FunctionItem(_item, signature) =>
                 original_name = f"{name}__incan_original"

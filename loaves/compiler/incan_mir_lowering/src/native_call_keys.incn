@@ -3,13 +3,14 @@
 from rust::incan_semantics_core::body_ir import LoafCallable, Place as RustPlace
 from frame import Builder
 from type_parameters import substitute
+from tuples import type_name
 
 
-pub def native_result_matches(
+pub def native_result_mismatch(
     mut builder: Builder,
     declaration: &LoafCallable,
     destination: &Option[RustPlace],
-) -> Result[bool, str]:
+) -> Result[Option[str], str]:
     """
     Disambiguate checked native records: 1. Read the original result slot. 2. Compare their closed checked types.
 
@@ -20,16 +21,16 @@ pub def native_result_matches(
     """
     # 1. Read only a whole result slot in its authenticated source frame.
     match destination:
-        None => return Ok(true)
+        None => return Ok(None)
         Some(place) =>
             if len(place.projection) != 0 or builder.local_offset != 0:
-                return Ok(true)
+                return Ok(None)
             match place.local_id():
-                None => return Ok(true)
+                None => return Ok(None)
                 Some(local) =>
                     index = int(local.index())
                     if len(builder.checked_local_types) == 0:
-                        return Ok(true)
+                        return Ok(None)
                     if index >= len(builder.checked_local_types):
                         return Err("invalid checked native result slot")
                     # 2. Compare the existing checked types under this exact frame's retained binding.
@@ -38,5 +39,9 @@ pub def native_result_matches(
                         builder.type_parameters,
                         builder.type_arguments,
                     )?
-                    selected = substitute(declaration.return_type, builder.type_parameters, builder.type_arguments)?
-                    return Ok(actual == selected)
+                    match substitute(declaration.return_type, builder.type_parameters, builder.type_arguments):
+                        Err(reason) => return Ok(Some(reason))
+                        Ok(selected) =>
+                            if actual == selected:
+                                return Ok(None)
+                            return Ok(Some(f"checked {type_name(actual)}; retained {type_name(selected)}"))

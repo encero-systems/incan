@@ -24,7 +24,8 @@ use incan_frontend::module::{
 use incan_frontend::parsed_module::ParsedModule;
 use incan_frontend::{diagnostics, typechecker};
 
-/// Collect one source graph through an already-resolved compilation session.
+/// Collect one source graph through an already-resolved compilation session, preserving the entry's logical module
+/// identity. A test or alternate entry must not claim `main` and collide with an imported sibling `main.incn`.
 pub fn collect_modules_detailed_with_session(
     path: PathBuf,
     session: &CompilationSession,
@@ -32,7 +33,9 @@ pub fn collect_modules_detailed_with_session(
     let _invocation =
         tracing::trace_span!(target: "incan::invocation", "incan_driver::collect_modules", input = %path.display())
             .entered();
-    collect_modules_detailed_with_session_at_path(path, session, vec!["main".to_string()])
+    let path_segments =
+        logical_module_segments_from_file(&session.source_root, &path).unwrap_or_else(|| vec!["main".to_string()]);
+    collect_modules_detailed_with_session_at_path(path, session, path_segments)
 }
 
 /// Collect one source graph while preserving the caller-proven logical identity of its entry module.

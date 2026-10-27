@@ -13,6 +13,7 @@ from rust::incan_std_core::iter import nonnegative_count
 from rust::incan_std_core::errors import raise_index_error
 from rust::incan_std_core::collections import set_contains, dict_contains_key, dict_get, dict_get_mut
 from native_equality import equal_native
+from native_copying import clone_native
 
 
 pub def equal_set[T with (Eq, Hash)](left: &Set[T], right: &Set[T]) -> bool:
@@ -63,7 +64,7 @@ pub def contains_set[T with (Eq, Hash)](values: &Set[T], value: T) -> bool:
 pub def clone_set[T with Clone](values: &Set[T]) -> Set[T]:
     """Copy a set only when the checked read requires an owned copy."""
     native: &RuntimeSet[T] = values
-    return RuntimeClone.clone(native)
+    return clone_native(native)
 
 
 pub def empty_dict[K with (Eq, Hash), V]() -> Dict[K, V]:
@@ -90,14 +91,14 @@ pub def contains_dict[K with (Eq, Hash), V](values: &Dict[K, V], key: K) -> bool
 pub def clone_dict[K with Clone, V with Clone](values: &Dict[K, V]) -> Dict[K, V]:
     """Materialize an owned dictionary for checked value-preserving reads."""
     native: &RuntimeDict[K, V] = values
-    return RuntimeClone.clone(native)
+    return clone_native(native)
 
 
 pub def get_dict[K with (Eq, Hash, Display), V with RuntimeClone](values: &Dict[K, V], key: K) -> V:
     """Index a dictionary with the legacy missing-key diagnostic."""
     reference: &K = key
     value: &V = dict_get(values, reference)
-    return RuntimeClone.clone(value)
+    return clone_native(value)
 
 
 pub def borrow_mut_dict[K with (Eq, Hash, Display), V](values: &mut Dict[K, V], key: K) -> &mut V:
@@ -111,7 +112,7 @@ pub def optional_dict[K with (Eq, Hash, Display), V with RuntimeClone](values: &
     reference: &K = key
     if dict_contains_key(values, reference):
         value: &V = dict_get(values, reference)
-        return Some(RuntimeClone.clone(value))
+        return Some(clone_native(value))
     return None
 
 
@@ -126,7 +127,7 @@ pub def keys_dict[K with Clone, V](values: &Dict[K, V]) -> list[K]:
         match iterator.next():
             Some(value) =>
                 key: &K = value
-                keys.append(RuntimeClone.clone(key))
+                keys.append(clone_native(key))
             None => return keys
 
 
@@ -141,7 +142,7 @@ pub def values_dict[K with (Eq, Hash, Clone, Display), V with Clone](values: &Di
         match iterator.next():
             Some(value) =>
                 item: &V = value
-                items.append(RuntimeClone.clone(item))
+                items.append(clone_native(item))
             None => return items
 
 
@@ -150,7 +151,7 @@ pub def default_dict[K with (Eq, Hash, Display), V with Clone](values: &Dict[K, 
     reference: &K = key
     if dict_contains_key(values, reference):
         value: &V = dict_get(values, reference)
-        return RuntimeClone.clone(value)
+        return clone_native(value)
     return default
 
 
@@ -161,7 +162,7 @@ pub def nth_set[T with Clone](values: &Set[T], index: int) -> T:
     match iterator.nth(nonnegative_count(index)):
         Some(value) =>
             element: &T = value
-            return RuntimeClone.clone(element)
+            return clone_native(element)
         None => return raise_index_error("set cursor outside collection")
 
 
@@ -196,5 +197,5 @@ pub def extend_dict[K with (Eq, Hash, Clone, Display), V with Clone](
             Some(value) =>
                 key: &K = value
                 item: &V = dict_get(source, key)
-                values.insert(RuntimeClone.clone(key), RuntimeClone.clone(item))
+                values.insert(clone_native(key), clone_native(item))
             None => return

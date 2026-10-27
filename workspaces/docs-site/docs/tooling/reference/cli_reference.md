@@ -74,6 +74,7 @@ Writes the selected source's unit description as a JSON object. Execution-only o
 | `package`, `version`, `profile` | Strings | Package identity, package version and selected artifact profile. |
 | `declared_features`, `active_features` | Arrays of strings | Declared root features and the selected root features. |
 | `loaves` | Array of objects | Each entry has string `key`, `name` and `dir`, Boolean `standard`, and optional string `source_root`. The latter is omitted when authored source is unavailable. |
+| `loaves[].toolchain_provided` | Boolean | Whether the toolchain supplies the facade rather than the project declaring a dependency. Default: `false`. |
 | `rust_crates` | Array of strings | Declared Rust crate aliases. |
 | `contract_models`, `c_headers` | Arrays of strings | Selected model-bundle paths and C header paths. |
 | `vocab`, `vocab_entry` | String or null | Prepared vocabulary registration path and declared vocabulary entry path. |

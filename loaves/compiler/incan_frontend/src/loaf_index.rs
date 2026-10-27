@@ -425,8 +425,8 @@ impl LoafIndex {
         self.forget_resolved_rust_items();
     }
 
-    /// Name the Rust crates the unit declares. The ABI a standard Loaf ships does not answer for them, so their facts
-    /// come from the unit's own caches and extraction.
+    /// Name the Rust crates the unit declares. Private indexed snapshots do not answer for them, so their facts come
+    /// from the unit's own caches and extraction. Explicit dependency reexports retain their declared ABI.
     pub fn declare_rust_crates(&mut self, crates: impl IntoIterator<Item = String>) {
         self.declared_rust_crates = crates.into_iter().collect();
         self.forget_resolved_rust_items();
@@ -577,9 +577,9 @@ impl LoafIndex {
         Some(resolved)
     }
 
-    /// Resolve one item through the lookup order, without the shared store. Ambient standard Loaves ship facts read in
-    /// their own closure's session, where visible paths and implementation sets can differ from the unit's; for a
-    /// crate the unit declares they stay silent and the unit's own extraction answers.
+    /// Resolve one item through the lookup order, without the shared store. A private indexed snapshot belongs to its
+    /// producer's closure, where visible paths and implementations can differ from the unit's. For a crate the unit
+    /// declares, only explicit dependency reexports precede the unit's own caches and extraction.
     fn resolve_rust_abi_item(&self, canonical_path: &str) -> Option<RustItemMetadata> {
         let root = canonical_path.split("::").next().unwrap_or(canonical_path);
         let declared = self.declared_rust_crates.contains(root);
@@ -603,7 +603,7 @@ impl LoafIndex {
                 return Some(item.clone());
             }
         }
-        for entry in shipping().filter(|entry| entry.summary.rust_abi_cache) {
+        for entry in shipping().filter(|entry| !declared && entry.summary.rust_abi_cache) {
             let Ok(entry) = entry.demand() else {
                 continue;
             };

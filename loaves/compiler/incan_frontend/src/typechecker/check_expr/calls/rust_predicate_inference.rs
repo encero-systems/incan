@@ -171,16 +171,38 @@ impl TypeChecker {
             let RustItemKind::Trait(info) = &metadata.kind else {
                 continue;
             };
-            let accepts = |owner: &ResolvedType| {
-                info.implementations.iter().any(|implementation| {
-                    self.rust_impl_may_apply(implementation, owner)
-                        && self.rust_impl_self_bindings(implementation, owner).is_some()
-                })
-            };
+            let accepts =
+                |owner: &ResolvedType| self.rust_predicate_accepts_carrier(predicate, &info.implementations, owner);
             if !accepts(&owned) && accepts(&borrowed) {
                 bindings.insert(name.to_owned(), borrowed);
             }
         }
+    }
+
+    /// Consult the native owner's retained implementations as well as the trait's explicit templates. Auto traits
+    /// such as Send can be proven on String without an explicit impl in the trait's list; losing that proof must
+    /// not turn an owned value into a borrowed generic argument. Rustc still verifies the complete selected bounds.
+    fn rust_predicate_accepts_carrier(
+        &self,
+        predicate: &RustTraitBound,
+        trait_implementations: &[RustImplementedTrait],
+        owner: &ResolvedType,
+    ) -> bool {
+        let metadata = self
+            .rust_canonical_path_for_receiver_type(owner)
+            .and_then(|path| self.rust_item_metadata_for_path(&path));
+        let owner_implementations = match metadata.as_deref().map(|metadata| &metadata.kind) {
+            Some(RustItemKind::Type(info)) => info.implemented_traits.as_slice(),
+            _ => &[],
+        };
+        let identity = self.rust_trait_identity(&predicate.path);
+        owner_implementations
+            .iter()
+            .chain(trait_implementations)
+            .any(|implementation| {
+                self.rust_trait_identity(&implementation.path) == identity
+                    && self.rust_impl_may_apply(implementation, owner)
+            })
     }
 
     /// Pair an owned input with its native view. Nominal inputs require an already borrowed parameter, so selecting

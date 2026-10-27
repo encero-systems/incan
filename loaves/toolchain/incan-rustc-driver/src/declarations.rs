@@ -2,6 +2,7 @@
 
 use crate::ast_build::ident;
 use crate::plan::{Function, ListLeaf, PlanType, SizedNumeric, list_leaf_type, range_field_types, tuple_element_type};
+use incan_semantics_core::RuntimeCarrier;
 use rustc_ast as ast;
 use rustc_span::{Span, Symbol};
 use thin_vec::{ThinVec, thin_vec};
@@ -20,6 +21,22 @@ fn standard_path(segments: &[&str], span: Span) -> ast::Path {
         path.segments.push(ast::PathSegment::from_ident(ident(segment, span)));
     }
     path
+}
+
+/// Name the shared builtin carrier directly, so compiling the runtime never needs its own already-built facade.
+fn runtime_carrier_ty(carrier: RuntimeCarrier, span: Span) -> ast::TyKind {
+    let mut segments = thin_vec![ast::PathSegment::path_root(span)];
+    for segment in carrier.path().split("::") {
+        segments.push(ast::PathSegment::from_ident(ident(segment, span)));
+    }
+    ast::TyKind::Path(
+        None,
+        ast::Path {
+            span,
+            segments,
+            tokens: None,
+        },
+    )
 }
 
 /// Spell `::std::boxed::Box` from the crate root, so a source declaration named `Box` cannot shadow a closure's box.
@@ -188,34 +205,10 @@ pub(crate) fn ty(kind: &PlanType, span: Span) -> Box<ast::Ty> {
             },
         ),
         PlanType::RangeValue => ast::TyKind::Tup(range_field_types().iter().map(|field| ty(field, span)).collect()),
-        PlanType::Decimal => {
-            let mut path = ast::Path::from_ident(ident("incan_native_runtime", span));
-            path.segments
-                .push(ast::PathSegment::from_ident(ident("DecimalCarrier", span)));
-            ast::TyKind::Path(None, path)
-        }
-        PlanType::FrozenStr => {
-            let mut path = ast::Path::from_ident(ident("incan_native_runtime", span));
-            path.segments
-                .push(ast::PathSegment::from_ident(ident("FrozenCarrier", span)));
-            ast::TyKind::Path(None, path)
-        }
-        PlanType::FrozenBytes => {
-            let mut path = ast::Path::from_ident(ident("incan_native_runtime", span));
-            path.segments
-                .push(ast::PathSegment::from_ident(ident("FrozenBytesCarrier", span)));
-            ast::TyKind::Path(None, path)
-        }
-        PlanType::ValidationError => {
-            let mut segments = incan_semantics_core::RuntimeBuiltinType::ValidationError
-                .carrier_path()
-                .split("::");
-            let mut path = ast::Path::from_ident(ident(segments.next().unwrap_or_default(), span));
-            for segment in segments {
-                path.segments.push(ast::PathSegment::from_ident(ident(segment, span)));
-            }
-            ast::TyKind::Path(None, path)
-        }
+        PlanType::Decimal => runtime_carrier_ty(RuntimeCarrier::Decimal, span),
+        PlanType::FrozenStr => runtime_carrier_ty(RuntimeCarrier::FrozenStr, span),
+        PlanType::FrozenBytes => runtime_carrier_ty(RuntimeCarrier::FrozenBytes, span),
+        PlanType::ValidationError => runtime_carrier_ty(RuntimeCarrier::ValidationError, span),
         PlanType::ValidationErrorRef => ast::TyKind::Ref(
             None,
             ast::MutTy {

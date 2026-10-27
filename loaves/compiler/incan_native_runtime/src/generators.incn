@@ -22,9 +22,11 @@ from rust::std::iter import (
 )
 from rust::std::clone import Clone as NativeClone
 from rust::std::rc import Rc
+from rust::std::vec import Vec
 from rust::std::cell import Cell, RefCell, RefMut
 from rust::std::ops import DerefMut
 from rust::std::panic import panic_any
+from native_copying import clone_native
 
 
 pub def poll_generator[T with Clone](values: &mut NativeGenerator[T], mut output: list[T]) -> bool:
@@ -39,12 +41,10 @@ pub def poll_generator[T with Clone](values: &mut NativeGenerator[T], mut output
         None => return false
 
 
-pub def list_generator[T with (Clone, Static)](values: list[T]) -> Generator[T]:
-    """Yield an independent snapshot lazily and in order: 1. Clone the source. 2. Wrap its consuming native iterator."""
-    # 1. Clone the source.
-    snapshot = NativeClone.clone(values)
-    # 2. Wrap its consuming native iterator.
-    return NativeGenerator.new(IntoIterator.into_iter(snapshot))
+pub def list_generator[T with (Clone, Static)](values: Vec[T]) -> Generator[T]:
+    """Yield owned source storage lazily: 1. Transfer the vector into its consuming native iterator."""
+    # 1. Transfer the owned source without making another snapshot.
+    return NativeGenerator.new(IntoIterator.into_iter(values))
 
 
 pub def set_generator[T with (Clone, Static)](values: set[T]) -> Generator[T]:
@@ -430,4 +430,4 @@ pub def for_each_int_generator(values: Generator[int], action: (int) -> None) ->
 
 def next_index(previous: &int) -> Option[int]:
     """Advance the private signed index stream using the language's integer arithmetic."""
-    return Some(NativeClone.clone(previous) + 1)
+    return Some(previous.clone() + 1)

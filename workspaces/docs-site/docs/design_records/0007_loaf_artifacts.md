@@ -41,6 +41,8 @@ dev.8 removes generated Rust crates and Cargo artifact coordinates. The library-
 
 One index per compilation records each reachable Loaf's key, artifact directory, manifest, and namespace: `pub::<key>` for ordinary dependencies and compiler-pinned `std.*` roots for standard packages. Every module path selects exactly one entry; types come from its manifest, governed bodies from `.incnbody`, and linkage from its rlib and native closure.
 
+A checked source interface may publish declarations and governed bodies through this same index before native compilation, allowing the runtime and its standard trait declarations to be built from source without an earlier runtime. It grants no compiled callable or native layout and is never a substitute for a complete compiled Loaf in a release toolchain.
+
 Validated manifest inventories and facts may be retained privately for an exact file generation and compiler; public artifact admission remains authoritative. Canonical lookups load complete manifests on first demand, including every global vocabulary, provider-operation, and native-union contributor; failed demands refuse analysis, and previous source footprints supply no negative lookup facts.
 
 ### Calling into a Loaf
@@ -70,7 +72,7 @@ The standard packages are Loaves like any other. A project depends on the standa
 ## Consequences
 
 - The provider plan, the library-manifest index, the SDK inventory with its components, profiles and bootstrap grants, the standard source publication, and the generated-crate artifact record are replaced by the artifact and the index.
-- A dependency is always compiled before its consumer is checked (DD-0005's eager preparation), so there is no checked-source or parser-source stand-in for a missing artifact.
+- Ordinary dependency preparation remains eager (DD-0005); an explicitly selected checked source interface supplies only its checked declarations and governed bodies, and a consumer requiring its compiled items refuses until native compilation completes.
 - The checker sees the standard library only through manifests, the same contract every dependency already meets.
 
 ## Non-goals

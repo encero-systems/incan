@@ -151,6 +151,9 @@ pub struct UnitLoaf {
     pub dir: PathBuf,
     /// Whether it is a standard package, which owns `std.*` roots rather than `pub::<key>`.
     pub standard: bool,
+    /// Whether the toolchain supplies this facade rather than the project declaring it as a dependency.
+    #[serde(default)]
+    pub toolchain_provided: bool,
     /// Optional authored source root selected by Oven; editor locations never infer it from artifact placement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_root: Option<PathBuf>,

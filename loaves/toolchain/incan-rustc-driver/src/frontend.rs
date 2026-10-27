@@ -241,11 +241,12 @@ fn checked_modules(
 
     // ---- Declarations the program reaches in its Loaves ----
     let mut requested = required_loaf_identities(&modules, &analysis, package_identity)?;
+    let checked_local = checked_local_identities(manifest.as_ref());
     let runtime_callable_bindings = runtime_declarations(&session, manifest.as_ref());
     requested.extend(runtime_callable_bindings.iter().map(|binding| binding.canonical.clone()).filter(
         |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity),
     ));
-    let mut bodies = load_loaf_modules(session.loaves(), &requested)?;
+    let mut bodies = load_loaf_modules(session.loaves(), &requested, &checked_local)?;
     // Loaf declarations retain canonical spans but carry no source text. Do not attribute those spans to the entry.
     let mut files = bodies
         .iter()
@@ -289,6 +290,7 @@ fn checked_modules(
         session.loaves(),
         requested,
         package_identity,
+        &checked_local,
     )?;
     session.loaves().validate_demands().map_err(|error| error.to_string())?;
     Ok(program)
@@ -338,6 +340,18 @@ fn program_entrypoints(
     Ok(entries)
 }
 
+/// Retain the producer's checked public identities for returning dependency edges. A foreign artifact gains no
+/// permission to reach a private source declaration merely because this compilation happens to own it.
+fn checked_local_identities(manifest: Option<&LibraryManifest>) -> BTreeSet<CanonicalSymbolId> {
+    manifest
+        .into_iter()
+        .flat_map(|manifest| {
+            incan_frontend::library_manifest::public_identities::public_executable_identities(manifest)
+                .into_iter()
+                .filter(move |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library == &manifest.name))
+        })
+        .collect()
+}
 /// Complete the dependency context with checked comparison slots and source primitive adapters, then retain linked
 /// contracts and held Rust layouts. Install the sole callable inventory before collecting its native signature
 /// carriers. The added defaults introduce no new source checking or invented implementations.
@@ -346,6 +360,7 @@ fn complete_dependency_context(
     loaves: &LoafIndex,
     mut requested: BTreeSet<CanonicalSymbolId>,
     package_identity: &str,
+    checked_local: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<CheckedProgram, String> {
     let mut defaults = incan_frontend::body_ir::required_comparison_defaults(&program.modules[program.own..])
         .into_iter()
@@ -358,7 +373,7 @@ fn complete_dependency_context(
     );
     if !defaults.is_subset(&requested) {
         requested.extend(defaults);
-        let mut expanded = load_loaf_modules(loaves, &requested)?;
+        let mut expanded = load_loaf_modules(loaves, &requested, checked_local)?;
         let own = program.modules.split_off(program.own);
         let mut files = program.files.split_off(program.own);
         let mut sources = program.sources.split_off(program.own);
@@ -1052,6 +1067,55 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     compile_unit(arguments, false)
 }
 
+/// Publish checked declarations and governed bodies before a library's native artifact exists. This uses the same
+/// source-to-Body-IR pass and publication as compilation, but provides no compiled callable or native layout. It
+/// breaks source dependency cycles such as the runtime's standard trait bounds without importing a prior runtime.
+/// Consumers that require the provider's compiled crate still refuse until ordinary compilation supplies it.
+pub fn source_interface(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let [unit_path, sysroot, directory] = arguments else {
+        return Err("usage: --source-interface UNIT SYSROOT DIRECTORY".into());
+    };
+
+    // ---- Checking inputs without an existing native publication ----
+    crate::identity::verify(Path::new(sysroot))?;
+    let unit = UnitDescription::read(Path::new(unit_path)).map_err(|error| error.message)?;
+    if unit.kind != UnitKind::Library {
+        return Err("a source interface requires a library unit".into());
+    }
+    let directory = Path::new(directory);
+    let library = directory.join(format!("lib{}.rlib", unit.package.replace('-', "_")));
+    if library.exists() {
+        return Err("a source interface cannot replace a compiled library's publication".into());
+    }
+    let dependencies = dependencies(&unit, &[])?;
+    let rust = dependencies.rust_facts(&unit, Path::new(sysroot));
+    let loaf_links = unit.loaves.iter().map(|loaf| loaf.name.replace('-', "_")).collect();
+    let mut closure = LoafNativeClosure {
+        externs: dependencies.externs,
+        search: unit.own_search.clone(),
+        macro_externs: Vec::new(),
+    };
+
+    // ---- Checked source and governed publication ----
+    let program = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
+        checked_modules(&unit, &rust, false, &RefusalReceipt(None))
+    })?;
+    let manifest = program
+        .manifest
+        .ok_or("a checked source interface requires a library manifest")?;
+    closure.macro_externs = macro_externs(&manifest, &closure.externs, &loaf_links);
+    std::fs::create_dir_all(directory)?;
+    write_loaf(
+        directory,
+        manifest,
+        &program.modules[program.own..],
+        &closure,
+        &program.graph,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 /// Compile through the same native pipeline with a full canonical session, borrowing only generation-guarded
 /// immutable readings. A resident worker has no use for a persisted unchanged-source lookup footprint.
 pub(crate) fn compile_resident(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
@@ -1060,7 +1124,9 @@ pub(crate) fn compile_resident(arguments: &[String]) -> Result<(), Box<dyn std::
 
 /// Compile one unit with the invocation's immutable-input retention policy; source checking and native execution
 /// remain fresh for both short-lived and resident callers. A leading `--certify PATH` option names where a refusal
-/// that unchanged inputs reproduce writes its receipt.
+/// that unchanged inputs reproduce writes its receipt. `INCAN_DIRECT_BODY_IR_REPORT` optionally writes the checked
+/// modules before lowering and artifact publication, including bodies whose portable coverage later refuses.
+/// `INCAN_DIRECT_PLAN_REPORT` optionally writes the lowered plan before native artifact validation.
 fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std::error::Error>> {
     if arguments.len() < 4 {
         return Err(
@@ -1107,6 +1173,15 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
             return Err(error.into());
         }
     };
+    // Keep the checked representation inspectable before lowering or publication can refuse its retained facts.
+    if std::env::var_os("INCAN_TRACE_WORK").is_some() {
+        for module in &program.modules {
+            crate::native_timing::work("checked_module", module.module_id.path(), module.bodies.len());
+        }
+    }
+    if let Some(path) = std::env::var_os("INCAN_DIRECT_BODY_IR_REPORT") {
+        std::fs::write(path, format!("{:#?}", program.modules))?;
+    }
     if census_complete(&program)? {
         return Ok(());
     }
@@ -1135,6 +1210,9 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         receipt.deterministic();
         return Err(SourceFailure::MissingEntrypoint.into());
     };
+    if let Some(path) = std::env::var_os("INCAN_DIRECT_PLAN_REPORT") {
+        std::fs::write(path, format!("{plan:#?}"))?;
+    }
     let tests = crate::test_unit::report(&program.tests, &plan.tests)?;
 
     // ---- Exact native dependencies, including checked Loaf implementation layouts ----

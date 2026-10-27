@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use incan_lang::interop::rust_display_is_owned_string;
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
-use incan_semantics_core::{CanonicalSymbolId, IncanType, body_ir};
+use incan_semantics_core::{CanonicalSymbolId, IncanType, RuntimeCarrier, body_ir};
 use quote::ToTokens;
 
 use super::TypeChecker;
@@ -393,7 +393,7 @@ impl TypeChecker {
                     .collect(),
             );
         }
-        if base == "incan_std_core::num::Decimal128" && arguments.is_empty() {
+        if base == RuntimeCarrier::Decimal.path() && arguments.is_empty() {
             // Decimal precision and scale constrain source expressions; all such expressions and this native
             // definition share the runtime's Decimal128 storage. Do not invent a separate nominal MIR carrier.
             return ResolvedType::Generic(

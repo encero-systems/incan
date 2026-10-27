@@ -33,25 +33,6 @@ pub mod __private {
         String::from_utf8(data).map_err(|err| err.to_string())
     }
 
-    /// Decode a boolean `OrdinalKey` payload.
-    #[inline]
-    pub fn ordinal_key_bool_from_bytes(data: Vec<u8>) -> Result<bool, String> {
-        if data.len() != 1 {
-            return Err(format!(
-                "{} OrdinalMap key bytes must be 1 byte",
-                ordinal_key_encoding_bool()
-            ));
-        }
-        match data[0] {
-            0 => Ok(false),
-            1 => Ok(true),
-            _ => Err(format!(
-                "{} OrdinalMap key byte must be 0 or 1",
-                ordinal_key_encoding_bool()
-            )),
-        }
-    }
-
     /// Encode a decimal `OrdinalKey` into its canonical coefficient/scale payload.
     #[inline]
     #[must_use]
@@ -60,24 +41,5 @@ pub mod __private {
         out[0..16].copy_from_slice(&value.coefficient().to_le_bytes());
         out[16] = value.scale();
         out
-    }
-
-    /// Decode a decimal `OrdinalKey` payload.
-    #[inline]
-    pub fn ordinal_key_decimal_from_bytes(data: Vec<u8>) -> Result<incan_std_core::num::Decimal128, String> {
-        let encoding = ordinal_key_encoding_decimal();
-        if data.len() != 17 {
-            return Err(format!("{encoding} OrdinalMap key bytes must be 17 bytes"));
-        }
-        let coefficient_bytes = <[u8; 16]>::try_from(&data[0..16])
-            .map_err(|_| format!("{encoding} OrdinalMap coefficient bytes could not be decoded"))?;
-        let scale = data[16];
-        if scale > 38 {
-            return Err(format!("{encoding} OrdinalMap scale byte must be <= 38"));
-        }
-        Ok(incan_std_core::num::Decimal128::new(
-            i128::from_le_bytes(coefficient_bytes),
-            scale,
-        ))
     }
 }

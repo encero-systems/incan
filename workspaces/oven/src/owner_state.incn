@@ -255,7 +255,7 @@ def supported(unit: UnitDescription) -> Result[bool, str]:
     if len(unit.rust_crates) > 0:
         return Ok(false)
     for loaf in unit.loaves:
-        if not loaf.standard and not loaf.toolchain_provided:
+        if loaf.is_dependency():
             return Ok(false)
     if Path(unit.project_root).joinpath("loaf.toml").is_file():
         return Ok(rust_facet(unit.project_root, false)?.kind == "")
@@ -279,7 +279,7 @@ def guard_paths(unit: UnitDescription) -> Result[list[str], str]:
     1. The manifests of its project graph.
     2. Its lock.
     3. The standard library directory with its packages' manifests.
-    4. The libraries of the standard packages it links.
+    4. The libraries of the standard providers and compiler facades it links.
     """
     root = Path(unit.project_root)
     mut paths: list[str] = []
@@ -294,7 +294,7 @@ def guard_paths(unit: UnitDescription) -> Result[list[str], str]:
     paths.append(get_or("INCAN_STDLIB", ""))
     for package in standard_packages()?:
         paths.append(Path(package.root).joinpath("loaf.toml").0)
-    # 4. So does a rebuilt library of a standard package the unit links.
+    # 4. So does a rebuilt standard provider or compiler facade the unit links.
     for loaf in unit.loaves:
         paths.append(Path(loaf.dir).joinpath(f"lib{loaf.name.replace("-", "_")}.rlib").0)
     return Ok(unique(paths))

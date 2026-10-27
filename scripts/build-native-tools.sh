@@ -47,4 +47,10 @@ fi
 mkdir -p "${destination:h}"
 cp "$output" "$destination.next"
 mv "$destination.next" "$destination"
+# The language server launches its adjacent CLI; follow the lane's installed Oven across later replacements.
+if [[ $name == lsp ]]; then
+    [[ -x $lane/oven-bin/incan ]] || { print -u2 'install the lane Oven before the LSP'; exit 1; }
+    ln -s ../oven-bin/incan "${destination:h}/incan.next"
+    mv "${destination:h}/incan.next" "${destination:h}/incan"
+fi
 shasum -a 256 "$destination"

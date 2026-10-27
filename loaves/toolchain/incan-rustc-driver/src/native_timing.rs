@@ -2,6 +2,29 @@
 
 use std::time::Instant;
 
+/// Record owning-phase work only for diagnostic invocations; names never select or suppress compiler work.
+pub(crate) fn work(phase: &str, identity: &str, units: usize) {
+    if std::env::var_os("INCAN_TRACE_WORK").is_some() {
+        eprintln!("compile-work\t{phase}\t{identity}\t{units}");
+    }
+}
+
+/// Count each retained plan function and its blocks/statements before rustc starts requesting bodies.
+pub(crate) fn plan_work(plan: &crate::plan::Plan) {
+    if std::env::var_os("INCAN_TRACE_WORK").is_none() {
+        return;
+    }
+    for function in &plan.functions {
+        work("plan_function", &function.name, 1);
+        work("plan_blocks", &function.name, function.blocks.len());
+        work(
+            "plan_statements",
+            &function.name,
+            function.blocks.iter().map(|block| block.statements.len()).sum(),
+        );
+    }
+}
+
 /// A disabled timer never reads a clock; enabled records use the same console as rustc's phase diagnostics.
 pub(crate) struct Timing(Option<Clock>);
 

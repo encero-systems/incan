@@ -54,6 +54,7 @@ impl TypeChecker {
         let unbound = std::collections::BTreeMap::new();
         let scope = declaration
             .and_then(|identity| self.declaration_nominal_scopes.get(identity))
+            .map(AsRef::as_ref)
             .unwrap_or(&unbound);
         let mut qualified = declared.clone();
         let template = declaration
@@ -148,6 +149,7 @@ impl TypeChecker {
         let unbound = std::collections::BTreeMap::new();
         let scope = declaration
             .and_then(|identity| self.declaration_nominal_scopes.get(identity))
+            .map(AsRef::as_ref)
             .unwrap_or(&unbound);
         let mut ty = contextual.clone();
         qualify_contextual_nominals(&mut ty, template.as_ref().unwrap_or(&contextual), scope);
@@ -484,7 +486,14 @@ impl TypeChecker {
         if contextual == actual {
             return Some(actual.to_owned());
         }
-        let identities = self.checked_nominal_type_identities();
+        let collected;
+        let identities = match self.checked_body_nominal_scope() {
+            Some(scope) => scope,
+            None => {
+                collected = self.checked_nominal_type_identities();
+                &collected
+            }
+        };
         let owner = identities.get(actual)?;
         if nominal_carrier_key(owner).as_deref() != Some(actual) {
             return None;

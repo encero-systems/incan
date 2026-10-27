@@ -6,6 +6,8 @@ order. Blocks are indexed from zero. Every source-bearing node keeps its Incan
 location, including operands and places, so native diagnostics retain provenance.
 """
 
+from rust::std::sync import Arc
+
 
 @derive(Clone, PartialEq)
 pub enum TupleElement:
@@ -46,9 +48,9 @@ pub enum TupleElement:
 
 @derive(Clone, PartialEq)
 pub model SourceSpan:
-    """One-based line and column in an Incan source file."""
+    """One-based location retaining a shared file handle, so copying a span never copies its path text."""
 
-    pub file: str
+    pub file: Arc[str]
     pub line: int
     pub column: int
 
@@ -894,6 +896,11 @@ pub model ExternalFunction:
     pub parameters: list[PlanType]
     pub return_type: PlanType
     pub span: SourceSpan
+
+
+pub def source_span(file: str, line: int, column: int) -> SourceSpan:
+    """Own the file text behind a shared handle that remains valid after the creating scope returns."""
+    return SourceSpan(file=Arc.new(file), line=line, column=column)
 
 
 pub def place(local: int, span: SourceSpan) -> Place:

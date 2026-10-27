@@ -25,6 +25,7 @@ from decls import library_item
 from layout_types import native_source_type
 from closures import callable_component, packed_input
 from table_views import borrowed_table
+from pub::incan_mir_plan import source_span as plan_span
 
 
 pub def generic_models(
@@ -101,7 +102,7 @@ pub def generic_models(
                 parameters=declaration.type_parameters.clone(),
                 fields=fields,
                 derives=derives,
-                span=SourceSpan(file=file, line=1, column=1),
+                span=plan_span(file=file, line=1, column=1),
             ),
         )
     return Ok(models)

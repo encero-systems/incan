@@ -15,6 +15,7 @@ from rust::incan_semantics_core::body_ir import (
 from rust::incan_semantics_core import IncanType as RustType
 from rust::std::collections import BTreeSet
 from table_views import borrowed_at
+from compilation_work import enabled as work_enabled, record as record_work
 
 
 pub model DisplayFunction:
@@ -78,4 +79,7 @@ pub def retain_nominal_tables(mut program: ProgramContext, module: &BodyIrModule
     """Publish each appended nominal-table generation once before its closed frames borrow the new layouts."""
     retained: &list[NominalDeclaration] = program.nominals.as_ref()
     if len(retained) != len(module.nominal_declarations):
+        if work_enabled():
+            generation = f"{module.module_id.path()}:{len(module.nominal_declarations)}"
+            record_work("nominal_inventory", generation, len(module.nominal_declarations))
         program.nominals = Arc.new(list(module.nominal_declarations))

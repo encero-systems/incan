@@ -136,12 +136,13 @@ pub fn required_loaf_identities(
     Ok(requested)
 }
 
-/// Read only the selected Loaves' authenticated declaration closure; absence never authorizes a synthesized body.
+/// Read the authenticated dependency closure, allowing only exact checked source identities to satisfy local edges.
 pub fn load_loaf_modules(
     loaves: &LoafIndex,
     requested: &BTreeSet<CanonicalSymbolId>,
+    checked_local: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<Vec<BodyIrModule>, String> {
-    incan_frontend::executable_resolution::resolve_loaf_declarations(loaves, requested)
+    incan_frontend::executable_resolution::resolve_loaf_declarations(loaves, requested, checked_local)
         .map(|resolved| resolved.modules)
         .map_err(|error| format!("unsupported Body IR Loaf declaration: {error}"))
 }

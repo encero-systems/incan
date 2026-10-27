@@ -1,4 +1,4 @@
-# behavior: native receivers retain owners, iterator outputs, primitive views, callbacks, lazy captures and independently bound borrowed inputs (#2256, #2368)
+# behavior: native receivers retain owners, iterator outputs, primitive views, callbacks, lazy captures, blanket associated iterator types and independently bound borrowed inputs (#2256, #2368)
 # expect-stdout:
 #   1
 #   770
@@ -45,8 +45,7 @@ from rust::std::vec import Vec, IntoIter as VectorIterator
 from rust::xxhash_rust::xxh32 import Xxh32, xxh32
 from rust::xxhash_rust::xxh64 import Xxh64, xxh64
 from rust::xxhash_rust::xxh3 import Xxh3Default, xxh3_64, xxh3_128
-from rust::incan_std_core::iter import nonnegative_count
-from rust::incan_std_core::iter import Generator as NativeGenerator
+from rust::incan_std_core::iter import nonnegative_count, batch as native_batch, Generator as NativeGenerator
 from rust::incan_std_core::errors import raise_index_error
 from std.derives.copying import Clone
 from std.derives.comparison import Ord
@@ -313,15 +312,21 @@ def singleton(value: int) -> Generator[int]:
     yield value
 
 
-def captured_chain[F with (Callable1[int, Generator[int]], Static)](
-    source: Generator[int], step: F,
-) -> Generator[int]:
+def captured_chain[F with (Callable1[int, Generator[int]], Static)](source: Generator[int], step: F) -> Generator[int]:
     """1. Retain the native source. 2. Return its lazy chain with the callable's owned environment."""
     # 1. Retain the native source.
     native: NativeGenerator[int] = source
     # 2. Return its lazy chain with the callable's owned environment.
     adapted: FlatMap[NativeGenerator[int], NativeGenerator[int], F] = native.flat_map(step)
     return NativeGenerator.new(adapted)
+
+
+def native_batches[T with (Clone, Static)](source: Generator[T], size: int) -> Generator[list[T]]:
+    """1. Retain the native source. 2. Wrap a batch adapter whose iterator owner comes from its blanket impl."""
+    # 1. Retain the native source.
+    native: NativeGenerator[T] = source
+    # 2. Keep the normalized associated iterator type in the native adapter's arguments.
+    return NativeGenerator.new(native_batch(native, size))
 
 
 def observe_captures(captures: &NativeCaptures) -> bool:
@@ -364,3 +369,4 @@ def main() -> None:
     println("captured chain created")
     println(native_snapshot_length[str](words))
     check_borrowed_captures()
+    assert list(native_batches((value for value in [1, 2, 3]), 2)) == [[1, 2], [3]]

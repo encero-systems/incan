@@ -15,6 +15,7 @@ from rust::incan_semantics_core::body_ir import (
     ValueEnumBacking,
 )
 from pub::incan_mir_plan import EnumDeclaration, EnumVariant, PlanType, SourceSpan
+from pub::incan_mir_plan import source_span as plan_span
 from models import model_type as plain_model_type
 from layout_types import native_source_type as retained_source_type
 from decls import library_enum_item, serde_propagation, with_serde_derives
@@ -243,7 +244,7 @@ pub def lower_enum_declarations(
                 public=declaration.public or item != "",
                 variants=variants,
                 derives=derives,
-                span=SourceSpan(file=file, line=1, column=1),
+                span=plan_span(file=file, line=1, column=1),
                 library_item=item,
                 library_type_arguments=native_arguments,
                 raw_kind=raw_kind,

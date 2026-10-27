@@ -21,6 +21,7 @@ Each expected line of the program (`main.incn`) is a program step, the step's re
 | `select` | `select_owned`: the cursor is returned | 0 | a returned cursor is an escape, so `item` and `current` stay owned and move |
 | `clear` | `clear`: `current.clear()`, then `child_count()` is 0 | 0 | `clear(&mut self)` is not a shared contract, so the parameter stays owned and moves |
 | `trait callback` | `Factory.callback` default returns `is_table_callback`, called once | 0 | the same escaping classifier, reached through a trait default |
+| `exclusive forward` | `forward_clear_ref` -> `clear_ref`, then `child_count()` is 0 | 0 | both helpers declare `mut item: &mut Item`, so the exclusive loan forwards the original owner |
 
 `is_table` and `is_table_callback` are two functions on purpose: a classifier that escapes as a callable value keeps the owned ABI, and one that only a direct call reaches is lent its argument. One function cannot show both.
 

@@ -19,6 +19,7 @@ from pub::incan_mir_plan import (
     TerminatorKind,
 )
 from pub::incan_mir_plan import assign as plan_assign, place as plan_place
+from pub::incan_mir_plan import source_span as plan_span
 from frame import Builder, temporary, read_place, terminate_call, forget_owned, drop_all_owned, track_rvalue_moves
 from string_input import owned_string_frame
 from string_conversion_contracts import conversion_name, conversion_trait
@@ -112,7 +113,7 @@ pub def lower_string_conversions(
             input_result,
             intrinsics,
         )?
-        span = SourceSpan(file=file, line=1, column=1)
+        span = plan_span(file=file, line=1, column=1)
         function, runtime = conversion_function(module, index, name, result, underlying_result, intrinsics, span)?
         functions.append(function)
         externals.extend(runtime)

@@ -32,34 +32,45 @@ from rust::incan_semantics_core::body_ir import Pattern as RustPattern, Place as
 from enums import validate_payload_patterns, enum_owner
 from layout_types import native_source_type
 from nominal_frames import declaration_storage
+from table_views import borrowed_at
+from pub::incan_mir_plan import source_span as plan_span
+from compilation_work import enabled as work_enabled, record as record_work
 
 
 pub def collect_unions(module: &BodyIrModule) -> list[RustType]:
-    """Retain each union shape once across checked frame and declaration types."""
+    """Read checked tables through shared entries and retain each union shape once without copying their bodies."""
+    if work_enabled():
+        generation = f"{module.module_id.path()}:{len(module.nominal_declarations)}"
+        record_work("union_inventory", generation, len(module.bodies))
     mut unions: list[RustType] = []
     mut added: BTreeSet[RustType] = BTreeSet.new()
     empty: BTreeSet[RustType] = BTreeSet.new()
     retained: Arc[BTreeSet[RustType]] = Arc.new(empty)
     for ty in declaration_storage(module):
         retain_union(unions, retained.as_ref(), added, ty)
-    for delegation in module.loaf_callables:
+    for position in range(len(module.loaf_callables)):
+        delegation = borrowed_at(module.loaf_callables, position)
         if len(delegation.type_parameters) != 0:
             continue
         for parameter in delegation.parameters:
             retain_union(unions, retained.as_ref(), added, parameter)
         retain_union(unions, retained.as_ref(), added, delegation.return_type)
-    for body in module.bodies:
+    for position in range(len(module.bodies)):
+        body = borrowed_at(module.bodies, position)
         retain_union(unions, retained.as_ref(), added, body.return_type)
         for local in body.locals:
             retain_union(unions, retained.as_ref(), added, local.ty)
-    for declaration in module.nominal_declarations:
+    for position in range(len(module.nominal_declarations)):
+        declaration = borrowed_at(module.nominal_declarations, position)
         for ty in declaration.field_types:
             retain_union(unions, retained.as_ref(), added, ty)
-    for declaration in module.enum_declarations:
+    for position in range(len(module.enum_declarations)):
+        declaration = borrowed_at(module.enum_declarations, position)
         for variant in declaration.variants:
             for ty in variant.fields:
                 retain_union(unions, retained.as_ref(), added, ty)
-    for declaration in module.static_declarations:
+    for position in range(len(module.static_declarations)):
+        declaration = borrowed_at(module.static_declarations, position)
         retain_union(unions, retained.as_ref(), added, declaration.ty)
         match declaration.initial:
             StaticInitializer.Computed(body) => retain_body_union_types(unions, retained.as_ref(), added, body)
@@ -346,7 +357,7 @@ pub def lower_union_declaration(
             variants=variants,
             derives=derives,
             library_item=native_item,
-            span=SourceSpan(file=file, line=1, column=1),
+            span=plan_span(file=file, line=1, column=1),
             source_type=str(ty),
             member_debug=member_debug,
             closure_items=closure_items,

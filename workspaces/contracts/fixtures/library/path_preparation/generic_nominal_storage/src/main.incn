@@ -1,4 +1,4 @@
-# behavior: library models keep their type arguments and authored Debug fields, and consumers read unimported model values through loops and comprehensions (#2256)
+# behavior: generic libraries retain source fields, native frozen storage and unimported records (#2256)
 # expect-stdout:
 #   Parcel { value: 7 }
 #   ok
@@ -6,7 +6,7 @@
 #   visible
 #   ["visible"]
 
-from pub::parcels import Marker, Parcel, entries, unpack, wrap
+from pub::parcels import Marker, Parcel, entries, freeze_values, frozen_count, unpack, wrap
 
 
 def main() -> None:
@@ -20,3 +20,4 @@ def main() -> None:
         println(entry.value)
     values = [entry.value for entry in entries()]
     println(f"{values:?}")
+    assert frozen_count(freeze_values([4, 5])) == 2

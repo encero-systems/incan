@@ -1,57 +1,49 @@
 """Fail carrier-pattern assertions and `unwrap` calls exactly as legacy's inlined code fails them."""
 
 from std.derives.string import Debug
-from std.testing import assert_is_some, assert_is_none, assert_is_ok, assert_is_err
+from rust::incan_std_testing import fail_t
 from rust::std::panic import panic_any
 from rust::incan_std_core::frozen import FrozenStr as NativeFrozenStr
 
 
 pub def missing_some() -> None:
     """Fail as `assert value is Some(...)` does on None, keeping std.testing's default message."""
-    nothing: Option[int] = None
-    _ = assert_is_some(nothing)
+    missing_some_with("assertion failed: expected Some, got None")
 
 
 pub def missing_some_with(message: str) -> None:
     """Fail as `assert value is Some(...), message` does on None."""
-    nothing: Option[int] = None
-    _ = assert_is_some(nothing, message)
+    return fail_t(message)
 
 
 pub def unexpected_some() -> None:
     """Fail as `assert value is None` does on Some, keeping std.testing's default message."""
-    something: Option[int] = Some(0)
-    assert_is_none(something)
+    unexpected_some_with("assertion failed: expected None, got Some")
 
 
 pub def unexpected_some_with(message: str) -> None:
     """Fail as `assert value is None, message` does on Some."""
-    something: Option[int] = Some(0)
-    assert_is_none(something, message)
+    return fail_t(message)
 
 
 pub def missing_ok() -> None:
     """Fail as `assert value is Ok(...)` does on Err, keeping std.testing's default message."""
-    failed: Result[int, int] = Err(0)
-    _ = assert_is_ok(failed)
+    missing_ok_with("assertion failed: expected Ok, got Err")
 
 
 pub def missing_ok_with(message: str) -> None:
     """Fail as `assert value is Ok(...), message` does on Err."""
-    failed: Result[int, int] = Err(0)
-    _ = assert_is_ok(failed, message)
+    return fail_t(message)
 
 
 pub def missing_err() -> None:
     """Fail as `assert value is Err(...)` does on Ok, keeping std.testing's default message."""
-    succeeded: Result[int, int] = Ok(0)
-    _ = assert_is_err(succeeded)
+    missing_err_with("assertion failed: expected Err, got Ok")
 
 
 pub def missing_err_with(message: str) -> None:
     """Fail as `assert value is Err(...), message` does on Ok."""
-    succeeded: Result[int, int] = Ok(0)
-    _ = assert_is_err(succeeded, message)
+    return fail_t(message)
 
 
 pub def unwrap_none() -> None:

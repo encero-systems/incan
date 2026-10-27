@@ -126,15 +126,18 @@ impl PackageArtifact {
 ///
 /// Every requested root and its published closure is read from the declaring Loaf's `.incnbody`, decoded once even
 /// when recursion or facades reach it again. An explicitly uncovered root contributes no facts; malformed artifacts,
-/// missing public membership and digest mismatches are errors. Nothing executes and no source is consulted.
+/// missing public membership and digest mismatches are errors. Exact public identities already supplied by the
+/// checked producer satisfy returning dependency edges without demanding an older artifact of the same package.
+/// Nothing executes and no additional source is consulted.
 pub fn resolve_loaf_declarations(
     loaves: &LoafIndex,
     requested: &BTreeSet<CanonicalSymbolId>,
+    checked_local: &BTreeSet<CanonicalSymbolId>,
 ) -> Result<ResolvedExecutableModules, ExecutableResolutionError> {
     if requested.is_empty() {
         return Ok(ResolvedExecutableModules::default());
     }
-    let resolved = resolve_from_catalog(loaves, &catalog(loaves)?, requested, true)?;
+    let resolved = resolve_from_catalog(loaves, &catalog(loaves)?, requested, checked_local, true)?;
     loaves.validate_demands()?;
     Ok(resolved)
 }
@@ -186,6 +189,7 @@ fn resolve_from_catalog(
     loaves: &LoafIndex,
     catalog: &BTreeMap<String, String>,
     required: &BTreeSet<CanonicalSymbolId>,
+    checked_local: &BTreeSet<CanonicalSymbolId>,
     optional_roots: bool,
 ) -> Result<ResolvedExecutableModules, ExecutableResolutionError> {
     let mut opened = BTreeMap::new();
@@ -199,6 +203,9 @@ fn resolve_from_catalog(
     let mut modules: BTreeMap<String, BodyIrModule> = BTreeMap::new();
     let mut resolved = ResolvedExecutableModules::default();
     while let Some((identity, implementation_allowed, optional_root)) = pending.pop_first() {
+        if checked_local.contains(&identity) {
+            continue;
+        }
         let SymbolOrigin::Package { library, .. } = &identity.origin else {
             return Err(ExecutableResolutionError::NotAPackageDeclaration {
                 declaration: identity.declaration_name.clone(),

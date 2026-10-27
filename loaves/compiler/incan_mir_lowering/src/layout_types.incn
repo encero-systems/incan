@@ -16,6 +16,7 @@ from enums import enum_type
 from closures import semantic_input
 from decls import library_enum_item, library_item
 from lists import exclusive_reference, list_parameter_type
+from table_views import borrowed_at
 
 
 pub def native_alias_boundary(nominals: &list[NominalDeclaration], source: PlanType, target: PlanType) -> bool:
@@ -62,7 +63,7 @@ def retained_nominal_carrier(nominals: &list[NominalDeclaration], ty: PlanType) 
     """Require a compiled nominal alias or a closed source template whose consumer owns its native declaration."""
     match ty:
         (PlanType.Model(owner, _name) | PlanType.ModelRef(owner, _name) | PlanType.ModelMutRef(owner, _name)) =>
-            declaration = nominals[owner]
+            declaration = borrowed_at(nominals, owner)
             if library_item(declaration) != "":
                 return true
             return declaration.type_parameter_count != 0
@@ -142,15 +143,18 @@ pub def native_source_type(
                 match element:
                     PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))
                     _ => return Ok(PlanType.List(collection_leaf(element)?, 1))
-            if constructor in ["FrozenList", "FrozenSet", "FrozenDict"]:
+            if constructor in ["FrozenList", "FrozenSet", "FrozenDict", "$FrozenList", "$FrozenSet", "$FrozenDict"]:
+                native = constructor.startswith("$")
                 mut elements: list[PlanType] = []
                 for argument in arguments:
                     mut element = native_source_type(nominals, enums, unions, argument, intrinsics)?
-                    if element == PlanType.String:
+                    if not native and element == PlanType.String:
                         element = PlanType.StaticText
-                    elif element == PlanType.List(ListLeaf.U8, 1):
+                    elif not native and element == PlanType.List(ListLeaf.U8, 1):
                         element = PlanType.StaticBytes
                     elements.append(element)
+                if native:
+                    return Ok(PlanType.FrozenCollection(constructor[1:], elements))
                 return Ok(PlanType.FrozenCollection(constructor, elements))
             if base == "Set" and len(arguments) == 1:
                 return Ok(PlanType.Set(hashed_leaf(nominals, enums, arguments[0], intrinsics)?))
@@ -302,7 +306,7 @@ def numeric_newtype_iterator(nominals: &list[NominalDeclaration], element: &Rust
     match element:
         RustType.Named(name) =>
             for index in range(len(nominals)):
-                declaration = nominals[index]
+                declaration = borrowed_at(nominals, index)
                 if declaration.name != str(name) or declaration.canonical.kind != SemanticSourceTargetKind.Newtype:
                     continue
                 if (

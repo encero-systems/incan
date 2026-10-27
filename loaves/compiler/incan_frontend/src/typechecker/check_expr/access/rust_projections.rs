@@ -51,6 +51,7 @@ impl TypeChecker {
     /// templates. Native signature and predicate validation remains authoritative for a selected concrete call.
     /// An unresolved blanket projection does not prevent a later concrete candidate from supplying its associated
     /// value; only successfully normalized candidates participate in specificity selection.
+    /// Keep native storage available when source inference projects away the owner's metadata identity.
     fn rust_associated_type_at_depth(
         &self,
         ty: &ResolvedType,
@@ -100,7 +101,7 @@ impl TypeChecker {
             }
             _ => return None,
         };
-        let owner = self.rust_trait_owner(ty, &info, &path);
+        let owner = self.rust_storage_owner(ty, &info, &path);
         let mut candidates = Vec::new();
         let trait_identity = self.rust_trait_identity(trait_path);
         for implementation in &info.implemented_traits {
@@ -224,6 +225,15 @@ impl TypeChecker {
             return None;
         }
         let mut bindings = self.rust_impl_self_bindings(implementation, owner)?;
+        let template = self.rust_inference_type(
+            &self.native_rust_signature_type(&implementation.self_type, ""),
+            &implementation.type_params,
+        );
+        if let ResolvedType::TypeVar(name) = template
+            && let Some(inferred) = bindings.remove(&name)
+        {
+            bindings.insert(name, self.rust_native_self_binding(owner, inferred));
+        }
         for (display, argument) in implementation.type_arguments.iter().zip(arguments) {
             let template = self.native_rust_signature_type(display, "");
             self.infer_type_param_bindings(

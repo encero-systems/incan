@@ -15,7 +15,6 @@ use rustc_middle::mir::Body;
 use rustc_middle::ty::{Ty, TyCtxt};
 use rustc_session::config::Input;
 use rustc_span::FileName;
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -187,6 +186,9 @@ fn mir_built<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> &'tcx Steal<Body<'tcx>
             && tcx.parent(def.to_def_id()).is_crate_root()
             && name.is_some_and(|name| name.as_str() == function.name)
     });
+    if let Some(function) = function {
+        crate::native_timing::work("mir_built", &function.name, 1);
+    }
     match function {
         // A closure constructor keeps rustc's own body, built from its injected boxing expression.
         Some(function)
@@ -263,6 +265,7 @@ struct Callbacks<'manifest> {
 impl rustc_driver::Callbacks for Callbacks<'_> {
     /// Install the source-free root and the MIR query override. `INCAN_NATIVE_TIMING` opts into rustc's phase timings
     /// on stderr without enabling unstable command-line options or changing compilation policy.
+    /// The source map owns one filename copied from the plan's shared file handle.
     fn config(&mut self, config: &mut interface::Config) {
         self.timing.mark("rustc_options");
         let mut search = std::mem::take(&mut self.search);
@@ -274,7 +277,7 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
         config.opts.search_paths = search;
         self.timing.configure(config);
         config.input = Input::Str {
-            name: FileName::Custom(self.plan.span.file.clone()),
+            name: FileName::Custom(self.plan.span.file.as_str().to_owned()),
             input: String::new(),
         };
         config.override_queries = Some(|_session, providers| {
@@ -821,6 +824,7 @@ pub fn compile(
         return Err(DriverError::Invocation("crate name must be a Rust identifier".into()));
     }
     timing.mark("validated_plan");
+    crate::native_timing::plan_work(&plan);
 
     // ---- Optional shared native dependencies ----
     let _compilation = COMPILATION.lock().map_err(|_| DriverError::State)?;

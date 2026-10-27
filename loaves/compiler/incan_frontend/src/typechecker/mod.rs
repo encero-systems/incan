@@ -478,6 +478,18 @@ struct DeclarationCallableTypes {
     return_type: ResolvedType,
 }
 
+/// Module identities used during body checking, guarded by the declaration inventory and lexical alias bindings.
+struct CheckingNominalScope {
+    /// Private bindings; only successful checking can transfer this still-valid snapshot into published facts.
+    identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
+    /// Exact alias lookup bindings; local shadows must not reuse the module's alias contributions.
+    alias_bindings: Vec<(String, Option<usize>)>,
+    /// Declaration and public-type inventory generations, which grow when checking admits another dependency.
+    declaration_scopes: usize,
+    /// Number of admitted public nominal bindings at snapshot creation.
+    public_types: usize,
+}
+
 /// Collect and check a program while retaining accepted semantic facts for Body IR and analysis consumers.
 pub struct TypeChecker {
     /// Symbol table populated during the first pass.
@@ -708,7 +720,9 @@ pub struct TypeChecker {
     pub dependency_direct_member_identities: HashMap<String, HashMap<String, CanonicalSymbolId>>,
     /// Nominal bindings captured in a source declaration's own scope before its signature enters a consumer.
     /// Contextual empty values use these bindings rather than the caller's same-spelled declarations.
-    declaration_nominal_scopes: HashMap<CanonicalSymbolId, std::collections::BTreeMap<String, CanonicalSymbolId>>,
+    declaration_nominal_scopes: HashMap<CanonicalSymbolId, Arc<std::collections::BTreeMap<String, CanonicalSymbolId>>>,
+    /// Private value-composition snapshot after declaration collection; lexical alias shadows invalidate it.
+    checking_nominal_scope: Option<CheckingNominalScope>,
     /// Original callable signatures before receiver or trait arguments replace their declaration-owned binders.
     declaration_callables: HashMap<CanonicalSymbolId, DeclarationCallableTypes>,
     /// Re-export links a dependency module publishes, keyed by module cache key then exported name.
@@ -976,6 +990,7 @@ impl TypeChecker {
             dependency_direct_member_type_aliases: HashMap::new(),
             dependency_direct_member_identities: HashMap::new(),
             declaration_nominal_scopes: HashMap::new(),
+            checking_nominal_scope: None,
             declaration_callables: HashMap::new(),
             dependency_member_reexports: HashMap::new(),
             body_ir_dependency_pub_reexports: HashMap::new(),
@@ -6828,6 +6843,7 @@ impl TypeChecker {
         preserve_dependency_semantics: bool,
     ) -> Result<(), Vec<CompileError>> {
         // Reset per-run caches.
+        self.checking_nominal_scope = None;
         self.validate_source_type_names = false;
         self.unknown_source_type_names_emitted.clear();
         self.source_type_declaration_names = Self::collect_source_type_declaration_names(&program.declarations);
@@ -6917,13 +6933,24 @@ impl TypeChecker {
         self.type_info.rust.item_public_paths = self.checked_rust_item_public_paths();
         // Internal carrier identities must survive per-module fact resets before Result payloads are checked. Source
         // alias entries still publish only after successful checking.
-        self.type_info.declarations.named_type_identities = self
-            .checked_nominal_type_identities()
-            .into_iter()
+        let nominal_scope = self.checked_nominal_type_identities();
+        self.type_info.declarations.named_type_identities = nominal_scope
+            .iter()
             .filter(|(name, identity)| {
-                incan_semantics_core::body_ir::nominal_carrier_key(identity).as_ref() == Some(name)
+                incan_semantics_core::body_ir::nominal_carrier_key(identity).as_ref() == Some(*name)
             })
+            .map(|(name, identity)| (name.clone(), identity.clone()))
             .collect();
+        self.checking_nominal_scope = Some(CheckingNominalScope {
+            identities: nominal_scope,
+            alias_bindings: self
+                .type_aliases
+                .keys()
+                .map(|name| (name.clone(), self.symbols.lookup(name)))
+                .collect(),
+            declaration_scopes: self.declaration_nominal_scopes.len(),
+            public_types: self.public_library_type_identities.len(),
+        });
 
         // Second pass: check consts first so their resolved types are available to later checks.
         self.validate_source_type_names = true;
@@ -7002,13 +7029,18 @@ impl TypeChecker {
             }
             Ok(())
         } else {
+            self.checking_nominal_scope = None;
             Err(fatal)
         }
     }
 
     /// Publish the checked module-scope nominal and native identity tables Body IR reads, once the module is checked.
     fn publish_checked_nominal_scope(&mut self) {
-        self.type_info.declarations.named_type_identities = self.checked_nominal_type_identities();
+        let reusable = self.checked_body_nominal_scope().is_some();
+        self.type_info.declarations.named_type_identities = match self.checking_nominal_scope.take() {
+            Some(scope) if reusable => scope.identities,
+            _ => self.checked_nominal_type_identities(),
+        };
         self.type_info.declarations.body_ir_native_type_identities = self.checked_native_nominal_type_identities();
         self.type_info.body_ir_runtime_types = self.checked_body_ir_runtime_types();
         self.type_info.rust.item_public_paths = self.checked_rust_item_public_paths();
@@ -7255,11 +7287,14 @@ impl TypeChecker {
         for name in ambiguous {
             identities.remove(&name);
         }
+        // Declarations from one module share a scope; visit that inventory once, not once per field or method.
+        let mut scopes = HashSet::new();
         let carriers = identities
             .values()
             .chain(
                 self.declaration_nominal_scopes
                     .values()
+                    .filter(|scope| scopes.insert(Arc::as_ptr(scope)))
                     .flat_map(|scope| scope.values()),
             )
             .filter_map(|identity| {
@@ -7269,7 +7304,34 @@ impl TypeChecker {
         for (key, identity) in carriers {
             identities.entry(key).or_insert(identity);
         }
+        if std::env::var_os("INCAN_TRACE_WORK").is_some() {
+            let mut fingerprint = std::collections::hash_map::DefaultHasher::new();
+            std::hash::Hash::hash(&identities, &mut fingerprint);
+            eprintln!(
+                "compile-work\tchecked_nominal_inventory\t{:016x}\t{}",
+                std::hash::Hasher::finish(&fingerprint),
+                scopes.len(),
+            );
+        }
         identities
+    }
+
+    /// Borrow the declaration snapshot only while its inputs and lexical alias bindings still match. Newly admitted
+    /// declarations or a local binding shadowing an alias fall back to the authoritative collector; the private
+    /// snapshot never publishes unchecked aliases; successful checking may transfer it into the published facts.
+    fn checked_body_nominal_scope(&self) -> Option<&std::collections::BTreeMap<String, CanonicalSymbolId>> {
+        let scope = self.checking_nominal_scope.as_ref()?;
+        if scope.declaration_scopes != self.declaration_nominal_scopes.len()
+            || scope.public_types != self.public_library_type_identities.len()
+            || scope.alias_bindings.len() != self.type_aliases.len()
+            || scope
+                .alias_bindings
+                .iter()
+                .any(|(name, binding)| self.symbols.lookup(name) != *binding)
+        {
+            return None;
+        }
+        Some(&scope.identities)
     }
 
     /// Turn collisions from the shared symbol-registration mechanism into source diagnostics.
@@ -7674,7 +7736,7 @@ impl TypeChecker {
                 direct_projections.insert(name, projection.clone());
             }
         }
-        let scope = self.checked_nominal_type_identities();
+        let scope = Arc::new(self.checked_nominal_type_identities());
         let remapping = scope
             .iter()
             .filter_map(|(name, identity)| {
@@ -7735,19 +7797,19 @@ impl TypeChecker {
             .insert(module_name.to_string(), direct_projections);
     }
 
-    /// Retain a declaration and its own fields' and methods' lexical nominal bindings before imports copy them.
-    /// A facade cannot replace the original scope, and inherited members keep their declaring module's scope.
+    /// Share a module's immutable lexical scope across its declarations, fields and methods. A facade cannot replace
+    /// the original scope, and inherited members keep their declaring module's scope without another table copy.
     fn retain_declaration_nominal_scope(
         &mut self,
         identity: &CanonicalSymbolId,
         kind: &SymbolKind,
-        scope: &std::collections::BTreeMap<String, CanonicalSymbolId>,
+        scope: &Arc<std::collections::BTreeMap<String, CanonicalSymbolId>>,
     ) {
         let scope = self
             .declaration_nominal_scopes
             .entry(identity.clone())
-            .or_insert_with(|| scope.clone())
-            .clone();
+            .or_insert_with(|| Arc::clone(scope));
+        let scope = Arc::clone(scope);
         if let SymbolKind::Function(function) = kind {
             self.declaration_callables
                 .entry(identity.clone())
@@ -7766,7 +7828,7 @@ impl TypeChecker {
                 if member.origin == identity.origin {
                     self.declaration_nominal_scopes
                         .entry(member.clone())
-                        .or_insert_with(|| scope.clone());
+                        .or_insert_with(|| Arc::clone(&scope));
                 }
             }
         }
@@ -7783,7 +7845,7 @@ impl TypeChecker {
             if member.origin == identity.origin {
                 self.declaration_nominal_scopes
                     .entry(member.clone())
-                    .or_insert_with(|| scope.clone());
+                    .or_insert_with(|| Arc::clone(&scope));
                 self.declaration_callables
                     .entry(member.clone())
                     .or_insert_with(|| DeclarationCallableTypes {

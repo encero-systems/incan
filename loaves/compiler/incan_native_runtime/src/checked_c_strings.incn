@@ -5,9 +5,9 @@ from rust::std::vec import Vec as RustVec
 from rust::incan_std_core::strings import utf8_error_message
 
 
-pub def checked_c_string(value: &RustString) -> Result[bytes, str]:
+pub def checked_c_string(value: &RustString) -> Result[list[u8], str]:
     """
-    Create owned NUL-terminated UTF-8 storage.
+    Create owned NUL-terminated UTF-8 storage with the checked bridge's explicit byte-element carrier.
 
     1. Copy the source's encoded bytes.
     2. Reject every interior NUL before foreign access becomes possible.
@@ -17,9 +17,8 @@ pub def checked_c_string(value: &RustString) -> Result[bytes, str]:
     owned: RustString = value.clone()
     mut encoded: RustVec[u8] = owned.into_bytes()
     # 2. No raw pointer exists while the input is being validated.
-    for index in range(len(encoded)):
-        if encoded[index] == 0u8:
-            return Err("C string input contains an interior NUL")
+    if encoded.contains(0u8):
+        return Err("C string input contains an interior NUL")
     # 3. The caller's checked bridge keeps this allocation alive through its raw call.
     encoded.push(0u8)
     return Ok(encoded)

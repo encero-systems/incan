@@ -113,6 +113,32 @@ pub enum IncanType {
     NativeCChar,
 }
 
+/// Physical Rust storage of compiler-owned builtin values. These paths identify the existing native ABI, not a
+/// source declaration or an authority grant, and remain usable while the Incan runtime itself is being compiled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeCarrier {
+    /// Exact decimal coefficient and written scale.
+    Decimal,
+    /// Immutable UTF-8 text with static storage.
+    FrozenStr,
+    /// Immutable bytes with static storage.
+    FrozenBytes,
+    /// The builtin validation error's owned message and optional code.
+    ValidationError,
+}
+
+impl RuntimeCarrier {
+    /// Return the canonical Rust definition supplying this builtin's physical storage.
+    pub fn path(self) -> &'static str {
+        match self {
+            Self::Decimal => "incan_std_core::num::Decimal128",
+            Self::FrozenStr => "incan_std_core::frozen::FrozenStr",
+            Self::FrozenBytes => "incan_std_core::frozen::FrozenBytes",
+            Self::ValidationError => "incan_std_core::validation::ValidationError",
+        }
+    }
+}
+
 /// Builtin runtime storage admitted by the direct route without impersonating a same-spelled source declaration.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum RuntimeBuiltinType {
@@ -131,7 +157,7 @@ impl RuntimeBuiltinType {
     /// Return the Rust path of the runtime storage this builtin is.
     pub fn carrier_path(&self) -> &'static str {
         match self {
-            Self::ValidationError => "incan_std_core::validation::ValidationError",
+            Self::ValidationError => RuntimeCarrier::ValidationError.path(),
         }
     }
 

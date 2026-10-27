@@ -29,6 +29,7 @@ from nominal_instances import NominalInstance
 from library_model_arguments import library_model_arguments, local_generic_item
 from string_conversion_contracts import conversion_name, conversion_trait
 from symbols import model_symbol
+from pub::incan_mir_plan import source_span as plan_span
 
 
 pub def static_slot(declarations: &list[StaticDeclaration], value: &GlobalPlace) -> Result[int, str]:
@@ -145,7 +146,7 @@ pub def lower_model_declarations(
                     Ok(resolved) => ty = resolved
                     Err(reason) => return Err(f"{reason} in model {declaration.name} field {declaration.fields[slot]}")
                 fields.append(
-                    Parameter(name=str(declaration.fields[slot]), ty=ty, span=SourceSpan(file=file, line=1, column=1)),
+                    Parameter(name=str(declaration.fields[slot]), ty=ty, span=plan_span(file=file, line=1, column=1)),
                 )
         callable_name, callable_signature = callable_methods(module, owner, intrinsics)?
         if item == "":
@@ -158,7 +159,7 @@ pub def lower_model_declarations(
                 field_public=field_public,
                 derives=derives,
                 source_name=str(declaration.canonical.declaration_name),
-                span=SourceSpan(file=file, line=1, column=1),
+                span=plan_span(file=file, line=1, column=1),
                 library_item=item,
                 library_type_arguments=library_arguments,
                 field_serde_names=serde_names,
@@ -310,7 +311,7 @@ def library_fields(
         ):
             Ok(ty) =>
                 fields.append(
-                    Parameter(name=str(declaration.fields[slot]), ty=ty, span=SourceSpan(file=file, line=1, column=1)),
+                    Parameter(name=str(declaration.fields[slot]), ty=ty, span=plan_span(file=file, line=1, column=1)),
                 )
             Err(_reason) => return []
     return fields

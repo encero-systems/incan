@@ -197,25 +197,25 @@ pub def float_f64(value: f64) -> float:
 pub def negate_i8(value: i8) -> i8:
     """Negate i8: 1. Invoke its native Neg implementation with inherited overflow behavior."""
     # 1. Retain the carrier's native overflow policy.
-    return Neg.neg(value)
+    return value.neg()
 
 
 pub def negate_i16(value: i16) -> i16:
     """Negate i16: 1. Invoke its native Neg implementation with inherited overflow behavior."""
     # 1. Retain the carrier's native overflow policy.
-    return Neg.neg(value)
+    return value.neg()
 
 
 pub def negate_i32(value: i32) -> i32:
     """Negate i32: 1. Invoke its native Neg implementation with inherited overflow behavior."""
     # 1. Retain the carrier's native overflow policy.
-    return Neg.neg(value)
+    return value.neg()
 
 
 pub def negate_i128(value: i128) -> i128:
     """Negate i128: 1. Invoke its native Neg implementation with inherited overflow behavior."""
     # 1. Retain the carrier's native overflow policy.
-    return Neg.neg(value)
+    return value.neg()
 
 
 pub def parse_int(value: &str) -> int:
@@ -421,7 +421,7 @@ pub def py_floor_div_usize(left: usize, right: usize) -> usize:
 pub def negate_isize(value: isize) -> isize:
     """Negate isize: 1. Invoke its native Neg implementation with inherited overflow behavior."""
     # 1. Retain the carrier's native overflow policy.
-    return Neg.neg(value)
+    return value.neg()
 
 
 # Exact-width integer powers. Legacy emits `base.pow(exponent as u32)` with the base keeping its own carrier, so each

@@ -499,10 +499,11 @@ fn identifier(name: &str) -> bool {
 }
 
 /// Source coordinates are one-based and must have a source file name.
+/// Valid locations borrow their shared file handle; an owned refusal retains its own filename text.
 fn span(source: &SourceSpan) -> Result<(), PlanError> {
     if source.file.is_empty() || source.line < 1 || source.column < 1 {
         return Err(PlanError::Invalid {
-            function: source.file.clone(),
+            function: source.file.as_str().to_owned(),
             reason: "source span requires a file and positive line and column".into(),
         });
     }

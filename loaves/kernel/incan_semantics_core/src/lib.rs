@@ -60,7 +60,7 @@ pub use hir::{
 pub use types::{
     AbiV0Ownership, AbiV0Representation, AbiV0ReservedFacts, AbiV0RuntimeRequirement, AbiV0TypeFacts,
     AbiV0TypeIdentity, IncanCallableParam, IncanCallableParamKind, IncanPrimitiveType, IncanType, RuntimeBuiltinType,
-    function_type, generic, native_array_type, rust_tuple_arity,
+    RuntimeCarrier, function_type, generic, native_array_type, rust_tuple_arity,
 };
 
 /// Stable feature key used by parser handoff and semantics dispatch.

@@ -71,7 +71,7 @@ def rebase_loaves(declared: list[UnitLoaf], providers: list[Tuple[str, str]]) ->
     mut result: list[UnitLoaf] = []
     for loaf in declared:
         mut directory = loaf.dir
-        if not loaf.standard:
+        if loaf.is_dependency():
             for name, prepared in providers:
                 if name == loaf.name:
                     directory = prepared
@@ -319,7 +319,7 @@ def linked_registry(facets: list[LocalFacet], toolchain: Toolchain) -> Result[Re
 
 def needs_local_preparation(unit: UnitDescription, kind: str) -> bool:
     """Whether the shared graph must prepare a local Loaf, the root's Rust facet, or declared Rust crates."""
-    return kind != "" or len(unit.rust_crates) > 0 or len([loaf for loaf in unit.loaves if not loaf.standard]) > 0
+    return kind != "" or len(unit.rust_crates) > 0 or len([loaf for loaf in unit.loaves if loaf.is_dependency()]) > 0
 
 
 def bind_edges(
@@ -335,16 +335,25 @@ def bind_edges(
     return Ok(result)
 
 
-def add_extern(unit: UnitDescription, native: NativeCrate) -> Result[UnitDescription, str]:
-    """Bind an alias exactly once; a conflicting artifact is an error rather than directory-based selection."""
+pub def add_extern(unit: UnitDescription, native: NativeCrate) -> Result[UnitDescription, str]:
+    """Bind an alias once, accepting relocated copies only when their complete artifact bytes agree."""
     for current in unit.externs:
         if current.name == native.name:
-            if current.path != native.path:
+            if not same_native_artifact(current.path, native.path)?:
                 return Err(f"Rust crate `{native.name}` names conflicting artifacts: {current.path} and {native.path}")
             return Ok(unit)
     mut result = unit
     result.externs.append(native)
     return Ok(result)
+
+
+def same_native_artifact(selected: str, candidate: str) -> Result[bool, str]:
+    """Match the driver's exact-artifact boundary: paths may relocate, but filenames and crate hashes are no proof."""
+    if selected == candidate:
+        return Ok(true)
+    retained = Path(selected).read_bytes().map_err((error) => f"{selected}: {error.message()}")?
+    incoming = Path(candidate).read_bytes().map_err((error) => f"{candidate}: {error.message()}")?
+    return Ok(retained == incoming)
 
 
 def expose_macro_crates(

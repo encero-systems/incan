@@ -41,6 +41,7 @@ from pub::incan_mir_plan import (
     Unwind,
 )
 from pub::incan_mir_plan import assign as plan_assign, place as plan_place
+from pub::incan_mir_plan import source_span as plan_span
 from frame import (
     Builder,
     temporary,
@@ -478,7 +479,7 @@ pub def retain_carrier(
                     public=false,
                     variants=variants,
                     derives=["Clone"],
-                    span=SourceSpan(file=file, line=1, column=1),
+                    span=plan_span(file=file, line=1, column=1),
                     carrier=str(base),
                     source_type=spelling,
                     comparison_methods=[],

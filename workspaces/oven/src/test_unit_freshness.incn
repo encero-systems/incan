@@ -15,7 +15,7 @@ from loaf_local_graph import LocalFacet
 from rust_activation import DependencyDomain
 from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription, UnitLoaf
-from unit_rust import compile_library_unit
+from unit_rust import add_extern, compile_library_unit
 from unit_freshness import (
     Key,
     artifact_files,
@@ -314,7 +314,7 @@ def verify_check_replay(scratch: Path) -> Result[None, str]:
 
 
 pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
-    """Dependency rebuilds rekey consumers; fresh ABI publication remains reusable."""
+    """Dependency rebuilds rekey consumers; exact relocated native artifacts and fresh ABI publication stay valid."""
     scratch = scratch_directory()?
     setup = fixture(scratch.path())?
     first = reconcile(scratch.path(), setup)?
@@ -340,6 +340,33 @@ pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
             assert false, "a malformed manifest cannot authorize an incomplete artifact set"
         Err(_) => pass
     verify_completed_library_abi(scratch.path().joinpath("publication"))?
+    verify_native_alias_artifacts(scratch.path().joinpath("aliases"))?
+    return Ok(None)
+
+
+def verify_native_alias_artifacts(scratch: Path) -> Result[None, str]:
+    """Retain one alias for byte-identical relocated artifacts, refusing different or unreadable candidates."""
+    setup = fixture(scratch)?
+    selected = setup.toolchain.externs[0]
+    assert len(add_extern(setup.unit, selected)?.externs) == 1
+    copy = scratch.joinpath("relocated.rlib")
+    write(copy, read(Path(selected.path))?)?
+    candidate = NativeCrate(name=selected.name, path=copy.0)
+    retained = add_extern(setup.unit, candidate)?
+    assert len(retained.externs) == 1
+    assert retained.externs[0].path == selected.path
+    write(copy, "different runtime")?
+    match add_extern(setup.unit, candidate):
+        Ok(_) =>
+            assert false, "a shared alias cannot select different artifact bytes"
+        Err(reason) =>
+            assert "names conflicting artifacts" in reason
+    remove(copy)?
+    match add_extern(setup.unit, candidate):
+        Ok(_) =>
+            assert false, "a missing candidate cannot prove artifact identity"
+        Err(reason) =>
+            assert copy.0 in reason
     return Ok(None)
 
 

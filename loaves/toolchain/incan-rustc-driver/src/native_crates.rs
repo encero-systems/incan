@@ -116,10 +116,12 @@ impl<'ast> Visitor<'ast> for DeclarationRoots {
 }
 
 /// Select exact artifacts needed by a checked plan from direct inputs and its reached Loaves' native closures.
-/// Every offered binding of a required root must name the same complete artifact. A direct input cannot replace a
-/// provider's native type identity: its exported fields and signatures still refer to the artifact it compiled
-/// against. Private provider aliases enter only native compilation, after source checking; transitive imports remain
-/// private, and conflicting artifacts require rebuilding and publishing a coherent dependency closure.
+/// Every offered binding of a required root must name the same complete artifact. Compiled providers and checked
+/// source interfaces both contribute their exact native dependencies, including dependencies used by governed source
+/// templates. A direct input cannot replace a provider's native type identity: its exported fields and signatures
+/// still refer to the selected artifact. Private provider aliases enter only native compilation, after source
+/// checking; transitive imports remain private, and conflicting artifacts require rebuilding and publishing a
+/// coherent dependency closure.
 pub(crate) fn link_externs(
     plan: &crate::plan::Plan,
     direct: &[(String, PathBuf)],

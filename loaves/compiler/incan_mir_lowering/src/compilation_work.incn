@@ -1,0 +1,13 @@
+"""Report opt-in owning-phase work without letting diagnostic identities select compilation behavior."""
+
+from rust::std::env import var_os
+
+
+pub def enabled() -> bool:
+    """Whether this invocation requested work counters independently of timings or allocation diagnostics."""
+    return var_os("INCAN_TRACE_WORK").is_some()
+
+
+pub def record(phase: str, identity: str, units: int) -> None:
+    """Write one tab-separated event after enabled was checked; units count visited input records."""
+    println(f"compile-work\t{phase}\t{identity}\t{units}")

@@ -37,7 +37,7 @@ use incan_frontend::registry_metadata::{
     CheckedRegistryPackageIdentity, collect_checked_registry_metadata, materialize_registry_reexport_projections,
 };
 use incan_frontend::typechecker::TypeChecker;
-use incan_lang::interop::RustItemMetadata;
+use incan_lang::interop::{RustItemKind, RustItemMetadata};
 use incan_semantics_core::IncanType;
 use incan_semantics_core::body_ir::BodyIrModule;
 use incan_semantics_core::body_ir::NativeUnionDeclaration;
@@ -108,6 +108,8 @@ impl PublicationFacts {
     /// Retain each exact queried native surface once across checked modules, sharing its inspected metadata until the
     /// Loaf publishes its owned ABI payload. The first record for a canonical path wins, matching
     /// `LibraryRustAbi::from_items`; retaining ABI facts does not grant a source-visible import binding.
+    /// Private trait snapshots are excluded because the consumer's native closure can add implementations and
+    /// associated definitions; explicit public Rust reexports remain part of the declared ABI.
     fn collect_native_rust_items(&mut self, module: &ParsedModule, checker: &TypeChecker) {
         let mut paths = checker.observed_rust_metadata_queries();
         let mut public_paths = BTreeSet::new();
@@ -145,6 +147,11 @@ impl PublicationFacts {
                 continue;
             }
             if let Some(metadata) = checker.rust_item_metadata_for_path(&path) {
+                // A private trait snapshot describes the producer's native closure, not implementations a later
+                // consumer adds. Let that consumer inspect its own closure instead of shadowing it with this snapshot.
+                if !public_paths.contains(&path) && matches!(&metadata.kind, RustItemKind::Trait(_)) {
+                    continue;
+                }
                 self.rust_items
                     .entry(metadata.canonical_path.clone())
                     .or_insert(metadata);

@@ -137,22 +137,28 @@ pub(super) fn project_compiled_frame(
     ))
 }
 
-/// Recover only checker-authenticated native selections, preserving their exact type arguments for both executable
-/// bodies and declaration defaults.
+/// Recover checker-authenticated native selections for executable bodies and declaration defaults. Open argument
+/// spellings can belong to different generic frames, so preserve every checked signature sharing that selection;
+/// the closed consumer selects against its own checked result rather than losing a frame to first-match ordering.
 fn selected_native_calls(
     selections: &[(CanonicalSymbolId, Vec<IncanType>)],
     native_callables: &[&crate::body_ir::LoafCallable],
 ) -> Result<Vec<crate::body_ir::LoafCallable>, CoverageReason> {
     let mut callables = Vec::new();
     for (identity, arguments) in selections {
-        let callable = native_callables
+        let mut found = false;
+        for callable in native_callables
             .iter()
             .copied()
-            .find(|callable| &callable.canonical == identity && &callable.native_type_arguments == arguments)
-            .cloned()
-            .ok_or(CoverageReason::UnresolvedReference)?;
-        if !callables.contains(&callable) {
-            callables.push(callable);
+            .filter(|callable| &callable.canonical == identity && &callable.native_type_arguments == arguments)
+        {
+            found = true;
+            if !callables.contains(callable) {
+                callables.push(callable.clone());
+            }
+        }
+        if !found {
+            return Err(CoverageReason::UnresolvedReference);
         }
     }
     Ok(callables)
@@ -597,8 +603,21 @@ impl<'a> PublicationAudit<'a> {
                 Ok(())
             }
             IncanType::RustInteropPath(path) if path == "str" => Ok(()),
-            IncanType::Generic { base, args } if base == "[]" || base == "Awaitable" => match args.as_slice() {
-                [element] => self.ty(element),
+            IncanType::Generic { base, args }
+                if matches!(base.as_str(), "[]" | "Awaitable" | "$FrozenList" | "$FrozenSet") =>
+            {
+                match args.as_slice() {
+                    [element] => self.ty(element),
+                    _ => Err(CoverageReason::UnresolvedReference),
+                }
+            }
+            // Native frozen storage keeps the checker's element carriers rather than applying the public frozen
+            // surface's text conversion. Its internal constructor has no source declaration to demand.
+            IncanType::Generic { base, args } if base == "$FrozenDict" => match args.as_slice() {
+                [key, value] => {
+                    self.ty(key)?;
+                    self.ty(value)
+                }
                 _ => Err(CoverageReason::UnresolvedReference),
             },
             IncanType::NativeTraitObject { path, .. } if crate::body_ir::rust_item_identity(path).is_some() => Ok(()),

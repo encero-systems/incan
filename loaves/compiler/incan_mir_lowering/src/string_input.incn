@@ -25,7 +25,7 @@ pub def owned_string_frame(
         blocks=[],
         current=0,
         source="",
-        file=span.file,
+        file=str(span.file),
         module_identity=str(module.module_id.path()),
         callable_identity=None,
         loops=[],

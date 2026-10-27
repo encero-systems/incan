@@ -2,6 +2,7 @@
 
 from rust::incan_std_core::num import Decimal128 as RuntimeDecimal
 from rust::std::cmp import PartialEq, PartialOrd
+from rust::std::string import ToString
 
 
 pub def decimal_from_parts(coefficient: i128, scale: u8) -> RuntimeDecimal:
@@ -11,7 +12,7 @@ pub def decimal_from_parts(coefficient: i128, scale: u8) -> RuntimeDecimal:
 
 pub def format_decimal(value: RuntimeDecimal) -> str:
     """Render the carrier's written scale through its canonical Display implementation."""
-    return str(value)
+    return value.to_string()
 
 
 pub def equal_decimal(left: RuntimeDecimal, right: RuntimeDecimal) -> bool:

@@ -24,16 +24,21 @@ pub model UnitLoaf:
     # Its artifact directory for the unit's profile.
     pub dir: str
     pub standard: bool
-    # Binding provenance for owner admission; it does not change the compiler's public dependency contract.
+    # Compiler-provided facades are inputs rather than dependencies authored in the project manifest.
     pub toolchain_provided: bool = false
     # The authored source root supplied by Oven, never inferred from the consumer's artifact layout.
     pub source_root: Option[str] = None
+
+    def is_dependency(self) -> bool:
+        """Identify a project-authored dependency rather than a standard provider or compiler facade."""
+        return not self.standard and not self.toolchain_provided
 
     def to_json(self) -> JsonValue:
         """The Loaf as the description spells it."""
         mut fields = {"key": JsonValue.string(self.key), "name": JsonValue.string(self.name), "dir": JsonValue.string(
             self.dir,
         ), "standard": JsonValue.bool(self.standard)}
+        fields["toolchain_provided"] = JsonValue.bool(self.toolchain_provided)
         if let Some(root) = self.source_root:
             fields["source_root"] = JsonValue.string(root)
         return JsonValue.object(fields)
