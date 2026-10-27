@@ -1,6 +1,6 @@
 # RFC 135: Lazy Option defaults with `or`
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-11
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -10,7 +10,7 @@
     - RFC 129 (binding and borrowing semantics)
     - RFC 131 (typed error declarations)
     - RFC 134 (pattern bindings with exiting fallbacks)
-- **Issue:** —
+- **Issue:** [#2464](https://github.com/encero-systems/incan/issues/2464)
 - **RFC PR:** —
 - **Written against:** v0.6
 - **Shipped in:** —

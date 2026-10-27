@@ -1,6 +1,6 @@
 # RFC 136: Chained comparisons
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-11
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -10,7 +10,7 @@
     - RFC 110 (proposed comparison traits)
     - RFC 111 (proof-aware contracts)
     - RFC 135 (Option defaults using existing `or` precedence)
-- **Issue:** —
+- **Issue:** [#2465](https://github.com/encero-systems/incan/issues/2465)
 - **RFC PR:** —
 - **Written against:** v0.6
 - **Shipped in:** —
