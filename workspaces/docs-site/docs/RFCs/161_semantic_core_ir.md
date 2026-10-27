@@ -25,7 +25,7 @@ This is a strategic RFC. It defines SCIR, the semantic core of Incan: a small, c
 - a `class` becomes a record with its implementations and trait adoptions;
 - an `error` becomes an enum or record with its error implementation.
 
-Compiler-owned vocabulary normalizes the same way, and library vocabulary under RFC 160 may target SCIR in a later schema version. RFC 104's capabilities are part of the core, not a layer on top. A normalization cannot introduce, hide or drop authority-bearing work. A function's capability requirements are derived from its SCIR. RFC 102's inspection surface and RFC 106's graph read declarations, edges and authority from one place. SCIR is not part of 0.6. This RFC also lists the constraints 0.6 work keeps so the design stays open.
+Compiler-owned vocabulary normalizes the same way, and library vocabulary under RFC 160 may target SCIR in a later schema version. RFC 104's capabilities are part of the core, not a layer on top. A normalization cannot introduce, hide or drop authority-bearing work. A function's capability requirements are derived from its SCIR. RFC 102's inspection surface and RFC 106's graph read declarations, edges and authority from one place. SCIR is not part of 0.6. The 0.7 program settles this semantic contract; full implementation is unscheduled and is not promised for 0.7, 0.8 or 1.0. This RFC also lists the constraints 0.6 work keeps so the design stays open.
 
 ## Core model
 
@@ -72,7 +72,7 @@ Capabilities belong in the same place. RFC 104 makes authority explicit at bound
 ## Non-Goals
 
 - Shipping SCIR in 0.6. This RFC sets its direction and the constraints 0.6 keeps.
-- A user-writable SCIR syntax. SCIR has an inspection form; whether it also becomes a writable dialect is an open question.
+- A user-writable SCIR syntax. The versioned inspection view is read-only; a future separate proposal may define a writable dialect once the semantic contract stabilizes.
 - Changing the meaning of any surface construct. Normalization must preserve today's semantics exactly.
 - Turning capabilities into effect types in user signatures. RFC 104's usability rule stands: requirements are derived and inspected, not annotated on every function.
 - A new backend. SCIR lowers to the existing native plan and the pinned compiler adapter.
@@ -158,6 +158,14 @@ error: default for field `y` of model `Point` has type `str`, expected `int`
 - RFC 102's semantic package and RFC 106's graph must read declarations, call edges and capability requirements from SCIR facts, not from surface syntax or generated output.
 - `incan inspect` must be able to show any declaration's SCIR form with its provenance. The inspection form is versioned and is not a source language.
 
+### Generic definitions and derived instances
+
+SCIR must retain each checked generic definition and its constraints as the semantic authority. Concrete instantiations needed by backend lowering or inspection must be derived facts with explicit links to that definition and its type substitution. They must not independently reinterpret ownership, capability requirements or source meaning. Inspection must distinguish a generic definition such as identity[T] from derived identity[int] and identity[str] instances while preserving each originating source location. This contract does not prescribe internal storage or the optimization stage that specializes a body.
+
+### Public authority and compatibility
+
+A public function's effective derived capability requirements must be part of its checked API facts. Adding a required capability at that boundary must be reported as an API compatibility change, identifying the operation and call path that introduced it. Consumer policy may deliberately accept that change; the compiler or runtime must not silently expand an old grant. Argument and result types remaining unchanged do not hide the authority change. Compare effective public requirements rather than reporting every internal call edge as an independent public break. RFC 104 retains actual grant enforcement and requirements remain inferred, not authored effect annotations on every function.
+
 ### Single authority
 
 - A fact decided in SCIR must not also be decided by another stage. Introducing SCIR must replace, not shadow, the stages whose facts it takes over.
@@ -180,7 +188,7 @@ So that 0.6 does not foreclose SCIR, 0.6 work keeps these properties:
 
 ### Relationship to RFC 160 and source surfaces
 
-RFC 160 desugarers return canonical surface syntax. Vocabulary, dialects and frontends under RFC 162 enter the compiler the same way. SCIR is where all of them meet. A dialect could eventually be a writable form of SCIR itself, for code that needs precise control of ownership and layout. That is left open here.
+RFC 160 desugarers return canonical surface syntax. Vocabulary, dialects and frontends under RFC 162 enter the compiler the same way. SCIR is where all of them meet. A future separate proposal could define a writable SCIR dialect for code that needs precise control of ownership and layout. This RFC commits to inspectable facts, not another authored source language.
 
 ## Alternatives considered
 
@@ -205,13 +213,10 @@ RFC 160 desugarers return canonical surface syntax. Vocabulary, dialects and fro
 - **Vocabulary**: compiler-owned surfaces normalize to SCIR; a later `std.vocab` schema version lets library desugarers target it.
 - **LSP / Tooling**: `incan inspect` shows SCIR forms; RFC 102 and RFC 106 read SCIR facts; diagnostics render through provenance.
 
-## Unresolved questions
+## Design Decisions
 
-- Should the core be named SCIR or SCL in user-facing documentation and inspection output?
-- Should SCIR also have a writable textual form, as a dialect for code that needs precise control of ownership and layout?
-- Are generic functions represented in SCIR before specialization, after it, or in both forms?
-- Are a function's derived capability requirements part of its published compatibility contract, so that a new requirement is a breaking change?
-- Which construct should normalize first: `error`, `model` or `class`?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- SCIR is the retained name. The 0.7 scope is design closure; full compiler migration remains unscheduled.
+- Inspection is versioned and read-only. A writable core dialect requires a separate source-language proposal; exposing complete facts to people and tools does not itself define an authored syntax.
+- Checked generic definitions own semantics. Concrete instances are derived, origin-linked facts; inspection distinguishes both without creating a second semantic authority.
+- Effective public capability requirements are compatibility facts. New required authority must be reported with provenance and deliberately accepted; existing grants are not silently expanded.
+- Selecting the first migration workload is engineering preparation, not an unresolved language policy. Each migrated boundary must replace the authority it assumes and demonstrate ownership, execution, unwind, diagnostics and identity parity before widening. No particular first construct or release date is promised by this design.

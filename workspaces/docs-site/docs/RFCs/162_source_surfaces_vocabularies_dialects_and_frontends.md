@@ -1,4 +1,4 @@
-# RFC 162: Source surfaces: vocabularies, dialects and frontends
+# RFC 162: File syntax: vocabularies, dialects and frontends
 
 - **Status:** Draft
 - **Created:** 2026-10-24
@@ -18,12 +18,12 @@
 
 ## Summary
 
-This RFC lets a whole source file be written in a surface other than canonical Incan, while every surface still enters one Incan semantic model. It defines three kinds of **source surface**, distinguished by how far they are from Incan:
+This RFC lets a whole source file be written in a surface other than canonical Incan, while every surface still enters one Incan semantic model. It defines three kinds of **file syntax**, distinguished by how far they are from Incan:
 - a **vocabulary** keeps Incan's grammar and semantics with different words and small forms, such as Incan with keywords in another human language;
 - a **dialect** has a different grammar with Incan's semantics;
 - a **frontend** is another source language, parsed by its own parser and lowered through an explicit compatibility boundary.
 
-A file selects its surface with a header directive (`#!vocab`, `#!dialect` or `#!frontend`) on its first line, and a project may set a default in `loaf.toml`. Surfaces are provided by Loaves on RFC 160's provider substrate: Incan-authored providers, built natively, admitted by policy, run as out-of-process workers and recorded in build evidence. This RFC adds the source-surface registration records and the whole-file request and response to that substrate. It also gives each kind its own execution shape:
+An .incn file selects its syntax through an explicit header or a project default. Native-language files keep their extensions and original bytes; loaf.toml explicitly selects their frontend through file/path patterns. The built-in #!syntax incan header restores canonical Incan in an .incn file whose project default is another syntax. Surfaces are provided by Loaves on RFC 160's provider substrate: Incan-authored providers, built natively, admitted by policy, run as out-of-process workers and recorded in build evidence. This RFC adds the file-syntax registration records and the whole-file request and response to that substrate. It also gives each kind its own execution shape:
 - a vocabulary can be a static word table that needs no worker;
 - a dialect needs a parsing and lowering worker;
 - a frontend also needs lowerability diagnostics, a compatibility declaration and runtime requirements.
@@ -34,7 +34,7 @@ Every provider's output is RFC 160's canonical surface representation, and later
 
 1. **Many surfaces, one semantics.** Every surface lowers into canonical Incan and is checked by the ordinary Incan checker. No surface brings its own type system or backend.
 2. **The kind is honest.** A vocabulary changes words, a dialect changes grammar, and a frontend translates a language. A provider declares its kind, and a frontend declares how much of its source language it accepts.
-3. **Selection is explicit and file-scoped.** A file's surface is chosen by its header or its project's default, never as a side effect of an ordinary import.
+3. **Selection is explicit and file-scoped.** An .incn file uses its explicit header or project default; native files use explicit frontend selection in loaf.toml. Ordinary imports never change how a file is parsed.
 4. **Providers are package-owned.** A surface comes from a Loaf, written in Incan, on RFC 160's substrate for building, admission, execution, reuse and evidence.
 5. **A surface that cannot be resolved stops the file.** A missing, unadmitted or incompatible provider fails before the body is parsed. A file is never silently read as canonical Incan instead.
 6. **Source maps are mandatory.** Every lowered node maps to a byte span in the original file, so diagnostics, the editor and receipts point at what the author wrote.
@@ -60,9 +60,9 @@ Native workers are what make real frontends practical, because a provider can us
 
 ## Goals
 
-- Define vocabulary, dialect and frontend as the three kinds of source surface, with the promise each makes.
+- Define vocabulary, dialect and frontend as the three kinds of file syntax, with the promise each makes.
 - Define file-scoped selection through a header directive, and project defaults in `loaf.toml`.
-- Define the source-surface provider contract on top of RFC 160:
+- Define the file-syntax provider contract on top of RFC 160:
     - registration records;
     - the whole-file request and response;
     - each kind's execution shape;
@@ -108,7 +108,7 @@ A dialect and a frontend are chosen the same way:
 #!frontend example_frontends.python3_12.subset
 ```
 
-The directive must be the file's first line that is neither blank nor a comment. It names a surface provided by one of the project's dependencies.
+An .incn directive must be the first significant header line, allowing preceding blank lines and ordinary comments. Native files do not need or receive Incan directives. It names a surface provided by one of the project's dependencies.
 
 ### Project defaults
 
@@ -116,10 +116,42 @@ A project whose files mostly use one surface may set a default:
 
 ```toml
 [source]
-surface = "vocab:incan_es.espanol"
+syntax = "vocab:incan_es.espanol"
 ```
 
-A file header overrides the project default, and a file with neither is canonical Incan. If the selected surface's provider is missing, not admitted or incompatible, the build stops with an error on that file before its body is read. It never quietly treats the file as canonical Incan.
+An .incn file header overrides its project default; an .incn file with neither is canonical Incan. The built-in #!syntax incan header explicitly selects canonical Incan without a provider. Native files are selected only through the frontend rules below, not by that .incn default. If the selected surface's provider is missing, not admitted or incompatible, the build stops with an error on that file before its body is read. It never quietly treats the file as canonical Incan.
+
+### Native Python and Java sources remain unchanged
+
+The following manifest addition explicitly selects native-language files. Provider names are illustrative dependencies accepting the shown subsets, not a claim that these packages exist or provide complete language compatibility.
+
+```toml
+[[source.frontends]]
+provider = "example_frontends.python3_12.subset"
+include = ["legacy/python/**/*.py"]
+exclude = ["legacy/python/tests/**"]
+
+[[source.frontends]]
+provider = "example_frontends.java21.subset"
+include = ["legacy/java/**/*.java"]
+```
+
+The corresponding complete native files retain ordinary language syntax and need no injected header:
+
+```text
+File legacy/python/greeting.py:
+    def greeting(name: str) -> str:
+        return "Hello, " + name
+
+File legacy/java/Greeter.java:
+    public final class Greeter {
+        public static String greeting(String name) {
+            return "Hello, " + name;
+        }
+    }
+```
+
+An .incn author may deliberately select frontend syntax with #!frontend in that file. That explicit override does not make Incan-specific directives a requirement for native files. A braced-declaration dialect is another distinct use: it may parse `record Point { x: int; y: int; }` into canonical `model Point` fields while retaining Incan meaning, without claiming compatibility with Java or Python.
 
 ### What authors see
 
@@ -133,16 +165,16 @@ The editor colors, navigates and diagnoses the file through the provider's descr
 
 ### Providing a surface
 
-A surface provider is a Loaf whose RFC 160 vocabulary entry registers a source surface. `SourceSurface` and `VocabRegistration.with_source_surface` are this RFC's additions to `std.vocab`:
+A surface provider is a Loaf whose RFC 160 vocabulary entry registers a file syntax. `FileSyntax` and `VocabRegistration.with_file_syntax` are this RFC's additions to `std.vocab`:
 
 ```incan
-from std.vocab import SourceSurface, VocabRegistration
+from std.vocab import FileSyntax, VocabRegistration
 
 
 pub def library_vocab() -> VocabRegistration:
     """Register the Spanish vocabulary as a file-scoped surface."""
-    surface = SourceSurface.vocabulary("espanol").with_keyword_map(SPANISH_KEYWORDS)
-    return VocabRegistration.new().with_source_surface(surface)
+    syntax = FileSyntax.vocabulary("espanol").with_keyword_map({"definir": "def", "imprimir": "println"})
+    return VocabRegistration.new().with_file_syntax(syntax)
 ```
 
 A vocabulary whose mapping is a plain table of words needs no provider code: the compiler applies the table while lexing. A dialect or frontend defines the provider function that receives the whole file and returns canonical surface representation with a source map.
@@ -174,18 +206,19 @@ A response that lacks a field its kind requires must be refused as malformed und
 
 ### Selection
 
-- A file selects its surface with exactly one of `#!vocab NAME`, `#!dialect NAME` or `#!frontend NAME` as its first line that is neither blank nor a comment. The directive kind must match the provider's declared kind.
-- `NAME` must resolve to a surface registered by a dependency in the project's resolved and locked dependencies, or by the project itself.
-- A project may set `[source] surface = "KIND:NAME"` in `loaf.toml`. A file header must take precedence over the project default; a file with neither is canonical Incan.
-- If the selected surface cannot be resolved, the file must fail with a diagnostic before its body is parsed. This applies to a surface selected by header or by project default, and covers a missing provider, one the build's provider policy does not admit, a kind mismatch, and an unsupported schema version. The compiler must not fall back to canonical Incan.
-- An ordinary import must not change the surface of a file.
+- An .incn file must accept exactly one explicit header: #!syntax incan for the built-in canonical syntax, or #!vocab NAME, #!dialect NAME or #!frontend NAME for a package-owned provider. It must be the first significant header after optional blank lines and ordinary comments. The declared kind must match the resolved provider. The canonical escape needs no provider.
+- A project may set `[source] syntax` to `incan`, `vocab:NAME` or `dialect:NAME` as the default for .incn files. A frontend must not become an implicit .incn project default; its .incn use requires the explicit file header. A file header takes precedence; absent both, the file is canonical Incan. The canonical schema term “canonical surface representation” remains RFC 160's structured interchange, not another authored syntax.
+- Native-language sources must retain their native extensions and original bytes. They enter the build through explicit `[[source.frontends]]` tables containing provider and include, with optional exclude. Include/exclude are lists of project-relative path glob patterns: * matches within one path component, while ** matches zero or more directory components. Exclusion removes a path from that rule. Absolute paths and parent traversal must be rejected.
+- Multiple patterns selecting the same file for the same canonical provider must not duplicate compilation. A file selected for different providers must receive a configuration diagnostic identifying both rules; table order must not silently choose a winner. Provider identity and selected input evidence must be recorded under RFC 160.
+- These native-file rules must not silently reinterpret ordinary .incn files. A frontend inside .incn is an explicit file-header choice. A native extension alone is not permission to execute a frontend; a native file outside selected paths is not a source input of this frontend build.
+- Provider names must resolve through the project's checked locked dependencies or its own registration. Missing, unadmitted, kind-mismatched or schema-incompatible selections must fail before body translation, never fall back to another parser. Ordinary imports must not change file syntax.
 
 ### Providers
 
 - Surface providers must be built, admitted, run, reused and recorded under RFC 160.
 - A whole-file request must contain the file's source bytes, its path relative to the project and the selected surface name.
 - A whole-file response must contain the file's canonical surface representation, a source map and any diagnostics, as the provider's kind requires.
-- Every output node must map to a byte span of the original file. Diagnostics must be rendered at the original span, naming the surface and its provider.
+- Every output node must retain its responsible original token or construct span through parsing, frontend translation, checked IR and backend lowering. A later diagnostic must point back to that authored span, preserving original type names where available and identifying its provider. Synthetic nodes retain the responsible authored construct plus generation provenance; they must not fabricate handwritten tokens. A whole-file placeholder is insufficient when the responsible expression is known. Canonical Incan, Rust-origin code and custom frontends must meet the same provenance standard.
 - A construct the provider cannot lower faithfully must produce a diagnostic. A provider must not substitute different semantics for it.
 - A vocabulary whose registration is a complete word table may omit the provider function. The compiler then applies the table, with the same source map guarantees.
 
@@ -205,7 +238,7 @@ A response that lacks a field its kind requires must be refused as malformed und
 ### Relationship to RFC 160 and RFC 161
 
 RFC 160 is the substrate: how a provider Loaf is built, admitted, run, reused and recorded, and the versioned canonical surface representation it returns. This RFC adds to it, without redefining it:
-- source-surface registration records in `std.vocab`;
+- file-syntax registration records in `std.vocab`;
 - the whole-file request and response;
 - each kind's execution shape;
 - selection, compatibility levels and lowerability.
@@ -228,7 +261,7 @@ A file selected with `#!dialect`, or a file in any surface whose grammar admits 
 
 ### Packaging a frontend's sources
 
-A Loaf may contain sources in a frontend's language with their native extension, mapped to a surface in `loaf.toml`. Its published metadata records the surface identity and version alongside the lowered Incan API, so consumers see an ordinary Incan library.
+A Loaf may contain unchanged native-language sources selected by the explicit frontend path rules in loaf.toml. Its published metadata records the surface identity and version alongside the lowered Incan API, so consumers see an ordinary Incan library.
 
 ## Alternatives considered
 
@@ -246,18 +279,16 @@ A Loaf may contain sources in a frontend's language with their native extension,
 ## Layers affected
 
 - **Lexer / Parser**: header detection; word-table vocabularies applied while lexing.
-- **Manifest / Oven**: `[source] surface`; surface registration in vocabulary entries; frontend source files mapped to surfaces.
+- **Manifest / Oven**: `[source] syntax`; surface registration in vocabulary entries; frontend source files mapped to surfaces.
 - **Desugar pass**: whole-file provider requests and responses under RFC 160.
 - **Typechecker**: unchanged semantics; diagnostics rendered through source maps.
 - **Formatter**: preserve non-canonical files unless the provider declares a formatter.
 - **LSP / Tooling**: provider-driven highlighting; source-mapped diagnostics, navigation and hover; `incan inspect` of a file's canonical form.
 - **Registry**: surface identity and version in published metadata.
 
-## Unresolved questions
+## Design Decisions
 
-- How is canonical Incan selected explicitly in a project whose default is another surface: `#!surface incan`, `#!vocab incan`, or another spelling?
-- Should a frontend's files keep their native extension, use `.incn`, or allow both?
-- What is the minimum source-map granularity a dialect or frontend must meet before its diagnostics are user-facing?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- File syntax is the umbrella term; vocabulary changes words, dialect changes grammar, and frontend translates a declared external-language subset. The built-in #!syntax incan header explicitly selects canonical Incan without a provider. The proposed registration descriptor is FileSyntax, and the project default uses [source] syntax.
+- Native files retain their extension and bytes. Explicit loaf.toml provider/include/exclude rules select them without inserting directives; #!frontend remains an explicit override in an .incn file. Recursive ** and component-local * are path globs, and conflicting providers diagnose rather than use rule-order precedence.
+- Every AST/IR/backend path preserves the responsible source token or construct. Diagnostics use that same provenance standard for Incan, Rust-origin code and custom frontends; generated nodes retain honest authored origins and generation facts.
+- Full SCIR implementation is not a prerequisite: providers use RFC 160's canonical structured representation today and normalize through RFC 161 once that core is delivered. This design does not schedule the compiler-wide migration.
