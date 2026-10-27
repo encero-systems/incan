@@ -1,6 +1,6 @@
 # RFC 086: Schema descriptors and adapters
 
-- **Status:** Planned
+- **Status:** Draft
 - **Created:** 2026-04-29
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -16,6 +16,14 @@
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —
+
+!!! warning "Deferred from the 0.7 release"
+
+    This proposal is not ready for implementation. Revisit it in 0.8 at the earliest, after practical experience with model construction, validation, declaration metadata, and structured reflection. Implementation remains unscheduled; review may move to 0.9 or later if that experience is insufficient. The earlier design below is retained for investigation, not as an accepted implementation contract.
+
+    Review explored field-first metadata with ordinary indented schema declarations, checked dotted field selectors, profile-specific validators and factories, and whole-record decoding for ordered source data. These explorations did not establish a stable boundary between schemas, canonical model construction, format adapters, and query or ingestion libraries. No callable-schema mapping engine or decoder-hook protocol was accepted for implementation.
+
+    References from other RFCs remain useful design context, but they do not require implementing this deferred proposal in 0.7. In particular, RFC 087's explicit metadata-reconciliation references need a focused dependency review before implementation; this deferral does not silently choose replacement syntax or weaken its accepted conflict diagnostics. Declaration-local field metadata and validation retain their owning RFC contracts.
 
 ## Summary
 
@@ -501,6 +509,8 @@ External schema import support can be staged after schema descriptors, schema bl
 
 ## Design Decisions
 
+The decisions below record the earlier proposal. Implementation readiness was withdrawn during the October 2026 review; the open boundaries at the end must be resolved from practical evidence before promotion.
+
 - Use `schema_of[Model]()` as the canonical user-facing descriptor API for base model descriptors.
 - Use `schema_of[Model, Overlay]()` for descriptor requests with one overlay, and `schema_of[Model, OverlayA, OverlayB]()` for multiple overlays. Overlay order is semantically significant and defines merge order.
 - Keep overlays strictly projection-only. Reject compiler-semantic keys, including alias, `default_factory`, and validate, in overlays and their imports, even with explicit overrides. Adapter-owned projection names remain permitted and must not alter the source model contract.
@@ -512,3 +522,13 @@ External schema import support can be staged after schema descriptors, schema bl
 - Register adapter-provided LSP validation through explicit tooling hooks supplied by adapter packages or build configuration. The compiler owns syntax and safe-value checks; adapters own namespace-specific validation.
 - Represent descriptor/projection edges with base model anchor, selected overlay anchors in order, descriptor schema version, adapter identifier and version where available, source artifact identity where available, and field-level projection anchors.
 - Permit explicit namespaced target-mapping requests in schema blocks, imports, overlays, and RFC 085 field metadata. Represent these requests as adapter-owned checked enum values with safe constant payloads, retaining their type, case, and payload structure; do not use target-type strings for dispatch. The owning adapter must validate compatibility with the checked source type, constraints, nullability, and representation contract before using the projection. Reject incompatible, unsupported, or unestablished mappings; no silent narrowing, truncation, coercion, fallback, or weakening of secret protection is permitted. Existing metadata conflict and explicit override rules still apply, and an override cannot waive compatibility checking.
+
+## Unresolved questions
+
+- Which concrete gaps remain after the model-construction, validation, declaration-metadata, and structured-reflection surfaces are exercised in real libraries and applications?
+- What is the smallest coherent schema contract beyond those surfaces, and which representation or source-interpretation responsibilities belong to libraries?
+- If selected schema profiles can register validators or factories, how do they participate in canonical construction without replacing model obligations, duplicating execution, or changing ordinary construction globally?
+- Is a whole-record decoding hook needed in the schema contract, or should ordered, source-specific interpretation remain a reader/adapter interface? The boundary must also avoid duplicating query and ingestion planning.
+- Which existing cross-RFC schema references, especially owning-model metadata reconciliation, need an independent contract or explicit later release scope before their owning features can be implemented?
+
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
