@@ -5,10 +5,9 @@
 //! wherever such a value is displayed -- an f-string `{value}` part, `str(value)`, and each `print`/`println` argument
 //! -- it renders that text. That holds for a concrete adopter, for one whose `message`
 //! comes from a trait default, for a value of a type parameter bounded by `Error`, and for `self` inside a default
-//! method of a trait that extends `Error`. The checker proves which operands take that route and resolves their
-//! `message()` call exactly as a written `value.message()` is resolved, trait dispatch included; lowering rewrites each
-//! recorded operand into that call. A concrete adopter also satisfies a `Display` bound, so the checker resolves the
-//! same call once on each such type the module declares, and lowering gives the type a Rust `Display` that writes it.
+//! method of a trait that extends `Error`. A concrete adopter also satisfies a `Display` bound, so the checker resolves
+//! its `message()` call once on each such type the module declares, exactly as a written `value.message()` is
+//! resolved, trait dispatch included, and lowering gives the type a Rust `Display` that writes it.
 //! Nothing here refuses a program: a value with no printed form is refused by the display rule in `printed_form`, and
 //! every other operand keeps its existing display path.
 
@@ -59,43 +58,6 @@ impl TypeChecker {
         }
     }
 
-    /// Record that one display operand renders through `message()` when its checked type adopts `Error` and has no
-    /// `Display` of its own.
-    ///
-    /// Callers pass each operand in a display position with the type `check_expr` just returned for it. An operand of
-    /// any other type, or one whose `message()` does not resolve to text, records nothing.
-    pub(in crate::typechecker) fn record_error_message_display(
-        &mut self,
-        operand_span: Span,
-        operand_ty: &ResolvedType,
-    ) {
-        if matches!(operand_ty, ResolvedType::SelfType) {
-            // A written `self.message()` in a trait default resolves no further than the trait's `Self`; the display
-            // records the same, with the adopters that display themselves, and lowering decides per adopter.
-            if let Some(trait_name) = self.current_trait_name.clone()
-                && self.trait_default_self_displays_through_error_message(&trait_name)
-            {
-                let self_displaying_adopters = self.self_displaying_adopters_of(&trait_name);
-                self.type_info.record_error_message_display(
-                    operand_span,
-                    ErrorMessageDisplay {
-                        identity: None,
-                        dispatch: None,
-                        receiver_is_trait_self: true,
-                        self_displaying_adopters,
-                    },
-                );
-            }
-            return;
-        }
-        if !self.displays_through_error_message(operand_ty) {
-            return;
-        }
-        if let Some(display) = self.resolve_display_method_call(ERROR_MESSAGE_METHOD, operand_span, operand_ty) {
-            self.type_info.record_error_message_display(operand_span, display);
-        }
-    }
-
     /// Record that a model, class, enum or newtype this module declares displays through `message()`.
     ///
     /// Such a type adopts `Error` and has no `Display` of its own, so it satisfies a `Display` bound; lowering gives it
@@ -114,31 +76,6 @@ impl TypeChecker {
         if let Some(display) = self.resolve_display_method_call(ERROR_MESSAGE_METHOD, decl_span, self_ty) {
             self.type_info.record_error_message_display_type(type_name, display);
         }
-    }
-
-    /// Return whether `self` inside a default method of `trait_name` renders its `message()`.
-    ///
-    /// That holds in a default method of a trait that extends `Error` (or is `Error`) when neither the trait nor any
-    /// supertrait gives `Self` a `Display`: a `Display` supertrait or a `__str__` declaration. Which adopters display
-    /// themselves anyway is [`Self::self_displaying_adopters_of`].
-    fn trait_default_self_displays_through_error_message(&self, trait_name: &str) -> bool {
-        self.trait_reaches(trait_name, TraitId::Error)
-            && !self.trait_reaches(trait_name, TraitId::Display)
-            && !self.trait_supplies_str(trait_name)
-    }
-
-    /// Return the types of this module that adopt `trait_name` and have a `Display` of their own.
-    ///
-    /// A trait default is expanded into each adopter, and `{self}` there follows the adopter: one that has a `Display`
-    /// by the same rule [`Self::displays_through_error_message`] applies (see [`Self::nominal_own_display`]) keeps
-    /// it, every other adopter renders `message()`. Lowering reads this set while expanding the default.
-    fn self_displaying_adopters_of(&self, trait_name: &str) -> BTreeSet<String> {
-        self.symbols
-            .active_module_source_bindings()
-            .map(|(_, name, _)| name.to_string())
-            .filter(|name| self.type_implements_trait(name, trait_name))
-            .filter(|name| self.nominal_own_display(name) == Some(true))
-            .collect()
     }
 
     /// Return whether a displayed value of this type renders its `message()`.
@@ -204,12 +141,10 @@ impl TypeChecker {
         })
     }
 
-    /// Return the trait bounds active for one type parameter, innermost scope first.
+    /// Return the trait bounds the innermost declaration of one type parameter gives it.
     pub(in crate::typechecker::check_expr) fn placeholder_bounds(&self, placeholder: &str) -> Vec<TypeBoundInfo> {
-        self.current_type_param_bound_details
-            .iter()
-            .rev()
-            .find_map(|frame| frame.get(placeholder).cloned())
+        self.innermost_type_param_bounds(placeholder)
+            .map(<[TypeBoundInfo]>::to_vec)
             .unwrap_or_default()
     }
 

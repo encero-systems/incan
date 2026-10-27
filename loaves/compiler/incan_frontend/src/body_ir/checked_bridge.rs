@@ -3,6 +3,7 @@
 use super::{BodyBuilder, IncanType, TypeCheckInfo, ast, bir, checked_foreign, hir_span};
 use crate::typechecker::COutputMode;
 use incan_lang::lang::c_abi;
+use incan_lang::lang::types::numerics::NumericTypeId;
 use incan_semantics_core::{CanonicalSymbolId, IncanPrimitiveType, SemanticSourceTargetKind, SymbolOrigin};
 
 /// Preserve the actual standard namespace declaration rather than reconstructing authority from a source alias.
@@ -37,9 +38,11 @@ pub(super) fn private_storage(name: &str, facts: &TypeCheckInfo) -> Option<Incan
     if facts.c_abi.bridge_calls.is_empty() && facts.c_abi.output_slots.is_empty() && facts.c_abi.raw_calls.is_empty() {
         return None;
     }
+    let span_carrier = span_storage(name).or_else(|| span_pointer(name));
     let selected = name == c_abi::C_STRING_TYPE_ID
         || name == c_abi::SCOPED_C_STRING_VIEW_TYPE_ID
         || name == c_abi::pointer_type_identity(false, "c.c_char")
+        || span_carrier.is_some()
         || facts.c_abi.output_slots.iter().any(|slot| slot.identity == name);
     if !selected {
         return None;
@@ -48,6 +51,9 @@ pub(super) fn private_storage(name: &str, facts: &TypeCheckInfo) -> Option<Incan
         return Some(IncanType::Unsupported(
             "source declaration shadows a private checked C carrier".into(),
         ));
+    }
+    if span_carrier.is_some() {
+        return span_carrier;
     }
     if name == c_abi::C_STRING_TYPE_ID {
         return Some(IncanType::Generic {
@@ -64,6 +70,63 @@ pub(super) fn private_storage(name: &str, facts: &TypeCheckInfo) -> Option<Incan
         mutable: false,
         pointee: Box::new(IncanType::NativeCChar),
     })
+}
+
+/// The owned buffer a typed span carrier holds: the `bytes` or `list[f32]` storage its constructor moved in.
+fn span_storage(name: &str) -> Option<IncanType> {
+    let element = match name {
+        c_abi::C_BYTES_SPAN_TYPE_ID | c_abi::C_MUTABLE_BYTES_SPAN_TYPE_ID => NumericTypeId::U8,
+        c_abi::C_F32_SPAN_TYPE_ID | c_abi::C_MUTABLE_F32_SPAN_TYPE_ID => NumericTypeId::F32,
+        _ => return None,
+    };
+    Some(IncanType::Generic {
+        base: "List".into(),
+        args: vec![IncanType::Primitive(IncanPrimitiveType::Numeric(element))],
+    })
+}
+
+/// The raw element pointer a span's pointer method returns, selected by its checked pointer identity.
+fn span_pointer(name: &str) -> Option<IncanType> {
+    let carriers = [
+        (false, "c.u8", NumericTypeId::U8),
+        (true, "c.u8", NumericTypeId::U8),
+        (false, "c.f32", NumericTypeId::F32),
+        (true, "c.f32", NumericTypeId::F32),
+    ];
+    let (mutable, _, element) = carriers
+        .into_iter()
+        .find(|(mutable, scalar, _)| name == c_abi::pointer_type_identity(*mutable, scalar))?;
+    Some(IncanType::NativePointer {
+        mutable,
+        pointee: Box::new(IncanType::Primitive(IncanPrimitiveType::Numeric(element))),
+    })
+}
+
+/// How a bridge operation reads its receiver value, when it has one.
+#[derive(Clone, Copy)]
+enum ReceiverRead {
+    /// A shared loan of the receiver's storage for the operation.
+    Borrow,
+    /// An exclusive loan of the receiver's storage for the operation.
+    MutBorrow,
+    /// A copy of a scalar or view receiver.
+    Copy,
+}
+
+/// The receiver read of each operation; constructors have no receiver value.
+fn receiver_read(operation: bir::CheckedBridgeOperation) -> Option<ReceiverRead> {
+    match operation {
+        bir::CheckedBridgeOperation::CStringPointer
+        | bir::CheckedBridgeOperation::SpanConstPointer
+        | bir::CheckedBridgeOperation::SpanCount
+        | bir::CheckedBridgeOperation::FinishSpan => Some(ReceiverRead::Borrow),
+        bir::CheckedBridgeOperation::SpanMutPointer => Some(ReceiverRead::MutBorrow),
+        bir::CheckedBridgeOperation::CopyUtf8 | bir::CheckedBridgeOperation::TakeOutputSlot => Some(ReceiverRead::Copy),
+        bir::CheckedBridgeOperation::MakeCString
+        | bir::CheckedBridgeOperation::MakeSpan
+        | bir::CheckedBridgeOperation::NewOutputSlot
+        | bir::CheckedBridgeOperation::NewInOutSlot => None,
+    }
 }
 
 impl BodyBuilder<'_, '_> {
@@ -127,24 +190,14 @@ impl BodyBuilder<'_, '_> {
             ));
         };
         let mut values = Vec::new();
-        if matches!(
-            operation,
-            bir::CheckedBridgeOperation::CStringPointer
-                | bir::CheckedBridgeOperation::CopyUtf8
-                | bir::CheckedBridgeOperation::TakeOutputSlot
-        ) {
+        if let Some(read_kind) = receiver_read(operation) {
             let mut value = self.lower_expr_to_operand(receiver, scope, out);
-            if operation == bir::CheckedBridgeOperation::CStringPointer
-                && let bir::Operand::Place(read) = &mut value
-            {
-                self.retain_argument_borrow(read, false);
-            }
-            if matches!(
-                operation,
-                bir::CheckedBridgeOperation::CopyUtf8 | bir::CheckedBridgeOperation::TakeOutputSlot
-            ) && let bir::Operand::Place(read) = &mut value
-            {
-                read.fact = bir::OwnershipFact::Copy;
+            if let bir::Operand::Place(read) = &mut value {
+                match read_kind {
+                    ReceiverRead::Borrow => self.retain_argument_borrow(read, false),
+                    ReceiverRead::MutBorrow => self.retain_argument_borrow(read, true),
+                    ReceiverRead::Copy => read.fact = bir::OwnershipFact::Copy,
+                }
             }
             values.push(bir::ArgumentElement::One(value));
         }

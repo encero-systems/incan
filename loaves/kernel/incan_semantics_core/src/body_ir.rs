@@ -16,8 +16,7 @@
 //! being silently dropped, so the model stays total over real programs while being honest about v0's coverage.
 //! Generator expressions lower to [`Rvalue::Generator`], preserving their established iterator-adapter timing: the
 //! outer source expression is evaluated at construction, while polling, later clause sources, filters, and elements
-//! remain inside the owned [`GeneratorBody`]. Expression-position `yield` remains a stub in the existing
-//! Rust-emission backend too.
+//! remain inside the owned [`GeneratorBody`]. Expression-position `yield` remains a stub.
 //!
 //! #1101 adds dict/set aggregates, slices, assignment variants, expression-position `if`/`loop`/`try`, f-strings,
 //! general iteration, list/dict comprehensions, closures/partial construction and local invocation, statement
@@ -805,16 +804,6 @@ pub fn native_nominal_module(identity: &CanonicalSymbolId) -> Option<String> {
     crate::canonical_module_identity(identity)
 }
 
-/// Exact opaque ABI declaration of the checked ValidationError builtin, retaining its runtime's four derived traits.
-/// This layout record grants no field, constructor or display operations; those require explicit Body IR runtime
-/// operations. Storage remains opaque through native frames.
-pub fn native_builtin_nominal(identity: &CanonicalSymbolId) -> Option<NominalDeclaration> {
-    if identity.origin != crate::SymbolOrigin::Builtin {
-        return None;
-    }
-    native_carrier_nominal(identity)
-}
-
 /// Exact direct-route ABI of a compiler-known runtime carrier. ValidationError stays opaque, with no field,
 /// constructor or display operation; those require explicit Body IR runtime operations. Every Rust item, the web
 /// extractors and responses included, is a Rust value laid out from its inspected facts instead.
@@ -1508,14 +1497,11 @@ impl Body {
     /// ([`StatementKind::Yield`]) reachable from its top-level block.
     ///
     /// This is a **derived** fact, walked from the already-lowered statement tree, rather than a flag stored
-    /// redundantly on `Body` -- mirroring how the existing Rust-emission backend computes its own `is_generator`
-    /// boolean at lowering time (`return_type_is_generator(&return_type) && body_contains_yield(&f.body)` in
-    /// `loaves/compiler/incan_ir/src/lower/decl/functions.rs`) rather than threading a separate stored flag through its
-    /// own IR. Unlike that backend function, this does not also fold in a return-type check: `Generator[T]` is
-    /// declaration-level information a `Body` alone does not carry, so a caller that has the owning declaration in
-    /// hand should combine the two the same way the existing backend does. In practice a well-typed program's
-    /// `yield` only ever appears inside a function whose declared return type is `Generator[T]` (the typechecker
-    /// enforces this), so this alone is already a reliable generator signal for a `Body` in isolation.
+    /// redundantly on `Body`. It does not fold in a return-type check: `Generator[T]` is declaration-level information
+    /// a `Body` alone does not carry, so a caller that has the owning declaration in hand can combine the two. In
+    /// practice a well-typed program's `yield` only ever appears inside a function whose declared return type is
+    /// `Generator[T]` (the typechecker enforces this), so this alone is already a reliable generator signal for a
+    /// `Body` in isolation.
     ///
     /// The walk recurses into every statement kind that carries a nested [`Block`] -- [`StatementKind::If`],
     /// [`StatementKind::Loop`], [`StatementKind::UnsafeRegion`], and each [`StatementKind::Race`] arm -- but does not
@@ -2330,19 +2316,14 @@ pub enum Rvalue {
     /// imported conversions, unresolved types, and cross-error-type propagation remain visible refusals.
     ResultVariant(ResultVariant),
     /// An f-string interpolation, built from a sequence of literal text chunks and already-lowered embedded
-    /// expressions. Mirrors the existing Rust-emission backend's dedicated `IrExprKind::Format { parts }` node
-    /// (`loaves/compiler/incan_ir/src/expr.rs`) rather than a helper-call desugar: an f-string is a compiler-owned
-    /// structured value, not something inferred later from a generated Rust call shape (#653 criterion 3), so it
-    /// gets its own `Rvalue` shape just like the existing backend gives it its own `IrExprKind` shape.
+    /// expressions. It is a dedicated node rather than a helper-call desugar: an f-string is a compiler-owned
+    /// structured value, not something a consumer infers later from a call shape (#653 criterion 3).
     Format(Vec<FormatPart>),
     /// A closure literal (`(params) => expr`), or a partial callable's synthesized forwarding closure (`partial
     /// Target(presets)`) -- see `loaves/compiler/incan_frontend/src/body_ir.rs`'s `BodyBuilder::lower_partial`.
     ///
-    /// Unlike the existing Rust-emission backend's `IrExprKind::Closure` (whose `captures: Vec<String>` field is
-    /// always populated empty at both of that backend's own lowering call sites -- it relies entirely on Rust's own
-    /// closure syntax plus rustc's borrow checker to work out by-value/by-reference capture), Body IR represents
-    /// every capture explicitly: representing Duckborrower ownership facts rather than deferring to
-    /// generated-Rust semantics is this IR's entire reason to exist (#653), so a closure capturing an outer
+    /// Body IR represents every capture explicitly rather than leaving by-value or by-reference capture to rustc:
+    /// representing Duckborrower ownership facts is this IR's reason to exist (#653), so a closure capturing an outer
     /// variable is exactly the kind of copy/move/borrow decision this model must carry, not omit.
     Closure {
         /// The closure's own declared parameters, in order.
@@ -2378,16 +2359,12 @@ pub enum Rvalue {
     /// A `match` expression, evaluated by testing the scrutinee against each arm's [`Pattern`] in order and running
     /// the first arm whose pattern matches (and whose optional [`MatchArm::guard`], if present, evaluates truthy).
     ///
-    /// Mirrors the existing Rust-emission backend's own `IrExprKind::Match { scrutinee, arms }` node
-    /// (`loaves/compiler/incan_ir/src/expr.rs`): that backend has already reduced Incan's match-pattern surface to the
-    /// small, closed vocabulary [`Pattern`] mirrors (see its own docs), and compiles each arm's pattern directly
-    /// into a native Rust `match` arm, letting rustc perform exhaustiveness checking and the actual
-    /// destructuring/dispatch itself. Matching the same #653-criterion-3 "compiler-owned semantic gets its own
-    /// explicit node" treatment as [`Self::Format`]/[`StatementKind::TryPropagate`]/[`StatementKind::IterNext`],
-    /// `match` stays a single structured `Rvalue` here too rather than being decomposed into a chain of `If`
-    /// statements: decomposing it would mean re-deriving the same destructuring/dispatch logic a target backend's
-    /// native `match` already gives for free, and would lose the direct correspondence with the existing backend's
-    /// own `Pattern` vocabulary this model is built to mirror.
+    /// Arms use the small, closed [`Pattern`] vocabulary, which a consumer can translate directly into native `match`
+    /// arms and leave exhaustiveness checking and destructuring to rustc. Matching the same #653-criterion-3
+    /// "compiler-owned semantic gets its own explicit node" treatment as
+    /// [`Self::Format`]/[`StatementKind::TryPropagate`]/[`StatementKind::IterNext`], `match` stays a single structured
+    /// `Rvalue` rather than being decomposed into a chain of `If` statements, which would re-derive the
+    /// destructuring and dispatch a native `match` already provides.
     Match {
         /// The value being matched. Always read as [`OwnershipFact::Borrow`]: more than one arm's pattern bindings
         /// may read from the scrutinee across the arm list (only one arm actually runs at a time, but see
@@ -2978,9 +2955,7 @@ pub struct MatchArm {
     /// if any, was truthy).
     pub body_stmts: Vec<Statement>,
     /// This arm's produced value. A source arm whose body is a statement block rather than a single `=> expr`
-    /// always resolves to [`Constant::Unit`], mirroring the existing Rust-emission backend's own
-    /// `IrExprKind::Block { stmts, value: None }` treatment of the same shape
-    /// (`loaves/compiler/incan_ir/src/lower/expr/patterns.rs`'s `lower_match_arms`).
+    /// always resolves to [`Constant::Unit`].
     pub result: Operand,
 }
 
@@ -3019,16 +2994,11 @@ impl MatchArm {
 
 /// A `match` arm's pattern.
 ///
-/// Mirrors the existing Rust-emission backend's own closed `Pattern` vocabulary
-/// (`loaves/compiler/incan_ir/src/expr.rs`) almost exactly -- see #1101's B6 pre-intake in `plan.md` for why this
-/// vocabulary is already small and closed rather than something this bucket needed to design from scratch: the existing
-/// backend compiles each variant here directly into the matching native Rust pattern syntax and lets rustc itself do
-/// the actual destructuring/ dispatch, so a target backend consuming this model can do the same. The one deliberate
-/// divergence from the existing backend's vocabulary is [`Self::Var`]: the existing backend's `Pattern::Var(String)`
-/// carries a bare source name (that backend's own separate, string-keyed scope tracks what it resolves to), while this
-/// model's [`PatternBinding`] carries an already-declared [`LocalId`] plus the Duckborrower fact/last-use marker for
-/// reading that part of the scrutinee -- consistent with #653's requirement that ownership decisions be
-/// represented as explicit facts on the model itself, not deferred to a target backend's own name resolution.
+/// The vocabulary is small and closed: a consumer translates each variant directly into the matching native pattern
+/// syntax and leaves the destructuring and dispatch to rustc. A binding ([`Self::Var`]) carries no bare source name:
+/// its [`PatternBinding`] holds an already-declared [`LocalId`] plus the Duckborrower fact/last-use marker for reading
+/// that part of the scrutinee, consistent with #653's requirement that ownership decisions be represented as
+/// explicit facts on the model itself, not deferred to a consumer's own name resolution.
 ///
 /// [`Self::UnionMember`] retains the checker-selected target of an ordinary union constructor pattern. Native backends
 /// can select its payload variant without resolving the written constructor name. Subset targets remain explicit types;
@@ -3817,6 +3787,16 @@ pub enum CheckedBridgeOperation {
     NewInOutSlot,
     /// Read one output position after the checker proved its declared initialization condition.
     TakeOutputSlot,
+    /// Move an owned `bytes` or `list[f32]` buffer into a typed span without copying its elements.
+    MakeSpan,
+    /// Borrow a span's buffer as a constant element pointer for one raw call.
+    SpanConstPointer,
+    /// Borrow a mutable span's buffer as a mutable element pointer for one raw call.
+    SpanMutPointer,
+    /// Read a span's element count, or a mutable span's capacity, as a `usize`.
+    SpanCount,
+    /// Keep a mutable span's first `written` elements, refusing a count outside its capacity.
+    FinishSpan,
 }
 
 /// A checked foreign bridge operation, independent of source class layouts or backend helper names.
@@ -4638,12 +4618,15 @@ pub struct Block {
 impl Block {
     /// Check each direct acknowledgment against this block's existing scope before a consumer lowers its operations.
     /// Nested control-flow blocks are checked when consumed, and nested acknowledgment regions recurse here.
-    pub fn unsafe_acknowledgments_valid(&self, module: &CompilerNodeId) -> bool {
+    ///
+    /// `module_path` is the path of the source module whose body holds this block, which minted its receipts; for a
+    /// body imported from another module it is not the unit's entry module.
+    pub fn unsafe_acknowledgments_valid(&self, module_path: &str) -> bool {
         self.stmts.iter().all(|statement| match &statement.kind {
             StatementKind::UnsafeRegion { acknowledgment, body } => {
-                acknowledgment.matches_region(module, &statement.span, self.scope)
+                acknowledgment.matches_region(module_path, &statement.span, self.scope)
                     && body.scope == self.scope
-                    && body.unsafe_acknowledgments_valid(module)
+                    && body.unsafe_acknowledgments_valid(module_path)
             }
             _ => true,
         })
@@ -4668,12 +4651,10 @@ pub struct UnsafeAcknowledgment {
 impl UnsafeAcknowledgment {
     /// Validate the source receipt against its owning module, enclosing scope, and statement span before admission.
     ///
-    /// A matching receipt does not authorize a provider operation or admit an otherwise unsupported nested statement.
-    pub fn matches_region(&self, module: &CompilerNodeId, span: &HirSourceSpan, scope: ScopeId) -> bool {
-        module == &CompilerNodeId::module(module.path())
-            && self.span == *span
-            && self.scope == scope
-            && self.receipt == CompilerNodeId::statement_at(module.path(), *span)
+    /// `module_path` is the path of the source module that minted the receipt. A matching receipt does not authorize
+    /// a provider operation or admit an otherwise unsupported nested statement.
+    pub fn matches_region(&self, module_path: &str, span: &HirSourceSpan, scope: ScopeId) -> bool {
+        self.span == *span && self.scope == scope && self.receipt == CompilerNodeId::statement_at(module_path, *span)
     }
 }
 
@@ -5166,10 +5147,13 @@ impl PanicReason {
     }
 }
 
+/// The prefix every [`nominal_carrier_key`] starts with; a name without it is no carrier key.
+pub const NOMINAL_CARRIER_KEY_PREFIX: &str = "__incan_carrier_";
+
 /// Encode one checked source nominal's complete owning module and declaration into an identifier-safe carrier key.
 ///
-/// Only Body IR producers publish these keys, beside the original canonical identity in their type maps. SDK and
-/// foreign storage keep their native names. A key grants no declaration lookup or layout without that identity.
+/// Only Body IR producers publish these keys, beside the original canonical identity in their type maps. Standard
+/// and foreign storage keep their native names. A key grants no declaration lookup or layout without that identity.
 pub fn nominal_carrier_key(identity: &CanonicalSymbolId) -> Option<String> {
     if identity.namespace != SymbolNamespace::OrdinaryLexical || identity.scope_discriminant.is_some() {
         return None;
@@ -5198,7 +5182,7 @@ pub fn nominal_carrier_key(identity: &CanonicalSymbolId) -> Option<String> {
         .map(|byte| format!("{byte:02x}"))
         .collect();
     Some(format!(
-        "__incan_carrier_{kind}_{}_{}_{}_{}_{}_{}{}",
+        "{NOMINAL_CARRIER_KEY_PREFIX}{kind}_{}_{}_{}_{}_{}_{}{}",
         module.len(),
         encoded_module,
         identity.declaration_name.len(),

@@ -61,7 +61,7 @@ impl rustc_driver::Callbacks for Observer {
     fn after_analysis(&mut self, _compiler: &interface::Compiler, tcx: TyCtxt<'_>) -> rustc_driver::Compilation {
         self.records.push(CodegraphRecord::Header(CodegraphHeaderRecord {
             schema_version: CODEGRAPH_SCHEMA_VERSION,
-            compiler_version: env!("CARGO_PKG_VERSION").to_owned(),
+            compiler_version: incan_lang::version::INCAN_VERSION.to_owned(),
             mode: CodegraphMode::Strict,
             root_path: self.root.clone(),
             languages: vec![CodegraphLanguage::Rust],

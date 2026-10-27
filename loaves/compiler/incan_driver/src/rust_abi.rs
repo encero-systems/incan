@@ -93,7 +93,7 @@ pub fn cached_rust_facts(unit: &UnitDescription) -> CliResult<RustFactsSetup> {
     if !reused {
         extract_cache(&toolchain, unit, &externs, &directory, &cache)?;
     }
-    if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
+    if incan_frontend::trace_flags::trace_rust_facts() {
         eprintln!(
             "rust ABI cache: {} {} crates in {:?}",
             if reused { "reused" } else { "compiled" },
@@ -122,30 +122,32 @@ pub fn cached_path_facts(
     let (directory, cache, _lock) = match path_cache_location(unit, paths) {
         Ok(location) => location,
         Err(error) => {
-            if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
+            if incan_frontend::trace_flags::trace_rust_facts() {
                 eprintln!("rust facts cache unavailable: {}", error.message);
             }
             return extract().map_err(CliError::failure);
         }
     };
     // ---- Retained facts or genuine extraction ----
-    let cached = fs::read(&cache)
-        .ok()
-        .and_then(|bytes| RustAbiCache::decode(&bytes).and_then(RustAbiCache::into_items).ok());
+    let cached = fs::read(&cache).ok().and_then(|bytes| {
+        RustAbiCache::decode_owned(bytes)
+            .and_then(RustAbiCache::into_items)
+            .ok()
+    });
     let reused = cached.is_some();
     let facts = if let Some(facts) = cached {
         facts
     } else {
         let facts = extract().map_err(CliError::failure)?;
         if let Err(error) = persist_path_facts(&directory, &cache, &facts)
-            && std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some()
+            && incan_frontend::trace_flags::trace_rust_facts()
         {
             eprintln!("rust facts cache not retained: {}", error.message);
         }
         facts
     };
     // ---- Optional retrieval trace ----
-    if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
+    if incan_frontend::trace_flags::trace_rust_facts() {
         eprintln!(
             "rust facts cache: {} {} paths, {} items in {:?}",
             if reused { "reused" } else { "compiled" },

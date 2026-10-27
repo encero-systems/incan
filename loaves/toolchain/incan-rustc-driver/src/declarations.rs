@@ -1,14 +1,10 @@
 //! Declarations enter as AST items; only MIR supplies executable bodies.
 
+use crate::ast_build::ident;
 use crate::plan::{Function, ListLeaf, PlanType, SizedNumeric, list_leaf_type, range_field_types, tuple_element_type};
 use rustc_ast as ast;
-use rustc_span::{Ident, Span, Symbol};
+use rustc_span::{Span, Symbol};
 use thin_vec::{ThinVec, thin_vec};
-
-/// Create an identifier from a name that preflight validation has already admitted.
-fn ident(name: &str, span: Span) -> Ident {
-    Ident::new(Symbol::intern(name), span)
-}
 
 /// Retain the standard library's absolute carrier identity independently of source nominal spellings.
 fn standard_path(segments: &[&str], span: Span) -> ast::Path {
@@ -1255,10 +1251,7 @@ fn hashed_type(name: &str, leaves: &[&ListLeaf], span: Span) -> Box<ast::Ty> {
 
 /// Inject source-ordered unit and tuple variants as AST nodes; executable bodies still enter only through MIR.
 pub fn enum_declaration(value: &crate::plan::EnumDeclaration, span: Span) -> Box<ast::Item> {
-    if !value.carrier.is_empty() {
-        return library_alias(&value.name, value.public, span);
-    }
-    if !value.library_item.is_empty() {
+    if !value.carrier.is_empty() || !value.library_item.is_empty() {
         return library_alias(&value.name, value.public, span);
     }
     let variants = value

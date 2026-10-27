@@ -109,11 +109,12 @@ struct CopyingComprehension {
 }
 
 impl TypeChecker {
-    /// Record a collection comprehension whose source-consumption decision must be shared with lowering (#1983).
+    /// Record a collection comprehension whose source-consumption decision Body IR lowers from (#1983).
     ///
     /// The body read ledger already used by item-taking loops is the authority for whether a direct immutable list
-    /// binding has a later read. Nested blocks, loops, closures, mutable bindings, sets, and dicts conservatively keep
-    /// their source because the legacy emitter cannot consume them through its direct-list path.
+    /// binding has a later read; a comprehension that is that last read consumes its source, in any block. Inside a
+    /// loop or a closure the comprehension can run again, and a mutable binding can be read again after reassignment,
+    /// so those keep their source, as sets and dicts do.
     pub(super) fn plan_comprehension_collection_source(&mut self, iter_expr: &Spanned<Expr>, iter_ty: &ResolvedType) {
         let Some(type_param) = comprehension_copied_element_type(iter_ty)
             .and_then(|element| self.active_type_param_name(element))
@@ -131,11 +132,8 @@ impl TypeChecker {
             .symbols
             .get(symbol)
             .is_some_and(|definition| matches!(&definition.kind, SymbolKind::Variable(info) if !info.is_mutable));
-        let can_consume_if_last = is_immutable
-            && is_list_type(iter_ty)
-            && self.for_item_taking.block_path.len() == 1
-            && self.loop_stack.is_empty()
-            && self.closure_depth == 0;
+        let can_consume_if_last =
+            is_immutable && is_list_type(iter_ty) && self.loop_stack.is_empty() && self.closure_depth == 0;
         let has_clone_bound = self.active_type_param_satisfies_builtin_bound(&type_param, TraitId::Clone);
         self.for_item_taking.copying_comprehensions.push(CopyingComprehension {
             symbol,

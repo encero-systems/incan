@@ -12,6 +12,7 @@ pub(super) struct Capture {
     stdout: OwnedFd,
     stderr: OwnedFd,
     cwd: PathBuf,
+    restored: bool,
 }
 
 impl Capture {
@@ -25,22 +26,37 @@ impl Capture {
             stdout: duplicate(libc::STDOUT_FILENO)?,
             stderr: duplicate(libc::STDERR_FILENO)?,
             cwd: std::env::current_dir()?,
+            restored: false,
         };
         std::env::set_current_dir(cwd)?;
         replace(out.as_raw_fd(), libc::STDOUT_FILENO)?;
         replace(err.as_raw_fd(), libc::STDERR_FILENO)?;
         Ok(saved)
     }
+
+    /// Restore every process resource, preserving the first failure so the worker can retire before another request.
+    pub(super) fn restore(mut self) -> io::Result<()> {
+        self.restored = true;
+        self.restore_resources()
+    }
+
+    /// Attempt every restoration even if an earlier flush, descriptor replacement or directory change fails.
+    fn restore_resources(&self) -> io::Result<()> {
+        io::stdout()
+            .flush()
+            .and(io::stderr().flush())
+            .and(replace(self.stdout.as_raw_fd(), libc::STDOUT_FILENO))
+            .and(replace(self.stderr.as_raw_fd(), libc::STDERR_FILENO))
+            .and(std::env::set_current_dir(&self.cwd))
+    }
 }
 
 impl Drop for Capture {
     /// Flush request-local buffers and restore both originals even when compilation unwinds.
     fn drop(&mut self) {
-        let _ = io::stdout().flush();
-        let _ = io::stderr().flush();
-        let _ = replace(self.stdout.as_raw_fd(), libc::STDOUT_FILENO);
-        let _ = replace(self.stderr.as_raw_fd(), libc::STDERR_FILENO);
-        let _ = std::env::set_current_dir(&self.cwd);
+        if !self.restored {
+            let _ = self.restore_resources();
+        }
     }
 }
 

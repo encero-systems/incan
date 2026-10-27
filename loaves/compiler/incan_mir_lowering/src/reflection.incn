@@ -206,7 +206,7 @@ pub def emit_field_metadata(
             None => pass
         terminate_call(builder, CalleeKind.FieldMetadata(owner, info), [], output, span)
         return Ok(true)
-    return Err("unsupported Body IR field metadata SDK layout")
+    return Err("the standard library field metadata layout is unsupported")
 
 
 def reflected_field(mut builder: Builder, owner: int, source: Place, slot: int, span: SourceSpan) -> Result[Place, str]:

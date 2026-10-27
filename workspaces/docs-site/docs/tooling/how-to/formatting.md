@@ -19,4 +19,6 @@ The [code style reference](../../language/reference/code_style.md) defines sourc
 
 ## Format a source with dependencies
 
-Keep the matching package manifests available under the selected toolchain. Formatting reads a file's unit vocabulary; it does not build missing companion crates or substitute dependency source for absent compiled manifests.
+Formatting describes each file's unit with the `debug` profile and default features, and parses it with the vocabularies its dependencies publish. When an active local dependency declares a vocabulary entry, Oven prepares the dependency graph before parsing so its registered syntax is available on a first format. Formatting uses those descriptors without expanding consumer syntax through a desugarer. When no active local dependency declares a vocabulary entry, formatting does not build dependencies. A file whose unit cannot be described or whose dependency preparation fails is reported, and the remaining files are still formatted.
+
+Formatting accepts public reexport syntax before a module is placed under `src/`; checking and compilation enforce that placement rule.

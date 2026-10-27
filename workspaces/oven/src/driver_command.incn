@@ -1,0 +1,13 @@
+"""Construct every native driver command with the installed SDK and no inherited unstable-feature grant."""
+
+from rust::std::process import Command
+from apple_sdk import configure_sdk
+from toolchain import Toolchain
+
+
+pub def driver_command(toolchain: Toolchain) -> Result[Command, str]:
+    """Bind the selected driver and SDK, removing shell-owned Rust bootstrap permissions."""
+    mut command = Command.new(toolchain.driver)
+    configure_sdk(command, toolchain.sysroot)?
+    command.env_remove("RUSTC_BOOTSTRAP")
+    return Ok(command)

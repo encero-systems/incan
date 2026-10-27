@@ -1,6 +1,7 @@
 //! Process-local immutable artifact readings, guarded again for every request. Sessions, resolved source facts and
 //! checking outcomes never enter these stores. Replacements and restored-mtime edits invalidate through ctime;
-//! unsupported observations keep the ordinary reader. Each store has bounded payload bytes and entry count.
+//! unsupported observations keep the ordinary reader. Each reading is bounded in size; a store holds every current
+//! reading and drops, one by one, the readings whose files have changed or gone.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -12,8 +13,8 @@ use incan_lang::interop::RustAbiCache;
 use super::manifest_input::{Generation, generation};
 use super::{LoafArtifact, LoafIndexError};
 
-const MAX_ENTRIES: usize = 32;
-const MAX_BYTES: u64 = 384 * 1024 * 1024;
+/// The largest reading retained, in bytes of the files it was read from; a larger one is read for each request.
+const MAX_READING_BYTES: u64 = 384 * 1024 * 1024;
 
 static ARTIFACTS: OnceLock<Mutex<Store<LoafArtifact>>> = OnceLock::new();
 static ABI: OnceLock<Mutex<Store<Arc<RustAbiCache>>>> = OnceLock::new();
@@ -25,16 +26,24 @@ struct Inputs {
     bytes: u64,
 }
 
+impl Inputs {
+    /// Whether every file still has the generation this reading was authorized by.
+    fn current(&self) -> bool {
+        let paths: Vec<PathBuf> = self.files.iter().map(|(path, _)| path.clone()).collect();
+        observe(&paths).as_ref() == Some(self)
+    }
+}
+
 /// One immutable reading and the exact generations that authorized it.
 struct Reading<T> {
     inputs: Inputs,
     value: T,
 }
 
-/// A bounded store: replacing a generation replaces its old reading, and capacity pressure drops retained readings.
+/// A store of current readings: replacing a generation replaces its old reading, and a reading whose files changed
+/// is dropped; nothing caps how many readings the store holds.
 struct Store<T> {
     readings: BTreeMap<PathBuf, Reading<T>>,
-    bytes: u64,
 }
 
 impl<T> Default for Store<T> {
@@ -42,7 +51,6 @@ impl<T> Default for Store<T> {
     fn default() -> Self {
         Self {
             readings: BTreeMap::new(),
-            bytes: 0,
         }
     }
 }
@@ -56,19 +64,14 @@ impl<T: Clone> Store<T> {
             .map(|reading| reading.value.clone())
     }
 
-    /// Keep one stable reading within the count and payload budget; eviction changes performance only.
+    /// Keep one stable reading within the per-reading bound, after dropping each reading whose files changed;
+    /// dropping changes performance only.
     fn insert(&mut self, key: PathBuf, inputs: Inputs, value: T) {
-        if let Some(previous) = self.readings.remove(&key) {
-            self.bytes = self.bytes.saturating_sub(previous.inputs.bytes);
-        }
-        if inputs.bytes > MAX_BYTES {
+        self.readings.remove(&key);
+        self.readings.retain(|_, reading| reading.inputs.current());
+        if inputs.bytes > MAX_READING_BYTES {
             return;
         }
-        if self.readings.len() >= MAX_ENTRIES || self.bytes.saturating_add(inputs.bytes) > MAX_BYTES {
-            self.readings.clear();
-            self.bytes = 0;
-        }
-        self.bytes += inputs.bytes;
         self.readings.insert(key, Reading { inputs, value });
     }
 }

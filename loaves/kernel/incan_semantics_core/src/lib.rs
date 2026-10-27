@@ -33,7 +33,6 @@ pub mod dependencies;
 pub mod authority;
 pub mod body_ir;
 mod body_ir_identity;
-pub mod closure_digest;
 pub mod emitted_symbol;
 pub mod executable_representation;
 mod facts;

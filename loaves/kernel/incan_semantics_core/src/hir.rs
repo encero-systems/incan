@@ -1,8 +1,7 @@
 //! Incan HIR v0 data model.
 //!
-//! HIR v0 is a typed, source-mapped middle-end handoff keyed by stable compiler IDs. This first slice is deliberately
-//! declaration-level so it can run beside the Rust-source backend while later slices add statements, expressions, and
-//! body ownership facts.
+//! HIR v0 is a typed, source-mapped middle-end handoff keyed by stable compiler IDs. It is deliberately
+//! declaration-level; executable bodies, with their statements, expressions and ownership facts, are Body IR's.
 
 use std::fmt::Write;
 

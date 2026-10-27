@@ -1,13 +1,11 @@
 //! Compiler-backed codegraph inspection.
 //!
-//! `incan inspect codegraph` emits the first durable RFC 106 graph slice under the broader RFC 102 semantic inspection
-//! umbrella. The export is intentionally source- and syntax-fact oriented in 0.4: it gives tools stable files,
-//! modules, declarations, imports, exports, containment, and diagnostics without introducing a storage/indexing engine
-//! into the compiler.
+//! The RFC 106 graph under the broader RFC 102 semantic inspection umbrella, behind `incan inspect codegraph` and the
+//! language server: stable files, modules, declarations, imports, exports, containment, checked references and
+//! diagnostics, without a storage or indexing engine inside the compiler.
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
-use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -87,45 +85,17 @@ impl CodegraphError {
 pub type CodegraphResult<T> = Result<T, CodegraphError>;
 
 impl From<crate::error::CliError> for CodegraphError {
-    /// Absorb an error raised by the session and discovery code this module still calls into.
-    ///
-    /// Transitional, and in the direction that resolves itself: that code is `common.rs`, which the workspace
-    /// layout rewrite (#1478) sends to `incan_driver`. When it moves, it stops raising a CLI error and this conversion
-    /// goes with it.
+    /// Absorb an error raised by the session and discovery code this module calls into, which reports `CliError`.
     fn from(error: crate::error::CliError) -> Self {
         Self::failure(error.message)
     }
 }
 
 impl From<CodegraphError> for crate::error::CliError {
-    /// Convert at the command boundary, so a CLI command can report an analysis failure as its own.
-    ///
-    /// This is the direction that stays. A command consuming analysis and translating its errors is the normal
-    /// shape; analysis reaching for the CLI's error type is not.
+    /// Convert at the command boundary, so a command can report an analysis failure as its own.
     fn from(error: CodegraphError) -> Self {
         Self::failure(error.message)
     }
-}
-
-/// Collect checked or tolerant graph records for one normalized input path, a file or a directory, whose sources the
-/// described units own (DD-0008).
-pub fn collect_codegraph_records(
-    path: &Path,
-    units: &[UnitDescription],
-    allow_errors: bool,
-) -> CodegraphResult<Vec<CodegraphRecord>> {
-    collect_codegraph_records_with_rust(path, units, allow_errors, None)
-}
-
-/// Export the same graph with the unit's exact Rust facts source, so interop inspection checks against the crates
-/// selected for compilation rather than silently losing checked references.
-pub fn collect_codegraph_records_with_rust(
-    path: &Path,
-    units: &[UnitDescription],
-    allow_errors: bool,
-    rust: Option<&crate::session::RustFactsSetup>,
-) -> CodegraphResult<Vec<CodegraphRecord>> {
-    Ok(collect_codegraph_with_interface(path, units, allow_errors, rust)?.0)
 }
 
 /// Project a compiled library's graph from the exact checking pass and Body IR used by compilation. This boundary
@@ -157,17 +127,7 @@ pub fn collect_live_unit_codegraph(
     let mut builder = match analysis {
         Ok(analysis) => {
             let mut builder = checked_unit_builder(unit, session, modules, analysis);
-            builder.set_lowered_declaration_facts(
-                modules
-                    .iter()
-                    .flat_map(|module| {
-                        analysis
-                            .type_info_for_path(&module.file_path)
-                            .into_iter()
-                            .flat_map(|info| lowered_declaration_facts(module, info, session))
-                    })
-                    .collect(),
-            );
+            builder.set_lowered_declaration_facts(lowered_declaration_facts(modules, analysis, session));
             builder
         }
         Err(failure) => {
@@ -373,13 +333,8 @@ fn directory_modules_diagnostics_and_info(
                         // Lowering happens here rather than in `SemanticModuleSnapshot`, so only the graph pays
                         // for it. A module whose type info is unavailable contributes no signatures, and its
                         // declarations export an identity a consumer must read as unproven.
-                        for module in &modules {
-                            let Some(type_info) = analysis.type_info_for_path(&module.file_path) else {
-                                continue;
-                            };
-                            for (identity, signature) in lowered_declaration_facts(module, type_info, session) {
-                                signatures_by_identity.entry(identity).or_insert(signature);
-                            }
+                        for (identity, signature) in lowered_declaration_facts(&modules, &analysis, session) {
+                            signatures_by_identity.entry(identity).or_insert(signature);
                         }
                     }
                     Err(failure) => {
@@ -474,14 +429,7 @@ fn typecheck_diagnostics_and_info(
             interface,
             diagnostics: Vec::new(),
             semantic_snapshots_by_path: analysis.semantic_snapshots().clone(),
-            signatures_by_identity: modules
-                .iter()
-                .filter_map(|module| {
-                    let type_info = analysis.type_info_for_path(&module.file_path)?;
-                    Some(lowered_declaration_facts(module, type_info, session))
-                })
-                .flatten()
-                .collect(),
+            signatures_by_identity: lowered_declaration_facts(modules, &analysis, session),
             registry_metadata_by_path: checked_registry_metadata_by_path(
                 &analysis,
                 modules,
@@ -564,18 +512,7 @@ fn checked_c_abi_by_path(
 /// Convert shared CLI diagnostic failures into the public diagnostic projection used by both `incan check` and
 /// codegraph records.
 fn stable_diagnostics(failure: &CliDiagnosticFailure) -> Vec<StableDiagnostic> {
-    failure
-        .diagnostics
-        .iter()
-        .map(|diagnostic| {
-            diagnostics::stable_diagnostic(
-                &diagnostic.file_path,
-                &diagnostic.source,
-                &diagnostic.error,
-                diagnostic.phase,
-            )
-        })
-        .collect()
+    crate::check::stable_diagnostics_from(&failure.diagnostics)
 }
 
 /// Append diagnostics while suppressing duplicate records produced by overlapping directory entrypoint checks.
@@ -613,49 +550,15 @@ fn render_diagnostics(diagnostics: &[StableDiagnostic]) -> String {
 /// Discover `.incn` files below a directory in deterministic path order.
 fn discover_incan_files(root: &Path) -> CodegraphResult<Vec<PathBuf>> {
     let mut files = Vec::new();
-    collect_incan_files(root, &mut files)?;
+    crate::sources::collect_incan_source_files(root, &mut files)
+        .map_err(|error| CodegraphError::failure(format!("cannot discover {}: {error}", root.display())))?;
     files.sort();
     Ok(files)
 }
 
-/// Recursively collect Incan source files while skipping build, VCS, and agent state directories that are not source
-/// roots.
-fn collect_incan_files(dir: &Path, files: &mut Vec<PathBuf>) -> CodegraphResult<()> {
-    for entry in fs::read_dir(dir)
-        .map_err(|error| CodegraphError::failure(format!("failed to read directory {}: {error}", dir.display())))?
-    {
-        let entry =
-            entry.map_err(|error| CodegraphError::failure(format!("failed to read directory entry: {error}")))?;
-        let path = entry.path();
-        if path.is_dir() {
-            if should_skip_directory(&path) {
-                continue;
-            }
-            collect_incan_files(&path, files)?;
-        } else if path.extension().is_some_and(|extension| extension == "incn") {
-            files.push(path);
-        }
-    }
-    Ok(())
-}
-
-/// Return whether a directory should be ignored by broad directory codegraph inspection.
-fn should_skip_directory(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| matches!(name, ".git" | ".agents" | ".venv" | "node_modules" | "target"))
-}
-
-/// Read package identity from the nearest manifest so exported graph headers can be joined with build reports and
-/// metadata exports.
-/// The package of the unit owning `path`, when one does.
+/// Project the owning unit's package so graph headers agree with compilation.
 fn package_identity(sessions: &UnitSessions<'_>, path: &Path) -> Option<CodegraphPackage> {
-    let unit = sessions.unit_for(path).ok()?;
-    Some(CodegraphPackage {
-        name: Some(unit.package.clone()),
-        version: Some(unit.version.clone()),
-        root_path: Some(path_string(&unit.project_root)),
-    })
+    sessions.unit_for(path).ok().map(unit_package)
 }
 
 /// Build the Loaf header projection from the same sessions used by codegraph checking: one per described unit.
@@ -739,17 +642,6 @@ fn codegraph_semantic_context(project_root: &Path, session: &CompilationSession)
     }
 }
 
-/// Normalize a user-provided CLI path relative to the current working directory.
-pub fn normalize_input_path(path: &Path) -> CodegraphResult<PathBuf> {
-    if path.is_absolute() {
-        Ok(path.to_path_buf())
-    } else {
-        Ok(env::current_dir()
-            .map_err(|error| CodegraphError::failure(format!("failed to determine current directory: {error}")))?
-            .join(path))
-    }
-}
-
 struct CodegraphBuilder<'analysis> {
     records: Vec<CodegraphRecord>,
     diagnostics: Vec<StableDiagnostic>,
@@ -775,6 +667,10 @@ struct CodegraphBuilder<'analysis> {
     capabilities_by_path: BTreeMap<PathBuf, Vec<CapabilityDeclarationInfo>>,
     c_abi_by_path: BTreeMap<PathBuf, CAbiInteropArtifacts>,
     canonical_target_ids: BTreeMap<CanonicalSymbolId, String>,
+    /// Full compiler spans distinguish generated references that share authored coordinates.
+    reference_sites: BTreeSet<(String, Span, Option<CanonicalSymbolId>)>,
+    /// Call linkage retains expansion context even though public locations contain authored coordinates.
+    call_ids: BTreeMap<(String, Span), String>,
 }
 
 /// Compact source declaration facts used before serializing a public declaration record.
@@ -824,6 +720,8 @@ impl<'analysis> CodegraphBuilder<'analysis> {
             capabilities_by_path: BTreeMap::new(),
             c_abi_by_path: BTreeMap::new(),
             canonical_target_ids: BTreeMap::new(),
+            reference_sites: BTreeSet::new(),
+            call_ids: BTreeMap::new(),
         }
     }
 
@@ -912,15 +810,12 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                 };
                 let declaration_id = declaration_id(module, declaration, index);
                 let canonical = snapshot.hir.declarations.iter().find_map(|checked| {
-                    (checked.span.start == declaration.span.start
-                        && checked.span.end == declaration.span.end
-                        && checked.name.as_deref() == Some(summary.name.as_str()))
-                    .then(|| checked.canonical.clone())
-                    .flatten()
+                    (checked.span == declaration.span && checked.name.as_deref() == Some(summary.name.as_str()))
+                        .then(|| checked.canonical.clone())
+                        .flatten()
                 });
                 if let Some(canonical) = canonical
-                    && canonical.declaration_span.start == declaration.span.start
-                    && canonical.declaration_span.end == declaration.span.end
+                    && canonical.declaration_span == declaration.span
                     && match &canonical.origin {
                         SymbolOrigin::Module(path) => path == &module.path_segments,
                         SymbolOrigin::Package { library, module_path } => {
@@ -1190,17 +1085,6 @@ impl<'analysis> CodegraphBuilder<'analysis> {
     /// The snapshot supplies both anchors and identities. These records do not infer a dependency from type spelling
     /// or reconstruct a source owner; they project the same relationship query used by executable requirements.
     fn collect_remaining_checked_references(&mut self, module: &ParsedModule, module_id: &str) {
-        let mut existing = self
-            .records
-            .iter()
-            .filter_map(|record| match record {
-                CodegraphRecord::Reference(reference) if reference.module_id == module_id => reference
-                    .span
-                    .as_ref()
-                    .map(|span| (span.start, span.end, reference.canonical_identity.clone())),
-                _ => None,
-            })
-            .collect::<BTreeSet<_>>();
         let sites = self
             .semantic_snapshots_by_path
             .get(&module.file_path)
@@ -1209,7 +1093,10 @@ impl<'analysis> CodegraphBuilder<'analysis> {
             .map(|(span, reference)| (span, reference.target.clone(), reference.owner.cloned()))
             .collect::<Vec<_>>();
         for (span, target, owner) in sites {
-            if !existing.insert((span.start, span.end, Some(codegraph_canonical_identity(&target)))) {
+            if self
+                .reference_sites
+                .contains(&(module_id.to_owned(), span, Some(target.clone())))
+            {
                 continue;
             }
             let name = target.declaration_name.clone();
@@ -1223,7 +1110,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                 None,
                 &name,
                 "type",
-                Span::new(span.start, span.end),
+                span,
                 false,
                 Some((target, owner)),
             );
@@ -1453,18 +1340,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
 
     /// Return the generic source-level call fact emitted for one checked raw-call span.
     fn call_record_id_at_span(&self, module_id: &str, span: Span) -> Option<String> {
-        self.records.iter().rev().find_map(|record| match record {
-            CodegraphRecord::Call(call)
-                if call.module_id == module_id
-                    && call
-                        .span
-                        .as_ref()
-                        .is_some_and(|candidate| candidate.start == span.start && candidate.end == span.end) =>
-            {
-                Some(call.id.clone())
-            }
-            _ => None,
-        })
+        self.call_ids.get(&(module_id.to_owned(), span)).cloned()
     }
 
     /// Add declaration, import, export, and containment records for a parsed module body.
@@ -2204,6 +2080,8 @@ impl<'analysis> CodegraphBuilder<'analysis> {
             Some((target, owner)) => (Some(target), owner),
             None => (None, None),
         };
+        self.reference_sites
+            .insert((module_id.to_owned(), span, canonical_identity.clone()));
         let owner_id = self.navigable_owner_id(canonical_owner.as_ref(), owner_id, has_checked_target);
         let target_id = canonical_identity
             .as_ref()
@@ -2318,6 +2196,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
         degraded: bool,
     ) {
         let id = self.next_body_fact_id("call", module, span, callee);
+        self.call_ids.insert((module_id.to_owned(), span), id.clone());
         let checked = self.source_checked_reference(module, target_span);
         let canonical_identity = checked.map(|reference| reference.target.clone());
         let canonical_owner = checked.and_then(|reference| reference.owner.cloned());
@@ -2531,7 +2410,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
         span: Span,
     ) -> Option<incan_semantics_core::dependencies::CheckedReference<'_>> {
         let module_identity = incan_semantics_core::module_identity_for_path(&module.path_segments);
-        let subject = CompilerNodeId::expression_span(&module_identity, span.start, span.end);
+        let subject = CompilerNodeId::expression_at(&module_identity, span);
         self.semantic_snapshots_by_path
             .get(&module.file_path)?
             .facts
@@ -2592,34 +2471,16 @@ struct LoweredDeclarationFacts {
     doc_digest: Option<String>,
 }
 
-/// Lower one module and collect what its declarations contribute to the export.
-///
-/// Lowering happens here rather than in `SemanticModuleSnapshot` deliberately: putting Body IR in the snapshot
-/// would make every consumer of it pay for lowering, `build` and `check` included, to satisfy a need only the
-/// graph has. One pass yields both the signature that separates overloads and the digests that say whether a
-/// declaration changed.
-///
-/// A module whose declarations do not lower contributes nothing. Its declarations then export an absent digest and
-/// an unproven signature, which a consumer must read as *changed* and *not a key* respectively — the direction that
-/// costs a rebuild rather than a wrong build.
+/// Project declaration digests from the shared compilation boundary; a failed lowering exports no proven digest.
 fn lowered_declaration_facts(
-    module: &ParsedModule,
-    type_info: &incan_frontend::typechecker::TypeCheckInfo,
+    modules: &[ParsedModule],
+    analysis: &CompilationAnalysis,
     session: &CompilationSession,
 ) -> BTreeMap<CanonicalSymbolId, LoweredDeclarationFacts> {
-    let Ok(provider_operations) = incan_frontend::body_ir::ProviderOperationCatalog::from_loaves(session.loaves())
-    else {
+    let Ok(mut bodies) = crate::body_ir::checked_modules(modules, analysis, session) else {
         return BTreeMap::new();
     };
-    let context = incan_frontend::body_ir::BodyIrContext {
-        modules: &[],
-        provider_operations: &provider_operations,
-        registry_package: Some(session.unit().package.as_str()),
-        library_package: None,
-    };
-    let mut body_ir =
-        incan_frontend::body_ir::build_body_ir_module(&module.ast, &module.path_segments, type_info, &context);
-    body_declaration_facts(&mut body_ir)
+    bodies.iter_mut().flat_map(body_declaration_facts).collect()
 }
 
 /// Read signatures and digests from checked Body IR once. Digesting temporarily detaches a leading docstring and
@@ -3676,8 +3537,10 @@ fn module_segments_for_file(path: &Path, base: &Path) -> Vec<String> {
 fn source_span(path: &Path, source: &str, span: Span) -> CodegraphSourceSpan {
     let start = span.start.min(source.len());
     let end = span.end.min(source.len()).max(start);
-    let (start_line, start_column) = line_column_for_offset(source, start);
-    let (end_line, end_column) = line_column_for_offset(source, end);
+    let start_position = incan_frontend::diagnostics::position_for_offset(source, start);
+    let end_position = incan_frontend::diagnostics::position_for_offset(source, end);
+    let (start_line, start_column) = (start_position.line, start_position.column);
+    let (end_line, end_column) = (end_position.line, end_position.column);
     CodegraphSourceSpan {
         file: path_string(path),
         start,
@@ -3687,25 +3550,6 @@ fn source_span(path: &Path, source: &str, span: Span) -> CodegraphSourceSpan {
         end_line,
         end_column,
     }
-}
-
-/// Convert a byte offset into 1-based line and column coordinates.
-fn line_column_for_offset(source: &str, offset: usize) -> (usize, usize) {
-    let offset = offset.min(source.len());
-    let mut line = 1usize;
-    let mut column = 1usize;
-    for (idx, ch) in source.char_indices() {
-        if idx >= offset {
-            break;
-        }
-        if ch == '\n' {
-            line += 1;
-            column = 1;
-        } else {
-            column += 1;
-        }
-    }
-    (line, column)
 }
 
 /// Format a filesystem path using the process-native display spelling.

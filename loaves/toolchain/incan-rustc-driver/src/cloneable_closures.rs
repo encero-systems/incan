@@ -4,13 +4,14 @@
 //! concrete environment, and `Box` implements `Clone` by dispatching through its pointee, so SDK `Clone + Callable1`
 //! bounds retain their ordinary native meaning. AST construction is structural; no Rust source is generated or parsed.
 
+use crate::ast_build::ident;
 use crate::error::PlanError;
 use crate::plan::{Plan, PlanType};
 use crate::{callees, closures, declarations, types};
 use rustc_ast as ast;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
-use rustc_span::{Ident, Span, Symbol, kw, respan};
+use rustc_span::{Ident, Span, kw, respan};
 use thin_vec::{ThinVec, thin_vec};
 
 /// Encode the entire typed signature injectively as an identifier, never as native type-selection authority.
@@ -462,11 +463,6 @@ fn inherited(span: Span) -> ast::Visibility {
         span,
         tokens: None,
     }
-}
-
-/// Allocate a controlled private identifier or an absolute standard path segment.
-fn ident(name: &str, span: Span) -> Ident {
-    Ident::new(Symbol::intern(name), span)
 }
 
 /// Root standard names absolutely; private ABI and generic names stay in the generated crate's namespace.

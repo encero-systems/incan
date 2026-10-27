@@ -1,11 +1,11 @@
 """Run one invocation through the same owning pool as concurrent contract commands."""
 
 from std.fs import Path
-pub from processes import Outcome, clear_trace, set_timeout, trace_file, unit_notes
+pub from processes import Outcome, built_program, clear_trace, set_timeout, trace_file, unit_notes
 from workers import Invocation, invoke_many
 
 
-pub def invoke(incan: str, arguments: list[str], project: Path) -> Result[Outcome, str]:
-    """Run one command through the pool's capture, deadline and reaping contract."""
-    request = Invocation(program=incan, arguments=arguments, project=project, selector=None)
+pub def invoke(incan: str, arguments: list[str], project: Path, environment: list[str] = []) -> Result[Outcome, str]:
+    """Run one command through the pool's capture, deadline and reaping contract, with any declared settings."""
+    request = Invocation(program=incan, arguments=arguments, project=project, selector=None, environment=environment)
     return invoke_many([request], 1)[0]

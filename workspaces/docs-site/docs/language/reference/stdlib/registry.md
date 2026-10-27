@@ -208,9 +208,7 @@ A public `functions` static in `src/catalog.incn` has identity `catalog::functio
 
 ## Checked inspection
 
-Dev.8 exposes checked entries through `incan inspect codegraph PATH --format jsonl`. A `registry` record carries the registry identity and visibility, structural key and descriptor, subject kind and identity, registration and subject spans, and public re-export paths when present. The complete record schema is in [Codegraph inspection](../../../tooling/reference/codegraph_inspection.md).
-
-There is no `incan inspect registry` command in this CLI.
+Checked entries appear as `registry` records in `incan inspect codegraph PATH --format jsonl`. A `registry` record carries the registry identity and visibility, structural key and descriptor, subject kind and identity, registration and subject spans, and public re-export paths when present. The complete record schema is in [Codegraph inspection](../../../tooling/reference/codegraph_inspection.md).
 
 ## Visibility, packages and reexports
 

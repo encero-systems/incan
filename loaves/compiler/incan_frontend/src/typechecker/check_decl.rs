@@ -24,8 +24,8 @@ use super::type_info::{
     RegistryExplicitEntryInfo,
 };
 use super::{
-    DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, FunctionBindingInfo, MemberBindingSurface,
-    TestingFixtureInfo, TypeChecker, YieldContext,
+    DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, FunctionBindingInfo, MemberBindingSurface, TypeChecker,
+    YieldContext,
 };
 use incan_lang::interop::{RustItemKind, RustItemMetadata, RustTraitAssoc};
 use incan_lang::lang::decorators::{self, DecoratorId};
@@ -154,11 +154,6 @@ fn validate_async_fixture_yield_shape(body: &[Spanned<Statement>]) -> AsyncFixtu
     }
 
     AsyncFixtureYieldShape::Valid { has_teardown: true }
-}
-
-/// Return whether any yield expression appears in a fixture body.
-fn fixture_body_has_yield(body: &[Spanned<Statement>]) -> bool {
-    any_expr_in_body(body, |expr| matches!(expr, Expr::Yield(_)))
 }
 
 /// Return whether a function body contains any valued `return` statement.
@@ -2460,14 +2455,10 @@ impl TypeChecker {
     }
 
     /// Record how a declared model, class, enum or newtype displays when lowering has to give it a Rust `Display`: the
-    /// `message()` call it displays through when it adopts `Error` and has no `Display` of its own, or its derived
-    /// `Display` (RFC 000).
+    /// `message()` call it displays through when it adopts `Error` and has no `Display` of its own.
     fn record_declared_display_route(&mut self, type_name: &str, decl_span: Span) {
         let self_ty = self.trait_conformance_self_type(type_name);
         self.record_error_message_display_type(type_name, &self_ty, decl_span);
-        if self.nominal_derives_display(type_name) {
-            self.type_info.record_derived_display_type(type_name);
-        }
     }
 
     /// Reject protected builtin spellings in a declaration-owned generic parameter list.
@@ -2961,15 +2952,6 @@ impl TypeChecker {
             && let SymbolKind::Static(info) = &mut symbol.kind
         {
             info.ty = expected_ty.clone();
-        }
-
-        if let Some(binding) = self.type_info.declarations.static_bindings.get_mut(&static_decl.name) {
-            binding.is_imported = false;
-        } else {
-            self.type_info.declarations.static_bindings.insert(
-                static_decl.name.clone(),
-                super::StaticBindingInfo { is_imported: false },
-            );
         }
 
         if let Some((key_type, descriptor_type)) = Self::registry_type_arguments(&expected_ty) {
@@ -6472,45 +6454,24 @@ impl TypeChecker {
                     .push(errors::fixture_timeout_config_not_supported(&func.name, span));
             }
 
-            let has_teardown = if func.is_async() {
+            // An async fixture yields exactly one value at its top level; test discovery reads the rest of its shape.
+            if func.is_async() {
                 match validate_async_fixture_yield_shape(&func.body) {
-                    AsyncFixtureYieldShape::Valid { has_teardown } => has_teardown,
+                    AsyncFixtureYieldShape::Valid { .. } => {}
                     AsyncFixtureYieldShape::Missing => {
                         self.errors
                             .push(errors::async_fixture_requires_yield(&func.name, fixture_span));
-                        false
                     }
                     AsyncFixtureYieldShape::Invalid(span) => {
                         self.errors
                             .push(errors::async_fixture_invalid_yield_shape(&func.name, span));
-                        false
                     }
                     AsyncFixtureYieldShape::MissingValue(span) => {
                         self.errors
                             .push(errors::async_fixture_yield_requires_value(&func.name, span));
-                        false
                     }
                 }
-            } else {
-                fixture_body_has_yield(&func.body)
-            };
-
-            let dependencies = func
-                .params
-                .iter()
-                .filter(|param| self.testing_fixture_names.contains(&param.node.name))
-                .map(|param| param.node.name.clone())
-                .collect();
-            self.type_info.testing.fixtures.insert(
-                func.name.clone(),
-                TestingFixtureInfo {
-                    scope: args.scope,
-                    autouse: args.autouse,
-                    is_async: func.is_async(),
-                    has_teardown,
-                    dependencies,
-                },
-            );
+            }
         }
         self.validate_surface_modifier_typecheck_actions(&func.surface_modifiers, &func.return_type);
 
@@ -6536,6 +6497,7 @@ impl TypeChecker {
         let return_type = self.resolve_type_checked(&func.return_type);
         self.refuse_unbounded_nominal_type_arguments(&return_type, func.return_type.span);
         self.refuse_trait_type_nested_in_annotation(&return_type, func.return_type.span);
+        self.refuse_lifetime_bearing_rust_type(&return_type, func.return_type.span);
         self.check_route_handler_signature(func, &return_type, &resolved_param_types);
 
         // Define parameters after checking defaults so a declaration-owned default cannot resolve a callable-frame
@@ -6650,7 +6612,6 @@ impl TypeChecker {
             .iter()
             .map(|param| {
                 let param_ty = self.resolve_type_checked(&param.node.ty);
-                self.record_mutable_rust_parameter_projection(&param.node);
                 self.refuse_unbounded_nominal_type_arguments(&param_ty, param.node.ty.span);
                 self.refuse_trait_type_nested_in_annotation(&param_ty, param.node.ty.span);
                 if param.node.kind != ParamKind::Normal {
@@ -7115,6 +7076,7 @@ impl TypeChecker {
         let return_type = self.resolve_type_checked(&method.return_type);
         self.refuse_unbounded_nominal_type_arguments(&return_type, method.return_type.span);
         self.refuse_trait_type_nested_in_annotation(&return_type, method.return_type.span);
+        self.refuse_lifetime_bearing_rust_type(&return_type, method.return_type.span);
         self.type_info.declarations.method_bindings_by_span.insert(
             method_span,
             FunctionBindingInfo {

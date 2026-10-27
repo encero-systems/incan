@@ -329,6 +329,16 @@ pub fn native_attribute_argument_unsupported(macro_path: &str, span: Span) -> Co
     )
 }
 
+/// Report a decorator argument naming a value that has no scalar literal form for an attribute macro.
+pub fn native_attribute_argument_not_scalar(macro_path: &str, name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Argument `{name}` of the attribute macro `{macro_path}` has no literal form"),
+        span,
+    )
+    .with_note("An attribute macro receives literals, scalar constants, bare names or lists of them")
+    .with_hint("Write the list or value literally in the decorator")
+}
+
 /// Report a user-defined decorator on a declaration kind that keeps decorators compiler-owned.
 pub fn user_defined_decorator_unsupported_target(path: &str, kind: &str, span: Span) -> CompileError {
     CompileError::type_error(
@@ -2395,15 +2405,15 @@ pub fn rust_unsafe_call_not_supported(path: &str, span: Span) -> CompileError {
     .with_hint("Use a safe Rust API whose signature the compiler can validate")
 }
 
-/// A source signature names a lifetime-bearing Rust owner without a retained lifetime contract, by value or reference.
+/// A source return or field type names a lifetime-bearing Rust type, whose lifetime contract no source type can state.
 pub fn rust_borrow_without_lifetime_contract(path: &str, span: Span) -> CompileError {
     CompileError::type_error(
-        format!("Borrowed Rust type `rust::{path}` in a source signature requires a retained lifetime contract"),
+        format!("Rust type `rust::{path}` borrows data, so a source return or field type cannot name it"),
         span,
     )
     .with_stable_code("INCAN-T0120")
-    .with_note("DD-0006 excludes borrowed Rust signatures whose lifetime relationships are not retained")
-    .with_hint("Keep the borrowed value inside the function that creates it, or pass data that owns its contents")
+    .with_note("DD-0006 excludes returned and stored Rust values whose lifetime relationships are not retained")
+    .with_hint("Keep the borrowed value inside the function that creates it, or return data that owns its contents")
 }
 
 /// A Rust associated call tries to specialize a receiver whose turbofish contains const-generic slots.
@@ -2496,6 +2506,16 @@ pub fn rust_constructor_metadata_unavailable(path: &str, span: Span) -> CompileE
     )
     .with_hint("Use an associated Rust constructor method, a helper function, or refresh Rust metadata for this item")
     .with_note("Named-field Rust structs require field metadata so Incan can emit a Rust struct literal")
+}
+
+/// A Rust type's admitted metadata names no associated item, variant or field of the written name.
+pub fn rust_associated_item_metadata_unavailable(path: &str, item: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Rust type `rust::{path}` has no admitted associated item `{item}`"),
+        span,
+    )
+    .with_hint("Check the item's spelling, or call the associated function or method that provides the value")
+    .with_note("Rust associated items are read only from the type's admitted metadata")
 }
 
 /// `type X = rusttype Y` requires `Y` to resolve to a Rust-origin imported item.

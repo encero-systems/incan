@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use incan_codegraph::{CodegraphDeclarationRecord, CodegraphRecord, CodegraphSourceSpan};
+use incan_codegraph::{CodegraphCanonicalSymbolId, CodegraphDeclarationRecord, CodegraphRecord, CodegraphSourceSpan};
 use incan_driver::diagnostics::CliDiagnosticFailure;
 use incan_driver::inspect::codegraph::{codegraph_canonical_identity, collect_live_unit_codegraph};
 use incan_driver::session::{CompilationAnalysis, CompilationSession};
@@ -20,34 +20,44 @@ use super::DocumentState;
 #[derive(Debug, Clone)]
 pub(super) struct GraphSnapshot {
     records: Vec<CodegraphRecord>,
+    declarations: HashMap<String, usize>,
+    canonical_declarations: BTreeMap<CodegraphCanonicalSymbolId, usize>,
     sources: BTreeMap<String, String>,
     version: i32,
 }
 
 impl GraphSnapshot {
-    /// Reuse the compiler exporter and portable artifact projection. No collection, checking or source-based name
-    /// resolution occurs here; failed checking supplies degraded records with no checked navigation relationships.
+    /// Retain the compiler export directly, preserving its source paths and ids without an artifact round trip.
+    /// Failed checking supplies degraded records with no checked navigation relationships.
     pub(super) fn from_analysis(
         session: &CompilationSession,
         modules: &[ParsedModule],
         analysis: std::result::Result<&CompilationAnalysis, &CliDiagnosticFailure>,
         version: i32,
     ) -> std::result::Result<Self, Box<dyn std::error::Error>> {
-        let root = &session.unit().project_root;
         let records = collect_live_unit_codegraph(session, modules, analysis);
-        let bytes = incan_codegraph::artifact::encode_graph(&records, root)?;
-        let artifact = incan_codegraph::artifact::GraphArtifact::decode(&bytes)?;
-        let records = artifact
-            .records(root, "")?
-            .into_iter()
-            .map(serde_json::from_value)
-            .collect::<std::result::Result<_, _>>()?;
+        let mut declarations = HashMap::new();
+        let mut canonical_declarations = BTreeMap::new();
+        for (index, record) in records.iter().enumerate() {
+            let CodegraphRecord::Declaration(declaration) = record else {
+                continue;
+            };
+            if declaration.degraded {
+                continue;
+            }
+            declarations.entry(declaration.id.clone()).or_insert(index);
+            if let Some(identity) = &declaration.canonical_identity {
+                canonical_declarations.entry(identity.clone()).or_insert(index);
+            }
+        }
         let sources = modules
             .iter()
             .map(|module| (module.file_path.to_string_lossy().into_owned(), module.source.clone()))
             .collect();
         Ok(Self {
             records,
+            declarations,
+            canonical_declarations,
             sources,
             version,
         })
@@ -68,24 +78,20 @@ impl GraphSnapshot {
     /// Find a declaration by its compiler-proven identity, never by a matching spelling or source line.
     fn declaration_for(&self, identity: &CanonicalSymbolId) -> Option<&CodegraphDeclarationRecord> {
         let canonical = codegraph_canonical_identity(identity);
-        self.records.iter().find_map(|record| match record {
-            CodegraphRecord::Declaration(declaration)
-                if !declaration.degraded && declaration.canonical_identity.as_ref() == Some(&canonical) =>
-            {
-                Some(declaration)
-            }
-            _ => None,
-        })
+        self.declaration_at(*self.canonical_declarations.get(&canonical)?)
     }
 
     /// Resolve an artifact-local relationship endpoint to the declaration the exporter linked it to.
     fn declaration(&self, id: &str) -> Option<&CodegraphDeclarationRecord> {
-        self.records.iter().find_map(|record| match record {
-            CodegraphRecord::Declaration(declaration) if declaration.id == id && !declaration.degraded => {
-                Some(declaration)
-            }
+        self.declaration_at(*self.declarations.get(id)?)
+    }
+
+    /// Read a declaration at an index retained from this snapshot's immutable record vector.
+    fn declaration_at(&self, index: usize) -> Option<&CodegraphDeclarationRecord> {
+        match self.records.get(index)? {
+            CodegraphRecord::Declaration(declaration) => Some(declaration),
             _ => None,
-        })
+        }
     }
 
     /// Convert a recorded byte span against the captured buffer rather than whatever bytes happen to be on disk.

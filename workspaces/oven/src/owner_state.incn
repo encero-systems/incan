@@ -168,8 +168,10 @@ pub model Owner:
                 return built(held.unit, toolchain, key, request, self.generation)
 
     def current_toolchain(mut self) -> Result[Toolchain, str]:
-        """The toolchain and worker selection, held while their complete observations match. Derivation must see
-        stable inputs; a changed toolchain drops every entry and a racing update refuses this request."""
+        """
+        The toolchain and worker selection, held while their complete observations match. Derivation must see
+        stable inputs; a changed toolchain drops every entry and a racing update refuses this request.
+        """
         match self.toolchain:
             Some(loaded) =>
                 if unchanged(self.toolchain_watched):
@@ -205,12 +207,13 @@ pub model Owner:
         if id in self.unsupported and unchanged(self.unsupported[id]):
             return Ok(None)
         # 2. The unit is prepared exactly as the command line prepares it, and the files it depends on are watched.
-        unit = prepare_native(describe(Path(request.path), request.profile, requested_features(request))?, toolchain)?
-        watched = watch(guard_paths(unit)?)
+        described = describe(Path(request.path), request.profile, requested_features(request))?
         # 3. The owner's verdict that it does not serve this entry is itself retained, so it is not worked out again.
-        if not supported(unit)?:
-            self.unsupported[id] = watched
+        if not supported(described)?:
+            self.unsupported[id] = watch(guard_paths(described)?)
             return Ok(None)
+        unit = prepare_native(described, toolchain)?
+        watched = watch(guard_paths(unit)?)
         # 4. The preparation is kept with the digest of its description and the ledger of what requests observed.
         held = retain(unit, request.command, watched)?
         self.held[id] = held
@@ -252,7 +255,7 @@ def supported(unit: UnitDescription) -> Result[bool, str]:
     if len(unit.rust_crates) > 0:
         return Ok(false)
     for loaf in unit.loaves:
-        if not loaf.standard:
+        if not loaf.standard and not loaf.toolchain_provided:
             return Ok(false)
     if Path(unit.project_root).joinpath("loaf.toml").is_file():
         return Ok(rust_facet(unit.project_root, false)?.kind == "")

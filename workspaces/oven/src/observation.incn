@@ -201,7 +201,7 @@ pub model Ledger:
         )
 
 
-def skipped_directory(name: str) -> bool:
+pub def skipped_directory(name: str) -> bool:
     """Hidden directories, build output (`target`) and vendored packages (`node_modules`) are not entered."""
     return name.startswith(".") or name == "target" or name == "node_modules"
 

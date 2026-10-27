@@ -18,10 +18,10 @@ on:
 
 permissions:
   contents: write
+  packages: read
 
 jobs:
-  # Native docs gates require the published dev.8 Oven/toolchain and Rust 1.98.0 with rustc-dev (DD-0010).
-  # Publication and its CI installation recipe are prerequisites; these gates remain enabled while they are pending.
+  # Docs gates install the pinned dev.8 bundle with Oven and Rust 1.98.0 through install-dev8-toolchain.
   deploy:
     name: Deploy (GitHub Pages via mike)
     runs-on: ubuntu-latest
@@ -33,6 +33,12 @@ jobs:
         with:
           ref: ${{ github.event.inputs.source_ref || github.ref }}
           fetch-depth: 0
+
+      - name: Install dev.8
+        uses: ./.github/actions/install-dev8-toolchain
+        with:
+          reference: ${{ fromJSON(vars.DEV8_TOOLCHAINS || '{}')['x86_64-unknown-linux-gnu'] }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-python@v6
         with:

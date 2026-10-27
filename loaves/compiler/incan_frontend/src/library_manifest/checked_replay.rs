@@ -46,41 +46,6 @@ impl CheckedExportReplay {
         Self::from_projection(projection)
     }
 
-    /// Capture one checked shape with the finalized package's validated namespace proof for its projection hops.
-    /// The selected root must already occur in that package under its exact identity and projection. Supporting
-    /// nested entries and their checked API backing remain in the replay; they grant no additional root shape.
-    pub fn from_checked_in_package(
-        package: &LibraryManifest,
-        export: &CheckedNamedExport,
-    ) -> Result<Self, LibraryManifestError> {
-        package.to_json_string()?;
-        validate_replayable_shape(&export.kind)?;
-        let mut projection =
-            LibraryManifest::from_checked_exports(&package.name, &package.version, std::slice::from_ref(export));
-        let roots = &projection.contract_metadata.identity_graph.exports;
-        if roots.len() != 1 || !package.contract_metadata.identity_graph.exports.contains(&roots[0]) {
-            return Err(invalid(
-                "checked export replay root is absent from its finalized package",
-            ));
-        }
-        // Most declarations need no namespace context. Keep their existing compact replay rather than copying
-        // a package's complete checked API into every ordinary declaration record.
-        if let Ok(replay) = Self::from_projection(projection.clone()) {
-            return Ok(replay);
-        }
-        projection.contract_metadata.identity_graph.exports.extend(
-            package
-                .contract_metadata
-                .identity_graph
-                .exports
-                .iter()
-                .filter(|entry| entry.public_path.len() > 2)
-                .cloned(),
-        );
-        projection.contract_metadata.api = package.contract_metadata.api.clone();
-        Self::from_projection(projection)
-    }
-
     /// Validate the complete manifest boundary before retaining or consuming its one exact root shape.
     fn from_projection(projection: LibraryManifest) -> Result<Self, LibraryManifestError> {
         projection.to_json_string()?;

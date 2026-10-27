@@ -9,11 +9,12 @@
 //! planned method call. The storage and accessors keep rustc's own MIR; only initializers and selected methods are
 //! planned bodies.
 
+use crate::ast_build::ident;
 use crate::plan::{CalleeKind, Function, ListLeaf, PlanType, StaticCell, TerminatorKind, tuple_element_type};
 use crate::{declarations, error::PlanError, plan::Plan};
 use rustc_ast as ast;
 use rustc_middle::ty::{self, Ty, TyCtxt};
-use rustc_span::{Ident, Span, Symbol};
+use rustc_span::{Span, Symbol};
 use std::collections::BTreeSet;
 use thin_vec::{ThinVec, thin_vec};
 
@@ -537,11 +538,6 @@ pub fn items(cell: &StaticCell, span: Span) -> Vec<Box<ast::Item>> {
         items.extend(completion_items(cell.slot, span));
     }
     items
-}
-
-/// Create an identifier from a name the plan admitted.
-fn ident(name: &str, span: Span) -> Ident {
-    Ident::new(Symbol::intern(name), span)
 }
 
 /// Build an AST expression with identities left for rustc's node allocation.

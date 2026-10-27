@@ -53,10 +53,9 @@ pub fn check_unit(unit: &UnitDescription, rust: &RustFactsSetup) -> CliResult<Ch
 /// Schema version for the `incan check` report envelope.
 ///
 /// Deliberately separate from [`incan_frontend::diagnostics::DIAGNOSTIC_SCHEMA_VERSION`], which versions the
-/// `StableDiagnostic` payload itself and is also stamped onto `incan explain` output and the backend execution receipt.
-/// Version 2 changed only this envelope — `diagnostics` now carries non-fatal warnings alongside errors, so `ok` means
-/// "no error-severity diagnostics" rather than "no diagnostics at all". Bumping the shared constant instead would have
-/// falsely signaled a payload or receipt contract change to consumers of those other surfaces.
+/// `StableDiagnostic` payload itself. Version 2 changed only this envelope — `diagnostics` now carries non-fatal
+/// warnings alongside errors, so `ok` means "no error-severity diagnostics" rather than "no diagnostics at all".
+/// Bumping the payload constant instead would have falsely signaled a payload contract change.
 pub(crate) const CHECK_REPORT_SCHEMA_VERSION: u32 = 2;
 
 /// One complete typecheck result, retained independently from CLI rendering so workspace orchestration can emit one
@@ -75,18 +74,6 @@ pub struct DiagnosticReport {
     /// Whether unchanged inputs reproduce this report; never part of the public JSON report.
     #[serde(skip_serializing)]
     reproducible: bool,
-}
-
-impl DiagnosticReport {
-    /// Whether collection and typechecking succeeded without error-severity diagnostics.
-    pub fn ok(&self) -> bool {
-        self.ok
-    }
-
-    /// Human-readable diagnostics retained from the compiler pipeline when the report is unsuccessful.
-    pub fn human_message(&self) -> Option<&str> {
-        self.human_message.as_deref()
-    }
 }
 
 /// Check one unit without rendering the result: its stable diagnostics, warnings included, and whether it passed.
@@ -126,7 +113,6 @@ pub fn check_report(unit: &UnitDescription, rust: &RustFactsSetup) -> CliResult<
     }
 }
 
-/// Convert source-aware compiler failures into the stable report consumed by both single-project and workspace paths.
 /// Project collected CLI diagnostics into their stable machine-readable form, preserving input order.
 ///
 /// Shared by the success and failure paths so warnings and errors are projected identically — the only thing that

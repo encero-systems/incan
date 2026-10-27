@@ -16,12 +16,10 @@ Oven is the build system and the `incan` command line, written in Incan (DD-0008
 | `testing.incn` | Running a compiled test unit and reporting the collected tests' observed outcomes (`incan test PATH [UNIT OPTIONS]`). |
 | `rust_units.incn` | Rust units: a local Loaf's Rust facet and the local facets it reaches, one `rustc` per unit against compiled registry units (`incan build`). A binary that links the toolchain's own `rustc_driver` gets a runpath to it and the identity it was built against. |
 | `intake.incn`, `manifest_errors.incn` | Reading `loaf.toml`: the package, its scripts and features, its path, Rust-facet and registry dependencies (standard packages are ambient, never declared), its source root, contract model bundles and C headers. Every refusal names the manifest, the field path and its TOML location. |
-| `features.incn` | Package feature resolution over the local graph (RFC 114): additive, unified across active edges, optional dependencies selected by features, cycles refused. |
+| `features.incn` | Project feature requests and the Incan view of the shared local facet graph (RFC 114). |
 | `home.incn` | The home (`INCAN_HOME`) and the artifact layout of standard packages and path dependencies; the toolchain's standard packages. |
-| `loaf_index.incn`, `json_fields.incn`, `loaf_resolve.incn`, `loaf_facts.incn`, `semver_req.incn` | The incan.pub index: decoding pinned Loaf declarations, selecting versions, checking recorded feature closures. |
-| `rust_source.incn`, `rust_activation.incn`, `rust_graph.incn`, `cfg_predicate.incn`, `loaf_local_graph.incn` | The Rust facet: dependency declarations, `cfg` and target predicates, per-unit activation and feature propagation across the graph, keeping host and target separate. |
-| `unit_codegen.incn` | Declared codegen options for exact resolved units. |
-| `invocation.incn` | The restrictions a command runs under (locked, frozen, offline). |
+| `json_fields.incn`, `semver_req.incn` | Typed JSON fields and version requirement checks for prepared registry units. |
+| `rust_source.incn`, `rust_activation.incn`, `cfg_predicate.incn`, `loaf_local_graph.incn` | The shared local graph: dependency declarations, `cfg` and target predicates, per-unit activation and feature propagation, keeping host and target separate. |
 
 `test_*.incn` hold each module's tests. The dev.8 command accepts one test file at a time; directory discovery is not implemented.
 
@@ -59,7 +57,7 @@ Export is tolerant by default (RFC 106, "Checked and tolerant export"). A unit t
 
 Rust receiver types and signatures use canonical crate-qualified paths so a consumer's method target links to the defining crate's declaration. Rust call records with `kind: indirect` have no proved target; `virtual_method` names a trait requirement rather than a set of possible implementors. These records describe a lower bound on reachability, never proof that an unlisted implementation cannot be called.
 
-Incan libraries without published graphs are checked in dependency order. Each checking pass supplies both its source graph and a checking-only interface under the inspection cache; inspection produces no Incan rlib, executable body or native publication. Rust checking may need a native library for an Incan dependency: inspection uses an exact library recorded by the project's successful `incan build` in `target/incan/rust/<profile>/units.json`, or an explicitly installed toolchain extern, and refuses if neither is available. A bootstrap-emitted Rust graph cannot replace the authored Incan graph: publication must include the Incan manifest and complete artifact set. Source projections do not assert source/artifact equivalence.
+Incan libraries without published graphs are checked in dependency order. Each checking pass supplies both its source graph and a checking-only interface under the inspection cache. Vocabulary providers require execution, so their dependency closure is prepared through the ordinary library build before checking the consumer. Other Incan inspection passes produce no native publication. Rust checking may need a native library for an Incan dependency: inspection uses an exact library recorded by the project's successful `incan build` in `target/incan/rust/<profile>/units.json`, or an explicitly installed toolchain extern, and refuses if neither is available. A bootstrap-emitted Rust graph cannot replace the authored Incan graph: publication must include the Incan manifest and complete artifact set. Source projections do not assert source/artifact equivalence.
 
 Projects can include source context that their binary does not statically link:
 

@@ -112,6 +112,9 @@ pub def admit(fixture: Fixture, header: Header) -> Result[None, str]:
         commands = header.items("cli-commands")
         if len(commands) == 0 or "" in commands:
             return Err("`cli-commands:` requires nonempty command lines")
+    if header.declares("environment") or header.declares("expect-trace-contains"):
+        if not header.declares("cli-commands"):
+            return Err("only fixtures with `cli-commands:` declare `environment:` or `expect-trace-contains:`")
     if header.declares("check-edits"):
         check_edits(fixture, header)?
     # 2. The header declares at least one expectation, and only ones its family compares.

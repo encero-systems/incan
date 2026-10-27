@@ -8,6 +8,7 @@ from compare import compare
 from files import (
     items,
     json_text,
+    optional_text as string_field,
     parse_json,
     read,
     read_bytes,
@@ -85,15 +86,24 @@ def document(incan: str, project: Path, format: str) -> Result[str, str]:
 def declaration_identities(document: str) -> Result[list[str], str]:
     """Compare only declaration identities across a position-only source edit; spans must change independently."""
     records = items(parse_json(document)?)?
+    check_expansion_sites(records)?
     meanings = required(records[0], "declaration_digests")?
     mut identities: list[str] = []
     for record in records:
         if required_text(record, "record")? != "declaration":
             continue
+        # Published standard graphs may retain declarations whose executable signature is unproven.
+        # Position edits in this fixture must preserve its own declarations and those of its local providers.
+        if string_field(record.get("span").unwrap_or(JsonValue.null()), "file").startswith("@std/"):
+            continue
         stable = required(record, "stable_identity")?
         if stable.is_null():
             return Err("a checked fixture declaration has no stable identity")
         key = string_field(record, "stable_key")
+        if stable.get("signature").unwrap_or(JsonValue.null()).is_null():
+            if key != "":
+                return Err("a declaration without a proved signature has a portable identity key")
+            continue
         if not key.startswith("symbol:"):
             return Err("a checked fixture declaration has no portable identity key")
         meaning = required(meanings, key)?
@@ -102,6 +112,35 @@ def declaration_identities(document: str) -> Result[list[str], str]:
             return Err("a declaration digest is not indexed by its own identity")
         identities.append(key)
     return Ok(sorted(identities))
+
+
+def check_expansion_sites(records: list[JsonValue]) -> Result[None, str]:
+    """The vocabulary fixture retains both generated helper calls and references at one authored range."""
+    package = records[0].get("package").unwrap_or(JsonValue.null())
+    if string_field(package, "name") != "vocabulary_graph":
+        return Ok(None)
+    for kind in ["call", "reference"]:
+        mut sites: Dict[str, list[str]] = {}
+        mut repeated = false
+        for record in records:
+            if string_field(record, "record") != kind:
+                continue
+            identity = record.get("canonical_identity").unwrap_or(JsonValue.null())
+            if string_field(identity, "declaration_name") != "helper":
+                continue
+            if record.get("target_id").unwrap_or(JsonValue.null()).is_null():
+                return Err(f"a generated {kind} has no checked target")
+            span = json_text(record.get("span").unwrap_or(JsonValue.null()))?
+            identifier = string_field(record, "id")
+            mut retained = sites.get(span).unwrap_or([])
+            if identifier not in retained:
+                retained.append(identifier)
+            sites[span] = retained
+            if len(retained) >= 2:
+                repeated = true
+        if not repeated:
+            return Err(f"generated {kind} records sharing one authored range were lost")
+    return Ok(None)
 
 
 def check_documents(incan: str, project: Path, existing: list[str]) -> Result[list[str], str]:
@@ -187,15 +226,25 @@ def check_source_edits(incan: str, project: Path, original: str, snapshot: str) 
 
 
 def library_artifacts(project: Path) -> Result[list[str], str]:
-    """Record library file observations to refuse any creation or rewrite during inspection."""
+    """Record ordinary library observations; executable vocabulary providers are an inspection prerequisite."""
     mut result: list[str] = []
     for artifact in project.rglob("*.incnbody").map_err((error) => error.message())?:
+        if executed_vocabulary(artifact)?:
+            continue
         name = f"{artifact.0}"
         info = metadata(artifact.0).map_err((error) => str(error))?
         identity = f"{name}:{info.dev()}:{info.ino()}:{info.size()}"
         clock = f"{info.mtime()}.{info.mtime_nsec()}:{info.ctime()}.{info.ctime_nsec()}"
         result.append(f"{identity}:{clock}")
     return Ok(sorted(result))
+
+
+def executed_vocabulary(artifact: Path) -> Result[bool, str]:
+    """A published vocabulary worker requires its provider's executable body before the consumer can be checked."""
+    package = artifact.name()[:-len(".incnbody")]
+    manifest = parse_json(read(artifact.parent().joinpath(f"{package}.incnlib"))?)?
+    vocabulary = manifest.get("vocab").unwrap_or(JsonValue.null())
+    return Ok(not vocabulary.get("desugarer_artifact").unwrap_or(JsonValue.null()).is_null())
 
 
 def check_comment_freshness(incan: str, project: Path, source: Path, before: str) -> Result[None, str]:
@@ -277,8 +326,7 @@ def check_identity_queries(incan: str, project: Path, document: str) -> Result[N
             Some(span) =>
                 if not string_field(span, "file").startswith(f"{project.0}/"):
                     continue
-            None =>
-                continue
+            None => continue
         name = string_field(declaration, "name")
         if name == "" or len([item for item in declarations if string_field(item, "name") == name]) != 1:
             continue
@@ -305,14 +353,24 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
     source = provider.joinpath("src").joinpath("lib.incn")
     if not source.is_file():
         return Ok(None)
+    checked = invoke(incan, ["inspect", "codegraph", provider.0, "--format", "json"], project)?
+    if checked.code != Some(0):
+        return Err(f"provider inspection failed: {checked.stderr}")
+    checked_digest = helper_digest(checked.stdout)?
     # 1. The provider's compiled Loaf carries a version-one binary graph that names no physical project root.
     built = invoke(incan, ["build", source.0], project)?
     if built.code != Some(0):
         return Err(f"provider build failed: {built.stderr}")
+    consumer = invoke(incan, ["build", "src/main.incn"], project)?
+    if consumer.code != Some(0):
+        return Err(f"consumer preparation failed: {consumer.stderr}")
     publications = published_graphs(project, provider)
     if len(publications) == 0:
         return Err("provider build published no graph")
     check_binary_graph(read_bytes(publications[0])?, project)?
+    compiled = document(incan, project, "json")?
+    if helper_digest(compiled)? != checked_digest:
+        return Err("the inspected cross-module library body differs from its compiled publication")
     # 2. A consumer reads the published graph, though the provider's source has since become invalid.
     arguments = ["inspect", "codegraph", ".", "--query", "defs", "checked_helper"]
     original = invoke(incan, arguments, project)?
@@ -339,6 +397,18 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
     return Ok(None)
 
 
+def helper_digest(document: str) -> Result[str, str]:
+    """Read a proved helper digest and portable identity from either source inspection or its publication."""
+    for record in items(parse_json(document)?)?:
+        if string_field(record, "record") != "declaration" or string_field(record, "name") != "checked_helper":
+            continue
+        digest = string_field(record, "semantic_digest")
+        if not digest.startswith("sha256:"):
+            return Err("the checked library helper has no proved semantic digest")
+        return Ok(string_field(record, "stable_key") + ":" + digest)
+    return Err("the library graph omitted its checked helper")
+
+
 def check_binary_graph(data: bytes, project: Path) -> Result[None, str]:
     """A published graph starts with the version-one header and never contains the physical project root."""
     if data[:4] != b"\x01\x00\x00\x00":
@@ -359,17 +429,6 @@ def published_graphs(project: Path, provider: Path) -> list[Path]:
         if graph.is_file():
             graphs.append(graph)
     return graphs
-
-
-def string_field(value: JsonValue, key: str) -> str:
-    """Read an optional wire string for referential-integrity checks."""
-    match value.get(key):
-        Some(item) =>
-            match item.as_str():
-                Some(text) => return text
-                None => pass
-        None => pass
-    return ""
 
 
 def check_rust_links(document: str) -> Result[None, str]:

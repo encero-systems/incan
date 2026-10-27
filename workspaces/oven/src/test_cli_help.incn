@@ -1,7 +1,7 @@
 """CLI help contracts, including exact command synopses and the boundaries of help flag recognition."""
 
 from std.testing import fail
-from main import command_help, usage
+from command_help import command_help, usage
 
 
 pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> None:
@@ -12,7 +12,7 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> None:
     2. The overview uses those same synopses.
     3. Program arguments, option values and unknown commands never become help requests.
     """
-    commands = [
+    commands: list[tuple[str, str]] = [
         ("run", "incan run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"),
         ("check", "incan check PATH [--format text|json] [UNIT OPTIONS]"),
         ("test", "incan test PATH [UNIT OPTIONS]"),
@@ -32,14 +32,16 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> None:
         prefix = parts[1:]
         # 1. Both help flags print this command's contract, rather than a sibling's help.
         for flag in ["--help", "-h"]:
-            match command_help(command, prefix + [flag]):
+            response: Option[str] = command_help(command, prefix + [flag])
+            match response:
                 None => fail(f"{synopsis}: missing help")
                 Some(text) =>
                     assert text.split("\n")[0] == f"usage: {synopsis}"
                     assert "\nOptions:\n" in text
                     assert "\nExample:\n  incan " in text
         # 2. The overview and detailed help agree on the complete synopsis.
-        assert synopsis in usage().split("\n")
+        overview: list[str] = usage().split("\n")
+        assert synopsis in overview
     # 3. Help flags in value or program positions retain their ordinary meaning.
     assert command_help("run", ["src/main.incn", "--", "--help"]) == None
     assert command_help("run", ["--argv0", "--help", "src/main.incn"]) == None

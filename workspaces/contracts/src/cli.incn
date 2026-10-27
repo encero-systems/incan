@@ -3,22 +3,39 @@
 from std.fs import Path
 from compare import compare
 from header import Header
-from run import invoke
+from run import invoke, trace_file
 
 
 pub def compare_cli(incan: str, project: Path, header: Header) -> Result[list[str], str]:
     """
     Return the expectations broken by each command, identifying the invocation beside every failure.
 
-    1. Run each whitespace-separated command in the fixture project.
+    1. Run each whitespace-separated command in the fixture project with the case's declared settings.
     2. Compare each command's streams and status independently.
+    3. Require each declared trace substring in the Oven trace that command added.
     """
     mut failures: list[str] = []
     for command in header.items("cli-commands"):
         # 1. Each command runs afresh with its own streams and status.
         arguments = [item for item in command.split(" ") if item != ""]
-        outcome = invoke(incan, arguments, project)?
+        before = trace_text(project)
+        outcome = invoke(incan, arguments, project, header.items("environment"))?
         # 2. A successful sibling cannot hide another command's failure.
         for failure in compare("cli", header, outcome):
             failures.append(f"incan {command}: {failure}")
+        # 3. Only the lines this command traced can satisfy its trace expectations.
+        added = trace_text(project)[len(before):]
+        for expected in header.items("expect-trace-contains"):
+            if expected not in added:
+                failures.append(f"incan {command}: Oven's trace does not contain `{expected}`")
     return Ok(failures)
+
+
+def trace_text(project: Path) -> str:
+    """The Oven trace recorded so far for this case; empty before the first traced command."""
+    trace = trace_file(project)
+    if not trace.is_file():
+        return ""
+    match trace.read_text("utf-8", "strict"):
+        Ok(text) => return text
+        Err(_) => return ""

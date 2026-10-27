@@ -22,14 +22,6 @@ pub(crate) fn is_synthetic_span(span: ast::Span) -> bool {
     span == ast::Span::default() || span.expansion.is_some()
 }
 
-/// Return the synthetic span that stands in for `source` on a declaration a tool generates from source it rewrites.
-///
-/// The testing transform uses a separate context from public-tree decoding, so both can retain the genuine range
-/// without sharing checked declaration facts.
-pub fn synthetic_span_anchored_at(source: ast::Span) -> ast::Span {
-    expansion_anchor(source).expansion_child("testing-declaration")
-}
-
 /// Seed compiler-generated syntax from its genuine source coordinates and any enclosing expansion context.
 fn expansion_anchor(source: ast::Span) -> ast::Span {
     let mut identity = Sha256::new();
@@ -478,19 +470,6 @@ pub fn internal_statement_to_public(stmt: &ast::Statement) -> Result<incan_vocab
     }
 }
 
-/// Convert a slice of public statements into internal spanned statements.
-///
-/// Spans are synthesized as defaults here; the bridge preserves structure, not source provenance.
-///
-/// # Errors
-///
-/// Returns the first conversion error from [`public_statement_to_internal`].
-pub fn public_statements_to_internal(
-    stmts: &[incan_vocab::IncanStatement],
-) -> Result<Vec<ast::Spanned<ast::Statement>>, VocabAstBridgeError> {
-    public_statements_to_internal_with_anchor(stmts, ast::Span::default())
-}
-
 /// Convert public vocabulary declarations into internal compilation-unit declarations under one source anchor.
 pub fn public_declarations_to_internal_with_anchor(
     declarations: &[incan_vocab::IncanDeclaration],
@@ -646,15 +625,6 @@ fn public_decorator_span_or_synthetic(
         .with_expansion(spans.next().expansion)
 }
 
-/// Convert public statements into internal statements while assigning unique synthetic spans under `anchor`.
-pub fn public_statements_to_internal_with_anchor(
-    stmts: &[incan_vocab::IncanStatement],
-    anchor: ast::Span,
-) -> Result<Vec<ast::Spanned<ast::Statement>>, VocabAstBridgeError> {
-    let mut spans = SyntheticSpanAllocator::new(anchor);
-    public_statements_to_internal_with_spans(stmts, &mut spans)
-}
-
 /// Convert public statements while sharing one synthetic span allocator across the whole generated subtree.
 fn public_statements_to_internal_with_spans(
     stmts: &[incan_vocab::IncanStatement],
@@ -667,17 +637,6 @@ fn public_statements_to_internal_with_spans(
             Ok(ast::Spanned::new(internal, spans.next()))
         })
         .collect()
-}
-
-/// Convert one public `incan_vocab::IncanStatement` into internal compiler AST.
-///
-/// # Errors
-///
-/// Returns [`VocabAstBridgeError`] when the public statement (or any contained expression) does not currently have a
-/// supported internal mapping.
-pub fn public_statement_to_internal(stmt: &incan_vocab::IncanStatement) -> Result<ast::Statement, VocabAstBridgeError> {
-    let mut spans = SyntheticSpanAllocator::new(ast::Span::default());
-    public_statement_to_internal_with_spans(stmt, &mut spans)
 }
 
 /// Convert one public statement with a caller-owned synthetic span allocator.
@@ -1626,33 +1585,6 @@ mod tests {
         assert_ne!(inner.span, ast::Span::default());
         assert_ne!(value.span, ast::Span::default());
         Ok(())
-    }
-
-    #[test]
-    fn anchored_synthetic_spans_are_synthetic_distinct_and_apart_from_allocated_spans() {
-        let first = synthetic_span_anchored_at(ast::Span::new(10, 20));
-        let second = synthetic_span_anchored_at(ast::Span::new(30, 40));
-
-        assert!(
-            is_synthetic_span(first),
-            "an anchored span must read as compiler-authored"
-        );
-        assert!(
-            is_synthetic_span(second),
-            "an anchored span must read as compiler-authored"
-        );
-        assert_ne!(first, second, "two source spans must keep two generated spans");
-        assert_eq!(first, synthetic_span_anchored_at(ast::Span::new(10, 20)));
-
-        let mut allocator = SyntheticSpanAllocator::new(ast::Span::new(1, 2));
-        for _ in 0..64 {
-            let allocated = allocator.next();
-            assert_eq!((allocated.start, allocated.end), (1, 2));
-            assert_ne!(allocated, first);
-            assert_ne!(allocated, allocator.next());
-        }
-        assert_eq!((first.start, first.end), (10, 20));
-        assert_eq!((second.start, second.end), (30, 40));
     }
 
     #[test]

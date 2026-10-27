@@ -69,12 +69,21 @@ def retained_nominal_carrier(nominals: &list[NominalDeclaration], ty: PlanType) 
         _ => return false
 
 
+pub def context_free_type(ty: &RustType) -> Result[PlanType, str]:
+    """Resolve a callable component without source declarations, explicitly typing the empty borrowed inventories."""
+    nominals: list[NominalDeclaration] = []
+    enums: list[RustEnumDeclaration] = []
+    unions: list[RustType] = []
+    intrinsics: list[EnumDeclaration] = []
+    return native_source_type(nominals, enums, unions, ty, intrinsics)
+
+
 pub def native_source_type(
-    mut nominals: list[NominalDeclaration],
-    mut enums: list[RustEnumDeclaration],
-    mut unions: list[RustType],
+    nominals: &list[NominalDeclaration],
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
     ty: &RustType,
-    mut intrinsics: list[EnumDeclaration],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Use retained carrier identity before recursively resolving collection elements; never reopen source syntax."""
     source_type = str(ty)
@@ -120,8 +129,6 @@ pub def native_source_type(
             return Ok(PlanType.FunctionPointer(signature))
         RustType.Generic(base=base, args=arguments) =>
             constructor: str = str(base)
-            if constructor == "<native-callable>" and len(arguments) == 1:
-                return native_callable_type(nominals, enums, unions, arguments[0], intrinsics)
             if constructor == "<owned-callable>" and len(arguments) == 1:
                 match native_source_type(nominals, enums, unions, arguments[0], intrinsics)?:
                     PlanType.FunctionPointer(signature) => return Ok(PlanType.Closure(signature))
@@ -175,12 +182,12 @@ pub def native_source_type(
 
 
 pub def stored_field_type(
-    mut nominals: list[NominalDeclaration],
-    mut enums: list[RustEnumDeclaration],
-    mut unions: list[RustType],
+    nominals: &list[NominalDeclaration],
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
     declaration: &NominalDeclaration,
     slot: int,
-    mut intrinsics: list[EnumDeclaration],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Use the Body IR field's owning callable fact at every construction and projection of its closed owner."""
     ty = native_source_type(nominals, enums, unions, declaration.field_types[slot], intrinsics)?
@@ -190,24 +197,6 @@ pub def stored_field_type(
             PlanType.FunctionPointer(signature) => return Ok(PlanType.Closure(signature))
             _ => return Err("invalid Body IR owned callable field without a function signature")
     return Ok(ty)
-
-
-def native_callable_type(
-    mut nominals: list[NominalDeclaration],
-    mut enums: list[RustEnumDeclaration],
-    mut unions: list[RustType],
-    ty: &RustType,
-    mut intrinsics: list[EnumDeclaration],
-) -> Result[PlanType, str]:
-    """Retain a runtime callable's already selected input ABI without applying source parameter borrowing again."""
-    match ty:
-        RustType.Function(params=parameters, return_type=result) =>
-            mut signature: list[PlanType] = []
-            for parameter in parameters:
-                signature.append(native_source_type(nominals, enums, unions, parameter.ty, intrinsics)?)
-            signature.append(native_source_type(nominals, enums, unions, result, intrinsics)?)
-            return Ok(PlanType.FunctionPointer(signature))
-        _ => return Err("invalid retained native callable signature")
 
 
 def is_native_str(ty: &RustType) -> bool:
@@ -235,10 +224,6 @@ pub def shared_receiver_type(ty: PlanType) -> Result[PlanType, str]:
         ) => return Ok(PlanType.ScalarRef([ty]))
         PlanType.FrozenCollection(name, elements) => return Ok(PlanType.FrozenCollectionRef(name, elements))
         PlanType.NativeArray(elements, length) => return Ok(PlanType.NativeArrayRef(elements, length))
-        PlanType.StringRef => return Ok(PlanType.ScalarRef([ty]))
-        PlanType.ModelRef(_owner, _name) => return Ok(PlanType.ScalarRef([ty]))
-        PlanType.EnumRef(_owner, _name) => return Ok(PlanType.ScalarRef([ty]))
-        PlanType.ScalarRef(_elements) => return Ok(PlanType.ScalarRef([ty]))
         PlanType.SliceRef(_elements) => return Ok(PlanType.ScalarRef([ty]))
         PlanType.StrArray(count) => return Ok(PlanType.StrArrayRef(count))
         PlanType.NativeSlice(elements) => return Ok(PlanType.SliceRef(elements))
@@ -251,9 +236,32 @@ pub def shared_receiver_type(ty: PlanType) -> Result[PlanType, str]:
     collection = list_parameter_type(ty, false)
     if collection != ty:
         return Ok(collection)
-    if ty in [PlanType.Int, PlanType.Float, PlanType.I8, PlanType.I16, PlanType.I32, PlanType.I128, PlanType.ISize, PlanType.USize, PlanType.U8, PlanType.U16, PlanType.U32, PlanType.U64, PlanType.U128, PlanType.F32, PlanType.F64, PlanType.Bool, PlanType.Unit, PlanType.Decimal, PlanType.FrozenStr, PlanType.FrozenBytes, PlanType.StaticText, PlanType.StaticBytes]:
+    if ty in [
+        PlanType.Int,
+        PlanType.Float,
+        PlanType.I8,
+        PlanType.I16,
+        PlanType.I32,
+        PlanType.I128,
+        PlanType.ISize,
+        PlanType.USize,
+        PlanType.U8,
+        PlanType.U16,
+        PlanType.U32,
+        PlanType.U64,
+        PlanType.U128,
+        PlanType.F32,
+        PlanType.F64,
+        PlanType.Bool,
+        PlanType.Unit,
+        PlanType.Decimal,
+        PlanType.FrozenStr,
+        PlanType.FrozenBytes,
+        PlanType.StaticText,
+        PlanType.StaticBytes,
+    ]:
         return Ok(PlanType.ScalarRef([ty]))
-    return Err(f"unsupported Body IR shared SDK receiver carrier {ty:?}")
+    return Err(f"unsupported shared standard library receiver type {ty:?}")
 
 
 pub def mutable_receiver_type(ty: PlanType) -> Result[PlanType, str]:
@@ -261,7 +269,6 @@ pub def mutable_receiver_type(ty: PlanType) -> Result[PlanType, str]:
     match ty:
         PlanType.Generator(leaf, depth) => return Ok(PlanType.GeneratorMutRef(leaf, depth))
         PlanType.NativeArray(elements, length) => return Ok(PlanType.NativeArrayMutRef(elements, length))
-        PlanType.Generator(leaf, depth) => return Ok(PlanType.GeneratorMutRef(leaf, depth))
         PlanType.NativeSlice(elements) => return Ok(PlanType.SliceMutRef(elements))
         _ => pass
     match exclusive_reference(ty):
@@ -273,11 +280,11 @@ pub def mutable_receiver_type(ty: PlanType) -> Result[PlanType, str]:
 
 
 pub def callable_parameter_type(
-    mut nominals: list[NominalDeclaration],
-    mut enums: list[RustEnumDeclaration],
-    mut unions: list[RustType],
+    nominals: &list[NominalDeclaration],
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
     parameter: &IncanCallableParam,
-    mut intrinsics: list[EnumDeclaration],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Translate checked callable parameter kinds into the same native collection storage their Body IR frames retain."""
     element = native_source_type(nominals, enums, unions, parameter.ty, intrinsics)?
@@ -290,7 +297,7 @@ pub def callable_parameter_type(
         IncanCallableParamKind.RestKeyword => return Ok(PlanType.Dict(ListLeaf.Str, collection_leaf(element)?))
 
 
-def numeric_newtype_iterator(mut nominals: list[NominalDeclaration], element: &RustType) -> Option[PlanType]:
+def numeric_newtype_iterator(nominals: &list[NominalDeclaration], element: &RustType) -> Option[PlanType]:
     """Retain an integer newtype's exact owned generator leaf through the same canonical layout as its list items."""
     match element:
         RustType.Named(name) =>
@@ -314,10 +321,10 @@ def numeric_newtype_iterator(mut nominals: list[NominalDeclaration], element: &R
 
 
 def hashed_leaf(
-    mut nominals: list[NominalDeclaration],
-    mut enums: list[RustEnumDeclaration],
+    nominals: &list[NominalDeclaration],
+    enums: &list[RustEnumDeclaration],
     ty: &RustType,
-    mut intrinsics: list[EnumDeclaration],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[ListLeaf, str]:
     """
     Admit an enum set element or dictionary key only when its retained layout hashes.
@@ -355,16 +362,16 @@ def hashed_leaf(
 
 
 def layout_tuple_type(
-    mut nominals: list[NominalDeclaration],
-    mut enums: list[RustEnumDeclaration],
-    mut unions: list[RustType],
+    nominals: &list[NominalDeclaration],
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
     elements: &list[RustType],
-    mut intrinsics: list[EnumDeclaration],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Resolve each tuple element in the retained layout context, so a list or carrier element keeps its identity."""
     # Legacy emits a singleton literal as a parenthesized scalar; do not admit a different native layout.
     if len(elements) == 1:
-        return Err("unsupported Body IR singleton Tuple: legacy scalar emission")
+        return Err("a one-element tuple cannot be represented as a scalar")
     mut types: list[TupleElement] = []
     for element in elements:
         resolved = native_source_type(nominals, enums, unions, element, intrinsics)?
@@ -373,11 +380,11 @@ def layout_tuple_type(
 
 
 def zip_pair_type(
-    mut nominals: list[NominalDeclaration],
-    mut enums: list[RustEnumDeclaration],
-    mut unions: list[RustType],
+    nominals: &list[NominalDeclaration],
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
     element: &RustType,
-    mut intrinsics: list[EnumDeclaration],
+    intrinsics: &list[EnumDeclaration],
 ) -> Option[PlanType]:
     """Admit a checked pair iterator, such as `zip`'s, through its element tuple's retained layout."""
     match element:
@@ -390,11 +397,11 @@ def zip_pair_type(
 
 
 def pair_layout(
-    mut nominals: list[NominalDeclaration],
-    mut enums: list[RustEnumDeclaration],
-    mut unions: list[RustType],
+    nominals: &list[NominalDeclaration],
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
     elements: &list[RustType],
-    mut intrinsics: list[EnumDeclaration],
+    intrinsics: &list[EnumDeclaration],
 ) -> Option[PlanType]:
     """Lay out both pair components in the retained context; any other arity or element keeps its refusal."""
     if len(elements) != 2:

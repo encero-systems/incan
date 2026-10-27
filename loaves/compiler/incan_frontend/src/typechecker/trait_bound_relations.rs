@@ -487,18 +487,25 @@ impl TypeChecker {
             .then_some(name.as_str())
     }
 
+    /// Return the declared bounds of the active type parameter `name` from the innermost frame that declares it.
+    ///
+    /// This is the only reading of the bound frames: an outer frame's parameter of the same name is shadowed, so its
+    /// bounds grant no trait, method or native-call authority inside the inner declaration.
+    pub(in crate::typechecker) fn innermost_type_param_bounds(&self, name: &str) -> Option<&[TypeBoundInfo]> {
+        self.current_type_param_bound_details
+            .iter()
+            .rev()
+            .find_map(|frame| frame.get(name))
+            .map(Vec::as_slice)
+    }
+
     /// Whether the checker sees every method the bounds of the active type parameter `placeholder_name` give it: each
     /// bound names a trait whose declaration it has, or a `CallableN` trait (#1561).
     ///
     /// A bound on a Rust trait, or on a trait the checker cannot resolve, may declare methods the checker does not
     /// know, so a method call through such a parameter is left to the Rust compiler.
     pub(in crate::typechecker) fn active_type_param_bounds_are_visible(&self, placeholder_name: &str) -> bool {
-        let Some(bounds) = self
-            .current_type_param_bound_details
-            .iter()
-            .rev()
-            .find_map(|frame| frame.get(placeholder_name))
-        else {
+        let Some(bounds) = self.innermost_type_param_bounds(placeholder_name) else {
             return false;
         };
         bounds.iter().all(|bound| {
@@ -516,12 +523,7 @@ impl TypeChecker {
         placeholder_name: &str,
         member: &str,
     ) -> bool {
-        let Some(bounds) = self
-            .current_type_param_bound_details
-            .iter()
-            .rev()
-            .find_map(|frame| frame.get(placeholder_name))
-        else {
+        let Some(bounds) = self.innermost_type_param_bounds(placeholder_name) else {
             return false;
         };
         let declares = |info: &crate::symbols::TraitInfo| {
@@ -545,18 +547,12 @@ impl TypeChecker {
         required: &TypeBoundInfo,
         bindings: &HashMap<String, ResolvedType>,
     ) -> bool {
-        for frame in self.current_type_param_bound_details.iter().rev() {
-            let Some(active_bounds) = frame.get(placeholder_name) else {
-                continue;
-            };
-            for active in active_bounds {
-                if self.type_bound_implies_bound_info(active, required, bindings) {
-                    return true;
-                }
-            }
-            return false;
-        }
-        false
+        self.innermost_type_param_bounds(placeholder_name)
+            .is_some_and(|bounds| {
+                bounds
+                    .iter()
+                    .any(|active| self.type_bound_implies_bound_info(active, required, bindings))
+            })
     }
 
     /// Return whether an active type parameter explicitly or transitively carries one builtin trait bound.

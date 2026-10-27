@@ -24,7 +24,7 @@ serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
 serde_json = { loaf = "crates-io/serde_json", version = "1.0" }
 tracing = { loaf = "crates-io/tracing", version = "0.1" }
 # A multi-thread runtime, stdio transport, `spawn_blocking`, and the `RwLock`/`spawn` surface `backend.rs` uses.
-tokio = { features = ["rt-multi-thread", "io-std", "io-util", "sync", "macros"], loaf = "crates-io/tokio", version = "1" }
+tokio = { features = ["rt-multi-thread", "io-std", "io-util", "sync", "macros", "time"], loaf = "crates-io/tokio", version = "1" }
 tower-lsp = { loaf = "crates-io/tower-lsp", version = "0.20" }
 
 [rust]

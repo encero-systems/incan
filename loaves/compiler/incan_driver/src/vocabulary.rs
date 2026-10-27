@@ -19,6 +19,7 @@ pub(crate) fn validate_source(
     if unit.vocab_desugarer && is_entry_source(unit, source) {
         validate_desugar_export(program)?;
     }
+    let policy = standard_package_namespace_policy(&unit.package);
     for declaration in &program.declarations {
         let Declaration::Import(import) = &declaration.node else {
             continue;
@@ -26,7 +27,6 @@ pub(crate) fn validate_source(
         let activates = match &import.kind {
             ImportKind::PubLibrary { library, .. } | ImportKind::PubFrom { library, .. } => library == &unit.package,
             ImportKind::Module(path) | ImportKind::From { module: path, .. } => {
-                let policy = standard_package_namespace_policy(&unit.package);
                 path.segments.first().is_some_and(|root| root == "std")
                     && path.segments.get(1).is_some_and(|name| {
                         policy.is_some_and(|policy| policy.namespace_roots.contains(&name.as_str()))

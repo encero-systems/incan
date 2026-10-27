@@ -1,13 +1,14 @@
 //! Validate planned Incan string ingress roots; serde's native TryFrom header forwards to its reconstruction root.
 
 use crate::{
+    ast_build::ident,
     declarations,
     error::PlanError,
     plan::{ModelDeclaration, Plan, PlanType},
 };
 use incan_semantics_core::{SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin, decode_incan_symbol_identity};
 use rustc_ast as ast;
-use rustc_span::{Ident, Span, Symbol};
+use rustc_span::{Span, Symbol};
 use thin_vec::{ThinVec, thin_vec};
 
 /// Preserve serde's absolute String decoder selection in both AST attributes and their retained derive tokens.
@@ -352,11 +353,6 @@ fn inherited(span: Span) -> ast::Visibility {
         span,
         tokens: None,
     }
-}
-
-/// Retain a preflight-validated native identifier with the synthetic declaration's hygiene.
-fn ident(name: &str, span: Span) -> Ident {
-    Ident::new(Symbol::intern(name), span)
 }
 
 /// Keep forwarding expressions on the retained source span.

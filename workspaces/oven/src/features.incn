@@ -1,14 +1,10 @@
-"""
-Package feature resolution over a local graph (RFC 114).
+"""Project requests and the Incan dependency view of the shared local facet graph (RFC 114)."""
 
-Features are additive and unified across every active edge: a package reached through several edges gets the union of
-what they request. A dependency edge is active when it is not optional, or when an active feature of its requester
-selects it (`dep:<alias>`). An active edge selects the dependency's `default` feature unless it disables defaults,
-plus the features it lists. A feature request against a dependency (`<alias>/<feature>`) applies once that edge is
-active.
-"""
-
-from intake import DependencyEdge, LocalDependency, LocalIntake, LocalProject
+from intake import DependencyEdge, LocalIntake
+from loaf_local_graph import LocalDemand, LocalFacet, local_facets
+from rust_activation import DependencyDomain
+from rust_target import target_configuration
+from toolchain import load_toolchain, rust_compiler
 
 
 pub model FeatureRequest:
@@ -20,144 +16,45 @@ pub model FeatureRequest:
 
 
 pub model ActiveGraph:
-    """The packages a root reaches through active edges, and the features active in each."""
+    """Incan projects and edges selected by the shared graph, with its facets retained for preparation."""
 
-    # Project roots in the order they were reached, the root first.
     pub reached: list[str]
-    # The active features of each reached project, sorted.
     pub active: Dict[str, list[str]]
-    # The active edges, in the order they became active.
     pub edges: list[DependencyEdge]
-
-
-model Resolution:
-    """The resolution's state while the work list drains."""
-
-    projects: Dict[str, LocalProject]
-    dependencies: Dict[str, LocalDependency]
-    targets: Dict[str, str]
-    reached: list[str]
-    active: Dict[str, list[str]]
-    edges: list[DependencyEdge]
-    active_edges: list[str]
-    deferred: Dict[str, list[str]]
-    # Work items: `feature`, the project root and the feature; or `edge`, the requester root and the alias.
-    work: list[tuple[str, str, str]]
-
-    def reach(mut self, root: str) -> None:
-        """Reach a project and queue its non-optional edges."""
-        if root in self.reached:
-            return
-        self.reached.append(root)
-        self.active[root] = []
-        for dependency in self.projects[root].intent.dependencies:
-            if not dependency.optional and not dependency.rust_facet:
-                self.work.append(("edge", root, dependency.alias))
-
-    def activate_edge(mut self, requester: str, alias: str) -> None:
-        """Activate one edge: reach its dependency and queue the features the edge requests."""
-        key = edge_key(requester, alias)
-        if key in self.active_edges:
-            return
-        self.active_edges.append(key)
-        dependency = self.dependencies[key]
-        target = self.targets[key]
-        self.edges.append(DependencyEdge(requester_root=requester, alias=alias, dependency_root=target))
-        self.reach(target)
-        if dependency.default_features and "default" in self.projects[target].intent.features:
-            self.work.append(("feature", target, "default"))
-        for feature in dependency.features:
-            self.work.append(("feature", target, feature))
-        if key in self.deferred:
-            for feature in self.deferred[key]:
-                self.work.append(("feature", target, feature))
-
-    def activate_feature(mut self, root: str, name: str) -> Result[None, str]:
-        """Activate one feature and queue what it includes, selects and requests."""
-        if name in self.active[root]:
-            return Ok(None)
-        project = self.projects[root]
-        if name not in project.intent.features:
-            return Err(f"{project.intent.name} has no feature `{name}`")
-        mut names = self.active[root]
-        names.append(name)
-        self.active[root] = names
-        declaration = project.intent.features[name]
-        for included in declaration.includes:
-            self.work.append(("feature", root, included))
-        for alias in declaration.optional_dependencies:
-            # Rust slots are activated by the Rust graph, not the Incan path graph.
-            if edge_key(root, alias) in self.targets:
-                self.work.append(("edge", root, alias))
-        for alias in sorted([key for key in declaration.dependency_features.keys()]):
-            key = edge_key(root, alias)
-            if key not in self.targets:
-                continue
-            if key in self.active_edges:
-                for feature in declaration.dependency_features[alias]:
-                    self.work.append(("feature", self.targets[key], feature))
-            else:
-                mut later: list[str] = []
-                if key in self.deferred:
-                    later = self.deferred[key]
-                for feature in declaration.dependency_features[alias]:
-                    later.append(feature)
-                self.deferred[key] = later
-        return Ok(None)
-
-
-def edge_key(requester: str, alias: str) -> str:
-    """The key of the edge `alias` declared by the project at `requester`."""
-    return f"{requester}\n{alias}"
+    pub facets: list[LocalFacet]
 
 
 pub def resolve_features(intake: LocalIntake, root: str, request: FeatureRequest) -> Result[ActiveGraph, str]:
-    """The packages `root` reaches and their active features, for the features `request` asks of `root`."""
-    mut projects: Dict[str, LocalProject] = {}
-    for project in intake.projects:
-        projects[project.root] = project
-    mut dependencies: Dict[str, LocalDependency] = {}
-    mut targets: Dict[str, str] = {}
-    for edge in intake.edges:
-        targets[edge_key(edge.requester_root, edge.alias)] = edge.dependency_root
-        for dependency in projects[edge.requester_root].intent.dependencies:
-            if dependency.alias == edge.alias:
-                dependencies[edge_key(edge.requester_root, edge.alias)] = dependency
-    if root not in projects:
-        return Err(f"{root} is not a project of this graph")
-    mut state = Resolution(
-        projects=projects,
-        dependencies=dependencies,
-        targets=targets,
-        reached=[],
-        active={},
-        edges=[],
-        active_edges=[],
-        deferred={},
-        work=[],
+    """
+    Project the build engine's selection onto the Incan dependency declarations.
+
+    1. Select the shared graph against the installed compiler's target facts.
+    2. Retain Incan projects and edges from the validated intake, preserving direct aliases.
+    """
+    # 1. Descriptions and compilation use the same engine and the same target configuration.
+    toolchain = load_toolchain()?
+    demand = LocalDemand(
+        project=root,
+        domain=DependencyDomain.Target,
+        features=request.features,
+        defaults=request.default_features,
+        all_features=request.all_features,
     )
-    state.reach(root)
-    declared = sorted([name for name in projects[root].intent.features.keys()])
-    if request.all_features:
-        for name in declared:
-            state.work.append(("feature", root, name))
-    elif request.default_features and "default" in declared:
-        state.work.append(("feature", root, "default"))
-    for name in request.features:
-        state.work.append(("feature", root, name))
-    mut index = 0
-    while index < len(state.work):
-        kind, owner, name = state.work[index]
-        index += 1
-        if kind == "edge":
-            state.activate_edge(owner, name)
-        else:
-            state.activate_feature(owner, name)?
-    for key in sorted([key for key in state.deferred.keys()]):
-        if key not in state.active_edges:
-            parts = key.split("\n")
-            return Err(f"{projects[parts[0]].intent.name} requests features of `{parts[1]}`, an optional dependency no active feature selects")
+    facets = local_facets(demand, target_configuration(rust_compiler(toolchain))?)?
+    # 2. Rust facets participate in activation but are not published as Incan Loaves.
+    known = [project.root for project in intake.projects]
+    mut reached: list[str] = []
     mut active: Dict[str, list[str]] = {}
-    for reached in state.reached:
-        active[reached] = sorted(state.active[reached])
-    return Ok(ActiveGraph(reached=state.reached, active=active, edges=state.edges))
+    mut edges: list[DependencyEdge] = []
+    for facet in facets:
+        if facet.domain != DependencyDomain.Target or facet.project not in known:
+            continue
+        reached.append(facet.project)
+        active[facet.project] = facet.features
+        for edge in intake.edges:
+            if edge.requester_root != facet.project:
+                continue
+            for selected in facet.local:
+                if selected.alias == edge.alias and selected.project == edge.dependency_root:
+                    edges.append(edge)
+    return Ok(ActiveGraph(reached=reached, active=active, edges=edges, facets=facets))

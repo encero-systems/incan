@@ -7,7 +7,8 @@ from std.fs import Path
 from std.json import JsonValue
 from features import ActiveGraph, FeatureRequest, resolve_features
 from home import StandardPackage, dependency_artifact_dir, standard_artifact_dir, standard_packages
-from intake import LocalIntake, LocalProject, intake
+from intake import LocalIntake, LocalProject, intake, source_root_of
+from loaf_local_graph import LocalFacet
 from toolchain import NativeCrate
 
 pub const UNIT_DESCRIPTION_SCHEMA: str = "incan.unit/1"
@@ -23,14 +24,19 @@ pub model UnitLoaf:
     # Its artifact directory for the unit's profile.
     pub dir: str
     pub standard: bool
+    # Binding provenance for owner admission; it does not change the compiler's public dependency contract.
+    pub toolchain_provided: bool = false
+    # The authored source root supplied by Oven, never inferred from the consumer's artifact layout.
+    pub source_root: Option[str] = None
 
     def to_json(self) -> JsonValue:
         """The Loaf as the description spells it."""
-        return JsonValue.object(
-            {"key": JsonValue.string(self.key), "name": JsonValue.string(self.name), "dir": JsonValue.string(self.dir), "standard": JsonValue.bool(
-                self.standard,
-            )},
-        )
+        mut fields = {"key": JsonValue.string(self.key), "name": JsonValue.string(self.name), "dir": JsonValue.string(
+            self.dir,
+        ), "standard": JsonValue.bool(self.standard)}
+        if let Some(root) = self.source_root:
+            fields["source_root"] = JsonValue.string(root)
+        return JsonValue.object(fields)
 
 
 pub model UnitDescription:
@@ -62,6 +68,8 @@ pub model UnitDescription:
     pub vocab_admissions: list[str] = []
     pub vocab_policy: str = "locked-dependencies"
     pub vocab_desugarer: bool = false
+    # Oven retains the selected graph in memory; it is not part of the compiler's unit description.
+    pub facets: list[LocalFacet] = []
 
     def to_json(self) -> JsonValue:
         """The description as the compiler reads it."""
@@ -105,21 +113,10 @@ pub def project_root_of(source: Path) -> Option[Path]:
         if directory.joinpath("loaf.toml").is_file():
             return Some(directory)
         parent = directory.parent()
-        if parent.0 == directory.0 or parent.0 == "":
+        if parent.0 == directory.0 or parent.0 in ["", "."]:
             return None
         directory = parent
     return None
-
-
-def source_root_of(project: LocalProject) -> str:
-    """The project's source root: `[build] source-root`, else `src` when it exists, else the project root."""
-    root = Path(project.root)
-    match project.intent.source_root:
-        Some(declared) => return root.joinpath(declared).0
-        None => pass
-    if root.joinpath("src").is_dir():
-        return root.joinpath("src").0
-    return root.0
 
 
 def standard_loaves(package: str, profile: str) -> Result[list[UnitLoaf], str]:
@@ -182,6 +179,7 @@ def project_unit(
             contract_models=own.intent.contract_models,
             c_headers=own.intent.c_headers,
             vocab_entry=own.intent.vocab_entry,
+            facets=active.facets,
         ),
     )
 
@@ -211,7 +209,15 @@ def project_loaves(
             continue
         dependency = projects[edge.dependency_root]
         directory = dependency_artifact_dir(artifact_root, dependency.intent.name, profile)
-        loaves.append(UnitLoaf(key=edge.alias, name=dependency.intent.name, dir=directory.0, standard=false))
+        loaves.append(
+            UnitLoaf(
+                key=edge.alias,
+                name=dependency.intent.name,
+                dir=directory.0,
+                standard=false,
+                source_root=Some(source_root_of(dependency)),
+            ),
+        )
         direct.append(edge.dependency_root)
     # 3. A transitive dependency is named by its package, since no alias of this project reaches it.
     for root in reached[1:]:
@@ -219,7 +225,15 @@ def project_loaves(
             continue
         name = projects[root].intent.name
         directory = dependency_artifact_dir(artifact_root, name, profile)
-        loaves.append(UnitLoaf(key=name, name=name, dir=directory.0, standard=false))
+        loaves.append(
+            UnitLoaf(
+                key=name,
+                name=name,
+                dir=directory.0,
+                standard=false,
+                source_root=Some(source_root_of(projects[root])),
+            ),
+        )
     # 4. Every standard package is available, except the one the unit is.
     return Ok(loaves + standard_loaves(own.intent.name, profile)?)
 

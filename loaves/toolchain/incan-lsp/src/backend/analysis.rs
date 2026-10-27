@@ -5,24 +5,40 @@ use super::*;
 
 use incan_driver::diagnostics::CliDiagnostic;
 use incan_driver::modules::collect_document_modules;
-use incan_driver::rust_abi::cached_rust_facts;
 use incan_driver::unit::UnitDescription;
 use incan_frontend::module::logical_module_segments_from_file;
 
 impl IncanLanguageServer {
     /// Analyze a document off the async workers and publish only while this request is still the latest one.
-    pub(super) async fn analyze_document(&self, uri: &Url, source: &str, version: i32) {
+    pub(super) async fn analyze_document(&self, uri: &Url, source: &str, version: i32, debounce: bool) {
         let ticket = Arc::new(());
         self.analysis_tickets
             .write()
             .await
             .insert(uri.clone(), Arc::clone(&ticket));
+        self.pending_sources
+            .write()
+            .await
+            .insert(uri.clone(), source.to_owned());
         {
             let mut documents = self.documents.write().await;
             super::graph_navigation::invalidate(uri, &mut documents);
         }
+        if debounce {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            if !self
+                .analysis_tickets
+                .read()
+                .await
+                .get(uri)
+                .is_some_and(|current| Arc::ptr_eq(current, &ticket))
+            {
+                return;
+            }
+        }
         let open_sources = self.open_sources(uri, source).await;
         let analysis_uri = uri.clone();
+        let sessions = Arc::clone(&self.analysis_sessions);
         let source = source.to_owned();
         let result = tokio::task::spawn_blocking(move || match analysis_uri.to_file_path() {
             Ok(path) => analyze(
@@ -31,6 +47,7 @@ impl IncanLanguageServer {
                 &source,
                 version,
                 &open_sources,
+                &sessions,
             ),
             Err(()) => (
                 vec![lsp_root_error_diagnostic(
@@ -77,6 +94,11 @@ impl IncanLanguageServer {
                 Some((path.canonicalize().unwrap_or(path), document.source.clone()))
             })
             .collect::<HashMap<_, _>>();
+        for (open, text) in self.pending_sources.read().await.iter() {
+            if let Ok(path) = open.to_file_path() {
+                sources.insert(path.canonicalize().unwrap_or(path), text.clone());
+            }
+        }
         if let Ok(path) = uri.to_file_path() {
             sources.insert(path.canonicalize().unwrap_or(path), source.to_string());
         }
@@ -164,14 +186,15 @@ fn analyze(
     source: &str,
     version: i32,
     open_sources: &HashMap<PathBuf, String>,
+    sessions: &std::sync::Mutex<super::analysis_cache::Sessions>,
 ) -> (Vec<Diagnostic>, Option<DocumentState>) {
     let mut diagnostics = Vec::new();
     trace_graph("describe unit");
     let session = match unit_description(path).and_then(|unit| {
-        trace_graph("prepare Rust caches");
-        let setup = cached_rust_facts(&unit)?;
-        trace_graph("open compilation session");
-        CompilationSession::new(&unit)?.with_rust_facts(&setup)
+        sessions
+            .lock()
+            .map_err(|_| incan_driver::error::CliError::failure("analysis session cache lock is poisoned"))?
+            .session(&unit)
     }) {
         Ok(session) => session,
         Err(error) => return (vec![lsp_root_error_diagnostic(error.to_string())], None),
@@ -226,7 +249,7 @@ fn analyze(
         return (diagnostics, None);
     };
     let mut related = related_declaration_sources(uri, source, &segments, &modules, path);
-    extend_package_declaration_sources(&mut related, session.loaves());
+    extend_package_declaration_sources(&mut related, session.loaves(), session.unit());
 
     // ---- Diagnostics: the document's own, and a note per imported module with errors ----
     let failures = analysis
@@ -389,9 +412,18 @@ fn related_declaration_sources(
 ///
 /// A Loaf's artifact directory is `<root>/target/incan/loaf/<profile>` (DD-0007). A Loaf without its sources adds
 /// nothing: a declaration span from its manifest is no offset into any file the editor could open.
-fn extend_package_declaration_sources(sources: &mut RelatedDeclarationSources, loaves: &LoafIndex) {
+fn extend_package_declaration_sources(
+    sources: &mut RelatedDeclarationSources,
+    loaves: &LoafIndex,
+    unit: &UnitDescription,
+) {
     for entry in loaves.entries() {
-        let Some(root) = entry.artifact.dir.ancestors().nth(4) else {
+        let Some(root) = unit
+            .loaves
+            .iter()
+            .find(|loaf| loaf.key == entry.key && loaf.name == entry.artifact.name)
+            .and_then(|loaf| loaf.source_root.as_deref())
+        else {
             continue;
         };
         let manifest = &entry.artifact.manifest;
@@ -416,11 +448,14 @@ fn extend_package_declaration_sources(sources: &mut RelatedDeclarationSources, l
     }
 }
 
-/// The source file of one Loaf module below its project root, when it is present.
+/// The source file of a published module below Oven's explicit source root, when source is available.
 fn package_source_path(root: &Path, module_path: &[String]) -> Option<PathBuf> {
+    if module_path == ["main"] && root.join("lib.incn").is_file() {
+        return root.join("lib.incn").canonicalize().ok();
+    }
     let joined = module_path
         .iter()
-        .fold(root.join("src"), |path, segment| path.join(segment));
+        .fold(root.to_path_buf(), |path, segment| path.join(segment));
     [
         joined.with_extension("incn"),
         joined.join("mod.incn"),
@@ -431,7 +466,7 @@ fn package_source_path(root: &Path, module_path: &[String]) -> Option<PathBuf> {
     .map(|path| path.canonicalize().unwrap_or(path))
 }
 
-/// The description of the unit that owns `path`, from the Oven (`incan describe-unit PATH`), which is the only reader
+/// The description of the unit that owns `path`, from Oven (`incan describe-unit PATH`), which is the only reader
 /// of project manifests (DD-0008). The `incan` beside this server answers it; the search index it names is merged.
 pub(super) fn unit_description(path: &Path) -> incan_driver::error::CliResult<UnitDescription> {
     use incan_driver::error::CliError;
@@ -448,8 +483,5 @@ pub(super) fn unit_description(path: &Path) -> incan_driver::error::CliResult<Un
             String::from_utf8_lossy(&output.stderr).trim().to_string(),
         ));
     }
-    let mut unit: UnitDescription = serde_json::from_slice(&output.stdout)
-        .map_err(|error| CliError::failure(format!("`incan describe-unit` printed no unit description: {error}")))?;
-    unit.merge_search_index()?;
-    Ok(unit)
+    UnitDescription::parse(&output.stdout, path)
 }

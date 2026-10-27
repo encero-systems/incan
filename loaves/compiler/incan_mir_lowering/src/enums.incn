@@ -1,5 +1,6 @@
 """Canonical normal-enum layouts and identity-checked native construction and pattern admission."""
 
+from table_views import borrowed_at, borrowed_table
 from rust::incan_semantics_core import IncanType as RustType
 from rust::incan_semantics_core::body_ir import (
     EnumDeclaration as RustEnumDeclaration,
@@ -21,20 +22,22 @@ from nominal_instances import nominal_symbol
 from symbols import model_symbol
 
 
-pub def enum_type(mut declarations: list[RustEnumDeclaration], ty: &RustType) -> Option[PlanType]:
+pub def enum_type(declarations: &list[RustEnumDeclaration], ty: &RustType) -> Option[PlanType]:
     """Recognize a retained source enum before the model/scalar resolver runs."""
     match ty:
         RustType.Named(name) =>
             retained_name = str(name)
             mut index = 0
-            for declaration in declarations:
+            for declaration_position in range(len(declarations)):
+                declaration = borrowed_at(declarations, declaration_position)
                 if declaration.carrier_name() == retained_name:
                     return Some(PlanType.Enum(index, model_symbol(retained_name)))
                 index += 1
         RustType.Generic(base=base, args=arguments) =>
             name = nominal_symbol(str(base), arguments.clone())
             mut index = 0
-            for declaration in declarations:
+            for declaration_position in range(len(declarations)):
+                declaration = borrowed_at(declarations, declaration_position)
                 if declaration.carrier_name() == name:
                     return Some(PlanType.Enum(index, model_symbol(name)))
                 index += 1
@@ -43,7 +46,7 @@ pub def enum_type(mut declarations: list[RustEnumDeclaration], ty: &RustType) ->
 
 
 pub def variant_index(
-    mut declarations: list[RustEnumDeclaration],
+    declarations: &list[RustEnumDeclaration],
     target: &EnumVariantTarget,
     expected: PlanType,
 ) -> Result[tuple[int, int], str]:
@@ -67,7 +70,7 @@ pub def variant_index(
 
 
 pub def unit_variant(
-    mut declarations: list[RustEnumDeclaration],
+    declarations: &list[RustEnumDeclaration],
     target: &FieldlessEnumVariantTarget,
 ) -> Result[tuple[int, int], str]:
     """Resolve the older fieldless constructor vocabulary against the same canonical layout."""
@@ -177,8 +180,8 @@ pub def validate_binding(binding: &ArgumentBinding, count: int) -> Result[None, 
 
 
 pub def native_source_type(
-    mut nominals: list[RustNominalDeclaration],
-    mut declarations: list[RustEnumDeclaration],
+    nominals: &list[RustNominalDeclaration],
+    declarations: &list[RustEnumDeclaration],
     ty: &RustType,
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
@@ -207,36 +210,24 @@ pub def lower_enum_declarations(
     path rather than a native Rust derive. Native enums retain only the checked Copy fact verified on their SDK type.
     """
     reached = serde_propagation(module)?
+    unions: list[RustType] = []
+    nominals: &list[RustNominalDeclaration] = borrowed_table(module.nominal_declarations)
+    layouts: &list[RustEnumDeclaration] = borrowed_table(module.enum_declarations)
     mut declarations: list[EnumDeclaration] = []
-    for declaration in module.enum_declarations:
+    for enum_position in range(len(module.enum_declarations)):
+        declaration = borrowed_at(module.enum_declarations, enum_position)
         mut variants: list[EnumVariant] = []
         for variant in declaration.variants:
             mut fields: list[PlanType] = []
             for ty in variant.fields:
-                fields.append(
-                    retained_source_type(
-                        list(module.nominal_declarations),
-                        list(module.enum_declarations),
-                        [],
-                        ty,
-                        intrinsics,
-                    )?,
-                )
+                fields.append(retained_source_type(nominals, layouts, unions, ty, intrinsics)?)
             variants.append(EnumVariant(name=str(variant.name), fields=fields))
         # A stdlib enum is the SDK crate's own type; its derives and storage belong to that crate.
         item = library_enum_item(declaration)
         mut native_arguments: list[PlanType] = []
         if item != "":
             for argument in declaration.native_type_arguments:
-                native_arguments.append(
-                    retained_source_type(
-                        list(module.nominal_declarations),
-                        list(module.enum_declarations),
-                        [],
-                        argument,
-                        intrinsics,
-                    )?,
-                )
+                native_arguments.append(retained_source_type(nominals, layouts, unions, argument, intrinsics)?)
         selected = with_serde_derives(declaration.derives, str(declaration.name), reached)
         mut derives: list[str] = []
         if item == "":
@@ -270,7 +261,8 @@ def value_enum_raw_values(
     """A source value enum's backing and raw values in variant order; an SDK enum keeps its serialization in its crate."""
     if library_enum_item(declaration) != "":
         return Ok(("", []))
-    for value_enum in module.value_enum_declarations:
+    for enum_position in range(len(module.value_enum_declarations)):
+        value_enum = borrowed_at(module.value_enum_declarations, enum_position)
         if value_enum.canonical != declaration.canonical:
             continue
         mut raw_values: list[str] = []
@@ -293,7 +285,7 @@ pub def enum_owner(ty: PlanType) -> Result[int, str]:
 
 
 pub def validate_unit_comparison(
-    mut declarations: list[RustEnumDeclaration],
+    declarations: &list[RustEnumDeclaration],
     left: PlanType,
     right: PlanType,
 ) -> Result[None, str]:
@@ -315,7 +307,7 @@ pub def validate_unit_comparison(
     return Ok(None)
 
 
-pub def validate_unit_ordering(mut declarations: list[RustEnumDeclaration], ty: PlanType) -> Result[None, str]:
+pub def validate_unit_ordering(declarations: &list[RustEnumDeclaration], ty: PlanType) -> Result[None, str]:
     """
     Authorize tag ordering only for a fieldless owner whose checked derives select a derived order.
 

@@ -1,9 +1,12 @@
-# behavior: a declared Rust dependency and a standard module retain their signatures in one unit
+# behavior: Rust imports admit standard, registry, rust-dependencies and sibling Rust facet origins (docs-14)
 # expect-accepted:
 
 """A unit's dependency artifacts supply the same Rust signatures as its toolchain caches."""
 
 from rust::serde_json import from_str, Error as JsonError
+from rust::json_alias import Value
+from rust::child_alias import MARKER
+from rust::std::convert import identity
 from std.testing import assert_eq
 
 
@@ -15,3 +18,5 @@ def parse(text: str) -> Result[int, JsonError]:
 def main() -> None:
     """Check the standard package beside the imported Rust function."""
     assert_eq(7, 7)
+    assert_eq(identity(MARKER), 42)
+    value = Value.Null

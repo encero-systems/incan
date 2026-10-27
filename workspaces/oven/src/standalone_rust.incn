@@ -1,9 +1,9 @@
 """Bind standalone source imports to exact compiled registry Loaves before checking their Rust items."""
 
-from rust::std::process import Command
 from std.fs import Path
 from std.json import JsonValue
 from files import make_directory, parse_json, write
+from driver_command import driver_command
 from home import standard_packages
 from json_fields import array, field, required_text, strings
 from loaf_local_graph import unique
@@ -43,7 +43,7 @@ def source_requests(unit: UnitDescription, toolchain: Toolchain) -> Result[list[
     make_directory(directory)?
     path = directory.joinpath(f"{unit.package}.imports.unit.json")
     write(path, unit.to_json().to_pretty_json().map_err((error) => error.message())?)?
-    mut command: Command = Command.new(toolchain.driver)
+    mut command = driver_command(toolchain)?
     command.arg("--rust-imports")
     command.arg(path.0)
     output = command.output().map_err((error) => error.to_string())?

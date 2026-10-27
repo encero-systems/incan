@@ -81,9 +81,9 @@ pub(crate) fn collect_incan_source_files_with_directories(
         if file_type.is_dir() {
             let name = entry.file_name();
             let name = name.to_str().unwrap_or("");
-            // Broad source collection is used for package libraries and generated test batches. Compiler, editor,
-            // and user tools all place non-source state below hidden directories; treating that state as an Incan
-            // module can emit invalid Rust such as `pub mod .incan;`.
+            // Broad source collection is used for package libraries and test units. Compiler, editor and user tools
+            // all place non-source state below hidden directories, and a directory such as `.incan` is no valid
+            // module name.
             if !name.starts_with('.') && name != "target" && name != "node_modules" {
                 collect_incan_source_files_with_directories(&entry.path(), files, directories, contains_symlinks)?;
             }

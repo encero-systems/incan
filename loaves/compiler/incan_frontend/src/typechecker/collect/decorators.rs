@@ -64,6 +64,37 @@ struct CBindingMembers {
     structs: Vec<CBindingStruct>,
 }
 
+/// Why a written decorator argument cannot become the literal value an attribute macro receives.
+enum NativeAttributeRefusal {
+    /// An expression form an attribute macro does not receive.
+    Expression,
+    /// A name bound to a value without a scalar constant form, such as a list constant.
+    NonScalarBinding(String),
+}
+
+impl NativeAttributeRefusal {
+    /// The diagnostic for this refusal at one attribute macro's decorator.
+    fn error(&self, macro_path: &str, span: Span) -> CompileError {
+        match self {
+            Self::Expression => errors::native_attribute_argument_unsupported(macro_path, span),
+            Self::NonScalarBinding(name) => errors::native_attribute_argument_not_scalar(macro_path, name, span),
+        }
+    }
+}
+
+/// Whether a value of this type has a scalar literal form an attribute macro can receive.
+fn is_scalar_attribute_type(ty: &ResolvedType) -> bool {
+    matches!(
+        ty,
+        ResolvedType::Str
+            | ResolvedType::FrozenStr
+            | ResolvedType::Int
+            | ResolvedType::Float
+            | ResolvedType::Bool
+            | ResolvedType::Numeric(_)
+    )
+}
+
 /// Resolve a decorator path to a module path.
 pub(in crate::typechecker) fn resolve_decorator_path(dec: &Decorator, symbols: &SymbolTable) -> Vec<String> {
     decorator_resolution::resolve_decorator_path(dec, symbols)
@@ -168,10 +199,9 @@ impl TypeChecker {
             let mut arguments = Vec::new();
             for argument in &decorator.node.args {
                 match self.native_attribute_argument(argument) {
-                    Some(argument) => arguments.push(argument),
-                    None => {
-                        self.errors
-                            .push(errors::native_attribute_argument_unsupported(&path, decorator.span));
+                    Ok(argument) => arguments.push(argument),
+                    Err(refusal) => {
+                        self.errors.push(refusal.error(&path, decorator.span));
                         return;
                     }
                 }
@@ -186,45 +216,65 @@ impl TypeChecker {
         }
     }
 
-    /// One written decorator argument as the literal value an attribute macro receives, or `None` for an expression.
-    fn native_attribute_argument(&self, argument: &DecoratorArg) -> Option<NativeAttributeArgument> {
+    /// One written decorator argument as the literal value an attribute macro receives.
+    fn native_attribute_argument(
+        &self,
+        argument: &DecoratorArg,
+    ) -> Result<NativeAttributeArgument, NativeAttributeRefusal> {
         let (name, value) = match argument {
             DecoratorArg::Positional(value) => (None, value),
             DecoratorArg::Named(name, DecoratorArgValue::Expr(value)) => (Some(name.clone()), value),
-            DecoratorArg::Named(_, DecoratorArgValue::Type(_)) => return None,
+            DecoratorArg::Named(_, DecoratorArgValue::Type(_)) => return Err(NativeAttributeRefusal::Expression),
         };
-        Some(NativeAttributeArgument {
+        Ok(NativeAttributeArgument {
             name,
             value: self.native_attribute_value(&value.node)?,
         })
     }
 
-    /// A literal, a constant with a literal value, or a list of them.
-    ///
-    /// An identifier that is not a constant with a known value stands for its own name, the spelling a hand-written
-    /// attribute uses for a method set such as `methods=[GET]`.
-    fn native_attribute_value(&self, expression: &Expr) -> Option<NativeAttributeValue> {
+    /// A literal, a scalar constant's value, a name (see [`Self::native_attribute_name`]), or a list of them.
+    fn native_attribute_value(&self, expression: &Expr) -> Result<NativeAttributeValue, NativeAttributeRefusal> {
         match expression {
-            Expr::Literal(Literal::String(text)) => Some(NativeAttributeValue::Text(text.clone())),
-            Expr::Literal(Literal::Int(value)) => Some(NativeAttributeValue::Int(value.value)),
-            Expr::Literal(Literal::Float(value)) => Some(NativeAttributeValue::Float(value.value)),
-            Expr::Literal(Literal::Bool(value)) => Some(NativeAttributeValue::Bool(*value)),
-            Expr::Ident(name) => Some(match self.type_info.const_value(name) {
-                Some(ConstValue::FrozenStr(text)) => NativeAttributeValue::Text(text.clone()),
-                Some(ConstValue::Int(value)) => NativeAttributeValue::Int(*value),
-                Some(ConstValue::Float(value)) => NativeAttributeValue::Float(*value),
-                Some(ConstValue::Bool(value)) => NativeAttributeValue::Bool(*value),
-                _ => NativeAttributeValue::Text(name.clone()),
-            }),
+            Expr::Literal(Literal::String(text)) => Ok(NativeAttributeValue::Text(text.clone())),
+            Expr::Literal(Literal::Int(value)) => Ok(NativeAttributeValue::Int(value.value)),
+            Expr::Literal(Literal::Float(value)) => Ok(NativeAttributeValue::Float(value.value)),
+            Expr::Literal(Literal::Bool(value)) => Ok(NativeAttributeValue::Bool(*value)),
+            Expr::Ident(name) => self.native_attribute_name(name),
             Expr::List(entries) => entries
                 .iter()
                 .map(|entry| match entry {
                     ListEntry::Element(value) => self.native_attribute_value(&value.node),
-                    _ => None,
+                    _ => Err(NativeAttributeRefusal::Expression),
                 })
-                .collect::<Option<Vec<_>>>()
+                .collect::<Result<Vec<_>, _>>()
                 .map(NativeAttributeValue::List),
+            _ => Err(NativeAttributeRefusal::Expression),
+        }
+    }
+
+    /// One written name as an attribute macro value.
+    ///
+    /// A constant with a scalar value gives that value. A name no value binds stands for its own spelling, the one a
+    /// hand-written attribute uses for a method set such as `methods=[GET]`; so does a scalar-typed value whose
+    /// constant value this module does not hold, such as an imported `GET`. A name bound to any other value, such as
+    /// a list constant, has no literal form and is refused rather than passed on as its own name.
+    fn native_attribute_name(&self, name: &str) -> Result<NativeAttributeValue, NativeAttributeRefusal> {
+        match self.type_info.const_value(name) {
+            Some(ConstValue::FrozenStr(text)) => return Ok(NativeAttributeValue::Text(text.clone())),
+            Some(ConstValue::Int(value)) => return Ok(NativeAttributeValue::Int(*value)),
+            Some(ConstValue::Float(value)) => return Ok(NativeAttributeValue::Float(*value)),
+            Some(ConstValue::Bool(value)) => return Ok(NativeAttributeValue::Bool(*value)),
+            Some(ConstValue::FrozenBytes(_)) => return Err(NativeAttributeRefusal::NonScalarBinding(name.to_owned())),
+            None => {}
+        }
+        let bound_type = self.lookup_symbol(name).and_then(|symbol| match &symbol.kind {
+            SymbolKind::Variable(info) => Some(&info.ty),
+            SymbolKind::Static(info) => Some(&info.ty),
             _ => None,
+        });
+        match bound_type {
+            Some(ty) if !is_scalar_attribute_type(ty) => Err(NativeAttributeRefusal::NonScalarBinding(name.to_owned())),
+            _ => Ok(NativeAttributeValue::Text(name.to_owned())),
         }
     }
 

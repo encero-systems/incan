@@ -12,6 +12,7 @@ from rust::std::string import String as RustString
 from std.fs import Path
 from std.io import BytesIO
 from std.json import JsonValue, parse
+from files import optional_text as string
 
 
 pub def start(binary: str, project: Path, arguments: list[str] = [], framing: str = "lsp") -> Result[Peer, str]:
@@ -104,7 +105,7 @@ pub class Peer:
         return Err("LSP did not publish this live snapshot's diagnostics")
 
     def receive(mut self) -> Result[JsonValue, str]:
-        """Read exact byte buffers without the frozen emitter's unsupported nested line-reader type."""
+        """Read one frame: a JSONL line, or an LSP header byte by byte and then exactly its `Content-Length` payload."""
         if self.framing == "jsonl":
             return self.receive_line()
         mut header = ""
@@ -165,10 +166,3 @@ pub def decode(value: bytes) -> Result[str, str]:
     match RustString.from_utf8(value):
         Ok(text) => return Ok(str(text))
         Err(_) => return Err("protocol output is not UTF-8")
-
-
-def string(value: JsonValue, key: str) -> str:
-    """Read an optional protocol label without inventing an absent field."""
-    match value.get(key):
-        Some(item) => return item.as_str().unwrap_or("")
-        None => return ""

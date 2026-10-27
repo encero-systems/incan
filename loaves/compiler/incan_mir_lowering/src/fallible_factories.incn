@@ -7,14 +7,29 @@ from rust::incan_semantics_core import (
     SymbolNamespace,
 )
 from rust::incan_semantics_core::body_ir import BodyIrModule, MethodTarget, NominalDeclaration
-from pub::incan_mir_plan import PlanType, EnumDeclaration, ModelDeclaration, ExternalFunction, Function, Local, Operand, OperandKind, Callee, CalleeKind, TerminatorKind, Unwind, Statement
+from pub::incan_mir_plan import (
+    PlanType,
+    EnumDeclaration,
+    ModelDeclaration,
+    ExternalFunction,
+    Function,
+    Local,
+    Operand,
+    OperandKind,
+    Callee,
+    CalleeKind,
+    TerminatorKind,
+    Unwind,
+    Statement,
+)
 from pub::incan_mir_plan import block as plan_block, place as plan_place
 from classes import function_name
 from fallible_methods import standard_protocol
 from trait_links import contains
 from nominal_instances import instance_arguments
 from decls import library_item
-from unions import native_source_type, collect_unions
+from layout_types import native_source_type
+from unions import collect_unions
 
 
 pub model NativeFactory:
@@ -42,8 +57,12 @@ pub def fallible_factory(
             match result:
                 PlanType.Model(owner, _name) =>
                     declaration = module.nominal_declarations[owner]
-                    if library_item(declaration) == "" or declaration.canonical.origin != slot.origin or declaration.canonical.declaration_name != carrier:
-                        return Err("unsupported Body IR standard factory without its canonical SDK result")
+                    if (
+                        library_item(declaration) == ""
+                        or declaration.canonical.origin != slot.origin
+                        or declaration.canonical.declaration_name != carrier
+                    ):
+                        return Err("the standard library factory has no checked canonical result type")
                     if not concrete_return(module, slot, declaration):
                         return Ok(None)
                     mut arguments: list[PlanType] = []
@@ -147,15 +166,27 @@ pub def retain_factory_callable_storage(
                         if owner < 0 or owner >= len(models):
                             return Err("invalid Body IR fallible error-map return owner")
                         carrier = models[owner]
-                        if carrier.name != name or carrier.library_item != "incan_stdlib_core::derives::collection::MapErrFallibleIterator":
+                        if (
+                            carrier.name != name
+                            or carrier.library_item != "incan_stdlib_core::derives::collection::MapErrFallibleIterator"
+                        ):
                             return Err("unsupported Body IR fallible error-map return identity")
                         if carrier.library_type_arguments != external.type_arguments:
                             return Err("unsupported Body IR fallible error-map return arguments")
-                        if external.type_arguments[4] != PlanType.FunctionPointer(signature) or external.type_arguments[1] != signature[0] or external.type_arguments[3] != signature[1]:
+                        if (
+                            external.type_arguments[4] != PlanType.FunctionPointer(signature)
+                            or external.type_arguments[1] != signature[0]
+                            or external.type_arguments[3] != signature[1]
+                        ):
                             return Err("unsupported Body IR fallible error-map callback identity")
                         if external.type_arguments[2] != external.parameters[0] or len(carrier.fields) != 5:
                             return Err("unsupported Body IR fallible error-map source identity")
-                        if carrier.fields[0].name != "source" or carrier.fields[0].ty != external.parameters[0] or carrier.fields[1].name != "f" or carrier.fields[1].ty != PlanType.FunctionPointer(signature):
+                        if (
+                            carrier.fields[0].name != "source"
+                            or carrier.fields[0].ty != external.parameters[0]
+                            or carrier.fields[1].name != "f"
+                            or carrier.fields[1].ty != PlanType.FunctionPointer(signature)
+                        ):
                             return Err("unsupported Body IR fallible error-map callback field")
                         for prior in selected:
                             if prior.owner == owner and prior.signature != signature:
@@ -168,7 +199,10 @@ pub def retain_factory_callable_storage(
         owner = storage.owner
         signature = storage.signature
         for external in externals:
-            if external.path == "incan_native_runtime::fallible_map_err" and external.return_type == PlanType.Model(owner, models[owner].name):
+            if (
+                external.path == "incan_native_runtime::fallible_map_err"
+                and external.return_type == PlanType.Model(owner, models[owner].name)
+            ):
                 if external.parameters[1] != PlanType.SharedCallable(signature):
                     return Err("unsupported Body IR mixed fallible callback storage")
     for storage in selected:
@@ -177,10 +211,18 @@ pub def retain_factory_callable_storage(
         models[owner].library_type_arguments[4] = PlanType.SharedCallable(signature)
         models[owner].fields[1].ty = PlanType.SharedCallable(signature)
         for index in range(len(externals)):
-            if externals[index].path == "incan_native_runtime::fallible_map_err" and externals[index].return_type == PlanType.Model(owner, models[owner].name):
+            if (
+                externals[index].path == "incan_native_runtime::fallible_map_err"
+                and externals[index].return_type == PlanType.Model(owner, models[owner].name)
+            ):
                 previous_arguments = externals[index].type_arguments.clone()
                 externals[index].type_arguments[4] = PlanType.SharedCallable(signature)
-                retain_factory_call_arguments(functions, externals[index].path, previous_arguments, externals[index].type_arguments)
+                retain_factory_call_arguments(
+                    functions,
+                    externals[index].path,
+                    previous_arguments,
+                    externals[index].type_arguments,
+                )
         retain_shared_factory_poll(module, models, owner, functions, externals)?
     return Ok(None)
 
@@ -200,12 +242,19 @@ def retain_shared_factory_poll(
     for body in module.bodies:
         match body.canonical:
             Some(identity) =>
-                if identity.origin != declaration.canonical.origin or identity.declaration_name != "__next__" or identity.kind != SemanticSourceTargetKind.Method or identity.namespace != SymbolNamespace.Member:
+                if (
+                    identity.origin != declaration.canonical.origin
+                    or identity.declaration_name != "__next__"
+                    or identity.kind != SemanticSourceTargetKind.Method
+                    or identity.namespace != SymbolNamespace.Member
+                ):
                     continue
-                if identity.declaration_span.start < declaration.canonical.declaration_span.start or identity.declaration_span.end > declaration.canonical.declaration_span.end:
+                if (
+                    identity.declaration_span.start < declaration.canonical.declaration_span.start
+                    or identity.declaration_span.end > declaration.canonical.declaration_span.end
+                ):
                     continue
-            None =>
-                continue
+            None => continue
         name = function_name(module, body)
         for index in range(len(functions)):
             if functions[index].name != name:
@@ -217,7 +266,11 @@ def retain_shared_factory_poll(
             if original.is_async or original.future_callee != None or len(body.params) != 1:
                 return Err("unsupported Body IR shared factory poll signature")
             span = original.span
-            arguments = [models[owner].library_type_arguments[0], models[owner].library_type_arguments[3], PlanType.Model(owner, models[owner].name)]
+            arguments = [
+                models[owner].library_type_arguments[0],
+                models[owner].library_type_arguments[3],
+                PlanType.Model(owner, models[owner].name),
+            ]
             path = "incan_native_runtime::fallible_next"
             invocation = TerminatorKind.Call(
                 Callee(kind=CalleeKind.Instantiated(path, arguments), span=span),
@@ -234,7 +287,15 @@ def retain_shared_factory_poll(
                 blocks=[plan_block([], invocation, span), plan_block([], TerminatorKind.Return, span)],
                 span=span,
             )
-            externals.append(ExternalFunction(path=path, type_arguments=arguments, parameters=[reference], return_type=original.return_type, span=span))
+            externals.append(
+                ExternalFunction(
+                    path=path,
+                    type_arguments=arguments,
+                    parameters=[reference],
+                    return_type=original.return_type,
+                    span=span,
+                ),
+            )
             found = true
     if not found:
         return Err("unsupported Body IR missing authenticated shared factory poll")

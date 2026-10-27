@@ -1,10 +1,11 @@
 """Read dependency Loaf graphs and export only the selected project's own Rust units."""
 
-from rust::std::process import Command, id
+from rust::std::process import id
 from rust::std::time import Instant
 from std.fs import Path
 from features import FeatureRequest
 from files import remove
+from driver_command import driver_command
 from graph_cache import GraphUnit, cache_file, is_unchecked, publish_unchecked, tree_inputs
 from graph_dependencies import GraphDependencies, prepare_graph
 from graph_loaves import registry_artifacts, registry_graphs, standard_graphs
@@ -15,6 +16,7 @@ from rust_activation import DependencyDomain
 from rust_units import (
     RustFacet,
     binary_environment,
+    binary_arguments,
     decoded,
     library_arguments,
     linking,
@@ -163,10 +165,7 @@ def binary_graph(
     graph = cache_file(root, fingerprint(keyed + tree_inputs(root)?)?)?
     if not graph.is_file() and not is_unchecked(graph):
         crate_id = name.replace("-", "_")
-        mut arguments = [source, "--crate-name", crate_id, "--crate-type", "bin", "--edition", declared.edition]
-        arguments = arguments + linking(facet, prepared.request, prepared.built, search)?
-        if facet.key() in prepared.built:
-            arguments = arguments + ["--extern", f"{declared.crate_name}={prepared.built[facet.key()].artifact}"]
+        arguments = binary_arguments(name, source, facet, declared, prepared.request, prepared.built, search)?
         environment = binary_environment(prepared.request.rustc, facet.project, declared, crate_id)?
         observe(graph, facet, f"{declared.package}:{name}", arguments, environment, declared.unstable, toolchain)?
     return Ok(GraphUnit(path=graph, root=root, source_root=root.0))
@@ -193,8 +192,7 @@ def observe(
     """
     # 1. The driver analyzes the unit with its own environment and arguments, writing beside the graph's final name.
     output = Path(f"{path.0}.{id()}.analysis")
-    mut command = Command.new(toolchain.driver)
-    command.env_remove("RUSTC_BOOTSTRAP")
+    mut command = driver_command(toolchain)?
     if unstable:
         command.env("RUSTC_BOOTSTRAP", "1")
     for name in sorted([key for key in environment.keys()]):

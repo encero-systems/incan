@@ -11,7 +11,7 @@ from rust::incan_semantics_core::body_ir import (
     Operand as RustOperand,
 )
 from pub::incan_mir_plan import Operand, OperandKind, Constant, PlanType, SourceSpan, Local
-from unions import native_source_type
+from layout_types import native_source_type
 from frame import literal
 from lowering import BodyIrModule, call_argument_operand, lower_statement, list_root_place
 from frame import Builder, drop_owned

@@ -18,5 +18,5 @@ pub use miette::IncanDiagnostic;
 pub use stable::{
     DIAGNOSTIC_SCHEMA_VERSION, DiagnosticCatalogEntry, DiagnosticOrigin, DiagnosticPhase, DiagnosticRelatedDeclaration,
     DiagnosticRelatedSpan, StableDiagnostic, catalog_entries, code_for_error, explain, phase_for_typecheck_span,
-    stable_diagnostic,
+    position_for_offset, stable_diagnostic,
 };

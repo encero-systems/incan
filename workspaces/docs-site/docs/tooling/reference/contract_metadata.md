@@ -27,6 +27,16 @@ Duplicate logical names, stable IDs, field names or aliases are refused. Empty a
 
 Declared bundles contribute public model declarations before source checking. Constructors, field access, JSON aliases and field reflection use the declared model fields. A model name colliding with another visible declaration or bundle is refused.
 
-## CLI availability
+`incan describe-unit PATH` reports the declared bundle paths as `contract_models`.
 
-Dev.8 exposes no `incan tools metadata model` projection or artifact-inspection command. Model-bundle paths appear in `incan describe-unit PATH`. Source diagnostics use `incan check PATH --format json`.
+## LSP command
+
+`incan-lsp` serves the `workspace/executeCommand` command `incan.metadata.model.emit`. Its arguments are one object, or the positional array `[URI_OR_PATH, MODEL, FORMAT]` with `FORMAT` optional.
+
+| Argument | Contract |
+| --- | --- |
+| `uri` or `path` | A `file:` URI or path naming a project directory, a source file in a project, a bundle JSON file or a `.incnlib` artifact. |
+| `model` | A bundle's `logical_type_name` or `stable_model_id`. |
+| `format` | `incan` (default) or `json`. |
+
+The result is an object with `format`, `model`, `stableModelId` and either `source` for `incan` or `bundle` for `json`. Invalid arguments, an unknown format or model, and an `.incnlib` without model bundles return an object with an `error` string.

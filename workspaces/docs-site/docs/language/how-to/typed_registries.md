@@ -122,7 +122,7 @@ Use this sequence when a library currently registers functions through its own d
 5. Replace runtime enumeration with `loaded_entries()` where process-local behavior is intended.
 6. Replace source scanning or documentation extraction with checked codegraph records.
 7. Remove the old mutable or queued registry. Keeping it as a fallback would create two authorities that can disagree.
-8. Test direct imports, facade reexports, package consumers, compiled test batches, inspection JSON, and generated Rust.
+8. Test direct imports, facade reexports, package consumers, tests and codegraph records.
 
 Dynamic-only registration may remain custom when entries genuinely depend on runtime values. Document that such a catalog has no complete static projection rather than presenting it as equivalent to `std.registry`.
 
@@ -135,7 +135,6 @@ Dynamic-only registration may remain custom when entries genuinely depend on run
 | Descriptor is not structural | Add `@derive(Descriptor)` and remove mutable containers, functions, Rust handles, open generics, or recursive descriptor graphs. |
 | Subject kind is rejected | Add the required `SubjectKind` to `Registry.define(...)` or choose the correct registry. |
 | Duplicate key is rejected | Give each entry a unique typed key within that registry. Reexports do not require a new entry. |
-| Dependency registry is missing | Rebuild the dependency with an SDK that publishes RFC 113 metadata; older `.incnlib` artifacts do not contain the projection. |
-| Selector is ambiguous | Use `package::module::registry` instead of the shorter module-local identity. |
+| Dependency registry is missing | Rebuild the dependency with the installed toolchain; older `.incnlib` artifacts do not contain the registry projection. |
 
 For the complete type and JSON contracts, see the [`std.registry` reference](../reference/stdlib/registry.md). For the design boundary between loaded and checked views, see [Checked catalogs and loaded registries](../explanation/checked_and_loaded_registries.md).

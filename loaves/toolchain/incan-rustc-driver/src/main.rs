@@ -26,6 +26,8 @@ mod checked_json;
 mod cloneable_closures;
 mod closures;
 mod codegraph;
+mod command_diagnostics;
+mod command_format;
 mod comparison_bridges;
 mod coroutines;
 mod declarations;
@@ -71,19 +73,20 @@ mod zip_carriers;
 
 use std::path::Path;
 
-use incan_cli::commands::DiagnosticOutputFormat;
+use command_diagnostics::DiagnosticOutputFormat;
 use incan_driver::unit::UnitDescription;
 
 /// The receipt `--check --certify PATH` writes when unchanged inputs reproduce the check's exact report.
 const CHECK_CERTIFICATE: &str = "incan.compiler-check/1\n";
 
 const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [OPTIONS] | \
-                     --check UNIT SYSROOT [--format text|json] [--certify PATH] [OPTIONS] | --fmt UNIT PATH [--check] | --rust-imports UNIT | --codegraph UNIT SYSROOT OUTPUT | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --identity SYSROOT\n\
-                     OPTIONS: --rustc-arg ARG, --library (native artifacts and ABI caches come from UNIT)";
+                     --check UNIT SYSROOT [--format text|json] [--certify PATH] [OPTIONS] | --fmt UNIT PATH [--check] | --source-files PATH | --rust-imports UNIT | --codegraph UNIT SYSROOT OUTPUT [INTERFACE] | --read-codegraph GRAPH ROOT GROUP [FIELDS_JSON] | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-compile-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --resident SOCKET GENERATION READY IDLE_SECONDS | --identity SYSROOT\n\
+                     OPTIONS: --rustc-arg ARG, --library, --shared-native DIR (native artifacts and ABI caches come from UNIT)";
 
-/// Compile an Incan unit (`--unit`) or check one (`--check`), each from the unit description Oven wrote, or write the
-/// ABI cache of Rust crates (`--rust-abi`), format source with the unit's vocabulary (`--fmt`), or export checked
-/// graphs (`--codegraph` and `--rust-codegraph`).
+/// Compile an Incan unit (`--unit`, or serially from a `--resident` worker) or check one (`--check`), each from the
+/// unit description Oven wrote, or write the ABI cache of Rust crates (`--rust-abi`), format source with the unit's
+/// vocabulary (`--fmt`), discover authored files (`--source-files`), or export and read checked graphs (`--codegraph`,
+/// `--read-codegraph`, `--rust-codegraph` and `--rust-compile-codegraph`).
 ///
 /// The shared opt-in invocation sink is initialized before dispatch; disabled tracing uses the ordinary logging filter.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -95,6 +98,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("--unit") => frontend::compile(&args[1..]),
         Some("--check") => exit_with(check(&args[1..])?),
         Some("--fmt") => exit_with(format(&args[1..])?),
+        Some("--source-files") => {
+            let [path] = &args[1..] else {
+                return Err(USAGE.into());
+            };
+            let path = std::path::absolute(path)?;
+            let files = command_format::source_files(&path).map_err(|error| error.message)?;
+            println!("{}", serde_json::to_string(&files)?);
+            Ok(())
+        }
         Some("--codegraph") => codegraph::incan(&args[1..]),
         Some("--read-codegraph") => codegraph::read(&args[1..]),
         Some("--rust-codegraph") => rust_codegraph::export(&args[1..]),
@@ -126,7 +138,7 @@ fn exit_with(code: i32) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Print a failed command's message to stderr and return its status; a command that succeeded has status zero.
-fn status_of<T>(result: incan_cli::CliResult<T>) -> i32 {
+fn status_of<T>(result: incan_driver::error::CliResult<T>) -> i32 {
     match result {
         Ok(_) => 0,
         Err(error) => {
@@ -150,7 +162,7 @@ pub(crate) fn format(arguments: &[String]) -> Result<i32, Box<dyn std::error::Er
         _ => return Err("usage: incan-rustc-driver --fmt UNIT PATH [--check]".into()),
     };
     let unit = UnitDescription::read(Path::new(unit_path)).map_err(|error| error.message)?;
-    let formatted = incan_cli::commands::format_files(source, &unit, check, false);
+    let formatted = command_format::format_files(source, &unit, check);
     Ok(status_of(formatted))
 }
 
@@ -209,7 +221,7 @@ pub(crate) fn check(arguments: &[String]) -> Result<i32, Box<dyn std::error::Err
     let rust = frontend::dependencies(&unit, options)?.rust_facts(&unit, Path::new(sysroot));
     let checked = incan_driver::check::check_unit(&unit, &rust);
     let reproducible = checked.as_ref().is_ok_and(|report| report.reproducible);
-    let status = status_of(checked.and_then(|report| incan_cli::commands::render_check_report(report, format)));
+    let status = status_of(checked.and_then(|report| command_diagnostics::render_check_report(report, format)));
     if reproducible && let Some(certificate) = certificate {
         // A receipt that cannot be written only means the next unchanged check runs again.
         let _ = std::fs::write(certificate, CHECK_CERTIFICATE);

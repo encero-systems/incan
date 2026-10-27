@@ -1,0 +1,15 @@
+# behavior: graph inspection checks a consumer of an always-on vocabulary through its prepared registration
+# graph-commands:
+#   src/main.incn --query defs main
+# expect-stdout-contains:
+#   declaration main src/main.incn:10
+
+from provider import helper
+
+
+def main() -> None:
+    """Expand the registered query while retaining the ordinary library binding."""
+    value = query:
+        FROM helper()
+    println(value)
+    println(helper())

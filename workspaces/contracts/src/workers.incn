@@ -24,6 +24,8 @@ pub model Invocation:
     pub after: Option[int] = None
     # Optional scheduling evidence from another scratch directory; it never authorizes compilation reuse.
     pub duration_hint: int = 0
+    # `NAME=value` settings a project case's `environment:` block adds to this command's inherited environment.
+    pub environment: list[str] = []
 
 
 model Started:
@@ -71,7 +73,7 @@ pub def invoke_many(requests: list[Invocation], jobs: int) -> list[Result[Outcom
             index = pool_ready[next]
             request = requests[index]
             clock = Instant.now()
-            match launch(request.program, request.arguments, request.project, request.selector):
+            match launch(request.program, request.arguments, request.project, request.selector, request.environment):
                 Err(error) => record_failure(index, error)
                 Ok(child) =>
                     handle = Rc.new(RefCell.new(child))

@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use sha2::{Digest, Sha256};
 
 use crate::ast::{Expr, ParamKind, Span, Spanned, Visibility};
-use crate::library_exports::{CheckedParamDefault, CheckedPresetValue};
+use crate::library_exports::CheckedParamDefault;
 use crate::symbols::{
     CallableParam, ClassInfo, FunctionOverloadInfo, ImplementationTypeParamInfo, MethodInfo,
     NewtypePrimitiveConstraint, ResolvedType, TypeBoundInfo,
@@ -70,8 +70,6 @@ pub struct TypeCheckInfo {
     pub registry: RegistryArtifacts,
     /// Call-site semantic decisions selected by the typechecker.
     pub calls: CallArtifacts,
-    /// Test-runner and fixture metadata extracted during typechecking.
-    pub testing: TestingArtifacts,
     /// Custom protocol decisions that lower into explicit runtime calls.
     pub protocols: ProtocolArtifacts,
     /// Checked C ABI declaration facts consumed by verification and code generation.
@@ -143,16 +141,6 @@ pub struct CAbiInteropArtifacts {
     pub enum_accesses: Vec<CBindingEnumAccess>,
     /// Folded C enum values keyed by `(binding, enum, variant)` after Clang verification.
     pub enum_values: HashMap<(String, String, String), i64>,
-    /// Whether source lowering requires the compiler-private checked C string constructor.
-    pub uses_checked_c_strings: bool,
-    /// Whether source lowering requires the compiler-private bounded scoped C string copy helper.
-    pub uses_scoped_c_string_views: bool,
-    /// Whether source lowering requires a compiler-private checked caller-owned span finish helper.
-    pub uses_checked_c_span_buffers: bool,
-    /// Checked constructors that move owned Incan storage into opaque typed C bridge carriers.
-    pub spans: Vec<CAbiSpan>,
-    /// Checked bridge operations admitted on those opaque typed carriers.
-    pub span_accesses: Vec<CAbiSpanAccess>,
 }
 
 /// One checked C bridge call, retained before its source method spelling is erased.
@@ -173,41 +161,6 @@ pub struct CAbiSpanKind {
     pub element: ScalarTypeId,
     /// Whether this is an immutable input view or a caller-owned mutable output buffer.
     pub mutable: bool,
-}
-
-/// One checked source constructor for an opaque typed span carrier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CAbiSpan {
-    /// Full source range of a compiler-owned `c.*_span(...)` constructor.
-    pub constructor_span: Span,
-    /// Exact scalar representation and mutability selected by the constructor/typechecker.
-    pub kind: CAbiSpanKind,
-}
-
-/// One of the closed bridge operations admitted on a checked typed span carrier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CAbiSpanAccessKind {
-    /// Extract an immutable typed pointer only for a declared raw binding call.
-    ConstPointer,
-    /// Read the exact immutable element count that is paired with `ConstPointer`.
-    ElementCount,
-    /// Extract a mutable typed pointer only for a declared raw binding call.
-    MutPointer,
-    /// Read the exact mutable element capacity paired with `MutPointer`.
-    ElementCapacity,
-    /// Validate a foreign written element count and return the existing caller-owned allocation.
-    Finish,
-}
-
-/// A successful source bridge operation retained for lowering rather than rediscovered from AST spelling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CAbiSpanAccess {
-    /// Full source range of the method call.
-    pub span: Span,
-    /// Carrier representation selected by the constructor/typechecker.
-    pub span_kind: CAbiSpanKind,
-    /// Exact bridge action authorized at this source location.
-    pub access: CAbiSpanAccessKind,
 }
 
 /// Compiler-known callable body that owns one direct native call.
@@ -697,10 +650,10 @@ pub struct TraitArtifacts {
     ///
     /// A consumer still requires that body's executable representation; this fact never supplies a missing body.
     pub default_method_identities: HashSet<CanonicalSymbolId>,
-    /// Visible trait slots declared by the active compiled SDK providers, including through aliases and facades.
+    /// Visible trait slots the standard packages declare, including through aliases and facades.
     ///
     /// Their protocol contracts do not imply executable source bodies among the project's modules.
-    pub sdk_method_identities: HashSet<CanonicalSymbolId>,
+    pub standard_method_identities: HashSet<CanonicalSymbolId>,
     /// Checked trait slots selected by calls on an open `Self` receiver, keyed by the whole call span.
     ///
     /// Body IR retains these declaration identities for concrete specialization. They remain separate from ordinary
@@ -716,14 +669,6 @@ pub struct TraitArtifacts {
     /// Declared parameters of the same slots, keyed by the whole call span, so Body IR binds the call's arguments to
     /// the slot's declaration as it binds any checked call; no legacy route reads it.
     pub self_method_params: HashMap<crate::ast::Span, Vec<CallableParam>>,
-    /// The active SDK provider's identity of a standard-library trait slot whose call resolved through the stdlib
-    /// source cache, keyed by the whole call span.
-    ///
-    /// A supertrait the program does not import resolves its slots from the stdlib source, so the call's resolved
-    /// identity names the source module (`std.derives.comparison`) while the program's other slots, and the bodies the
-    /// SDK publishes, carry the provider's package identity. Body IR names the call by the provider identity recorded
-    /// here; the resolved identity, which legacy reads, is unchanged.
-    pub provider_slot_identities: HashMap<crate::ast::Span, CanonicalSymbolId>,
     /// Compiler-owned requirements inferred for otherwise unresolved calls on rigid declaration parameters. Only
     /// Body IR consumes these span-keyed targets; legacy call identities and explicit bound selections stay intact.
     pub inferred_method_identities: HashMap<crate::ast::Span, CanonicalSymbolId>,
@@ -739,8 +684,8 @@ pub struct TraitArtifacts {
 }
 
 impl TraitArtifacts {
-    /// Whether a visible trait name resolves to a standard-library or compiled SDK protocol: the checker recorded slots
-    /// for it, and every one carries such an identity.
+    /// Whether a visible trait name resolves to a standard-package protocol: the checker recorded slots for it, and
+    /// every one carries such an identity.
     pub fn is_standard_trait(&self, name: &str) -> bool {
         let mut slots = self
             .method_identities
@@ -750,10 +695,9 @@ impl TraitArtifacts {
         slots.peek().is_some() && slots.all(|(_, identity)| self.is_standard_slot(identity))
     }
 
-    /// Whether a trait slot belongs to a standard-library or compiled SDK protocol.
+    /// Whether a trait slot belongs to a standard-package protocol.
     pub fn is_standard_slot(&self, identity: &CanonicalSymbolId) -> bool {
-        self.sdk_method_identities.contains(identity)
-            || matches!(&identity.origin, SymbolOrigin::Module(path) if incan_lang::lang::stdlib::is_any_stdlib_path(path))
+        self.standard_method_identities.contains(identity)
     }
 
     /// Retain one visible slot's identity under its trait key, and whether its checked declaration has a default body.
@@ -775,11 +719,6 @@ pub struct DerivationArtifacts {
     /// Exact exported derive macro paths inspected from declared native dependencies. These authorize forwarding
     /// the macro to rustc, never an assumed layout change, generated method, or trait implementation.
     pub native_macro_paths: HashSet<String>,
-    /// RFC 024: Imported derivable modules keyed by source module path, such as `yaml` or `formats.yaml`.
-    ///
-    /// Values are the trait names listed in the module's `__derives__` metadata. Lowering consumes this so
-    /// user-authored derivable modules participate in the same derive expansion path as stdlib modules.
-    pub derivable_modules: HashMap<String, Vec<String>>,
     /// RFC 024: Trait-level Rust derive paths keyed by module-qualified trait name, such as `yaml.Serialize`.
     ///
     /// The typechecker owns this because dependency modules are already imported and validated there. Lowering should
@@ -882,8 +821,6 @@ pub struct ExpressionArtifacts {
     pub read_only_dict_lookups: HashSet<crate::ast::Span>,
     /// Values of chained assignments that each target gets its own evaluation of, keyed by the value span (#1806).
     pub chained_values_written_per_target: HashSet<crate::ast::Span>,
-    /// Values of chained assignments whose already-bound targets all have one type, keyed by the value span (#1806).
-    pub chained_values_of_agreeing_targets: HashSet<crate::ast::Span>,
     /// RFC 017 validated-newtype coercion decisions keyed by source expression span.
     ///
     /// Lowering consumes these decisions when an expression is used at an approved implicit-coercion site, such as a
@@ -894,29 +831,6 @@ pub struct ExpressionArtifacts {
     /// The codegraph exporter consumes this instead of re-resolving names from syntax. Absence means the target is
     /// unsupported, ambiguous, degraded, or outside the current conservative source target set.
     pub source_targets: HashMap<crate::ast::Span, SourceTargetInfo>,
-    /// Fields a model or class destructuring pattern leaves unnamed, keyed by the constructor name's span.
-    ///
-    /// `Account(tier=1)` names one field and is silent about the rest; the source says nothing about them, and the
-    /// checker is the only stage that knows the complete canonical field list of the matched nominal wherever it
-    /// was declared (locally, in another source module or in a compiled dependency). The value is the omitted
-    /// canonical field names in declaration order. Lowering consumes it to record the rest explicitly in the
-    /// pattern shape it hands the backend (#1708). A pattern that names every field records nothing.
-    pub pattern_rest_fields: HashMap<crate::ast::Span, Vec<String>>,
-    /// Destructuring patterns whose unnamed fields include one the pattern may not name, keyed by the constructor
-    /// name's span.
-    ///
-    /// A private field is nameable only in a pattern inside a method of its owning type; anywhere else the pattern
-    /// may not spell it, not even as a wildcard. When such a field is among a pattern's [`Self::pattern_rest_fields`],
-    /// lowering records the rest as a rest marker instead of one wildcard per field, because a model declared in
-    /// another module keeps that field out of reach of the matching code (#1740).
-    pub pattern_rests_with_private_fields: HashSet<crate::ast::Span>,
-    /// The enum-qualified canonical variant a variant pattern names, keyed by the pattern's constructor name span.
-    ///
-    /// A pattern names its variant through the subject's enum: bare (`Filled(n)`), through a variant alias (`Full(n)`,
-    /// `Shape.Full(n)`), or qualified by the enum itself. Only the checker knows which enum the subject is and what a
-    /// variant alias names, so it records the path lowering spells the pattern with (`Shape::Filled`): the same path a
-    /// qualified pattern over the canonical variant has, which is what the generated program can name.
-    pub pattern_variant_paths: HashMap<crate::ast::Span, String>,
     /// The method a local partial's target names on a value (`partial user.label(prefix="x")`), keyed by the target
     /// span, by the name its declaration has (after a method alias) (RFC 084).
     ///
@@ -1044,12 +958,6 @@ pub struct RustInteropArtifacts {
     /// it. Rust metadata spells a returned type by its definition (`std::sync::poison::mutex::Mutex`), an annotation
     /// by its import (`std::sync::Mutex`); direct-route storage keys both on the one public path (DD-0006).
     pub item_public_paths: HashMap<String, String>,
-    /// Typechecker-approved mutable-reference projections for generic Rust type annotations.
-    ///
-    /// Keys are annotation spans. The frontend derives these from complete foreign generic metadata, so lowering
-    /// preserves the checked ownership decision without matching a provider/type name or consulting application
-    /// manifest configuration.
-    pub mutable_reference_type_argument_projections: HashMap<crate::ast::Span, Vec<MutableRustTypeArgumentProjection>>,
     /// Rust-boundary coercion decisions keyed by argument expression span.
     pub arg_coercions: HashMap<crate::ast::Span, RustArgCoercionInfo>,
     /// Rust trait imports keyed by the source binding name with the trait path and method names they can place in
@@ -1058,28 +966,18 @@ pub struct RustInteropArtifacts {
     /// Lowering carries this into IR import items so codegen can retain extension-trait imports when Rust method
     /// lookup needs the trait in scope even though emitted call tokens do not otherwise mention the trait name.
     pub trait_imports: HashMap<String, RustTraitImportInfo>,
-    /// Rust extension-trait import selected for one Rust method call.
+    /// Body-less rusttype Rust-trait adoptions proven by metadata and therefore satisfied by the backing type alias,
+    /// keyed by `(rusttype name, written trait name)`.
     ///
-    /// Keyed by the full method-call expression span. Lowering attaches the binding to the corresponding IR method
-    /// call so generated-use analysis can retain the exact import instead of retaining every trait with the same
-    /// method name.
-    pub method_trait_import_uses: HashMap<crate::ast::Span, RustMethodTraitImportUse>,
-    /// Imported Rust items with an unknown method surface that a Rust method call may reach through extension lookup.
-    ///
-    /// Keyed by the full method-call expression span and recorded only when no inspected surface resolved the
-    /// method. Every listed binding is retained by generated-use analysis when the call is reachable: without
-    /// metadata the compiler cannot pick the one trait that declares the method, and dropping the `use` turns a
-    /// correct program into an E0599 against generated code (#1450).
-    pub method_trait_import_candidates: HashMap<crate::ast::Span, Vec<String>>,
-    /// Body-less rusttype Rust-trait adoptions proven by metadata and therefore satisfied by the backing type alias.
-    ///
-    /// Lowering must not emit an `impl Trait for Alias` for these entries because Rust coherence treats the alias as
-    /// the foreign backing type. The typechecker records only non-generic trait paths that metadata proved.
+    /// Body IR keeps such a rusttype a transparent alias (`is_direct_native_rusttype_alias`): Rust coherence treats
+    /// the alias as the foreign backing type, which already implements the trait. The typechecker records only
+    /// non-generic trait paths that metadata proved.
     pub rusttype_forwarded_trait_adoptions: HashSet<(String, String)>,
     /// Rust-boundary coercion decisions for method return values, keyed by the call expression span.
     ///
-    /// Populated when metadata shows a `rusttype` method's actual Rust return type requires coercion to the
-    /// Incan-declared type (e.g. `&str` → `String` for a method declared `-> str`).
+    /// Checker working state: recorded when metadata shows a `rusttype` method's actual Rust return type requires
+    /// coercion to the Incan-declared type (e.g. `&str` → `String` for a method declared `-> str`), and read by later
+    /// trait-method selection in the same check.
     pub return_coercions: HashMap<crate::ast::Span, RustArgCoercionInfo>,
     /// Borrowed Rust call results that must remain in their native Rust representation at the next call boundary.
     ///
@@ -1087,26 +985,6 @@ pub struct RustInteropArtifacts {
     /// direct Rust-return arguments rather than inventing an Incan-owned conversion before rustc sees the boundary.
     /// The marker makes either decision independent of whether result or argument checking runs first.
     pub native_return_consumers: HashSet<crate::ast::Span>,
-    /// Regular method calls whose arguments must keep Rust method-call lookup shape.
-    ///
-    /// Keyed by `(receiver_span, method_name)` so lowering can preserve borrow-sensitive
-    /// lookup calls like `HashMap.get(key)` without re-querying rust-inspect metadata in the backend.
-    pub regular_method_arg_shape_preserving_calls: HashSet<(crate::ast::Span, String)>,
-    /// Imported Rust named-field struct constructor calls keyed by full call-expression span.
-    ///
-    /// The frontend resolves positional source arguments against rust-inspect field metadata. Lowering consumes the
-    /// resolved field names so `Range(1, 3)` can emit `Range { start: 1, end: 3 }` instead of an invalid tuple-style
-    /// Rust constructor.
-    pub named_field_constructor_fields: HashMap<crate::ast::Span, Vec<String>>,
-    /// Imported Rust named-field constructors whose omitted fields are filled through a metadata-proven `Default`
-    /// implementation.
-    pub default_filled_named_field_constructors: HashSet<crate::ast::Span>,
-    /// Imported Rust field accesses keyed by full field-expression span.
-    ///
-    /// The parser may use an Incan-safe source spelling such as `type_` for a Rust field whose metadata name is the
-    /// Rust keyword `type`. Lowering consumes this resolved Rust field name so emission can use the real Rust field
-    /// identifier rather than guessing from source text.
-    pub field_access_names: HashMap<crate::ast::Span, String>,
     /// Rust closure parameter displays keyed by closure-expression span.
     ///
     /// This is populated when contextual Rust metadata proves a closure is being used as a Rust callable boundary
@@ -1139,11 +1017,13 @@ pub struct RustInteropArtifacts {
 /// A metadata-selected native struct layout, generic over its declaring type parameters.
 #[derive(Debug, Clone)]
 pub struct RustCheckedLayout {
+    /// Source visibility of each native field slot, aligned with `fields`.
+    pub field_public: Vec<bool>,
     /// An unconditional native Copy implementation retained with the owner, independent of which module uses it.
     pub is_copy: bool,
     /// Declared type binders; lifetime arguments carry no layout and are absent.
     pub type_parameters: Vec<String>,
-    /// Ordered public field names and exact native type templates.
+    /// Ordered native field names and exact storage templates, including inaccessible private slots.
     pub fields: Vec<CallableParam>,
     /// Canonical field targets minted with the same owner as the retained layout.
     pub field_identities: Vec<CanonicalSymbolId>,
@@ -1228,19 +1108,6 @@ pub struct RustIterationHooks {
     pub next: RustCheckedCall,
 }
 
-/// Reference leaves selected for one generic argument of a mutable imported Rust type.
-///
-/// An empty path borrows the argument itself. A non-empty path selects a nested tuple leaf, letting one foreign
-/// contract retain an owned `Handle` while borrowing an adjacent `MutableData` without assigning special meaning to
-/// the provider's type name.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MutableRustTypeArgumentProjection {
-    /// Zero-based position in the foreign generic's explicit type arguments.
-    pub argument_position: usize,
-    /// Tuple-index paths to the leaves lowered as `&mut`.
-    pub reference_leaf_paths: Vec<Vec<usize>>,
-}
-
 /// Declaration-level binding rewrites and visibility facts consumed by lowering.
 #[derive(Debug, Default, Clone)]
 pub struct DeclarationArtifacts {
@@ -1288,14 +1155,8 @@ pub struct DeclarationArtifacts {
     /// Active compiler-owned native nominal bindings for Body IR only. Legacy continues to consume the ordinary
     /// nominal table; a real source binding under the same spelling cannot authorize this foreign ABI.
     pub body_ir_native_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
-    /// Exact selected foreign origins retained from accepted bindings for native representation projection.
-    pub named_type_origins: std::collections::BTreeMap<String, crate::library_manifest::NominalTypeOriginExport>,
     /// Checked local model field types keyed by exact field declaration span.
     pub model_field_types: HashMap<crate::ast::Span, ResolvedType>,
-    /// Direct dependency roots required by checked public API nominal types, including callable signatures.
-    pub public_type_bridge_roots: std::collections::BTreeSet<String>,
-    /// Admitted foreign nominal bindings mapped to checked native routes for each direct import container.
-    pub foreign_pub_type_remappings: HashMap<String, HashMap<String, String>>,
     /// Checked field visibility for local models, keyed first by model name and then canonical field name.
     ///
     /// Field modifiers and the containing model's visibility are resolved by the frontend. Lowering consumes this
@@ -1326,16 +1187,6 @@ pub struct DeclarationArtifacts {
     /// written path, so the proven identity is recorded here and is simply absent when resolution did not prove one.
     /// A re-export resolves to the identity of the module that *declares* the member, never to the facade.
     pub resolved_import_identities: HashMap<String, CanonicalSymbolId>,
-    /// The name the declaring module binds each resolved source import under, keyed by the local import name.
-    ///
-    /// Recorded beside [`Self::resolved_import_identities`] for imports that resolved through the source module
-    /// graph. A facade may re-export a declaration under a new name, and the written item name then says nothing
-    /// about how the declaring module spells it; the identity's `declaration_name` does not answer either, because an
-    /// `alias` declaration binds one identity under a second name of its own. Lowering spells a projected import
-    /// (function, partial, static) by this name so a re-export rename lowers exactly like a direct import of the
-    /// declaration, and an `alias` declaration keeps its own spelling (#1710). Absent for an import that resolved
-    /// through a compiled provider's manifest, whose public names carry no such fact.
-    pub resolved_import_declared_names: HashMap<String, String>,
     /// Module-qualified type annotations the checker resolved, keyed by their dotted source spelling.
     ///
     /// `mod.Type` in type position reaches a declaration through a module binding rather than through a local type
@@ -1346,14 +1197,6 @@ pub struct DeclarationArtifacts {
     /// its declaring module and must never rebuild that placement from the written segments. An absent entry means
     /// the checker did not prove a type and reported that at the annotation.
     pub qualified_type_references: HashMap<String, QualifiedTypeReferenceInfo>,
-    /// The module path of the one module of this check that declares each nominal type name no other module of the
-    /// check declares.
-    ///
-    /// A union that reaches this module through another module's signature spells such a member by its bare name even
-    /// where no binding of this module names it; lowering reads the declaring module here to place the member's
-    /// wrapper payload (#1796). A name several modules of the check declare is absent: the checker spells a union
-    /// member of that name by its declaring module instead.
-    pub unique_nominal_declaring_modules: HashMap<String, Vec<String>>,
     /// The target of each non-generic type alias this module declares or imports, keyed by its local name.
     ///
     /// Lowering reads an imported alias's target here where the emitter cannot place the alias by its name, because
@@ -1413,27 +1256,16 @@ pub struct DeclarationArtifacts {
     /// Body IR-only getter signatures and receiver provenance, keyed by the exact property declaration span.
     /// Legacy property metadata and callable binding tables remain unchanged.
     pub body_ir_property_bindings: HashMap<crate::ast::Span, BodyIrPropertyBindingInfo>,
-    /// Function declaration emitted names keyed by source declaration span.
-    ///
-    /// Present when top-level overloads need Rust-level name disambiguation while preserving one source name.
-    pub function_emitted_names: HashMap<crate::ast::Span, String>,
     /// Overload candidates keyed by the source binding name visible in the current module.
     ///
     /// This includes declarations, imports, and aliases so call resolution, export metadata, and lowering all see one
     /// overload surface instead of rebuilding overload sets from syntax-specific paths.
     pub function_overloads: HashMap<String, Vec<FunctionOverloadInfo>>,
-    /// Imported overload bindings keyed by local import name.
-    ///
-    /// Each value is the concrete Rust function name exported by the provider module for one overload candidate. IR
-    /// import lowering consumes this so source-level overload names do not get re-exported as nonexistent Rust items.
-    pub imported_function_emitted_names: HashMap<String, Vec<String>>,
     /// Module-visible partial projections keyed by their source binding name.
     ///
     /// Constructor partials can be materialized in const contexts without calling the generated wrapper. Keeping the
     /// target and preset expressions here lets const-eval and lowering consume one resolved projection surface.
     pub partial_projections: HashMap<String, PartialProjectionInfo>,
-    /// Module-visible static bindings keyed by local name for lowering/runtime emission.
-    pub static_bindings: HashMap<String, StaticBindingInfo>,
     /// Same-type method aliases keyed by nominal type name (`alias -> target_method`).
     ///
     /// This includes imported type metadata so lowering can rewrite calls through aliases such as
@@ -1761,8 +1593,6 @@ pub struct ClassFieldLayoutInfo {
     pub visibility: Visibility,
     /// Checked initializer plan, retaining whether the expression belongs to this source unit or a compiled provider.
     pub default: Option<ClassFieldDefaultInfo>,
-    /// Compiled dependency that owns this inherited field, when it is not redeclared by a local class.
-    pub provider_library: Option<String>,
     /// Canonical source field alias used for construction and access.
     pub alias: Option<String>,
     /// Source-authored field description preserved for generated reflection metadata.
@@ -1791,9 +1621,6 @@ pub struct NewtypeConstructionInfo {
     ///
     /// The checker's derive relation decides both, so a newtype implements what the checker says it does.
     pub automatic_derives: Vec<String>,
-    /// Explicit derive selections checked on the source newtype, then serde's derive for each `std.serde.json`
-    /// protocol its trait adoptions provide, retained for direct nominal carriers.
-    pub explicit_derives: Vec<String>,
     /// Declared type parameters in source order.
     pub type_params: Vec<String>,
     /// Resolved wrapped value type, including references to the declared type parameters.
@@ -1823,8 +1650,6 @@ pub struct PartialProjectionInfo {
     pub target_kind: PartialProjectionTargetKind,
     /// Preset keyword expressions supplied by the partial declaration.
     pub presets: Vec<PartialProjectionPreset>,
-    /// Public dependency that owns serialized preset values, when this projection crossed a compiled-library boundary.
-    pub external_library: Option<String>,
 }
 
 /// One preset keyword/value pair from a partial declaration.
@@ -1832,8 +1657,6 @@ pub struct PartialProjectionInfo {
 pub struct PartialProjectionPreset {
     pub name: String,
     pub value: Spanned<Expr>,
-    /// Checked provider-owned value used to lower external constant and model references without source heuristics.
-    pub external_value: Option<CheckedPresetValue>,
 }
 
 /// Target kinds that matter to downstream partial projection consumers.
@@ -1916,12 +1739,6 @@ pub struct CallArtifacts {
     ///
     /// These accompany the retained call instantiation; legacy contextual expression types remain unchanged.
     pub inferred_call_result_types: HashMap<crate::ast::Span, ResolvedType>,
-    /// The callee's caller-visible `mut` parameter names for each call that resolved to such a callee, keyed by the
-    /// full call span, so lowering passes those arguments the way the declaration takes them (#1773).
-    pub caller_visible_mut_arguments: HashMap<crate::ast::Span, Vec<String>>,
-    /// Argument expressions, by span, that a call hands to a caller-visible `mut` parameter the callee never changes
-    /// while the argument is an immutable binding or field: lowering passes a copy of the value (#1773).
-    pub mut_argument_copies: HashSet<crate::ast::Span>,
     /// Method calls, by full call span, whose receiver's source type declares the method only with `mut self`.
     ///
     /// Lowering marks the binding at the root of such a call's receiver as borrowed mutably, so every later question
@@ -1986,8 +1803,6 @@ pub struct CallArtifacts {
     /// Lowering consumes this for calls whose selected method lives in a trait impl rather than an inherent Rust impl.
     /// This keeps codegen from re-deriving dispatch from method names or argument shapes.
     pub resolved_method_calls: HashMap<crate::ast::Span, ResolvedMethodCall>,
-    /// Top-level overload callee emitted names selected by the typechecker, keyed by full call expression span.
-    pub selected_function_emitted_names: HashMap<crate::ast::Span, String>,
     /// Compiler-generated member identities observed at checked call sites.
     ///
     /// These helpers retain owner-discriminated semantic identities for tooling, but they are not source declarations
@@ -2004,8 +1819,6 @@ pub struct CallArtifacts {
     /// This carries the typechecker's canonical [`StringMethodId`] through Body IR so a consumer can select an
     /// admitted helper operation from a resolved identity rather than rediscovering a method target from source text.
     pub resolved_string_helper_calls: HashMap<crate::ast::Span, StringMethodId>,
-    /// Direct closures whose contextual parameter types came from a canonical source `CallableN` bound.
-    pub source_callable_closures: HashSet<crate::ast::Span>,
     /// Function-typed parameters of this module's functions and methods that hold any callable of their type, since
     /// the body only calls them, keyed by the parameter's span (#1561).
     ///
@@ -2021,19 +1834,6 @@ pub struct CallArtifacts {
     /// The binding takes the value's own type, so lowering does not spell the binding's function-type annotation, and
     /// spells the parameter types of a closure bound there instead.
     pub capturing_callable_bindings: HashSet<crate::ast::Span>,
-    /// Arguments for a closure-holding parameter that name a local bound to a capturing callable, keyed by the
-    /// argument's span: lowering passes them by reference, so the local stays usable after the call (#1561).
-    pub borrowed_callable_arguments: HashSet<crate::ast::Span>,
-    /// Closures a closure-returning function returns, keyed by the closure's span (#1561). Such a closure outlives the
-    /// call that built it, so lowering moves a copy of every local it reads into it.
-    pub returned_closures: HashSet<crate::ast::Span>,
-    /// Display operands that render through `message()`, keyed by the operand's expression span (#1778).
-    ///
-    /// A model or class has a textual form only through `__str__`. A type that adopts `Error` and has no `Display` of
-    /// its own renders its `message()` instead wherever a value is displayed: an f-string `{value}` part, the
-    /// argument of `str(value)`, and each `print`/`println` argument. The value is the `message()` call the checker
-    /// resolved for the operand, so lowering emits the same call a written `value.message()` would.
-    pub error_message_displays: HashMap<crate::ast::Span, ErrorMessageDisplay>,
     /// Exact source string methods selected for display operands. Body IR emits these as ordinary shared-receiver
     /// calls; native Rust formatting never supplies a source method by guesswork.
     pub source_display_methods: HashMap<crate::ast::Span, CanonicalSymbolId>,
@@ -2043,12 +1843,6 @@ pub struct CallArtifacts {
     /// so it satisfies a `Display` bound. The value is the `message()` call the checker resolved on the type, which
     /// lowering makes the body of the Rust `Display` it gives the type.
     pub error_message_display_types: HashMap<String, ErrorMessageDisplay>,
-    /// Types this module declares whose values display through a derived `Display` (RFC 000), by type name.
-    ///
-    /// A model, class, enum or newtype whose `@derive(...)` names the builtin `Display` displays as its `{value:?}`
-    /// structure. Lowering gives each such type the `__str__` that returns that text, which the Rust `Display` of the
-    /// type writes.
-    pub derived_display_types: HashSet<String>,
 }
 
 /// The `message()` call one displayed `Error` adopter renders through (#1778).
@@ -2083,15 +1877,6 @@ pub struct IsInstanceTargetInfo {
     pub canonical: Option<CanonicalSymbolId>,
     /// Original source range of the target expression, including parentheses when they were written.
     pub span: Span,
-}
-
-/// Test-runner and fixture metadata extracted during typechecking.
-#[derive(Debug, Default, Clone)]
-pub struct TestingArtifacts {
-    /// `std.testing.fixture` declarations resolved during typechecking.
-    ///
-    /// A successful typecheck guarantees async fixture entries have exactly one top-level `yield value` boundary.
-    pub fixtures: HashMap<String, TestingFixtureInfo>,
 }
 
 /// Custom protocol decisions that lower into explicit runtime calls.
@@ -2227,7 +2012,6 @@ pub(crate) struct CallSiteFacts {
     body_ir_self_method_identity: Option<CanonicalSymbolId>,
     body_ir_self_method_result_type: Option<ResolvedType>,
     body_ir_self_method_params: Option<Vec<CallableParam>>,
-    body_ir_provider_slot_identity: Option<CanonicalSymbolId>,
     body_ir_inferred_method_identity: Option<CanonicalSymbolId>,
 }
 
@@ -2441,13 +2225,6 @@ pub struct ValidatedNewtypeCoercionStep {
     pub constraints: Vec<NewtypePrimitiveConstraint>,
 }
 
-/// Lowering metadata for a visible static binding.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StaticBindingInfo {
-    /// `true` when this name came from `from pub::... import NAME`.
-    pub is_imported: bool,
-}
-
 /// Lowering metadata for one source function or method declaration.
 ///
 /// Shared by [`DeclarationArtifacts::function_bindings`]/[`DeclarationArtifacts::function_bindings_by_span`] (top-
@@ -2525,24 +2302,6 @@ pub struct DecoratedMethodBindingInfo {
     pub original_unbound_ty: ResolvedType,
 }
 
-/// Lowering and test-runner metadata for one `std.testing.fixture` function.
-///
-/// This is the frontend handoff for test-runner and lowering-adjacent code that needs to know fixture shape without
-/// re-resolving decorators from raw AST nodes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TestingFixtureInfo {
-    /// Fixture scope selected by `@fixture(scope=...)`, defaulting to function scope.
-    pub scope: TestingFixtureScope,
-    /// Whether `@fixture(autouse=true)` was set.
-    pub autouse: bool,
-    /// Whether the fixture declaration used `async def`.
-    pub is_async: bool,
-    /// Whether the fixture has teardown work after its yielded value.
-    pub has_teardown: bool,
-    /// Fixture dependencies named by parameters that resolve to other fixture functions.
-    pub dependencies: Vec<String>,
-}
-
 impl DeclarationArtifacts {
     /// Return whether the `mut` parameter declared at `span` as `name` is marked, when the checker recorded it.
     pub fn mut_param_marker(&self, span: Span, name: &str) -> Option<bool> {
@@ -2551,16 +2310,6 @@ impl DeclarationArtifacts {
 }
 
 impl TypeCheckInfo {
-    /// Return the caller-visible `mut` parameter names of the callee the call at `span` resolved to, if any.
-    pub fn caller_visible_mut_arguments(&self, span: Span) -> Option<&[String]> {
-        self.calls.caller_visible_mut_arguments.get(&span).map(Vec::as_slice)
-    }
-
-    /// Return whether the argument expression at `span` is passed to its `mut` parameter as a copy.
-    pub fn mut_argument_is_copied(&self, span: Span) -> bool {
-        self.calls.mut_argument_copies.contains(&span)
-    }
-
     /// Return whether the method call at `span` calls a source method whose receiver is `mut self`.
     pub fn method_call_takes_mutable_receiver(&self, span: Span) -> bool {
         self.calls.mutable_receiver_method_calls.contains(&span)
@@ -2569,11 +2318,6 @@ impl TypeCheckInfo {
     /// Return the checked source path associated with one active import-derived binding.
     pub fn import_binding_path(&self, local_name: &str) -> Option<&[String]> {
         self.import_bindings.path(local_name)
-    }
-
-    /// Return all checked source import binding paths.
-    pub fn checked_import_bindings(&self) -> &CheckedImportBindings {
-        &self.import_bindings
     }
 
     /// Export a backend-neutral fact snapshot for consumers that should not depend on typed AST or Rust IR shapes.
@@ -2994,36 +2738,6 @@ impl TypeCheckInfo {
         self.expressions.value_destination_types.get(&span)
     }
 
-    /// Return the canonical fields a destructuring pattern leaves unnamed, keyed by its constructor name's span.
-    ///
-    /// `None` means the pattern names every field of its nominal or is not a model or class pattern at all; the
-    /// two cases need no distinction because both leave nothing for lowering to add.
-    pub fn pattern_rest_fields(&self, span: Span) -> Option<&[String]> {
-        self.expressions.pattern_rest_fields.get(&span).map(Vec::as_slice)
-    }
-
-    /// Return whether the unnamed fields of the destructuring pattern whose constructor name sits at `span` include a
-    /// private field the pattern may not name.
-    ///
-    /// `true` tells lowering to cover the rest with a rest marker rather than one wildcard per field (#1740); `false`
-    /// means every field in [`Self::pattern_rest_fields`] may be spelled, or the pattern leaves nothing unnamed.
-    pub fn pattern_rest_has_private_fields(&self, span: Span) -> bool {
-        self.expressions.pattern_rests_with_private_fields.contains(&span)
-    }
-
-    /// Return the enum-qualified canonical variant (`Shape::Filled`) the variant pattern whose constructor name sits
-    /// at `span` names, when the checker resolved it to a variant of an enum declared in Incan.
-    ///
-    /// See [`ExpressionArtifacts::pattern_variant_paths`].
-    pub fn pattern_variant_path(&self, span: Span) -> Option<&str> {
-        self.expressions.pattern_variant_paths.get(&span).map(String::as_str)
-    }
-
-    /// Return exact Rust parameter displays recorded for a closure expression, if any.
-    pub fn closure_param_type_displays(&self, span: Span) -> Option<&[String]> {
-        self.rust.closure_param_type_displays.get(&span).map(Vec::as_slice)
-    }
-
     /// Return computed-property metadata for a field-access expression, if that access resolved to a property.
     pub fn computed_property_access(&self, span: Span) -> Option<&ComputedPropertyAccessInfo> {
         self.expressions.computed_property_accesses.get(&span)
@@ -3082,17 +2796,6 @@ impl TypeCheckInfo {
         }
     }
 
-    /// Return the name the declaring module binds an imported source symbol under, if resolution recorded it.
-    ///
-    /// Absent for imports the source module graph did not resolve (compiled providers): see
-    /// [`DeclarationArtifacts::resolved_import_declared_names`].
-    pub fn resolved_import_declared_name(&self, local_name: &str) -> Option<&str> {
-        self.declarations
-            .resolved_import_declared_names
-            .get(local_name)
-            .map(String::as_str)
-    }
-
     /// Return the declaration a module-qualified type annotation resolved to, keyed by its dotted spelling.
     ///
     /// Absent means the checker did not prove a type for that spelling and reported it at the annotation; lowering
@@ -3104,14 +2807,6 @@ impl TypeCheckInfo {
     /// Return the target of a non-generic type alias this module declares or imports.
     pub fn type_alias_target(&self, name: &str) -> Option<&ResolvedType> {
         self.declarations.type_alias_targets.get(name)
-    }
-
-    /// Return the one module of this check that declares a nominal type of this name, when no other module does.
-    pub fn unique_nominal_declaring_module(&self, name: &str) -> Option<&[String]> {
-        self.declarations
-            .unique_nominal_declaring_modules
-            .get(name)
-            .map(Vec::as_slice)
     }
 
     /// Return a compiler-proven source target for the expression at `span`, if one was recorded.
@@ -3180,36 +2875,6 @@ impl TypeCheckInfo {
         self.expressions.read_only_dict_lookups.insert(span);
     }
 
-    /// Return static-binding metadata for `name`, if the checker recorded one.
-    pub fn static_binding(&self, name: &str) -> Option<&StaticBindingInfo> {
-        self.declarations.static_bindings.get(name)
-    }
-
-    /// Return the Rust emitted name selected for a function declaration span, if overloads renamed it.
-    pub fn function_emitted_name(&self, span: Span) -> Option<&str> {
-        self.declarations.function_emitted_names.get(&span).map(String::as_str)
-    }
-
-    /// Record a Rust emitted name for an overloaded function declaration.
-    pub fn record_function_emitted_name(&mut self, span: Span, emitted_name: String) {
-        self.declarations.function_emitted_names.insert(span, emitted_name);
-    }
-
-    /// Return emitted provider function names for an imported overload binding, if any.
-    pub fn imported_function_emitted_names(&self, local_name: &str) -> Option<&[String]> {
-        self.declarations
-            .imported_function_emitted_names
-            .get(local_name)
-            .map(Vec::as_slice)
-    }
-
-    /// Record emitted provider function names for an imported overload binding.
-    pub fn record_imported_function_emitted_names(&mut self, local_name: String, emitted_names: Vec<String>) {
-        self.declarations
-            .imported_function_emitted_names
-            .insert(local_name, emitted_names);
-    }
-
     /// Return partial projection metadata for a visible partial binding, if collection recorded one.
     pub fn partial_projection(&self, local_name: &str) -> Option<&PartialProjectionInfo> {
         self.declarations.partial_projections.get(local_name)
@@ -3232,11 +2897,6 @@ impl TypeCheckInfo {
         self.declarations.function_overloads.insert(local_name, overloads);
     }
 
-    /// Return frontend fixture metadata for `name`, if the declaration was marked with `@fixture`.
-    pub fn testing_fixture(&self, name: &str) -> Option<&TestingFixtureInfo> {
-        self.testing.fixtures.get(name)
-    }
-
     /// Return the computed const value for `name`, when const evaluation succeeded.
     pub fn const_value(&self, name: &str) -> Option<&ConstValue> {
         self.consts.const_values.get(name)
@@ -3255,55 +2915,6 @@ impl TypeCheckInfo {
     /// Record a typechecker-approved validated-newtype coercion for a source expression span.
     pub fn record_validated_newtype_coercion(&mut self, span: Span, info: ValidatedNewtypeCoercionInfo) {
         self.expressions.validated_newtype_coercions.insert(span, info);
-    }
-
-    /// Return the recorded return coercion for the call expression at `span`, if any.
-    pub fn rust_return_coercion(&self, span: Span) -> Option<&RustArgCoercionInfo> {
-        self.rust.return_coercions.get(&span)
-    }
-
-    /// Whether lowering should preserve Rust method-call lookup argument shape for this receiver/method pair.
-    pub fn preserves_regular_method_arg_shape(&self, receiver_span: Span, method: &str) -> bool {
-        self.rust
-            .regular_method_arg_shape_preserving_calls
-            .contains(&(receiver_span, method.to_string()))
-    }
-
-    /// Record that lowering should preserve Rust method-call lookup argument shape for this receiver/method pair.
-    pub fn record_regular_method_arg_shape(&mut self, receiver_span: Span, method: &str) {
-        self.rust
-            .regular_method_arg_shape_preserving_calls
-            .insert((receiver_span, method.to_string()));
-    }
-
-    /// Return the Rust struct field names selected for this named-field constructor call, if any.
-    pub fn rust_named_field_constructor_fields(&self, span: Span) -> Option<&[String]> {
-        self.rust.named_field_constructor_fields.get(&span).map(Vec::as_slice)
-    }
-
-    /// Record the Rust struct field names selected for a named-field constructor call.
-    pub fn record_rust_named_field_constructor_fields(&mut self, span: Span, fields: Vec<String>) {
-        self.rust.named_field_constructor_fields.insert(span, fields);
-    }
-
-    /// Whether lowering should emit a Rust struct update using `Default::default()` for omitted named fields.
-    pub fn rust_named_field_constructor_fills_defaults(&self, span: Span) -> bool {
-        self.rust.default_filled_named_field_constructors.contains(&span)
-    }
-
-    /// Record that an imported Rust named-field constructor may fill omitted fields through `Default`.
-    pub fn record_rust_named_field_constructor_fills_defaults(&mut self, span: Span) {
-        self.rust.default_filled_named_field_constructors.insert(span);
-    }
-
-    /// Return the Rust field name resolved for one Rust field-access expression, if one was recorded.
-    pub fn rust_field_access_name(&self, span: Span) -> Option<&str> {
-        self.rust.field_access_names.get(&span).map(String::as_str)
-    }
-
-    /// Record the Rust field name resolved for one Rust field-access expression.
-    pub fn record_rust_field_access_name(&mut self, span: Span, field: String) {
-        self.rust.field_access_names.insert(span, field);
     }
 
     /// Return rest-aware callable metadata recorded for the full call expression span, if any.
@@ -3402,35 +3013,6 @@ impl TypeCheckInfo {
         self.calls.capturing_callable_bindings.contains(&span)
     }
 
-    /// Return whether the closure at `span` is returned by its function, and so holds its own copy of every local it
-    /// reads (#1561).
-    pub fn is_returned_closure(&self, span: Span) -> bool {
-        self.calls.returned_closures.contains(&span)
-    }
-
-    /// Return whether the argument at `span` is passed by reference to a closure-holding parameter (#1561).
-    pub fn is_borrowed_callable_argument(&self, span: Span) -> bool {
-        self.calls.borrowed_callable_arguments.contains(&span)
-    }
-
-    /// Return whether a canonical source `CallableN` bound supplied this closure's contextual parameter types.
-    pub fn is_source_callable_closure(&self, span: Span) -> bool {
-        self.calls.source_callable_closures.contains(&span)
-    }
-
-    /// Preserve that a canonical source `CallableN` bound supplied this closure's parameter types.
-    pub fn record_source_callable_closure(&mut self, span: Span) {
-        self.calls.source_callable_closures.insert(span);
-    }
-
-    /// Return the overloaded Rust emitted callee selected for one source call expression.
-    pub fn selected_function_emitted_name(&self, span: Span) -> Option<&str> {
-        self.calls
-            .selected_function_emitted_names
-            .get(&span)
-            .map(String::as_str)
-    }
-
     /// Select checked executable context without changing the reference's navigation identity.
     /// Constructor requirements apply only while the exact checked field still occupies this reference site;
     /// replacing its binding cannot reuse an earlier constructor's layout authorization.
@@ -3476,18 +3058,6 @@ impl TypeCheckInfo {
         self.calls.resolved_builtin_calls.get(&call_span).copied()
     }
 
-    /// Return the `message()` call one display operand renders through, or `None` when it displays itself.
-    ///
-    /// See [`CallArtifacts::error_message_displays`].
-    pub fn error_message_display(&self, operand_span: Span) -> Option<&ErrorMessageDisplay> {
-        self.calls.error_message_displays.get(&operand_span)
-    }
-
-    /// Record the `message()` call one display operand renders through (#1778).
-    pub fn record_error_message_display(&mut self, operand_span: Span, display: ErrorMessageDisplay) {
-        self.calls.error_message_displays.insert(operand_span, display);
-    }
-
     /// Return the `message()` call a declared type displays through, or `None` when it has a `Display` of its own or
     /// does not adopt `Error`.
     ///
@@ -3501,18 +3071,6 @@ impl TypeCheckInfo {
         self.calls
             .error_message_display_types
             .insert(type_name.to_string(), display);
-    }
-
-    /// Return whether a declared type displays through a derived `Display`.
-    ///
-    /// See [`CallArtifacts::derived_display_types`].
-    pub fn type_derives_display(&self, type_name: &str) -> bool {
-        self.calls.derived_display_types.contains(type_name)
-    }
-
-    /// Record that a declared type displays through a derived `Display`.
-    pub fn record_derived_display_type(&mut self, type_name: &str) {
-        self.calls.derived_display_types.insert(type_name.to_string());
     }
 
     /// Record the compiler-owned builtin selected for one checked call.
@@ -3538,11 +3096,6 @@ impl TypeCheckInfo {
     /// Record a selected runtime-string helper identity for later Body-IR lowering.
     pub fn record_resolved_string_helper_call(&mut self, span: Span, method: StringMethodId) {
         self.calls.resolved_string_helper_calls.insert(span, method);
-    }
-
-    /// Record the overloaded Rust emitted callee selected for one source call expression.
-    pub fn record_selected_function_emitted_name(&mut self, span: Span, emitted_name: String) {
-        self.calls.selected_function_emitted_names.insert(span, emitted_name);
     }
 
     /// Record callable metadata needed by lowering when the callee expression alone cannot carry it.
@@ -3573,16 +3126,6 @@ impl TypeCheckInfo {
     /// Return a typechecker-resolved method call for `span`, if any.
     pub fn resolved_method_call(&self, span: Span) -> Option<&ResolvedMethodCall> {
         self.calls.resolved_method_calls.get(&span)
-    }
-
-    /// Return the Rust extension-trait import selected for the method call at `span`, if any.
-    pub fn rust_method_trait_import_use(&self, span: Span) -> Option<&RustMethodTraitImportUse> {
-        self.rust.method_trait_import_uses.get(&span)
-    }
-
-    /// Return the unknown-surface Rust imports the method call at `span` may reach, if any were recorded.
-    pub fn rust_method_trait_import_candidates(&self, span: Span) -> Option<&[String]> {
-        self.rust.method_trait_import_candidates.get(&span).map(Vec::as_slice)
     }
 
     /// Return custom iteration protocol metadata for `span`, if any.
@@ -3640,7 +3183,6 @@ impl TypeCheckInfo {
             body_ir_self_method_identity: self.traits.self_method_identities.remove(&key),
             body_ir_self_method_result_type: self.traits.self_method_result_types.remove(&key),
             body_ir_self_method_params: self.traits.self_method_params.remove(&key),
-            body_ir_provider_slot_identity: self.traits.provider_slot_identities.remove(&key),
             body_ir_inferred_method_identity: self.traits.inferred_method_identities.remove(&key),
         }
     }
@@ -3661,7 +3203,6 @@ impl TypeCheckInfo {
         self.traits.self_method_identities.remove(&key);
         self.traits.self_method_result_types.remove(&key);
         self.traits.self_method_params.remove(&key);
-        self.traits.provider_slot_identities.remove(&key);
         self.traits.inferred_method_identities.remove(&key);
     }
 
@@ -3756,11 +3297,6 @@ impl TypeCheckInfo {
             facts.body_ir_self_method_params,
         );
         put(
-            &mut self.traits.provider_slot_identities,
-            key,
-            facts.body_ir_provider_slot_identity,
-        );
-        put(
             &mut self.traits.inferred_method_identities,
             key,
             facts.body_ir_inferred_method_identity,
@@ -3800,16 +3336,6 @@ impl TypeCheckInfo {
         if module_path.is_none() && *trait_name == receiver_trait {
             *module_path = Some(receiver_module);
         }
-    }
-
-    /// Record that a Rust method call requires a specific imported extension trait in generated Rust scope.
-    pub fn record_rust_method_trait_import_use(&mut self, span: Span, import_use: RustMethodTraitImportUse) {
-        self.rust.method_trait_import_uses.insert(span, import_use);
-    }
-
-    /// Record the unknown-surface Rust imports a method call that no inspected surface resolved may reach.
-    pub fn record_rust_method_trait_import_candidates(&mut self, span: Span, bindings: Vec<String>) {
-        self.rust.method_trait_import_candidates.insert(span, bindings);
     }
 
     /// Record a custom `for` iteration protocol route.

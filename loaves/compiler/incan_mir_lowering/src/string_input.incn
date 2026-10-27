@@ -1,6 +1,6 @@
 """Owned String ingress frames shared by checked reconstruction and raw source conversions."""
 
-from rust::incan_semantics_core::body_ir import BodyIrModule, DecoratedBinding as RustDecoratedBinding
+from rust::incan_semantics_core::body_ir import BodyIrModule
 from rust::incan_semantics_core import IncanType as RustType
 # Keep inferred empty Builder field element types in scope until #2010 is resolved.
 from pub::incan_mir_plan import BasicBlock, Local, PlanType, EnumDeclaration, ExternalFunction, Function, SourceSpan
@@ -18,7 +18,6 @@ pub def owned_string_frame(
     """Keep the sole input owned until a planned call or construction consumes it, with one local cleanup ledger."""
     empty_unions: list[RustType] = []
     empty_type_arguments: list[RustType] = []
-    empty_decorated_bindings: list[RustDecoratedBinding] = []
     mut builder = Builder(
         program=synthetic_program_context(module),
         locals=[Local(ty=result, span=span), Local(ty=PlanType.String, span=span)],
@@ -40,14 +39,11 @@ pub def owned_string_frame(
         partial_callables=[],
         scalar_closures=[],
         unproven_closures=[],
-        nominals=module.nominal_declarations,
-        enums=module.enum_declarations,
         unions=empty_unions,
         local_offset=0,
         consuming_closure_frame=false,
         intrinsics=list(intrinsics),
         generator_handle=-1,
-        value_enums=module.value_enum_declarations,
         instances=[],
         type_parameters=[],
         type_arguments=empty_type_arguments,
@@ -55,7 +51,6 @@ pub def owned_string_frame(
         name=name,
         synthesized=[],
         moved_tuple_fields=[],
-        decorated_bindings=empty_decorated_bindings,
     )
     _ = builder.new_block(span)
     return builder

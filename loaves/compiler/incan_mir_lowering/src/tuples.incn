@@ -67,7 +67,7 @@ pub def tuple_type(elements: &list[RustType]) -> Result[PlanType, str]:
     """Admit only tuple elements whose native scalar layout is already supported."""
     # Legacy emits a singleton literal as a parenthesized scalar; do not admit a different native layout.
     if len(elements) == 1:
-        return Err("unsupported Body IR singleton Tuple: legacy scalar emission")
+        return Err("a one-element tuple cannot be represented as a scalar")
     mut types: list[TupleElement] = []
     for element in elements:
         match element:

@@ -2,7 +2,8 @@
 
 from rust::std::env import VarError, var as env_var
 from std.fs import Path
-from observation import load_ledger, observe, SETTLE_SECONDS
+from files import read
+from observation import load_ledger, observe, skipped_directory, SETTLE_SECONDS
 from toolchain import Toolchain
 from unit_freshness import Key, artifact_identity, compiler_fingerprint, fingerprint
 
@@ -15,15 +16,17 @@ pub def library_key(
     environment: Dict[str, str],
     linked: list[str],
     toolchain: Toolchain,
+    compiler: str = "",
 ) -> Result[Key, str]:
-    """Key the actual compiler inputs; unavailable dependency evidence prevents reuse.
+    """
+    Key the actual compiler inputs; unavailable dependency evidence prevents reuse.
 
     1. Read the files and environment keys rustc recorded.
     2. Reconcile their current contents and the exact linked libraries.
     3. Bind them to the compiler, arguments and package environment.
     """
     # 1. Read the files and environment keys rustc recorded.
-    text = dependencies.read_text("utf-8", "strict").map_err((error) => error.message())?
+    text = read(dependencies)?
     paths, variables = dependency_inputs(text)?
     mut ledger = load_ledger(directory.joinpath("observations.json"), SETTLE_SECONDS)
     mut sources: list[str] = []
@@ -35,22 +38,37 @@ pub def library_key(
         artifacts.extend([path, artifact_identity(Path(path))?])
     ledger.save()?
     # 3. Bind them to the compiler, arguments and package environment.
-    compiler = compiler_fingerprint(toolchain)?
+    mut selected_compiler = compiler
+    if selected_compiler == "":
+        selected_compiler = compiler_fingerprint(toolchain)?
     command = fingerprint(arguments)?
     authored = fingerprint(sources)?
     native = fingerprint(artifacts)?
     ambient = fingerprint(environment_inputs(variables, environment)?)?
-    digest = fingerprint(["incan.oven.rust-library/2", compiler, command, authored, native, ambient])?
-    return Ok(Key(digest=digest, parts=[
-        f"compiler {compiler}", f"command {command}", f"sources {authored}",
-        f"artifacts {native}", f"environment {ambient}",
-    ]))
+    digest = fingerprint(["incan.oven.rust-library/2", selected_compiler, command, authored, native, ambient])?
+    return Ok(
+        Key(
+            digest=digest,
+            parts=[
+                f"compiler {selected_compiler}",
+                f"command {command}",
+                f"sources {authored}",
+                f"artifacts {native}",
+                f"environment {ambient}",
+            ],
+        ),
+    )
 
 
 pub def compilation_observations(
-    project: Path, dependencies: Path, arguments: list[str], linked: list[str], toolchain: Toolchain,
+    project: Path,
+    dependencies: Path,
+    arguments: list[str],
+    linked: list[str],
+    toolchain: Toolchain,
 ) -> Result[Dict[str, str], str]:
-    """Capture inputs before compiling so later file changes cannot be vouched for by a completed build.
+    """
+    Capture inputs before compiling so later file changes cannot be vouched for by a completed build.
 
     1. Collect authored files, known external dependencies and installed native inputs.
     2. Retain their metadata before the compiler can read them.
@@ -76,14 +94,15 @@ pub def compilation_observations(
 
 
 pub def inputs_unchanged(dependencies: Path, observations: Dict[str, str]) -> Result[bool, str]:
-    """Allow publication only for files captured before compilation and still unchanged afterward.
+    """
+    Allow publication only for files captured before compilation and still unchanged afterward.
 
     1. Read the compiler's complete dependency list.
     2. Require every recorded dependency to have been observed before compilation.
     3. Refuse proof for any changed source, compiler or linked artifact.
     """
     # 1. Read the compiler's complete dependency list.
-    text = dependencies.read_text("utf-8", "strict").map_err((error) => error.message())?
+    text = read(dependencies)?
     paths, _ = dependency_inputs(text)?
     # 2. Require every recorded dependency to have been observed before compilation.
     for path in paths:
@@ -107,7 +126,7 @@ def authored_files(root: Path, mut visited: set[str]) -> Result[list[str], str]:
     mut paths: list[str] = []
     for entry in root.iterdir().map_err((error) => error.message())?:
         name = entry.name()
-        if name.startswith(".") or name in ["target", "node_modules"]:
+        if skipped_directory(name):
             continue
         paths.extend(authored_files(entry, visited)?)
     return Ok(paths)
@@ -151,7 +170,7 @@ def dependency_paths(text: str) -> Result[list[str], str]:
     return Ok(paths)
 
 
-def extern_paths(arguments: list[str]) -> list[str]:
+pub def extern_paths(arguments: list[str]) -> list[str]:
     """Extract named native libraries; rustc's built-in `proc_macro` has no artifact argument."""
     mut paths: list[str] = []
     for index in range(1, len(arguments)):

@@ -240,17 +240,10 @@ impl TypeChecker {
     /// Resolve `Awaitable[T]` output from active generic bounds for one placeholder.
     fn await_output_type_from_active_bound(&self, placeholder_name: &str) -> Option<ResolvedType> {
         let awaitable = builtin_traits::as_str(TraitId::Awaitable);
-        for frame in self.current_type_param_bound_details.iter().rev() {
-            let Some(bounds) = frame.get(placeholder_name) else {
-                continue;
-            };
-            for bound in bounds {
-                if bound.name == awaitable && bound.type_args.len() == 1 {
-                    return bound.type_args.first().cloned();
-                }
-            }
-        }
-        None
+        self.innermost_type_param_bounds(placeholder_name)?
+            .iter()
+            .find(|bound| bound.name == awaitable && bound.type_args.len() == 1)
+            .and_then(|bound| bound.type_args.first().cloned())
     }
 
     /// Type-check an expression-form `race for value:` block.

@@ -5,17 +5,29 @@ use std::collections::BTreeSet;
 use incan_lang::lang::trait_capabilities::{self, PrimitiveSourceAdapterInfo};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 
-use crate::loaf_index::LoafIndex;
+use super::primitive_adapters::registered_owner;
+use crate::loaf_index::{LoafIndex, LoafIndexError};
 
 /// Request registered source adapters only when the checked dependency graph reaches their real capability trait
 /// or one of its registered activating declarations. Every returned identity comes from the selected public API.
-pub fn required(loaves: &LoafIndex, requested: &BTreeSet<CanonicalSymbolId>) -> BTreeSet<CanonicalSymbolId> {
+///
+/// Only the Loaves whose admitted identity names the adapter's package are demanded, so a broken Loaf the unit does
+/// not use cannot fail it; a candidate whose manifest cannot be read is an error.
+pub fn required(
+    loaves: &LoafIndex,
+    requested: &BTreeSet<CanonicalSymbolId>,
+) -> Result<BTreeSet<CanonicalSymbolId>, LoafIndexError> {
     let mut required = BTreeSet::new();
     for specification in trait_capabilities::PRIMITIVE_SOURCE_ADAPTERS {
-        for entry in loaves.entries() {
-            if entry.artifact.manifest.name != specification.package {
+        let candidates = loaves
+            .identities()
+            .filter(|(_, identity)| identity.name == specification.package)
+            .map(|(key, _)| key.to_owned())
+            .collect::<Vec<_>>();
+        for key in candidates {
+            let Some(entry) = loaves.demand(&key)? else {
                 continue;
-            }
+            };
             let identities = entry
                 .artifact
                 .manifest
@@ -30,7 +42,7 @@ pub fn required(loaves: &LoafIndex, requested: &BTreeSet<CanonicalSymbolId>) -> 
             }
             let Some(owner) = identities
                 .iter()
-                .find(|identity| registered_owner(specification, identity))
+                .find(|identity| registered_owner(identity, specification))
             else {
                 continue;
             };
@@ -43,14 +55,7 @@ pub fn required(loaves: &LoafIndex, requested: &BTreeSet<CanonicalSymbolId>) -> 
             );
         }
     }
-    required
-}
-
-/// Match a checked public model against the registry's declaring location; aliases preserve that same identity.
-fn registered_owner(specification: &PrimitiveSourceAdapterInfo, identity: &CanonicalSymbolId) -> bool {
-    identity.kind == SemanticSourceTargetKind::Model
-        && matches!(&identity.origin, SymbolOrigin::Package { library, module_path }
-            if specification.matches_owner(library, module_path, &identity.declaration_name))
+    Ok(required)
 }
 
 /// Read activation from canonical dependency edges, including selected trait methods owned by the trait declaration.

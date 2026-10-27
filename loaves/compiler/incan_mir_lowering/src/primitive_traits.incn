@@ -31,6 +31,7 @@ from lowering import (
     source_operand_type,
 )
 from type_parameters import substitute
+from table_views import borrowed_at
 
 
 pub def normalized_primitive_call(
@@ -218,7 +219,8 @@ def normalized_primitive_static(
         return Ok(None)
     # 2. Select its exact source implementation or checked primitive decoder.
     mut result = target.clone()
-    for adoption in module.nominal_declarations[owner].trait_adoptions:
+    for adoption_position in range(len(module.nominal_declarations[owner].trait_adoptions)):
+        adoption = borrowed_at(module.nominal_declarations[owner].trait_adoptions, adoption_position)
         match adoption.primitive_adapter:
             Some(adapter) =>
                 if identity == Some(adapter.decode_slot.clone()):
@@ -228,7 +230,8 @@ def normalized_primitive_static(
                     return Ok(Some(result))
             None => pass
     mut implementation: Option[CanonicalSymbolId] = None
-    for record in module.trait_implementations:
+    for implementation_position in range(len(module.trait_implementations)):
+        record = borrowed_at(module.trait_implementations, implementation_position)
         if record.owner != module.nominal_declarations[owner].canonical or Some(record.method.clone()) != identity:
             continue
         if len(record.slot_arguments) != 0 or len(record.type_arguments) != 0:
@@ -254,7 +257,8 @@ pub def has_adapter_slot(module: &BodyIrModule, slot: &CanonicalSymbolId) -> boo
     """
     # 1. Search validated source adapter adoptions by exact slot identity.
     selected_slot: CanonicalSymbolId = slot.clone()
-    for declaration in module.nominal_declarations:
+    for nominal_position in range(len(module.nominal_declarations)):
+        declaration = borrowed_at(module.nominal_declarations, nominal_position)
         for adoption in declaration.trait_adoptions:
             if adoption.primitive_adapter == None:
                 continue
@@ -277,7 +281,8 @@ def adapter_owner(
     mut selected = -1
     selected_slot: CanonicalSymbolId = slot.clone()
     mut owner = -1
-    for declaration in module.nominal_declarations:
+    for nominal_position in range(len(module.nominal_declarations)):
+        declaration = borrowed_at(module.nominal_declarations, nominal_position)
         owner += 1
         for adoption in declaration.trait_adoptions:
             match adoption.primitive_adapter:

@@ -8,7 +8,7 @@ This tutorial builds a small JSON-in/JSON-out order processor. It combines model
     <div><dt>Prerequisites</dt><dd>Getting Started and basic functions</dd></div>
     <div><dt>Time</dt><dd>30–45 minutes</dd></div>
     <div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.8</code></dd></div>
-    <div><dt>Status</dt><dd>Source exercise; native compilation is refused in the tested dev.8 installation</dd></div>
+    <div><dt>Status</dt><dd>Development-toolchain executable</dd></div>
     <div><dt>Outcome</dt><dd>A running typed JSON processor</dd></div>
     <div><dt>Artifacts</dt><dd>Models, transformation, tests, executable, and JSON report</dd></div>
   </dl>
@@ -211,7 +211,7 @@ def test_build_report_keeps_valid_orders() -> None:  # (1)
 2. The test exercises the same typed input contract as production code, including one deliberately invalid order.
 3. Incan's standard testing assertions compare actual and expected values and report failures with source context.
 
-The repository example contains the complete source. The tested dev.8 installation refuses its native build at an `Order` local in `build_report`; the run and test commands below reproduce that compiler limitation:
+The repository example contains the complete source. Run its tests and the program:
 
 ```bash
 cd examples/advanced/typed_data_processor
@@ -219,11 +219,11 @@ incan test tests/test_transform.incn
 incan run src/main.incn
 ```
 
-The intended output path is `target/tutorial-output/order-report.json`. The refusal occurs before execution, so these commands do not produce that report in the tested installation.
+Both tests pass, and the program prints `Wrote 2 accepted orders to order-report.json` and `Rejected 1 invalid order(s)`. The report is written to `target/tutorial-output/order-report.json`.
 
 <section class="inc-learning-panel inc-learning-panel--complete inc-incus-slot" data-label="Complete" data-incus-category="success" markdown="1">
 
-The source separates a fallible filesystem boundary, typed JSON and a testable transformation. Runtime completion requires a successful compile and the generated report; the tested dev.8 compiler does not satisfy that completion condition.
+The source separates a fallible filesystem boundary, typed JSON and a testable transformation, and the run writes the typed report.
 
 </section>
 

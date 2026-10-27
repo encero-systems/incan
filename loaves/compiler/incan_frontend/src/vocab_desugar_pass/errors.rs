@@ -22,14 +22,6 @@ pub enum VocabDesugarPassError {
         /// The missing or invalid dependency fact.
         message: String,
     },
-    /// A provider referenced an undeclared symbolic helper.
-    #[error("helper binding resolution failed for keyword `{keyword}`: {message}")]
-    HelperBinding {
-        /// The surface whose output requested the helper.
-        keyword: String,
-        /// The unresolved helper contract.
-        message: String,
-    },
     /// The provider's output cannot occupy this source position.
     #[error("desugarer returned an unsupported output position for block keyword `{keyword}`")]
     UnsupportedOutput {

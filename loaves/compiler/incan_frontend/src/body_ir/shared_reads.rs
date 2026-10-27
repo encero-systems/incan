@@ -1,6 +1,8 @@
 //! Retain nonescaping native read loans before the executable ABI is published. Owned snapshots, mutable uses,
 //! callable values and public signatures keep their original storage contracts.
 
+use std::collections::HashSet;
+
 use super::{CanonicalSymbolId, IncanType, SemanticSourceTargetKind, ast, bir};
 use incan_semantics_core::SymbolOrigin;
 
@@ -37,7 +39,7 @@ pub(super) fn retain(module: &mut bir::BodyIrModule, program: &ast::Program) {
             (function.visibility == ast::Visibility::Private && function.type_params.is_empty() && !function.is_async())
                 .then_some(super::hir_span(declaration.span))
         })
-        .collect::<Vec<_>>();
+        .collect::<HashSet<_>>();
     let escaped = escaped_functions(module);
     loop {
         let mut changed = false;
@@ -74,8 +76,9 @@ pub(super) fn retain(module: &mut bir::BodyIrModule, program: &ast::Program) {
         }
         signatures = self::signatures(module);
     }
+    // A callee's signature is module-level, so a call inside a closure or generator body takes the same loans.
     for body in &mut module.bodies {
-        walk_mut(&mut body.block.stmts, &mut |statement| {
+        walk_calls_mut(&mut body.block.stmts, &mut |statement| {
             retain_call_loans(statement, &signatures)
         });
     }
@@ -110,8 +113,8 @@ fn native_owner(ty: &IncanType, identities: &std::collections::BTreeMap<String, 
 }
 
 /// A private function exposed as a callable retains the callable's owned argument contract.
-fn escaped_functions(module: &bir::BodyIrModule) -> Vec<CanonicalSymbolId> {
-    let mut escaped = Vec::new();
+fn escaped_functions(module: &bir::BodyIrModule) -> HashSet<CanonicalSymbolId> {
+    let mut escaped = HashSet::new();
     for body in &module.bodies {
         walk(&body.block.stmts, &mut |statement| {
             if let bir::StatementKind::Assign {
@@ -127,7 +130,7 @@ fn escaped_functions(module: &bir::BodyIrModule) -> Vec<CanonicalSymbolId> {
                     } = &statement.kind
                         && let Some(identity) = &target.canonical
                     {
-                        escaped.push(identity.clone());
+                        escaped.insert(identity.clone());
                     }
                 });
             }
@@ -380,6 +383,20 @@ fn walk(statements: &[bir::Statement], visit: &mut impl FnMut(&bir::Statement)) 
 
 /// Rewrite the same lexical statement surface without allowing a nested callable to share frame-local identities.
 fn walk_mut(statements: &mut [bir::Statement], visit: &mut impl FnMut(&mut bir::Statement)) {
+    walk_statements_mut(statements, false, visit);
+}
+
+/// Rewrite every call site of one body, including the calls inside its closure and generator bodies.
+fn walk_calls_mut(statements: &mut [bir::Statement], visit: &mut impl FnMut(&mut bir::Statement)) {
+    walk_statements_mut(statements, true, visit);
+}
+
+/// The one mutable statement walk: lexical control flow always, closure and generator bodies when `enter_callables`.
+fn walk_statements_mut(
+    statements: &mut [bir::Statement],
+    enter_callables: bool,
+    visit: &mut impl FnMut(&mut bir::Statement),
+) {
     for statement in statements {
         visit(statement);
         match &mut statement.kind {
@@ -388,20 +405,28 @@ fn walk_mut(statements: &mut [bir::Statement], visit: &mut impl FnMut(&mut bir::
                 ..
             } => {
                 for arm in arms {
-                    walk_mut(&mut arm.guard_stmts, visit);
-                    walk_mut(&mut arm.body_stmts, visit);
+                    walk_statements_mut(&mut arm.guard_stmts, enter_callables, visit);
+                    walk_statements_mut(&mut arm.body_stmts, enter_callables, visit);
                 }
             }
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Closure { body, .. },
+                ..
+            } if enter_callables => walk_statements_mut(&mut body.stmts, enter_callables, visit),
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Generator { body, .. },
+                ..
+            } if enter_callables => walk_statements_mut(&mut body.stmts, enter_callables, visit),
             bir::StatementKind::If {
                 then_block, else_block, ..
             } => {
-                walk_mut(&mut then_block.stmts, visit);
+                walk_statements_mut(&mut then_block.stmts, enter_callables, visit);
                 if let Some(block) = else_block {
-                    walk_mut(&mut block.stmts, visit);
+                    walk_statements_mut(&mut block.stmts, enter_callables, visit);
                 }
             }
             bir::StatementKind::Loop { body } | bir::StatementKind::UnsafeRegion { body, .. } => {
-                walk_mut(&mut body.stmts, visit)
+                walk_statements_mut(&mut body.stmts, enter_callables, visit)
             }
             _ => {}
         }

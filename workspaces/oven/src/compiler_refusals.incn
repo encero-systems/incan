@@ -13,7 +13,7 @@ from rust::std::string import String as RustString
 from std.environ import get_or
 from std.fs import Path
 from std.io import BytesIO
-from apple_sdk import configure_sdk
+from driver_command import driver_command
 from compiler_worker import Completion, captured_resident
 from files import open_stream
 from observation import trace
@@ -50,7 +50,7 @@ pub def compile_or_replay(
     3. Publish a certified refusal only if the complete input identity is still unchanged.
     """
     # 1. Replay a complete matching refusal unless a caller requested compiler side effects.
-    cacheable = ordinary_compilation() and complete_artifacts(unit)
+    cacheable = ordinary_compilation() and complete_artifacts(unit)?
     if cacheable:
         if let Some(refusal) = load_outcome(path, key.digest):
             trace(f"unit {unit.package} {unit.kind}: replayed refusal")
@@ -86,7 +86,7 @@ pub def check_or_replay(
     label = f"unit {unit.package} check"
     identity = fingerprint([CHECK_DOMAIN, key.digest] + arguments)?
     # 1. A stored report of this identity is shown exactly as the compiler printed it.
-    cacheable = ordinary_compilation() and complete_artifacts(unit)
+    cacheable = ordinary_compilation() and complete_artifacts(unit)?
     if cacheable:
         if let Some(report) = load_outcome(path, identity):
             trace(f"{label}: replayed")
@@ -130,13 +130,13 @@ def ordinary_compilation() -> bool:
     return get_or("INCAN_DIRECT_REFUSAL_REPORT", "") == "" and get_or("INCAN_DIRECT_SEMANTIC_REPORT", "") == ""
 
 
-def complete_artifacts(unit: UnitDescription) -> bool:
+def complete_artifacts(unit: UnitDescription) -> Result[bool, str]:
     """A missing linked artifact is a preparation failure and must be retried even beside a source diagnostic."""
     for loaf in unit.loaves:
-        for artifact in artifact_files(Path(loaf.dir), loaf.name):
+        for artifact in artifact_files(Path(loaf.dir), loaf.name)?:
             if not artifact.is_file():
-                return false
-    return true
+                return Ok(false)
+    return Ok(true)
 
 
 def cold_completion(toolchain: Toolchain, arguments: list[str]) -> Result[Completion, str]:
@@ -144,9 +144,7 @@ def cold_completion(toolchain: Toolchain, arguments: list[str]) -> Result[Comple
     Run one compiler process with its exact streams captured; a process ended by a signal has status one and no
     normal exit.
     """
-    mut command = Command.new(toolchain.driver)
-    configure_sdk(command, toolchain.sysroot)?
-    command.env_remove("RUSTC_BOOTSTRAP")
+    mut command = driver_command(toolchain)?
     command.stdin(Stdio.inherit())
     for argument in arguments:
         command.arg(argument)

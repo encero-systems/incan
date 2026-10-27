@@ -422,11 +422,7 @@ impl Formatter {
                 }
                 self.writer.dedent();
             }
-            Expr::If(if_expr) => {
-                self.format_spanned_expr(&if_expr.condition);
-                self.writer.write(" if ");
-                // Note: This handles ternary-style if expressions
-            }
+            Expr::If(if_expr) => self.format_if_expression(if_expr),
             Expr::Loop(loop_expr) => {
                 self.writer.writeln("loop:");
                 self.writer.indent();
@@ -724,6 +720,32 @@ impl Formatter {
             self.writer.write(&name.replace("::", "."));
         } else {
             self.writer.write(name);
+        }
+    }
+
+    /// Format both suites of an if expression, retaining every statement instead of emitting a ternary fragment.
+    fn format_if_expression(&mut self, expression: &IfExpr) {
+        self.writer.write("if ");
+        self.format_suite_header_expr(&expression.condition);
+        self.writer.writeln(":");
+        self.writer.indent();
+        for statement in &expression.then_body {
+            self.format_statement(statement);
+        }
+        if expression.then_body.is_empty() {
+            self.writer.writeln("pass");
+        }
+        self.writer.dedent();
+        if let Some(body) = &expression.else_body {
+            self.writer.writeln("else:");
+            self.writer.indent();
+            for statement in body {
+                self.format_statement(statement);
+            }
+            if body.is_empty() {
+                self.writer.writeln("pass");
+            }
+            self.writer.dedent();
         }
     }
 

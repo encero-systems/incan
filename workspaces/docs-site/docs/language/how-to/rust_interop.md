@@ -1,850 +1,189 @@
-# Rust Interoperability
+# Call Rust APIs from Incan
 
-Incan exposes a Rust interop boundary for crates and Rust types. Dev.8 checks Rust items through the installed compiler's ABI caches and Rust metadata extraction, then compiles native calls directly. External dependencies must match artifacts in the installed toolchain closure.
+Use `rust::` imports to call Rust crates through checked native signatures. Oven selects compiled dependencies, the checker resolves Rust items, and the pinned compiler compiles native calls. For import syntax and refusals, see [Imports and modules](../reference/imports_and_modules.md#rust-crate-imports).
 
-## Importing Rust Crates
+## Start with Rust's standard library
 
-Use the `rust::` prefix to import from Rust crates:
-
-```incan
-# Import entire crate
-import rust::serde_json as json
-
-# Import specific items from Rust's standard library
-from rust::std::time import Instant, Duration
-from rust::std::collections import HashMap, HashSet
-
-# Import from an external crate
-from rust::uuid import Uuid
-
-# Import nested items
-import rust::serde_json::Value
-```
-
-### The `std` and `rust` namespaces
-
-- `std::...` is reserved for **Incan's** standard library (e.g. `from std.web import App`).
-- `rust::...` is for Rust crates from crates.io **and** Rust's standard library.
-
-To use Rust's own standard library, use the `rust::std::` prefix:
+Put this in `src/main.incn` of a project with a declared `main` script:
 
 ```incan
-import rust::std::fs
-import rust::std::collections::BTreeMap
+from rust::std::time import Duration
+
+
+def main() -> None:
+    seconds: f32 = 1.5
+    duration = Duration.from_secs_f64(seconds)
+    println(duration.as_secs_f64())
 ```
 
-For example, if you would use `import std::fs`, this would refer to Incan's stdlib, **not** Rust's!
-
-Using `rust::std` types means working with their Rust behavior; for common file work, `std.fs.Path` is the simpler choice (see [File I/O](file_io.md)). When you pass a `list[T]` to a Rust function or method that expects `Vec<U>`, Incan converts each element with `.into()`, and Rust checks that `U` implements `From<T>`.
-
-> **Note:** `rust::core::...` and `rust::alloc::...` are reserved for future `no_std`/target work and are not yet
-> supported. The compiler will tell you to use `rust::std::...` instead.
-
-### Check a project that uses only Rust's standard library
-
-For a project with no declared Rust dependencies, use `rust::std::` imports without adding a crate dependency. Use the matching installed compiler and Rust sysroot:
+Check and run it with the matching installed toolchain:
 
 ```bash
 incan check src/main.incn
 incan run src/main.incn
-incan test tests/test_main.incn
 ```
 
-The checker reads installed Rust ABI caches and extracts uncovered paths with the pinned Rust compiler. External Rust dependencies must match the installed registry closure; declaring a missing crate does not download or build it.
+The program prints `1.5`. `rust::std` needs no project dependency declaration. `std.*` names Incan's standard library; for example, `std.fs.Path` provides file operations without exposing Rust's path types. `rust::core` and `rust::alloc` imports are refused; use `rust::std`.
 
-### Paths and names that match Incan keywords
+## Declare an external crate
 
-Rust modules and items sometimes use names that are reserved in Incan (`type`, `async`, and others). In `rust::` paths and in `from rust::... import ...` item lists, those spellings are still accepted. When you import a keyword-named symbol, bind it with `as` so you have a normal identifier in Incan source:
+In a project, declare the crate in `loaf.toml` before importing it. A registry Loaf can be declared under `[dependencies]`:
+
+```toml
+[project]
+name = "json_app"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+serde_json = { loaf = "crates-io/serde_json", version = "1" }
+```
+
+Alternatively, use `[rust-dependencies]` for a Rust crate requirement, including a package alias:
+
+```toml
+[rust-dependencies]
+json = { package = "serde_json", version = "1" }
+```
+
+The second form is imported as `rust::json`. A sibling path Loaf linked as a Rust facet is also available through its dependency alias. See [Managing dependencies](../../tooling/how-to/dependencies.md) for project declarations.
+
+The selected version and features must match an exact compiled registry unit in the installed toolchain. Declaring a crate does not download or build a missing registry unit. Use a toolchain that contains the required closure; changing only the requested version cannot supply a missing artifact.
+
+For the first manifest above, parse JSON with a checked return type and propagate its error:
+
+```incan
+from rust::serde_json import from_str, Error as JsonError
+
+
+def parse_number(text: str) -> Result[int, JsonError]:
+    """Parse a JSON integer using the function's result annotation."""
+    return from_str(text)
+
+
+def main() -> Result[None, JsonError]:
+    value = parse_number("7")?
+    println(value)
+    return Ok(None)
+```
+
+## Select standalone versions and features
+
+A source file outside a project can state its Rust dependency requirement inline:
+
+```incan
+import rust::serde_json @ "1"
+import rust::serde @ "1" with ["derive"]
+```
+
+Version strings use Cargo SemVer requirements, such as `"1"`, `"~1.2"`, `">=1, <2"` and `"=1.2.3"`. Repeated explicit requirements for a crate must match; requested features are unioned.
+
+Without an inline version, Oven looks for that crate's declared dependency in the available standard packages' `loaf.toml` files. It takes the version and features from those declarations. There is no separate table of tested default versions. If no declaration supplies a default, provide an explicit requirement. The requested registry unit must still be installed.
+
+For a project, keep dependencies in its manifest and use bare imports. Inline annotations on a manifest-configured crate are refused.
+
+## Spell Rust names and generic calls
+
+Use `::` between Rust path segments. Keyword-named Rust items can be imported with an ordinary local alias:
 
 ```incan
 from rust::my_crate::proto import type as proto_type
 ```
 
-The same rule applies to path segments after `rust::` (for example `rust::substrait::proto::type::Binary`).
+For a Rust field named `r#type`, write `value.type` or `TypeName(type=value)` in Incan. A field actually named `type_` stays `value.type_`.
 
-For Rust struct fields whose real Rust identifier is a keyword, use the keyword spelling in Incan field access and named constructor arguments. For example, a Rust field declared as `r#type` is available as `value.type` and `TypeName(type=value)` in Incan source; generated Rust still uses the real raw identifier. An ordinary Rust field named `type_` remains `value.type_`.
-
-### Constructing a generic Rust receiver
-
-Some Rust crates define constructors on a generic type while the constructor itself has no generic parameters. In Rust this is written as `Fft::<f32>::new(...)`. When the receiver declaration contains type parameters only, put those arguments after the associated function name in Incan:
+Place explicit type arguments after the associated function or method name. A constructor whose generic parameters belong only to its owner uses those brackets to specialize the owner. For example, for a crate exposing `Fft<T>::new`:
 
 ```incan
-from rust::rubato import Fft, FixedSync, ResamplerConstructionError
-
 result: Result[Fft[f32], ResamplerConstructionError] = Fft.new[f32](
-    48_000,
-    24_000,
-    480,
-    1,
-    FixedSync.Input,
+    48_000, 24_000, 480, 1, FixedSync.Input,
 )
 ```
 
-The brackets specialize `Fft`, not `new`. Do not write `Fft[f32].new(...)`: bracketed types are type expressions, not runtime receiver expressions.
-
-You may omit the explicit receiver argument when the expected result fixes it uniquely:
+Do not write `Fft[f32].new(...)`. An expected result or parameter type can supply the receiver specialization without explicit brackets. When specifying method type arguments, supply the complete inspected type-parameter list; `_` leaves a slot inferred:
 
 ```incan
-result: Result[Fft[f32], ResamplerConstructionError] = Fft.new(
-    48_000,
-    24_000,
-    480,
-    1,
-    FixedSync.Input,
-)
+stream = device.build_output_stream[f32, _, _](config, on_data, on_error, None)
 ```
 
-Expected function parameters provide the same context:
+These examples assume the named crate dependencies, types and surrounding values are declared. Const-generic arguments cannot be supplied as Incan type arguments.
 
-```incan
-def register(result: Result[Fft[f32], ResamplerConstructionError]) -> None:
-    ...
+## Call methods through checked traits
 
-register(Fft.new(48_000, 24_000, 480, 1, FixedSync.Input))
-```
-
-Use the explicit form when there is no result annotation or parameter context from which the receiver specialization can be inferred. Incan specializes the complete inspected signature, so owner parameters used by arguments and non-`Self` returns are checked consistently before Rust generation.
-
-Rust const-generic receiver declarations are not supported by this v0.5 call shape. Incan reports a checked error because its brackets accept types, not const values; wrap that API behind a type-only Rust or Incan receiver rather than relying on rustc to reinterpret the arguments.
-
-### Supplying generic arguments to an imported Rust method
-
-Imported Rust methods use the same arity-complete bracket rule as Incan methods. If inspection reports three method type parameters, provide either no brackets and let Rust infer all three, or provide exactly three entries. Use `_` for each slot that should remain inferred:
-
-```incan
-from rust::cpal::traits import DeviceTrait
-
-# `device`, `config`, and the callbacks are values prepared by the surrounding audio code.
-stream = device.build_output_stream[f32, _, _](
-    config,
-    on_data,
-    on_error,
-    None,
-)
-```
-
-Writing `build_output_stream[f32](...)` is an error because the method declares three type parameters. Incan reports the required and supplied arity during typechecking instead of emitting an incomplete Rust turbofish. The `_` entries are deliberate inference slots, not optional trailing arguments.
-
-### Calling a Rust trait method through the trait
-
-When two imported traits both provide a method with the same name, `value.method(...)` is ambiguous for Rust. Spell the call through the trait instead and pass the receiver as the first argument:
-
-```incan
-from rust::sha2 import Digest, Sha256
-from rust::sha3::digest import Update
-
-class Hasher:
-    handle: Sha256
-
-    def absorb(mut self, chunk: bytes) -> None:
-        Update.update(self.handle, chunk.as_slice())
-
-    def update(mut self, chunk: bytes) -> None:
-        Digest.update(self.handle, chunk.as_slice())
-```
-
-The receiver is passed like any other argument. The compiler does not guess for a trait it recognizes: when the import is known to be a trait but no signature is available for the method, the trait-qualified call is an error naming the trait and method, and `value.method(...)` remains available when the method is unambiguous on the receiver. A method the trait does not declare is also rejected, since Rust resolves `Trait::method` only against the trait's own items. An import the compiler has no metadata for at all is treated as an ordinary associated call, and native compilation remains the authority for it.
-
-### Extension traits stay in scope for the methods they provide
-
-Rust finds a trait method on a value only when the trait is imported. Generated code keeps only the imports it uses, and a trait used through method syntax never appears in the emitted call, so the compiler attributes each method call to the imported trait that provides it and retains that `use`:
+Import the trait that supplies an extension method. The checker resolves the method against its Rust signature and bounds; a metadata-free import does not grant method-call authority.
 
 ```incan
 from rust::std::borrow import Borrow
 from rust::std::path import PathBuf
 
+
 pub def borrowed(value: &PathBuf) -> &PathBuf:
     return value.borrow()
 ```
 
-With inspected metadata the attribution is exact. Without it the compiler cannot tell which imported item declares `borrow`, so a method call that no inspected surface resolves keeps every imported Rust item whose method surface is unknown, aliases included. A metadata-free import in a module with no such call is still pruned as unused, and an import whose metadata names a non-trait item is never retained on a method call's behalf.
+To disambiguate two imported traits with the same method name, call `Trait.method(receiver, arguments...)`. The named trait must declare the method, and its checked signature must be available. This is a native trait call; it does not depend on retaining a generated Rust `use` statement.
 
-### Passing callbacks that borrow Rust slices
+## Match a borrowed callback signature
 
-When an inspected Rust callback bound accepts a borrowed slice, write the corresponding named Incan callback with a borrowed `list[T]`. Incan keeps the inspected Rust spelling for emission, so `&mut list[f32]` becomes `&mut [f32]` at this call boundary rather than changing the representation of ordinary Incan lists:
-
-```incan
-from rust::cpal import Error as CpalError, OutputCallbackInfo, default_host
-from rust::cpal::traits import DeviceTrait, HostTrait
-
-
-def write_silence(_data: &mut list[f32], _info: &OutputCallbackInfo) -> None:
-    pass
-
-
-def report_stream_error(error: CpalError) -> None:
-    println(error.to_string())
-
-
-def main() -> None:
-    host = default_host()
-    match host.default_output_device():
-        Some(device) =>
-            match device.default_output_config():
-                Ok(supported_config) =>
-                    config = supported_config.config()
-                    match device.build_output_stream[f32, _, _](
-                        config,
-                        write_silence,
-                        report_stream_error,
-                        None,
-                    ):
-                        Ok(_) => println("stream-built")
-                        Err(error) => println(error.to_string())
-                Err(error) => println(error.to_string())
-        None => println("no-output-device")
-```
-
-An inline closure receives the same contextual parameter types from the inspected `FnMut` bound:
+When a Rust API requires a callback with a borrowed slice parameter, give a named Incan callback the matching borrowed list annotation:
 
 ```incan
-match device.build_output_stream[f32, _, _](
-    config,
-    (_data, _info) => (),
-    report_stream_error,
-    None,
-):
-    Ok(_) => println("stream-built")
-    Err(error) => println(error.to_string())
-```
-
-The inline form assumes `device`, `config`, and `report_stream_error` were prepared exactly as in the complete example above. Borrowed-slice preservation applies only where Rust metadata proves the callback shape; it is not a general conversion between `Vec[T]` and `[T]`.
-
-## Dependency Management
-
-When you use `import rust::crate_name`, Incan records a Rust compatibility requirement. The requirement source uses
-this three-tier precedence system:
-
-1. **`loaf.toml`** (highest priority): If the crate is configured in your project manifest, that spec is used.
-2. **Inline annotations**: If you write `import rust::foo @ "1.0"`, that version is used.
-3. **Known-good defaults**: For common crates (see table below), the compiler provides tested defaults.
-
-If none of these apply, the compiler emits an error asking you to specify a version. In Oven Alpha, selecting a
-requirement is separate from resolving it: normal `build`, `run`, and `test` require a compatible sealed Loaf and
-never ask Cargo to resolve a missing crate. An unsupported crate, version, feature set, build script, or procedural
-macro shape fails with explicit envelope guidance.
-
-For the bigger picture, see: [Projects today](../../tooling/explanation/projects_today.md).
-
-### Specifying versions and features
-
-You can annotate any `rust::` import with a version requirement and optional feature list:
-
-```incan
-# Version only
-import rust::my_crate @ "1.0"
-from rust::obscure_lib @ "0.5" import Widget
-
-# Version with features
-import rust::tokio @ "1.0" with ["full"]
-import rust::serde @ "1.0" with ["derive", "rc"]
-from rust::sqlx @ "0.7" with ["runtime-tokio", "postgres"] import Pool
-```
-
-Version strings use [Cargo SemVer syntax](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html):
-
-| Syntax      | Meaning                      | Example            |
-| ----------- | ---------------------------- | ------------------ |
-| `"1.2.3"`   | Caret (^1.2.3): >=1.2.3 <2.0 | `@ "1.0"`          |
-| `"~1.2"`    | Tilde: >=1.2.0 <1.3.0        | `@ "~0.3"`         |
-| `">=1, <2"` | Range                        | `@ ">=1.30, <2.0"` |
-| `"=1.2.3"`  | Exact version                | `@ "=1.2.3"`       |
-
-**Merging rules** when the same crate is imported in multiple files:
-
-- Version strings must match exactly across all sites (mismatch is an error).
-- Features are unioned automatically.
-
-### Project-level dependencies (`loaf.toml`)
-
-For projects with multiple dependencies, use a `loaf.toml` manifest instead of inline annotations. This is the recommended approach for anything beyond single-file scripts:
-
-```toml
-[project]
-name = "my_app"
-version = "0.1.0"
-
-[rust-dependencies]
-tokio = { version = "1.35", features = ["full"] }
-serde = { version = "1.0", features = ["derive"] }
-my_crate = "2.0"  # assuming this is a rust crate you are referencing
-```
-
-When a crate is configured in `loaf.toml`, inline version annotations for that crate are **not allowed** — the manifest is the single source of truth. Bare imports (without `@`) are fine.
-
-For the full manifest format, see: [Project configuration reference](../../tooling/reference/project_configuration.md). For a practical guide, see: [Managing dependencies](../../tooling/how-to/dependencies.md).
-
-### Known-good defaults
-
-The following crates have pre-configured versions with appropriate features. These defaults apply automatically when you import a crate without a version annotation and without a `loaf.toml` entry:
-
-| Crate      | Version | Features                            |
-| ---------- | ------- | ----------------------------------- |
-| serde      | 1.0     | derive                              |
-| serde_json | 1.0     | -                                   |
-| tokio      | 1       | rt-multi-thread, macros, time, sync |
-| time       | 0.3     | formatting, macros                  |
-| chrono     | 0.4     | serde                               |
-| reqwest    | 0.11    | json                                |
-| uuid       | 1.0     | v4, serde                           |
-| rand       | 0.8     | -                                   |
-| regex      | 1.0     | -                                   |
-| anyhow     | 1.0     | -                                   |
-| thiserror  | 1.0     | -                                   |
-| tracing    | 0.1     | -                                   |
-| clap       | 4.0     | derive                              |
-| log        | 0.4     | -                                   |
-| env_logger | 0.10    | -                                   |
-| sqlx       | 0.7     | runtime-tokio-native-tls, postgres  |
-| futures    | 0.3     | -                                   |
-| bytes      | 1.0     | -                                   |
-| itertools  | 0.12    | -                                   |
-
-You can override any of these requirements via `loaf.toml` or inline `@ "version"` annotations. The installed Oven-enabled toolchain must still contain a Loaf that authorizes the chosen closure.
-
-### Using unknown crates
-
-If you import a crate not in the known-good list and provide no version, you'll see:
-
-```text
-error: unknown Rust crate `my_crate`: no version specified
-  --> src/main.incn:5
-    import rust::my_crate
-
-hint: Add a version annotation: `import rust::my_crate @ "1.0"` or add it to loaf.toml.
-```
-
-**Fix**: add an inline version annotation, or add the crate to your `loaf.toml`.
-
-## Rust bounds on source traits
-
-A source trait can inherit an imported Rust trait. This retains the foreign requirement on every adopter without generating an implementation of the Rust parent:
-
-```incan
-from rust::std::clone import Clone as RustClone
-
-trait Snapshot with RustClone:
+def write_silence(data: &mut list[f32], info: &OutputCallbackInfo) -> None:
     pass
 ```
 
-For serialization, use the Incan derive API to generate the serde implementations:
+Here `OutputCallbackInfo` is imported from the callback's crate. The call's checked Rust signature supplies the slice ABI. A closure expression can receive the same contextual parameter types. This applies at that callback boundary; it does not change the representation of ordinary Incan lists.
 
-```incan
-from std.serde import json
-from rust::serde import Serialize as RustSerialize
-from rust::serde::de import DeserializeOwned
+## Name a Rust-backed type
 
-trait Readable with DeserializeOwned:
-    pass
-
-trait Writable with RustSerialize:
-    pass
-
-@derive(json)
-model Config with Readable, Writable:
-    name: str
-```
-
-Here `Readable` and `Writable` are source traits whose foreign parents require serde deserialization and serialization. `@derive(json)` supplies those known implementations through `std.serde`; the model does not need a separate `@rust.derive` decorator. Adopting an arbitrary trait imposes its requirements but does not infer a Rust derive macro from its name.
-
-The adopter must already satisfy the Rust bound, for example through a derive or an existing blanket implementation. Import aliases preserve the original Rust trait identity. When inspection metadata identifies an imported item as a non-trait, the frontend rejects it; native Rust compilation checks foreign trait obligations and generic argument counts that are not represented in the inspection metadata.
-
-## Rust-backed types with `rusttype`
-
-Use `rusttype` when you want an Incan type that is directly backed by a Rust type:
+Use `rusttype` for an Incan-facing name backed by a Rust type:
 
 ```incan
 from rust::std::string import String as RustString
 
-type Name = rusttype RustString:
-    def parse(raw: str) -> Result[Name, str]:
-        ...
-
-    def as_str(self) -> str:
-        ...
+type Name = rusttype RustString
 ```
 
-This keeps Rust provenance explicit (`rust::...` import) while giving you an Incan-facing type name (`Name`) for docs, APIs, and rebinding.
+A body may define methods and explicit conversion adapters. Adopt traits with `with TraitName`; when method names overlap, qualify the implementing declaration with `for TraitName` before its return arrow. A body-less adoption requires metadata proving that the backing type already satisfies the Rust trait. Rust coherence rules also apply to native implementations.
 
-### Trait adoption on `rusttype`
-
-Use `with TraitName` when an Incan-owned wrapper should satisfy a Rust trait contract:
+Inside a `rusttype` body, an `interop:` block can declare adapters:
 
 ```incan
-from rust::std::convert import From
-from rust::tokio::task import JoinError
-
-type TaskJoinError = rusttype str with From[JoinError]:
-    @classmethod
-    def from(cls, error: JoinError) -> Self:
-        return TaskJoinError(error.to_string())
+interop:
+    from str try Name.parse
+    into str via Name.as_str
 ```
 
-If two adopted traits require the same method name, target the method implementation with `for TraitName` before the return arrow:
+This fragment assumes `Name.parse` returns `Result[Name, E]` or `Option[Name]` and `Name.as_str` returns `str`. Use `from S via adapter` for an infallible inbound conversion. See [Rust types for Python developers](rust_types_for_python_devs.md) for the authoring model.
+
+## Publish Rust-backed library APIs
+
+A facade library can re-export imported Rust items:
 
 ```incan
-from rust::std::fmt import Debug, Display, Formatter, FmtError
-
-type UserId = rusttype i64 with Display, Debug:
-    def fmt(self, f: Formatter) for Display -> Result[None, FmtError]:
-        return f.write_str(f"user_{self.0}")
-
-    def fmt(self, f: Formatter) for Debug -> Result[None, FmtError]:
-        return f.write_str(f"UserId({self.0})")
+pub from rust::serde_json import Value
 ```
 
-The `for Display` qualifier belongs to the method declaration. It tells the compiler which adopted trait owns that method body; it is not part of the return type.
+Build the producer with `incan build src/lib.incn`. The producer publishes its checked API and Rust ABI in its library sidecars. A consumer declaring that path dependency imports `Value` through `pub::PACKAGE`. Its selected producer artifact supplies the Rust-facing contract; the consumer does not select an unrelated signature for the same path.
 
-Rust traits with associated types use type declarations in the wrapper body. Associated type values are written as Incan type expressions:
+Public metadata and editor previews are specified in [Checked API metadata](../../tooling/reference/checked_api_metadata.md).
 
-```incan
-from rust::std::ops import Add
+## Choose conversions explicitly
 
-type UserId = rusttype i64 with Add[int]:
-    type Output for Add[int] = UserId
+Exact numeric types and lossless widening are accepted at Rust call boundaries. The opening example passes `f32` to `Duration.from_secs_f64`; narrowing to `f32`, signed-to-unsigned conversions and other lossy changes need an explicit source conversion. Handle `try_resize()` with `Option` before making the call. See [Numeric semantics](../reference/numeric_semantics.md).
 
-    def add(self, rhs: int) for Add[int] -> UserId:
-        return UserId(self.0 + rhs)
-```
+Incan `str` values can satisfy Rust `String` or shared `&str` parameters, and `bytes` can satisfy `Vec<u8>` or shared byte slices. Write `&T` or `&mut T` where an API explicitly borrows a value; Rust types with lifetime parameters can require a lifetime contract and may be refused.
 
-Rust coherence rules still apply to generated implementations. Incan can implement a foreign Rust trait for an Incan-owned wrapper, but it cannot make arbitrary foreign-trait-for-foreign-type combinations legal.
+For imported Rust free functions with checked parameter names, keyword arguments bind by those names. A name missing from the signature is refused rather than guessed.
 
-Body-less `rusttype` adoption is only accepted when Rust metadata proves that the backing type already implements the adopted Rust trait. In that case Incan treats the alias as already satisfying the contract and does not emit an invalid `impl ForeignTrait for Alias` block.
+## Rust lint annotations {#targeted-generated-rust-lint-suppression}
 
-`rusttype ... with Awaitable[T]` is currently rejected with a focused diagnostic. The compiler keeps `Awaitable[T]` as the Incan-facing async contract, but Rust `Future` bridge emission still needs safe pin-projection and output-mapping metadata before it can replace handwritten Rust adapters.
+Oven's native build does not run Clippy or generate Rust source attributes. The checker validates `@rust.allow(...)` arguments, but that annotation does not admit an unsupported signature or satisfy a trait bound. Resolve a source error at its reported span rather than adding a lint allowance to the declaration.
 
-## Published libraries and shipped ABI metadata
+## Diagnose a refused call
 
-When a library exposes Rust-backed items, run `incan build src/lib.incn` before another project consumes it through `pub::`. Its `.incnlib` includes the checked Rust-facing public contract from the producer build.
+Run `incan check src/main.incn --format json` to identify the source span and stable diagnostic code. Check the dependency alias, installed artifact, receiver type, generic arity and trait bound before changing the call. A successful check establishes the source contract; `incan run` also proves that its native call compiles and executes.
 
-Consumers load the published contract for Rust-backed imported symbols. The pinned compiler obtains other Rust facts from installed ABI caches and extraction during checking.
-
-Producer capture includes successful metadata lookups made while checking function bodies, in addition to explicit imports and `rust.extern` backing items. A Rust factory's inferred return receiver can therefore carry its checked ABI without a separate type import. Complete ABI records already shipped by dependencies are reused; other requested type records are completed before shipping them. Partial fast-inspection records are insufficient. Repeated queries are deduplicated, and unsuccessful speculative lookups do not become ABI requirements.
-
-A library can deliberately publish a checked Rust import:
-
-```incan
-# Native façade library
-pub from rust::rubato import Fft, FixedSync, ResamplerConstructionError
-```
-
-After building that library with `incan build src/lib.incn`, a consumer imports the same types through the package boundary:
-
-```incan
-from pub::audio_native import Fft, FixedSync, ResamplerConstructionError
-
-result: Result[Fft[f32], ResamplerConstructionError] = Fft.new(
-    48_000,
-    24_000,
-    480,
-    1,
-    FixedSync.Input,
-)
-```
-
-The selected `pub::audio_native` artifact remains the authority for those reexports and their shipped Rust ABI. Associated calls made through the imported type receiver therefore cannot silently pick a different checked signature from another dependency that happens to expose the same canonical Rust path.
-
-### Calling imported Rust functions
-
-Imported Rust free functions use ordinary Incan call syntax. When the compiler has inspected or shipped Rust signature metadata with parameter names, keyword arguments bind to those Rust parameters and lower to the positional Rust call shape that Cargo expects:
-
-```incan
-from rust::demo import create_widget
-
-widget = create_widget(name="primary", enabled=true)
-```
-
-If the Rust metadata does not include the named parameter, the compiler rejects the keyword argument instead of guessing a positional mapping.
-
-### Qualified backing paths
-
-When a `rust::` import binds a Rust module (or other namespace), you can name a concrete type inside it with `::` after that binding:
-
-```incan
-from rust::substrait::proto import type as proto_type
-
-type Binary = rusttype proto_type::Binary
-```
-
-The first segment must resolve to a `rust::` import; the compiler builds the full Rust path for lowering and tooling.
-
-Generics on qualified type paths (for example `binding::Wrapper[int]`) are not supported yet — import or spell a path to the concrete type without type arguments in that position.
-
-### Declaring conversion edges with `interop:`
-
-Inside a `rusttype` body, `interop:` declares explicit adapters across the Incan/Rust boundary:
-
-```incan
-from rust::std::string import String as RustString
-
-type Name = rusttype RustString:
-    def parse(raw: str) -> Result[Name, str]:
-        ...
-
-    def as_str(self) -> str:
-        ...
-
-    interop:
-        from str try Name.parse
-        into str via Name.as_str
-```
-
-Use:
-
-- `from S via adapter` for infallible inbound adaptation (`S -> ThisType`)
-- `from S try adapter` for fallible inbound adaptation (`S -> Result[ThisType, E]` or `S -> Option[ThisType]`)
-- `into T via adapter` for outbound adaptation (`ThisType -> T`)
-
-## Numeric arguments and return values
-
-Rust APIs often distinguish numeric widths that ordinary Incan code does not care about. Incan's interop boundary uses the same rule as numeric assignment: exact matches and provably lossless widening are accepted; narrowing is rejected.
-
-```incan
-from rust::telemetry import record_i32, record_i64, record_f32, record_f64
-
-code: i32 = 200
-record_i32(code)       # ok: exact
-record_i64(code)       # ok: i32 widens to i64
-
-count: int = 200       # int is canonical i64
-record_i64(count)      # ok
-# error if record_i32 expects Rust i32
-record_i32(count)
-
-sample: f32 = 1.25
-record_f64(sample)     # ok: f32 widens to f64
-
-value: float = 1.25    # float is canonical f64
-# error if record_f32 expects Rust f32
-record_f32(value)
-```
-
-This rule is deliberate. Users should not have to add casts for safe width increases, but generated code should not silently downcast a value when a Rust API asks for a smaller integer or `f32`.
-
-When narrowing is intended, choose the conversion policy in Incan source before the Rust call:
-
-```incan
-from rust::telemetry import record_i32
-
-count: int = 200
-maybe_code: Option[i32] = count.try_resize()
-
-match maybe_code:
-    case Some(code): record_i32(code)
-    case None: println("count is outside i32")
-```
-
-For fixed-scale data, prefer `decimal[p, s]` / `numeric[p, s]` at the Incan boundary and explicit Rust adapters for crate-specific decimal types until the target crate's decimal representation is modeled directly.
-
-For the complete numeric contract, see [Numeric semantics](../reference/numeric_semantics.md). For practical type selection advice, see [Choosing numeric types](choosing_numeric_types.md). For the design rationale, see [Why numeric types work this way](../explanation/numeric_types.md).
-
-## Capability bounds with `std.rust`
-
-Import Rust capability markers from `std.rust` and use them in generic `with` clauses:
-
-```incan
-from std.rust import Send, Sync
-
-def run[T with Send, Sync](_value: T) -> None:
-    pass
-```
-
-These are Incan-syntax bounds that lower to Rust-native predicates in generated code.
-
-The callable markers take the callable's parameter list as their type arguments: `Fn[int]` accepts a callable taking one `int`, `FnMut[int, str]` one taking an `int` and a `str`, and a bare marker one taking nothing. The return type is not part of the marker; it is whatever the value passed at the call site returns. A function whose arity or parameter types differ from the marker is refused by `incan check`.
-
-A marker names at most two parameters, and it bounds a type parameter of a function or method only. `incan check` refuses `Fn[int, int, int]`, and a marker on a model, class, enum, trait, newtype or type alias parameter, with `INCAN-T0106`: for more than two parameters, gather them into one model and write `Fn[ThatModel]`; on a nominal declaration, bound the parameter with `Callable1[int, R]` from `std.traits.callable`, which names the return type, or give the field a function type such as `(int) -> R`.
-
-```incan
-from std.rust import Fn, FnOnce
-
-def run_fn[F with Fn[int]](_f: F) -> None:
-    pass
-
-def run_fn_once[F with FnOnce[int]](_f: F) -> None:
-    pass
-
-def double(value: int) -> int:
-    return value * 2
-
-def main() -> None:
-    run_fn(double)
-    run_fn_once(double)
-```
-
-## Targeted generated-Rust lint suppression
-
-Use `@rust.allow(...)` when one Incan declaration is expected to generate Rust that triggers a specific rustc or Clippy lint that is legitimate but not avoidable from Incan source. This is narrow Rust-emission metadata: it emits a Rust `#[allow(...)]` on the generated item for that declaration. It is not a general Rust attribute escape hatch, and it is not a way to set project-wide lint policy.
-
-```incan
-@rust.allow("deprecated")
-def load_legacy_record(path: str) -> Record:
-    return legacy.load_record(path)
-```
-
-Multiple specific lint names can be listed when the same generated item needs more than one suppression:
-
-```incan
-@rust.allow("deprecated", "clippy::unwrap_used")
-def boot_runtime() -> Runtime:
-    return Runtime.from_env().unwrap()
-```
-
-`@rust.allow(...)` is item-only: it can be used on functions, methods, models, classes, enums, and newtypes, because those declarations lower to concrete Rust items. It cannot be used as a module-level directive, on imports, local bindings, expressions, or declarations that do not own a stable generated Rust item boundary.
-
-The decorator takes one or more string literal lint names. Bare rustc lints such as `"deprecated"` and tool-prefixed lints such as `"clippy::unwrap_used"` are accepted. Empty lists, non-string arguments, empty names, duplicate names, and obvious broad lint groups are rejected. The initial broad-group blocklist is `"warnings"`, `"unused"`, `"clippy::all"`, `"clippy::pedantic"`, `"clippy::nursery"`, `"clippy::restriction"`, and `"clippy::cargo"`.
-
-Prefer fixing the source or tightening the generated lowering when a warning is avoidable. Use `@rust.allow(...)` only when the Rust warning is real, local, and intentionally accepted for that declaration.
-
-## Coercions at explicit Rust boundaries
-
-When calling Rust functions or methods, the compiler can apply a bounded, compiler-managed coercion model for built-in types:
-
-| Incan built-in       | Canonical Rust lowering | Admitted Rust boundary targets          |
-| -------------------- | ----------------------- | --------------------------------------- |
-| `int`                | `i64`                   | `i64`                                   |
-| `float`              | `f64`                   | `f64`                                   |
-| exact-width numerics | matching Rust scalar    | same type or provably lossless widening |
-| `bool`               | `bool`                  | `bool`                                  |
-| `str`                | `String`                | `String`, `&str`                        |
-| `bytes`              | `Vec<u8>`               | `Vec<u8>`, `&[u8]`                      |
-| `List[T]`            | `Vec<T>`                | `Vec<U>` when Rust accepts `U: From<T>` |
-| `None` / unit        | `()`                    | `()`                                    |
-
-Exact-width numeric adaptation is intentionally narrow. `i8` can flow into an `i16`/`i32`/`i64` Rust parameter, `u8` can flow into a wider unsigned or strictly wider signed parameter, and `f32` can flow into `f64`. Narrowing, signed-to-unsigned conversion, and `float`/`f64` to `f32` are rejected unless the Incan code performs an explicit conversion first.
-
-For direct list arguments passed to external Rust functions or methods, Incan can adapt the element type at the boundary. If a Rust callable expects `Vec<U>` and the Incan value is `list[T]`, the generated Rust maps each element through `.into()` and lets Rust enforce that `U: From<T>`. This is intentionally one level deep; nested collection adaptation is not implied.
-
-Example (`f32 -> f64` boundary adaptation):
-
-```incan
-from rust::std::time import Duration
-
-def main() -> None:
-    seconds: f32 = 1.5
-    d = Duration.from_secs_f64(seconds)
-    println(d.as_secs_f64())
-```
-
-## Examples
-
-### Working with JSON (serde_json)
-
-```incan
-import rust::serde_json as json
-from rust::serde_json import Value
-
-def parse_json(data: str) -> Value:
-    return json.from_str(data).unwrap()
-
-def main() -> None:
-    data = '{"name": "Alice", "age": 30}'
-    parsed = parse_json(data)
-    println(f"Name: {parsed['name']}")
-```
-
-### Working with Time
-
-```incan
-from rust::std::time import Instant, Duration
-
-def measure_operation() -> None:
-    start = Instant.now()
-
-    # Do some work
-    for i in range(1000000):
-        pass
-
-    elapsed = start.elapsed()
-    println(f"Operation took: {elapsed}")
-```
-
-### HTTP Requests (reqwest)
-
-```incan
-import std.async
-import rust::reqwest
-
-async def fetch_data(url: str) -> str:
-    response = await reqwest.get(url)
-    return await response.text()
-
-async def main() -> None:
-    data = await fetch_data("https://api.example.com/data")
-    println(data)
-```
-
-### Using Collections
-
-```incan
-from rust::std::collections import HashMap
-
-def count_words(text: str) -> HashMap[str, int]:
-    mut counts = HashMap.new()
-    for word in text.split_whitespace():
-        count = counts.get(word).unwrap_or(0)
-        counts.insert(word, count + 1)
-    return counts
-```
-
-### Random Numbers
-
-```incan
-from rust::rand import Rng, thread_rng
-
-def random_int(min: int, max: int) -> int:
-    rng = thread_rng()
-    return rng.gen_range(min..max)
-
-def main() -> None:
-    for _ in range(5):
-        println(f"Random: {random_int(1, 100)}")
-```
-
-### UUIDs
-
-```incan
-from rust::uuid import Uuid
-
-def generate_id() -> str:
-    return Uuid.new_v4().to_string()
-
-def main() -> None:
-    id = generate_id()
-    println(f"Generated ID: {id}")
-```
-
-## Type Mapping
-
-Incan types map to canonical Rust types:
-
-| Incan            | Rust                            |
-| ---------------- | ------------------------------- |
-| `int`            | `i64`                           |
-| `float`          | `f64`                           |
-| `i8` / `u8` etc. | matching Rust primitive         |
-| `decimal[p, s]`  | `incan_std_core::num::Decimal128` |
-| `str`            | `String`                        |
-| `bytes`          | `Vec<u8>`                       |
-| `bool`           | `bool`                          |
-| `List[T]`        | `Vec<T>`                        |
-| `Dict[K, V]`     | `HashMap<K, V>`                 |
-| `Set[T]`         | `HashSet<T>`                    |
-| `Option[T]`      | `Option<T>`                     |
-| `Result[T, E]`   | `Result<T, E>`                  |
-| `None` / unit    | `()`                            |
-
-### String arguments and borrowing
-
-!!! tip "Coming from Rust?"
-    You never write `&str` or lifetimes in Incan. When you pass a `str` value to an external Rust function, the compiler automatically passes it as a borrowed `&str` — the most common pattern in Rust APIs.
-
-    If a Rust function requires an owned `String` instead, append `.to_string()` at the call site:
-
-    ```incan
-    from rust::std::fs import write
-
-    # Incan passes `path` and `content` as &str automatically
-    write(path, content)
-
-    # Force an owned String if the API requires it
-    some_fn(path.to_string())
-    ```
-
-    This keeps interop ergonomic without exposing Rust borrow syntax in Incan code.
-
-Direct `list[T]` arguments lower to Rust `Vec<T>`. At external Rust call boundaries, a `list[T]` can also satisfy a `Vec<U>` parameter when Rust has the corresponding `From<T>` / `Into<U>` element conversion.
-
-## Understanding Rust types (optional)
-
-??? tip "Coming from Python?"
-    If you're new to Rust types like `Vec`, `HashMap`, `String`, `Option`, and `Result`, see [Understanding Rust types (coming from Python)](rust_types_for_python_devs.md).
-
-### Matching on Rust-backed enums and oneofs
-
-When you wrap an imported Rust enum (or a prost-style `oneof`) in a `rusttype`, `match` uses the same qualified constructor patterns as for Incan enums (`Type.Variant(...)` in source; the compiler normalizes this to `Type::Variant` internally). Names you bind in those patterns are in scope in the arm body, so you can nest `Option` / `Result` matches the same way you would for native types. The same payload typing now applies when you match through imported Rust/prost fields in normal CLI builds and editor/tooling analysis, so helpers like `match rel.rel_type: Some(RelType.Read(read)) => ...` resolve `read` to the concrete payload type instead of degrading to a placeholder `T`.
-
-```incan
-type PlanRel = rusttype rust::my_crate::proto::PlanRel:
-    def noop(self) -> None:
-        ...
-
-def inspect(x: Option[PlanRel]) -> None:
-    match x:
-        Some(inner) =>
-            match inner:
-                PlanRel.Root(root) =>
-                    # `root` is a normal binding here (payload typed as a composed Rust path)
-                    println("matched Root")
-                _ =>
-                    pass
-        None =>
-            pass
-```
-
-For a single tuple-field variant, the typechecker models the payload as a `RustPath` of the form `{backing_rust_path}::{Variant}` (aligned with how member paths are composed for imported ADTs). Multiple positional sub-patterns are accepted but typed permissively until richer `rust-inspect` metadata is available.
-
-If the scrutinee is typed as a bare imported Rust path (not a `rusttype` alias), the type prefix in the pattern is not cross-checked against that path; prefer spelling the `rusttype` wrapper and matching on `PlanRel.Variant(...)` so the prefix matches your Incan type name.
-
-## Limitations
-
-1. **Lifetime annotations**: Rust's borrow checker and lifetime annotations are not exposed in Incan.
-    Types that require explicit lifetime management may not work directly.
-
-2. **Generic bounds**: Capability bounds from `std.rust` (`Send`, `Sync`, `Static`, `Fn`, `FnMut`, `FnOnce`) are supported via `with` clauses. Custom trait bounds and more complex generic patterns may need wrapper functions.
-
-3. **Unsafe code**: Incan cannot call unsafe Rust functions directly.
-    If you need unsafe operations, create a safe wrapper in Rust first.
-
-4. **Macros**: Rust macros are not directly callable. Use the expanded form or a wrapper function.
-
-5. **`match` exhaustiveness on `rusttype` enums**: Compiler exhaustiveness for `match` is driven by Incan `enum` definitions plus `Option` / `Result`. A `rusttype` wrapping a Rust enum does not supply the same variant list, so you will not get “non-exhaustive match” diagnostics for missing Rust variants. Use a catch-all arm (`_`) when you must accept variants you do not list explicitly.
-
-## Best Practices
-
-1. **Use `incan fmt` to fix import style**: the formatter always normalizes `rust::` imports to `::` notation.
-    If you (or a collaborator) wrote `from rust.serde_json import Value`, running `incan fmt` silently rewrites it to `from rust::serde_json import Value`.
-
-2. **Prefer Incan types**: Use Incan's built-in types when possible. Use Rust types only when you need
-    specific functionality.
-
-3. **Handle Results**: Rust crate functions often return `Result`. Use `?` or explicit matching:
-
-    ```incan
-    def safe_parse(s: str) -> Result[int, str]:
-        return s.parse()  # Returns Result
-
-    def main() -> None:
-        match safe_parse("42"):
-            case Ok(n):
-                println(f"Parsed: {n}")
-            case Err(e):
-                println(f"Error: {e}")
-    ```
-
-4. **Async compatibility**: If using async Rust crates, make sure your Incan functions are also async.
-
-5. **Error types**: Rust's error types can be complex. Consider using `anyhow` for simple error handling:
-
-    ```incan
-    from rust::anyhow import Result, Context
-
-    def read_config(path: str) -> Result[Config]:
-        content = fs.read_to_string(path).context("Failed to read config")?
-        return parse_config(content)
-    ```
-
-## See Also
-
-- [Managing dependencies](../../tooling/how-to/dependencies.md) - Adding crates, locking, CI
-- [Project configuration reference](../../tooling/reference/project_configuration.md) - Full `loaf.toml` format
-- [Targeted generated-Rust lint suppression](#targeted-generated-rust-lint-suppression) - `@rust.allow(...)` for narrow generated-code lint allowances
-- [Rust types for Python developers](rust_types_for_python_devs.md) - `rusttype`, interop declarations, and type mapping concepts
-- [Error Handling](../explanation/error_handling.md) - Working with `Result` types
-- [Derives & Traits](../reference/derives_and_traits.md) - Drop trait for custom cleanup
-- [File I/O](file_io.md) - Reading, writing, and path handling
-- [Async Programming](async_programming.md) - Async/await with Tokio
-- [Imports & Modules](imports_and_modules.md) - Module system, imports, and built-in functions
-- [Web framework guide](../tutorials/web_framework.md) - Building web apps with Axum
-
---8<-- "_snippets/rfcs_refs.md"
+For Rust capability bounds, see the [language reference](../reference/language.md#standard-library-namespaces). For checked C symbols and unsafe call blocks, see [Checked C bindings](checked_c_bindings.md).

@@ -250,11 +250,7 @@ impl TypeChecker {
     pub(in crate::typechecker) fn value_type_without_serialize_form(&self, ty: &ResolvedType) -> Option<String> {
         let protocol = StdlibJsonTraitId::Serialize;
         if let Some(name) = self.active_type_param_name(ty) {
-            let bounds = self
-                .current_type_param_bound_details
-                .iter()
-                .rev()
-                .find_map(|frame| frame.get(name))?;
+            let bounds = self.innermost_type_param_bounds(name)?;
             return (!self.adoptions_provide_json_protocol(bounds, protocol)).then(|| name.to_string());
         }
         match ty {

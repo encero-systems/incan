@@ -14,6 +14,8 @@ from rust::incan_semantics_core::body_ir import (
     LoafCallable,
     DecoratedBinding,
     DecoratedInitialization,
+    NominalDeclaration,
+    EnumDeclaration as RustEnumDeclaration,
 )
 from pub::incan_mir_plan import (
     PlanType,
@@ -38,7 +40,7 @@ from types import primitive_type
 from classes import receiver_mode, parameter_local_index
 from async_ import evaluator_name
 from collections import is_collection, is_owned_collection
-from layout_types import native_source_type, callable_parameter_type, collection_leaf
+from layout_types import native_source_type, context_free_type, callable_parameter_type, collection_leaf
 from lists import is_list, parameter_storage_type, is_exclusive_borrow
 from numerics import numeric_carrier
 from generators import generator_type, is_generator_type
@@ -51,12 +53,16 @@ pub def function_pointer_type(parameters: &list[IncanCallableParam], result: &Ru
     """Build the native signature: 1. Retain checked input order and loans. 2. Append the owned return contract."""
     # 1. Retain checked input order and loans.
     mut signature: list[PlanType] = []
+    nominals: list[NominalDeclaration] = []
+    enums: list[RustEnumDeclaration] = []
+    unions: list[RustType] = []
+    intrinsics: list[EnumDeclaration] = []
     for parameter in parameters:
         mut input = PlanType.Unit
         if parameter.kind == IncanCallableParamKind.Normal:
             input = callable_input(parameter.ty)?
         else:
-            input = callable_parameter_type([], [], [], parameter, [])?
+            input = callable_parameter_type(nominals, enums, unions, parameter, intrinsics)?
         signature.append(packed_input(input, parameter.kind, parameter.is_mut, parameter.native_owned)?)
     # 2. Append the owned return contract.
     signature.append(callable_result(result)?)
@@ -66,8 +72,8 @@ pub def function_pointer_type(parameters: &list[IncanCallableParam], result: &Ru
 def callable_input(ty: &RustType) -> Result[PlanType, str]:
     """Retain explicit native input loans; returned values still follow the owned callable component contract."""
     match ty:
-        RustType.Ref(_inner) => return native_source_type([], [], [], ty, [])
-        RustType.RefMut(_inner) => return native_source_type([], [], [], ty, [])
+        RustType.Ref(_inner) => return context_free_type(ty)
+        RustType.RefMut(_inner) => return context_free_type(ty)
         _ => return callable_component(ty)
 
 
@@ -167,7 +173,7 @@ pub def callable_component(ty: &RustType) -> Result[PlanType, str]:
     # A signature component carries no source-local nominal context, and lists or collections of admitted elements
     # translate without one. Models, enums and unions inside a signature stay refused by name. The `EnumDeclaration`
     # import keeps the empty intrinsics list's element type in scope (the compiler gap tracked by #2010).
-    match native_source_type([], [], [], ty, []):
+    match context_free_type(ty):
         Ok(component) =>
             if is_list(component) or is_collection(component):
                 return Ok(component)

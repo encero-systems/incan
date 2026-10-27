@@ -151,6 +151,9 @@ pub struct UnitLoaf {
     pub dir: PathBuf,
     /// Whether it is a standard package, which owns `std.*` roots rather than `pub::<key>`.
     pub standard: bool,
+    /// Optional authored source root selected by Oven; editor locations never infer it from artifact placement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_root: Option<PathBuf>,
 }
 
 impl UnitDescription {
@@ -159,12 +162,18 @@ impl UnitDescription {
         let bytes = fs::read(path).map_err(|error| {
             CliError::failure(format!("cannot read the unit description {}: {error}", path.display()))
         })?;
-        let mut unit: Self = serde_json::from_slice(&bytes)
-            .map_err(|error| CliError::failure(format!("{} is not a unit description: {error}", path.display())))?;
+        Self::parse(&bytes, path)
+    }
+
+    /// Decode and validate a description from Oven, retaining its origin in schema and registration failures.
+    /// Every client receives the same search-index merge and prepared-vocabulary admission checks.
+    pub fn parse(bytes: &[u8], origin: &Path) -> CliResult<Self> {
+        let mut unit: Self = serde_json::from_slice(bytes)
+            .map_err(|error| CliError::failure(format!("{} is not a unit description: {error}", origin.display())))?;
         if unit.schema != UNIT_DESCRIPTION_SCHEMA {
             return Err(CliError::failure(format!(
                 "{} has schema `{}`; this compiler reads `{UNIT_DESCRIPTION_SCHEMA}`",
-                path.display(),
+                origin.display(),
                 unit.schema
             )));
         }

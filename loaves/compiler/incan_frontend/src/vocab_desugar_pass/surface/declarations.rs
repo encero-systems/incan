@@ -1,4 +1,4 @@
-//! Decode schema 2 compilation-unit output without exposing the compiler's private declaration model.
+//! Decode schema 3 compilation-unit output without exposing the compiler's private declaration model.
 
 use serde::Deserialize;
 
@@ -20,7 +20,7 @@ pub(super) struct SurfaceDeclaration {
     is_public: bool,
 }
 
-/// Schema 2 declaration alternatives; methods, decorators and type parameters are outside this schema.
+/// Schema 3 declaration alternatives; methods, decorators and type parameters are outside this schema.
 #[derive(Deserialize)]
 enum DeclarationKind {
     /// Fixed parameters, explicit return type and ordinary body statements.

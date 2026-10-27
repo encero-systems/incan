@@ -54,6 +54,13 @@ pub def required_text(value: JsonValue, key: str) -> Result[str, str]:
     return required(value, key)?.expect_str().map_err((error) => error.message())
 
 
+pub def optional_text(value: JsonValue, key: str) -> str:
+    """The string at `key` of a JSON object; empty when the member is absent or is not a string."""
+    match value.get(key):
+        Some(item) => return item.as_str().unwrap_or("")
+        None => return ""
+
+
 pub def items(value: JsonValue) -> Result[list[JsonValue], str]:
     """The elements of a JSON array."""
     return value.expect_array().map_err((error) => error.message())

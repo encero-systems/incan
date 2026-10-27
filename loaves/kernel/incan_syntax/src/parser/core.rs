@@ -239,6 +239,9 @@ impl<'a> Parser<'a> {
         let mut seen_non_doc_decl = false;
         let mut seen_test_module = false;
 
+        // Every loaded provider's `Always` vocabulary is active from the module's first line.
+        self.activate_imported_keywords_for_import_path(&[]);
+
         // Skip leading newlines
         self.skip_newlines();
         // Stray top-level DEDENT can appear after error recovery (e.g. unexpected indentation).
@@ -453,6 +456,9 @@ impl<'a> Parser<'a> {
 
     /// Activate keyword registrations contributed by an imported namespace.
     ///
+    /// An empty path is module start, which activates every loaded provider's `Always` registrations and surfaces; an
+    /// import path activates only the `OnImport` ones its namespace matches, so each activation happens once.
+    ///
     /// This bridges serialized vocab metadata into parser state by:
     /// - recording compatible soft-keyword ids in `active_soft_keywords` (for existing parser flows), and
     /// - recording imported keyword surface specs in `active_imported_keyword_specs` (for surface-kind checks driven by
@@ -472,11 +478,12 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Activate one provider's registered vocabulary after its import namespace matched.
+    /// Activate one provider's registered vocabulary at module start (empty path) or after its import namespace
+    /// matched.
     fn activate_imported_keywords_for_provider(&mut self, provider_key: &str, import_path: &[String]) {
         if let Some(surfaces) = self.library_imported_dsl_surfaces.get(provider_key) {
             for surface in surfaces {
-                if !dsl_surface_applies_to_import_path(surface, import_path) {
+                if !activation_applies(&surface.activation, import_path) {
                     continue;
                 }
                 self.active_scoped_surface_descriptors
@@ -516,7 +523,7 @@ impl<'a> Parser<'a> {
         };
 
         for registration in registrations {
-            if !registration_applies_to_import_path(registration, import_path) {
+            if !activation_applies(&registration.activation, import_path) {
                 continue;
             }
 
@@ -655,7 +662,8 @@ impl<'a> Parser<'a> {
     }
 }
 
-/// Return `true` when a DSL surface should activate for an imported namespace.
+/// Return `true` when a DSL surface's descriptors are in scope for a namespace: an `Always` surface is in scope at
+/// module start and at every import.
 fn dsl_surface_applies_to_import_path(surface: &incan_vocab::DslSurface, import_path: &[String]) -> bool {
     match &surface.activation {
         incan_vocab::KeywordActivation::Always => true,
@@ -666,15 +674,13 @@ fn dsl_surface_applies_to_import_path(surface: &incan_vocab::DslSurface, import_
     }
 }
 
-/// Return `true` when a registration should be activated for an imported namespace.
-fn registration_applies_to_import_path(
-    registration: &incan_vocab::KeywordRegistration,
-    import_path: &[String],
-) -> bool {
-    match &registration.activation {
-        incan_vocab::KeywordActivation::Always => true,
+/// Return `true` when an activation rule fires here: `Always` at module start (an empty path), `OnImport` at an
+/// import of its namespace or of a namespace that encloses it.
+fn activation_applies(activation: &incan_vocab::KeywordActivation, import_path: &[String]) -> bool {
+    match activation {
+        incan_vocab::KeywordActivation::Always => import_path.is_empty(),
         incan_vocab::KeywordActivation::OnImport { namespace } => {
-            import_path_activates_namespace(import_path, namespace)
+            !import_path.is_empty() && import_path_activates_namespace(import_path, namespace)
         }
         _ => false,
     }

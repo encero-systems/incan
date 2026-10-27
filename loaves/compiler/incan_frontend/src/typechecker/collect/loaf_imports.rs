@@ -14,9 +14,7 @@ use crate::api_metadata::{
 };
 use crate::ast::*;
 use crate::diagnostics::errors;
-use crate::library_exports::{
-    CheckedParamDefault, CheckedParamDefaultArg, CheckedParamDefaultCallSignature, CheckedPresetValue,
-};
+use crate::library_exports::{CheckedParamDefault, CheckedParamDefaultArg, CheckedParamDefaultCallSignature};
 use crate::library_manifest::{
     AliasExport, ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, FieldExport,
     FunctionExport, ImplementationTraitBoundOriginExport, ImplementationTypeParamExport, LibraryManifest, MethodExport,
@@ -76,7 +74,6 @@ struct PublicModuleMember {
 
 /// Shared package context while following a public alias chain to partial projection metadata.
 struct PartialProjectionAliasContext<'a> {
-    library: &'a str,
     manifest: &'a LibraryManifest,
     local_name: &'a str,
     imported_type_aliases: &'a HashMap<String, String>,
@@ -847,14 +844,7 @@ impl TypeChecker {
             Self::remap_resolved_type_with_import_aliases(target, &remapping);
         }
         let partial_projection = declarations.iter().find_map(|declaration| {
-            Self::public_member_partial_projection(
-                library,
-                manifest,
-                source_module_path,
-                member,
-                declaration,
-                &remapping,
-            )
+            Self::public_member_partial_projection(manifest, source_module_path, member, declaration, &remapping)
         });
         Self::mark_compiled_class_field_provider(&mut kind, library);
         Ok(Some(PublicModuleMember {
@@ -897,7 +887,6 @@ impl TypeChecker {
 
     /// Preserve partial application metadata when a public namespace reaches it through a declaration alias.
     fn public_member_partial_projection(
-        library: &str,
         manifest: &LibraryManifest,
         source_module_path: &[String],
         member: &str,
@@ -915,7 +904,7 @@ impl TypeChecker {
             return None;
         };
         let export = partial_export_from_api(partial);
-        Self::partial_projection_from_manifest_partial(&export, member, remapping, Span::default(), library)
+        Self::partial_projection_from_manifest_partial(&export, member, remapping, Span::default())
     }
 
     /// Choose one of several source modules that each publish `member` into the same derived namespace, when the
@@ -1053,12 +1042,6 @@ impl TypeChecker {
                     name: source_name.clone(),
                     kind: target_kind.to_string(),
                 },
-            );
-        }
-        if matches!(kind, SymbolKind::Static(_)) {
-            self.type_info.declarations.static_bindings.insert(
-                local_name.clone(),
-                crate::typechecker::StaticBindingInfo { is_imported: true },
             );
         }
         if matches!(
@@ -2274,14 +2257,8 @@ impl TypeChecker {
         imported_type_aliases: &HashMap<String, String>,
         span: Span,
     ) {
-        let partial_projection = self.partial_projection_from_manifest_export(
-            library,
-            manifest,
-            &local_name,
-            &export,
-            imported_type_aliases,
-            span,
-        );
+        let partial_projection =
+            self.partial_projection_from_manifest_export(manifest, &local_name, &export, imported_type_aliases, span);
         let declared_type_params = match &export {
             ManifestExportRef::Model(model) => model.type_params.clone(),
             ManifestExportRef::Class(class) => class.type_params.clone(),
@@ -2402,12 +2379,6 @@ impl TypeChecker {
         self.record_imported_function_binding(&local_name, &kind);
         if let Some(projection) = partial_projection {
             self.type_info.record_partial_projection(projection);
-        }
-        if matches!(kind, SymbolKind::Static(_)) {
-            self.type_info
-                .declarations
-                .static_bindings
-                .insert(local_name, crate::typechecker::StaticBindingInfo { is_imported: true });
         }
     }
 
@@ -2713,7 +2684,6 @@ impl TypeChecker {
     /// Convert one public-manifest export into partial projection metadata when it denotes a partial callable.
     pub(super) fn partial_projection_from_manifest_export(
         &self,
-        library: &str,
         manifest: &LibraryManifest,
         local_name: &str,
         export: &ManifestExportRef<'_>,
@@ -2722,11 +2692,10 @@ impl TypeChecker {
     ) -> Option<PartialProjectionInfo> {
         match export {
             ManifestExportRef::Partial(export) => {
-                Self::partial_projection_from_manifest_partial(export, local_name, imported_type_aliases, span, library)
+                Self::partial_projection_from_manifest_partial(export, local_name, imported_type_aliases, span)
             }
             ManifestExportRef::Alias(export) => {
                 let context = PartialProjectionAliasContext {
-                    library,
                     manifest,
                     local_name,
                     imported_type_aliases,
@@ -2760,7 +2729,6 @@ impl TypeChecker {
                 context.local_name,
                 context.imported_type_aliases,
                 context.span,
-                context.library,
             );
         }
         match Self::find_manifest_export(context.manifest, target_name)? {
@@ -2769,7 +2737,6 @@ impl TypeChecker {
                 context.local_name,
                 context.imported_type_aliases,
                 context.span,
-                context.library,
             ),
             ManifestExportRef::Alias(next_alias) => {
                 self.partial_projection_from_manifest_alias(context, next_alias, visited)
@@ -2784,7 +2751,6 @@ impl TypeChecker {
         local_name: &str,
         imported_type_aliases: &HashMap<String, String>,
         span: Span,
-        library: &str,
     ) -> Option<PartialProjectionInfo> {
         let mut target_path = export.target_path.clone();
         if let Some(target_name) = target_path.last_mut()
@@ -2803,69 +2769,9 @@ impl TypeChecker {
                     Some(PartialProjectionPreset {
                         name: preset.name.clone(),
                         value: Self::manifest_preset_value_expr(&preset.value, imported_type_aliases, span)?,
-                        external_value: Self::checked_preset_value_from_manifest(&preset.value, imported_type_aliases),
                     })
                 })
                 .collect::<Option<Vec<_>>>()?,
-            external_library: Some(library.to_string()),
-        })
-    }
-
-    /// Rebuild one provider-owned preset value without losing canonical external reference identity.
-    pub(super) fn checked_preset_value_from_manifest(
-        value: &PresetValueExport,
-        imported_type_aliases: &HashMap<String, String>,
-    ) -> Option<CheckedPresetValue> {
-        Some(match value {
-            PresetValueExport::Int(value) => CheckedPresetValue::Int(*value),
-            PresetValueExport::Float(value) => CheckedPresetValue::Float(value.parse().ok()?),
-            PresetValueExport::Bool(value) => CheckedPresetValue::Bool(*value),
-            PresetValueExport::String(value) => CheckedPresetValue::String(value.clone()),
-            PresetValueExport::Bytes(value) => CheckedPresetValue::Bytes(value.clone()),
-            PresetValueExport::None => CheckedPresetValue::None,
-            PresetValueExport::List(values) => CheckedPresetValue::List(
-                values
-                    .iter()
-                    .map(|item| Self::checked_preset_value_from_manifest(item, imported_type_aliases))
-                    .collect::<Option<Vec<_>>>()?,
-            ),
-            PresetValueExport::Set(values) => CheckedPresetValue::Set(
-                values
-                    .iter()
-                    .map(|item| Self::checked_preset_value_from_manifest(item, imported_type_aliases))
-                    .collect::<Option<Vec<_>>>()?,
-            ),
-            PresetValueExport::Tuple(values) => CheckedPresetValue::Tuple(
-                values
-                    .iter()
-                    .map(|item| Self::checked_preset_value_from_manifest(item, imported_type_aliases))
-                    .collect::<Option<Vec<_>>>()?,
-            ),
-            PresetValueExport::Dict(entries) => CheckedPresetValue::Dict(
-                entries
-                    .iter()
-                    .map(|entry| {
-                        Some((
-                            Self::checked_preset_value_from_manifest(&entry.key, imported_type_aliases)?,
-                            Self::checked_preset_value_from_manifest(&entry.value, imported_type_aliases)?,
-                        ))
-                    })
-                    .collect::<Option<Vec<_>>>()?,
-            ),
-            PresetValueExport::ConstRef(path) => CheckedPresetValue::ConstRef(path.clone()),
-            PresetValueExport::ModelLiteral { name, fields } => CheckedPresetValue::ModelLiteral {
-                name: imported_type_aliases.get(name).cloned().unwrap_or_else(|| name.clone()),
-                fields: fields
-                    .iter()
-                    .map(|field| {
-                        Some((
-                            field.name.clone(),
-                            Self::checked_preset_value_from_manifest(&field.value, imported_type_aliases)?,
-                        ))
-                    })
-                    .collect::<Option<Vec<_>>>()?,
-            },
-            PresetValueExport::Unsupported => CheckedPresetValue::Unsupported,
         })
     }
 

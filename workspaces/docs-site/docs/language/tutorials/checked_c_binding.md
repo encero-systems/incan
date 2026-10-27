@@ -4,8 +4,6 @@ This tutorial calls C's `abs` function through a small Incan façade. It shows t
 
 The checked C surface is experimental and intentionally small. Use this tutorial on a Linux x86-64 or Apple arm64 host with a Clang-compatible C toolchain and the standard C headers installed. It does not yet provision cross-target toolchains or native artifacts for you.
 
-The tested dev.8 interop artifact does not activate the `binding` vocabulary: this example is refused at parse time (`INCAN-P0001`). The source below illustrates the binding contract; it is not a runnable native tutorial with that installation.
-
 ## Declare the raw contract
 
 Create `src/main.incn`:

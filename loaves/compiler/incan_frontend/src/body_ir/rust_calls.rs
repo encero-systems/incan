@@ -80,6 +80,37 @@ pub(super) fn declarations(facts: &TypeCheckInfo) -> Vec<bir::LoafCallable> {
 }
 
 impl BodyBuilder<'_, '_> {
+    /// Materialize the shared reference layers inside a checked parameter before its final argument loan.
+    /// Each temporary carries an explicit borrow fact and the retained signature's exact type; a foreign `&T`
+    /// whose selected T is `&Owner` therefore receives `&&Owner` without downstream type or trait inference.
+    /// A different referent or an exclusive inner reference keeps the ordinary boundary's existing validation.
+    pub(super) fn materialize_argument_loans(
+        &mut self,
+        expression: &ast::Spanned<ast::Expr>,
+        mut value: bir::Operand,
+        referent: &IncanType,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let source = self.resolve_ty(expression.span);
+        let mut target = referent;
+        let mut loans = Vec::new();
+        while target != &source {
+            let IncanType::Ref(inner) = target else {
+                return value;
+            };
+            loans.push(target.clone());
+            target = inner;
+        }
+        for loan in loans.into_iter().rev() {
+            if let bir::Operand::Place(read) = &mut value {
+                self.retain_argument_borrow(read, false);
+            }
+            value = self.push_assign_temp(bir::Rvalue::Use(value), loan, scope, hir_span(expression.span), out);
+        }
+        value
+    }
+
     /// Evaluate a source list once, convert each element through its exact checked native call, and collect owned
     /// results in order. This uses ordinary Body IR iteration and list growth; no mapping policy reaches lowering.
     fn lower_native_list_conversion(

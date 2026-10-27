@@ -3,9 +3,9 @@
 from std.fs import Path
 from families import command, read_program
 from files import make_directory, read, write
-from fixture import Fixture, fixture_files, materialize, materialize_files
+from fixture import MINIMAL_MANIFEST, Fixture, fixture_files, materialize, materialize_files
 from group_hints import retain_hint
-from run import Outcome, clear_trace, trace_file, unit_notes
+from run import Outcome, built_program, clear_trace, trace_file, unit_notes
 from timing_hints import Costs, load_costs, retain_costs
 from workers import Invocation, invoke_many
 
@@ -444,11 +444,6 @@ def queue_entries(
     return names
 
 
-def built_program(project: Path, name: str) -> Path:
-    """Where a debug build of a project stores the program `name`."""
-    return project.joinpath("target").joinpath("incan").joinpath("debug").joinpath("bin").joinpath(name)
-
-
 def group_arguments(command: str, project: Path, entries: list[Entry]) -> list[str]:
     """Describe selected entries for a shared build; execution uses its already-verified binary through Oven."""
     mut arguments = [command, project.joinpath("src").joinpath("main.incn").0]
@@ -490,7 +485,7 @@ def materialize_group(project: Path, entries: list[Entry]) -> Result[None, str]:
 
 def group_manifest() -> str:
     """The manifest of a group's project: one program, `src/main.incn`."""
-    return "[project]\nname = \"contract_batch\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+    return MINIMAL_MANIFEST.replace("{name}", "contract_batch")
 
 
 def group_main(imports: str) -> str:

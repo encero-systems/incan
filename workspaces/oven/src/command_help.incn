@@ -1,0 +1,110 @@
+"""Dispatch command help using the same synopses and option policy as Oven's public commands."""
+
+from cli_help import overview, render, requested
+from formatting import USAGE as FORMAT_USAGE, help_text as format_help
+from graph_inspection import USAGE as GRAPH_USAGE, VALUE_OPTIONS as GRAPH_VALUE_OPTIONS, help_text as graph_help
+from graph_mcp import USAGE as MCP_USAGE, help_text as mcp_help
+from toolchain_archive import PACK_USAGE, INSTALL_USAGE, help_text as archive_help
+
+const VERSION_USAGE: str = "incan --version"
+const RUN_USAGE: str = "incan run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-entry PATH]... [-- ARGS...]"
+const CHECK_USAGE: str = "incan check PATH [--format text|json] [UNIT OPTIONS]"
+const TEST_USAGE: str = "incan test PATH [UNIT OPTIONS]"
+const DESCRIBE_USAGE: str = "incan describe-unit PATH [UNIT OPTIONS]"
+const BUILD_USAGE: str = "incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"
+const OWNER_USAGE: str = "incan owner stop"
+pub const UNIT_VALUE_OPTIONS: FrozenList[str] = [
+    "--profile",
+    "--features",
+    "--substitute",
+    "--program-entry",
+    "--argv0",
+]
+
+
+pub def usage() -> str:
+    """The overview, composed from the same synopses each command's detailed help uses."""
+    return overview(
+        [
+            VERSION_USAGE,
+            RUN_USAGE,
+            CHECK_USAGE,
+            TEST_USAGE,
+            DESCRIBE_USAGE,
+            BUILD_USAGE,
+            FORMAT_USAGE,
+            OWNER_USAGE,
+            GRAPH_USAGE,
+            MCP_USAGE,
+            PACK_USAGE,
+            INSTALL_USAGE,
+        ],
+    )
+
+
+pub def command_help(command: str, arguments: list[str]) -> Option[str]:
+    """Answer help only for a known command, respecting value operands and the program argument separator."""
+    if command in ["run", "check", "test", "describe-unit", "build"]:
+        if requested(arguments, list(UNIT_VALUE_OPTIONS) + ["--format"]):
+            return Some(unit_help(command))
+    elif command == "fmt" and requested(arguments):
+        return Some(format_help())
+    elif command == "mcp" and requested(arguments):
+        return Some(mcp_help())
+    elif command in ["--version", "version"] and requested(arguments):
+        return Some(render(VERSION_USAGE, [], "incan --version"))
+    elif command == "owner" and nested_help(arguments, "stop"):
+        return Some(render(OWNER_USAGE, [], "incan owner stop"))
+    elif command == "inspect" and nested_help(arguments, "codegraph", list(GRAPH_VALUE_OPTIONS)):
+        return Some(graph_help())
+    elif command == "toolchain":
+        if nested_help(arguments, "pack"):
+            return Some(archive_help("pack"))
+        if nested_help(arguments, "install"):
+            return Some(archive_help("install"))
+    return None
+
+
+def nested_help(arguments: list[str], subcommand: str, valued: list[str] = []) -> bool:
+    """Recognize a group's help or help for its named subcommand, preserving unknown-command errors."""
+    if arguments == ["--help"] or arguments == ["-h"]:
+        return true
+    return len(arguments) > 0 and arguments[0] == subcommand and requested(arguments[1:], valued)
+
+
+def unit_help(command: str) -> str:
+    """Describe common unit options and only the additional flags accepted by the selected command."""
+    options = [
+        "  --profile NAME         Select the artifact profile (default debug).",
+        "  --features A,B         Add public root-package features.",
+        "  --no-default-features  Disable the root package's default feature.",
+        "  --all-features         Select every declared root-package feature.",
+    ]
+    if command == "run":
+        return render(
+            RUN_USAGE,
+            options + [
+                "  --argv0 TEXT          Set the program's argument zero.",
+                "  --program-entry PATH  Add a program entry; repeatable.",
+                "  --                    Pass remaining arguments to the program.",
+            ],
+            "incan run src/main.incn -- hello",
+        )
+    if command == "check":
+        return render(
+            CHECK_USAGE,
+            options + ["  --format text|json    Report format (default text)."],
+            "incan check src/main.incn --format json",
+        )
+    if command == "test":
+        return render(TEST_USAGE, options, "incan test tests/test_example.incn")
+    if command == "describe-unit":
+        return render(DESCRIBE_USAGE, options, "incan describe-unit src/main.incn")
+    return render(
+        BUILD_USAGE,
+        options + [
+            "  --substitute NAME=DIR  Supply a local Rust dependency substitution; repeatable.",
+            "  --program-entry PATH   Add a program entry to a program build; repeatable.",
+        ],
+        "incan build src/main.incn --profile debug",
+    )

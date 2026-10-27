@@ -87,7 +87,7 @@ fn loaded_library() -> Result<PathBuf, IdentityError> {
 
 /// Verify build-time evidence against the runtime selected by the caller, before creating output files.
 ///
-/// These values must be recorded in the Oven unit identity and supplied as declared compile-time environment;
+/// These values must be recorded in Oven's unit identity and supplied as declared compile-time environment;
 /// an arbitrary ambient path or a matching version label alone cannot authorize the driver. Identity is content,
 /// never location: any sysroot whose `rustc -vV` output and whose loaded `rustc_driver` library bytes equal the
 /// build evidence is the same compiler wherever it is installed, so a toolchain built on one machine runs on another.

@@ -59,6 +59,7 @@ use incan_lang::lang::types::collections;
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SymbolOrigin};
 
 mod analysis;
+mod analysis_cache;
 mod graph_navigation;
 mod loaves;
 mod rust_hover;
@@ -171,6 +172,10 @@ pub struct IncanLanguageServer {
     documents: Arc<RwLock<HashMap<Url, DocumentState>>>,
     /// Only the most recently requested analysis may publish, including after a close and reopen.
     analysis_tickets: RwLock<HashMap<Url, Arc<()>>>,
+    /// Sessions hold compiled facts only; each analysis still asks Oven to prepare current dependency artifacts.
+    analysis_sessions: Arc<std::sync::Mutex<analysis_cache::Sessions>>,
+    /// Latest text, including edits awaiting the debounce interval or a checking pass.
+    pending_sources: RwLock<HashMap<Url, String>>,
 }
 
 impl IncanLanguageServer {
@@ -180,6 +185,8 @@ impl IncanLanguageServer {
             client,
             documents: Arc::new(RwLock::new(HashMap::new())),
             analysis_tickets: RwLock::new(HashMap::new()),
+            analysis_sessions: Arc::new(std::sync::Mutex::new(analysis_cache::Sessions::default())),
+            pending_sources: RwLock::new(HashMap::new()),
         }
     }
 
@@ -945,7 +952,7 @@ fn api_metadata_previews(ast: &Program, metadata: &CheckedApiMetadata) -> Vec<Ap
                 api_static_markdown(static_decl),
             )),
             ApiDeclaration::Alias(alias) => previews.push(ApiMetadataPreview {
-                span: source_anchor_span(&alias.anchor),
+                span: alias.anchor.span,
                 markdown: checked_api_markdown(
                     format!("pub alias {} = {}", alias.name, alias.target_path.join("::")),
                     "public import alias",
@@ -1182,14 +1189,9 @@ fn c_binding_preview_at_offset(previews: &[CBindingPreview], offset: usize) -> O
 /// Convert a metadata anchor to an LSP preview entry.
 fn preview_for_anchor(anchor: &SourceAnchor, markdown: String) -> ApiMetadataPreview {
     ApiMetadataPreview {
-        span: source_anchor_span(anchor),
+        span: anchor.span,
         markdown,
     }
-}
-
-/// Retain the metadata anchor's complete checked span for source locations and declaration lookups.
-fn source_anchor_span(anchor: &SourceAnchor) -> Span {
-    anchor.span
 }
 
 /// Find a top-level declaration by its exported source name.
@@ -1978,8 +1980,7 @@ fn checked_identity_at_offset(
                     .declaration_sources
                     .get(&identity.origin)
                     .is_some_and(|declaration_source| &declaration_source.uri == document_uri)
-                && first_identifier_span_named(source, source_span(identity.declaration_span), &identifier)
-                    == Some(token_span)
+                && first_identifier_span_named(source, identity.declaration_span, &identifier) == Some(token_span)
         })
         .map(|identity| CheckedIdentityOccurrence {
             identity,
@@ -2083,7 +2084,11 @@ fn identifier_spans(span: Span, source: &str) -> Vec<(String, Span)> {
             };
             Some((
                 name,
-                Span::new(span.start + token.span.start, span.start + token.span.end),
+                Span {
+                    start: span.start + token.span.start,
+                    end: span.start + token.span.end,
+                    expansion: span.expansion,
+                },
             ))
         })
         .collect()
@@ -2100,7 +2105,10 @@ fn first_identifier_span_named(source: &str, span: Span, name: &str) -> Option<S
 fn checked_reference_token_span(source: &str, span: Span, identity: &CanonicalSymbolId) -> Option<Span> {
     let fragment = source.get(span.start..span.end)?;
     let target_end = fragment.find('(').map(|offset| span.start + offset).unwrap_or(span.end);
-    let target_span = Span::new(span.start, target_end);
+    let target_span = Span {
+        end: target_end,
+        ..span
+    };
     let tokens = identifier_spans(target_span, source);
     tokens
         .iter()
@@ -2110,18 +2118,13 @@ fn checked_reference_token_span(source: &str, span: Span, identity: &CanonicalSy
         .map(|(_, span)| *span)
 }
 
-/// Retain the semantic source span, including expansion context, when looking up frontend declarations.
-fn source_span(span: HirSourceSpan) -> Span {
-    span
-}
-
 /// Project a canonical identity to its genuine source file, if that exact source was retained by the analysis.
 fn definition_location_for_identity(
     identity: &CanonicalSymbolId,
     declaration_sources: &RelatedDeclarationSources,
 ) -> Option<Location> {
     let declaration_source = declaration_sources.get(&identity.origin)?;
-    let span = source_span(identity.declaration_span);
+    let span = identity.declaration_span;
     if span.start >= span.end || declaration_source.source.get(span.start..span.end).is_none() {
         return None;
     }
@@ -3946,7 +3949,7 @@ impl LanguageServer for IncanLanguageServer {
             },
             server_info: Some(ServerInfo {
                 name: "incan-lsp".to_string(),
-                version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                version: Some(incan_lang::version::INCAN_VERSION.to_string()),
             }),
         })
     }
@@ -4009,7 +4012,7 @@ impl LanguageServer for IncanLanguageServer {
         let source = params.text_document.text;
         let version = params.text_document.version;
 
-        self.analyze_document(&uri, &source, version).await;
+        self.analyze_document(&uri, &source, version, false).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -4018,7 +4021,7 @@ impl LanguageServer for IncanLanguageServer {
 
         // We use FULL sync, so there's only one change with the full content
         if let Some(change) = params.content_changes.into_iter().next() {
-            self.analyze_document(&uri, &change.text, version).await;
+            self.analyze_document(&uri, &change.text, version, true).await;
         }
     }
 
@@ -4027,6 +4030,7 @@ impl LanguageServer for IncanLanguageServer {
         let uri = params.text_document.uri;
         let mut tickets = self.analysis_tickets.write().await;
         tickets.remove(&uri);
+        self.pending_sources.write().await.remove(&uri);
 
         // Remove document from cache
         let mut docs = self.documents.write().await;
@@ -4433,13 +4437,12 @@ impl LanguageServer for IncanLanguageServer {
         }
 
         if let Some(occurrence) = checked_identity_at_offset(uri, ast, &doc.source, &doc.checked_identities, offset) {
-            let Some(graph) = doc.graph_navigation.as_ref() else {
-                return Ok(None);
-            };
-            if !graph.is_current(&docs) {
-                return Ok(None);
-            }
-            if let Some(location) = graph_navigation::definition(doc, &docs, &occurrence.identity) {
+            if doc
+                .graph_navigation
+                .as_ref()
+                .is_some_and(|graph| graph.is_current(&docs))
+                && let Some(location) = graph_navigation::definition(doc, &docs, &occurrence.identity)
+            {
                 return Ok(Some(GotoDefinitionResponse::Scalar(location)));
             }
             // Published dependencies without a live declaration record retain their checked manifest locations.

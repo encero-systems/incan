@@ -2,9 +2,8 @@
 
 use crate::error::PlanError;
 use crate::identity::DriverIdentity;
-use crate::plan::{
-    CalleeKind, Constant, Operand, OperandKind, Plan, PlanType, RvalueKind, StatementKind, TerminatorKind,
-};
+use crate::native_crates::native_roots;
+use crate::plan::{CalleeKind, Plan, PlanType, TerminatorKind};
 use crate::spans::Sources;
 use crate::{bodies, callees, declarations, types, union_debug, validation, value_enum_serde};
 use incan_driver::unit::UnitKind;
@@ -20,7 +19,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-/// Compilation is serialized until stage 3d supplies a resident driver with request isolation.
+/// Compilation is serialized: `PLAN` and `FAILURE` are process-global slots, also in the resident worker.
 static COMPILATION: Mutex<()> = Mutex::new(());
 /// Query providers are function pointers, so the invocation's source-owned plan has an explicit scoped slot.
 static PLAN: Mutex<Option<Arc<Plan>>> = Mutex::new(None);
@@ -575,28 +574,6 @@ fn verify_planned_clone_bounds(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), PlanE
     Ok(())
 }
 
-/// Load the explicit crate aliases of retained native constants even when their value types name no native owner.
-/// Body IR materializes each constant read into a Use assignment before other operations consume that temporary.
-fn constant_crate_roots(plan: &Plan) -> impl Iterator<Item = &str> {
-    plan.functions
-        .iter()
-        .flat_map(|function| &function.blocks)
-        .flat_map(|block| &block.statements)
-        .filter_map(|statement| {
-            let StatementKind::Assign(_, value) = &statement.kind else {
-                return None;
-            };
-            let RvalueKind::Use(Operand {
-                kind: OperandKind::Literal(Constant::RustItem(path, _)),
-                ..
-            }) = &value.kind
-            else {
-                return None;
-            };
-            path.split("::").next()
-        })
-}
-
 /// Identify opaque return ABIs before normalization can reveal their implementation layout. Ordinary associated
 /// projections remain eligible for concrete normalization; an implicit return-position `impl Trait` associated type
 /// keeps the opaque boundary its caller must satisfy before constructing MIR.
@@ -755,9 +732,8 @@ fn enum_items(
 /// Give each generic external declared without type arguments its inferred ones, and its calls the matching
 /// instantiated callee, so signature verification and MIR construction see one explicit instantiation.
 fn instantiate_generic_externals(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Option<Plan>, PlanError> {
-    let mut instantiated = plan.clone();
     let mut inferred = std::collections::BTreeMap::new();
-    for external in &mut instantiated.externals {
+    for external in &plan.externals {
         if !external.type_arguments.is_empty() {
             continue;
         }
@@ -765,11 +741,18 @@ fn instantiate_generic_externals(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Option<
         if callees::arity_admits(tcx, def, 0) {
             continue;
         }
-        external.type_arguments = callees::inferred_arguments(tcx, def, external)?;
-        inferred.insert(external.path.clone(), external.type_arguments.clone());
+        inferred.insert(external.path.clone(), callees::inferred_arguments(tcx, def, external)?);
     }
     if inferred.is_empty() {
         return Ok(None);
+    }
+    let mut instantiated = plan.clone();
+    for external in &mut instantiated.externals {
+        if external.type_arguments.is_empty()
+            && let Some(arguments) = inferred.get(&external.path)
+        {
+            external.type_arguments.clone_from(arguments);
+        }
     }
     for block in instantiated
         .functions
@@ -790,50 +773,6 @@ fn instantiate_generic_externals(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Option<
     Ok(Some(instantiated))
 }
 
-/// The checked native roots shared by AST loading and optional development-library preparation.
-fn native_roots(plan: &Plan) -> BTreeSet<&str> {
-    let mut roots: BTreeSet<_> = plan
-        .externals
-        .iter()
-        .filter_map(|external| crate::native_crates::callee_root(&external.path))
-        .chain(
-            plan.models
-                .iter()
-                .map(|model| &model.library_item)
-                .chain(plan.enums.iter().map(|value| &value.library_item))
-                .filter_map(|item| item.split("::").next())
-                .filter(|root| !root.is_empty()),
-        )
-        .collect();
-    roots.extend(constant_crate_roots(plan));
-    if plan.functions.iter().any(|function| {
-        function.locals.iter().any(|local| {
-            matches!(
-                local.ty,
-                PlanType::Generator(..)
-                    | PlanType::GeneratorMutRef(..)
-                    | PlanType::GeneratorYield(..)
-                    | PlanType::GeneratorYieldRef(..)
-            )
-        })
-    }) {
-        roots.insert("incan_std_core");
-    }
-    for function in &plan.functions {
-        let Some(callee) = &function.future_callee else {
-            continue;
-        };
-        let path = match &callee.kind {
-            CalleeKind::External(path) | CalleeKind::Instantiated(path, _) | CalleeKind::FutureMethod(path, _) => path,
-            _ => continue,
-        };
-        if let Some(root) = crate::native_crates::callee_root(path) {
-            roots.insert(root);
-        }
-    }
-    roots
-}
-
 /// Compile a plan supplied directly by an Incan caller function into a native binary.
 ///
 /// The caller supplies the exact toolchain/library identity already verified before checking. External crates are
@@ -845,6 +784,8 @@ fn native_roots(plan: &Plan) -> BTreeSet<&str> {
 /// Executables leave debug information in their object files instead of packing a macOS bundle during each edit.
 /// A development store derives shared carriers from those same native identities and records loader witnesses;
 /// ordinary builds and release compilation do not select that policy.
+/// `overflow_checks` is the unit profile's integer overflow policy, the one the lowering already applied to the plan;
+/// rustc applies the same policy to the arithmetic it compiles from Rust crates, such as inlined standard library code.
 pub fn compile(
     plan: Plan,
     crate_name: &str,
@@ -855,6 +796,7 @@ pub fn compile(
     rustc_args: &[String],
     shared_store: Option<&Path>,
     kind: UnitKind,
+    overflow_checks: bool,
     manifest: Option<&incan_frontend::library_manifest::LibraryManifest>,
 ) -> Result<(), DriverError> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_compile", input = %output.display(), functions = plan.functions.len()).entered();
@@ -903,7 +845,7 @@ pub fn compile(
     let plan = Arc::new(plan);
     *PLAN.lock().map_err(|_| DriverError::State)? = Some(Arc::clone(&plan));
     *FAILURE.lock().map_err(|_| DriverError::State)? = None;
-    let mut args = compilation_arguments(crate_name, output, identity, kind, &plan.span.file);
+    let mut args = compilation_arguments(crate_name, output, identity, kind, overflow_checks, &plan.span.file);
     let all = externs.iter().chain(&shared).cloned().collect::<Vec<_>>();
     for (name, path) in &all {
         args.push("--extern".into());
@@ -945,13 +887,16 @@ pub fn compile(
 }
 
 /// Preserve the ordinary native argument sequence; optional development linkage is appended only by its caller.
+/// Overflow checks follow the unit profile: on in debug, off in release.
 fn compilation_arguments(
     crate_name: &str,
     output: &Path,
     identity: &DriverIdentity,
     kind: UnitKind,
+    overflow_checks: bool,
     source: &str,
 ) -> Vec<String> {
+    let overflow = if overflow_checks { "yes" } else { "no" };
     let mut args = vec![
         "incan-rustc-driver".into(),
         "--sysroot".into(),
@@ -963,7 +908,7 @@ fn compilation_arguments(
         "--cap-lints".into(),
         "allow".into(),
         "-C".into(),
-        "overflow-checks=yes".into(),
+        format!("overflow-checks={overflow}"),
         "-C".into(),
         "opt-level=3".into(),
         "-C".into(),
@@ -997,13 +942,8 @@ fn verify_library_argument_profiles(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), 
         let generics = tcx.generics_of(def);
         let reason = if !callees::arity_admits(tcx, def, model.library_type_arguments.len()) {
             Some("stdlib layout type argument count differs from metadata")
-        } else if generics.parent_count != 0
-            || generics
-                .own_params
-                .iter()
-                .any(|parameter| matches!(&parameter.kind, rustc_middle::ty::GenericParamDefKind::Const { .. }))
-        {
-            Some("native const arguments require a retained value contract")
+        } else if generics.parent_count != 0 {
+            Some("native layout retains generics from an enclosing declaration")
         } else {
             None
         };

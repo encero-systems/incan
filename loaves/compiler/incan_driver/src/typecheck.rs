@@ -92,7 +92,7 @@ pub fn typecheck_modules(
 
         visit(module, &checker);
         match check_result {
-            Ok(()) => type_infos.push(checker.type_info().clone()),
+            Ok(()) => type_infos.push(checker.into_type_info()),
             Err(errs) => {
                 diagnostics_out.extend(errs.into_iter().map(|error| CliDiagnostic {
                     file_path: module.file_path.to_string_lossy().to_string(),

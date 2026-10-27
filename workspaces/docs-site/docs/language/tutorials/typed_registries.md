@@ -2,8 +2,6 @@
 
 This tutorial builds a small catalog of text functions with `std.registry`. You will describe ordinary Incan functions once, read the entries loaded by a running program, and inspect the complete checked catalog without executing that program.
 
-The tested dev.8 driver refuses native execution of this example at the registry's `_describe_function` method. The source and checked graph illustrate the catalog contract; the runtime completion condition is not satisfied by that installation.
-
 ## Create the project
 
 Create a project with this manifest:
@@ -70,7 +68,7 @@ Run the program:
 incan run src/main.incn
 ```
 
-The intended output is two loaded descriptions followed by `incan`. The native refusal prevents that output in the tested installation. `loaded_entries()` denotes entries contributed by modules initialized in a process, rather than every entry in an unloaded package.
+The program prints `loaded 2 function descriptions` followed by `incan`. `loaded_entries()` denotes entries contributed by modules initialized in a process, rather than every entry in an unloaded package.
 
 ## Inspect the complete checked view
 

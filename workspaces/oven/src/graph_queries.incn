@@ -87,7 +87,7 @@ class Index:
             return true
         if checked != "" and checked in self.canonical_targets:
             return true
-        return proved != "" and (proved in self.identities or matches(record, term))
+        return proved != "" and (proved in self.identities or (len(self.selected) == 0 and matches(record, term)))
 
 
 pub def query_group(kind: str) -> str:

@@ -21,7 +21,7 @@ from owner_endpoint import Endpoint, attach, prepare_directory
 from owner_protocol import Connection, Listener, listen
 from toolchain import Toolchain
 from unit_freshness import compiler_fingerprint, fingerprint
-from apple_sdk import configure_sdk
+from driver_command import driver_command
 
 const SCHEMA: str = "incan.compiler-worker/1"
 const READINESS_POLLS: int = 7500
@@ -158,6 +158,7 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
     1. Select and connect the worker for this compiler and environment.
     2. Submit the ordinary compiler arguments and this request's console paths and working directory.
     3. Read its completion; a submitted request is never replayed after a transport failure.
+    4. A worker that retired with this reply is not dialed again: the next request starts a fresh one.
     """
     # 1. Unsupported observations and failed startup retain the existing one-process compilation path.
     match connection_for(toolchain):
@@ -170,7 +171,11 @@ def compile_at(toolchain: Toolchain, arguments: list[str]) -> Result[Option[i32]
             # 2. Once submission begins, failure cannot silently run the same compilation twice.
             connected.send(request(toolchain, arguments, generation)?)?
             # 3. A completed request grants only its actual exit code, never a retained checking result.
-            return completion(connected.receive()?)
+            reply = connected.receive()?
+            # 4. Retirement is an ordinary completion: the worker withdrew its endpoint before it replied.
+            if retired(reply):
+                trace("compiler worker: retired after its request")
+            return completion(reply)
 
 
 def connection_for(toolchain: Toolchain) -> Result[tuple[Connection, str], str]:
@@ -269,11 +274,9 @@ def unicode_environment(value: OsString) -> Result[str, str]:
 def launch(toolchain: Toolchain, endpoint: Endpoint) -> Result[None, str]:
     """Start the exact driver detached from the owner, with protocol and console on separate streams."""
     mut listener = listen(f"{endpoint.ready}", false)?
-    mut command = Command.new(toolchain.driver)
-    configure_sdk(command, toolchain.sysroot)?
+    mut command = driver_command(toolchain)?
     command.arg("--resident").arg(f"{endpoint.socket}").arg(f"{endpoint.generation}")
     command.arg(f"{endpoint.ready}").arg(str(IDLE_SECONDS))
-    command.env_remove("RUSTC_BOOTSTRAP")
     command.stdin(Stdio.null()).stdout(Stdio.null()).stderr(Stdio.null())
     command.process_group(0)
     child = command.spawn().map_err((error) => f"cannot start compiler worker: {error}")?
@@ -337,6 +340,17 @@ def completion(document: JsonValue) -> Result[Option[i32], str]:
             if code >= 0 and code <= MAX_STATUS:
                 return Ok(Some(status_code(code)))
     return Err("compiler worker returned no valid completion code")
+
+
+def retired(document: JsonValue) -> bool:
+    """
+    Whether the worker exits after this reply. It withdraws its endpoint first, so no later request dials it; a
+    retirement is neither a failed request nor a reason to replay one.
+    """
+    if let Some(value) = document.get("retired"):
+        if let Some(flag) = value.as_bool():
+            return flag
+    return false
 
 
 def integer_field(document: JsonValue, name: str) -> Result[int, str]:

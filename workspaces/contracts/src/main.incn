@@ -10,8 +10,7 @@ Runs every case of every family under FIXTURES_ROOT with the `incan` at INCAN, o
 is selected. Every case runs in its own process and working directory under scratch. Supervised families divide
 `--jobs` command slots (twelve by default). The runner prints one line per case (`PASS`, `FAIL` with its reasons,
 or `PEND` with what it waits for), one summary per area and one in total, and exits 1 when a case fails or a family
-cannot be read. A pending case
-that now holds fails: its `pending:` line is stale.
+cannot be read. A pending case that now holds fails: its `pending:` line is stale.
 """
 
 from rust::std::env import args, current_exe
@@ -238,9 +237,7 @@ def run_all(settings: Settings, scratch: Path) -> bool:
     mut total = Tally(passed=0, failed=0, pending=0)
     mut units = Units()
     mut refused = 0
-    for family in FAMILIES:
-        if not selected_family(family, settings.selectors):
-            continue
+    for family in families:
         clock = Instant.now()
         compiled = units.compiled
         reused = units.reused
@@ -255,14 +252,11 @@ def run_all(settings: Settings, scratch: Path) -> bool:
                 selected = [fixture for fixture in fixtures if selected_case(fixture.case_name(), settings.selectors)]
                 outcomes = family_outcomes(settings, scratch, family, fixtures, selected, units)
                 report_family(settings.incan, scratch, family, selected, outcomes, total, units)
-        detail = f" compiled={units.compiled - compiled} reused={units.reused - reused} replayed={units.replayed - replayed}"
+        mut detail = f" compiled={units.compiled - compiled} reused={units.reused - reused}"
+        detail += f" replayed={units.replayed - replayed}"
         report_time(f"family {family}", clock, detail)
     # 3. The total, the units Oven compiled and reused, and the families that could not be read close the report.
-    println(total.line("total"))
-    if units.compiled + units.reused + units.replayed > 0:
-        println(f"oven: {units.compiled} units compiled, {units.reused} reused, {units.replayed} refusals replayed")
-    if refused > 0:
-        println(f"{refused} families could not be read")
+    report_total(total, units, refused)
     if settings.family_worker:
         println("CONTRACT FAMILY COMPLETE")
     return total.failed == 0 and refused == 0
@@ -298,14 +292,17 @@ def run_family_workers(settings: Settings, scratch: Path, families: list[str]) -
                 for index in range(len(order)):
                     if order[index] == family:
                         refused += forward_family(family, results[index], total, units)
-            println(total.line("total"))
-            if units.compiled + units.reused + units.replayed > 0:
-                println(
-                    f"oven: {units.compiled} units compiled, {units.reused} reused, {units.replayed} refusals replayed",
-                )
-            if refused > 0:
-                println(f"{refused} families could not be read")
+            report_total(total, units, refused)
             return total.failed == 0 and refused == 0
+
+
+def report_total(total: Tally, units: Units, refused: int) -> None:
+    """Print the total, the units Oven compiled, reused and replayed, and how many families could not be read."""
+    println(total.line("total"))
+    if units.compiled + units.reused + units.replayed > 0:
+        println(f"oven: {units.compiled} units compiled, {units.reused} reused, {units.replayed} refusals replayed")
+    if refused > 0:
+        println(f"{refused} families could not be read")
 
 
 def family_work_order(families: list[str]) -> list[str]:

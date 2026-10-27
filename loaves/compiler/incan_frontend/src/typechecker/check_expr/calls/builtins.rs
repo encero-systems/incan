@@ -40,7 +40,6 @@ impl TypeChecker {
             self.call_argument_depth += 1;
             let arg_ty = self.check_expr(arg_expr);
             self.call_argument_depth -= 1;
-            self.record_error_message_display(arg_expr.span, &arg_ty);
             self.check_display_operand(errors::DisplayPosition::Print { builtin }, arg_expr, &arg_ty);
         }
     }
@@ -482,7 +481,6 @@ impl TypeChecker {
                     // `Error` adopter with no `__str__` renders its `message()` (#1778).
                     let arg_types = self.check_call_arg_types(args);
                     if let ([arg], [arg_ty]) = (args, arg_types.as_slice()) {
-                        self.record_error_message_display(Self::call_arg_expr(arg).span, arg_ty);
                         self.check_display_operand(errors::DisplayPosition::Str, Self::call_arg_expr(arg), arg_ty);
                     }
                     Some(ResolvedType::Str)

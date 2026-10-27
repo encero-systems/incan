@@ -13,8 +13,10 @@ pub(super) fn carrier(ty: &CBindingType) -> Option<IncanType> {
         CBindingType::Scalar(scalar) => c_abi::scalar_numeric_type(*scalar)
             .map(|numeric| IncanType::Primitive(IncanPrimitiveType::Numeric(numeric))),
         CBindingType::Pointer { mutable, pointee } => {
+            // Only the C string view and the `bounds`-paired span elements have a checked pointer carrier.
             let pointee = match pointee.as_ref() {
                 CBindingType::Scalar(c_abi::ScalarTypeId::CChar) => IncanType::NativeCChar,
+                CBindingType::Scalar(c_abi::ScalarTypeId::U8 | c_abi::ScalarTypeId::F32) => carrier(pointee)?,
                 _ => return None,
             };
             Some(IncanType::NativePointer {

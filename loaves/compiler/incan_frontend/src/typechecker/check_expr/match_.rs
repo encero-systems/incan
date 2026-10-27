@@ -10,13 +10,10 @@ use crate::diagnostics::errors;
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::symbols::*;
 use incan_lang::interop::RustItemKind;
-use incan_lang::lang::keywords::{self, KeywordId};
-use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::constructors;
 use incan_lang::lang::surface::constructors::ConstructorId;
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_lang::lang::types::numerics;
-use incan_semantics_core::SymbolOrigin;
 
 use super::TypeChecker;
 use super::match_coverage::{coverage_row_head_is_wild, expand_coverage_heads};
@@ -459,47 +456,6 @@ impl TypeChecker {
         }
     }
 
-    /// Record the canonical fields a model or class destructuring pattern leaves unnamed.
-    ///
-    /// `field_order` is the nominal's complete field list in declaration order and `provided` the canonical names
-    /// the pattern spelled (aliases already resolved). The difference is what a `..` would cover in Rust; lowering
-    /// spells it out as one wildcard per field (#1708). A pattern that names every field leaves no record, so a
-    /// consumer reads absence as "nothing to add".
-    ///
-    /// When the rest includes a field this pattern may not name (a private field of `type_name` matched outside its
-    /// owner's methods, by the same rule that refuses naming it), the pattern is also recorded as one whose rest must
-    /// stay unspelled, and lowering covers it with a rest marker instead (#1740). A field missing from `fields`
-    /// counts as unnameable: a rest marker covers any field, while a spelled one must exist and be visible.
-    fn record_pattern_rest_fields(
-        &mut self,
-        span: Span,
-        type_name: &str,
-        fields: &HashMap<String, FieldInfo>,
-        field_order: &[String],
-        provided: &HashSet<String>,
-    ) {
-        let rest: Vec<String> = field_order
-            .iter()
-            .filter(|field| !provided.contains(*field))
-            .cloned()
-            .collect();
-        if rest.is_empty() {
-            return;
-        }
-        let rest_has_private_field = rest.iter().any(|field| {
-            fields
-                .get(field)
-                .is_none_or(|info| self.private_field_is_inaccessible(type_name, info))
-        });
-        if rest_has_private_field {
-            self.type_info
-                .expressions
-                .pattern_rests_with_private_fields
-                .insert(span);
-        }
-        self.type_info.expressions.pattern_rest_fields.insert(span, rest);
-    }
-
     /// Record a constructor pattern that resolved through the active lexical binding.
     pub(in crate::typechecker) fn record_pattern_lexical_identity(&mut self, name: &str, span: Span) {
         let identity = self
@@ -525,45 +481,6 @@ impl TypeChecker {
         if let Some(identity) = identity {
             self.type_info.record_resolved_identity(span, identity);
         }
-    }
-
-    /// Record the enum-qualified canonical variant a checked variant pattern over an Incan enum names.
-    ///
-    /// The subject's enum qualifies the variant, and a variant alias resolves to the variant it names, so a bare
-    /// `Filled(n)` and an aliased `Full(n)` or `Shape.Full(n)` are spelled `Shape::Filled` by lowering, as a qualified
-    /// pattern over the canonical variant is. A module that matches a value of an enum another project module declares
-    /// without binding the enum's name spells it from the crate root (`crate::shapes::Shape::Filled`), and a value of a
-    /// dependency's enum typed by its provider-qualified key (`pub::recall::Outcome`) spells it from the dependency's
-    /// crate, as lowering spells that type (`recall::Outcome::Found`).
-    fn record_incan_enum_pattern_path(&mut self, expected_ty: &ResolvedType, variant: &str, span: Span) {
-        let enum_name = match expected_ty {
-            ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name,
-            _ => return,
-        };
-        let Some(TypeInfo::Enum(info)) = self.lookup_semantic_type_info(enum_name) else {
-            return;
-        };
-        let canonical = info.variant_aliases.get(variant).map_or(variant, String::as_str);
-        let enum_binds_here = self
-            .lookup_symbol(enum_name)
-            .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::Type(TypeInfo::Enum(_))));
-        let owner = match info.variant_identities.get(canonical).map(|identity| &identity.origin) {
-            Some(SymbolOrigin::Module(module_path))
-                if !enum_binds_here && module_path.first().is_some_and(|root| root != stdlib::STDLIB_ROOT) =>
-            {
-                format!(
-                    "{}::{}::{enum_name}",
-                    keywords::as_str(KeywordId::Crate),
-                    module_path.join("::")
-                )
-            }
-            _ => match crate::typechecker::split_canonical_public_library_type_name(enum_name) {
-                Some((library, public_name)) => format!("{library}::{public_name}"),
-                None => enum_name.clone(),
-            },
-        };
-        let path = format!("{owner}::{canonical}");
-        self.type_info.expressions.pattern_variant_paths.insert(span, path);
     }
 
     /// Type-check a pattern against an expected type, defining bindings in the current scope.
@@ -708,22 +625,20 @@ impl TypeChecker {
                             .and_then(|type_info| match type_info {
                                 TypeInfo::Model(model_info) => Some((
                                     model_info.fields.clone(),
-                                    model_info.field_order.clone(),
                                     type_param_subst_map(&model_info.type_params, type_args),
                                 )),
                                 TypeInfo::Class(class_info) => Some((
                                     class_info.fields.clone(),
-                                    class_info.field_order.clone(),
                                     type_param_subst_map(&class_info.type_params, type_args),
                                 )),
                                 _ => None,
                             })
-                            .map(|(fields, field_order, substitutions)| (type_name, fields, field_order, substitutions))
+                            .map(|(fields, substitutions)| (type_name, fields, substitutions))
                     }
                     _ => None,
                 };
 
-                if let Some((type_name, fields, field_order, substitutions)) = model_or_class_fields {
+                if let Some((type_name, fields, substitutions)) = model_or_class_fields {
                     let errors_before_pattern = self.errors.len();
                     self.record_pattern_lexical_identity(type_name, name.span);
                     let mut provided = HashSet::new();
@@ -771,7 +686,6 @@ impl TypeChecker {
                             }
                         }
                     }
-                    self.record_pattern_rest_fields(name.span, type_name, &fields, &field_order, &provided);
                     if self.errors.len() == errors_before_pattern
                         && self.type_info.resolved_identity(name.span).is_none()
                         && let Some(identity) = self
@@ -814,7 +728,6 @@ impl TypeChecker {
                     Some(fields) => {
                         if incan_resolution.is_some() {
                             self.record_incan_enum_pattern_identity(expected_ty, variant_name, name.span);
-                            self.record_incan_enum_pattern_path(expected_ty, variant_name, name.span);
                         }
                         if incan_resolution.is_some() || rust_resolution.is_some() {
                             // One sub-pattern per payload value (#1561); a named sub-pattern is refused on its own.
@@ -1243,17 +1156,12 @@ impl TypeChecker {
             return None;
         };
         let layout = self.checked_rust_enum_layout(&path, &info)?;
-        let (_, fields, names) = layout.variants.iter().find(|(name, _, _)| name == variant)?;
+        let (_, _, names) = layout.variants.iter().find(|(name, _, _)| name == variant)?;
         let names = names.clone();
-        let mut arguments = self.rust_owner_type_args(expected_ty, &path)?;
-        if !self.complete_rust_owner_arguments(&info, &mut arguments) {
-            return None;
-        }
-        let substitution = type_param_subst_map(&info.type_params, &arguments);
-        let fields = fields
-            .iter()
+        let fields = self
+            .native_enum_payload_types(expected_ty, &path, variant)?
+            .into_iter()
             .map(|field| {
-                let field = substitute_resolved_type(field, &substitution);
                 if names.is_empty() {
                     borrowed_pattern_payload(field, borrow)
                 } else {
@@ -1276,6 +1184,36 @@ impl TypeChecker {
         self.type_info.record_resolved_identity(span, identity);
         self.type_info.rust.checked_enums.insert(public_path, layout);
         Some(RustEnumPatternResolution::PayloadTypes { fields, names })
+    }
+
+    /// Return the payload types of native enum `variant` instantiated with `column`'s owner arguments, completing
+    /// the arguments the column leaves out from their declared defaults.
+    ///
+    /// Pattern checking and coverage both read payload types here, so a defaulted owner parameter (`C` in
+    /// `ControlFlow[B, C = ()]`) closes the same way for both.
+    pub(in crate::typechecker::check_expr) fn native_enum_payload_types(
+        &self,
+        column: &ResolvedType,
+        path: &str,
+        variant: &str,
+    ) -> Option<Vec<ResolvedType>> {
+        let metadata = self.rust_item_metadata_for_complete_type(path)?;
+        let RustItemKind::Type(info) = &metadata.kind else {
+            return None;
+        };
+        let layout = self.checked_rust_enum_layout(path, info)?;
+        let (_, fields, _) = layout.variants.iter().find(|(name, _, _)| name == variant)?;
+        let mut arguments = self.rust_owner_type_args(column, path)?;
+        if !self.complete_rust_owner_arguments(info, &mut arguments) {
+            return None;
+        }
+        let substitution = type_param_subst_map(&info.type_params, &arguments);
+        Some(
+            fields
+                .iter()
+                .map(|field| substitute_resolved_type(field, &substitution))
+                .collect(),
+        )
     }
 
     /// Check that a match expression covers all possible cases.

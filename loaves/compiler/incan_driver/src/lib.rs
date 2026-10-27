@@ -1,11 +1,12 @@
 //! The compiler driver: the compilation session, module collection, typecheck orchestration, checking, Loaf
-//! publication and the inspection analyses that the Oven (DD-0008), the pinned driver and the language server call.
+//! publication and the inspection analyses that Oven (DD-0008), the pinned driver and the language server call.
 //!
 //! Nothing in this crate parses `clap` arguments or plans a build; callers render what the driver returns.
 
 #![deny(clippy::unwrap_used)]
 #![deny(clippy::expect_used)]
 pub mod backend;
+pub mod body_ir;
 pub mod check;
 pub mod diagnostics;
 pub mod error;

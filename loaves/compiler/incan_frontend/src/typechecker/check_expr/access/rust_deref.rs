@@ -6,7 +6,7 @@ use crate::symbols::{CallableParam, ResolvedType};
 use crate::typechecker::helpers::render_resolved_type_as_rust_arg;
 use crate::typechecker::type_info::RustCheckedCall;
 use crate::typechecker::{IdentKind, RustArgCoercionKind};
-use incan_lang::interop::{RustFunctionSig, RustImplementedTrait, RustItemKind, RustTypeInfo, ancestral_rust_path};
+use incan_lang::interop::{RustFunctionSig, RustImplementedTrait, RustItemKind, RustTypeInfo};
 use incan_lang::lang::types::collections::{CollectionTypeId, from_str as collection_type};
 
 const DEREF_TRAIT: &str = "std::ops::Deref";
@@ -30,7 +30,7 @@ impl TypeChecker {
             let RustItemKind::Type(info) = &metadata.kind else {
                 return None;
             };
-            if Self::rust_field_for_source_name(&info.fields, field).is_some() {
+            if Self::rust_field_for_source_name(info, field).is_some() {
                 if steps.is_empty() {
                     return None;
                 }
@@ -194,14 +194,9 @@ impl TypeChecker {
         owner: &ResolvedType,
         trait_path: &str,
     ) -> Option<&'a RustImplementedTrait> {
-        let requested = self
-            .rust_definition_for_path(trait_path)
-            .unwrap_or_else(|| trait_path.to_owned());
+        let requested = self.rust_trait_identity(trait_path);
         info.implemented_traits.iter().find(|implementation| {
-            let identity = self
-                .rust_definition_for_path(&implementation.path)
-                .unwrap_or_else(|| implementation.path.clone());
-            ancestral_rust_path(&identity) == ancestral_rust_path(&requested)
+            self.rust_trait_identity(&implementation.path) == requested
                 && self.rust_impl_self_bindings(implementation, owner).is_some()
         })
     }
@@ -266,7 +261,13 @@ impl TypeChecker {
                 .iter()
                 .map(|(owner, target)| self.rust_deref_adjustment(owner, target, mutable))
                 .collect::<Option<Vec<_>>>()?;
-            let arguments = self.rust_owner_type_args(&owner, &path).unwrap_or_default();
+            // A generic owner whose arguments do not resolve selects nothing here, so the caller tries its next
+            // resolution step instead of specializing the method with no arguments.
+            let arguments = match self.rust_owner_type_args(&owner, &path) {
+                Some(arguments) => arguments,
+                None if info.type_params.is_empty() => Vec::new(),
+                None => return None,
+            };
             let signature =
                 self.specialize_rust_owner_signature(&method.signature, &path, &info.type_params, &arguments);
             let Some(signature) = self.specialize_written_method_arguments(&call, &path, signature) else {

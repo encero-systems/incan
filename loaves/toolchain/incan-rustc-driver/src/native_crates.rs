@@ -4,12 +4,81 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use crate::plan::{CalleeKind, Constant, Operand, OperandKind, Plan, PlanType, RvalueKind, StatementKind};
+use incan_driver::unit::UnitLoaf;
+use incan_frontend::loaf_index::LoafArtifact;
 use rustc_ast::{
     self as ast,
     visit::{self, Visitor},
 };
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
+
+/// Load the explicit crate aliases of retained native constants even when their value types name no native owner.
+/// Body IR materializes each constant read into a Use assignment before other operations consume that temporary.
+fn constant_crate_roots(plan: &Plan) -> impl Iterator<Item = &str> {
+    plan.functions
+        .iter()
+        .flat_map(|function| &function.blocks)
+        .flat_map(|block| &block.statements)
+        .filter_map(|statement| {
+            let StatementKind::Assign(_, value) = &statement.kind else {
+                return None;
+            };
+            let RvalueKind::Use(Operand {
+                kind: OperandKind::Literal(Constant::RustItem(path, _)),
+                ..
+            }) = &value.kind
+            else {
+                return None;
+            };
+            callee_root(path)
+        })
+}
+
+/// The checked native roots shared by AST loading and optional development-library preparation.
+pub(crate) fn native_roots(plan: &Plan) -> BTreeSet<&str> {
+    let mut roots: BTreeSet<_> = plan
+        .externals
+        .iter()
+        .filter_map(|external| callee_root(&external.path))
+        .chain(
+            plan.models
+                .iter()
+                .map(|model| &model.library_item)
+                .chain(plan.enums.iter().map(|value| &value.library_item))
+                .filter_map(|item| item.split("::").next())
+                .filter(|root| !root.is_empty()),
+        )
+        .collect();
+    roots.extend(constant_crate_roots(plan));
+    if plan.functions.iter().any(|function| {
+        function.locals.iter().any(|local| {
+            matches!(
+                local.ty,
+                PlanType::Generator(..)
+                    | PlanType::GeneratorMutRef(..)
+                    | PlanType::GeneratorYield(..)
+                    | PlanType::GeneratorYieldRef(..)
+            )
+        })
+    }) {
+        roots.insert("incan_std_core");
+    }
+    for function in &plan.functions {
+        let Some(callee) = &function.future_callee else {
+            continue;
+        };
+        let path = match &callee.kind {
+            CalleeKind::External(path) | CalleeKind::Instantiated(path, _) | CalleeKind::FutureMethod(path, _) => path,
+            _ => continue,
+        };
+        if let Some(root) = callee_root(path) {
+            roots.insert(root);
+        }
+    }
+    roots
+}
 
 /// Native wrapper paths in declarations require explicit aliases even when no executable call names their crate.
 pub(crate) fn declaration_roots(krate: &ast::Crate) -> BTreeSet<&'static str> {
@@ -46,9 +115,6 @@ impl<'ast> Visitor<'ast> for DeclarationRoots {
     }
 }
 
-use incan_driver::unit::UnitLoaf;
-use incan_frontend::loaf_index::LoafArtifact;
-
 /// Select exact artifacts needed by a checked plan from direct inputs and its reached Loaves' native closures.
 /// Every offered binding of a required root must name the same complete artifact. A direct input cannot replace a
 /// provider's native type identity: its exported fields and signatures still refer to the artifact it compiled
@@ -59,17 +125,8 @@ pub(crate) fn link_externs(
     direct: &[(String, PathBuf)],
     loaves: &[UnitLoaf],
 ) -> Result<Vec<(String, PathBuf)>, String> {
-    let roots = plan
-        .externals
-        .iter()
-        .filter_map(|external| callee_root(&external.path))
-        .chain(
-            plan.models
-                .iter()
-                .map(|model| &model.library_item)
-                .chain(plan.enums.iter().map(|value| &value.library_item))
-                .filter_map(|item| item.split("::").next()),
-        )
+    let roots = native_roots(plan)
+        .into_iter()
         .filter(|root| !matches!(*root, "" | "std" | "core" | "alloc" | "crate"))
         .collect::<BTreeSet<_>>();
     let closures = loaves
@@ -126,7 +183,7 @@ fn same_artifact(left: &Path, right: &Path) -> Result<bool, String> {
 /// impl bucket belongs to the always-linked standard closure. Full path and signature validation remain separate.
 pub(crate) fn callee_root(path: &str) -> Option<&str> {
     path.split("::").next().map(|root| {
-        if matches!(root, "[]" | "str" | "f32" | "f64" | "u8") {
+        if crate::rust_facts::primitive_owner(root) {
             "core"
         } else {
             root

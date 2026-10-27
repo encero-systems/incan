@@ -13,7 +13,7 @@ from std.io import IoError
 
 
 # The manifest every single-file and module fixture runs under.
-const MINIMAL_MANIFEST: str = "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
+pub const MINIMAL_MANIFEST: str ="[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
 
 # The manifest a testing fixture runs under: a project with no program.
 const PROJECT_ONLY_MANIFEST: str = "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n"

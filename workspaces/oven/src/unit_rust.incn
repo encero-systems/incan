@@ -43,6 +43,8 @@ pub def compile_incan_library(
     bindings: list[Tuple[str, str]],
     loaves: list[Tuple[str, str]],
     search: list[str],
+    toolchain: Toolchain,
+    compiler: str,
 ) -> Result[i32, str]:
     """
     Prepare one activated Incan provider after the shared graph prepared all its dependencies.
@@ -55,14 +57,13 @@ pub def compile_incan_library(
     selected = FeatureRequest(features=features, default_features=false)
     mut unit = describe(Path(source), profile, selected)?
     unit.kind = "library"
-    toolchain = load_toolchain()?
     # 2. A provider sees the same selected artifacts as every other consumer in this graph.
     unit.loaves = rebase_loaves(unit.loaves, loaves)
     unit.externs = [NativeCrate(name=alias, path=artifact) for alias, artifact in bindings]
     unit.search = search
     ready = prepare_linked(unit, toolchain)?
     # 3. The ordinary library stamp preserves a current artifact for either language's consumer.
-    return compile_library_unit(ready, toolchain, Path(output))
+    return compile_library_unit(ready, toolchain, Path(output), compiler)
 
 
 def rebase_loaves(declared: list[UnitLoaf], providers: list[Tuple[str, str]]) -> list[UnitLoaf]:
@@ -74,11 +75,25 @@ def rebase_loaves(declared: list[UnitLoaf], providers: list[Tuple[str, str]]) ->
             for name, prepared in providers:
                 if name == loaf.name:
                     directory = prepared
-        result.append(UnitLoaf(key=loaf.key, name=loaf.name, dir=directory, standard=loaf.standard))
+        result.append(
+            UnitLoaf(
+                key=loaf.key,
+                name=loaf.name,
+                dir=directory,
+                standard=loaf.standard,
+                toolchain_provided=loaf.toolchain_provided,
+                source_root=loaf.source_root,
+            ),
+        )
     return result
 
 
-pub def compile_library_unit(library: UnitDescription, toolchain: Toolchain, output: Path) -> Result[i32, str]:
+pub def compile_library_unit(
+    library: UnitDescription,
+    toolchain: Toolchain,
+    output: Path,
+    compiler: str = "",
+) -> Result[i32, str]:
     """
     Reuse or replace a prepared library and record all published artifacts.
     The caller supplies its selected toolchain and exact output path after dependency preparation is complete.
@@ -89,8 +104,8 @@ pub def compile_library_unit(library: UnitDescription, toolchain: Toolchain, out
     """
     # 1. Both source and native inputs contribute to the ordinary library key.
     directory = output.parent()
-    artifacts = artifact_files(directory, library.package)
-    key = unit_key(library, toolchain)?
+    artifacts = artifact_files(directory, library.package)?
+    key = unit_key(library, toolchain, compiler)?
     stamp = directory.joinpath(".oven-inputs.sha256")
     why = staleness(artifacts, stamp, key)?
     # 2. A stamp vouches only for a complete current build.
@@ -105,7 +120,7 @@ pub def compile_library_unit(library: UnitDescription, toolchain: Toolchain, out
         return Ok(compiled)
     # 3. Partial publication never receives a stamp. Publication can add an indexed Rust ABI cache, and the new
     #    manifest decides whether a vocabulary worker belongs to the completed set.
-    completed = artifact_files(directory, library.package)
+    completed = artifact_files(directory, library.package)?
     for artifact in completed:
         if not artifact.is_file():
             return Err(f"compiler did not publish {artifact.0}")
@@ -133,7 +148,11 @@ pub def prepare_native(described: UnitDescription, toolchain: Toolchain) -> Resu
     return prepare_linked(unit, toolchain)
 
 
-def prepare_linked(described: UnitDescription, toolchain: Toolchain) -> Result[UnitDescription, str]:
+pub def prepare_linked(
+    described: UnitDescription,
+    toolchain: Toolchain,
+    checking_interfaces: list[str] = [],
+) -> Result[UnitDescription, str]:
     """
     Bind exact native inputs and register a producer vocabulary after shared dependency preparation is complete.
 
@@ -157,6 +176,9 @@ def prepare_linked(described: UnitDescription, toolchain: Toolchain) -> Result[U
     mut directories = [directory for directory in unit.search if directory not in indexed]
     loaves = unit.loaves
     for loaf in loaves:
+        # Checking-only exports supply a manifest, never a claim to an executable native artifact.
+        if loaf.name in checking_interfaces and not loaf_library(loaf).is_file():
+            continue
         linked, searched = link_loaf(unit, loaf, toolchain_crates)?
         unit = linked
         for directory in searched:
@@ -179,8 +201,14 @@ def standard_available(loaf: UnitLoaf) -> bool:
     """Keep source dependencies and published standard providers; an unbuilt standard package grants no interface."""
     if not loaf.standard:
         return true
-    directory = Path(loaf.dir)
-    return directory.joinpath(f"lib{loaf.name}.rlib").is_file() and directory.joinpath(f"{loaf.name}.incnlib").is_file()
+    interface = Path(loaf.dir).joinpath(f"{loaf.name}.incnlib")
+    return loaf_library(loaf).is_file() and interface.is_file()
+
+
+def loaf_library(loaf: UnitLoaf) -> Path:
+    """A Loaf's compiled library: `lib<crate>.rlib` in its directory, the crate being its name with `_` for `-`."""
+    linked = loaf.name.replace("-", "_")
+    return Path(loaf.dir).joinpath(f"lib{linked}.rlib")
 
 
 def with_toolchain_crates(described: UnitDescription, toolchain: Toolchain) -> UnitDescription:
@@ -192,7 +220,9 @@ def with_toolchain_crates(described: UnitDescription, toolchain: Toolchain) -> U
         directory = Path(native.path).parent()
         if native.name != unit.package and directory.joinpath(f"{native.name}.incnlib").is_file():
             if native.name not in [loaf.name for loaf in unit.loaves]:
-                unit.loaves.append(UnitLoaf(key=native.name, name=native.name, dir=directory.0, standard=false))
+                unit.loaves.append(
+                    UnitLoaf(key=native.name, name=native.name, dir=directory.0, standard=false, toolchain_provided=true),
+                )
     return unit
 
 
@@ -208,7 +238,7 @@ def link_loaf(
     During bootstrap only already compiled standard packages may be linked.
     """
     linked = loaf.name.replace("-", "_")
-    library = Path(loaf.dir).joinpath(f"lib{linked}.rlib")
+    library = loaf_library(loaf)
     if loaf.standard and not library.is_file():
         return Ok((described, []))
     unit = add_extern(described, NativeCrate(name=linked, path=library.0))?
@@ -242,7 +272,9 @@ def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[
         features=unit.active_features,
         defaults=false,
     )
-    facets = local_facets(demand, configuration, None, {}, true)?
+    mut facets = unit.facets
+    if len(facets) == 0:
+        facets = local_facets(demand, configuration)?
     registry = linked_registry(facets, toolchain)?
     # 3. The local units the edges reach are compiled, each once, before the unit that links them.
     request = RustBuild(
@@ -254,6 +286,7 @@ def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[
         default_features=false,
         incan_compiler=Some(compile_incan_library),
         toolchain_search=toolchain.search,
+        toolchain=Some(toolchain),
     )
     built = build_dependencies(request, facets)?
     # 4. The unit searches what was built, names its own crate, and binds each edge under the alias it is written by.

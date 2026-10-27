@@ -17,48 +17,6 @@ pub mod __private {
         (::xxhash_rust::xxh3::xxh3_64(data) % 9_223_372_036_854_775_807u64) as i64
     }
 
-    /// Return the stable encoding identifier for `str` ordinal keys.
-    #[inline]
-    #[must_use]
-    pub fn ordinal_key_encoding_str() -> String {
-        "str:utf8".to_string()
-    }
-
-    /// Return the stable encoding identifier for `bytes` ordinal keys.
-    #[inline]
-    #[must_use]
-    pub fn ordinal_key_encoding_bytes() -> String {
-        "bytes:raw".to_string()
-    }
-
-    /// Return the stable encoding identifier for `bool` ordinal keys.
-    #[inline]
-    #[must_use]
-    pub fn ordinal_key_encoding_bool() -> String {
-        "bool:u8".to_string()
-    }
-
-    /// Return the stable encoding identifier for `Decimal128` ordinal keys.
-    #[inline]
-    #[must_use]
-    pub fn ordinal_key_encoding_decimal() -> String {
-        "decimal128:coefficient-i128-le:scale-u8".to_string()
-    }
-
-    /// Return the stable encoding identifier for signed integer ordinal keys.
-    #[inline]
-    #[must_use]
-    pub fn ordinal_key_encoding_int(bits: u16) -> String {
-        format!("int:i{bits}:le")
-    }
-
-    /// Return the stable encoding identifier for unsigned integer ordinal keys.
-    #[inline]
-    #[must_use]
-    pub fn ordinal_key_encoding_uint(bits: u16) -> String {
-        format!("uint:u{bits}:le")
-    }
-
     /// Decode an exact-width little-endian `OrdinalKey` payload.
     #[inline]
     pub fn ordinal_key_exact_bytes<const N: usize>(data: Vec<u8>, encoding: &str) -> Result<[u8; N], String> {
@@ -121,23 +79,5 @@ pub mod __private {
             i128::from_le_bytes(coefficient_bytes),
             scale,
         ))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::__private;
-
-    #[test]
-    fn ordinal_key_encoding_helpers_are_stable() {
-        assert_eq!(__private::ordinal_key_encoding_str(), "str:utf8");
-        assert_eq!(__private::ordinal_key_encoding_bytes(), "bytes:raw");
-        assert_eq!(__private::ordinal_key_encoding_bool(), "bool:u8");
-        assert_eq!(
-            __private::ordinal_key_encoding_decimal(),
-            "decimal128:coefficient-i128-le:scale-u8"
-        );
-        assert_eq!(__private::ordinal_key_encoding_int(32), "int:i32:le");
-        assert_eq!(__private::ordinal_key_encoding_uint(64), "uint:u64:le");
     }
 }

@@ -76,7 +76,7 @@ hide:
 
 ## Build beyond the basics.
 
-Incan 0.5 ships a full-standard-library Loaf and can explicitly bake project extensions for locked external dependencies. These tutorials carry that release envelope into services, typed data, asynchronous work, and Rust interop.
+Standard packages compile as ordinary Loaves, and Rust dependencies come from the installed toolchain's registry closure. These tutorials apply that toolchain to services, typed data, asynchronous work, and Rust interop.
 
 <div class="inc-route-grid">
   <a class="inc-route-card" href="language/tutorials/typed_data_processor/"><span class="inc-eyebrow">Typed data</span><strong>Run a typed data processor</strong><span>Model JSON, handle file failures, test the transformation, and produce a typed report.</span></a>
@@ -219,14 +219,14 @@ fn main() {
 
 <div class="inc-why-card inc-tone-gold">
 <img src="shared/incapunk/icons/package.svg" alt="">
-<span>Locked Rust dependencies enter through an explicit project bake, then remain available through a sealed Loaf closure.</span>
+<span>Declared Rust dependencies resolve to compiled units in the installed toolchain; declaring one never downloads a crate.</span>
 <a href="language/tutorials/add_a_rust_crate/">See the boundary</a>
 </div>
 
 <div class="inc-why-card inc-tone-pink">
 <img src="shared/incapunk/icons/workflow.svg" alt="">
 <span>Duckborrowing plans the handoff from clear source to Rust ownership.</span>
-<a href="contributing/explanation/duckborrowing/">Learn more</a>
+<a href="language/explanation/rust_shaped_confidence/#duckborrowing">Learn more</a>
 </div>
 
 </div>
@@ -293,7 +293,7 @@ Incan plans the Rust-facing ownership path. You keep writing clear application c
 <div class="inc-duck-step inc-tone-gold"><img src="shared/incapunk/icons/rust.svg" alt=""><span>Native compilation</span></div>
 </div>
 
-<p class="inc-duck-link"><a href="contributing/explanation/duckborrowing/">Read the Duckborrowing deep dive</a></p>
+<p class="inc-duck-link"><a href="language/explanation/rust_shaped_confidence/#duckborrowing">Read about Duckborrowing</a></p>
 
 </section>
 

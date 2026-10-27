@@ -157,20 +157,34 @@ pub fn library_item(tcx: TyCtxt<'_>, path: &str, kind: DefKind) -> Result<DefId,
     public_item(tcx, path, &[kind], reason)
 }
 
-/// Resolve an opaque carrier's public type item without granting field or variant projections. An alias keeps its
-/// own metadata parameters; field-bearing queries use [`library_item`] to select the underlying ADT. A trait principal
-/// requires the native object constructor rather than a nominal `type_of` query and grants no field projection.
+/// Resolve a checked carrier's exact type item, including dependency-only types, without granting source access.
+/// An alias keeps its own metadata parameters; field-bearing queries use [`library_item`] to select the underlying ADT.
+/// A trait principal requires the native object constructor rather than a nominal `type_of` query and grants no field
+/// projection.
 pub fn native_type_item(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
-    public_item(
+    layout_item(
         tcx,
         path,
         &[DefKind::Struct, DefKind::Enum, DefKind::TyAlias, DefKind::Trait],
-        "Loaf layout names no public type",
+        false,
+        "checked native layout names no type",
     )
 }
 
 /// Walk one public module path, selecting a final item only from the caller's admitted namespace kinds.
 fn public_item(tcx: TyCtxt<'_>, path: &str, kinds: &[DefKind], reason: &str) -> Result<DefId, PlanError> {
+    layout_item(tcx, path, kinds, true, reason)
+}
+
+/// Walk an exact retained native identity. Authored Loaf layout queries require public paths; compiler-selected
+/// Rust storage may cross private modules because its metadata authority was established by checking.
+fn layout_item(
+    tcx: TyCtxt<'_>,
+    path: &str,
+    kinds: &[DefKind],
+    public_only: bool,
+    reason: &str,
+) -> Result<DefId, PlanError> {
     let unknown = || PlanError::Invalid {
         function: path.into(),
         reason: reason.into(),
@@ -187,7 +201,7 @@ fn public_item(tcx: TyCtxt<'_>, path: &str, kinds: &[DefKind], reason: &str) -> 
         } else {
             kinds
         };
-        current = public_layout_child(tcx, current, segment, wanted).ok_or_else(unknown)?;
+        current = layout_child(tcx, current, segment, wanted, public_only).ok_or_else(unknown)?;
     }
     if !kinds.contains(&tcx.def_kind(current)) {
         return Err(unknown());
@@ -195,9 +209,9 @@ fn public_item(tcx: TyCtxt<'_>, path: &str, kinds: &[DefKind], reason: &str) -> 
     Ok(current)
 }
 
-/// Resolve a public module item in its owning query domain. Local injected ADTs are HIR items; the external-only
+/// Resolve a module item with the caller's visibility authority. Local injected ADTs are HIR items; the external-only
 /// `module_children` query must never receive the current crate's definitions.
-fn public_layout_child(tcx: TyCtxt<'_>, module: DefId, name: &str, kinds: &[DefKind]) -> Option<DefId> {
+fn layout_child(tcx: TyCtxt<'_>, module: DefId, name: &str, kinds: &[DefKind], public_only: bool) -> Option<DefId> {
     if module.is_local() {
         return tcx
             .hir_crate_items(())
@@ -206,13 +220,13 @@ fn public_layout_child(tcx: TyCtxt<'_>, module: DefId, name: &str, kinds: &[DefK
             .filter(|def| {
                 tcx.parent(*def) == module
                     && tcx.opt_item_name(*def).is_some_and(|symbol| symbol.as_str() == name)
-                    && tcx.visibility(*def).is_public()
+                    && (!public_only || tcx.visibility(*def).is_public())
             })
             .find_map(|def| admitted_layout_definition(tcx, def, kinds));
     }
     tcx.module_children(module)
         .iter()
-        .filter(|child| child.ident.name.as_str() == name && child.vis.is_public())
+        .filter(|child| child.ident.name.as_str() == name && (!public_only || child.vis.is_public()))
         .filter_map(|child| child.res.opt_def_id())
         .find_map(|def| admitted_layout_definition(tcx, def, kinds))
 }
@@ -245,7 +259,8 @@ fn layout_definition(tcx: TyCtxt<'_>, definition: DefId, expected: DefKind) -> O
     (tcx.def_kind(adt.did()) == expected).then_some(adt.did())
 }
 
-/// Walk only public module children, rejecting nonfunction callees before constructing MIR.
+/// Resolve a retained call, rejecting nonpublic callables before constructing MIR. Compiler-selected receivers may
+/// live behind private module prefixes; the callable itself must still be public.
 ///
 /// A segment inside a module selects by kind as well as name, as [`library_item`] does: a class with field defaults
 /// compiles a constructor function under its own name beside its struct, so `Class::method` must step through the
@@ -261,25 +276,10 @@ pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
         return Ok(definition);
     }
     let path = primitive.unwrap_or(path);
-    if let Some((owner, method)) = path.split_once("::") {
-        let native = match owner {
-            "f32" => Some(tcx.types.f32),
-            "f64" => Some(tcx.types.f64),
-            "u8" => Some(tcx.types.u8),
-            _ => None,
-        };
-        if let Some(native) = native {
-            return inherent_function_in(tcx, primitive_inherent_impls(tcx, native), method)
-                .ok_or_else(|| PlanError::UnknownCallee(path.into()));
-        }
-    }
-    if let Some(method) = path.strip_prefix("[]::") {
-        return primitive_function(tcx, SimplifiedType::Slice, method)
-            .ok_or_else(|| PlanError::UnknownCallee(path.into()));
-    }
-    if let Some(method) = path.strip_prefix("str::") {
-        return primitive_function(tcx, SimplifiedType::Str, method)
-            .ok_or_else(|| PlanError::UnknownCallee(path.into()));
+    if let Some((owner, _)) = path.split_once("::")
+        && crate::rust_facts::primitive_owner(owner)
+    {
+        return primitive_path(tcx, path).ok_or_else(|| PlanError::UnknownCallee(path.into()));
     }
     let mut segments = path.split("::").peekable();
     let root = segments.next().ok_or_else(|| PlanError::UnknownCallee(path.into()))?;
@@ -290,7 +290,7 @@ pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
             DefKind::Mod => tcx
                 .module_children(current)
                 .iter()
-                .filter(|child| child.ident.name.as_str() == segment && child.vis.is_public())
+                .filter(|child| child.ident.name.as_str() == segment && (!last || child.vis.is_public()))
                 .filter_map(|child| child.res.opt_def_id())
                 .find(|child| callee_path_step(tcx.def_kind(*child), last))
                 .ok_or_else(|| PlanError::UnknownCallee(path.into()))?,
@@ -317,6 +317,12 @@ pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
 /// Method spelling alone grants no signature; the ordinary native signature and predicate checks still apply.
 fn primitive_path(tcx: TyCtxt<'_>, path: &str) -> Option<DefId> {
     let (owner, method) = path.split_once("::")?;
+    if owner == "str" {
+        return primitive_function(tcx, SimplifiedType::Str, method);
+    }
+    if owner == "[]" {
+        return primitive_function(tcx, SimplifiedType::Slice, method);
+    }
     let (_, native) = crate::rust_facts::primitive_types(tcx)
         .into_iter()
         .find(|(name, _)| *name == owner)?;
@@ -472,7 +478,8 @@ pub fn inferred_arguments(
 ///
 /// Trailing parameters the plan omits take the item's own defaults (`HashMap`'s `S = RandomState`, `Arc`'s
 /// `A = Global`), instantiated over the arguments before them, as rustc does for a written path.
-/// Lifetime parameters receive erased regions and never consume a retained type argument; const parameters refuse.
+/// Lifetime parameters receive erased regions and consume no retained type argument. Omitted const parameters use
+/// their declaration's defaults; an explicit const value still requires a retained value contract and is refused.
 pub fn arguments<'tcx>(
     tcx: TyCtxt<'tcx>,
     def: DefId,
@@ -502,12 +509,13 @@ pub fn arguments<'tcx>(
                         reason: "omitted generic argument has no default".into(),
                     })?,
             },
-            rustc_middle::ty::GenericParamDefKind::Const { .. } => {
-                return Err(PlanError::Unsupported {
+            rustc_middle::ty::GenericParamDefKind::Const { .. } => parameter
+                .default_value(tcx)
+                .map(|default| default.instantiate(tcx, tcx.mk_args(&arguments)).skip_normalization())
+                .ok_or_else(|| PlanError::Unsupported {
                     function: tcx.def_path_str(def),
                     reason: "native const arguments require a retained value contract".into(),
-                });
-            }
+                })?,
         };
         arguments.push(argument);
     }
@@ -548,7 +556,7 @@ fn owner_parameter_default<'tcx>(
 }
 
 /// Whether `written` type arguments instantiate `def`: lifetimes consume no slot, omitted types need defaults, and
-/// const arguments require a separate value contract.
+/// omitted const parameters need declaration defaults. Written const values require a separate value contract.
 pub fn arity_admits(tcx: TyCtxt<'_>, def: DefId, written: usize) -> bool {
     let generics = tcx.generics_of(def);
     let mut supplied = 0;
@@ -556,6 +564,7 @@ pub fn arity_admits(tcx: TyCtxt<'_>, def: DefId, written: usize) -> bool {
         let parameter = generics.param_at(index, tcx);
         match parameter.kind {
             rustc_middle::ty::GenericParamDefKind::Lifetime => continue,
+            rustc_middle::ty::GenericParamDefKind::Const { .. } if parameter.default_value(tcx).is_some() => continue,
             rustc_middle::ty::GenericParamDefKind::Const { .. } => return false,
             rustc_middle::ty::GenericParamDefKind::Type { .. } if supplied < written => supplied += 1,
             rustc_middle::ty::GenericParamDefKind::Type { .. }

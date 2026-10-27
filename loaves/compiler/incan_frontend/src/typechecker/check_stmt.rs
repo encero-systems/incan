@@ -2307,12 +2307,12 @@ impl TypeChecker {
     /// yielding `int` values, and a type parameter bounded by `Iterable[T]` yielding `T`, before the backend chooses
     /// the Rust iterator adapter that implements them.
     pub fn infer_iterator_element_type(&self, iter_ty: &ResolvedType) -> ResolvedType {
-        if let Some(type_param) = self.active_type_param_name(iter_ty) {
-            for frame in self.current_type_param_bound_details.iter().rev() {
-                let Some(bounds) = frame.get(type_param) else {
-                    continue;
-                };
-                if let Some(item) = bounds.iter().find_map(|bound| {
+        if let Some(type_param) = self.active_type_param_name(iter_ty)
+            && let Some(item) = self
+                .innermost_type_param_bounds(type_param)
+                .into_iter()
+                .flatten()
+                .find_map(|bound| {
                     let trait_id = builtin_traits::from_qualified_str(&bound.name)
                         .or_else(|| builtin_traits::from_str(Self::type_bound_source_name(bound)))?;
                     if matches!(trait_id, TraitId::Iterable | TraitId::Iterator | TraitId::IntoIterator) {
@@ -2320,11 +2320,9 @@ impl TypeChecker {
                     } else {
                         None
                     }
-                }) {
-                    return item;
-                }
-                break;
-            }
+                })
+        {
+            return item;
         }
         match iter_ty {
             ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.infer_iterator_element_type(inner),

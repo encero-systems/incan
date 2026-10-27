@@ -398,15 +398,21 @@ impl TypeChecker {
     /// name embedded inside a native generic argument. Native aliases expand from retained templates; lifetime-only
     /// or defaulted owners with no effective arguments share their metadata self template's bare identity.
     /// Structured arguments already carry checked bindings, so only a rendered owner's base enters the constructor.
+    /// Anonymous native binders keep the declaration's exact key even when a signature parser normalizes whitespace.
     pub(in crate::typechecker) fn rust_inference_type(&self, ty: &ResolvedType, parameters: &[String]) -> ResolvedType {
         map_resolved_type_leaves(ty, &|leaf| {
             if let Some(target) = self.rusttype_native_target(leaf) {
                 return Some(self.rust_inference_type(&target, parameters));
             }
-            if let ResolvedType::Named(name) = leaf
-                && parameters.contains(name)
+            if let ResolvedType::Named(name) | ResolvedType::TypeVar(name) | ResolvedType::RustPath(name) = leaf
+                && let Some(parameter) = parameters.iter().find(|parameter| {
+                    parameter
+                        .chars()
+                        .filter(|ch| !ch.is_whitespace())
+                        .eq(name.chars().filter(|ch| !ch.is_whitespace()))
+                })
             {
-                return Some(ResolvedType::TypeVar(name.clone()));
+                return Some(ResolvedType::TypeVar(parameter.clone()));
             }
             if let Some(name) = self.generic_placeholder_name(leaf) {
                 return Some(ResolvedType::TypeVar(name.to_owned()));
@@ -441,10 +447,9 @@ impl TypeChecker {
             let ResolvedType::RustPath(path) = leaf else {
                 return None;
             };
-            if parameters.iter().any(|parameter| parameter == path.trim())
-                || self
-                    .generic_placeholder_name(&ResolvedType::Named(path.clone()))
-                    .is_some()
+            if self
+                .generic_placeholder_name(&ResolvedType::Named(path.clone()))
+                .is_some()
             {
                 return Some(ResolvedType::TypeVar(path.trim().to_owned()));
             }
@@ -650,7 +655,13 @@ impl TypeChecker {
     /// parameters and results. `[]` is an internal generic constructor unavailable as a source identifier. A generic
     /// `&T` instantiated with source text borrows its owned String carrier instead of being reclassified as an
     /// unsized string.
+    ///
+    /// A display that names a nominal carrier key resolves through the active module's bindings, which the cache key
+    /// does not hold, so it bypasses the cache.
     pub(crate) fn native_rust_signature_type(&self, display: &str, owner: &str) -> ResolvedType {
+        if display.contains(incan_semantics_core::body_ir::NOMINAL_CARRIER_KEY_PREFIX) {
+            return self.resolve_native_rust_signature_type(display, owner);
+        }
         let key = (display.to_owned(), owner.to_owned());
         if let Some(resolved) = self.native_signature_types.borrow().get(&key) {
             return resolved.clone();
@@ -1364,7 +1375,10 @@ impl TypeChecker {
         let Some(conversion) = self.native_element_conversion(source, target) else {
             return false;
         };
-        self.type_info.rust.element_adjustments.insert(expression.span, conversion);
+        self.type_info
+            .rust
+            .element_adjustments
+            .insert(expression.span, conversion);
         true
     }
 

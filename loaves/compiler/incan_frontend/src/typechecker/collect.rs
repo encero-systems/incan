@@ -244,17 +244,8 @@ impl TypeChecker {
             match &kind {
                 SymbolKind::Function(_) => self.record_imported_function_binding(&alias.name, &kind),
                 SymbolKind::FunctionOverloads(overloads) => {
-                    self.record_function_overload_binding(&alias.name, overloads, false);
+                    self.record_function_overload_binding(&alias.name, overloads);
                 }
-                SymbolKind::Static(info) => {
-                    self.type_info.declarations.static_bindings.insert(
-                        alias.name.clone(),
-                        crate::typechecker::StaticBindingInfo {
-                            is_imported: info.is_imported,
-                        },
-                    );
-                }
-                SymbolKind::Type(_) | SymbolKind::Trait(_) => {}
                 _ => {}
             }
         }
@@ -302,25 +293,11 @@ impl TypeChecker {
     }
 
     /// Record the common metadata for any source binding that resolves to an overload set.
-    ///
-    /// Imports additionally need provider emitted names so IR import lowering imports the concrete Rust functions
-    /// rather than the overloaded source name, which usually does not exist in generated Rust.
     pub(in crate::typechecker) fn record_function_overload_binding(
         &mut self,
         local_name: &str,
         overloads: &[FunctionOverloadInfo],
-        record_imported_emitted_names: bool,
     ) {
-        if record_imported_emitted_names {
-            let emitted_names = overloads
-                .iter()
-                .filter_map(|overload| overload.info.emitted_name.clone())
-                .collect::<Vec<_>>();
-            if !emitted_names.is_empty() {
-                self.type_info
-                    .record_imported_function_emitted_names(local_name.to_string(), emitted_names);
-            }
-        }
         self.type_info
             .record_function_overloads(local_name.to_string(), overloads.to_vec());
     }
@@ -351,7 +328,7 @@ impl TypeChecker {
                 );
             }
             SymbolKind::FunctionOverloads(overloads) => {
-                self.record_function_overload_binding(local_name, overloads, true);
+                self.record_function_overload_binding(local_name, overloads);
             }
             _ => {}
         }
@@ -460,10 +437,8 @@ impl TypeChecker {
                 .map(|arg| PartialProjectionPreset {
                     name: arg.name.clone(),
                     value: arg.value.clone(),
-                    external_value: None,
                 })
                 .collect(),
-            external_library: None,
         });
         let binding = FunctionBindingInfo {
             is_async,
@@ -708,10 +683,6 @@ impl TypeChecker {
         let decl_index = self.static_decls.len();
         self.static_decl_positions.insert(static_decl.name.clone(), decl_index);
         self.static_decls.push((static_decl.clone(), span));
-        self.type_info.declarations.static_bindings.insert(
-            static_decl.name.clone(),
-            crate::typechecker::StaticBindingInfo { is_imported: false },
-        );
     }
 
     /// Register a model declaration with its fields, methods, and derived traits.
@@ -1907,7 +1878,6 @@ impl TypeChecker {
             .iter()
             .map(|p| {
                 let ty = self.resolve_type_checked(&p.node.ty);
-                self.record_mutable_rust_parameter_projection(&p.node);
                 let is_mut = self.def_param_shows_changes_to_caller(&p.node, &ty);
                 CallableParam::named_with_default(p.node.name.clone(), ty, p.node.kind, p.node.default.is_some())
                     .with_mut(is_mut)
@@ -1950,15 +1920,10 @@ impl TypeChecker {
                 .declarations
                 .function_bindings_by_span
                 .insert(span, binding.clone());
-            let emitted_name = overloaded_function_emitted_name(&func.name, &info);
-            info.emitted_name = Some(emitted_name.clone());
-            self.type_info.record_function_emitted_name(span, emitted_name);
+            info.emitted_name = Some(overloaded_function_emitted_name(&func.name, &info));
             match &mut existing_symbol.kind {
                 SymbolKind::Function(existing_info) => {
-                    let existing_emitted_name = overloaded_function_emitted_name(&func.name, existing_info);
-                    existing_info.emitted_name = Some(existing_emitted_name.clone());
-                    self.type_info
-                        .record_function_emitted_name(existing_symbol.span, existing_emitted_name);
+                    existing_info.emitted_name = Some(overloaded_function_emitted_name(&func.name, existing_info));
                     let overloads = vec![
                         FunctionOverloadInfo {
                             info: existing_info.clone(),

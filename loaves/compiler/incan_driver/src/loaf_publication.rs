@@ -10,6 +10,7 @@ pub(crate) mod vocab;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 
@@ -58,8 +59,8 @@ pub struct PublicationFacts {
     alias_modules: Vec<CheckedApiMetadata>,
     /// Checked registries and entries, one per module.
     registry_modules: Vec<CheckedRegistryMetadataModule>,
-    /// Inspected native facts used by declarations and deferred bodies, independent of source import visibility.
-    rust_items: Vec<RustItemMetadata>,
+    /// First inspected fact per exact canonical query path, shared across module visits until ABI publication.
+    rust_items: BTreeMap<String, Arc<RustItemMetadata>>,
 }
 
 impl PublicationFacts {
@@ -72,7 +73,7 @@ impl PublicationFacts {
             api_modules: Vec::new(),
             alias_modules: Vec::new(),
             registry_modules: Vec::new(),
-            rust_items: Vec::new(),
+            rust_items: BTreeMap::new(),
         }
     }
 
@@ -104,8 +105,9 @@ impl PublicationFacts {
             .insert(module_key(&module.path_segments), checked_exports_by_name(exports));
     }
 
-    /// Ship imported and demanded native facts with aliases, signatures, and deferred bodies. A private Rust import
-    /// can back a public rusttype or generic function; retaining its ABI grants no source-visible import binding.
+    /// Retain each exact queried native surface once across checked modules, sharing its inspected metadata until the
+    /// Loaf publishes its owned ABI payload. The first record for a canonical path wins, matching
+    /// `LibraryRustAbi::from_items`; retaining ABI facts does not grant a source-visible import binding.
     fn collect_native_rust_items(&mut self, module: &ParsedModule, checker: &TypeChecker) {
         let mut paths = checker.observed_rust_metadata_queries();
         let mut public_paths = BTreeSet::new();
@@ -143,7 +145,9 @@ impl PublicationFacts {
                 continue;
             }
             if let Some(metadata) = checker.rust_item_metadata_for_path(&path) {
-                self.rust_items.push(metadata.as_ref().clone());
+                self.rust_items
+                    .entry(metadata.canonical_path.clone())
+                    .or_insert(metadata);
             }
         }
     }
@@ -193,7 +197,8 @@ impl PublicationFacts {
             })?;
         let mut manifest = LibraryManifest::from_checked_exports(&self.package, &unit.version, &selected);
         manifest.vocab = vocab::prepared_registration(unit)?;
-        manifest.rust_abi = LibraryRustAbi::from_items(self.rust_items);
+        manifest.rust_abi =
+            LibraryRustAbi::from_items(self.rust_items.into_values().map(Arc::unwrap_or_clone).collect());
         retain_feature_requirements(&mut manifest, modules, unit);
         manifest.contract_metadata.models = ContractMetadataPackage::new(
             model_bundles

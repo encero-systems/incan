@@ -495,7 +495,7 @@ pub model DeclarationSurface:
 
 @derive(json)
 pub enum EmbeddedFragmentSubmode(str):
-    """RFC 081's fixed lexical grammars; descriptors cannot install arbitrary parser grammars."""
+    """Fixed lexical grammars; descriptors cannot install arbitrary parser grammars."""
 
     Markup = "Markup"
     Style = "Style"
@@ -506,7 +506,7 @@ pub enum EmbeddedFragmentSubmode(str):
 
 
 pub model EmbeddedFragmentDescriptor:
-    """An RFC 081 owned lexical submode and its stable artifact identity and eligible positions."""
+    """An owned lexical submode with its stable artifact identity and eligible positions."""
 
     pub key: str
     pub submode: EmbeddedFragmentSubmode
@@ -515,7 +515,7 @@ pub model EmbeddedFragmentDescriptor:
     pub layout_sensitive: bool = false
 
     def new(key: str, submode: EmbeddedFragmentSubmode, artifact_key: str) -> Self:
-        """Construct a descriptor without admitting any source position yet."""
+        """Construct a descriptor with no eligible source positions."""
         return EmbeddedFragmentDescriptor(key=key, submode=submode, artifact_key=artifact_key)
 
     def in_declaration_body(self, declaration: str) -> Self:
@@ -541,7 +541,7 @@ pub model EmbeddedFragmentDescriptor:
         return result
 
     def to_json(self) -> JsonValue:
-        """Publish the unchanged RFC 081 descriptor grammar through ordinary vocabulary metadata."""
+        """Publish the descriptor grammar through ordinary vocabulary metadata."""
         return JsonValue.object(
             {"key": JsonValue.string(self.key), "submode": JsonValue.string(self.submode.value()), "artifact_key": JsonValue.string(
                 self.artifact_key,
@@ -618,12 +618,9 @@ pub model DslSurface:
 
 
 pub model LibraryManifest:
-    """Additional library metadata in the existing RFC 027 descriptor format."""
+    """Additional library metadata in the vocabulary descriptor format."""
 
     pub modules: list[ModuleExport] = []
-    pub helper_bindings: list[HelperBinding] = []
-    pub required_dependencies: list[CargoDependency] = []
-    pub required_stdlib_features: list[str] = []
 
     def new() -> Self:
         """Construct an empty version-one library metadata value."""
@@ -634,22 +631,7 @@ pub model LibraryManifest:
         return JsonValue.object(
             {"format_version": JsonValue.string("V1"), "modules": JsonValue.array(
                 [module.to_json() for module in self.modules],
-            ), "helper_bindings": JsonValue.array([binding.to_json() for binding in self.helper_bindings]), "required_dependencies": JsonValue.array(
-                [dependency.to_json() for dependency in self.required_dependencies],
-            ), "required_stdlib_features": texts(self.required_stdlib_features)},
-        )
-
-
-pub model HelperBinding:
-    """A symbolic helper key and its public library export."""
-
-    pub key: str
-    pub exported_name: str
-
-    def to_json(self) -> JsonValue:
-        """Encode a helper binding for publication."""
-        return JsonValue.object(
-            {"key": JsonValue.string(self.key), "exported_name": JsonValue.string(self.exported_name)},
+            )},
         )
 
 
@@ -762,30 +744,6 @@ pub model ModuleExport:
         )
 
 
-pub enum CargoDependencySource:
-    """Legacy descriptor source tags retained for metadata compatibility."""
-
-    Version(str)
-    Path(str)
-
-    def to_json(self) -> JsonValue:
-        """Preserve the reader's dependency source representation."""
-        match self:
-            CargoDependencySource.Version(value) => return tagged("Version", JsonValue.string(value))
-            CargoDependencySource.Path(value) => return tagged("Path", JsonValue.string(value))
-
-
-pub model CargoDependency:
-    """A dependency descriptor under the existing metadata field spellings."""
-
-    pub crate_name: str
-    pub source: CargoDependencySource
-
-    def to_json(self) -> JsonValue:
-        """Encode library dependency metadata without invoking a build tool."""
-        return JsonValue.object({"crate_name": JsonValue.string(self.crate_name), "source": self.source.to_json()})
-
-
 pub model VocabRegistration:
     """The producer's versioned registration, serialized once into published metadata."""
 
@@ -848,11 +806,7 @@ pub model VocabRegistration:
         mut desugarer = JsonValue.null()
         if self.custom_desugaring:
             desugarer = JsonValue.object(
-                {"artifact_kind": JsonValue.string("NativeWorker"), "abi_version": JsonValue.int(VOCAB_SYNTAX_VERSION), "target": JsonValue.string(
-                    "host",
-                ), "profile": JsonValue.string("release"), "file_name": JsonValue.null(), "entrypoint": JsonValue.string(
-                    "desugar",
-                )},
+                {"artifact_kind": JsonValue.string("NativeWorker"), "abi_version": JsonValue.int(VOCAB_SYNTAX_VERSION)},
             )
         return JsonValue.object(
             {"metadata_version": JsonValue.int(self.metadata_version), "keyword_registrations": JsonValue.array(
@@ -940,7 +894,7 @@ pub enum VocabScopedSurfaceKind:
 
 @derive(json)
 pub model VocabFragment:
-    """An RFC 081 owned fragment with its canonical descriptor identity and structured lexical tree."""
+    """An owned fragment with its canonical descriptor identity and structured lexical tree."""
 
     pub span: Span
     pub dependency_key: str
@@ -961,7 +915,7 @@ pub model VocabFragmentNode:
 
 @derive(json)
 pub enum VocabFragmentNodeKind:
-    """RFC 081 grammar productions, independent of compiler-private node definitions."""
+    """Fragment grammar productions, independent of compiler-private node definitions."""
 
     Text(str)
     Hole(IncanExpr)
@@ -997,7 +951,7 @@ pub model VocabFragmentAttribute:
 
 @derive(json)
 pub enum VocabFragmentValue:
-    """Literal values from RFC 081's style and selector grammars; the enclosing node supplies the span."""
+    """Literal values from the style and selector grammars; the enclosing node supplies the span."""
 
     Dimension(str, str)
     Color(str)
@@ -1010,7 +964,7 @@ pub enum VocabFragmentValue:
 
 @derive(json)
 pub model VocabFragmentType:
-    """A type-position production anchored to the finest source range retained by RFC 081 parsing."""
+    """A type-position production anchored to its finest retained source range."""
 
     pub span: Span
     pub kind: VocabFragmentTypeKind

@@ -3,7 +3,7 @@
 from rust::incan_semantics_core::body_ir import BodyIrModule, NominalDeclaration
 from pub::incan_mir_plan import PlanType, EnumDeclaration
 from nominal_instances import NominalInstance, nominal_symbol
-from unions import native_source_type, collect_unions
+from layout_types import native_source_type
 from rust::incan_semantics_core import IncanType as RustType
 
 
@@ -22,12 +22,13 @@ pub def library_model_arguments(
     module: &BodyIrModule,
     declaration: &NominalDeclaration,
     instances: list[NominalInstance],
+    mut unions: list[RustType],
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[PlanType], str]:
-    """Transport a retained instance's actual arguments, without decoding names or inferring them from fields."""
+    """Transport retained instance arguments against the enclosing layout pass's ordered union inventory."""
     native_item: str = str(declaration.native_item)
     if len(declaration.type_parameters) == 0:
-        return native_arguments(module, declaration, intrinsics).map_err(
+        return native_arguments(module, declaration, unions, intrinsics).map_err(
             (reason) => f"{reason} in native arguments of {native_item}",
         )
     mut selected: Option[NominalInstance] = None
@@ -37,16 +38,16 @@ pub def library_model_arguments(
         if nominal_symbol(str(instance.declaration.name), instance.arguments) != declaration.name:
             continue
         if len(instance.arguments) != len(declaration.type_parameters):
-            return Err("unsupported Body IR SDK model argument arity")
+            return Err("the standard library model type argument count is unsupported")
         match selected:
             None => selected = Some(instance)
             Some(previous) =>
                 if previous.arguments != instance.arguments:
-                    return Err("unsupported Body IR conflicting SDK model arguments")
+                    return Err("the standard library model has conflicting type arguments")
     match selected:
-        None => return Err(f"unsupported Body IR SDK model without checked instance arguments for {declaration.name}")
+        None => return Err(f"standard library model {declaration.name} has no checked instance type arguments")
         Some(instance) =>
-            return instance_native_arguments(module, declaration, instance, intrinsics).map_err(
+            return instance_native_arguments(module, declaration, instance, unions, intrinsics).map_err(
                 (reason) => f"{reason} in native instance arguments of {native_item}",
             )
 
@@ -54,10 +55,10 @@ pub def library_model_arguments(
 def native_arguments(
     module: &BodyIrModule,
     declaration: &NominalDeclaration,
+    mut unions: list[RustType],
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[PlanType], str]:
-    """Preserve fixed runtime arguments of a nongeneric source surface without manufacturing an instance."""
-    mut unions = collect_unions(module)
+    """Preserve fixed native arguments using the caller's already collected union inventory."""
     mut arguments: list[PlanType] = []
     for argument in declaration.native_type_arguments:
         arguments.append(
@@ -76,9 +77,10 @@ def instance_native_arguments(
     module: &BodyIrModule,
     declaration: &NominalDeclaration,
     instance: NominalInstance,
+    mut unions: list[RustType],
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[PlanType], str]:
-    """Close native argument templates and retain each generic value's field storage through the linked owner ABI."""
+    """Close native templates using the caller's union inventory and preserve each argument's field storage."""
     mut templates: list[RustType] = []
     for argument in instance.declaration.native_type_arguments:
         templates.append(argument.clone())
@@ -93,7 +95,6 @@ def instance_native_arguments(
             closed.append(argument.clone())
     if len(templates) != len(closed):
         return Err("invalid Body IR native owner argument templates")
-    mut unions = collect_unions(module)
     mut arguments: list[PlanType] = []
     for index in range(len(closed)):
         ty = native_source_type(

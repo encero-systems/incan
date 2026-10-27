@@ -8,6 +8,7 @@ from graph_dependencies import unit_natives
 from graph_incan import inspect_incan
 from graph_queries import text
 from home import standard_artifact_dir, standard_packages
+from intake import library_source
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
 from rust_activation import DependencyDomain
 from rust_units import RustBuild, read_registry_units, registry_selection, target_configuration
@@ -39,7 +40,7 @@ pub def standard_graphs(
     mut queue = units
     while len(queue) > 0:
         current = queue.pop()
-        for line in read_graph(current, toolchain.driver, "origins")?.split("\n"):
+        for line in read_graph(current, toolchain, "origins")?.split("\n"):
             if line == "":
                 continue
             # 3. A package met for the first time contributes its graph, and its own origins are followed in turn.
@@ -82,18 +83,19 @@ def standard_graph(
     # 2. Any other is exported from its source, once, into the requesting project's own cache.
     rustc = rust_compiler(toolchain)
     demand = LocalDemand(project=source_root, domain=DependencyDomain.Target, features=[], defaults=true)
-    facets = local_facets(demand, target_configuration(rustc)?, None, {}, true)?
+    facets = local_facets(demand, target_configuration(rustc)?)?
     request = RustBuild(
         project=owner.0,
         profile=profile,
         rustc=rustc,
         registry=read_registry_units(Path(toolchain.registry_units))?,
         toolchain_search=toolchain.search,
+        toolchain=Some(toolchain),
     )
     for facet in facets:
         if facet.project != source_root or facet.domain != DependencyDomain.Target:
             continue
-        source = Path(source_root).joinpath("src").joinpath("lib.incn")
+        source = library_source(Path(source_root))?
         natives = unit_natives(facet, {}, request)?
         legacy = inspect_incan(source, toolchain, natives, {}, facet.features, false, [], Some(owner))?
         return Ok(GraphUnit(path=legacy, root=Path(f"@std/{package}"), package=package, source_root=source_root))

@@ -393,6 +393,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 self.lower_boundary_value(expr, slot_types.get(*slot), scope, out)
             };
             if let Some(mutable) = reference {
+                if let Some(IncanType::Ref(referent) | IncanType::RefMut(referent)) = slot_types.get(*slot) {
+                    operand = self.materialize_argument_loans(expr, operand, referent, scope, out);
+                }
                 if let bir::Operand::Place(read) = &mut operand {
                     self.retain_argument_borrow(read, mutable);
                 }
@@ -1940,13 +1943,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
-        let Some(canonical) = self
-            .type_info
-            .calls
-            .source_display_methods
-            .get(&span)
-            .cloned()
-        else {
+        let Some(canonical) = self.type_info.calls.source_display_methods.get(&span).cloned() else {
             return operand;
         };
         let place = self.materialize_operand_to_place(operand, self.resolve_ty(span), scope, hir_span(span), out);
@@ -2519,10 +2516,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             .or_else(|| self.type_info.calls.body_ir_string_slice_members.get(&span).cloned())
             .or_else(|| {
                 self.type_info
-                    .traits
-                    .provider_slot_identities
-                    .get(&span)
-                    .or_else(|| self.type_info.resolved_identity(span))
+                    .resolved_identity(span)
                     .or_else(|| self.type_info.traits.inferred_method_identities.get(&span))
                     .or_else(|| self.type_info.traits.self_method_identities.get(&span))
                     .or_else(|| retained_binding.and_then(|binding| binding.identity.as_ref()))

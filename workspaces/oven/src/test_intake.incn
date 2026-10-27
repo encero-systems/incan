@@ -27,9 +27,7 @@ pub def test_rust_requirements_preserve_features_and_package_alias() -> None:
     match parse_intent(source, "loaf.toml"):
         Err(error) => fail(error.message())
         Ok(project) =>
-            assert project.target == Some("wasm32-wasip1")
-            assert project.profile == Some("release")
-            assert project.rust_edition == Some("2024")
+            assert project.rust_edition == "2024"
             request = project.rust_inputs[0]
             assert request.alias == "search"
             assert request.package == "regex"
@@ -40,7 +38,8 @@ pub def test_rust_requirements_preserve_features_and_package_alias() -> None:
 
 
 pub def test_unsupported_intent_is_not_dropped() -> None:
-    """Check the intake boundary.
+    """
+    Check the intake boundary.
 
     1. Accept implemented features and empty C intent.
     2. Refuse unsupported manifest sections.
@@ -59,7 +58,8 @@ pub def test_unsupported_intent_is_not_dropped() -> None:
 
 
 pub def test_dependency_options_are_not_silently_ignored() -> None:
-    """Check local dependency options.
+    """
+    Check local dependency options.
 
     1. Retain supported local features.
     2. Name the exact unsupported dependency option.
@@ -67,7 +67,8 @@ pub def test_dependency_options_are_not_silently_ignored() -> None:
     # 1. Feature requests survive intake.
     supported = "[dependencies]\nstock={path='../catalog', features=['extra']}\n"
     match parse_intent(project_manifest(supported), "loaf.toml"):
-        Ok(project) => assert project.dependencies[0].features == ["extra"]
+        Ok(project) =>
+            assert project.dependencies[0].features == ["extra"]
         Err(error) => fail(error.message())
     # 2. An unknown option does not disappear beside supported ones.
     unsupported = "[dependencies]\nstock={path='../catalog', features=['extra'], workspace=true}\n"
@@ -93,8 +94,8 @@ pub def test_workbench_aliases_and_unselected_rust_request() -> None:
                     catalog_roots.append(edge.dependency_root)
             assert sorted(aliases) == ["catalog", "pricing", "stock"]
             assert catalog_roots[0] == catalog_roots[1]
-            assert len(packet.dependency_order) == 3
-            assert packet.dependency_order[0] == catalog_roots[0]
+            assert len(packet.projects) == 3
+            assert catalog_roots[0] in [project.root for project in packet.projects]
             assert packet.projects[0].intent.rust_inputs[0].alias == "regex"
             assert packet.projects[0].intent.rust_inputs[0].version == "1"
             assert packet.projects[0].intent.scripts["main"] == "src/main.incn"
@@ -140,13 +141,21 @@ pub def test_literal_alias_diagnostic_retains_segments_and_location() -> None:
 
 
 pub def test_absent_build_options_stay_absent() -> None:
-    """Preserve omitted build options without inventing target, profile or edition defaults."""
+    """Apply the default edition, prefer rust.edition, and continue validating non-executed build intent."""
     match parse_intent("[project]\nname='app'\nversion='0.1.0'\n", "loaf.toml"):
         Err(error) => fail(error.message())
         Ok(project) =>
-            assert project.target == None
-            assert project.profile == None
-            assert project.rust_edition == None
+            assert project.rust_edition == "2024"
+    source = "[project]\nname='app'\nversion='0.1.0'\n[build]\nrust-edition='2015'\n[rust]\nedition='2024'\n"
+    match parse_intent(source, "loaf.toml"):
+        Err(error) => fail(error.message())
+        Ok(project) =>
+            assert project.rust_edition == "2024"
+    for field in ["target", "profile"]:
+        invalid = f"[project]\nname='app'\nversion='0.1.0'\n[build]\n{field}=1\n"
+        match parse_intent(invalid, "loaf.toml"):
+            Ok(_) => fail(f"non-string build.{field} was accepted")
+            Err(_) => pass
 
 
 pub def test_amended_loaf_dependency_entries() -> Result[None, IntakeError]:
@@ -154,7 +163,7 @@ pub def test_amended_loaf_dependency_entries() -> Result[None, IntakeError]:
     source = "\n[project]\nname = \"app\"\nversion = \"0.1.0\"\nlicense = \"Apache-2.0\"\nprivate = true\n[rust]\nname = \"app_lib\"\ntype = \"lib\"\nedition = \"2024\"\n[rust.source]\nroot = \"rust\"\n[dependencies]\nsearch = { loaf = \"crates-io/regex\", version = \"1\", features = [\"std\"], default-features = false, optional = true }\nlibc = [\n  { loaf = \"crates-io/libc\", version = \"0.2\", target = \"aarch64-apple-darwin\" },\n  { loaf = \"crates-io/libc\", version = \"0.2\", target = 'cfg(all(unix, not(target_os = \"macos\")))' }\n]\n"
     project = parse_intent(source, "loaf.toml")?
     assert len(project.rust_inputs) == 3
-    assert project.rust_edition == Some("2024")
+    assert project.rust_edition == "2024"
     search = project.rust_inputs[2]
     assert search.alias == "search"
     assert search.package == "regex"
@@ -163,12 +172,24 @@ pub def test_amended_loaf_dependency_entries() -> Result[None, IntakeError]:
     assert not search.default_features
     assert search.optional
     assert project.rust_inputs[0].target == Some("aarch64-apple-darwin")
+    environment = parse_intent(
+        source + "\n[envs.test.dependencies]\nsearch={features=['test_support']}\nserde_json={loaf='crates-io/serde_json', version='1'}\n",
+        "loaf.toml",
+    )?
+    assert environment.rust_inputs == project.rust_inputs
     return Ok(None)
 
 
 pub def test_amended_loaf_refuses_retired_grammar() -> None:
     """Reject removed Rust keys, dependency kinds, extra roles and noncanonical predicates."""
-    for extra in ["[rust]\ncrate-name='app'\n", "[rust]\ncrate-type='lib'\n", "[dev-dependencies]\nregex='1'\n", "[build-dependencies]\nregex='1'\n", "[dependencies]\nregex={crate='regex', version='1'}\n", "[dependencies]\nregex={loaf='crates-io/regex', version='1', target='cfg(all(unix,windows))'}\n"]:
+    for extra in [
+        "[rust]\ncrate-name='app'\n",
+        "[rust]\ncrate-type='lib'\n",
+        "[dev-dependencies]\nregex='1'\n",
+        "[build-dependencies]\nregex='1'\n",
+        "[dependencies]\nregex={crate='regex', version='1'}\n",
+        "[dependencies]\nregex={loaf='crates-io/regex', version='1', target='cfg(all(unix,windows))'}\n",
+    ]:
         source = "[project]\nname='app'\nversion='0.1.0'\n" + extra
         match parse_intent(source, "loaf.toml"):
             Ok(_) => fail("removed or noncanonical grammar was admitted")

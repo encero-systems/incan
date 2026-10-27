@@ -1,4 +1,4 @@
-# behavior: native receivers retain indexed Copy, defaults, owners, projections, loans, Clone and CommandExt (#2256)
+# behavior: native receivers retain indexed Copy, defaults, owners, projections, loans, Clone, CommandExt, facade re-exported traits, shared-read loans inside closure expressions and primitive inherent calls (#2256)
 # expect-stdout:
 #   allocated
 #   1
@@ -17,11 +17,14 @@ from rust::std::collections import BTreeMap, VecDeque
 from rust::std::cmp import Ordering
 from rust::std::env import args, args_os
 from rust::std::hash import Hash as NativeHash, Hasher, DefaultHasher
+from rust::std::io import Cursor
+from rust::std::io::prelude import Read as FacadeRead
 from rust::std::net import Ipv4Addr
 from rust::std::os::raw import c_int
 from rust::std::ops import Index, Range
 from rust::std::os::unix::process import CommandExt as UnixCommandExt
-from rust::std::primitive import usize
+from rust::std::path import PathBuf
+from rust::std::primitive import usize, i64 as NativeInt, u32 as NativeUnsigned, bool as NativeBool
 from rust::std::process import Command, Output
 from rust::std::rc import Rc
 from rust::std::string import String as RustString
@@ -52,6 +55,11 @@ model FlagSet:
     """Keep indexed records behind a borrowed model field."""
 
     flags: list[Flag]
+
+
+def ends_in_c(path: PathBuf) -> bool:
+    """Only read a native owner, so each caller lends it, a closure expression's call included."""
+    return path.ends_with("c")
 
 
 def native_hash[T with NativeHash](value: T) -> u64:
@@ -139,6 +147,17 @@ def show_trait_methods() -> None:
         seen += index + 1
     assert seen == 1
     assert native_hash(7) == native_hash(7)
+    # A trait reached through a facade re-export selects the trait its definition path names (rust-23).
+    mut cursor = Cursor.new(b"text")
+    mut read: str = ""
+    assert FacadeRead.read_to_string(cursor, read).unwrap() == 4
+    assert read == "text"
+    # A private function's shared-read loan holds for a call inside a closure expression too (rust-13).
+    path = PathBuf.from("a/b/c")
+    check = () => ends_in_c(path)
+    assert ends_in_c(path)
+    assert check()
+    assert ends_in_c(path)
 
 
 def show_mutable_tuple_fields() -> None:
@@ -165,15 +184,19 @@ def show_native_constructor() -> None:
             reports = [snapshot, copied]
             assert reports[1].status.success()
             assert len(reports[1].stdout) > 0
-        Err(_) => assert false
+        Err(_) =>
+            assert false
     match Command.new("true").spawn():
         Ok(child) =>
             mut running = child
             assert running.id() > 0
             match running.wait():
-                Ok(status) => assert status.success()
-                Err(_) => assert false
-        Err(_) => assert false
+                Ok(status) =>
+                    assert status.success()
+                Err(_) =>
+                    assert false
+        Err(_) =>
+            assert false
 
 
 def show_entry_defaults() -> None:
@@ -195,11 +218,10 @@ def show_indexed_flags() -> None:
     address = Ipv4Addr.new(127u8, 0u8, 0u8, 1u8)
     addresses = [address, address]
     assert addresses[1].to_bits() == 2130706433u32
-    flags = [Flag(enabled=false, ordering=Ordering.Less, address=address), Flag(
-        enabled=true,
-        ordering=Ordering.Greater,
-        address=address,
-    )]
+    flags = [
+        Flag(enabled=false, ordering=Ordering.Less, address=address),
+        Flag(enabled=true, ordering=Ordering.Greater, address=address),
+    ]
     assert flags[1].enabled
     match flags[1].ordering:
         Ordering.Greater => pass
@@ -242,11 +264,13 @@ def main() -> None:
     show_mutable_tuple_fields()
     configure_process_group()
     show_native_constructor()
+    show_primitive_methods()
     show_entry_defaults()
     show_indexed_flags()
     match reverse_ordering(Ordering.Less):
         Ordering.Greater => pass
-        _ => assert false
+        _ =>
+            assert false
 
 
 def configure_process_group() -> None:
@@ -255,3 +279,16 @@ def configure_process_group() -> None:
     command.process_group(0)
     command.process_group((0))
     command.process_group(-0)
+
+
+def show_primitive_methods() -> None:
+    """Native scalar owners retain inherent calls on values and associated calls with explicit receivers."""
+    signed: NativeInt = 7
+    unsigned: NativeUnsigned = 8
+    flag: NativeBool = true
+    assert NativeInt.count_ones(signed) == 3
+    assert NativeUnsigned.count_ones(unsigned) == 1
+    assert NativeBool.then_some(flag, 42) == Some(42)
+    assert signed.count_ones() == 3
+    assert unsigned.count_ones() == 1
+    assert flag.then_some(42) == Some(42)

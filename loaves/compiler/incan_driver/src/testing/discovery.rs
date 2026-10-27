@@ -257,14 +257,14 @@ fn validate_parametrize_case_arity(test_name: &str, markers: &[TestMarker]) -> R
         };
         let argument_names = split_parametrize_argument_names(names);
         for case in cases {
-            if case.rust_arguments.len() != argument_names.len() {
+            if case.parameters.len() != argument_names.len() {
                 return Err(format!(
                     "parametrize case `{}` for test `{}` expected {} value(s) for `{}`, got {}",
                     case.display_id,
                     test_name,
                     argument_names.len(),
                     names,
-                    case.rust_arguments.len()
+                    case.parameters.len()
                 ));
             }
         }
@@ -408,15 +408,6 @@ fn validate_yield_fixture(name: &str, body: &[Spanned<Statement>], scope: Fixtur
     }
 
     Ok(true)
-}
-
-/// Get autouse fixtures for a given scope.
-pub fn get_autouse_fixtures(fixtures: &HashMap<String, FixtureInfo>, scope: FixtureScope) -> Vec<String> {
-    fixtures
-        .values()
-        .filter(|f| f.autouse && f.scope == scope)
-        .map(|f| f.name.clone())
-        .collect()
 }
 
 /// Extract test markers from the decorators.
@@ -740,11 +731,9 @@ fn build_parametrize_case(expr: &Spanned<Expr>, explicit_id: Option<String>) -> 
                 .collect::<Vec<_>>()
                 .join("-");
             let display_id = explicit_id.unwrap_or(derived_display_id);
-            let rust_arguments = elements.iter().map(|e| render_rust_arg(&e.node)).collect();
             let parameters = elements.iter().map(|e| render_display(&e.node)).collect();
             ParametrizeCase {
                 display_id,
-                rust_arguments,
                 parameters,
                 markers: Vec::new(),
             }
@@ -752,10 +741,8 @@ fn build_parametrize_case(expr: &Spanned<Expr>, explicit_id: Option<String>) -> 
         other => {
             let rendered = render_display(other);
             let display_id = explicit_id.unwrap_or_else(|| rendered.clone());
-            let rust_args = render_rust_arg(other);
             ParametrizeCase {
                 display_id,
-                rust_arguments: vec![rust_args],
                 parameters: vec![rendered],
                 markers: Vec::new(),
             }
@@ -857,28 +844,5 @@ fn render_display(expr: &Expr) -> String {
         }
         Expr::Paren(inner) => render_display(&inner.node),
         _ => "?".to_string(),
-    }
-}
-
-/// Render an expression as a Rust literal suitable for injection into generated code.
-///
-/// - Integers: `42`
-/// - Floats: `1.5`
-/// - Strings: `"hello".to_string()`
-/// - Booleans: `true` / `false`
-/// - Negative: `-42`
-fn render_rust_arg(expr: &Expr) -> String {
-    match expr {
-        Expr::Literal(Literal::Int(il)) => il.value.to_string(),
-        Expr::Literal(Literal::Float(f)) => f.value.to_string(),
-        Expr::Literal(Literal::String(s)) => {
-            format!("\"{}\".to_string()", s.replace('\\', "\\\\").replace('"', "\\\""))
-        }
-        Expr::Literal(Literal::Bool(b)) => b.to_string(),
-        Expr::Unary(incan_frontend::ast::UnaryOp::Neg, operand) => {
-            format!("-{}", render_rust_arg(&operand.node))
-        }
-        Expr::Paren(inner) => render_rust_arg(&inner.node),
-        _ => "todo!(\"unsupported parametrize value\")".to_string(),
     }
 }

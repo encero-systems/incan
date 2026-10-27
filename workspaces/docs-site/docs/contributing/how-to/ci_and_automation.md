@@ -24,8 +24,6 @@ incan run workspaces/contracts/src/main.incn -- incan workspaces/contracts/fixtu
 
 Choose one case or area during development. Run the affected families at commit points. The [contract family guide](https://github.com/encero-systems/incan/blob/main/workspaces/contracts/README.md) defines selectors, expectations and pending cases.
 
-The tested dev.8 installation cannot compile the runner source above: native compilation refuses `std::process::Child` because its standard-library field layout differs from the Rust metadata. A maintainer-prepared runner is required in that installation; source invocation alone does not establish a passing family.
-
 ## Check examples
 
 ```bash

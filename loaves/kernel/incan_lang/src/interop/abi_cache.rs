@@ -118,10 +118,18 @@ impl RustAbiCache {
         })
     }
 
-    /// The facts of one path, decoded from its payload; `None` when the cache does not hold it.
-    pub fn get(&self, path: &str) -> Option<RustItemMetadata> {
-        let (offset, length) = *self.index.get(path)?;
-        postcard::from_bytes(&self.payload.record(offset, length)?).ok()
+    /// The facts of one path, decoded from its payload; `Ok(None)` when the cache does not hold it.
+    ///
+    /// A record that cannot be read or decoded (an I/O error, a poisoned handle, a file changed since its index was
+    /// read, a malformed payload) is an `Err`, never a missing item.
+    pub fn get(&self, path: &str) -> Result<Option<RustItemMetadata>, String> {
+        let Some(&(offset, length)) = self.index.get(path) else {
+            return Ok(None);
+        };
+        let record = self.payload.record(offset, length)?;
+        postcard::from_bytes(&record)
+            .map(Some)
+            .map_err(|error| format!("Rust ABI cache record for `{path}` does not decode: {error}"))
     }
 
     /// Decode every retained item of a bounded fallback result. Shipped complete-crate caches should keep using
@@ -130,7 +138,7 @@ impl RustAbiCache {
         self.index
             .into_iter()
             .map(|(path, (offset, length))| {
-                let record = self.payload.record(offset, length).ok_or_else(malformed_cache)?;
+                let record = self.payload.record(offset, length)?;
                 postcard::from_bytes(&record)
                     .map(|metadata| (path, metadata))
                     .map_err(|error| error.to_string())
@@ -225,24 +233,35 @@ enum Payload {
 }
 
 impl Payload {
-    /// Read one admitted range; changed files, short reads and unavailable locks cannot supply an item.
-    fn record(&self, offset: usize, length: usize) -> Option<Cow<'_, [u8]>> {
+    /// Read one admitted range; a changed file, a short read or an unavailable lock is an error, not a missing item.
+    fn record(&self, offset: usize, length: usize) -> Result<Cow<'_, [u8]>, String> {
         match self {
-            Self::Bytes(bytes) => Some(Cow::Borrowed(bytes.get(offset..offset.checked_add(length)?)?)),
+            Self::Bytes(bytes) => offset
+                .checked_add(length)
+                .and_then(|end| bytes.get(offset..end))
+                .map(Cow::Borrowed)
+                .ok_or_else(malformed_cache),
             Self::File { file, stamp } => {
-                let mut file = file.lock().ok()?;
-                if FileStamp::observe(&file).ok()? != *stamp {
-                    return None;
-                }
-                file.seek(SeekFrom::Start(u64::try_from(offset).ok()?)).ok()?;
+                let mut file = file
+                    .lock()
+                    .map_err(|_| "Rust ABI cache handle is poisoned".to_owned())?;
+                Self::require_stamp(&file, stamp)?;
+                let start = u64::try_from(offset).map_err(|_| malformed_cache())?;
+                file.seek(SeekFrom::Start(start)).map_err(|error| error.to_string())?;
                 let mut bytes = vec![0; length];
-                file.read_exact(&mut bytes).ok()?;
-                if FileStamp::observe(&file).ok()? != *stamp {
-                    return None;
-                }
-                Some(Cow::Owned(bytes))
+                file.read_exact(&mut bytes).map_err(|error| error.to_string())?;
+                Self::require_stamp(&file, stamp)?;
+                Ok(Cow::Owned(bytes))
             }
         }
+    }
+
+    /// Refuse a read from a cache file that changed since its index was read.
+    fn require_stamp(file: &File, stamp: &FileStamp) -> Result<(), String> {
+        if FileStamp::observe(file).map_err(|error| error.to_string())? != *stamp {
+            return Err("Rust ABI cache changed while reading a record".to_owned());
+        }
+        Ok(())
     }
 }
 

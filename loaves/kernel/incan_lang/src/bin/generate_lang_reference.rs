@@ -14,7 +14,8 @@
 //! ## Examples
 //! Run from the workspace root:
 //! ```bash
-//! cargo run -p incan_lang --bin generate_lang_reference
+//! incan build loaves/kernel/incan_lang
+//! loaves/kernel/incan_lang/target/incan/rust/debug/bin/generate_lang_reference
 //! ```
 //!
 //! ## Panics
@@ -91,6 +92,7 @@ fn start_section(out: &mut String, heading: &str) {
     out.push_str("\n\n");
 }
 
+/// Generate the language reference from this checkout's source registries.
 fn main() {
     let root = workspace_root();
 
@@ -111,7 +113,7 @@ fn write_language_reference(path: &Path) {
     out.push_str("!!! warning \"Generated file\"\n");
     out.push_str("    Do not edit this page by hand. If it looks wrong/outdated, regenerate it from source and commit the result.\n");
     out.push('\n');
-    out.push_str("    Regenerate with: `cargo run -p incan_lang --bin generate_lang_reference`\n\n");
+    out.push_str("    Regenerate with: `incan build loaves/kernel/incan_lang`, then `loaves/kernel/incan_lang/target/incan/rust/debug/bin/generate_lang_reference`\n\n");
 
     out.push_str("## Contents\n\n");
     out.push_str("- [Keywords](#keywords)\n");
@@ -1180,14 +1182,13 @@ fn render_surface_methods_section(out: &mut String) {
 /// ## Panics
 /// - If the path cannot be resolved (this indicates a broken workspace layout).
 fn workspace_root() -> PathBuf {
-    if let Some(root) = std::env::var_os("INCAN_SOURCE_ROOT").filter(|path| !path.is_empty()) {
-        return PathBuf::from(root);
-    }
     if let Ok(current_dir) = std::env::current_dir()
-        && current_dir.join("Cargo.toml").is_file()
         && current_dir.join("loaves/kernel/incan_lang").is_dir()
     {
         return current_dir;
+    }
+    if let Some(root) = std::env::var_os("INCAN_SOURCE_ROOT").filter(|path| !path.is_empty()) {
+        return PathBuf::from(root);
     }
 
     // loaves/kernel/incan_lang -> kernel -> loaves -> workspace root

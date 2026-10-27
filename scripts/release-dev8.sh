@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Rehearse one host's source release without publishing anything.
 # Usage: INCAN_HOME=SEED_HOME RELEASE_DEV8_OVEN=/path/incan release-dev8.sh SHA NEW_OUT
-# DEV8_LANE selects the frozen bootstrap inputs until compiler self-hosting is available (DD-0010).
+# The clean checkout builds natively from its own source with the seed toolchain, through the checkout's native build
+# scripts (zsh): Oven, then the driver with its Incan lowering, the runtime, the standard packages and the bundled tools.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -68,100 +69,20 @@ prepare_build_home() {
     shasum -a 256 "$seed_oven" "$seed_directory/toolchain.json" > "$out/seed.sha256"
 }
 
-# Write a dependency only into this rehearsal's generated bootstrap manifest. JSON strings are also valid TOML
-# basic strings, so spaces and quotes in the clean checkout's path cannot change the dependency declaration.
-bootstrap_dependency() {
-    printf '%s = { loaf = "%s", path = %s }\n' "$1" "$2" "$(jq -n --arg path "$3" '$path')"
+# Lay out the lane the checkout's native build scripts expect over this rehearsal: the clean checkout as its
+# `incan`, with the scripts' Oven, runner, LSP and log directories inside this output.
+prepare_native_lane() {
+    lane=$out/lane
+    mkdir -p "$lane/out"
+    ln -s "$source" "$lane/incan"
 }
 
-# Bind emitted Rust to this SHA's Rust facets, rather than the bootstrap machine's original checkout paths.
-bootstrap_manifest() {
-    local component=$1 directory=$bootstrap_lane/bootstrap/loaves/$1 project crate
-    if [[ $component == mir_lowering || $component == native_runtime ]]; then
-        directory=$bootstrap_lane/bootstrap/loaves/incan_$component
-    fi
-    project=incan_$component
-    crate=${project%_component}
-    mkdir -p "$directory"
-    {
-        printf '[project]\nname = "%s"\nversion = "0.6.0-dev.7"\n\n' "$project"
-        printf '[rust]\nname = "%s"\ntype = "lib"\nedition = "2024"\n\n[dependencies]\n' "$crate"
-        bootstrap_dependency incan_std_core incan_stdlib_core "$source/loaves/stdlib/core"
-        bootstrap_dependency incan_derive incan_derive "$source/loaves/stdlib/derive/incan_derive"
-        if [[ $component != stdlib_core_component ]]; then
-            bootstrap_dependency incan_stdlib_core incan_stdlib_core_component \
-                "$bootstrap_lane/bootstrap/loaves/stdlib_core_component"
-        fi
-        case $component in
-            stdlib_async_component|native_runtime)
-                bootstrap_dependency incan_std_async incan_stdlib_async "$source/loaves/stdlib/async"
-                ;;
-        esac
-        case $component in
-            stdlib_testing_component|native_runtime)
-                bootstrap_dependency incan_std_testing incan_stdlib_testing "$source/loaves/stdlib/testing"
-                ;;
-        esac
-        case $component in
-            mir_lowering|native_runtime)
-                bootstrap_dependency incan_lang incan_lang "$source/loaves/kernel/incan_lang"
-                ;;
-        esac
-        if [[ $component == mir_lowering ]]; then
-            bootstrap_dependency incan_semantics_core incan_semantics_core "$source/loaves/kernel/incan_semantics_core"
-        elif [[ $component == native_runtime ]]; then
-            bootstrap_dependency incan_std_data incan_stdlib_data "$source/loaves/stdlib/data"
-            bootstrap_dependency incan_stdlib_async incan_stdlib_async_component \
-                "$bootstrap_lane/bootstrap/loaves/stdlib_async_component"
-            bootstrap_dependency incan_stdlib_testing incan_stdlib_testing_component \
-                "$bootstrap_lane/bootstrap/loaves/stdlib_testing_component"
-            printf 'serde = { loaf = "crates-io/serde", version = "1.0", features = ["derive"] }\n'
-        elif [[ $component == stdlib_async_component ]]; then
-            printf 'tokio = { loaf = "crates-io/tokio", version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }\n'
-        fi
-    } > "$directory/loaf.toml"
-}
-
-# Re-emit this clean SHA's lowering and runtime with the configured frozen builder. Its generated standard support
-# is a recorded seed input; the release's ordinary standard Loaves are compiled afresh below.
-prepare_bootstrap() {
-    local seed_lane=${DEV8_LANE:?set DEV8_LANE for the frozen builder} component
-    compiler_build=frozen-stage-zero
-    [[ -x "$seed_lane/bootstrap/scripts/stage0-boot.sh" ]] || fail 'frozen stage-zero wrapper is absent'
-    bootstrap_lane=$out/bootstrap-lane
-    mkdir -p "$bootstrap_lane/bootstrap/ambient2" "$bootstrap_lane/bootstrap/scripts" "$bootstrap_lane/oven-bin"
-    ln -s "$source" "$bootstrap_lane/incan"
-    ln -s "$INCAN_HOME" "$bootstrap_lane/dev8-home"
-    ln -s "$seed_lane/stage0-home" "$bootstrap_lane/stage0-home"
-    cp -R "$seed_lane/bootstrap/kernel" "$bootstrap_lane/bootstrap/kernel"
-    cp "$seed_lane/bootstrap/scripts/stage0-boot.sh" "$bootstrap_lane/bootstrap/scripts/"
-    cp "$seed_oven" "$bootstrap_lane/oven-bin/incan"
-    for component in incan_mir_lowering incan_native_runtime; do
-        mkdir "$bootstrap_lane/bootstrap/ambient2/$component"
-        cp "$seed_lane/bootstrap/ambient2/$component/loaf.toml" \
-            "$bootstrap_lane/bootstrap/ambient2/$component/loaf.toml"
-        if [[ -f "$seed_lane/bootstrap/ambient2/$component/oven.lock" ]]; then
-            cp "$seed_lane/bootstrap/ambient2/$component/oven.lock" \
-                "$bootstrap_lane/bootstrap/ambient2/$component/oven.lock"
-        fi
-    done
-    for component in stdlib_core_component stdlib_async_component stdlib_testing_component; do
-        bootstrap_manifest "$component"
-        cp -R "$seed_lane/bootstrap/loaves/$component/src" "$bootstrap_lane/bootstrap/loaves/$component/src"
-    done
-    bootstrap_manifest mir_lowering
-    bootstrap_manifest native_runtime
-    # The shared runtime helper's final installer belongs to an ordinary lane, not to this isolated build home.
-    printf '#!/bin/sh\nexit 0\n' > "$bootstrap_lane/bootstrap/scripts/install-toolchain.sh"
-    chmod +x "$bootstrap_lane/bootstrap/scripts/install-toolchain.sh"
-    step lowering-emission env DEV8_LANE="$bootstrap_lane" zsh \
-        "${RELEASE_DEV8_LOWERING_EMITTER:-$source/scripts/refresh-lowering.sh}"
-    cp "$bootstrap_lane/bootstrap/lowering-emission.sha256" "$out/lowering-emission.sha256"
-    (
-        cd "$bootstrap_lane/bootstrap/loaves"
-        find stdlib_core_component/src stdlib_async_component/src stdlib_testing_component/src -type f \
-            -exec shasum -a 256 {} \;
-    ) > "$out/frozen-support.sha256"
+# Run one of the checkout's native build scripts on the rehearsal's lane and build home, with `builder` as its Oven.
+native() {
+    local phase=$1 script=$2
+    shift 2
+    step "$phase" env DEV8_LANE="$lane" SELFBUILD_HOME="$INCAN_HOME" SELFBUILD_OVEN="$builder" \
+        SELFBUILD_STDLIB="$INCAN_STDLIB" INCAN_RELINK_LOG="$out/$phase-oven.log" zsh "$source/scripts/$script" "$@"
 }
 
 # Compile standard packages in dependency order and publish only complete artifact sets into this build home.
@@ -186,31 +107,10 @@ build_standard_packages() {
     done
 }
 
-# Replace the seed runtime with this tree's native library and its published exact dependency closure.
-install_runtime() {
-    local directory native library
-    if [[ $compiler_build == frozen-stage-zero ]]; then
-        local units=$bootstrap_lane/bootstrap/loaves/incan_native_runtime/target/incan/rust/debug/units.json
-        directory=$(jq -er '[.units[] | select(.crate=="incan_native_runtime")] | select(length==1) | .[0].directory' "$units")
-        library=$(jq -er '.units[] | select(.crate=="incan_native_runtime") | .artifact' "$units")
-        native=$directory/native.json
-    else
-        directory=$source/loaves/compiler/incan_native_runtime/target/incan/loaves/incan_native_runtime/debug
-        library=$directory/libincan_native_runtime.rlib
-        native=$directory/incan_native_runtime.native.json
-    fi
-    [[ -f "$library" && -f "$native" ]] || fail 'runtime artifacts or graph-selected native inputs are incomplete'
-    jq --slurpfile native "$native" --arg base "$directory/" --arg library "$library" '
-        def absolute: if startswith("/") then . else $base + . end;
-        .externs = ([$native[0].externs[], ($native[0].macro_externs // [])[]]
-            | map(.[1] |= absolute)
-            | map(select(.[0] | startswith("incan_stdlib_") | not) | {name:.[0], path:.[1]}))
-            + [{name:"incan_native_runtime", path:$library}] |
-        .search = ($native[0].search | map(absolute) | unique)
-    ' "$toolchain/toolchain.json" > "$toolchain/toolchain.json.next"
-    jq -e '.externs | group_by(.name) | all(length==1)' "$toolchain/toolchain.json.next" >/dev/null \
+# The installed runtime must be one root: two externs with one name would make every unit's closure ambiguous.
+check_runtime_roots() {
+    jq -e '.externs | group_by(.name) | all(length==1)' "$toolchain/toolchain.json" >/dev/null \
         || fail 'native runtime closure has conflicting direct roots'
-    mv "$toolchain/toolchain.json.next" "$toolchain/toolchain.json"
 }
 
 # Count a complete census and compare all case outcomes, beyond the committed PASS floor.
@@ -260,7 +160,7 @@ seed_oven=$(cd "$(dirname "$seed_oven")" && pwd)/$(basename "$seed_oven")
 original_oven=$seed_oven
 [[ -n ${INCAN_HOME:-} ]] || fail 'INCAN_HOME must select the installed seed toolchain'
 seed_home=$(cd "$INCAN_HOME" && pwd)
-for command in jq shasum rustup git tar; do command -v "$command" >/dev/null || fail "$command is required"; done
+for command in jq shasum rustup git tar zsh; do command -v "$command" >/dev/null || fail "$command is required"; done
 case "$(uname -s)/$(uname -m)" in
     Darwin/arm64) target=aarch64-apple-darwin ;;
     Linux/x86_64) target=x86_64-unknown-linux-gnu ;;
@@ -287,41 +187,27 @@ toolchain=$INCAN_HOME/toolchains/0.6.0-dev.8
 prepare_build_home
 export INCAN_STDLIB=$source/loaves/stdlib
 prepare_reference
-step conductor-build "$seed_oven" build "$source/workspaces/oven" --profile release
-seed_oven=$source/workspaces/oven/target/incan/release/bin/oven
+prepare_native_lane
+builder=$seed_oven
+native conductor-build build-native-tools.sh oven
+seed_oven=$lane/oven-bin/incan
+builder=$seed_oven
 
-# The candidate compiler must come from the clean tree. A seed archive is never relabeled as its output.
-if [[ -n ${DEV8_LANE:-} ]]; then
-    prepare_bootstrap
-    step driver-build "$seed_oven" build "$source/loaves/toolchain/incan-rustc-driver" --profile release \
-        --substitute "incan_mir_lowering=$bootstrap_lane/bootstrap/loaves/incan_mir_lowering"
-else
-    step driver-build "$seed_oven" build "$source/loaves/toolchain/incan-rustc-driver" --profile release
-fi
-driver=$source/loaves/toolchain/incan-rustc-driver/target/incan/rust/release/bin/incan-rustc-driver
-[[ -x "$driver" ]] || fail 'driver build produced no executable'
-sysroot=$(rustup run 1.98.0 rustc --print sysroot)
-mkdir -p "$toolchain/bin" "$toolchain/rust-abi"
-cp "$driver" "$toolchain/bin/incan-rustc-driver"
-step rust-abi "$driver" --rust-abi "$sysroot" "$toolchain/rust-abi/std.rustabi" std core alloc
-jq --arg driver "$toolchain/bin/incan-rustc-driver" --arg abi "$toolchain/rust-abi/std.rustabi" \
-    '.driver=$driver | .rust_abi=[$abi]' "$toolchain/toolchain.json" > "$toolchain/toolchain.json.next"
-mv "$toolchain/toolchain.json.next" "$toolchain/toolchain.json"
-if [[ $compiler_build == frozen-stage-zero ]]; then
-    step runtime-build env DEV8_LANE="$bootstrap_lane" INCAN_RUNTIME_BUILD_HOME="$INCAN_HOME" \
-        zsh "${RELEASE_DEV8_RUNTIME_EMITTER:-$DEV8_LANE/bootstrap/scripts/refresh-runtime.sh}"
-else
-    step runtime-build "$seed_oven" build "$source/loaves/compiler/incan_native_runtime"
-fi
-install_runtime
+# The candidate compiler must come from the clean tree: Oven compiles the Incan lowering with the seed's driver, then
+# the driver, and installs it with its Rust ABI cache into the build home. A seed archive is never relabeled as its
+# output.
+native driver-build relink-driver.sh --release
+native runtime-build build-native-runtime.sh
+check_runtime_roots
 build_standard_packages
-step oven-build "$seed_oven" build "$source/workspaces/oven" --profile release
-cp "$source/workspaces/oven/target/incan/release/bin/oven" "$out/bundle/incan"
+native oven-build build-native-tools.sh oven --rebuild
+cp "$lane/oven-bin/incan" "$out/bundle/incan"
 oven=$out/bundle/incan
-step lsp-build "$oven" build "$source/loaves/toolchain/incan-lsp" --profile release
-cp "$source/loaves/toolchain/incan-lsp/target/incan/rust/release/bin/incan-lsp" "$out/bundle/incan-lsp"
-step runner-build "$oven" build "$source/workspaces/contracts" --profile release
-runner=$source/workspaces/contracts/target/incan/release/bin/contracts
+builder=$oven
+native lsp-build build-native-tools.sh lsp
+cp "$lane/lsp-bin/incan-lsp" "$out/bundle/incan-lsp"
+native runner-build build-native-tools.sh contracts
+runner=$lane/contracts-bin/contracts
 step pack "$oven" toolchain pack "$out/bundle/toolchain.tar.zst"
 
 # Measure this exact fixture tree directly before installing the bundle into a second fresh home.

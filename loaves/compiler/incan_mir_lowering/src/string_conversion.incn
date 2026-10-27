@@ -23,7 +23,8 @@ from frame import Builder, temporary, read_place, terminate_call, forget_owned, 
 from string_input import owned_string_frame
 from string_conversion_contracts import conversion_name, conversion_trait
 from options import retain_carrier, propagate_result, result_layout
-from unions import native_source_type, collect_unions
+from layout_types import native_source_type
+from unions import collect_unions
 from type_parameters import substitute
 
 

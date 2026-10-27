@@ -2,7 +2,15 @@
 
 from rust::std::string import String as RustString
 from rust::incan_std_core::num import Decimal128 as NativeDecimal
-from collections import OrdinalKey, OrdinalMapError
+from collections import (
+    OrdinalKey,
+    OrdinalMapError,
+    _ORDINAL_ENCODING_BOOL,
+    _ORDINAL_ENCODING_DECIMAL,
+    _ORDINAL_ENCODING_I32,
+    _ORDINAL_ENCODING_I64,
+    _ORDINAL_ENCODING_STR,
+)
 
 
 pub model _OrdinalTextKey with OrdinalKey:
@@ -17,7 +25,7 @@ pub model _OrdinalTextKey with OrdinalKey:
         1. Return the stable identifier of the source encoder.
         """
         # 1. Return the source encoder's stable wire identifier.
-        return "str:utf8"
+        return _ORDINAL_ENCODING_STR
 
     @staticmethod
     def from_ordinal_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
@@ -92,7 +100,7 @@ pub model _OrdinalI32Key with OrdinalKey:
         1. Return the stable little-endian encoding name.
         """
         # 1. Return the stable encoding name.
-        return "int:i32:le"
+        return _ORDINAL_ENCODING_I32
 
     @staticmethod
     def from_ordinal_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
@@ -139,7 +147,7 @@ pub model _OrdinalIntKey with OrdinalKey:
         1. Return the stable little-endian encoding name.
         """
         # 1. Return the stable encoding name.
-        return "int:i64:le"
+        return _ORDINAL_ENCODING_I64
 
     @staticmethod
     def from_ordinal_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
@@ -186,7 +194,7 @@ pub model _OrdinalBoolKey with OrdinalKey:
         1. Return the stable single-byte encoding name.
         """
         # 1. Return the stable encoding name.
-        return "bool:u8"
+        return _ORDINAL_ENCODING_BOOL
 
     @staticmethod
     def from_ordinal_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
@@ -237,7 +245,7 @@ pub model _OrdinalDecimalKey with OrdinalKey:
         1. Return the stable signed coefficient and scale encoding name.
         """
         # 1. Return the stable encoding name.
-        return "decimal128:coefficient-i128-le:scale-u8"
+        return _ORDINAL_ENCODING_DECIMAL
 
     @staticmethod
     def from_ordinal_bytes(data: bytes) -> Result[Self, OrdinalMapError]:

@@ -3,12 +3,16 @@
 from rust::std::fs import OpenOptions, metadata
 from rust::std::process import Command
 from std.fs import Path
+from std.json import JsonValue
 from files import make_directory, read, remove, write as write_file
 from compiler_refusals import check_or_replay, compile_or_replay
 from incan_units import executable_outputs, install_executable, test_report
 from observation import load_ledger
 from scratch import scratch_directory
 from rust_freshness import compilation_observations, inputs_unchanged, library_key
+from rust_units import BuiltUnit, RegistryUnits, RustBuild, linking
+from loaf_local_graph import LocalFacet
+from rust_activation import DependencyDomain
 from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription, UnitLoaf
 from unit_rust import compile_library_unit
@@ -18,7 +22,8 @@ from unit_freshness import (
     compiler_fingerprint,
     reusable,
     rust_key,
-    source_fingerprint,
+    description_digest,
+    unit_key_with,
     staleness,
     unit_key,
 )
@@ -61,8 +66,11 @@ def rewrite_in_place(path: Path, text: str) -> Result[None, str]:
 
 def publish_loaf(directory: Path, name: str, text: str) -> Result[None, str]:
     """Write the complete artifact set of a Loaf."""
-    for artifact in artifact_files(directory, name):
-        write(artifact, f"{text} {artifact.name()}")?
+    for artifact in artifact_files(directory, name)?:
+        mut content = f"{text} {artifact.name()}"
+        if artifact.name().endswith(".incnlib"):
+            content = JsonValue.object({"fixture": JsonValue.string(text)}).to_json().unwrap_or("{}")
+        write(artifact, content)?
     return Ok(None)
 
 
@@ -111,7 +119,7 @@ def fixture(scratch: Path) -> Result[Fixture, str]:
 def reconcile(scratch: Path, setup: Fixture) -> Result[Pass, str]:
     """Key the unit as a new process would: load its ledger, reconcile, save it. Settling is immediate."""
     mut project = load_ledger(scratch.joinpath("ledgers").joinpath("project.json"), 0)
-    key = source_fingerprint(setup.unit, compiler_fingerprint(setup.toolchain)?, project)?.digest
+    key = unit_key_with(setup.unit, compiler_fingerprint(setup.toolchain)?, description_digest(setup.unit)?, project)?.digest
     project.save()?
     return Ok(Pass(key=key, hashed=project.hashed, listed=project.listed))
 
@@ -234,7 +242,7 @@ def verify_refusal_replay(scratch: Path) -> Result[None, str]:
         after = attempts.read_text("utf-8", "strict").map_err((error) => error.message())?
         assert after == before + "xx", mode
     write(source, "refuse with missing artifact")?
-    linked = artifact_files(Path(setup.unit.loaves[0].dir), "dep")
+    linked = artifact_files(Path(setup.unit.loaves[0].dir), "dep")?
     linked[0].unlink().map_err((error) => error.message())?
     incomplete = unit_key(setup.unit, setup.toolchain)?
     before_missing = attempts.read_text("utf-8", "strict").map_err((error) => error.message())?
@@ -310,20 +318,27 @@ pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
     scratch = scratch_directory()?
     setup = fixture(scratch.path())?
     first = reconcile(scratch.path(), setup)?
-    write(artifact_files(Path(setup.unit.loaves[0].dir), "dep")[0], "dependency rebuilt with different code")?
+    dependency = artifact_files(Path(setup.unit.loaves[0].dir), "dep")?
+    write(dependency[0], "dependency rebuilt with different code")?
     rebuilt = reconcile(scratch.path(), setup)?
     assert rebuilt.key != first.key
     assert rebuilt.hashed == 0
-    write(artifact_files(Path(setup.unit.loaves[1].dir), "std")[1], "standard package recompiled")?
+    standard_artifacts = artifact_files(Path(setup.unit.loaves[1].dir), "std")?
+    write(standard_artifacts[1], "{\"fixture\":\"standard package recompiled\"}")?
     recompiled = reconcile(scratch.path(), setup)?
     assert recompiled.key != rebuilt.key
     # A manifest that declares a vocabulary worker adds it to the artifact set; rewritten without one, it does not.
     standard = Path(setup.unit.loaves[1].dir)
     manifest = standard.joinpath("std.incnlib")
     write(manifest, "{\"vocab\": {\"desugarer_artifact\": {\"artifact_kind\": \"NativeWorker\"}}}")?
-    assert "vocab-worker" in [artifact.name() for artifact in artifact_files(standard, "std")]
+    assert "vocab-worker" in [artifact.name() for artifact in artifact_files(standard, "std")?]
     write(manifest, "{}")?
-    assert "vocab-worker" not in [artifact.name() for artifact in artifact_files(standard, "std")]
+    assert "vocab-worker" not in [artifact.name() for artifact in artifact_files(standard, "std")?]
+    write(manifest, "malformed manifest")?
+    match artifact_files(standard, "std"):
+        Ok(_) =>
+            assert false, "a malformed manifest cannot authorize an incomplete artifact set"
+        Err(_) => pass
     verify_completed_library_abi(scratch.path().joinpath("publication"))?
     return Ok(None)
 
@@ -345,6 +360,7 @@ def verify_completed_library_abi(scratch: Path) -> Result[None, str]:
     script += "directory=${4%/*}\nmkdir -p \"$directory\"\n"
     script += "for name in libapp.rlib app.incnlib app.incnbody app.native.json app.incngraph app.rustabi; do\n"
     script += "printf published > \"$directory/$name\"\ndone\n"
+    script += "printf '{}' > \"$directory/app.incnlib\"\n"
     write(driver, script)?
     mut chmod = Command.new("/bin/chmod")
     assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
@@ -483,6 +499,17 @@ pub def test_rust_unit_key_follows_its_crate_manifest_how_it_is_built_and_what_i
     A Rust unit is keyed like an Incan one: every file of its crate, its manifest, its arguments, the compiler and
     the libraries it links; unchanged, it is keyed from metadata alone.
     """
+    facet = LocalFacet(
+        project="root",
+        domain=DependencyDomain.Target,
+        features=[],
+        local=[],
+        registry=[],
+        registry_aliases=[],
+    )
+    request = RustBuild(project="root", rustc="rustc", registry=RegistryUnits(units=[], search=[]))
+    unrelated = BuiltUnit(crate_name="other", artifact="/other/library.rlib", directory="/other")
+    assert linking(facet, request, {}, [])? == linking(facet, request, {"other": unrelated}, ["/other"])?
     scratch = scratch_directory()?
     setup = rust_crate(scratch.path())?
     sources = setup.facet.joinpath("rust").joinpath("src")

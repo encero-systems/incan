@@ -26,7 +26,8 @@ from lowering import instantiated_external_call
 from checked_json_contracts import checked_deserialize_name, checked_owner_arguments, selected_deserialize_hook
 from nominal_instances import NominalInstance
 from options import retain_body_carriers, retain_carrier, result_layout
-from unions import native_source_type, collect_unions
+from layout_types import native_source_type
+from unions import collect_unions
 from decls import library_item
 
 

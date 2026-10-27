@@ -11,8 +11,8 @@ use crate::symbols::{
     CallableParam, FieldInfo, FunctionInfo, FunctionOverloadInfo, ResolvedType, SymbolKind, TypeInfo,
 };
 use crate::typechecker::type_info::{
-    CAbiOutputSlot, CAbiSpan, CAbiSpanAccess, CAbiSpanAccessKind, CAbiSpanKind, CBindingRawCall, CBindingSymbol,
-    CBindingType, COutputMode, CResourceAccess,
+    CAbiBridgeCall, CAbiOutputSlot, CAbiSpanKind, CBindingRawCall, CBindingSymbol, CBindingType, COutputMode,
+    CResourceAccess,
 };
 use crate::typechecker::{CAbiRawCallResult, IdentKind, PendingCAbiOutputSlot, canonical_public_library_type_name};
 use incan_lang::interop::{
@@ -26,6 +26,7 @@ use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::types::SurfaceTypeId;
 use incan_lang::lang::traits::{self, TraitId};
 use incan_semantics_core::SemanticSourceTargetKind;
+use incan_semantics_core::body_ir::CheckedBridgeOperation;
 use std::collections::{HashMap, HashSet};
 
 use super::TypeChecker;
@@ -632,8 +633,9 @@ impl TypeChecker {
                                     );
                                 }
                                 RustItemKind::Type(type_info)
-                                    if !type_info.fields.is_empty()
-                                        || (type_info.variants.is_empty() && args.is_empty()) =>
+                                    if type_info.metadata_completeness.has_constructible_layout()
+                                        && (!type_info.fields.is_empty()
+                                            || (type_info.variants.is_empty() && args.is_empty())) =>
                                 {
                                     let error_count_before = self.errors.len();
                                     let result = if type_info.fields.iter().all(|field| field.name.is_empty()) {
@@ -1274,7 +1276,6 @@ impl TypeChecker {
             ));
             return Some(ResolvedType::Unknown);
         }
-        self.type_info.c_abi.uses_checked_c_strings = true;
         self.type_info
             .c_abi
             .bridge_calls
@@ -1380,18 +1381,7 @@ impl TypeChecker {
             ));
             return Some(ResolvedType::Unknown);
         }
-        if !self
-            .type_info
-            .c_abi
-            .spans
-            .iter()
-            .any(|existing| existing.constructor_span == span)
-        {
-            self.type_info.c_abi.spans.push(CAbiSpan {
-                constructor_span: span,
-                kind,
-            });
-        }
+        self.record_c_abi_span_operation(span, CheckedBridgeOperation::MakeSpan);
         self.unbound_c_abi_span_constructors.entry(span).or_insert(kind);
         Some(ResolvedType::Named(identity.to_string()))
     }
@@ -1418,6 +1408,8 @@ impl TypeChecker {
             self.check_call_args(args);
             return Some(ResolvedType::Unknown);
         }
+        // The receiver has no value surface, so it is never checked as a value; Body IR still reads it as its local.
+        self.record_c_abi_span_receiver(base, local_name);
         let mutable = local.kind.mutable;
         let immutable = !mutable;
         let (length_method, capacity_method, finish_method) = match local.kind.element {
@@ -1440,7 +1432,7 @@ impl TypeChecker {
         let (expected_method, access, return_type) = match (immutable, mutable, method) {
             (true, false, "as_const_ptr") => (
                 "as_const_ptr",
-                CAbiSpanAccessKind::ConstPointer,
+                CheckedBridgeOperation::SpanConstPointer,
                 ResolvedType::Named(c_abi::pointer_type_identity(
                     false,
                     c_abi::scalar_type_as_str(local.kind.element),
@@ -1448,7 +1440,7 @@ impl TypeChecker {
             ),
             (true, false, _) if method == length_method => (
                 length_method,
-                CAbiSpanAccessKind::ElementCount,
+                CheckedBridgeOperation::SpanCount,
                 ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::USize),
             ),
             (false, true, "as_mut_ptr") => {
@@ -1461,7 +1453,7 @@ impl TypeChecker {
                 }
                 (
                     "as_mut_ptr",
-                    CAbiSpanAccessKind::MutPointer,
+                    CheckedBridgeOperation::SpanMutPointer,
                     ResolvedType::Named(c_abi::pointer_type_identity(
                         true,
                         c_abi::scalar_type_as_str(local.kind.element),
@@ -1470,7 +1462,7 @@ impl TypeChecker {
             }
             (false, true, _) if method == capacity_method => (
                 capacity_method,
-                CAbiSpanAccessKind::ElementCapacity,
+                CheckedBridgeOperation::SpanCount,
                 ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::USize),
             ),
             (false, true, _) if method == finish_method => {
@@ -1497,8 +1489,7 @@ impl TypeChecker {
                     ));
                     return Some(ResolvedType::Unknown);
                 }
-                self.type_info.c_abi.uses_checked_c_span_buffers = true;
-                self.record_c_abi_span_access(span, local.kind, CAbiSpanAccessKind::Finish);
+                self.record_c_abi_span_operation(span, CheckedBridgeOperation::FinishSpan);
                 self.consumed_c_abi_span_bindings.insert(local.binding_span, span);
                 return Some(ResolvedType::Generic(
                     "Result".to_string(),
@@ -1515,26 +1506,43 @@ impl TypeChecker {
             self.check_call_args(args);
             return Some(ResolvedType::Unknown);
         }
-        self.record_c_abi_span_access(span, local.kind, access);
+        self.record_c_abi_span_operation(span, access);
         Some(return_type)
     }
 
-    /// Retain one authorized span-carrier operation exactly once so lowering need not rediscover it from source text.
-    fn record_c_abi_span_access(&mut self, span: Span, span_kind: CAbiSpanKind, access: CAbiSpanAccessKind) {
-        if self
-            .type_info
-            .c_abi
-            .span_accesses
-            .iter()
-            .any(|existing| existing.span == span && existing.access == access)
-        {
+    /// Retain one authorized span bridge operation at its call exactly once, so Body IR lowers the checked operation
+    /// instead of rediscovering it from the method spelling.
+    fn record_c_abi_span_operation(&mut self, span: Span, operation: CheckedBridgeOperation) {
+        let bridge_calls = &mut self.type_info.c_abi.bridge_calls;
+        if bridge_calls.iter().any(|existing| existing.span == span) {
             return;
         }
-        self.type_info.c_abi.span_accesses.push(CAbiSpanAccess {
+        bridge_calls.push(CAbiBridgeCall {
+            slot_identity: None,
             span,
-            span_kind,
-            access,
+            operation,
         });
+    }
+
+    /// Record at a span method's receiver what an ordinary read of the span local records, its binding identity and
+    /// carrier type, without the value-surface refusal: a method receiver is the one read a span admits.
+    fn record_c_abi_span_receiver(&mut self, base: &Spanned<Expr>, name: &str) {
+        let receiver = match &base.node {
+            Expr::Paren(inner) => return self.record_c_abi_span_receiver(inner, name),
+            Expr::Ident(_) => base.span,
+            _ => return,
+        };
+        let Some(symbol) = self.symbols.lookup(name) else {
+            return;
+        };
+        if let Some(identity) = self.symbols.identity_of(symbol).cloned() {
+            self.type_info.record_resolved_identity(receiver, identity);
+        }
+        let ty = match self.symbols.get(symbol).map(|symbol| &symbol.kind) {
+            Some(SymbolKind::Variable(info)) => info.ty.clone(),
+            _ => return,
+        };
+        self.record_expr_type(receiver, ty);
     }
 
     /// Return the ordinary source storage moved into one exact checked C span representation.
@@ -1662,7 +1670,6 @@ impl TypeChecker {
             ));
             return Some(ResolvedType::Unknown);
         }
-        self.type_info.c_abi.uses_scoped_c_string_views = true;
         self.type_info
             .c_abi
             .bridge_calls
@@ -2122,7 +2129,6 @@ impl TypeChecker {
                         .and_then(|binding| binding.identity.clone())
                 });
                 matches.push((
-                    overload.info.emitted_name.clone(),
                     selected_identity,
                     result,
                     self.errors.clone(),
@@ -2135,15 +2141,12 @@ impl TypeChecker {
 
         match matches.len() {
             1 => {
-                let (emitted_name, selected_identity, result, errors, warnings, type_info, consumed_iterator_bindings) =
+                let (selected_identity, result, errors, warnings, type_info, consumed_iterator_bindings) =
                     matches.remove(0);
                 self.errors = errors;
                 self.warnings = warnings;
                 self.type_info = type_info;
                 self.consumed_iterator_bindings = consumed_iterator_bindings;
-                if let Some(emitted_name) = emitted_name {
-                    self.type_info.record_selected_function_emitted_name(span, emitted_name);
-                }
                 if let (Some(callee_span), Some(identity)) = (callee_span, selected_identity) {
                     self.type_info.record_resolved_identity(callee_span, identity);
                 }
@@ -2310,8 +2313,7 @@ impl TypeChecker {
                     selected_fields.push(field.name.clone());
                 }
                 CallArg::Named(field_name, expr) => {
-                    let Some(field) = Self::rust_field_for_source_name(&type_info.fields, field_name.node.as_str())
-                    else {
+                    let Some(field) = Self::rust_field_for_source_name(type_info, field_name.node.as_str()) else {
                         self.check_expr(expr);
                         self.errors
                             .push(errors::missing_field(path, &field_name.node, field_name.span));
@@ -2359,20 +2361,11 @@ impl TypeChecker {
             }
         }
 
-        if !has_shape_error {
-            let retained = if omitted_fields {
-                None
-            } else {
-                self.retain_rust_construction(path, type_info, args, &selected_fields, span)
-            };
-            self.type_info
-                .record_rust_named_field_constructor_fields(span, selected_fields);
-            if omitted_fields {
-                self.type_info.record_rust_named_field_constructor_fills_defaults(span);
-            }
-            if let Some(result) = retained {
-                return result;
-            }
+        if !has_shape_error
+            && !omitted_fields
+            && let Some(result) = self.retain_rust_construction(path, type_info, args, &selected_fields, span)
+        {
+            return result;
         }
         ResolvedType::RustPath(path.to_string())
     }
@@ -2428,14 +2421,11 @@ impl TypeChecker {
             has_shape_error = true;
         }
 
-        if !has_shape_error {
-            self.type_info
-                .record_rust_named_field_constructor_fields(span, vec![String::new(); type_info.fields.len()]);
-            if type_info.fields.is_empty()
-                && let Some(result) = self.retain_rust_construction(path, type_info, args, &[], span)
-            {
-                return result;
-            }
+        if !has_shape_error
+            && type_info.fields.is_empty()
+            && let Some(result) = self.retain_rust_construction(path, type_info, args, &[], span)
+        {
+            return result;
         }
         ResolvedType::RustPath(path.to_string())
     }
@@ -2443,7 +2433,7 @@ impl TypeChecker {
     /// Type-check a Rust type-shaped constructor when metadata is unavailable but source names every field.
     ///
     /// Metadata is still required for positional construction because field order must come from Rust. Named source
-    /// arguments already carry the field names lowering needs, so this path can preserve IncQL/Substrait-style protobuf
+    /// arguments already carry the field names, so this path can preserve IncQL/Substrait-style protobuf
     /// constructors without emitting invalid tuple calls.
     fn check_metadata_free_rust_named_field_constructor_call(
         &mut self,
@@ -2451,7 +2441,6 @@ impl TypeChecker {
         args: &[CallArg],
         span: Span,
     ) -> ResolvedType {
-        let mut selected_fields = Vec::with_capacity(args.len());
         let mut provided = HashSet::new();
         let mut has_shape_error = false;
         let mut emitted_metadata_error = false;
@@ -2467,9 +2456,7 @@ impl TypeChecker {
                             field_name.span,
                         ));
                         has_shape_error = true;
-                        continue;
                     }
-                    selected_fields.push(field_name.node.clone());
                 }
                 CallArg::Positional(expr) => {
                     self.check_expr(expr);
@@ -2493,8 +2480,6 @@ impl TypeChecker {
         }
 
         if !has_shape_error {
-            self.type_info
-                .record_rust_named_field_constructor_fields(span, selected_fields);
             return ResolvedType::RustPath(path.to_string());
         }
         ResolvedType::Unknown

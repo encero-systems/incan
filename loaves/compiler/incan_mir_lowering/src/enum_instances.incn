@@ -5,6 +5,7 @@ from rust::incan_semantics_core::body_ir import BodyIrModule, EnumDeclaration
 from nominal_instances import nominal_symbol
 from type_parameters import substitute
 from nominal_frames import declaration_storage
+from table_views import borrowed_at
 
 
 model EnumInstance:
@@ -20,16 +21,19 @@ pub def specialize_enums(module: &BodyIrModule) -> Result[BodyIrModule, str]:
     mut instances: list[EnumInstance] = []
     for ty in declaration_storage(module):
         collect_type(module, ty, instances, [])?
-    for body in module.bodies:
+    for body_position in range(len(module.bodies)):
+        body = borrowed_at(module.bodies, body_position)
         for local in body.locals:
             _ = collect_type(module, local.ty, instances, [])?
         _ = collect_type(module, body.return_type, instances, [])?
-    for declaration in module.nominal_declarations:
+    for nominal_position in range(len(module.nominal_declarations)):
+        declaration = borrowed_at(module.nominal_declarations, nominal_position)
         for field in declaration.field_types:
             _ = collect_type(module, field, instances, [])?
     mut result = module.clone()
     result.enum_declarations.clear()
-    for declaration in module.enum_declarations:
+    for enum_position in range(len(module.enum_declarations)):
+        declaration = borrowed_at(module.enum_declarations, enum_position)
         if len(declaration.type_parameters) == 0:
             result.enum_declarations.push(declaration.clone())
             for variant in declaration.variants:
@@ -64,7 +68,8 @@ def collect_type(
                 _ = collect_type(module, argument, instances, ancestors)?
             if not closed_arguments(arguments):
                 return Ok(None)
-            for declaration in module.enum_declarations:
+            for enum_position in range(len(module.enum_declarations)):
+                declaration = borrowed_at(module.enum_declarations, enum_position)
                 if declaration.carrier_name() != str(base) or len(declaration.type_parameters) == 0:
                     continue
                 if len(declaration.type_parameters) != len(arguments):

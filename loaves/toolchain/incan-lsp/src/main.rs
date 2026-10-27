@@ -48,7 +48,7 @@ fn handle_cli_args(args: &[OsString]) -> Option<ExitCode> {
     match args {
         [] => None,
         [arg] if arg == "--version" || arg == "-V" => {
-            println!("incan-lsp {}", env!("CARGO_PKG_VERSION"));
+            println!("incan-lsp {}", incan_lang::version::INCAN_VERSION);
             Some(ExitCode::SUCCESS)
         }
         [arg] if arg == "--help" || arg == "-h" => {

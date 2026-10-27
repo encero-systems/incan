@@ -1,4 +1,4 @@
-# behavior: Incan and Rust consumers share a hybrid library and its aliased transitive dependency on the first run
+# behavior: Incan and Rust consumers share a hybrid library and its aliased transitive dependency on the first run; a native scalar constant retains the crate reached through its dependency Loaf
 # expect-stdout:
 #   42
 

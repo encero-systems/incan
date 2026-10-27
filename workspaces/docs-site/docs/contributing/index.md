@@ -20,7 +20,6 @@ If you’re new, start with:
 
 - [Architecture](explanation/architecture.md) — compilation pipeline, module layout, internal stages
 - [Readable, maintainable Rust](explanation/readable-maintainable-rust.md) — team conventions and engineering practices
-- [Hees.ai v0.5 dependency inventory](explanation/hees_ai_v05_dependency_inventory.md) — historical proof-lane dependency map and scope guardrails
 
 ## Reference (look up)
 

@@ -1299,10 +1299,7 @@ impl TypeChecker {
         let key = span;
         let canonical = self
             .type_info
-            .traits
-            .provider_slot_identities
-            .get(&key)
-            .or_else(|| self.type_info.resolved_identity(span))
+            .resolved_identity(span)
             .or_else(|| self.type_info.traits.self_method_identities.get(&key))
             .cloned();
         // ---- Ordinary and method-scoped argument frames ----

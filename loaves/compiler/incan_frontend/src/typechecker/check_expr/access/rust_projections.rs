@@ -84,11 +84,7 @@ impl TypeChecker {
         let info = match &metadata.kind {
             RustItemKind::Type(info) => info,
             RustItemKind::Trait(info) => {
-                let identity = self.rust_definition_for_path(&path).unwrap_or_else(|| path.clone());
-                let requested = self
-                    .rust_definition_for_path(trait_path)
-                    .unwrap_or_else(|| trait_path.to_owned());
-                if ancestral_rust_path(&identity) != ancestral_rust_path(&requested) {
+                if self.rust_trait_identity(&path) != self.rust_trait_identity(trait_path) {
                     return None;
                 }
                 let arguments = self.rust_owner_type_args(ty, &path)?;
@@ -106,14 +102,9 @@ impl TypeChecker {
         };
         let owner = self.rust_trait_owner(ty, &info, &path);
         let mut candidates = Vec::new();
-        let trait_identity = self
-            .rust_definition_for_path(trait_path)
-            .unwrap_or_else(|| trait_path.to_owned());
+        let trait_identity = self.rust_trait_identity(trait_path);
         for implementation in &info.implemented_traits {
-            let implementation_identity = self
-                .rust_definition_for_path(&implementation.path)
-                .unwrap_or_else(|| implementation.path.clone());
-            if ancestral_rust_path(&implementation_identity) != ancestral_rust_path(&trait_identity) {
+            if self.rust_trait_identity(&implementation.path) != trait_identity {
                 continue;
             }
             if Self::rust_projection_needs_bounds(implementation, &owner)
@@ -260,7 +251,7 @@ impl TypeChecker {
         if depth >= 12 {
             return None;
         }
-        if ancestral_rust_path(trait_path) == ancestral_rust_path("std::future::IntoFuture") {
+        if self.rust_trait_identity(trait_path) == self.rust_trait_identity("std::future::IntoFuture") {
             let output = self.rust_bound_associated_type(name, "std::future::Future", "Output", depth + 1)?;
             return match member {
                 "Output" => Some(output),
@@ -268,44 +259,41 @@ impl TypeChecker {
                 _ => None,
             };
         }
-        for frame in self.current_type_param_bound_details.iter().rev() {
-            for bound in frame.get(name).into_iter().flatten() {
-                let path = if bound.name.contains("::") {
-                    Some(bound.name.trim_start_matches("::").to_owned())
-                } else {
-                    self.rust_canonical_path_for_receiver_type(&ResolvedType::Named(bound.name.clone()))
-                };
-                let Some(path) = path else {
+        let identity = self.rust_trait_identity(trait_path);
+        for bound in self.innermost_type_param_bounds(name)? {
+            let path = if bound.name.contains("::") {
+                Some(bound.name.trim_start_matches("::").to_owned())
+            } else {
+                self.rust_canonical_path_for_receiver_type(&ResolvedType::Named(bound.name.clone()))
+            };
+            let Some(path) = path else {
+                continue;
+            };
+            let Some(metadata) = self.rust_item_metadata_for_path(&path) else {
+                continue;
+            };
+            let RustItemKind::Trait(info) = &metadata.kind else {
+                continue;
+            };
+            let substitutions = info
+                .type_params
+                .iter()
+                .zip(&bound.type_args)
+                .map(|(parameter, value)| (parameter.as_str(), render_resolved_type_as_rust_arg(value)))
+                .collect();
+            for predicate in &info.bounds {
+                if predicate.self_type != "Self" || self.rust_trait_identity(&predicate.path) != identity {
                     continue;
-                };
-                let Some(metadata) = self.rust_item_metadata_for_path(&path) else {
-                    continue;
-                };
-                let RustItemKind::Trait(info) = &metadata.kind else {
-                    continue;
-                };
-                let substitutions = info
-                    .type_params
-                    .iter()
-                    .zip(&bound.type_args)
-                    .map(|(parameter, value)| (parameter.as_str(), render_resolved_type_as_rust_arg(value)))
-                    .collect();
-                for predicate in &info.bounds {
-                    if predicate.self_type != "Self"
-                        || ancestral_rust_path(&predicate.path) != ancestral_rust_path(trait_path)
-                    {
-                        continue;
-                    }
-                    let Some(binding) = predicate
-                        .associated_type_bindings
-                        .iter()
-                        .find(|binding| binding.name == member)
-                    else {
-                        continue;
-                    };
-                    let display = Self::substitute_rust_owner_display(&binding.value_path, &substitutions, name);
-                    return self.rust_projected_type(&display, depth + 1);
                 }
+                let Some(binding) = predicate
+                    .associated_type_bindings
+                    .iter()
+                    .find(|binding| binding.name == member)
+                else {
+                    continue;
+                };
+                let display = Self::substitute_rust_owner_display(&binding.value_path, &substitutions, name);
+                return self.rust_projected_type(&display, depth + 1);
             }
         }
         None

@@ -20,7 +20,7 @@ incan toolchain pack OUT
 incan toolchain install ARCHIVE
 ```
 
-There is no implicit command or implicit source path. `new`, `init`, `lock`, `env`, `explain`, `tools`, `cache`, `workspace`, `oven`, `--release`, `--locked`, `--offline`, `--frozen`, `--sdk-profile` and `--emit-rust` are not CLI interfaces in this release.
+There is no implicit command or implicit source path.
 
 ## Help and version
 
@@ -37,7 +37,7 @@ There is no implicit command or implicit source path. `new`, `init`, `lock`, `en
 | `--no-default-features` | Boolean, false | Disables selection of the root package's `default` feature. |
 | `--all-features` | Boolean, false | Selects every declared root-package feature. |
 
-Unknown features, invalid feature edges and unknown options fail the command. Unit commands accept one path. Package features are specified in [Project configuration](project_configuration.md#projectfeatures).
+Unknown features, invalid feature edges and unknown options fail the command. Feature-selection options require an owning project. Unsupported command-option combinations exit `2` before dependency preparation. Unit commands accept one path. Package features are specified in [Project configuration](project_configuration.md#projectfeatures).
 
 ## `incan run`
 
@@ -47,27 +47,46 @@ Unknown features, invalid feature edges and unknown options fail the command. Un
 
 Checks the source at `PATH` without producing an executable. `--format` accepts `text` (default) or `json`. Successful checks exit zero; errors exit nonzero.
 
-The JSON report has `schema_version: 2`, Boolean `ok`, and a `diagnostics` array. Diagnostic entries carry `code`, `severity`, `phase`, `origin`, `message`, `primary_span`, `notes` and `hints`, with additional related or comparison fields when applicable. Message wording is not stable. A span carries its source file and positions, including byte offsets. An `explain` string in a report does not provide an `incan explain` command in this CLI.
+The JSON report has `schema_version: 2`, Boolean `ok`, and a `diagnostics` array. Diagnostic entries carry `code`, `severity`, `phase`, `origin`, `message`, `primary_span`, `notes`, `hints` and `explain`, with additional related or comparison fields when applicable. `explain` is always the string `incan explain CODE`, with the diagnostic's code. Message wording is not stable. A span carries its source file and positions, including byte offsets.
 
 ## `incan test`
 
-`PATH` names a source file containing test functions. The command compiles the collected tests and executes them on every invocation. Successful results print `FILE::TEST PASSED`. A compilation error or failing test returns nonzero. Directory collection, `-k`, `--jobs`, `--list`, JSON and JUnit output flags are not accepted by this command.
+`PATH` names a source file containing test functions. The command compiles the collected tests and executes each in its own process on every invocation. Each test prints one line: `FILE::TEST` followed by `PASSED`, `FAILED`, `SKIPPED (REASON)`, `XFAIL (REASON)` or `XPASS (REASON)`, where `FILE` is the source file's name. A failed test's output follows on stderr. A compilation error, a failing test or an `XPASS` returns nonzero. Directory collection, `-k`, `--jobs`, `--list`, JSON and JUnit output flags are not accepted by this command.
 
-Collected test functions take no arguments and return `None` or `Result[None, E]`. A result-returning test passes with `Ok(None)` and fails with `Err(error)`; `E` must satisfy the `Debug` trait bound.
+Collected test functions take no arguments and return `None` or `Result[None, E]`. A result-returning test passes with `Ok(None)` and fails with `Err(error)`; `E` must satisfy the `Debug` trait bound. `@skip`, `@skipif`, `@xfail` and `@xfailif` set a test's outcome policy; `@test`, `@slow`, `@mark` and `@serial` are accepted and do not change execution. Fixtures, parametrized tests, `@timeout` and `@resource` are refused.
 
 ## `incan build`
 
-An explicit source file selects that unit. For a directory, `src/lib.incn` selects a library; otherwise `src/main.incn` selects a program. Other project directories select the Rust facet build.
+An explicit source file selects that unit. For a directory, `lib.incn` in the project's source root selects a library; otherwise `main.incn` there selects a program. The source root is `[build] source-root`, otherwise `src` when present, otherwise the project directory. Other project directories select the Rust facet build.
 
-A library source named `lib.incn` produces an rlib and checked library sidecars. Path dependency artifacts reside under `target/incan/loaves/<package>/<profile>/`. Program executables reside under `target/incan/<profile>/bin/<crate>`. `--substitute NAME=DIR` supplies local Rust dependency substitutions. `--program-entry` is accepted for programs. `--argv0` is refused by builds. `--lib` and `--report` are not accepted.
+A library source named `lib.incn` produces an rlib and checked library sidecars. Path dependency artifacts reside under `target/incan/loaves/<package>/<profile>/`. Program executables reside under `target/incan/<profile>/bin/<crate>`. `--substitute NAME=DIR` supplies local Rust dependency substitutions for a Rust-project build. `--program-entry` is accepted for Incan programs. `--argv0` is refused by builds. `--lib` and `--report` are not accepted.
 
 ## `incan describe-unit`
 
-Writes the selected source's unit description as JSON with `schema: "incan.unit/1"`. Fields include `source`, `kind`, `program_entries`, `project_root`, `source_root`, `package`, `version`, `profile`, `declared_features`, `active_features`, `loaves`, `rust_crates`, `contract_models`, `c_headers`, `externs`, `search`, `search_index` and `rust_abi`. `search_index` names the toolchain generation's search index (`incan.search-index/1`, named by the SHA-256 of its content), and `search` lists only the directories beyond it. Each Loaf entry has `key`, `name`, `dir` and `standard`. Execution-only options are refused.
+Writes the selected source's unit description as a JSON object. Execution-only options are refused.
+
+| Fields | JSON type | Contract |
+| --- | --- | --- |
+| `schema` | String | `incan.unit/1`. |
+| `source`, `project_root`, `source_root` | Strings | Entry file, owning project directory and authored source directory. |
+| `kind` | String | `program`, `library` or `test`; the default is `program`. |
+| `program_entries` | Array of strings | Additional selected program-entry paths. |
+| `package`, `version`, `profile` | Strings | Package identity, package version and selected artifact profile. |
+| `declared_features`, `active_features` | Arrays of strings | Declared root features and the selected root features. |
+| `loaves` | Array of objects | Each entry has string `key`, `name` and `dir`, Boolean `standard`, and optional string `source_root`. The latter is omitted when authored source is unavailable. |
+| `rust_crates` | Array of strings | Declared Rust crate aliases. |
+| `contract_models`, `c_headers` | Arrays of strings | Selected model-bundle paths and C header paths. |
+| `vocab`, `vocab_entry` | String or null | Prepared vocabulary registration path and declared vocabulary entry path. |
+| `vocabulary`, `vocab_desugarer` | Booleans | Whether vocabulary is active and whether this unit supplies its desugarer. |
+| `vocab_admissions` | Array of strings | Admitted vocabulary dependency keys. |
+| `vocab_policy` | String | Vocabulary policy identity. |
+| `externs` | Array of objects | Exact native bindings, each with string `name` and `path`. |
+| `search`, `rust_abi` | Arrays of strings | Additional native search directories and Rust ABI cache paths. |
+| `search_index` | String or null | The toolchain generation's `incan.search-index/1` file, named by the SHA-256 of its content. `search` lists directories beyond this index. |
 
 ## `incan fmt`
 
-Formats one or more files or directory trees. `--check` leaves files unchanged and exits `1` when formatting would change a file. `--` ends option parsing. Only `.incn` files are selected; hidden directories, `target` and `node_modules` are skipped. No discovered source files is an error. Files that cannot be formatted are reported; other selected files are still processed. The [code style](../../language/reference/code_style.md) specifies formatting rules.
+Formats one or more files or directory trees. `--check` leaves files unchanged and exits `1` when formatting would change a file. `--` ends option parsing. Only `.incn` files are selected; hidden directories, `target`, `node_modules` and nested symbolic links are skipped. Explicitly named files retain their single-file selection. Directory-read errors and no discovered source files are errors. Files that cannot be formatted are reported; other selected files are still processed. The [code style](../../language/reference/code_style.md) specifies formatting rules.
 
 ## `incan owner stop`
 

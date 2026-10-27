@@ -4,10 +4,10 @@
 //! identity proofs. They do not protect against forged records or filesystem metadata. Parsing and semantic validation
 //! still consume the current bytes; missing, corrupt or unwritable records take the full hashing path.
 
-use std::fs::{self, File, Metadata, OpenOptions};
-use std::io::{self, Read, Write};
+use std::fs::{self, File, Metadata};
+use std::io::{self, Read};
 #[cfg(unix)]
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -125,10 +125,7 @@ fn retained_digest(path: &Path, key: &str, generation: Generation) -> Option<Str
     if record.version != 1 || record.key != key || record.generation != generation {
         return None;
     }
-    let digest = record.digest.strip_prefix("sha256:")?;
-    if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
+    crate::library_manifest::sha256_digest("retained manifest digest", &record.digest, true).ok()?;
     if record.checksum != checksum(&record.key, generation, &record.digest).ok()? {
         return None;
     }
@@ -143,10 +140,6 @@ fn checksum(key: &str, generation: Generation, digest: &str) -> io::Result<Strin
 
 /// Publish one complete private record atomically; failures leave the already-computed identity usable.
 fn store(path: &Path, key: &str, generation: Generation, digest: &str) -> io::Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| io::Error::other("the manifest record has no parent directory"))?;
-    fs::create_dir_all(parent)?;
     let record = Record {
         version: 1,
         key: key.to_owned(),
@@ -154,16 +147,6 @@ fn store(path: &Path, key: &str, generation: Generation, digest: &str) -> io::Re
         digest: digest.to_owned(),
         checksum: checksum(key, generation, digest)?,
     };
-    let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    options.mode(0o600);
-    let mut file = options.open(&temporary)?;
     let bytes = serde_json::to_vec(&record).map_err(io::Error::other)?;
-    let result = file.write_all(&bytes).and_then(|()| fs::rename(&temporary, path));
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result
+    super::publish_private_record(path, &bytes, "tmp")
 }

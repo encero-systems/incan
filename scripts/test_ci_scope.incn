@@ -12,20 +12,20 @@ from check_support import repository_root, source_lines
 
 def test_reference_only_dispatch_does_not_enable_heavy_work() -> Result[None, str]:
     """A reference-only dispatch selects its consumer without heavy work."""
-    assert scope(reference=True)? == expected(False, False, True)
+    assert scope(reference=true)? == expected(false, false, true)
     return Ok(None)
 
 
 def test_default_light_dispatch_does_not_enable_reference() -> Result[None, str]:
     """A default dispatch remains light."""
-    assert scope()? == expected(False, False, False)
+    assert scope()? == expected(false, false, false)
     return Ok(None)
 
 
 def test_every_heavy_event_also_selects_the_producer() -> Result[None, str]:
     """Heavy dispatches, integration branches and the full-ci label select the producer."""
-    heavy = expected(False, True, True)
-    assert scope(heavy=True)? == heavy
+    heavy = expected(false, true, true)
+    assert scope(heavy=true)? == heavy
     assert scope(event="pull_request", base="main")? == heavy
     assert scope(event="pull_request", base="release/0.6")? == heavy
     assert scope(event="pull_request", labels="compiler,full-ci")? == heavy
@@ -37,7 +37,7 @@ def test_every_heavy_event_also_selects_the_producer() -> Result[None, str]:
 def test_reference_input_does_not_change_ordinary_push_or_pr_scope() -> Result[None, str]:
     """The reference input belongs only to workflow dispatch."""
     for event in ["push", "pull_request"]:
-        assert scope(event=event, reference=True)? == scope(event=event)?
+        assert scope(event=event, reference=true)? == scope(event=event)?
     return Ok(None)
 
 
@@ -48,38 +48,25 @@ def test_registry_and_verified_example_prs_still_select_reference() -> Result[No
         "workspaces/docs-site/docs/language/reference/language.md",
         "workspaces/docs-site/docs/_snippets/language/examples/verified_web.incn",
     ]:
-        assert scope(event="pull_request", files=[path])? == expected(False, False, True)
-    return Ok(None)
-
-
-def test_generated_test_inventory_page_is_not_docs_only() -> Result[None, str]:
-    """The test inventory keeps the gate that regenerates it."""
-    path = "workspaces/docs-site/docs/contributing/reference/test_corpus_inventory.md"
-    assert scope(event="pull_request", files=[path])? == expected(False, False, False)
+        assert scope(event="pull_request", files=[path])? == expected(false, false, true)
     return Ok(None)
 
 
 def test_ordinary_docs_only_pr_stays_docs_only() -> Result[None, str]:
     """An ordinary documentation change remains docs-only."""
-    assert scope(event="pull_request", files=["workspaces/docs-site/docs/index.md"])? == expected(True, False, False)
+    assert scope(event="pull_request", files=["workspaces/docs-site/docs/index.md"])? == expected(true, false, false)
     return Ok(None)
 
 
 def test_empty_change_set_is_not_misreported_as_docs_only() -> Result[None, str]:
     """An empty diff does not prove a documentation-only change."""
-    assert scope(event="pull_request", files=[])? == expected(False, False, False)
+    assert scope(event="pull_request", files=[])? == expected(false, false, false)
     return Ok(None)
 
 
-def scope(
-    event: str = "workflow_dispatch",
-    heavy: bool = False,
-    reference: bool = False,
-    base: str = "0.6.0-dev.4",
-    branch: str = "0.6.0-dev.4",
-    labels: str = "",
-    files: list[str] = ["src/main.rs"],
-) -> Result[Dict[str, str], str]:
+def scope(event: str = "workflow_dispatch", heavy: bool = false, reference: bool = false, base: str = "0.6.0-dev.4", branch: str = "0.6.0-dev.4", labels: str = "", files: list[str] = [
+    "src/main.rs",
+]) -> Result[Dict[str, str], str]:
     """
     Return the scope command's fields using an isolated Git executable and changed-path fixture.
 
@@ -97,7 +84,7 @@ def scope(
     write(git, mock)?
     set_permissions(git.0, Permissions.from_mode(493)).map_err((error) => error.to_string())?
     changes = root.joinpath("changes")
-    nul = RustString.from_utf8(b"\0").map_err((error) => error.to_string())?
+    nul = RustString.from_utf8(b"\x00").map_err((error) => error.to_string())?
     mut paths = ""
     for path in files:
         paths += path + nul

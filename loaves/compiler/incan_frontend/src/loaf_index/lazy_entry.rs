@@ -3,9 +3,7 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::{Read, Write};
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
@@ -205,27 +203,12 @@ fn retain(path: &Path, observation: Observation, summary: &Summary) -> std::io::
     let Some(cache) = record_path(path) else {
         return Ok(());
     };
-    let parent = cache
-        .parent()
-        .ok_or_else(|| std::io::Error::other("inventory has no parent"))?;
-    fs::create_dir_all(parent)?;
     let record = Record {
         version: 1,
         checksum: checksum(&observation, summary)?,
         observation,
         summary: summary.clone(),
     };
-    let temporary = cache.with_extension(format!("{}.inventory-pending", std::process::id()));
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    options.mode(0o600);
-    let mut file = options.open(&temporary)?;
-    let result = file
-        .write_all(&serde_json::to_vec(&record).map_err(std::io::Error::other)?)
-        .and_then(|()| fs::rename(&temporary, &cache));
-    if result.is_err() {
-        let _ = fs::remove_file(temporary);
-    }
-    result
+    let bytes = serde_json::to_vec(&record).map_err(std::io::Error::other)?;
+    super::publish_private_record(&cache, &bytes, "inventory-pending")
 }

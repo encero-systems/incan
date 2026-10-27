@@ -10,8 +10,8 @@ use rustc_ast as ast;
 use rustc_span::{Span, Symbol, respan};
 use thin_vec::{ThinVec, thin_vec};
 
-/// Declare one process main that reports exactly one selected entry through Termination, propagating signature-loan
-/// validation failures.
+/// Declare a fresh process main that reports one selected entry through Termination. Its signature and generics
+/// are independent of every planned function, including native signature loans.
 pub(crate) fn dispatcher(plan: &Plan, span: Span) -> Result<Box<ast::Item>, crate::error::PlanError> {
     let mut arms = ThinVec::new();
     for (index, name) in plan.programs.iter().enumerate() {
@@ -61,15 +61,26 @@ pub(crate) fn dispatcher(plan: &Plan, span: Span) -> Result<Box<ast::Item>, crat
         span,
     );
     let value = expression(ast::ExprKind::Match(selector, arms, ast::MatchKind::Prefix), span);
-    let mut item = crate::declarations::function(&plan.functions[0], span)?;
-    if let ast::ItemKind::Fn(function) = &mut item.kind {
-        function.ident = crate::ast_build::ident("main", span);
-        function.sig.header = ast::FnHeader::default();
-        function.sig.decl.inputs.clear();
-        function.sig.decl.output = ast::FnRetTy::Ty(path_ty(global_path(&["std", "process", "ExitCode"], span), span));
-        function.body = Some(block(thin_vec![expression_statement(value, span)], span));
-    }
-    Ok(item)
+    Ok(crate::declarations::item(
+        ast::ItemKind::Fn(Box::new(ast::Fn {
+            defaultness: ast::Defaultness::Implicit,
+            ident: crate::ast_build::ident("main", span),
+            generics: ast::Generics::default(),
+            sig: ast::FnSig {
+                header: ast::FnHeader::default(),
+                decl: Box::new(ast::FnDecl {
+                    inputs: ThinVec::new(),
+                    output: ast::FnRetTy::Ty(path_ty(global_path(&["std", "process", "ExitCode"], span), span)),
+                }),
+                span,
+            },
+            contract: None,
+            define_opaque: None,
+            body: Some(block(thin_vec![expression_statement(value, span)], span)),
+            eii_impls: ThinVec::new(),
+        })),
+        span,
+    ))
 }
 
 /// Call a standard-library item using an absolute path immune to source declarations.

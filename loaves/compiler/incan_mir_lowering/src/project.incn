@@ -2,6 +2,7 @@
 
 from rust::incan_semantics_core::body_ir import BodyIrModule, EnumDeclaration, NominalDeclaration, LoafCallable
 from traits import specialize_project_traits
+from table_views import borrowed_at
 
 
 pub def project_context(
@@ -22,12 +23,14 @@ pub def project_context(
     context.loaf_callables.clear()
     context.native_union_declarations.clear()
     mut checked: list[BodyIrModule] = []
-    for module in modules:
+    for module_position in range(len(modules)):
+        module = borrowed_at(modules, module_position)
         specialized = specialize_project_traits(module, modules)?
         # The imported Rust type has Clone, but List.append cannot prove that trait for a named opaque value.
         # An explicit interop clone is an owned call result and retains the module for both planning views.
         checked.append(specialized.clone())
-        for body in specialized.bodies:
+        for body_position in range(len(specialized.bodies)):
+            body = borrowed_at(specialized.bodies, body_position)
             context.bodies.push(body.clone())
         # Indexed interop reads avoid legacy emission moving a vector field from a borrowed loop element.
         for index in range(len(module.nominal_declarations)):

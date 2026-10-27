@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 use incan_lang::interop::{
     RustAssociatedTypeBinding, RustFieldInfo, RustFunctionSig, RustImplementedTrait, RustItemKind, RustItemMetadata,
     RustMacroForm, RustMacroInfo, RustMethodSig, RustModuleChild, RustModuleChildKind, RustModuleInfo, RustParam,
-    RustPayloadCarrier, RustTraitAssoc, RustTraitBound, RustTraitInfo, RustTypeInfo, RustTypeShape, RustVariantInfo,
-    RustVisibility,
+    RustPayloadCarrier, RustTraitAssoc, RustTraitBound, RustTraitInfo, RustTypeInfo, RustTypeMetadataCompleteness,
+    RustTypeShape, RustVariantInfo, RustVisibility,
 };
 use rustc_hir::def::{DefKind, MacroKinds};
 use rustc_hir::def_id::DefId;
@@ -24,9 +24,13 @@ use rustc_span::{FileName, sym};
 
 /// What one extraction reads: what to describe, and the crates and directories that resolve it.
 pub struct RustFactsRequest<'a> {
+    /// The pinned toolchain's sysroot, which supplies `std`, `core` and `alloc`.
     pub sysroot: &'a Path,
+    /// The crates the extraction may name, as `--extern CRATE=RLIB` pairs.
     pub externs: &'a [(String, PathBuf)],
+    /// The directories that resolve those crates' own dependencies.
     pub search: &'a [PathBuf],
+    /// What to describe.
     pub scope: RustFactsScope,
 }
 
@@ -43,7 +47,9 @@ impl RustFactsScope {
     /// The crates the extraction reads, which the stub names (`std`, `core` and `alloc` are always loaded).
     fn roots(&self) -> BTreeSet<String> {
         let names: Box<dyn Iterator<Item = &str>> = match self {
-            Self::Paths { paths, .. } => Box::new(paths.iter().filter_map(|path| path.split("::").next())),
+            Self::Paths { paths, .. } => {
+                Box::new(paths.iter().filter_map(|path| crate::native_crates::callee_root(path)))
+            }
             Self::Crates(crates) => Box::new(crates.iter().map(String::as_str)),
         };
         names
@@ -58,8 +64,11 @@ impl RustFactsScope {
 pub struct RustcFacts {
     /// Exact native generation that identifies a bounded fallback extraction cache.
     pub unit: incan_driver::unit::UnitDescription,
+    /// The pinned toolchain's sysroot, which supplies `std`, `core` and `alloc`.
     pub sysroot: PathBuf,
+    /// The unit's own crates, as `--extern CRATE=RLIB` pairs.
     pub externs: Vec<(String, PathBuf)>,
+    /// The directories that resolve those crates' own dependencies.
     pub search: Vec<PathBuf>,
 }
 
@@ -107,7 +116,7 @@ impl RustcFacts {
             );
         }
         // ---- Optional extraction trace ----
-        if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
+        if incan_frontend::trace_flags::trace_rust_facts() {
             eprintln!(
                 "rust facts: {} uncovered paths, {} items in {:?}",
                 paths.len(),
@@ -200,14 +209,18 @@ impl rustc_driver::Callbacks for FactsCallbacks {
 /// path shared by distinct native crate versions grants no transitive facts without one selected crate binding.
 fn describe_paths(tcx: TyCtxt<'_>, paths: &BTreeSet<String>, depth: usize) -> BTreeMap<String, RustItemMetadata> {
     let mut facts = BTreeMap::new();
-    let mut pending = paths
-        .iter()
-        .filter_map(|path| resolve(tcx, path, false).map(|def| (path.clone(), def)))
-        .collect::<Vec<_>>();
+    let mut pending = Vec::new();
+    for path in paths {
+        if let Some(def) = resolve(tcx, path, false) {
+            pending.push((path.clone(), def));
+        } else if let Some(prefix) = restricted_prefix(tcx, path) {
+            facts.insert(prefix.clone(), visibility_fence(&prefix));
+        }
+    }
     for _ in 0..=depth {
         let mut named = HashSet::new();
         while let Some((path, def)) = pending.pop() {
-            if facts.contains_key(&path) {
+            if api_item_is_described(&facts, &path) {
                 continue;
             }
             pending.extend(
@@ -228,10 +241,96 @@ fn describe_paths(tcx: TyCtxt<'_>, paths: &BTreeSet<String>, depth: usize) -> BT
             .into_iter()
             .filter(|def| has_selected_native_crate(tcx, *def))
             .map(|def| (visible_path(tcx, def), def))
-            .filter(|(path, _)| !facts.contains_key(path))
+            .filter(|(path, _)| !api_item_is_described(&facts, path))
             .collect();
     }
+    close_api_dependencies(tcx, &mut facts, pending.into_iter().map(|(_, def)| def).collect());
     facts
+}
+
+/// Retain dependency-only types and traits to a fixed point without making private paths source-visible. Public
+/// foreign ADTs remain the responsibility of their own crate cache; only unnameable type dependencies expand here.
+fn close_api_dependencies(
+    tcx: TyCtxt<'_>,
+    facts: &mut BTreeMap<String, RustItemMetadata>,
+    mut pending: HashSet<DefId>,
+) {
+    let mut visited = HashSet::new();
+    while let Some(def) = pending.iter().next().copied() {
+        pending.remove(&def);
+        if !visited.insert(def) || !has_selected_native_crate(tcx, def) {
+            continue;
+        }
+        let path = visible_path(tcx, def);
+        let retained = match tcx.def_kind(def) {
+            DefKind::Trait => true,
+            DefKind::Struct | DefKind::Enum | DefKind::Union | DefKind::TyAlias => {
+                resolve(tcx, &path, false) != Some(def)
+            }
+            _ => false,
+        };
+        if !retained || api_item_is_described(facts, &path) {
+            continue;
+        }
+        let metadata = describe(tcx, def, &path, &mut pending);
+        facts.insert(path, metadata);
+    }
+}
+
+/// A visibility fence proves source inaccessibility without admitting a module's children or an item's API.
+fn visibility_fence(path: &str) -> RustItemMetadata {
+    RustItemMetadata {
+        canonical_path: path.to_owned(),
+        definition_path: None,
+        visibility: RustVisibility::Restricted,
+        kind: RustItemKind::Unsupported {
+            description: "restricted Rust namespace".into(),
+        },
+    }
+}
+
+/// Visibility-only facts do not replace a type's full metadata when an admitted API reaches that dependency.
+fn api_item_is_described(facts: &BTreeMap<String, RustItemMetadata>, path: &str) -> bool {
+    facts.get(path).is_some_and(|metadata| {
+        metadata.visibility != RustVisibility::Restricted || !matches!(&metadata.kind, RustItemKind::Unsupported { .. })
+    })
+}
+
+/// Locate the first inaccessible module child in an authored path. Missing paths remain unknown rather than being
+/// mislabeled private; lookup uses the exact native crate and rustc visibility, never a spelling convention.
+fn restricted_prefix(tcx: TyCtxt<'_>, path: &str) -> Option<String> {
+    let mut segments = path.split("::").peekable();
+    let root = segments.next()?;
+    let mut current = crate::native_crates::root(tcx, root)?;
+    let mut prefix = root.to_owned();
+    while let Some(segment) = segments.next() {
+        if tcx.def_kind(current) != DefKind::Mod {
+            return None;
+        }
+        let child = tcx
+            .module_children(current)
+            .iter()
+            .filter(|child| child.ident.name.as_str() == segment)
+            .filter_map(|child| child.res.opt_def_id().map(|def| (child, def)))
+            .min_by_key(|(_, def)| {
+                if segments.peek().is_none() {
+                    resolution_rank(tcx.def_kind(*def))
+                } else {
+                    match tcx.def_kind(*def) {
+                        DefKind::Mod => 0,
+                        DefKind::Struct | DefKind::Enum | DefKind::Union => 1,
+                        _ => 2,
+                    }
+                }
+            })?;
+        prefix.push_str("::");
+        prefix.push_str(segment);
+        if !child.0.vis.is_public() {
+            return Some(prefix);
+        }
+        current = child.1;
+    }
+    None
 }
 
 /// Admit transitive facts only from the native crate selected by an explicit canonical binding or a unique loaded
@@ -278,6 +377,10 @@ fn describe_crates(tcx: TyCtxt<'_>, crates: &BTreeSet<String>) -> BTreeMap<Strin
             continue;
         };
         for (path, def) in public_items(tcx, krate, name) {
+            if resolve(tcx, &path, false).is_none() {
+                facts.insert(path.clone(), visibility_fence(&path));
+                continue;
+            }
             let template = described
                 .entry(def)
                 .or_insert_with(|| describe(tcx, def, &path, &mut named));
@@ -326,16 +429,7 @@ fn describe_crates(tcx: TyCtxt<'_>, crates: &BTreeSet<String>) -> BTreeMap<Strin
             },
         );
     }
-    // Trait references use definition identities, including traits reached through a public re-export.
-    for def in named
-        .into_iter()
-        .filter(|def| tcx.def_kind(*def) == DefKind::Trait && has_selected_native_crate(tcx, *def))
-    {
-        let path = visible_path(tcx, def);
-        facts
-            .entry(path.clone())
-            .or_insert_with(|| describe(tcx, def, &path, &mut HashSet::new()));
-    }
+    close_api_dependencies(tcx, &mut facts, named);
     facts
 }
 
@@ -389,27 +483,40 @@ fn publish_primitive(facts: &mut BTreeMap<String, RustItemMetadata>, name: &str,
 
 /// Canonical primitive identities shared by metadata extraction and native inherent-method resolution.
 pub(crate) fn primitive_types(tcx: TyCtxt<'_>) -> [(&'static str, Ty<'_>); 16] {
-    [
-        ("bool", tcx.types.bool),
-        ("char", tcx.types.char),
-        ("i8", tcx.types.i8),
-        ("i16", tcx.types.i16),
-        ("i32", tcx.types.i32),
-        ("i64", tcx.types.i64),
-        ("i128", tcx.types.i128),
-        ("isize", tcx.types.isize),
-        ("u8", tcx.types.u8),
-        ("u16", tcx.types.u16),
-        ("u32", tcx.types.u32),
-        ("u64", tcx.types.u64),
-        ("u128", tcx.types.u128),
-        ("usize", tcx.types.usize),
-        ("f32", tcx.types.f32),
-        ("f64", tcx.types.f64),
-    ]
+    let types = [
+        tcx.types.bool,
+        tcx.types.char,
+        tcx.types.i8,
+        tcx.types.i16,
+        tcx.types.i32,
+        tcx.types.i64,
+        tcx.types.i128,
+        tcx.types.isize,
+        tcx.types.u8,
+        tcx.types.u16,
+        tcx.types.u32,
+        tcx.types.u64,
+        tcx.types.u128,
+        tcx.types.usize,
+        tcx.types.f32,
+        tcx.types.f64,
+    ];
+    std::array::from_fn(|index| (PRIMITIVE_NAMES[index], types[index]))
 }
 
-/// The public items of one crate's module tree, each module walked once under the first path that reaches it.
+/// Canonical scalar names in the same order as their rustc types above.
+const PRIMITIVE_NAMES: [&str; 16] = [
+    "bool", "char", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize", "f32",
+    "f64",
+];
+
+/// Whether a bare owner denotes a Rust primitive rather than a crate root.
+pub(crate) fn primitive_owner(name: &str) -> bool {
+    PRIMITIVE_NAMES.contains(&name) || matches!(name, "str" | "[]")
+}
+
+/// Public items and visibility-only children of a crate's public module tree. Private modules are never walked;
+/// their fences let source admission refuse a private prefix without publishing its contents.
 fn public_items(tcx: TyCtxt<'_>, root: DefId, name: &str) -> Vec<(String, DefId)> {
     let mut items = Vec::new();
     let mut walked = HashSet::new();
@@ -418,11 +525,17 @@ fn public_items(tcx: TyCtxt<'_>, root: DefId, name: &str) -> Vec<(String, DefId)
         if !walked.insert(module) {
             continue;
         }
-        for child in tcx.module_children(module).iter().filter(|child| child.vis.is_public()) {
+        for child in tcx.module_children(module).iter() {
             let Some(def) = child.res.opt_def_id() else {
                 continue;
             };
             let child_path = format!("{path}::{}", child.ident.name);
+            if !child.vis.is_public() {
+                if resolve(tcx, &child_path, false).is_none() {
+                    items.push((child_path, def));
+                }
+                continue;
+            }
             items.extend(enum_constructors(tcx, def, &child_path));
             match tcx.def_kind(def) {
                 DefKind::Mod => {
@@ -625,23 +738,32 @@ fn describe(tcx: TyCtxt<'_>, def: DefId, path: &str, named: &mut HashSet<DefId>)
     RustItemMetadata {
         canonical_path: path.to_owned(),
         definition_path: (definition != path).then_some(definition),
-        visibility: RustVisibility::Public,
+        visibility: if matches!(&kind, RustItemKind::Type(_) | RustItemKind::Trait(_))
+            && resolve(tcx, path, false) != Some(def)
+        {
+            RustVisibility::Restricted
+        } else {
+            RustVisibility::Public
+        },
         kind,
     }
 }
 
 /// A struct, enum or union: type parameters and defaults, inherent methods with native impl binders and self types,
-/// complete public field layouts and variants. Structs with hidden fields stay opaque under DD-0006: a public
-/// subset is not a complete native layout. Method binders remain distinct from the owner's defaulted parameters.
+/// native fields and variants. Private slots retain storage and order but grant no source access. Construction
+/// separately requires an exhaustive struct with all fields public. Method binders remain distinct from the owner's
+/// parameters.
 fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTypeInfo {
     let (type_params, type_param_defaults) = type_parameters(tcx, def);
     let methods = inherent_methods(tcx, &crate::callees::owner_inherent_impls(tcx, def), named);
     let adt = tcx.adt_def(def);
-    let fields = if adt.is_struct() && adt.all_fields().all(|field| field.vis.is_public()) {
+    let fields = if adt.is_struct() {
         adt.all_fields()
             .map(|field| {
                 let ty = tcx.type_of(field.did).instantiate_identity().skip_normalization();
-                note_named(ty, named);
+                if field.vis.is_public() {
+                    note_named(ty, named);
+                }
                 RustFieldInfo {
                     name: field.name.to_string(),
                     type_display: display(ty),
@@ -689,6 +811,12 @@ fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTyp
         Vec::new()
     };
     RustTypeInfo {
+        metadata_completeness: layout_completeness(adt),
+        has_const_params: tcx
+            .generics_of(def)
+            .own_params
+            .iter()
+            .any(|parameter| matches!(parameter.kind, ty::GenericParamDefKind::Const { .. })),
         has_lifetime_params: has_lifetime_parameters(tcx, def),
         type_params,
         type_param_defaults,
@@ -700,6 +828,25 @@ fn type_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTyp
     }
 }
 
+/// Keep private slots as native layout facts while refusing source access and incomplete construction.
+fn layout_completeness(adt: ty::AdtDef<'_>) -> RustTypeMetadataCompleteness {
+    if !adt.is_struct() {
+        return RustTypeMetadataCompleteness::CompleteWithoutConstruction;
+    }
+    let private = adt
+        .all_fields()
+        .filter(|field| !field.vis.is_public())
+        .map(|field| field.name.to_string())
+        .collect::<Vec<_>>();
+    if !private.is_empty() {
+        return RustTypeMetadataCompleteness::CompleteWithPrivateFields(private);
+    }
+    if adt.non_enum_variant().is_field_list_non_exhaustive() {
+        return RustTypeMetadataCompleteness::CompleteWithoutConstruction;
+    }
+    RustTypeMetadataCompleteness::Complete
+}
+
 /// Retain alias binders and candidate implementations on its actual target. An alias introduces no new native
 /// owner; the checker expands it for selection while executable storage may keep the public alias identity.
 fn alias_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTypeInfo {
@@ -707,6 +854,15 @@ fn alias_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTy
     note_named(target, named);
     let (type_params, type_param_defaults) = type_parameters(tcx, def);
     RustTypeInfo {
+        metadata_completeness: match target.kind() {
+            ty::Adt(adt, _) => layout_completeness(*adt),
+            _ => RustTypeMetadataCompleteness::CompleteWithoutConstruction,
+        },
+        has_const_params: tcx
+            .generics_of(def)
+            .own_params
+            .iter()
+            .any(|parameter| matches!(parameter.kind, ty::GenericParamDefKind::Const { .. })),
         has_lifetime_params: has_lifetime_parameters(tcx, def),
         type_params,
         type_param_defaults,
@@ -1177,11 +1333,12 @@ fn note_named(ty: Ty<'_>, named: &mut HashSet<DefId>) {
     }
 }
 
-/// Retain a trait's bounds and associated signatures in the same named-dependency closure as ordinary functions.
+/// Retain a trait's bounds and associated signatures as API dependencies. The impl index keeps its candidate
+/// templates, but does not make every implementation's unrelated owner a reachable API type.
 fn trait_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTraitInfo {
     RustTraitInfo {
         bounds: trait_bounds(tcx, def, named),
-        implementations: trait_implementations(tcx, def, named),
+        implementations: trait_implementations(tcx, def, &mut HashSet::new()),
         is_in_prelude: resolve(tcx, "std::prelude::rust_2024", false).is_some_and(|prelude| {
             tcx.module_children(prelude)
                 .iter()

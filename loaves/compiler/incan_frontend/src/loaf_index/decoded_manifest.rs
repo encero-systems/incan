@@ -1,10 +1,8 @@
 //! Retain validated manifest facts under exact source and compiler file-generation guards. Missing, malformed,
 //! stale or unwritable private records fall back to ordinary JSON admission, never to acceptance of missing facts.
 
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Read, Write};
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
+use std::fs::{self, File};
+use std::io::{self, BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
@@ -146,20 +144,5 @@ fn store(
     if u64::try_from(bytes.len()).map_err(io::Error::other)? > LIMIT {
         return Ok(());
     }
-    fs::create_dir_all(
-        cache
-            .parent()
-            .ok_or_else(|| io::Error::other("decoded record has no parent"))?,
-    )?;
-    let temporary = cache.with_extension(format!("{}.pending", std::process::id()));
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    options.mode(0o600);
-    let mut file = options.open(&temporary)?;
-    let result = file.write_all(&bytes).and_then(|()| fs::rename(&temporary, cache));
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result
+    super::publish_private_record(cache, &bytes, "pending")
 }

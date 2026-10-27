@@ -561,9 +561,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             field_place
                 .projection
                 .push(bir::PlaceElem::structural_field(slot.to_string()));
+            // The checker retained each payload sub-pattern's instantiated payload type at its span; a literal's
+            // storage takes that type, not a guess.
+            let payload_ty = self.resolve_ty(pattern.span);
             let lowered = self.lower_match_pattern(
                 pattern,
-                &IncanType::Unknown,
+                &payload_ty,
                 &field_place,
                 arm_scope,
                 reads,

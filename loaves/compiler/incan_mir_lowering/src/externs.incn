@@ -26,9 +26,11 @@ pub def delegated_function(
     result: PlanType,
     span: SourceSpan,
 ) -> Result[tuple[Function, list[ExternalFunction]], str]:
-    """Pass parameters in declaration order to the exact checked Rust instantiation, moving owned values."""
-    if name == "main":
-        return Err("unsupported Body IR ExternDelegation entrypoint")
+    """
+    Pass parameters in declaration order to the exact checked Rust instantiation, moving owned values.
+
+    The caller refuses a delegated program entry, which it identifies by its checked entry identity.
+    """
     if not delegated_type(result):
         return Err("unsupported Body IR ExternDelegation return type")
     mut locals = [Local(ty=result, span=span)]

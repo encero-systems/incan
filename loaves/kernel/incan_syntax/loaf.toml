@@ -1,7 +1,7 @@
 [dependencies]
 incan_lang = { loaf = "incan_lang", path = "../incan_lang" }
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../incan_semantics_core" }
-incan_vocab = { loaf = "incan_vocab", path = "../incan_vocab", version = "0.3.0" }
+incan_vocab = { loaf = "incan_vocab", path = "../incan_vocab", version = "0.6.0-dev.8" }
 miette = { loaf = "crates-io/miette", version = "7.0" }
 serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
 tracing = { loaf = "crates-io/tracing", version = "0.1" }
@@ -11,7 +11,7 @@ description = "Shared syntax frontend (lexer, AST, parser) for the Incan compile
 license = "Apache-2.0"
 name = "incan_syntax"
 private = true
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.8"
 
 [rust]
 edition = "2024"

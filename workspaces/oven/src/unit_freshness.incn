@@ -32,7 +32,7 @@ from apple_sdk import sdk_identity
 const UNIT_DOMAIN: str = "incan.oven.unit/1"
 
 
-pub def artifact_files(directory: Path, package: str) -> list[Path]:
+pub def artifact_files(directory: Path, package: str) -> Result[list[Path], str]:
     """The complete DD-0007 artifact set required to reuse a library."""
     linked = package.replace("-", "_")
     compiled = [f"lib{linked}.rlib", f"{package}.incnlib", f"{package}.incnbody"]
@@ -43,12 +43,10 @@ pub def artifact_files(directory: Path, package: str) -> list[Path]:
         artifacts.append(cache)
     manifest = directory.joinpath(f"{package}.incnlib")
     if manifest.is_file():
-        match manifest_vocabulary(manifest):
-            Ok(declared) =>
-                if not declared.desugarer.is_null():
-                    artifacts.append(directory.joinpath("vocab-worker"))
-            Err(_) => pass
-    return artifacts
+        declared = manifest_vocabulary(manifest)?
+        if not declared.desugarer.is_null():
+            artifacts.append(directory.joinpath("vocab-worker"))
+    return Ok(artifacts)
 
 
 pub def artifact_identity(path: Path) -> Result[str, str]:
@@ -70,10 +68,13 @@ pub model Key:
     pub parts: list[str]
 
 
-pub def unit_key(unit: UnitDescription, toolchain: Toolchain) -> Result[Key, str]:
+pub def unit_key(unit: UnitDescription, toolchain: Toolchain, compiler: str = "") -> Result[Key, str]:
     """Reconcile every input of `unit` against the retained observations; the key its outputs are valid for."""
     mut project = load_ledger(unit_ledger(unit.project_root, ledger_name(unit)), SETTLE_SECONDS)
-    return reconciled_key(unit, compiler_fingerprint(toolchain)?, description_digest(unit)?, project)
+    mut selected_compiler = compiler
+    if selected_compiler == "":
+        selected_compiler = compiler_fingerprint(toolchain)?
+    return reconciled_key(unit, selected_compiler, description_digest(unit)?, project)
 
 
 pub def reconciled_key(unit: UnitDescription, compiler: str, described: str, mut project: Ledger) -> Result[Key, str]:
@@ -142,11 +143,6 @@ pub def description_digest(unit: UnitDescription) -> Result[str, str]:
     return fingerprint([json_text(unit.to_json())?] + native_arguments(unit.profile))
 
 
-pub def source_fingerprint(unit: UnitDescription, compiler: str, mut project: Ledger) -> Result[Key, str]:
-    """The key of a unit whose description has not been digested yet; see `unit_key_with`."""
-    return unit_key_with(unit, compiler, description_digest(unit)?, project)
-
-
 pub def unit_key_with(unit: UnitDescription, compiler: str, described: str, mut project: Ledger) -> Result[Key, str]:
     """
     Hash everything authored that the compilation reads, and identify every artifact it links.
@@ -181,7 +177,7 @@ def loaf_identities(unit: UnitDescription) -> Result[list[str], str]:
     """The path and identity of every artifact of every Loaf the unit links; a missing artifact is `absent`."""
     mut inputs: list[str] = []
     for loaf in unit.loaves:
-        for path in artifact_files(Path(loaf.dir), loaf.name):
+        for path in artifact_files(Path(loaf.dir), loaf.name)?:
             inputs.append(path.0)
             if path.is_file():
                 inputs.append(artifact_identity(path)?)

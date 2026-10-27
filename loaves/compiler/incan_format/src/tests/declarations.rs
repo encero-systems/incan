@@ -597,6 +597,7 @@ static COUNTER: int = 0
     Ok(())
 }
 
+/// A newtype's alias is authored once even when parser views share its declaration.
 #[test]
 fn test_format_source_preserves_rich_newtype_round_trip() -> Result<(), FormatError> {
     let source = r#"@derive(Clone)
@@ -606,6 +607,8 @@ pub type MutexGuard[T with Clone] = newtype RawMutexGuard[T]:
     Guard providing access to mutex-protected data.
     The lock is released when the guard goes out of scope.
     """
+
+    read = get
 
     def get(self) -> T:
         """Get the current value (by reference)"""
@@ -617,6 +620,7 @@ pub type MutexGuard[T with Clone] = newtype RawMutexGuard[T]:
 "#;
     let formatted = format_source(source)?;
     assert_eq!(formatted, source);
+    assert_eq!(format_source(&formatted)?, formatted);
     Ok(())
 }
 

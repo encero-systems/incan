@@ -9,6 +9,8 @@ which directives a family admits is the family's rule (`families.incn`).
 # The directives the header accepts.
 const DIRECTIVES: FrozenList[str] = [
     "cli-commands",
+    "environment",
+    "expect-trace-contains",
     "graph-commands",
     "check-edits",
     "behavior",
@@ -28,6 +30,8 @@ const DIRECTIVES: FrozenList[str] = [
 # The directives whose lines follow them as an indented block.
 const BLOCKS: FrozenList[str] = [
     "cli-commands",
+    "environment",
+    "expect-trace-contains",
     "graph-commands",
     "check-edits",
     "expect-formatted",
@@ -40,9 +44,16 @@ const BLOCKS: FrozenList[str] = [
 ]
 # Blocks every item of which must be present, so an empty one checks nothing. `expect-dependencies:` and
 # `expect-active-features:` are exact: an empty block means none.
-const SUBSET_BLOCKS: FrozenList[str] = ["expect-stdout-contains", "expect-stderr-contains", "expect-std-packages"]
+const SUBSET_BLOCKS: FrozenList[str] = [
+    "expect-stdout-contains",
+    "expect-stderr-contains",
+    "expect-std-packages",
+    "expect-trace-contains",
+]
 # Blocks whose items are compared as a set, so an item listed twice checks nothing.
 const SET_BLOCKS: FrozenList[str] = [
+    "environment",
+    "expect-trace-contains",
     "expect-stdout-contains",
     "expect-stderr-contains",
     "expect-dependencies",

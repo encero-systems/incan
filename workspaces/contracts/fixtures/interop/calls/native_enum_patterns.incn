@@ -1,4 +1,4 @@
-# behavior: native enum patterns retain exact payloads, nested variants, Rust discriminants, source field value arguments, shared payload clones, fresh non-Clone owners in if let and while let, and the borrowed payload's owner; native unit variants keep their constant identities and compare through their own implementation; native public fields preserve named construction order and writable storage; and a native UTF-8 error displays through captured Result mappers and narrowed callable formatters forwarded across source calls
+# behavior: native enum patterns retain exact payloads, nested variants, Rust discriminants, source field value arguments, shared payload clones, fresh non-Clone owners in if let and while let, and the borrowed payload's owner; literal payload sub-patterns keep the instantiated payload type (rust-12); native unit variants keep their constant identities and compare through their own implementation; native public fields preserve named construction order and writable storage; and a native UTF-8 error displays through captured Result mappers and narrowed callable formatters forwarded across source calls
 # expect-stdout:
 #   borrowed
 #   missing
@@ -21,7 +21,7 @@ from rust::std::ffi import OsString
 from rust::std::fs import File
 from rust::std::io import ErrorKind, SeekFrom
 from rust::std::num import Wrapping
-from rust::std::ops import ControlFlow, Range
+from rust::std::ops import Bound, ControlFlow, Range
 from rust::std::path import PathBuf
 from rust::std::str import from_utf8
 
@@ -82,6 +82,22 @@ def flow_score(value: ControlFlow[int, str]) -> int:
         ControlFlow.Break(score) => return score
         ControlFlow.Continue(text) => return len(text)
         _ => return -1
+
+
+def bound_name(value: Bound[u8]) -> str:
+    """Match a `u8` literal payload before binding the remaining payloads."""
+    match value:
+        Bound.Included(3) => return "three"
+        Bound.Included(other) => return f"included {other}"
+        Bound.Excluded(other) => return f"excluded {other}"
+        Bound.Unbounded => return "unbounded"
+
+
+def show_literal_payloads() -> None:
+    """Observe literal payload sub-patterns against the instantiated payload type."""
+    assert bound_name(Bound.Included(3u8)) == "three"
+    assert bound_name(Bound.Included(4u8)) == "included 4"
+    assert bound_name(Bound.Excluded(5u8)) == "excluded 5"
 
 
 def text_length(value: str) -> int:
@@ -214,6 +230,7 @@ def main() -> None:
     """Run each native enum observation in the order of the cases it carries."""
     show_borrowed_payload()
     show_payload_patterns()
+    show_literal_payloads()
     show_unit_variants()
     show_public_fields()
     show_error_display()

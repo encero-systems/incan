@@ -162,7 +162,7 @@ def test_new_parser_case() -> None:
     assert_eq(parse("..."), expected)
 ```
 
-Dev.8 exposes no test-probe `--feature` switch. Package `--features` selects declared package features, not this collection probe.
+`feature("new_parser")` is true during collection when the package declares `new_parser` and it is active, for example with `incan test tests/test_parser.incn --features new_parser`.
 
 ## Fixtures
 

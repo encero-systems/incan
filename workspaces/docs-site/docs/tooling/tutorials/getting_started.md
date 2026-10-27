@@ -70,7 +70,7 @@ def test_addition() -> None:
 
 <section class="inc-learning-panel inc-learning-panel--result" data-label="Result" markdown="1">
 
-The program prints `Hello, Incan!`, and the test reports `test_addition PASSED`. The executable is under `target/incan/debug/bin/`. There is no scaffolding command in dev.8: the files above are the project.
+The program prints `Hello, Incan!`, and the test reports `test_main.incn::test_addition PASSED`. The executable is under `target/incan/debug/bin/`. There is no scaffolding command in dev.8: the files above are the project.
 
 </section>
 

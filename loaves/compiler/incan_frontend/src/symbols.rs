@@ -292,19 +292,6 @@ fn stable_fnv1a(bytes: &[u8]) -> u64 {
     hash
 }
 
-/// Return the generated Rust symbol prefix shared by all overload implementations for one source binding.
-pub fn overload_emitted_name_prefix(source_name: &str) -> String {
-    format!("{source_name}{OVERLOAD_EMITTED_NAME_SEPARATOR}")
-}
-
-/// Return whether a generated Rust symbol names one overload implementation.
-pub fn is_overload_emitted_name(name: &str) -> bool {
-    let Some((source_name, hash)) = name.rsplit_once(OVERLOAD_EMITTED_NAME_SEPARATOR) else {
-        return false;
-    };
-    !source_name.is_empty() && hash.len() == 16 && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-
 /// Symbol table managing all named entities
 #[derive(Debug, Default)]
 pub struct SymbolTable {
@@ -1364,28 +1351,6 @@ impl SymbolTable {
         false
     }
 
-    /// Get the current scope kind
-    pub fn current_scope_kind(&self) -> ScopeKind {
-        self.scopes[self.current_scope].kind
-    }
-
-    /// Check if we're inside a function/method
-    pub fn in_function(&self) -> bool {
-        let mut scope_idx = self.current_scope;
-        loop {
-            match self.scopes[scope_idx].kind {
-                ScopeKind::Function | ScopeKind::Method { .. } => return true,
-                _ => {}
-            }
-            if let Some(parent) = self.scopes[scope_idx].parent {
-                scope_idx = parent;
-            } else {
-                break;
-            }
-        }
-        false
-    }
-
     /// Get the current function's return type (if in a function)
     pub fn current_return_type(&self) -> Option<&ResolvedType> {
         let mut scope_idx = self.current_scope;
@@ -1425,26 +1390,6 @@ impl SymbolTable {
     /// Set the return type for the current function scope
     pub fn set_return_type(&mut self, ty: ResolvedType) {
         self.scopes[self.current_scope].return_type = Some(ty);
-    }
-}
-
-/// Build the canonical identity for a source-owned type/object member.
-///
-/// This is shared by the live symbol table and source stdlib extraction so both paths retain the declaring module
-/// and declaration span. Callers without exact Incan declaration provenance must leave member identity absent.
-pub fn source_member_identity(
-    module_path: &[String],
-    name: &str,
-    kind: SemanticSourceTargetKind,
-    span: Span,
-) -> CanonicalSymbolId {
-    CanonicalSymbolId {
-        namespace: SymbolNamespace::Member,
-        origin: SymbolOrigin::Module(module_path.to_vec()),
-        declaration_name: name.to_string(),
-        kind,
-        scope_discriminant: None,
-        declaration_span: span,
     }
 }
 
@@ -2895,15 +2840,6 @@ mod tests {
             "historical interface metadata remains inspectable"
         );
         Ok(())
-    }
-
-    #[test]
-    fn test_overload_emitted_name_validation_requires_generated_hash_suffix() {
-        let emitted = overload_emitted_name("cast", 0xd28281f54a5b9ea6);
-
-        assert!(is_overload_emitted_name(&emitted));
-        assert!(!is_overload_emitted_name("cast_overload_suffix"));
-        assert!(is_overload_emitted_name("__incan_overload_d28281f54a5b9ea6"));
     }
 
     #[test]

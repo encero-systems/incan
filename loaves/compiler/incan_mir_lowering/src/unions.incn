@@ -30,7 +30,7 @@ from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, temporary, read_place, literal
 from rust::incan_semantics_core::body_ir import Pattern as RustPattern, Place as RustPlace, PlaceElem as RustPlaceElem
 from enums import validate_payload_patterns, enum_owner
-from layout_types import native_source_type as retained_source_type
+from layout_types import native_source_type
 from nominal_frames import declaration_storage
 
 
@@ -119,32 +119,22 @@ def retain_union(
         _ => pass
 
 
-pub def native_source_type(
-    mut nominals: list[NominalDeclaration],
-    mut enums: list[RustEnumDeclaration],
-    mut unions: list[RustType],
-    ty: &RustType,
-    mut intrinsics: list[EnumDeclaration],
-) -> Result[PlanType, str]:
-    """Resolve an anonymous union to its injected enum slot; all payloads must already be admitted."""
-    return retained_source_type(nominals, enums, unions, ty, intrinsics)
-
-
 pub def union_members(
-    mut nominals: list[NominalDeclaration],
-    mut enums: list[RustEnumDeclaration],
+    nominals: &list[NominalDeclaration],
+    enums: &list[RustEnumDeclaration],
     ty: &RustType,
-    mut intrinsics: list[EnumDeclaration] = [],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[list[PlanType], str]:
     """Normalize by legacy Rust payload spelling, retaining only scalar and previously admitted nominal members."""
     mut members: list[PlanType] = []
     mut keys: list[str] = []
+    unions: list[RustType] = []
     match ty:
         RustType.Generic(base=base, args=args) =>
             if str(base) != "Union":
                 return Err(f"unsupported Body IR union type {ty}")
             for arg in args:
-                member = retained_source_type(nominals, enums, [], arg, intrinsics)?
+                member = native_source_type(nominals, enums, unions, arg, intrinsics)?
                 if member == PlanType.Unit:
                     return Err("unsupported Body IR optional union")
                 mut key = ""
@@ -211,10 +201,11 @@ def union_name(members: list[PlanType]) -> Result[str, str]:
 
 pub def publish_unions(
     module: &BodyIrModule,
-    mut intrinsics: list[EnumDeclaration],
+    intrinsics: &list[EnumDeclaration],
     mut published: list[NativeUnionDeclaration],
 ) -> Result[None, str]:
     """Publish the emitted wrapper and payload order, preserving the checker's semantic carrier and nominal owners."""
+    unions: list[RustType] = []
     for ty in collect_unions(module):
         for index in range(len(intrinsics)):
             declaration = intrinsics[index]
@@ -226,10 +217,10 @@ pub def publish_unions(
                     for variant in declaration.variants:
                         for index in range(len(arguments)):
                             argument = arguments[index]
-                            mut native = retained_source_type(
-                                list(module.nominal_declarations),
-                                list(module.enum_declarations),
-                                [],
+                            mut native = native_source_type(
+                                module.nominal_declarations,
+                                module.enum_declarations,
+                                unions,
                                 argument,
                                 intrinsics,
                             )?
@@ -267,7 +258,7 @@ pub def publish_unions(
 
 pub def require_native_union_signature(
     ty: &RustType,
-    mut intrinsics: list[EnumDeclaration],
+    intrinsics: &list[EnumDeclaration],
     source_carriers: bool = false,
 ) -> Result[None, str]:
     """Require retained union carriers: checked Rust generics admit source carriers; linked Loaves need their owner."""
@@ -294,7 +285,7 @@ pub def lower_union_declaration(
     module: &BodyIrModule,
     ty: &RustType,
     file: str,
-    mut intrinsics: list[EnumDeclaration],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[EnumDeclaration, str]:
     """
     Construct a normalized union only after its nested payload layouts have been retained.
@@ -366,7 +357,7 @@ pub def lower_union_declaration(
 def published_union_members(
     module: &BodyIrModule,
     declaration: &NativeUnionDeclaration,
-    mut intrinsics: list[EnumDeclaration],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[list[PlanType], str]:
     """Validate published payloads against checked semantic members without sorting them or hashing a local name."""
     mut ordered: list[PlanType] = []
@@ -387,16 +378,11 @@ def native_union_payload(
     module: &BodyIrModule,
     declaration: &NativeUnionDeclaration,
     member: &RustType,
-    mut intrinsics: list[EnumDeclaration],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Read checked payload ownership once; the explicit enum Clone keeps the #2256 bootstrap compatible."""
-    payload = retained_source_type(
-        list(module.nominal_declarations),
-        list(module.enum_declarations),
-        [],
-        member,
-        intrinsics,
-    )?
+    unions: list[RustType] = []
+    payload = native_source_type(module.nominal_declarations, module.enum_declarations, unions, member, intrinsics)?
     if member.clone() not in declaration.closure_members:
         return Ok(payload)
     match payload:
@@ -405,10 +391,10 @@ def native_union_payload(
 
 
 def retained_union(
-    mut enums: list[RustEnumDeclaration],
-    mut unions: list[RustType],
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
     owner: int,
-    mut intrinsics: list[EnumDeclaration],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[RustType, str]:
     """Resolve a union by its exact retained layout slot, independently of neighboring Option and Result layouts."""
     index = owner - len(enums)
@@ -421,12 +407,12 @@ def retained_union(
 
 
 pub def union_slot(
-    mut nominals: list[NominalDeclaration],
-    mut enums: list[RustEnumDeclaration],
-    mut unions: list[RustType],
+    nominals: &list[NominalDeclaration],
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
     owner: int,
     member: PlanType,
-    mut intrinsics: list[EnumDeclaration],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[int, str]:
     """Find one exact normalized member; widening and unrepresented narrowing stay refused."""
     slot = union_test_slot(nominals, enums, unions, owner, member, intrinsics)?
@@ -436,12 +422,12 @@ pub def union_slot(
 
 
 pub def union_pattern_slot(
-    mut nominals: list[NominalDeclaration],
-    mut enums: list[RustEnumDeclaration],
-    mut unions: list[RustType],
+    nominals: &list[NominalDeclaration],
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
     owner: int,
     pattern: &RustPattern,
-    mut intrinsics: list[EnumDeclaration],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[int, str]:
     """Dispatch checker-retained member patterns; subset, literal and binding fallback refinements stay refused."""
     match pattern:
@@ -456,12 +442,12 @@ pub def union_pattern_slot(
 
 
 pub def union_test_slot(
-    mut nominals: list[NominalDeclaration],
-    mut enums: list[RustEnumDeclaration],
-    mut unions: list[RustType],
+    nominals: &list[NominalDeclaration],
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
     owner: int,
     member: PlanType,
-    mut intrinsics: list[EnumDeclaration],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[int, str]:
     """A primitive target absent from the union is always false; source enum tests remain refused."""
     _ = retained_union(enums, unions, owner, intrinsics)?
@@ -478,13 +464,13 @@ pub def union_test_slot(
 
 
 pub def carrier_injection(
-    mut nominals: list[NominalDeclaration],
-    mut enums: list[RustEnumDeclaration],
-    mut unions: list[RustType],
+    nominals: &list[NominalDeclaration],
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
     operand: Operand,
     source: PlanType,
     target: PlanType,
-    mut intrinsics: list[EnumDeclaration],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[RvalueKind, str]:
     """Inject an exact checked Option payload or union member at the shared assignment, argument and return boundary."""
     match target:
@@ -506,12 +492,12 @@ pub def carrier_injection(
 
 
 pub def union_test_slots(
-    mut nominals: list[NominalDeclaration],
-    mut enums: list[RustEnumDeclaration],
-    mut unions: list[RustType],
+    nominals: &list[NominalDeclaration],
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
     owner: int,
     member: PlanType,
-    mut intrinsics: list[EnumDeclaration],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[list[int], str]:
     """Match either string identity against both carriers while preserving exact construction and narrowing slots."""
     _ = retained_union(enums, unions, owner, intrinsics)?
@@ -519,7 +505,10 @@ pub def union_test_slots(
     variants = intrinsics[owner - len(enums)].variants
     for slot in range(len(variants)):
         payload = variants[slot].fields
-        same_string_identity = member in [PlanType.String, PlanType.FrozenStr] and payload in [[PlanType.String], [PlanType.FrozenStr]]
+        same_string_identity = member in [PlanType.String, PlanType.FrozenStr] and payload in [
+            [PlanType.String],
+            [PlanType.FrozenStr],
+        ]
         if payload == [member] or same_string_identity:
             slots.append(slot)
     return Ok(slots)

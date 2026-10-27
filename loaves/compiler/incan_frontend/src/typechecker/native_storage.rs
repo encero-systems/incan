@@ -9,7 +9,7 @@ use quote::ToTokens;
 
 use super::TypeChecker;
 use super::type_info::{FunctionBindingInfo, RustCheckedCall, RustCheckedSignature, semantic_type_from_resolved};
-use crate::ast::{Declaration, Program};
+use crate::ast::{Declaration, MethodDecl, Program, Spanned, TypeParam};
 use crate::resolved_type_subst::{map_resolved_type_leaves, substitute_resolved_type, type_param_subst_map};
 use crate::symbols::{ResolvedType, TypeInfo};
 
@@ -88,6 +88,7 @@ impl TypeChecker {
     /// Publish accepted value types in their lexical source binder frame. Dropping the frame turns a parameter
     /// embedded in a native display into a nominal name and can contradict the same call's checked signature.
     fn freeze_value_storage(&self, program: &Program, storage: &mut HashMap<IncanType, IncanType>) {
+        let frames = StorageFrames::new(program);
         let expressions = &self.type_info.expressions;
         for (span, ty) in expressions
             .expr_types
@@ -98,11 +99,11 @@ impl TypeChecker {
             .chain(&self.type_info.calls.inferred_call_result_types)
             .chain(&self.type_info.calls.body_ir_constructor_types)
         {
-            let parameters = source_storage_parameters(program, *span);
+            let parameters = frames.parameters(*span);
             self.rust_call_storage_type(ty, &parameters, storage, &mut BTreeMap::new());
         }
         for ((span, _), ty) in &self.type_info.references.resolved_write_types {
-            let parameters = source_storage_parameters(program, *span);
+            let parameters = frames.parameters(*span);
             self.rust_call_storage_type(ty, &parameters, storage, &mut BTreeMap::new());
         }
         for (identity, ty) in expressions
@@ -110,7 +111,7 @@ impl TypeChecker {
             .iter()
             .chain(&self.type_info.rust.value_native_types)
         {
-            let parameters = source_storage_parameters(program, identity.declaration_span);
+            let parameters = frames.parameters(identity.declaration_span);
             self.rust_call_storage_type(ty, &parameters, storage, &mut BTreeMap::new());
         }
     }
@@ -592,23 +593,51 @@ impl TypeChecker {
     }
 }
 
-/// Select the innermost declaration's source binders by its checked fact's provenance span. Syntax contributes only
-/// binder roles; native types and declaration identities still come from the accepting checker's retained facts.
-fn source_storage_parameters(program: &Program, span: crate::ast::Span) -> Vec<String> {
-    for declaration in &program.declarations {
-        if span.start < declaration.span.start || span.end > declaration.span.end {
-            continue;
-        }
-        let (parameters, methods) = match &declaration.node {
-            Declaration::Model(owner) => (&owner.type_params, owner.methods.as_slice()),
-            Declaration::Class(owner) => (&owner.type_params, owner.methods.as_slice()),
-            Declaration::Enum(owner) => (&owner.type_params, owner.methods.as_slice()),
-            Declaration::Trait(owner) => (&owner.type_params, owner.methods.as_slice()),
-            Declaration::Newtype(owner) => (&owner.type_params, owner.methods.as_slice()),
-            Declaration::Function(owner) => (&owner.type_params, &[][..]),
-            Declaration::TypeAlias(owner) => (&owner.type_params, &[][..]),
-            _ => continue,
+/// The binder frames of one program's top-level declarations, in source order, collected once per publication.
+///
+/// A checked fact's provenance span selects its declaration's source binders. Syntax contributes only binder roles;
+/// native types and declaration identities still come from the accepting checker's retained facts.
+struct StorageFrames<'a> {
+    /// Each binder-owning declaration's span, type parameters and methods; top-level declarations do not overlap.
+    declarations: Vec<(crate::ast::Span, &'a [TypeParam], &'a [Spanned<MethodDecl>])>,
+}
+
+impl<'a> StorageFrames<'a> {
+    /// Collect the binder-owning declarations of `program` in source order.
+    fn new(program: &'a Program) -> Self {
+        let declarations = program
+            .declarations
+            .iter()
+            .filter_map(|declaration| {
+                let (parameters, methods) = match &declaration.node {
+                    Declaration::Model(owner) => (owner.type_params.as_slice(), owner.methods.as_slice()),
+                    Declaration::Class(owner) => (owner.type_params.as_slice(), owner.methods.as_slice()),
+                    Declaration::Enum(owner) => (owner.type_params.as_slice(), owner.methods.as_slice()),
+                    Declaration::Trait(owner) => (owner.type_params.as_slice(), owner.methods.as_slice()),
+                    Declaration::Newtype(owner) => (owner.type_params.as_slice(), owner.methods.as_slice()),
+                    Declaration::Function(owner) => (owner.type_params.as_slice(), &[][..]),
+                    Declaration::TypeAlias(owner) => (owner.type_params.as_slice(), &[][..]),
+                    _ => return None,
+                };
+                Some((declaration.span, parameters, methods))
+            })
+            .collect();
+        Self { declarations }
+    }
+
+    /// The type parameter names in scope at `span`: its declaration's, then its method's.
+    fn parameters(&self, span: crate::ast::Span) -> Vec<String> {
+        let index = self
+            .declarations
+            .partition_point(|(declaration, _, _)| declaration.start <= span.start);
+        let Some((declaration, parameters, methods)) =
+            index.checked_sub(1).and_then(|index| self.declarations.get(index))
+        else {
+            return Vec::new();
         };
+        if span.end > declaration.end {
+            return Vec::new();
+        }
         let mut names = parameters
             .iter()
             .map(|parameter| parameter.name.clone())
@@ -619,9 +648,8 @@ fn source_storage_parameters(program: &Program, span: crate::ast::Span) -> Vec<S
         {
             names.extend(method.node.type_params.iter().map(|parameter| parameter.name.clone()));
         }
-        return names;
+        names
     }
-    Vec::new()
 }
 
 impl TypeChecker {

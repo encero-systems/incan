@@ -61,8 +61,10 @@ pub(super) fn retain(module: &mut bir::BodyIrModule) {
     }
 }
 
-/// Match the source provider's declaration identity before reading any adapter-specific fields.
-fn registered_owner(identity: &CanonicalSymbolId, specification: &PrimitiveSourceAdapterInfo) -> bool {
+/// Match the source provider's declaration identity before reading any adapter-specific fields: a checked public
+/// model at the registry's declaring location. Aliases preserve that same identity. Dependency discovery in
+/// `primitive_adapter_requirements` applies the same test.
+pub(super) fn registered_owner(identity: &CanonicalSymbolId, specification: &PrimitiveSourceAdapterInfo) -> bool {
     identity.kind == SemanticSourceTargetKind::Model
         && matches!(&identity.origin, SymbolOrigin::Package { library, module_path }
             if specification.matches_owner(library, module_path, &identity.declaration_name))

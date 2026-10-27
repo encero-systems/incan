@@ -22,7 +22,7 @@ incan build examples/web/hello_web.incn
 incan run examples/web/hello_web.incn
 ```
 
-The tested dev.8 installation refuses this example during native compilation at a nonlocal model constructor. No server starts. The source illustrates route and response contracts; runtime validation requires a successful build before requests to `127.0.0.1:8080` can succeed.
+The server listens on `127.0.0.1:8080`; [Build a typed API](build_your_first_api.md) requests each of its routes.
 
 ## Routes
 

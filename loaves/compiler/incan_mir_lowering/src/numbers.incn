@@ -1,20 +1,25 @@
 """Native numeric admission from retained operand representations."""
 
 from rust::incan_semantics_core import IncanType as RustType
-from rust::incan_semantics_core::body_ir import Operand as RustOperand, Constant as RustConstant, NominalDeclaration, EnumDeclaration as RustEnumDeclaration
+from rust::incan_semantics_core::body_ir import (
+    Operand as RustOperand,
+    Constant as RustConstant,
+    NominalDeclaration,
+    EnumDeclaration as RustEnumDeclaration,
+)
 from pub::incan_mir_plan import Local, PlanType, SourceSpan, EnumDeclaration
 from models import model_place, place_type
 from numerics import is_float_constant
 
 
 pub def float_operand(
-    mut declarations: list[NominalDeclaration],
-    mut locals: list[Local],
+    declarations: &list[NominalDeclaration],
+    locals: &list[Local],
     value: &RustOperand,
     span: SourceSpan,
-    mut enums: list[RustEnumDeclaration],
-    mut unions: list[RustType],
-    mut intrinsics: list[EnumDeclaration],
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[bool, str]:
     """Borrow layout tables to require a retained float representation; integer true-division coercions remain outside this slice."""
     match value:

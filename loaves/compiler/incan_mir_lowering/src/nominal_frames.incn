@@ -1,6 +1,10 @@
 """Checked callable frames that contribute nominal layouts without adding executable bodies."""
 
-from rust::incan_semantics_core import CanonicalSymbolId as RustCanonicalSymbolId, IncanType as RustType, SemanticSourceTargetKind
+from rust::incan_semantics_core import (
+    CanonicalSymbolId as RustCanonicalSymbolId,
+    IncanType as RustType,
+    SemanticSourceTargetKind,
+)
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
     Body,
@@ -16,7 +20,8 @@ from rust::incan_semantics_core::body_ir import (
     Operand,
     Constant,
 )
-from type_parameters import substitute, instantiate, static_type_arguments
+from type_parameters import substitute, instantiate, static_type_arguments, UNBOUND_TYPE_PARAMETER
+from table_views import borrowed_at
 
 
 pub model SelectedMember:
@@ -54,13 +59,11 @@ def collect_member_statement(body: &Body, kind: &StatementKind, mut selected: li
                 Some(nested) => collect_member_block(body, nested, selected)
                 None => pass
         StatementKind.Loop(body=nested) => collect_member_block(body, nested, selected)
-        StatementKind.UnsafeRegion(acknowledgment=_receipt, body=nested) =>
-            collect_member_block(body, nested, selected)
+        StatementKind.UnsafeRegion(acknowledgment=_receipt, body=nested) => collect_member_block(body, nested, selected)
         StatementKind.Race(destination=_destination, arms=arms) =>
             for arm in arms:
                 collect_member_block(body, arm.body, selected)
-        StatementKind.Assign(place=_place, rvalue=value) =>
-            collect_member_value(body, value, selected)
+        StatementKind.Assign(place=_place, rvalue=value) => collect_member_value(body, value, selected)
         _ => pass
 
 
@@ -135,7 +138,8 @@ model ScheduledFrame:
 pub def declaration_storage(module: &BodyIrModule) -> list[RustType]:
     """Project frozen return, parameter and local types from imported default frames, without copying or scheduling their implementation bodies."""
     mut types: list[RustType] = []
-    for callable in module.loaf_callables:
+    for callable_position in range(len(module.loaf_callables)):
+        callable = borrowed_at(module.loaf_callables, callable_position)
         match callable.declaration_frame():
             None => pass
             Some(body) =>
@@ -151,7 +155,8 @@ pub def nominal_frames(module: &BodyIrModule) -> Result[list[Body], str]:
     """Inventory function, method, computed-static and closed source-call frames without granting execution or altering module bodies."""
     mut frames: list[Body] = []
     mut pending: list[ScheduledFrame] = []
-    for body in module.bodies:
+    for body_position in range(len(module.bodies)):
+        body = borrowed_at(module.bodies, body_position)
         frames.append(body.clone())
         if len(body.type_parameters) == 0:
             schedule_block(module, body.block, [], [], pending, [])?
@@ -166,13 +171,14 @@ pub def nominal_frames(module: &BodyIrModule) -> Result[list[Body], str]:
         request = pending[cursor]
         cursor += 1
         # This inventory closes layout types only; executable callable ownership is selected by call lowering. A method
-        # or property whose owner placeholders the recorded arguments leave open grants no layout.
+        # or property whose owner placeholders the recorded arguments leave open grants no layout; every other
+        # instantiation failure is refused.
         match instantiate(request.body, request.arguments, []):
-            Err(error) =>
-                if not owner_dependent(request.body):
-                    return Err(error)
-                continue
             Ok(frame) => frames.append(frame.clone())
+            Err(error) =>
+                if owner_dependent(request.body) and leaves_placeholder_open(error):
+                    continue
+                return Err(error)
         match request.body.canonical:
             Some(identity) =>
                 ancestry = request.ancestors + [identity.render_compact()]
@@ -193,6 +199,11 @@ def owner_dependent(body: &Body) -> bool:
     match body.canonical:
         Some(identity) => return identity.kind != SemanticSourceTargetKind.Function
         None => return false
+
+
+def leaves_placeholder_open(error: str) -> bool:
+    """Whether an instantiation failed only because a placeholder outside the frame's own binders stayed open."""
+    return error.startswith(UNBOUND_TYPE_PARAMETER)
 
 
 def append_static_frame(mut frames: list[Body], body: &Body) -> None:
@@ -230,15 +241,7 @@ def schedule_statement(
                     match callable:
                         CallableTarget.Named(target) =>
                             call_arguments = static_type_arguments(module, target)?
-                            schedule_call(
-                                module,
-                                target.canonical,
-                                call_arguments,
-                                names,
-                                arguments,
-                                pending,
-                                ancestors,
-                            )?
+                            schedule_call(module, target.canonical, call_arguments, names, arguments, pending, ancestors)?
                         _ => pass
                 Callee.Method(target) => schedule_call(
                     module,
@@ -321,7 +324,11 @@ def schedule_call(
     match canonical:
         None => return Ok(None)
         Some(identity) =>
-            if identity.kind != SemanticSourceTargetKind.Function and identity.kind != SemanticSourceTargetKind.Method and identity.kind != SemanticSourceTargetKind.Property:
+            if (
+                identity.kind != SemanticSourceTargetKind.Function
+                and identity.kind != SemanticSourceTargetKind.Method
+                and identity.kind != SemanticSourceTargetKind.Property
+            ):
                 return Ok(None)
             if identity.render_compact() in ancestors:
                 return Ok(None)
@@ -385,7 +392,8 @@ def checked_callable_body(module: &BodyIrModule, identity: &RustCanonicalSymbolI
     """Resolve an admitted identity across retained bodies. Owner-dependent method copies grant no frame without an exact receiver selection."""
     mut selected: Option[Body] = None
     canonical = Some(identity.clone())
-    for body in module.bodies:
+    for body_position in range(len(module.bodies)):
+        body = borrowed_at(module.bodies, body_position)
         if body.canonical != canonical:
             continue
         match selected:
@@ -393,6 +401,5 @@ def checked_callable_body(module: &BodyIrModule, identity: &RustCanonicalSymbolI
                 if identity.kind == SemanticSourceTargetKind.Function:
                     return Err("unsupported Body IR ambiguous canonical nominal frame")
                 return Ok(None)
-            None =>
-                selected = Some(body.clone())
+            None => selected = Some(body.clone())
     return Ok(selected)

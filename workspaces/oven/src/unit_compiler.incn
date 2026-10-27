@@ -2,11 +2,11 @@
 
 from rust::std::process import Command, Stdio
 from std.fs import Path
-from apple_sdk import configure_sdk
+from driver_command import driver_command
 from codegen import driver_arguments
 from compiler_refusals import compile_or_replay
 from compiler_worker import compile_resident, served_resident
-from files import open_stream
+from files import open_stream, read
 from observation import trace_boundary
 from publication import publish
 from shared_link import shared_arguments
@@ -108,7 +108,7 @@ def description_current(path: Path, witness: Path, described: str) -> bool:
 def verified_description(path: Path, witness: Path, described: str) -> Result[bool, str]:
     """Bracket the exact witness read with complete file observations before retaining the existing generation."""
     stamp = artifact_identity(path)?
-    text = witness.read_text("utf-8", "strict").map_err((error) => error.message())?
+    text = read(witness)?
     if text != description_witness(described, stamp):
         return Ok(false)
     return Ok(artifact_identity(path)? == stamp)
@@ -133,11 +133,9 @@ pub def run_compiler(toolchain: Toolchain, arguments: list[str]) -> Result[i32, 
             Some(code) => return Ok(code)
             None => pass
     # 2. The cold process retains SDK selection and the owner's explicit console sinks.
-    mut command = Command.new(toolchain.driver)
-    configure_sdk(command, toolchain.sysroot)?
+    mut command = driver_command(toolchain)?
     for argument in arguments:
         command.arg(argument)
-    command.env_remove("RUSTC_BOOTSTRAP")
     # Project owners retain the original bytes in their request-local stream files.
     if toolchain.console != "":
         command.stdout(Stdio.from(open_stream(f"{toolchain.console}.out")?))

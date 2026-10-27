@@ -64,10 +64,10 @@ impl TypeChecker {
         };
 
         // ---- Exact and unambiguous From implementation ----
-        let identity = self.rust_trait_definition_path("std::convert::From");
+        let identity = self.rust_trait_identity("std::convert::From");
         let mut selected: Option<crate::typechecker::RustCheckedCall> = None;
         for implementation in &info.implemented_traits {
-            if incan_lang::interop::ancestral_rust_path(&implementation.path) != identity {
+            if self.rust_trait_identity(&implementation.path) != identity {
                 continue;
             }
             let Some(candidate) = self.retained_trait_candidate(implementation, &call, target, info) else {
@@ -313,12 +313,8 @@ impl TypeChecker {
             other => other,
         };
         let name = self.active_type_param_name(owner)?;
-        let bounds = self
-            .current_type_param_bound_details
-            .iter()
-            .rev()
-            .find_map(|frame| frame.get(name))?;
-        let identity = self.rust_trait_definition_path(call.rust_path);
+        let bounds = self.innermost_type_param_bounds(name)?;
+        let identity = self.rust_trait_identity(call.rust_path);
         let admitted = bounds.iter().any(|bound| {
             if !bound.type_args.is_empty() {
                 return false;
@@ -335,7 +331,7 @@ impl TypeChecker {
                 &item.path
             };
             self.rust_item_metadata_for_path(path).is_some_and(|metadata| {
-                matches!(metadata.kind, RustItemKind::Trait(_)) && self.rust_trait_definition_path(path) == identity
+                matches!(metadata.kind, RustItemKind::Trait(_)) && self.rust_trait_identity(path) == identity
             })
         });
         if !admitted {
@@ -432,7 +428,7 @@ impl TypeChecker {
             span: expression.span,
         };
         let mut candidates = self.retained_rust_trait_candidates(&call, info, owner, Some(trait_path), true);
-        if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
+        if crate::trace_flags::trace_rust_facts() {
             eprintln!(
                 "native iteration: {owner:?}, {trait_path}::{method}, candidates {:?}",
                 candidates
@@ -463,10 +459,7 @@ impl TypeChecker {
             receiver_adjustments: Vec::new(),
             path: selected.path,
             type_arguments: selected.arguments,
-            parameters: vec![Self::checked_rust_receiver_parameter(
-                &selected.signature,
-                &selected.self_type,
-            )?],
+            parameters: vec![self.checked_rust_receiver_parameter(&selected.signature, &selected.self_type)?],
             return_type: self.native_rust_signature_type(&selected.signature.return_type, &path),
             result_item_path: self.rust_result_item_path(&selected.signature.return_type, &path),
             has_receiver: true,
@@ -500,27 +493,23 @@ impl TypeChecker {
         };
         let name = self.generic_placeholder_name(referent)?;
         let source = ResolvedType::TypeVar(name.to_owned());
+        let identity = self.rust_trait_identity(call.rust_path);
         let mut selected = None;
-        for frame in self.current_type_param_bound_details.iter().rev() {
-            for bound in frame.get(name).into_iter().flatten() {
-                let path = if bound.name.contains("::") {
-                    Some(bound.name.trim_start_matches("::").to_owned())
-                } else {
-                    self.rust_canonical_path_for_receiver_type(&ResolvedType::Named(bound.name.clone()))
-                };
-                if path.as_deref().is_none_or(|path| {
-                    incan_lang::interop::ancestral_rust_path(path)
-                        != incan_lang::interop::ancestral_rust_path(call.rust_path)
-                }) {
-                    continue;
-                }
-                if bound.type_args.len() != call.trait_info.type_params.len()
-                    || selected.as_ref().is_some_and(|previous| previous != &bound.type_args)
-                {
-                    return None;
-                }
-                selected = Some(bound.type_args.clone());
+        for bound in self.innermost_type_param_bounds(name)? {
+            let path = if bound.name.contains("::") {
+                Some(bound.name.trim_start_matches("::").to_owned())
+            } else {
+                self.rust_canonical_path_for_receiver_type(&ResolvedType::Named(bound.name.clone()))
+            };
+            if path.is_none_or(|path| self.rust_trait_identity(&path) != identity) {
+                continue;
             }
+            if bound.type_args.len() != call.trait_info.type_params.len()
+                || selected.as_ref().is_some_and(|previous| previous != &bound.type_args)
+            {
+                return None;
+            }
+            selected = Some(bound.type_args.clone());
         }
         let arguments = selected?;
         let substitutions = call
@@ -854,14 +843,7 @@ impl TypeChecker {
     ) {
         for _ in 0..implementation.type_params.len() {
             for bound in &implementation.bounds {
-                let Some(name) = bound
-                    .path
-                    .strip_prefix("std::ops::")
-                    .or_else(|| bound.path.strip_prefix("core::ops::"))
-                else {
-                    continue;
-                };
-                if !incan_lang::interop::is_rust_callable_capability_bound(name) {
+                if incan_lang::interop::rust_callable_trait(&bound.path).is_none() {
                     continue;
                 }
                 let owner = self.native_rust_signature_type(&bound.self_type, "");
@@ -897,6 +879,7 @@ impl TypeChecker {
         let RustItemKind::Type(info) = &metadata.kind else {
             return;
         };
+        let mut earlier = Vec::new();
         for (index, argument) in arguments
             .iter()
             .filter(|argument| !Self::rust_generic_arg_is_lifetime(argument))
@@ -904,10 +887,15 @@ impl TypeChecker {
         {
             if implementation.type_params.iter().any(|name| name == argument)
                 && !bindings.contains_key(*argument)
-                && let Some(default) = info.type_param_defaults.get(index).and_then(Option::as_deref)
+                && let Some(default) = self.owner_default(info, index, &earlier, base)
             {
-                bindings.insert((*argument).to_owned(), self.native_rust_signature_type(default, base));
+                bindings.insert((*argument).to_owned(), default);
             }
+            let closed = bindings
+                .get(*argument)
+                .cloned()
+                .unwrap_or_else(|| self.native_rust_signature_type(argument, base));
+            earlier.push(closed);
         }
     }
 
@@ -1000,16 +988,10 @@ impl TypeChecker {
         path: &str,
     ) -> Vec<ResolvedType> {
         while let Some(index) = arguments.len().checked_sub(1) {
-            let Some(default) = info.type_param_defaults.get(index).and_then(Option::as_deref) else {
+            let Some(default) = self.owner_default(info, index, &arguments[..index], path) else {
                 break;
             };
-            let displays = arguments[..index]
-                .iter()
-                .map(render_resolved_type_as_rust_arg)
-                .collect::<Vec<_>>();
-            let displays = displays.iter().map(String::as_str).collect::<Vec<_>>();
-            let default = Self::substitute_rust_display_params(default, &info.type_params[..index], &displays);
-            if !self.rust_trait_carriers_match(&arguments[index], &self.native_rust_signature_type(&default, path)) {
+            if !self.rust_trait_carriers_match(&arguments[index], &default) {
                 break;
             }
             arguments.pop();
@@ -1308,7 +1290,7 @@ impl TypeChecker {
                 .insert(call.span, explicit);
         }
         let mut candidates = self.retained_rust_trait_candidates(&call, info, owner, trait_path, false);
-        if std::env::var_os("INCAN_TRACE_RUST_FACTS").is_some() {
+        if crate::trace_flags::trace_rust_facts() {
             eprintln!(
                 "rust trait call: {}.{} owner {owner:?}, {} impls, candidates {:?}",
                 call.rust_path,
@@ -1388,7 +1370,7 @@ impl TypeChecker {
         filter_callable_bounds: bool,
     ) -> Vec<TraitCandidate> {
         let mut candidates = Vec::new();
-        let selected = trait_path.map(|path| self.rust_trait_definition_path(path));
+        let selected = trait_path.map(|path| self.rust_trait_identity(path));
         let imported = self.rust_imported_trait_templates(info, trait_path);
         let mut current = source;
         loop {
@@ -1401,7 +1383,7 @@ impl TypeChecker {
             {
                 if selected
                     .as_ref()
-                    .is_some_and(|path| *path != incan_lang::interop::ancestral_rust_path(&implementation.path))
+                    .is_some_and(|path| *path != self.rust_trait_identity(&implementation.path))
                 {
                     continue;
                 }
@@ -1413,7 +1395,7 @@ impl TypeChecker {
                 };
                 if Self::rust_signature_has_receiver(&candidate.signature) {
                     let Some(receiver) =
-                        Self::checked_rust_receiver_parameter(&candidate.signature, &candidate.self_type)
+                        self.checked_rust_receiver_parameter(&candidate.signature, &candidate.self_type)
                     else {
                         continue;
                     };
@@ -1431,9 +1413,10 @@ impl TypeChecker {
         candidates
     }
 
-    /// Resolve an explicitly selected trait's retained definition identity before comparing impl references. Public
-    /// re-exports may differ between crates, but the extractor records one definition path for their shared trait.
-    fn rust_trait_definition_path(&self, path: &str) -> String {
+    /// Return the one identity two Rust trait paths are compared by: the definition path the extractor retained, else
+    /// the canonical path, else `path` itself, normalized through `ancestral_rust_path`. A facade re-export and the
+    /// trait's definition therefore agree. Every trait comparison applies this to both of its sides.
+    pub(in crate::typechecker) fn rust_trait_identity(&self, path: &str) -> String {
         let metadata = self.rust_item_metadata_for_path(path);
         let definition = metadata
             .as_deref()
@@ -1446,16 +1429,14 @@ impl TypeChecker {
     /// Existing owner facts retain priority; importing a trait never rewrites the cached native type's answer.
     fn rust_imported_trait_templates(&self, info: &RustTypeInfo, selected: Option<&str>) -> Vec<RustImplementedTrait> {
         let mut templates = Vec::new();
-        let selected = selected.map(|path| self.rust_trait_definition_path(path));
+        let selected = selected.map(|path| self.rust_trait_identity(path));
         for import in self.type_info.rust.trait_imports.values() {
-            let identity = incan_lang::interop::ancestral_rust_path(
-                import.definition_path.as_deref().unwrap_or(&import.trait_path),
-            );
+            let identity = self.rust_trait_identity(import.definition_path.as_deref().unwrap_or(&import.trait_path));
             if selected.as_ref().is_some_and(|selected| *selected != identity)
                 || info
                     .implemented_traits
                     .iter()
-                    .any(|implementation| incan_lang::interop::ancestral_rust_path(&implementation.path) == identity)
+                    .any(|implementation| self.rust_trait_identity(&implementation.path) == identity)
             {
                 continue;
             }
@@ -1516,9 +1497,7 @@ impl TypeChecker {
                 return false;
             };
             if matches!(metadata.kind, RustItemKind::Trait(_)) {
-                if incan_lang::interop::ancestral_rust_path(&metadata.canonical_path)
-                    != incan_lang::interop::ancestral_rust_path(&required_path)
-                {
+                if self.rust_trait_identity(&metadata.canonical_path) != self.rust_trait_identity(&required_path) {
                     return false;
                 }
                 continue;
@@ -1527,13 +1506,13 @@ impl TypeChecker {
                 return false;
             };
             let actual = self.rust_closed_owner(&actual, &info, &path);
-            let identity = incan_lang::interop::ancestral_rust_path(&bound.path);
+            let identity = self.rust_trait_identity(&bound.path);
             if !info
                 .implemented_traits
                 .iter()
                 .chain(required.implementations.iter())
                 .any(|candidate| {
-                    incan_lang::interop::ancestral_rust_path(&candidate.path) == identity
+                    self.rust_trait_identity(&candidate.path) == identity
                         && self.rust_impl_self_bindings(candidate, &actual).is_some()
                 })
             {
@@ -1586,7 +1565,7 @@ impl TypeChecker {
         if has_receiver {
             parameters.insert(
                 0,
-                Self::checked_rust_receiver_parameter(&selected.signature, &selected.self_type)?,
+                self.checked_rust_receiver_parameter(&selected.signature, &selected.self_type)?,
             );
         }
         self.type_info.rust.checked_calls.insert(

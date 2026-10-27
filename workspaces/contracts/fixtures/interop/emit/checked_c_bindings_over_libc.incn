@@ -1,4 +1,4 @@
-# behavior: checked C bindings preserve scalar carriers, initialized output slots and bounded UTF-8 text
+# behavior: checked C bindings preserve scalar carriers, initialized output slots and bounded UTF-8 text, and a bounded copy refuses a nonpositive bound with its own message (incan-4.10)
 # expect-stdout:
 #   5
 #   7
@@ -9,6 +9,7 @@
 #   65
 #   0 5
 #   true true true
+#   max_bytes is not a valid bound
 
 from std.interop import c
 
@@ -109,6 +110,7 @@ def main() -> None:
     2. Check valid text and text containing an actual NUL byte.
     3. Copy a bounded returned C string view.
     4. Check conditional output initialization, empty and UTF-8 inputs, and refused scan bounds.
+    5. Refuse a nonpositive bound with its own reason.
     """
     # 1. Scalar carriers and the initialized output slot keep their declared types.
     println(absolute(-5))
@@ -134,3 +136,7 @@ def main() -> None:
     encoded = string_length("café").unwrap_or(99usize)
     println(f"{empty} {encoded}")
     println(f"{refused_bound(1)} {refused_bound(0)} {refused_bound(-1)}")
+    # 5. A nonpositive bound is refused before any read, with its own reason.
+    match error_text(0, 0):
+        Ok(text) => println(text)
+        Err(error) => println(error)

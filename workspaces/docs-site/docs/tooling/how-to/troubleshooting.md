@@ -2,7 +2,7 @@
 
 ## Verify the executable
 
-Run `incan --version`. This guide describes `0.6.0-dev.8`; the 0.5 CLI has different commands and flags. Dev.8 has no `--help` command. The [CLI reference](../reference/cli_reference.md) lists accepted signatures.
+Run `incan --version`. This guide describes `0.6.0-dev.8`; the 0.5 CLI has different commands and flags. `incan --help` lists the command synopses, and `incan COMMAND --help` prints one command's options. The [CLI reference](../reference/cli_reference.md) lists accepted signatures.
 
 ## Supply a source path
 

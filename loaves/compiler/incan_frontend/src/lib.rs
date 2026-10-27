@@ -41,6 +41,7 @@ pub mod serde_usage;
 pub mod surface_semantics;
 pub mod symbols;
 pub mod testing_markers;
+pub mod trace_flags;
 pub mod typechecker;
 pub mod vocab_ast_bridge;
 pub mod vocab_desugar_pass;

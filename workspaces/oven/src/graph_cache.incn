@@ -1,11 +1,12 @@
 """Content-addressed inspection entries under the owning project's target directory."""
 
-from rust::std::process import Command
 from rust::std::string import String as RustString
 from std.fs import Path
 from files import make_directory, read
 from home import home
-from observation import Ledger, SETTLE_SECONDS, load_ledger, trace
+from driver_command import driver_command
+from toolchain import Toolchain
+from observation import Ledger, SETTLE_SECONDS, load_ledger, skipped_directory, trace
 from publication import publish
 from unit_freshness import fingerprint
 
@@ -76,12 +77,11 @@ pub def stamp_file(unit: GraphUnit) -> Path:
     return unchecked_marker(unit.path)
 
 
-pub def read_graph(unit: GraphUnit, driver: str, group: str, fields: str = "") -> Result[str, str]:
+pub def read_graph(unit: GraphUnit, toolchain: Toolchain, group: str, fields: str = "") -> Result[str, str]:
     """Decode indexed records with an optional field projection; only storage runs, never checking or codegen."""
     if not unit.path.is_file() and is_unchecked(unit.path):
         return Ok("")
-    mut command = Command.new(driver)
-    command.env_remove("RUSTC_BOOTSTRAP")
+    mut command = driver_command(toolchain)?
     for argument in ["--read-codegraph", unit.path.0, unit.root.0, group]:
         command.arg(argument)
     if fields != "":
@@ -100,7 +100,8 @@ pub def output_text(content: bytes) -> Result[str, str]:
 
 
 pub def tree_inputs(root: Path) -> Result[list[str], str]:
-    """Return the existing ordered content keys, including manifests and assets, excluding build outputs.
+    """
+    Return the existing ordered content keys, including manifests and assets, excluding build outputs.
 
     1. Load observations under this consumer's home, even for a source tree outside its project.
     2. Read directory entries and reconcile file digests in their original traversal order.
@@ -136,7 +137,7 @@ def observed_tree(root: Path, mut ledger: Ledger) -> Result[list[str], str]:
     mut by_name: Dict[str, Path] = {}
     for entry in root.iterdir().map_err((error) => f"{root.0}: {error.message()}")?:
         name = entry.name()
-        if name.startswith(".") or name == "target" or name == "node_modules":
+        if skipped_directory(name):
             continue
         by_name[name] = entry
     mut inputs: list[str] = []

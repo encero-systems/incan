@@ -16,7 +16,7 @@ from std.vocab import DesugarRequest, DesugarResponse, DesugarOutput, DesugarErr
 
 The field tables below give every model's public fields and Incan constructor defaults. A field without a default is required. Wire decoding also validates the response shape and can refuse omitted fields. Builder methods return the model named by their section; `Self` denotes that type. List-appending builders preserve argument order. Factory spellings must contain at least one whitespace-separated token.
 
-Registration models expose `to_json(self) -> JsonValue`, except `VocabRegistration`, which exposes `metadata(self) -> JsonValue`. `KeywordActivation`, `KeywordPlacement`, `ClausePlacement`, `ScopedSurfaceSyntax`, `TypeRef` and `CargoDependencySource` also expose `to_json(self) -> JsonValue`. String-valued descriptor enums expose `value(self) -> str`. The syntax models and syntax enums expose `to_json(self) -> str` and `from_json(source: str) -> Result[Self, str]`; decoding failure returns an error string. `Span` is a syntax model. `ScopedSurfaceReceiver` exposes these syntax serialization methods and a separate `descriptor_json(self) -> JsonValue`.
+Registration models expose `to_json(self) -> JsonValue`, except `VocabRegistration`, which exposes `metadata(self) -> JsonValue`. `KeywordActivation`, `KeywordPlacement`, `ClausePlacement`, `ScopedSurfaceSyntax` and `TypeRef` also expose `to_json(self) -> JsonValue`. String-valued descriptor enums expose `value(self) -> str`; `EmbeddedFragmentSubmode` also exposes the syntax serialization methods below. The syntax models and syntax enums expose `to_json(self) -> str` and `from_json(source: str) -> Result[Self, str]`; decoding failure returns an error string. `Span` is a syntax model. `ScopedSurfaceReceiver` exposes these syntax serialization methods and a separate `descriptor_json(self) -> JsonValue`.
 
 ## Registration
 
@@ -48,8 +48,8 @@ Fields: `activation: KeywordActivation = KeywordActivation.Always`, `declaration
 | Method | Return | Behavior |
 | --- | --- | --- |
 | `new(activation: KeywordActivation)` | `Self` | Empty surface with explicit activation. |
-| `on_import(namespace: str)` | `Self` | Activate on import of the namespace. |
-| `always_on()` | `Self` | Always-active surface in the loaded descriptor set. |
+| `on_import(namespace: str)` | `Self` | Activate at an import of `namespace` or of a namespace that encloses it. |
+| `always_on()` | `Self` | Active from the first line of every module of a consumer that loads the descriptors, without an import. |
 | `with_declaration(self, declaration: DeclarationSurface)` | `Self` | Append one declaration. |
 | `with_declarations(self, declarations: list[DeclarationSurface])` | `Self` | Append declarations. |
 | `with_embedded_fragment(self, fragment: EmbeddedFragmentDescriptor)` | `Self` | Append an owned fragment descriptor. |
@@ -94,7 +94,7 @@ Fields: `activation: KeywordActivation = KeywordActivation.Always`, `declaration
 | `with_declarations(self, declarations: list[DeclarationSurface])` | `Self` | Append declarations restricted to this parent. |
 | `keywords(self)` | `list[KeywordSpec]` | Derive declaration, clause and nested declaration keywords. |
 
-Signature-head and decorated declaration input is refused. Selecting a descriptor does not change the accepted request shapes.
+A native request for a declaration with a signature head or decorators is refused. In native requests, `head.parameters` is empty, `head.return_type` is `None`, and clause bodies are `Empty`, `Expression`, `ExpressionList` or `Items`.
 
 ### `ClauseSurface`
 
@@ -102,10 +102,10 @@ Fields: required `keyword: str`; `compound_tokens: list[str] = []`; `body_kind: 
 
 | Method | Return | Behavior |
 | --- | --- | --- |
-| `new(keyword: str, body_kind: ClauseBodyKind)` | `Self` | Explicit keyword and payload. |
+| `new(keyword: str, body_kind: ClauseBodyKind)` | `Self` | Explicit keyword and payload; an `ExpressionList` payload starts with the `as` alias modifier. |
 | `from_spelling(spelling: str, body_kind: ClauseBodyKind)` | `Self` | Split first token and compound tail. |
 | `expr(spelling: str)` | `Self` | Expression payload. |
-| `expr_list(spelling: str)` | `Self` | Expression-list payload. |
+| `expr_list(spelling: str)` | `Self` | Expression-list payload with the `as` alias modifier. |
 | `fields(spelling: str)` | `Self` | Field-set payload. |
 | `type_ref(spelling: str)` | `Self` | Type payload. |
 | `nested_items(spelling: str)` | `Self` | Nested-item payload. |
@@ -115,8 +115,8 @@ Fields: required `keyword: str`; `compound_tokens: list[str] = []`; `body_kind: 
 | `before(self, other: str)` | `Self` | Set relative ordering. |
 | `after(self, other: str)` | `Self` | Set relative ordering. |
 | `with_compound_tokens(self, tokens: list[str])` | `Self` | Replace compound tail. |
-| `with_expression_item_modifier(self, modifier: ExpressionItemModifierSurface)` | `Self` | Append one item modifier. |
-| `with_expression_item_modifiers(self, modifiers: list[ExpressionItemModifierSurface])` | `Self` | Append item modifiers. |
+| `with_expression_item_modifier(self, modifier: ExpressionItemModifierSurface)` | `Self` | Append one item modifier unless one with the same keyword is present. |
+| `with_expression_item_modifiers(self, modifiers: list[ExpressionItemModifierSurface])` | `Self` | Append item modifiers, keeping the first for each keyword. |
 
 `ExpressionItemModifierSurface` has `keyword: str` and `kind: ExpressionItemModifierKind = ExpressionItemModifierKind.Alias`. Its factories `alias(keyword: str) -> Self` and `expr(keyword: str) -> Self` select an identifier alias or expression payload.
 
@@ -154,7 +154,7 @@ Fields: required `key: str`, `syntax: ScopedSurfaceSyntax`; `family: ScopedSurfa
 | `with_receiver(self, receiver: ScopedSurfaceReceiver)` | `Self` | Replace receiver context. |
 | `pairwise_chain(self)` | `Self` | Select pairwise-chain formatting. |
 
-`ScopedSurfaceFamily` is a string-valued enum with `OperatorLike`, `BindingLike` and `ExpressionForm`. `ScopedSurfaceSyntax` has `Glyph(str)` and `LeadingDotPath(int, Option[int])`; the latter specifies minimum and optional maximum segment counts, each fitting an unsigned 16-bit integer. Descriptor serialization disables misuse diagnostics outside the registered positive positions.
+`ScopedSurfaceFamily` is a string-valued enum with `OperatorLike`, `BindingLike` and `ExpressionForm`. `ScopedSurfaceSyntax` has `Glyph(str)` and `LeadingDotPath(int, Option[int])`; the latter specifies minimum and optional maximum segment counts, each fitting an unsigned 16-bit integer. A scoped surface is recognized only in its `eligible_in` positions. Elsewhere, its glyph is ordinary Incan syntax and produces no vocabulary diagnostic.
 
 `ScopedSurfaceReceiver` has `OwningDeclaration`, `Clause(str)` and `Custom(str)`. `custom(key: str) -> Self` constructs the custom alternative. A receiver names context for the owning desugarer; it does not evaluate that context.
 
@@ -176,13 +176,13 @@ Fields: required `key: str`, `submode: EmbeddedFragmentSubmode`, `artifact_key: 
 | `in_call_argument(self, declaration: str, call: str)` | `Self` | Append call-argument position. |
 | `with_eligibility(self, eligibility: ScopedSurfaceEligibility)` | `Self` | Append an explicit position. |
 
-An embedded block body occupies statement position. A custom desugarer receives its structured fragment through the declaration. Without a hook, the fragment and its expression holes can be checked; executable compilation refuses the fragment.
+An embedded block body occupies statement position. When the providing registration calls `with_desugarer()`, its desugarer receives the fragment through the declaration. Otherwise the fragment and its expression holes are checked, and executable compilation refuses the fragment.
 
 ## Syntax and source ranges
 
 All syntax alternatives below have derived JSON serialization. Unit enum alternatives serialize as strings, payload alternatives as single-key objects, and tuple payloads as arrays. Model fields serialize under their declared names. Optional fields serialize as `null` when absent.
 
-`Span` has required `start: int` and `end: int`. They are half-open byte offsets in the requesting module, with `0 <= start <= end`. Every output range must lie inside the requesting vocabulary node. Missing response ranges inherit that node's range; an explicit `null` range is refused. Distinct output nodes may share a source range, including nested calls with different result types. Diagnostics retain the original-source coordinates. Providers supply only `start` and `end`; additional span fields are refused.
+`Span` has required `start: int` and `end: int`. They are half-open byte offsets in the requesting module, with `0 <= start <= end`. Every output range must lie inside the requesting vocabulary node. A `null` range is refused. Distinct output nodes may share a source range, including nested calls with different result types. Diagnostics retain the original-source coordinates. Providers supply only `start` and `end`; additional span fields are refused.
 
 ### Expressions
 
@@ -244,7 +244,7 @@ pub enum IncanStatementKind:
     Unsafe(list[IncanStatement])
 ```
 
-`Assign` writes an existing binding. `Let` declares a binding; its boolean selects mutability. `If` contains condition, then-body and else-body. `For` binds its named variable. `TypedLet` is serializable as a model value but is refused in native worker output. Native request statement transport accepts `Pass`, `Expr`, `Return` and unannotated assignments; other host statement shapes are refused.
+`Assign` writes an existing binding. `Let` declares a binding; its boolean selects mutability. `If` contains condition, then-body and else-body. `For` binds its named variable. `TypedLet` is serializable as a model value but is refused in native worker output. Native requests carry `Pass`, `Expr`, `Return`, `Assign` and `Let` body statements; a request whose body holds any other statement, including an annotated assignment, is refused.
 
 ### Compilation-unit output
 
@@ -348,7 +348,7 @@ pub enum VocabFragmentTypeKind:
     Union(list[VocabFragmentType])
 ```
 
-`StyleRule` contains selectors and declarations. `Regex` contains pattern and flags. `CustomPropertyRef` contains the bare `--name` without `var(...)` delimiters. `Generic` contains its constructor as its first child; `Nullable` and `Array` contain one child. Expression holes retain ordinary Incan expressions and their original ranges. `source_text` is lexical input provenance; it is not generated-source interchange.
+`StyleRule` contains selectors and declarations. `Regex` contains pattern and flags. `CustomPropertyRef` contains the bare `--name` without `var(...)` delimiters. `Generic` contains its constructor as its first child; `Nullable` and `Array` contain one child. Expression holes retain ordinary Incan expressions and their original ranges. `source_text` is the fragment's original source text.
 
 ## Requests, responses and worker service
 
@@ -357,7 +357,7 @@ pub enum VocabFragmentTypeKind:
 | `DesugarRequest` | Required `node: VocabSyntaxNode`, `module_path: str`; `schema_version: int = VOCAB_SYNTAX_VERSION`. |
 | `DesugarResponse` | Required `output: DesugarOutput`; `schema_version: int = VOCAB_SYNTAX_VERSION`. |
 | `DesugarOutput` | `Statements(list[IncanStatement])`, `Expression(IncanExpr)`, `Declarations(list[IncanDeclaration])`. |
-| `DesugarError` | Required `span: Span`, `message: str`; `at(span: Span, message: str) -> Self`. |
+| `DesugarError` | Required `span: Span`, `message: str`; `at(span: Span, message: str) -> Self`. The span must lie inside the requesting node, or the reply is refused. |
 | `DesugarBatchRequest` | Required `requests: list[DesugarRequest]`. |
 | `DesugarReply` | `Ok(DesugarResponse)`, `Err(DesugarError)`. |
 | `DesugarBatchResponse` | Required `responses: list[DesugarReply]`. |
@@ -386,20 +386,17 @@ Builders: `with_keyword(self, keyword: KeywordSpec) -> Self`, `with_keywords(sel
 
 ## Additional library metadata
 
-These registration values encode additional published library metadata. They do not execute dependency resolution or replace `loaf.toml` dependencies. Their models, `TypeRef` and `CargoDependencySource` expose `to_json(self) -> JsonValue`; `TypeExportKind` exposes `value(self) -> str`.
+These registration values encode additional published library metadata. They do not execute dependency resolution or replace `loaf.toml` dependencies. Their models and `TypeRef` expose `to_json(self) -> JsonValue`; `TypeExportKind` exposes `value(self) -> str`.
 
 | Type | Fields or alternatives |
 | --- | --- |
-| `LibraryManifest` | `modules: list[ModuleExport] = []`, `helper_bindings: list[HelperBinding] = []`, `required_dependencies: list[CargoDependency] = []`, `required_stdlib_features: list[str] = []`; `new() -> Self`. Its encoded `format_version` is `V1`. |
-| `HelperBinding` | Required `key: str`, `exported_name: str`. |
+| `LibraryManifest` | `modules: list[ModuleExport] = []`; `new() -> Self`. Its encoded `format_version` is `V1`. |
 | `TypeRef` | `Named(str)`, `Generic(str, list[TypeRef])`, `Optional(list[TypeRef])`, `Union(list[TypeRef])`; `named(name: str) -> Self`. `Optional` requires a nonempty list and serializes only its first element as its payload. |
 | `FunctionExport` | Required `name: str`; `params: list[Tuple[str, TypeRef]] = []`, `return_type: Option[TypeRef] = None`, `is_async: bool = false`. |
 | `TypeExportKind` | String-valued `Model`, `Class`, `Enum`, `Trait`, `Newtype`. |
 | `FieldExport` | Required `name: str`, `field_type: TypeRef`; `has_default: bool = false`. |
 | `TypeExport` | Required `name: str`; `kind: TypeExportKind = TypeExportKind.Model`, `type_params: list[str] = []`, `fields: list[FieldExport] = []`, `methods: list[FunctionExport] = []`. |
 | `ModuleExport` | Required `path: str`; `functions: list[FunctionExport] = []`, `types: list[TypeExport] = []`. |
-| `CargoDependencySource` | `Version(str)`, `Path(str)`. |
-| `CargoDependency` | Required `crate_name: str`, `source: CargoDependencySource`. |
 
 ## See also
 

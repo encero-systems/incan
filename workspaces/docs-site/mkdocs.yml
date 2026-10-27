@@ -298,17 +298,16 @@ nav:
           - Backend selection & execution receipts: tooling/explanation/backend_selection_receipts.md
       - Reference:
           - CLI reference: tooling/reference/cli_reference.md
-          - Binding inspection JSON schema: tooling/reference/binding_inspection_schema.md
+          - Binding inspection schema: tooling/reference/binding_inspection_schema.md
           - Codegraph inspection: tooling/reference/codegraph_inspection.md
           - Agent context CLI and MCP: tooling/reference/agent_context_cli.md
-          - Agent and tooling docs surfaces: tooling/reference/agent_docs_surfaces.md
+          - Documentation and inspection surfaces: tooling/reference/agent_docs_surfaces.md
           - Checked contract metadata: tooling/reference/contract_metadata.md
           - Checked API metadata: tooling/reference/checked_api_metadata.md
-          - Package executable representation: tooling/reference/package_executable_representation.md
+          - Library artifact sets: tooling/reference/package_executable_representation.md
           - Project configuration: tooling/reference/project_configuration.md
           - Vocabulary entries: tooling/reference/vocabulary.md
           - Standard packages and features: tooling/reference/sdk_components_and_package_features.md
-          - Oven interop deployment plans: tooling/reference/interop_deployment_plans.md
           - LSP protocol support: tooling/reference/lsp_protocol_support.md
   - Contributing:
       - Start here: contributing/index.md
@@ -337,12 +336,12 @@ nav:
           - Architecture: contributing/explanation/architecture.md
           - Layering rules: contributing/explanation/layering.md
           - Oven and toolchain ownership map: contributing/explanation/oven_toolchain_ownership_map.md
+          - Native linkage during development: contributing/explanation/development-linking.md
           - "Post-mortem: v0.5.1": contributing/explanation/postmortem_v051.md
           - Incapunk docs theme: contributing/explanation/incapunk_docs_theme.md
           - Readable Incan: contributing/explanation/readable-incan.md
           - Readable, maintainable Rust: contributing/explanation/readable-maintainable-rust.md
           - "std.testing internals": contributing/explanation/stdlib_testing_internals.md
-          - Hees.ai v0.5 dependency inventory: contributing/explanation/hees_ai_v05_dependency_inventory.md
   - Release notes:
       - Overview: release_notes/index.md
       - Release 0.6 (development): release_notes/0_6.md
@@ -362,6 +361,10 @@ nav:
           - "DD-0003: Replacement program output contract": design_records/0003_replacement_program_output_contract.md
           - "DD-0004: Pinned native compiler driver": design_records/0004_native_route_through_the_pinned_rustc.md
           - "DD-0005: Cargo-free development contract": design_records/0005_cargo_free_development_contract.md
+          - "DD-0006: Rust interop on the direct route": design_records/0006_rust_interop_on_the_direct_route.md
+          - "DD-0007: Loaf artifacts": design_records/0007_loaf_artifacts.md
+          - "DD-0008: One Oven, written in Incan": design_records/0008_one_oven_in_incan.md
+          - "DD-0009: Rust facts from rustc metadata": design_records/0009_rust_facts_from_rustc_metadata.md
           - "DD-0010: The dev.8 release toolchain and CI": design_records/0010_dev8_toolchain_and_ci.md
       - Whitepapers:
           - Overview: whitepapers/index.md

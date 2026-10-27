@@ -3,11 +3,12 @@
 from std import toml
 from std.fs import Path
 from std.toml import TomlValue
+from files import read
 
 
 pub def read_manifest(project: Path) -> Result[TomlValue, str]:
     """The parsed `loaf.toml` of the project at `project`."""
-    source = project.joinpath("loaf.toml").read_text("utf-8", "strict").map_err((error) => error.message())?
+    source = read(project.joinpath("loaf.toml"))?
     return toml.parse(source).map_err((error) => error.message())
 
 

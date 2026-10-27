@@ -185,7 +185,7 @@ pub def construct_future(
     span: SourceSpan,
 ) -> Result[None, str]:
     """Capture evaluated arguments by value and return a native coroutine without polling its body."""
-    if str(body.name) == "main":
+    if is_program_entry(module, body):
         return Err("unsupported Body IR calling async main")
     fields = capture_types(module, body, builder.intrinsics)?
     output = native_source_type(

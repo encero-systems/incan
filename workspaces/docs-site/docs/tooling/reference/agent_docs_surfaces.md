@@ -11,5 +11,3 @@
 | `incan mcp PATH` | Graph tools and resources over stdio JSON-RPC. |
 
 [CLI reference](cli_reference.md) specifies command options. [Agent context CLI and MCP](agent_context_cli.md) specifies graph identities, context budgets, snapshot checks, MCP methods, tools and resources.
-
-No generated-Rust, checked-API metadata, provider-inspection or build-report command is exposed by the dev.8 CLI.

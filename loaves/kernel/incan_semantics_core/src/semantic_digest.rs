@@ -19,8 +19,13 @@
 use serde::{Serialize, ser};
 use sha2::{Digest, Sha256};
 
-use crate::closure_digest::update_delimited;
 use std::fmt::Display;
+
+/// Length-delimit a semantic value so adjoining values cannot forge the same hash input by shifting a boundary.
+fn update_delimited(hasher: &mut Sha256, value: &[u8]) {
+    hasher.update((value.len() as u64).to_le_bytes());
+    hasher.update(value);
+}
 
 /// Node-identifier fields excluded from every semantic digest.
 ///
@@ -40,7 +45,7 @@ const POSITIONAL_ID_FIELDS: &[&str] = &["decl_id", "direct_call_id", "id", "modu
 ///
 /// The failure directions are asymmetric. A positional field wrongly left in makes an unrelated edit look like a
 /// change, costing a rebuild. A meaningful field wrongly excluded makes a real change invisible, producing a wrong
-/// build. This rule can only ever over-match on names ending in `_span`, so it errs the safe way.
+/// build. This rule matches only the exact names in [`POSITIONAL_ID_FIELDS`], so it errs the safe way.
 fn is_positional_field(name: &str) -> bool {
     POSITIONAL_ID_FIELDS.contains(&name)
 }

@@ -1160,15 +1160,11 @@ impl TypeChecker {
                     ResolvedType::TypeVar(name) | ResolvedType::Named(name) => Some(name.as_str()),
                     _ => None,
                 };
-                let ty = if let Some(span) = closure_params.get(&index) {
-                    if let Some(signature) = generic_name
+                let ty = if closure_params.contains_key(&index)
+                    && let Some(signature) = generic_name
                         .and_then(|name| self.source_callable_signature_for_param(name, bound_details, bindings))
-                    {
-                        self.type_info.record_source_callable_closure(*span);
-                        signature
-                    } else {
-                        param.ty.clone()
-                    }
+                {
+                    signature
                 } else {
                     param.ty.clone()
                 };

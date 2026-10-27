@@ -1,8 +1,32 @@
-# behavior: nested list membership compares complete child lists (#2256)
+# behavior: list membership compares complete elements, and `x in xs` and `xs.contains(x)` give the same answer for enums, tuples, nested lists, dictionaries, sets and models with derived equality (#2256, incan-1.8)
 # expect-stdout:
 #   true
+#   true true
+#   false false
+#   true true
+#   false false
+#   true true
+#   false false
+#   true true
+#   true true
+#   true true
+#   false false
 
-"""Compare nested list elements without flattening their native slice storage."""
+"""Compare list elements without flattening their native slice storage."""
+
+
+enum Color:
+    """A fieldless enum element."""
+
+    Red
+    Green
+
+
+@derive(Eq)
+model Point:
+    """A source model whose equality is derived."""
+
+    x: int
 
 
 def program_result() -> bool:
@@ -13,6 +37,27 @@ def program_result() -> bool:
     return [1] in xs
 
 
+def pair(found: bool, contained: bool) -> None:
+    """Print the answers of both membership spellings."""
+    println(f"{found} {contained}")
+
+
 def main() -> None:
     """Print the fixture values in the expected order."""
     println(program_result())
+    colors = [Color.Red]
+    pair(Color.Red in colors, colors.contains(Color.Red))
+    pair(Color.Green in colors, colors.contains(Color.Green))
+    pairs = [(1, "a")]
+    pair((1, "a") in pairs, pairs.contains((1, "a")))
+    pair((2, "b") in pairs, pairs.contains((2, "b")))
+    nested = [[1], [2]]
+    pair([2] in nested, nested.contains([2]))
+    pair([3] in nested, nested.contains([3]))
+    tables = [{"k": 1}]
+    pair({"k": 1} in tables, tables.contains({"k": 1}))
+    sets = [{1, 2}]
+    pair({2, 1} in sets, sets.contains({2, 1}))
+    points = [Point(x=1)]
+    pair(Point(x=1) in points, points.contains(Point(x=1)))
+    pair(Point(x=2) in points, points.contains(Point(x=2)))

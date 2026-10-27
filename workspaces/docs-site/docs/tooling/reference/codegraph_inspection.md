@@ -1,6 +1,6 @@
 # Codegraph inspection
 
-This page specifies the JSONL records `incan inspect codegraph` writes for an Incan source file or directory. The command's options are in the [CLI reference](cli_reference.md#incan-inspect-codegraph).
+This page specifies the JSONL records `incan inspect codegraph` writes. Its options and `PATH` selection are in [Agent context CLI and MCP](agent_context_cli.md#cli-signatures).
 
 ```bash
 incan inspect codegraph src/main.incn --format jsonl
@@ -9,10 +9,9 @@ incan inspect codegraph . --format jsonl --strict
 
 ## Stream
 
-- Every line is one JSON object with a `record` discriminator. The first record is the `header`; `diagnostic` records come last.
-- The record kinds are `header`, `file`, `namespace`, `module`, `declaration`, `import`, `export`, `reference`, `call`, `containment`, `registry`, `capability`, `c_binding`, `c_binding_call`, `c_binding_facade` and `diagnostic`.
+- Every line is one JSON object with a `record` discriminator. The first record is the `header`. Each selected unit's `diagnostic` records follow that unit's other records; with `--risk`, `risk_signal` records come last.
+- The record kinds are `header`, `file`, `namespace`, `module`, `declaration`, `import`, `export`, `reference`, `call`, `containment`, `registry`, `capability`, `c_binding`, `c_binding_call`, `c_binding_facade` and `diagnostic`, and with `--risk`, `risk_signal`.
 - The records and their order are deterministic for the same compiler version, source and filesystem layout. An `id` is unique within one export. Ids are not stable across file moves, renames or schema versions.
-- The export is tooling output. It is not the runtime `std.graph` module, a graph database, a full reference index, a whole-program call graph, or a generated-Rust interface.
 
 ## Modes and degraded state
 
@@ -22,8 +21,8 @@ incan inspect codegraph . --format jsonl --strict
 | `allow_errors` | The default. | Parseable units still produce records; stderr names unchecked units. |
 
 - An unchecked unit contributes syntax facts without resolved reference or call edges. Checked units in the same selection retain their checked facts.
-- The header's `degraded` is `true` when any record is degraded or any diagnostic is present.
-- Warnings of source that checks produce no records in either mode.
+- The header's `degraded` is `true` when any selected unit failed checking.
+- A source that checks with warnings produces no `diagnostic` records in either mode.
 
 ## Common fields
 
@@ -33,7 +32,7 @@ incan inspect codegraph . --format jsonl --strict
 | `degraded` | Every record | Whether the record belongs to a partial graph recovered from diagnostics. |
 | `id` | Every record but the header | Export-local id. |
 | `language` | Every record but the header | `"incan"` or `"rust"`. |
-| `provenance` | Every record but the header | Where the fact came from: `source` (source text or filesystem shape), `syntax` (parsed syntax), `checked` (checked compiler facts) or `diagnostic` (compiler diagnostics). |
+| `provenance` | Every record but the header | Where the fact came from: `source` (source text or filesystem shape), `syntax` (parsed syntax), `checked` (checked compiler facts), `diagnostic` (compiler diagnostics) or, on `risk_signal`, `process_observed`. |
 | `span` | Source-backed records | A source span, or `null` when none applies. |
 
 `language` identifies the source language of the represented fact. Rust declarations and their checked relationships can appear alongside Incan declarations.
@@ -52,6 +51,9 @@ A source span has `file`, an inclusive `start` and an exclusive `end` byte offse
 | `package` | `name`, `version` and `root_path` from the nearest `loaf.toml`, each `null` when absent; `null` without a manifest. |
 | `semantic_contexts` | The selected projects and Loaves. |
 | `degraded` | See [Modes and degraded state](#modes-and-degraded-state). |
+| `identity_schema` | `incan.graph.identity/1`. |
+| `declaration_digests` | See [Export identity and snapshots](agent_context_cli.md#export-identity-and-snapshots). |
+| `snapshot_id` | See [Export identity and snapshots](agent_context_cli.md#export-identity-and-snapshots). |
 
 A semantic context has `project_root` and `loaves`. Each Loaf has `key`, `name`, `version`, `standard` and a `sha256:` artifact `digest`. Consumer identities, snapshots, context packs and optional process records are specified in [Agent context CLI and MCP](agent_context_cli.md).
 
@@ -227,8 +229,6 @@ A re-export adds a `reexport_paths` entry; it does not add a `registry` record o
 
 No `c_binding_facade` record is written for a transitive, imported, re-exported, method or syntax-only relation.
 
-The C binding records describe checked language declarations. They do not resolve an Oven requirement to a compiler or SDK, read a lock or receipt, fetch or stage an artifact, build a shim, show that a library is present at run time, or provide an editor navigation result.
-
 ## Identities
 
 `canonical_identity` is the compiler's identity of a declaration:
@@ -270,11 +270,11 @@ Inserting or reordering an indistinguishable binding in the owner changes the or
 | `expected`, `actual` | The compared values or types; omitted when the diagnostic compares none. |
 | `related_spans` | Each secondary `span` with its `label`; omitted when empty. |
 | `related_declarations` | Each related declaration's canonical `identity` with its `label`; omitted when empty. The identity keeps its own declaration span. |
-| `explain` | Diagnostic explanation hint, when present. Dev.8's CLI exposes no explanation command. |
+| `explain` | Always present; the string `incan explain CODE`, with the diagnostic's code. |
 | `provenance` | `diagnostic`. |
 | `degraded` | `true`. |
 
 ## See also
 
-- [Read compiler reports from another tool](../how-to/ci_and_automation.md#read-compiler-reports-from-another-tool)
+- [Retain CI evidence](../how-to/ci_and_automation.md#retain-evidence)
 - [Inspect checked C bindings](../how-to/inspect_checked_c_bindings.md)

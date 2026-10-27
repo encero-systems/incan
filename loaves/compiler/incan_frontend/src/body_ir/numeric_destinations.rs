@@ -97,12 +97,7 @@ impl BodyBuilder<'_, '_> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
-        let Some(destination) = self
-            .type_info
-            .expressions
-            .numeric_conversion_destinations
-            .get(&span)
-        else {
+        let Some(destination) = self.type_info.expressions.numeric_conversion_destinations.get(&span) else {
             return operand;
         };
         let destination = self.checked_type(destination);
@@ -152,7 +147,7 @@ impl BodyBuilder<'_, '_> {
         let (IncanType::Named(name) | IncanType::Generic { base: name, .. }) = ty else {
             return false;
         };
-        name.starts_with("__incan_carrier_")
+        name.starts_with(incan_semantics_core::body_ir::NOMINAL_CARRIER_KEY_PREFIX)
             || self
                 .type_info
                 .declarations

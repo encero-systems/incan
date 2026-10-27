@@ -6,7 +6,7 @@ use crate::diagnostics::errors;
 use crate::symbols::*;
 use crate::typechecker::TypeChecker;
 use crate::typechecker::type_info::RustTraitImportInfo;
-use incan_lang::interop::{RustItemKind, RustTraitAssoc, fallback_rust_trait_methods};
+use incan_lang::interop::{RustItemKind, RustTraitAssoc, RustVisibility};
 use std::collections::HashSet;
 
 impl TypeChecker {
@@ -92,6 +92,9 @@ impl TypeChecker {
     /// Validate and register a Rust import symbol for codegen and RFC 041 provenance.
     pub(super) fn define_rust_import_binding(&mut self, name: Ident, info: RustItemInfo, span: Span) {
         self.validate_root_namespace(&name, span);
+        if info.binding != RustImportBindingKind::CrateRoot && !self.admit_source_rust_item(&name, &info.path, span) {
+            return;
+        }
         let mut trait_methods = HashSet::new();
         let mut trait_method_signatures = std::collections::HashMap::new();
         if let Some(metadata) = &info.metadata
@@ -106,13 +109,6 @@ impl TypeChecker {
                     RustTraitAssoc::TypeAlias { .. } | RustTraitAssoc::Constant { .. } => {}
                 }
             }
-        }
-        if trait_methods.is_empty() {
-            trait_methods.extend(
-                fallback_rust_trait_methods(info.path.as_str())
-                    .iter()
-                    .map(|method| (*method).to_string()),
-            );
         }
         let symbol_id = self.define_rust_import_symbol(name.clone(), info.clone(), span);
         if !self.symbols.is_active_lookup_binding(symbol_id) {
@@ -139,6 +135,37 @@ impl TypeChecker {
                 method_signatures: trait_method_signatures,
             },
         );
+    }
+
+    /// Refuse known restricted imports, including unused imports and paths under a private namespace. Missing
+    /// metadata keeps the existing deferred import binding and grants no callable or construction authority.
+    pub(in crate::typechecker) fn admit_source_rust_item(&mut self, name: &str, path: &str, span: Span) -> bool {
+        let mut prefix = path;
+        loop {
+            if self
+                .rust_item_metadata_for_path(prefix)
+                .is_some_and(|metadata| metadata.visibility == RustVisibility::Restricted)
+            {
+                self.errors.push(errors::rust_item_not_public(name, path, span));
+                return false;
+            }
+            let Some((parent, _)) = prefix.rsplit_once("::") else {
+                return true;
+            };
+            prefix = parent;
+        }
+    }
+
+    /// A source-authored type needs public metadata even when an unused import could remain deferred.
+    pub(in crate::typechecker) fn admit_source_rust_type(&mut self, name: &str, path: &str, span: Span) -> bool {
+        if self
+            .rust_item_metadata_for_path(path)
+            .is_some_and(|metadata| metadata.visibility == RustVisibility::Public)
+        {
+            return self.admit_source_rust_item(name, path, span);
+        }
+        self.errors.push(errors::rust_item_not_public(name, path, span));
+        false
     }
 
     /// Define a symbol for a Rust crate import.

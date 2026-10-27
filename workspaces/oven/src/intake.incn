@@ -11,9 +11,31 @@ from rust::std::str import from_utf8
 from manifest_errors import IntakeError, IntakeErrorKind
 
 # The manifest's tables.
-const ROOT_TABLES: FrozenList[str] = ["project", "dependencies", "rust-dependencies", "build", "rust", "vocab", "tool", "interop"]
+const ROOT_TABLES: FrozenList[str] = [
+    "project",
+    "dependencies",
+    "rust-dependencies",
+    "build",
+    "rust",
+    "vocab",
+    "tool",
+    "interop",
+    "envs",
+]
 # The keys of `[project]`.
-const PROJECT_KEYS: FrozenList[str] = ["name", "version", "scripts", "features", "description", "authors", "license", "license-files", "readme", "requires-incan", "private"]
+const PROJECT_KEYS: FrozenList[str] = [
+    "name",
+    "version",
+    "scripts",
+    "features",
+    "description",
+    "authors",
+    "license",
+    "license-files",
+    "readme",
+    "requires-incan",
+    "private",
+]
 
 
 pub model ManifestEvidence:
@@ -77,9 +99,7 @@ pub model ProjectIntent:
     pub scripts: Dict[str, str]
     pub dependencies: list[LocalDependency]
     pub rust_inputs: list[RustInputRequest]
-    pub target: Option[str]
-    pub profile: Option[str]
-    pub rust_edition: Option[str]
+    pub rust_edition: str
     # The declared package features by name.
     pub features: Dict[str, FeatureDeclaration] = {}
     # The source root `[build] source-root` names, project-relative, when it names one.
@@ -113,7 +133,6 @@ pub model LocalIntake:
 
     pub projects: list[LocalProject]
     pub edges: list[DependencyEdge]
-    pub dependency_order: list[str]
 
 
 def refusal(manifest: str, field: list[str], kind: IntakeErrorKind, detail: str) -> IntakeError:
@@ -226,25 +245,24 @@ def parse_raw_intent(source: str, manifest: str) -> Result[ProjectIntent, Intake
     dependencies, rust_inputs = parse_dependencies(root, manifest)?
     features = parse_features(project, dependencies, manifest, rust_inputs)?
     validate_facets(root, manifest)?
-    mut target: Option[str] = None
-    mut profile: Option[str] = None
-    mut edition: Option[str] = None
+    validate_environments(root, manifest)?
+    mut edition = "2024"
     mut source_root: Option[str] = None
-    if "rust" in root:
-        rust_facet = table(root["rust"], manifest, ["rust"])?
-        if "edition" in rust_facet:
-            edition = Some(required(rust_facet, "edition", manifest, ["rust", "edition"])?)
     if "build" in root:
         build = table(root["build"], manifest, ["build"])?
         allowed(build, ["target", "profile", "rust-edition", "source-root"], manifest, ["build"])?
         if "target" in build:
-            target = Some(required(build, "target", manifest, ["build", "target"])?)
+            required(build, "target", manifest, ["build", "target"])?
         if "profile" in build:
-            profile = Some(required(build, "profile", manifest, ["build", "profile"])?)
+            required(build, "profile", manifest, ["build", "profile"])?
         if "rust-edition" in build:
-            edition = Some(required(build, "rust-edition", manifest, ["build", "rust-edition"])?)
+            edition = required(build, "rust-edition", manifest, ["build", "rust-edition"])?
         if "source-root" in build:
             source_root = Some(required(build, "source-root", manifest, ["build", "source-root"])?)
+    if "rust" in root:
+        rust_facet = table(root["rust"], manifest, ["rust"])?
+        if "edition" in rust_facet:
+            edition = required(rust_facet, "edition", manifest, ["rust", "edition"])?
     return Ok(
         ProjectIntent(
             name=name,
@@ -252,8 +270,6 @@ def parse_raw_intent(source: str, manifest: str) -> Result[ProjectIntent, Intake
             scripts=scripts,
             dependencies=dependencies,
             rust_inputs=rust_inputs,
-            target=target,
-            profile=profile,
             rust_edition=edition,
             features=features,
             source_root=source_root,
@@ -262,6 +278,19 @@ def parse_raw_intent(source: str, manifest: str) -> Result[ProjectIntent, Intake
             vocab_entry=parse_vocab_entry(root, manifest)?,
         ),
     )
+
+
+def validate_environments(root: Dict[str, TomlValue], manifest: str) -> Result[None, IntakeError]:
+    """Admit inactive environment tables without treating their partial dependency overrides as production edges."""
+    if "envs" not in root:
+        return Ok(None)
+    environments = table(root["envs"], manifest, ["envs"])?
+    for name in sorted([name for name in environments.keys()]):
+        environment = table(environments[name], manifest, ["envs", name])?
+        allowed(environment, ["dependencies", "rust-dependencies"], manifest, ["envs", name])?
+        for group in sorted([group for group in environment.keys()]):
+            table(environment[group], manifest, ["envs", name, group])?
+    return Ok(None)
 
 
 def string_list(value: TomlValue, manifest: str, field: list[str]) -> Result[list[str], IntakeError]:
@@ -574,7 +603,7 @@ def validate_facets(root: Dict[str, TomlValue], manifest: str) -> Result[None, I
     """Validate authored facet metadata even when local intake does not execute it."""
     if "rust" in root:
         rust_facet = table(root["rust"], manifest, ["rust"])?
-        allowed(rust_facet, ["name", "type", "edition", "source"], manifest, ["rust"])?
+        allowed(rust_facet, ["name", "type", "edition", "source", "bin", "lib"], manifest, ["rust"])?
         for key in ["name", "type", "edition"]:
             if key in rust_facet:
                 value = required(rust_facet, key, manifest, ["rust", key])?
@@ -594,7 +623,7 @@ def validate_facets(root: Dict[str, TomlValue], manifest: str) -> Result[None, I
                     manifest,
                     ["vocab", "crate"],
                     IntakeErrorKind.Unsupported,
-                    "[vocab] crate is no longer supported; use entry",
+                    "[vocab] crate is refused; declare [vocab] entry",
                 ),
             )
         allowed(vocab, ["entry"], manifest, ["vocab"])?
@@ -767,13 +796,40 @@ def request_flag(value: TomlValue, manifest: str, field: list[str]) -> Result[bo
     return value.as_bool().map_err((error) => refusal(manifest, field, IntakeErrorKind.Invalid, error.message()))
 
 
-pub def load_project(root: Path) -> Result[LocalProject, IntakeError]:
-    """Read one byte snapshot and validate script paths; conventional library and test-only packages need no script."""
+pub def read_project(root: Path) -> Result[LocalProject, IntakeError]:
+    """Read one manifest snapshot and its authored intent without imposing an executable entry policy."""
     manifest = root.joinpath("loaf.toml")
     raw = manifest.read_bytes().map_err((error) => refusal(manifest.0, [], IntakeErrorKind.Missing, error.message()))?
     document = parse_document(raw, manifest.0)?
-    intent = document.intent
-    source = document.evidence.source
+    return Ok(LocalProject(root=root.0, intent=document.intent, evidence=document.evidence))
+
+
+pub def source_root_of(project: LocalProject) -> str:
+    """The declared source root, otherwise `src` when present, otherwise the project root."""
+    return source_root_for(Path(project.root), project.intent)
+
+
+def source_root_for(root: Path, intent: ProjectIntent) -> str:
+    """Apply source-root policy to an already read intent without rediscovering the manifest."""
+    if let Some(declared) = intent.source_root:
+        return root.joinpath(declared).0
+    if root.joinpath("src").is_dir():
+        return root.joinpath("src").0
+    return root.0
+
+
+pub def library_source(root: Path) -> Result[Path, str]:
+    """Locate an Incan library through the same source-root policy as its compiler unit."""
+    project = read_project(root).map_err((error) => error.message())?
+    return Ok(Path(source_root_of(project)).joinpath("lib.incn"))
+
+
+pub def load_project(root: Path) -> Result[LocalProject, IntakeError]:
+    """Validate script paths against one snapshot; conventional libraries and test-only packages need no script."""
+    project = read_project(root)?
+    intent = project.intent
+    source = project.evidence.source
+    manifest = root.joinpath("loaf.toml")
     for script in intent.scripts.keys():
         path = root.joinpath(intent.scripts[script])
         if not path.is_file():
@@ -785,7 +841,7 @@ pub def load_project(root: Path) -> Result[LocalProject, IntakeError]:
             .map_err(
                 (error) => refusal(manifest.0, ["project", "scripts", script], IntakeErrorKind.Invalid, error.message()),
             )?
-        library = root.joinpath("src/lib.incn")
+        library = Path(source_root_for(root, intent)).joinpath("lib.incn")
         if library.is_file():
             canonical = library
                 .resolve()
@@ -815,12 +871,16 @@ pub def load_project(root: Path) -> Result[LocalProject, IntakeError]:
                 "expected a conventional library or explicit script",
             ),
         )
-    return Ok(LocalProject(root=root.0, intent=intent, evidence=document.evidence))
+    return Ok(project)
 
 
 def declares_no_entry(root: Path, intent: ProjectIntent) -> bool:
-    """Whether a project has no script, no conventional library and no `tests` directory to run."""
-    has_library = root.joinpath("src/lib.incn").is_file()
+    """
+    Whether a project has no script, no conventional library in either language and no `tests` directory: an Incan
+    `lib.incn` under its source root, or a Rust `src/lib.rs`.
+    """
+    incan_library = Path(source_root_for(root, intent)).joinpath("lib.incn").is_file()
+    has_library = incan_library or root.joinpath("src/lib.rs").is_file()
     return len(intent.scripts) == 0 and not has_library and not root.joinpath("tests").is_dir()
 
 
@@ -886,11 +946,4 @@ pub def intake(root: Path) -> Result[LocalIntake, IntakeError]:
                         error.message(),
                     ).with_source(sources[edge.requester_root]),
                 )?
-    mut order: list[str] = []
-    for node in graph.topological_order():
-        order.append(
-            graph
-                .node_payload(node)
-                .map_err((error) => refusal(canonical.0, [], IntakeErrorKind.Invalid, error.message()))?,
-        )
-    return Ok(LocalIntake(projects=projects, edges=edges, dependency_order=order))
+    return Ok(LocalIntake(projects=projects, edges=edges))

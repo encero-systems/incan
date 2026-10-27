@@ -474,22 +474,4 @@ impl TypeChecker {
             .map(|(name, alias)| (name.clone(), alias.target.clone()))
             .collect();
     }
-
-    /// Retain, for lowering, the one module of this check that declares each nominal name no other module declares.
-    ///
-    /// A union that reached this module through another module's signature spells such a member bare, and lowering
-    /// places its wrapper payload at this declaring module even where no binding of this module names it.
-    pub(super) fn export_unique_nominal_declaring_modules(&mut self) {
-        self.type_info.declarations.unique_nominal_declaring_modules = self
-            .nominal_declarations
-            .declaring_modules
-            .iter()
-            .filter_map(|(name, modules)| {
-                let [module_path] = modules.iter().collect::<Vec<_>>()[..] else {
-                    return None;
-                };
-                (!module_path.is_empty()).then(|| (name.clone(), module_path.clone()))
-            })
-            .collect();
-    }
 }

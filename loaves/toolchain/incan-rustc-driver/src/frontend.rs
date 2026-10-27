@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
+use incan_driver::body_ir::{load_loaf_modules, required_loaf_identities};
 use incan_driver::diagnostics::CliDiagnosticFailure;
 use incan_driver::loaf_publication::{PublicationFacts, publish_native_unions, write_loaf};
 use incan_driver::modules::{collect_library_modules_detailed_with_session, collect_modules_detailed_with_session};
@@ -255,15 +256,7 @@ fn checked_modules(
     let entry = entry + loaf_modules;
 
     // ---- The program's own modules ----
-    lower_authored_modules(
-        &modules,
-        &analysis,
-        &session,
-        package_identity,
-        library,
-        &mut bodies,
-        &mut files,
-    )?;
+    lower_authored_modules(&modules, &analysis, &session, &mut bodies, &mut files)?;
     let graph = if library {
         let records = incan_driver::inspect::codegraph::collect_checked_unit_codegraph(
             unit,
@@ -345,98 +338,6 @@ fn program_entrypoints(
     Ok(entries)
 }
 
-/// Project exact public package requirements reachable from accepted module facts, including private re-export calls.
-/// The current package's declarations compile from this unit and never resolve through a dependency artifact.
-/// Trait-wide default inventories are not execution roots: unused adaptor bodies must not instantiate for every
-/// adopter. Native comparison bridges add their selected slots from checked Body IR in `complete_dependency_context`.
-fn required_loaf_identities(
-    modules: &[ParsedModule],
-    analysis: &CompilationAnalysis,
-    package_identity: &str,
-) -> Result<BTreeSet<CanonicalSymbolId>, String> {
-    let facts = modules
-        .iter()
-        .map(|module| {
-            analysis
-                .type_info_for_path(&module.file_path)
-                .map(|info| info.semantic_fact_store(&module.path_segments))
-                .ok_or("module analysis is missing")
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let roots = modules
-        .iter()
-        .filter_map(|module| analysis.type_info_for_path(&module.file_path))
-        .flat_map(|info| {
-            info.declarations
-                .declaration_identities
-                .values()
-                .chain(info.declarations.member_declaration_identities.values())
-                .cloned()
-        });
-    let requested = incan_semantics_core::dependencies::CheckedDependencyGraph::from_fact_stores(&facts)
-        .reachable_from(roots)
-        .into_iter()
-        .chain(
-            modules
-                .iter()
-                .filter_map(|module| analysis.type_info_for_path(&module.file_path))
-                .flat_map(|info| info.calls.body_ir_reexport_calls.values())
-                .map(|call| call.canonical.clone()),
-        )
-        .chain(
-            modules
-                .iter()
-                .filter_map(|module| analysis.type_info_for_path(&module.file_path))
-                .flat_map(|info| info.calls.body_ir_async_call_targets.values().cloned()),
-        )
-        .chain(
-            modules
-                .iter()
-                .filter_map(|module| analysis.type_info_for_path(&module.file_path))
-                .flat_map(|info| info.calls.source_display_methods.values().cloned()),
-        )
-        .chain(
-            modules
-                .iter()
-                .filter_map(|module| analysis.type_info_for_path(&module.file_path))
-                .flat_map(|info| info.declarations.body_ir_trait_adoptions.values())
-                .flatten()
-                .flat_map(|adoption| adoption.methods.iter().flatten().cloned()),
-        )
-        .chain(
-            modules
-                .iter()
-                .filter_map(|module| analysis.type_info_for_path(&module.file_path))
-                .flat_map(|info| info.expressions.validated_newtype_coercions.values())
-                .flat_map(|coercion| &coercion.steps)
-                .flat_map(|step| step.owner_identity.iter().chain(step.ctor_identity.iter()).cloned()),
-        )
-        .chain(
-            modules
-                .iter()
-                .filter_map(|module| analysis.type_info_for_path(&module.file_path))
-                .flat_map(|info| info.declarations.body_ir_native_type_identities.values().cloned()),
-        )
-        .chain(
-            modules
-                .iter()
-                .filter_map(|module| analysis.type_info_for_path(&module.file_path))
-                .flat_map(incan_frontend::body_ir::registry_helper_identities),
-        )
-        .filter(
-            |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity),
-        )
-        .collect();
-    Ok(requested)
-}
-
-/// Read only the selected Loaves' authenticated declaration closure; absence never authorizes a synthesized body.
-fn load_loaf_modules(loaves: &LoafIndex, requested: &BTreeSet<CanonicalSymbolId>) -> Result<Vec<BodyIrModule>, String> {
-    incan_frontend::executable_resolution::resolve_loaf_declarations(loaves, requested)
-        .map(|resolved| resolved.modules)
-        .map_err(|error| format!("unsupported Body IR Loaf declaration: {error}"))
-}
-
 /// Complete the dependency context with checked comparison slots and source primitive adapters, then retain linked
 /// contracts and held Rust layouts. Install the sole callable inventory before collecting its native signature
 /// carriers. The added defaults introduce no new source checking or invented implementations.
@@ -452,7 +353,9 @@ fn complete_dependency_context(
             |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity),
         )
         .collect::<BTreeSet<_>>();
-    defaults.extend(incan_frontend::body_ir::required_primitive_adapters(loaves, &requested));
+    defaults.extend(
+        incan_frontend::body_ir::required_primitive_adapters(loaves, &requested).map_err(|error| error.to_string())?,
+    );
     if !defaults.is_subset(&requested) {
         requested.extend(defaults);
         let mut expanded = load_loaf_modules(loaves, &requested)?;
@@ -814,7 +717,6 @@ fn validate_declarations(
                     ));
                 }
                 validate_generic_adoptions(&model.traits, program, type_info)?;
-                validate_trait_partial_overrides(&model.traits, &model.methods, program)?;
                 continue;
             }
             Declaration::Class(class) => {
@@ -829,7 +731,6 @@ fn validate_declarations(
                     ));
                 }
                 validate_generic_adoptions(&class.traits, program, type_info)?;
-                validate_trait_partial_overrides(&class.traits, &class.methods, program)?;
                 continue;
             }
             Declaration::Enum(value) => {
@@ -987,7 +888,8 @@ fn refused_decorator_feature(
 /// Admit builtin trait markers with no executable decorator behavior. The checker validates required field types
 /// and each adopter's conformance before admission; default method bodies retain their checked field accesses.
 fn retained_trait_marker(decorator: &incan_frontend::ast::Decorator) -> bool {
-    if decorator.path.segments == ["requires"]
+    let id = incan_lang::lang::decorators::from_segments(&decorator.path.segments);
+    if id == Some(incan_lang::lang::decorators::DecoratorId::Requires)
         && decorator.type_args.is_empty()
         && decorator
             .args
@@ -996,7 +898,9 @@ fn retained_trait_marker(decorator: &incan_frontend::ast::Decorator) -> bool {
     {
         return true;
     }
-    decorator.path.segments == ["rust", "derive"] && decorator.type_args.is_empty() && !decorator.args.is_empty()
+    id == Some(incan_lang::lang::decorators::DecoratorId::RustDerive)
+        && decorator.type_args.is_empty()
+        && !decorator.args.is_empty()
         && decorator.args.iter().all(|argument| matches!(argument,
             DecoratorArg::Positional(value) if matches!(&value.node,
                 Expr::Literal(Literal::String(path)) if matches!(path.as_str(), "Debug" | "Clone" | "serde::Serialize" | "serde::Deserialize"))))
@@ -1042,38 +946,6 @@ fn declares_trait(program: &incan_frontend::ast::Program, name: &str) -> bool {
     )
 }
 
-/// Preserve the frozen legacy failure for a trait partial whose concrete adopter replaces its forwarding target.
-/// Inherited target bodies are admitted; the legacy emitter does not publish the trait target bridge after an override,
-/// so this shape has no runtime parity authority.
-fn validate_trait_partial_overrides(
-    adoptions: &[incan_frontend::ast::Spanned<incan_frontend::ast::TraitBound>],
-    methods: &[incan_frontend::ast::Spanned<incan_frontend::ast::MethodDecl>],
-    program: &incan_frontend::ast::Program,
-) -> Result<(), String> {
-    for adoption in adoptions {
-        let Some(source) = program
-            .declarations
-            .iter()
-            .find_map(|declaration| match &declaration.node {
-                incan_frontend::ast::Declaration::Trait(source) if source.name == adoption.node.name => Some(source),
-                _ => None,
-            })
-        else {
-            continue;
-        };
-        if source
-            .method_partials
-            .iter()
-            .any(|partial| methods.iter().any(|method| method.node.name == partial.node.target))
-        {
-            return Err(
-                "unsupported source Trait method partial with an adopter target override on the native route".into(),
-            );
-        }
-    }
-    Ok(())
-}
-
 /// Refuse a generic adoption of a trait this module does not declare, unless the standard library declares it.
 ///
 /// Body IR instantiates only source-local trait defaults; another module's generic trait's implementation facts are
@@ -1096,7 +968,9 @@ fn validate_generic_adoptions(
 
 /// Exact caller-declared native libraries and their dependency search directories.
 pub(crate) struct Dependencies {
+    /// The native libraries the unit links, as `--extern CRATE=RLIB` pairs.
     pub(crate) externs: Vec<(String, PathBuf)>,
+    /// The directories that resolve those libraries' own dependencies.
     pub(crate) directories: Vec<PathBuf>,
     /// The ABI caches Oven names in the unit description: the toolchain's standard crates and each compiled unit's.
     pub(crate) rust_abi: Vec<PathBuf>,
@@ -1189,7 +1063,10 @@ pub(crate) fn compile_resident(arguments: &[String]) -> Result<(), Box<dyn std::
 /// that unchanged inputs reproduce writes its receipt.
 fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std::error::Error>> {
     if arguments.len() < 4 {
-        return Err("usage: --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [--rustc-arg ARG] [--library]".into());
+        return Err(
+            "usage: --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [--rustc-arg ARG] [--library] [--shared-native DIR]"
+                .into(),
+        );
     }
 
     // ---- Checked source and Incan plan ----
@@ -1272,6 +1149,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         &dependencies.rustc_args,
         dependencies.shared_native.as_deref(),
         kind,
+        overflow_checks,
         program.manifest.as_ref(),
     )
     .map_err(|error| {
@@ -1311,30 +1189,17 @@ fn lower_authored_modules(
     modules: &[ParsedModule],
     analysis: &CompilationAnalysis,
     session: &CompilationSession,
-    package_identity: &str,
-    library: bool,
     bodies: &mut Vec<BodyIrModule>,
     files: &mut Vec<String>,
 ) -> Result<(), String> {
-    let provider_operations = incan_frontend::body_ir::ProviderOperationCatalog::from_loaves(session.loaves())?;
-    for module in modules {
-        let type_info = analysis
-            .type_info_for_path(&module.file_path)
-            .ok_or("module analysis is missing")?;
-        let body_ir = incan_frontend::body_ir::build_body_ir_module(
-            &module.ast,
-            &module.path_segments,
-            type_info,
-            &incan_frontend::body_ir::BodyIrContext {
-                modules: bodies,
-                provider_operations: &provider_operations,
-                registry_package: Some(package_identity),
-                library_package: library.then_some(package_identity),
-            },
-        );
+    let _invocation =
+        tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::build_body_ir", modules = modules.len())
+            .entered();
+    let own = bodies.len();
+    incan_driver::body_ir::lower_authored_modules(modules, analysis, session, bodies)?;
+    for (module, body_ir) in modules.iter().zip(&bodies[own..]) {
         validate_retained_storage(&module.ast, &body_ir)
             .map_err(|error| format!("{}: {error}", module.file_path.display()))?;
-        bodies.push(body_ir);
         files.push(module.file_path.to_string_lossy().into_owned());
     }
     Ok(())

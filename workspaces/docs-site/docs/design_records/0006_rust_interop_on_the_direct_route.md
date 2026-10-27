@@ -47,8 +47,8 @@ Body-local storage erases lifetimes, while native input signatures bind each met
 
 ## Non-goals
 
-- Layouts with hidden fields, and construction of items whose fields are not all public.
-- Const-generic arguments.
+- Access to hidden fields, and construction of items whose fields are not all public or whose layout is non-exhaustive. Readable public fields are retained independently of construction authority.
+- Source-written const-generic arguments. Omitted native parameter defaults come from the linked Rust declaration, as omitted type defaults do.
 - Borrowed Rust outputs and fields without a retained relationship to their owners.
 - Changing RFC 005's source surface.
 - Rust statics without a storage contract, and unsafe or unsupported calls without complete checked facts.

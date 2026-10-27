@@ -4,7 +4,7 @@ incan_codegraph = { loaf = "incan_codegraph", path = "../../kernel/incan_codegra
 incan_frontend = { default-features = false, loaf = "incan_frontend", path = "../incan_frontend" }
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
-incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab", version = "0.3.0" }
+incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab", version = "0.6.0-dev.8" }
 proc-macro2 = { loaf = "crates-io/proc-macro2", version = "1.0" }
 rustix = { features = ["fs"], loaf = "crates-io/rustix", version = "1.1.4" }
 semver = { loaf = "crates-io/semver", version = "1.0.27" }
@@ -23,7 +23,7 @@ description = "The Incan compiler driver: sessions, checking, Loaf publication a
 license = "Apache-2.0"
 name = "incan_driver"
 private = true
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.8"
 
 [project.features]
 default = [

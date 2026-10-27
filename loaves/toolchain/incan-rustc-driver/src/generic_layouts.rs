@@ -11,6 +11,9 @@ use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_span::{Ident, Span, Symbol, kw, respan};
 use thin_vec::{ThinVec, thin_vec};
 
+/// Name prefix of the private zero-sized marker field; the declaration and the layout reader must agree on it.
+const MARKER_PREFIX: &str = "__incan_phantom";
+
 /// Declare the generic ADT and its source-shaped Debug implementation, excluding its private marker from output.
 /// The compiled ABI exposes every retained layout; the checked manifest governs source visibility separately.
 pub(crate) fn items(
@@ -173,7 +176,7 @@ fn field_definition(name: &str, ty: Box<ast::Ty>, public: bool, span: Span) -> a
 
 /// Choose a private marker name outside the authored field set.
 fn marker_name(model: &GenericModelDeclaration) -> String {
-    let mut name = "__incan_phantom".to_owned();
+    let mut name = MARKER_PREFIX.to_owned();
     while model.fields.iter().any(|field| field.name == name) {
         name.push('_');
     }
@@ -449,7 +452,7 @@ pub(crate) fn marker_type<'tcx>(
         return None;
     }
     let field = fields.iter().next_back()?;
-    if !field.name.as_str().starts_with("__incan_phantom") || tcx.visibility(field.did).is_public() {
+    if !field.name.as_str().starts_with(MARKER_PREFIX) || tcx.visibility(field.did).is_public() {
         return None;
     }
     let ty = field.ty(tcx, args).skip_normalization();

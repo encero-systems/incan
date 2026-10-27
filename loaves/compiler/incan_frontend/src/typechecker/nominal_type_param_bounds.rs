@@ -555,17 +555,13 @@ impl TypeChecker {
     /// own bound on the same trait may resolve through a different import path, so the declaration name decides.
     fn active_type_param_declares_same_trait(&self, placeholder: &str, required: &TypeBoundInfo) -> bool {
         let required_name = Self::type_bound_source_name(required);
-        self.current_type_param_bound_details
-            .iter()
-            .rev()
-            .find_map(|frame| frame.get(placeholder))
-            .is_some_and(|bounds| {
-                bounds.iter().any(|bound| {
-                    let name = Self::type_bound_source_name(bound);
-                    name == required_name
-                        || (required_name == builtin_traits::as_str(TraitId::Clone)
-                            && name == derives::as_str(DeriveId::Copy))
-                })
+        self.innermost_type_param_bounds(placeholder).is_some_and(|bounds| {
+            bounds.iter().any(|bound| {
+                let name = Self::type_bound_source_name(bound);
+                name == required_name
+                    || (required_name == builtin_traits::as_str(TraitId::Clone)
+                        && name == derives::as_str(DeriveId::Copy))
             })
+        })
     }
 }

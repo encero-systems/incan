@@ -20,6 +20,10 @@ from rust::incan_semantics_core::body_ir import (
 )
 from symbols import type_component
 
+# The refusal for a placeholder no binder of the instantiated frame closes; callers that may leave owner placeholders
+# open recognize their skip by this prefix.
+pub const UNBOUND_TYPE_PARAMETER: str = "unsupported Body IR unbound type parameter"
+
 
 pub model Instance:
     """One retained declaration and checked arguments; original-callable requests select the retained source role."""
@@ -73,7 +77,7 @@ pub def substitute(ty: &RustType, names: list[str], arguments: list[RustType]) -
             for index in range(len(names)):
                 if names[index] == str(name):
                     return Ok(arguments[index].clone())
-            return Err(f"unsupported Body IR unbound type parameter {name} in binding scope {names}")
+            return Err(f"{UNBOUND_TYPE_PARAMETER} {name} in binding scope {names}")
         RustType.Named(name) =>
             # A named declaration is not a placeholder, even when its spelling matches a type parameter.
             return Ok(ty.clone())
@@ -158,9 +162,6 @@ pub def instantiate(body: &Body, arguments: list[RustType], owned_callable_slots
     storage = callable_storage_arguments(body, arguments, owned_callable_slots)?
     mut result = retain_owned_callable_storage(body, owned_callable_slots)?
     result.trait_default_instantiation = close_trait_environment(body.trait_default_instantiation, names, arguments)?
-    pointers = native_pointer_parameters(body, storage)
-    if len(pointers) != 0:
-        result = retain_native_pointer_storage(result, pointers)
     body_name = str(body.name)
     for index in range(len(result.locals)):
         concrete: RustType = substitute(result.locals[index].ty, names, storage).map_err(
@@ -295,8 +296,6 @@ def owned_callable_argument(argument: &RustType) -> Result[RustType, str]:
         RustType.Generic(base=base, args=elements) =>
             if str(base) == "<owned-callable>" and len(elements) == 1:
                 return Ok(argument.clone())
-            if str(base) == "<native-callable>" and len(elements) == 1:
-                return Ok(generic("<owned-callable>", [argument.clone()]))
         _ => pass
     return Err("invalid owned callable storage argument")
 
@@ -333,57 +332,6 @@ def retain_owned_callable_storage(original: &Body, slots: list[int]) -> Result[B
                 _ => pass
             result.callable_representation = Some(retained)
     return Ok(result)
-
-
-def native_pointer_parameters(body: &Body, arguments: list[RustType]) -> list[str]:
-    """Select generic binders supplied with exact native function-pointer arguments, excluding owned environments."""
-    mut names: list[str] = []
-    for index in range(len(arguments)):
-        match arguments[index]:
-            RustType.Generic(base=base, args=elements) =>
-                if str(base) == "<native-callable>" and len(elements) == 1:
-                    names.append(str(body.type_parameters[index]))
-            _ => pass
-    return names
-
-
-def retain_native_pointer_storage(body: &Body, names: list[str]) -> Body:
-    """Keep the selected pointer ABI in every original generic local instead of borrowing a closure object."""
-    mut result = body.clone()
-    match body.callable_representation:
-        Some(representation) =>
-            mut retained = representation.clone()
-            mut pointers: list[RustLocalId] = []
-            for local in body.locals:
-                match local.ty:
-                    RustType.TypeVar(name) =>
-                        if str(name) in names:
-                            pointers.append(local.id.clone())
-                    _ => pass
-            local_holds: list[RustLocalId] = without_locals(retained.closure_holding_locals, pointers)
-            parameter_holds: list[RustLocalId] = without_locals(retained.closure_holding_parameters, pointers)
-            retained.closure_holding_locals = local_holds
-            retained.closure_holding_parameters = parameter_holds
-            for pointer in pointers:
-                if not has_local(retained.function_pointer_locals, pointer):
-                    retained.function_pointer_locals.push(pointer.clone())
-            match body.return_type:
-                RustType.TypeVar(name) =>
-                    if str(name) in names:
-                        retained.closure_holding_return = false
-                _ => pass
-            result.callable_representation = Some(retained)
-        None => pass
-    return result
-
-
-def without_locals(values: &list[RustLocalId], excluded: &list[RustLocalId]) -> list[RustLocalId]:
-    """Remove only locals whose checked generic binder has a separately selected native pointer representation."""
-    mut result: list[RustLocalId] = []
-    for value in values:
-        if not has_local(excluded, value):
-            result.append(value.clone())
-    return result
 
 
 def has_local(locals: &list[RustLocalId], sought: &RustLocalId) -> bool:

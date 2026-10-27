@@ -1,4 +1,4 @@
-# behavior: native associated and instance calls retain their declared results, including extension trait associated calls with contextual integer literals (#2256)
+# behavior: native associated and instance calls retain their declared results, including extension trait associated calls with contextual integer literals (#2256); a body-less rusttype that forwards Clone and Display to its backing Rust type stays a transparent alias (rust-22h)
 # expect-stdout:
 #   5
 #   8
@@ -7,7 +7,10 @@
 #   7
 #   493
 #   420
+#   ada
 
+from rust::std::clone import Clone as NativeClone
+from rust::std::fmt import Display
 from rust::std::fs import Permissions
 from rust::std::os::unix::fs import PermissionsExt
 from rust::std::num import ParseIntError
@@ -15,6 +18,9 @@ from rust::std::string import String as RustString
 
 
 type Name = rusttype RustString
+
+
+type Label = rusttype RustString with NativeClone, Display
 
 
 model Buffer:
@@ -49,3 +55,6 @@ def main() -> None:
     mode: u32 = 420
     typed = Permissions.from_mode(mode)
     println(typed.mode())
+    label = Label.from("ada")
+    assert label.len() == 3
+    println(label)

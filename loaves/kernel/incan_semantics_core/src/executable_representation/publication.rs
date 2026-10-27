@@ -38,7 +38,8 @@ pub(super) fn project_constant(
     Ok((value, audit.requirements))
 }
 
-/// Select a compiled contract, governed body, or complete checked decorator replacement under one public identity.
+/// Select a governed body or complete checked decorator replacement under one public identity. Compiled exports
+/// reach `project_compiled_frame` directly at the owning publication boundary.
 pub(super) fn project_callable(
     source: &Body,
     module: &BodyIrModule,
@@ -73,9 +74,6 @@ pub(super) fn project_callable(
             },
             value.requirements,
         ));
-    }
-    if super::publishes_compiled_frame(module, source) {
-        return project_compiled_frame(source, module, library, eligible);
     }
     let value = project_body(source, module, library, eligible)?;
     let callables = selected_native_calls(&value.native_calls, native_callables)?;
@@ -125,7 +123,6 @@ pub(super) fn project_compiled_frame(
         }
     }
     frame.runtime_requirements.clear();
-    frame.panic_facts.clear();
     frame.extern_delegation = None;
     frame.named_type_identities = audit.used_nominal_types;
     require_module_initialization(module, &mut audit.requirements);

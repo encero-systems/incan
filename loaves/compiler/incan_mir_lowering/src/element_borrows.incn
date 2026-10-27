@@ -295,8 +295,8 @@ def borrow_dictionary_value(
         return Err("unsupported Body IR set indexing")
     # Legacy dictionary indexing requires Display for its missing-key diagnostic; tuples and unit lack that bound.
     match types[0]:
-        PlanType.Tuple(_elements) => return Err("unsupported Body IR tuple dictionary key lookup: legacy Display bound")
-        PlanType.Unit => return Err("unsupported Body IR unit dictionary key lookup: legacy Display bound")
+        PlanType.Tuple(_elements) => return Err("tuple dictionary keys cannot satisfy the lookup's Display requirement")
+        PlanType.Unit => return Err("unit dictionary keys cannot satisfy the lookup's Display requirement")
         _ => pass
     result = mutable_reference_type(types[1])?
     key = value_operand(builder, index, span)?

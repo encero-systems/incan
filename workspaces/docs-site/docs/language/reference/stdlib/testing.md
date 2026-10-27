@@ -69,15 +69,15 @@ Returns the stable platform string used by `skipif` / `xfailif` collection probe
 
 ### `feature(name: str) -> bool`
 
-Returns whether the named test collection probe is enabled. Dev.8's CLI exposes no switch to enable a named probe.
+Returns whether the package feature `name` is active for the test unit, as selected by its manifest defaults and the `--features`, `--no-default-features` and `--all-features` flags.
 
 ### `@slow`
 
-Marks a test as slow. Slow tests are excluded by default; dev.8's CLI exposes no slow-test selection flag.
+Marks a test as slow. `incan test` runs slow tests.
 
 ### `@mark(name: str)`
 
-Attaches a user-defined marker. Dev.8's CLI exposes no marker-selection flag.
+Attaches a user-defined marker. Markers do not select tests; `incan test` runs marked tests.
 
 ### `@resource(name: str)`
 
@@ -115,13 +115,13 @@ Built-in fixtures are provided by parameter name:
 - `tmp_workdir`
 - `env`
 
-`env` is backed by `incan_std_testing::TestEnv`, which restores environment changes when dropped.
+`env` restores environment changes at the fixture's scope boundary.
 
 Fixture scopes:
 
 - `@fixture` / `@fixture(scope="function")`: created for each test that uses it.
 - `@fixture(scope="module")`: cached once per source file inside a generated worker-batch harness.
-- `@fixture(scope="session")`: cached once per worker batch. Dev.8's CLI accepts one test source per invocation and exposes no job-count flag.
+- `@fixture(scope="session")`: cached once per worker batch.
 
 Fixtures may use one top-level `yield` statement. Statements before `yield` are setup, the yielded value is injected, and statements after `yield` run as teardown at the fixture scope boundary. Teardown can reference setup locals and fixture parameters, runs after failing tests when the worker remains alive, and fails the run if teardown itself fails. Timeout-enforced worker termination can bypass teardown.
 

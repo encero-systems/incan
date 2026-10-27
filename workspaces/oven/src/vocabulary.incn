@@ -5,7 +5,7 @@ from std.fs import Path
 from std.encoding.hex import hexlify
 from std.hash import sha256
 from std.json import JsonValue, parse
-from files import json_text
+from files import json_text, read, write
 from graph_queries import nested
 from publication import publish
 from rust_units import decoded
@@ -65,12 +65,7 @@ pub def prepare_vocabulary(described: UnitDescription, toolchain: Toolchain) -> 
         if worker_code != 0:
             contract = "vocabulary entry must export pub def desugar(request: DesugarRequest) -> Result[DesugarResponse, DesugarError]"
             return Err(f"{contract} ({worker_unit.package}; compiler {Path(toolchain.driver).name()})")
-        worker = worker_metadata(
-            executable,
-            worker_key,
-            registration.profile,
-            nested(nested(payload, "desugarer"), "abi_version"),
-        )?
+        worker = worker_metadata(executable, worker_key, nested(nested(payload, "desugarer"), "abi_version"))?
     prepared = JsonValue.object(
         {"crate_path": JsonValue.string(entry.replace(".", "/") + ".incn"), "package_name": JsonValue.string(
             unit.package,
@@ -112,15 +107,13 @@ def worker_description(registration: UnitDescription, entry: str, directory: Pat
     return Ok(worker)
 
 
-def worker_metadata(executable: Path, key: Key, profile: str, schema_version: JsonValue) -> Result[JsonValue, str]:
+def worker_metadata(executable: Path, key: Key, schema_version: JsonValue) -> Result[JsonValue, str]:
     """Publish executable identity with the syntax schema declared by the producer's std.vocab."""
     bytes = executable.read_bytes().map_err((error) => error.message())?
     return Ok(
         JsonValue.object(
             {"artifact_kind": JsonValue.string("NativeWorker"), "abi_version": schema_version, "relative_path": JsonValue.string(
                 "vocab-worker",
-            ), "target": JsonValue.string("host"), "profile": JsonValue.string(profile), "entrypoint": JsonValue.string(
-                "desugar",
             ), "sha256": JsonValue.string(hexlify(sha256.digest(bytes))), "unit_identity": JsonValue.string(key.digest)},
         ),
     )
@@ -175,7 +168,7 @@ def run_registration(output: Path) -> Result[JsonValue, str]:
 def write_changed(path: Path, content: str) -> Result[None, str]:
     """Keep generated input identities stable when their bytes have not changed."""
     if path.is_file():
-        previous = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+        previous = read(path)?
         if previous == content:
             return Ok(None)
-    return path.write_text(content, "utf-8", "strict", None).map_err((error) => error.message())
+    return write(path, content)

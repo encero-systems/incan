@@ -1,4 +1,4 @@
-# behavior: a shared path dependency receives the features selected by all consumers and enables its optional dependency
+# behavior: a shared path dependency unifies requested features, enables its optional dependency and keeps defaults disabled
 # expect-stdout:
 #   42
 

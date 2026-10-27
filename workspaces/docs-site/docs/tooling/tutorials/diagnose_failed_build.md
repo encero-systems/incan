@@ -53,7 +53,7 @@ incan build src/main.incn
 incan inspect codegraph . --query defs double
 ```
 
-The program prints `42`. Inspection reports the source declaration; native compilation does not provide a generated-Rust inspection command.
+The program prints `42`. Inspection reports the source declaration.
 
 <section class="inc-learning-panel inc-learning-panel--complete" data-label="Complete" markdown="1">
 

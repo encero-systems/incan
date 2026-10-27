@@ -5,6 +5,7 @@ from rust::std::process import Command
 from rust::std::string import String as RustString
 from std.fs import Path
 from std.json import JsonValue, parse
+from files import optional_text as text
 
 
 pub def check_mcp(incan: str, project: Path) -> Result[None, str]:
@@ -118,10 +119,3 @@ def content(reply: JsonValue) -> Result[str, str]:
     items = value.expect_array().map_err((error) => error.message())?
     payload = items[0].require("text").map_err((error) => error.message())?
     return payload.expect_str().map_err((error) => error.message())
-
-
-def text(value: JsonValue, key: str) -> str:
-    """Read an optional protocol string for a focused contract comparison."""
-    match value.get(key):
-        Some(item) => return item.as_str().unwrap_or("")
-        None => return ""

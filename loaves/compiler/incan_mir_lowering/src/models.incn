@@ -1,5 +1,6 @@
 """Scalar, collection, and nominal layout admission from canonical frontend records."""
 
+from table_views import borrowed_at
 pub from frame import place_type
 from collections import primitive_leaf
 from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId
@@ -35,7 +36,7 @@ from ranges import range_field
 from unions import union_slot
 
 
-pub def model_type(mut declarations: list[NominalDeclaration], ty: &RustType) -> Result[PlanType, str]:
+pub def model_type(declarations: &list[NominalDeclaration], ty: &RustType) -> Result[PlanType, str]:
     """
     Translate checked types against retained declarations, preserving unsupported types in refusals.
 
@@ -57,7 +58,8 @@ pub def model_type(mut declarations: list[NominalDeclaration], ty: &RustType) ->
         RustType.Named(name) =>
             retained_name = str(name)
             mut index = 0
-            for declaration in declarations:
+            for declaration_position in range(len(declarations)):
+                declaration = borrowed_at(declarations, declaration_position)
                 if declaration.name == retained_name:
                     return Ok(PlanType.Model(index, model_symbol(retained_name)))
                 index += 1
@@ -92,7 +94,8 @@ pub def model_type(mut declarations: list[NominalDeclaration], ty: &RustType) ->
             retained_base = str(base)
             retained_name = nominal_symbol(retained_base, arguments)
             mut index = 0
-            for declaration in declarations:
+            for declaration_position in range(len(declarations)):
+                declaration = borrowed_at(declarations, declaration_position)
                 if (
                     declaration.type_parameter_count != 0
                     and declaration.name == retained_name
@@ -141,9 +144,10 @@ pub def runtime_storage_marker(ty: &RustType) -> Option[PlanType]:
     return None
 
 
-def rejected_nominal_name(mut declarations: list[NominalDeclaration], name: str) -> str:
+def rejected_nominal_name(declarations: &list[NominalDeclaration], name: str) -> str:
     """Report a rejected carrier's source name only through its retained canonical owner, without granting layout admission."""
-    for declaration in declarations:
+    for declaration_position in range(len(declarations)):
+        declaration = borrowed_at(declarations, declaration_position)
         match nominal_carrier_key(declaration.canonical):
             Some(key) =>
                 if str(key) == name:
@@ -152,7 +156,7 @@ def rejected_nominal_name(mut declarations: list[NominalDeclaration], name: str)
     return name
 
 
-pub def hashed_element(mut declarations: list[NominalDeclaration], ty: &RustType) -> Result[ListLeaf, str]:
+pub def hashed_element(declarations: &list[NominalDeclaration], ty: &RustType) -> Result[ListLeaf, str]:
     """
     Admit a retained model as a set element or dictionary key with derived Hash and derived or canonically selected source Eq.
 
@@ -164,7 +168,8 @@ pub def hashed_element(mut declarations: list[NominalDeclaration], ty: &RustType
         RustType.Named(name) =>
             retained_name = str(name)
             mut index = 0
-            for declaration in declarations:
+            for declaration_position in range(len(declarations)):
+                declaration = borrowed_at(declarations, declaration_position)
                 if declaration.name == retained_name and model_equality(declaration) and "Hash" in declaration.derives:
                     return Ok(ListLeaf.Model(index, retained_name))
                 index += 1
@@ -182,27 +187,27 @@ def model_equality(declaration: &NominalDeclaration) -> bool:
 
 
 pub def model_place(
-    mut declarations: list[NominalDeclaration],
-    mut locals: list[Local],
+    declarations: &list[NominalDeclaration],
+    locals: &list[Local],
     value: &RustPlace,
     span: SourceSpan,
-    mut enums: list[RustEnumDeclaration],
-    mut unions: list[RustType],
-    mut intrinsics: list[EnumDeclaration],
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[Place, str]:
     """Borrow the frame's tables while requiring each selected field's canonical layout; an unprojected local needs no declaration-table copy."""
     return model_prefix(declarations, locals, value, len(value.projection), span, enums, unions, intrinsics)
 
 
 pub def model_prefix(
-    mut declarations: list[NominalDeclaration],
-    mut locals: list[Local],
+    declarations: &list[NominalDeclaration],
+    locals: &list[Local],
     value: &RustPlace,
     count: int,
     span: SourceSpan,
-    mut enums: list[RustEnumDeclaration],
-    mut unions: list[RustType],
-    mut intrinsics: list[EnumDeclaration],
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[Place, str]:
     """Borrow retained tables to project a checked leading field path without copying or changing the frontend place."""
     if count < 0 or count > len(value.projection):
@@ -266,13 +271,13 @@ pub def model_prefix(
 
 
 pub def field_path(
-    mut declarations: list[NominalDeclaration],
+    declarations: &list[NominalDeclaration],
     root: PlanType,
     projections: list[RustPlaceElem],
     count: int,
-    mut enums: list[RustEnumDeclaration],
-    mut unions: list[RustType],
-    mut intrinsics: list[EnumDeclaration],
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[list[FieldProjection], str]:
     """Resolve ordered checked carrier payloads and canonical fields; indices and slices keep their separate lowering."""
     mut ty = root
@@ -285,12 +290,12 @@ pub def field_path(
 
 
 pub def field_projection(
-    mut declarations: list[NominalDeclaration],
+    declarations: &list[NominalDeclaration],
     root: PlanType,
     projection: &RustPlaceElem,
-    mut enums: list[RustEnumDeclaration],
-    mut unions: list[RustType],
-    mut intrinsics: list[EnumDeclaration],
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[FieldProjection, str]:
     """Validate one ordered payload or canonical field through the typed Rust enum boundary required by #459."""
     match field_referent(root):
@@ -396,7 +401,7 @@ def checked_field_identity(
 
 
 pub def constructor_index(
-    mut declarations: list[NominalDeclaration],
+    declarations: &list[NominalDeclaration],
     target: &ConstructorTarget,
     count: int,
     expected: PlanType,
@@ -447,15 +452,15 @@ def validate_constructor_binding(binding: &ArgumentBinding, count: int, fields: 
 
 
 def receiver_field(
-    mut declarations: list[NominalDeclaration],
+    declarations: &list[NominalDeclaration],
     index: int,
     owner: int,
     value: &RustPlace,
     count: int,
     span: SourceSpan,
-    mut enums: list[RustEnumDeclaration],
-    mut unions: list[RustType],
-    mut intrinsics: list[EnumDeclaration],
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[Place, str]:
     """Project a checked field path through a shared or mutable nominal receiver."""
     fields = field_path(

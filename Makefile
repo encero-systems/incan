@@ -1,13 +1,13 @@
 # Incan development commands: formatting, quality gates and docs.
 #
-# Nothing here runs Cargo or builds the compiler. Oven (workspaces/oven, DD-0008) builds and tests it; during dev.8
-# the frozen dev.7 builder bakes the Oven and the compiler.
+# Nothing here runs Cargo or builds the compiler: Oven (workspaces/oven, DD-0008) builds and tests it.
 
 .DEFAULT_GOAL := help
 
 INCAN ?= incan
 
-# Workspace Rust sources rustfmt owns; fixture crates keep the shape their tests assert and vendored crates their upstream form.
+# Workspace Rust sources rustfmt owns; fixture crates keep the shape their tests assert, and vendored crates keep
+# their upstream form.
 RUST_SOURCES = git ls-files -z 'loaves/*.rs' ':!:loaves/**/fixtures/**' ':!:loaves/third_party/**'
 
 # =============================================================================
@@ -86,7 +86,7 @@ agents-doc-sync:
 agents-doc-sync-ci:
 	@$(INCAN) run scripts/check_agents_doc_sync.incn
 
-.PHONY: pre-commit-fast  ## quality - Fast local gate: formatting, spelling, rustdoc and the skill table (doc paths return with the dev.8 docs pass)
+.PHONY: pre-commit-fast  ## quality - Fast local gate: formatting, spelling, rustdoc and the skill table
 pre-commit-fast: fmt-check us-english-check rustdoc-gate agents-doc-sync
 
 # =============================================================================

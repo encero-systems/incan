@@ -13,7 +13,7 @@ from graph_context_items import anchor_root, minimum_sizes, tokens
 from observation import trace
 from publication import publish
 from unit_freshness import artifact_identity, fingerprint
-
+from toolchain import Toolchain
 
 const INDEX_DOMAIN: str = "incan.context.index/4"
 
@@ -66,9 +66,9 @@ pub class ContextIndex:
     pub read_bytes: int = 0
     extra: Dict[str, JsonValue] = {}
 
-    def add(mut self, unit: GraphUnit, driver: str, owner: Path) -> Result[None, str]:
+    def add(mut self, unit: GraphUnit, toolchain: Toolchain, owner: Path) -> Result[None, str]:
         """Load one identity-bound package index; only its header needs JSON decoding."""
-        path = prepare(unit, driver, owner)?
+        path = prepare(unit, toolchain, owner)?
         data = f"{path.0}.records"
         self.searches.append((f"{path.0}.terms", data))
         for line in read(path)?.split("\n"):
@@ -239,7 +239,8 @@ pub class ContextIndex:
         return Ok(JsonValue.object(fields))
 
     def minimum_tokens(self, identifier: str, format: str) -> Result[int, str]:
-        """Bound a node's serialized bytes from below without opening its payload.
+        """
+        Bound a node's serialized bytes from below without opening its payload.
 
         Prepared sizes retain exact signatures, trust, details and source anchors. Joined identity fields are
         measured now, after ambiguity resolution. Extra local-id digits, score digits and longer reasons only add
@@ -291,7 +292,7 @@ pub class ContextIndex:
             Err(_) => return Err("context index record is not UTF-8")
 
 
-def prepare(unit: GraphUnit, driver: str, owner: Path) -> Result[Path, str]:
+def prepare(unit: GraphUnit, toolchain: Toolchain, owner: Path) -> Result[Path, str]:
     """
     Persist a package index in the requesting project's preparation cache, bound to the export's full file identity.
 
@@ -301,15 +302,22 @@ def prepare(unit: GraphUnit, driver: str, owner: Path) -> Result[Path, str]:
     """
     # 1. A changed export, package or anchor selects another immutable index.
     anchors = anchor_root(owner).0
-    key = fingerprint([
-        INDEX_DOMAIN, anchors, unit.path.0, unit.root.0, unit.package, unit.version,
-        artifact_identity(stamp_file(unit))?,
-    ])?
+    key = fingerprint(
+        [
+            INDEX_DOMAIN,
+            anchors,
+            unit.path.0,
+            unit.root.0,
+            unit.package,
+            unit.version,
+            artifact_identity(stamp_file(unit))?,
+        ],
+    )?
     path = Path(f"{cache_file(owner, key)?.0}.context-index")
     if path.is_file() and Path(f"{path.0}.records").is_file() and Path(f"{path.0}.terms").is_file():
         return Ok(path)
     # 2. Only preparation decodes all payloads; requests read the vocabulary and lightweight rows.
-    document = read_graph(unit, driver, "", context_fields()?)?
+    document = read_graph(unit, toolchain, "", context_fields()?)?
     mut rows: list[str] = []
     mut vocabulary: Dict[str, list[str]] = {}
     mut package = unit.package
@@ -339,32 +347,48 @@ def prepare(unit: GraphUnit, driver: str, owner: Path) -> Result[Path, str]:
     publish(Path(f"{path.0}.records"), document)?
     publish(Path(f"{path.0}.terms"), "\n".join(terms))?
     publish(path, "\n".join(rows))?
-    trace(f"graph context prepared {unit.path.0}: {len(document.encode('utf-8'))} bytes, {count} records")
+    trace(f"graph context prepared {unit.path.0}: {len(document.encode("utf-8"))} bytes, {count} records")
     return Ok(path)
 
 
 def context_node(row: list[str], data: str) -> ContextNode:
     """Decode the private row layout once; ranking uses named fields rather than storage column positions."""
     return ContextNode(
-        position=RecordRange(path=data, offset=row[2], length=row[3]), kind=row[4], key=row[5], logical=row[6],
-        label=row[7], name=row[8], bonus=row[9], target=row[10], declaration=row[11], meaning=row[12],
-        compact_minimum=row[16], structured_minimum=row[17],
+        position=RecordRange(path=data, offset=row[2], length=row[3]),
+        kind=row[4],
+        key=row[5],
+        logical=row[6],
+        label=row[7],
+        name=row[8],
+        bonus=row[9],
+        target=row[10],
+        declaration=row[11],
+        meaning=row[12],
+        compact_minimum=row[16],
+        structured_minimum=row[17],
         original_identity=row[18],
     )
 
 
 def searchable(record: JsonValue) -> str:
     """Index exactly the label and optional text fields the public task scoring examines."""
-    return " ".join([display(record)] + [
-        text(record, key) for key in ["path", "signature", "message", "documentation"]
-    ]).lower()
+    return " ".join([display(record)] + [text(record, key) for key in ["path", "signature", "message", "documentation"]]).lower()
 
 
 pub def context_fields() -> Result[str, str]:
     """Select context edges' exact fields before JSON transport; complete nodes and artifact bytes stay intact."""
     kept = [
-        "record", "id", "owner_id", "target_id", "parent_id", "child_id", "source_id", "module_id",
-        "span", "provenance", "degraded",
+        "record",
+        "id",
+        "owner_id",
+        "target_id",
+        "parent_id",
+        "child_id",
+        "source_id",
+        "module_id",
+        "span",
+        "provenance",
+        "degraded",
     ]
     mut projection: Dict[str, JsonValue] = {}
     for kind in ["call", "reference", "containment", "export"]:
@@ -396,10 +420,24 @@ def index_row(record: JsonValue, offset: int, length: int, root: str) -> Result[
             original_identity = encoded
     compact_minimum, structured_minimum = minimum_sizes(record, root)?
     fields = [
-        "node", text(record, "id"), str(offset), str(length), kind, text(record, "stable_key"), stable,
-        display(record), text(record, "name"), str(bonus), text(record, "target_id"), text(record, "declaration_id"),
-        json_text(nested(record, "semantic_digest"))?, source, target, relationship,
-        str(compact_minimum), str(structured_minimum),
+        "node",
+        text(record, "id"),
+        str(offset),
+        str(length),
+        kind,
+        text(record, "stable_key"),
+        stable,
+        display(record),
+        text(record, "name"),
+        str(bonus),
+        text(record, "target_id"),
+        text(record, "declaration_id"),
+        json_text(nested(record, "semantic_digest"))?,
+        source,
+        target,
+        relationship,
+        str(compact_minimum),
+        str(structured_minimum),
         original_identity,
     ]
     return Ok("\t".join([escape(field) for field in fields]))

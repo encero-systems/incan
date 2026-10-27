@@ -6,12 +6,25 @@ from rust::incan_semantics_core import (
     IncanCallableParam,
     IncanCallableParamKind,
 )
-from rust::incan_semantics_core::body_ir import BodyIrModule, Body, NominalDeclaration, StaticInitializer
-from pub::incan_mir_plan import GenericLayoutType, GenericLayoutField, GenericModelDeclaration, SourceSpan
+from rust::incan_semantics_core::body_ir import (
+    BodyIrModule,
+    Body,
+    NominalDeclaration,
+    StaticInitializer,
+    EnumDeclaration as RustEnumDeclaration,
+)
+from pub::incan_mir_plan import (
+    GenericLayoutType,
+    GenericLayoutField,
+    GenericModelDeclaration,
+    SourceSpan,
+    EnumDeclaration,
+)
 from nominal_instances import NominalInstance
 from decls import library_item
-from unions import native_source_type
+from layout_types import native_source_type
 from closures import callable_component, packed_input
+from table_views import borrowed_table
 
 
 pub def generic_models(
@@ -62,7 +75,17 @@ pub def generic_models(
             # Construction defaults and reflection stay in their checked Incan records, rather than native derives.
             if derive in ["Default", "FieldInfo", "IncanClass"]:
                 continue
-            if derive not in ["Clone", "Debug", "PartialEq", "Eq", "PartialOrd", "Ord", "Hash", "serde::Serialize", "serde::Deserialize"]:
+            if derive not in [
+                "Clone",
+                "Debug",
+                "PartialEq",
+                "Eq",
+                "PartialOrd",
+                "Ord",
+                "Hash",
+                "serde::Serialize",
+                "serde::Deserialize",
+            ]:
                 return Err(f"unsupported Body IR generic Loaf derive {derive}")
             derives.append(str(derive))
         if "serde::Serialize" in derives or "serde::Deserialize" in derives:
@@ -158,11 +181,11 @@ def generic_field_type(module: &BodyIrModule, ty: &RustType, parameters: list[st
             signature.append(generic_field_type(module, output, parameters)?)
             return Ok(GenericLayoutType.FunctionPointer(signature))
         _ =>
-            return Ok(
-                GenericLayoutType.Concrete(
-                    native_source_type(list(module.nominal_declarations), list(module.enum_declarations), [], ty, [])?,
-                ),
-            )
+            unions: list[RustType] = []
+            intrinsics: list[EnumDeclaration] = []
+            nominals: &list[NominalDeclaration] = borrowed_table(module.nominal_declarations)
+            enums: &list[RustEnumDeclaration] = borrowed_table(module.enum_declarations)
+            return Ok(GenericLayoutType.Concrete(native_source_type(nominals, enums, unions, ty, intrinsics)?))
 
 
 def generic_callable_input(

@@ -27,18 +27,13 @@ pub fn provider_bridge_route(library: &str, dependencies: impl IntoIterator<Item
 }
 
 #[derive(Clone, Copy)]
-enum Qualification<'a> {
-    Emission { provider: Option<&'a str> },
-    Manifest { provider: &'a str },
+struct Qualification<'a> {
+    provider: &'a str,
 }
 
-/// Normalize every Rust display nested in one resolved type for generated declaration emission.
-pub fn normalize_for_emission(
-    ty: &mut ResolvedType,
-    provider: Option<&str>,
-    type_params: &[String],
-) -> Result<(), String> {
-    transform_resolved_type(ty, Qualification::Emission { provider }, type_params)
+/// Validate the syntax of every Rust display without inventing an emission spelling.
+pub fn validate_emission_display(ty: &ResolvedType) -> Result<(), String> {
+    public_bridge_roots(ty, &[]).map(|_| ())
 }
 
 /// Qualify provider-owned Rust displays so a compiled subclass can republish them through its own dependency bridge.
@@ -49,7 +44,7 @@ pub fn qualify_for_manifest(
 ) -> Result<ResolvedType, String> {
     let mut qualified = ty.clone();
     if let Some(provider) = provider {
-        transform_resolved_type(&mut qualified, Qualification::Manifest { provider }, type_params)?;
+        transform_resolved_type(&mut qualified, Qualification { provider }, type_params)?;
     }
     Ok(qualified)
 }
@@ -121,56 +116,26 @@ fn transform_resolved_type(
     }
 }
 
-/// Rebase one structured provider-owned nominal name for the selected artifact boundary.
+/// Rebase a structured provider-owned nominal name through the manifest's explicit dependency bridge.
 fn qualify_nominal_name(name: &mut String, qualification: Qualification<'_>) {
+    let provider = escaped_crate_name(qualification.provider);
     if let Some(path) = name
         .strip_prefix(PROVIDER_RUST_BRIDGE_MODULE)
         .and_then(|path| path.strip_prefix("::"))
     {
-        *name = match qualification {
-            Qualification::Emission { provider: None } => return,
-            Qualification::Emission {
-                provider: Some(provider),
-            } => format!(
-                "::{}::{PROVIDER_RUST_BRIDGE_MODULE}::{path}",
-                escaped_crate_name(provider)
-            ),
-            Qualification::Manifest { provider } => format!(
-                "{PROVIDER_RUST_BRIDGE_MODULE}::{}::{PROVIDER_RUST_BRIDGE_MODULE}::{path}",
-                escaped_crate_name(provider)
-            ),
-        };
+        *name = format!("{PROVIDER_RUST_BRIDGE_MODULE}::{provider}::{PROVIDER_RUST_BRIDGE_MODULE}::{path}");
         return;
     }
     let Some((dependency, public_name)) = split_canonical_public_library_type_name(name) else {
         return;
     };
-    let dependency_matches_provider = match qualification {
-        Qualification::Emission { provider } => provider == Some(dependency),
-        Qualification::Manifest { provider } => provider == dependency,
-    };
-    let dependency = escaped_crate_name(dependency);
-    *name = match qualification {
-        Qualification::Emission { provider: None } => return,
-        Qualification::Emission {
-            provider: Some(provider),
-        } if dependency_matches_provider => format!("::{}::{public_name}", escaped_crate_name(provider)),
-        Qualification::Emission {
-            provider: Some(provider),
-        } => format!(
-            "::{}::{PROVIDER_RUST_BRIDGE_MODULE}::{dependency}::{public_name}",
-            escaped_crate_name(provider)
-        ),
-        Qualification::Manifest { provider } if dependency_matches_provider => {
-            format!(
-                "{PROVIDER_RUST_BRIDGE_MODULE}::{}::{public_name}",
-                escaped_crate_name(provider)
-            )
-        }
-        Qualification::Manifest { provider } => format!(
-            "{PROVIDER_RUST_BRIDGE_MODULE}::{}::{PROVIDER_RUST_BRIDGE_MODULE}::{dependency}::{public_name}",
-            escaped_crate_name(provider)
-        ),
+    *name = if dependency == qualification.provider {
+        format!("{PROVIDER_RUST_BRIDGE_MODULE}::{provider}::{public_name}")
+    } else {
+        format!(
+            "{PROVIDER_RUST_BRIDGE_MODULE}::{provider}::{PROVIDER_RUST_BRIDGE_MODULE}::{}::{public_name}",
+            escaped_crate_name(dependency)
+        )
     };
 }
 
@@ -239,7 +204,7 @@ fn transform_type_paths(ty: &mut Type, qualification: Qualification<'_>, type_pa
     }
 }
 
-/// Rebase one parsed Rust path according to its provider ownership and artifact destination.
+/// Rebase a parsed path for publication, preserving shared crates and rejecting relative provider ownership.
 fn transform_path(
     path: &mut syn::Path,
     qualification: Qualification<'_>,
@@ -248,76 +213,27 @@ fn transform_path(
     let Some(first) = path.segments.first().map(|segment| segment.ident.to_string()) else {
         return Ok(());
     };
-    if matches!(first.as_str(), "Self") || type_params.iter().any(|param| param == &first) {
+    if first == "Self" || type_params.iter().any(|param| param == &first) {
         return Ok(());
     }
-    if matches!(qualification, Qualification::Emission { .. }) && path.leading_colon.is_some() {
-        return Ok(());
-    }
-    if matches!(qualification, Qualification::Manifest { .. }) {
-        path.leading_colon = None;
-    }
+    path.leading_colon = None;
     if is_shared_rust_crate(&first) || path.segments.len() == 1 && is_rust_prelude_type(&first) {
-        if matches!(qualification, Qualification::Emission { .. }) && path.segments.len() > 1 {
-            path.leading_colon = Some(Default::default());
-        }
         return Ok(());
     }
-
-    match qualification {
-        Qualification::Emission { provider: None } => {
-            if path.segments.len() > 1 && !matches!(first.as_str(), "crate" | "self" | "super") {
-                path.leading_colon = Some(Default::default());
-            }
-        }
-        Qualification::Emission {
-            provider: Some(provider),
-        } => {
-            if matches!(first.as_str(), "self" | "super") {
-                return Err(format!(
-                    "provider-owned Rust type display cannot retain relative `{first}::` paths"
-                ));
-            }
-            let original = std::mem::take(&mut path.segments);
-            let include_nested_bridge = first != "crate" && first != PROVIDER_RUST_BRIDGE_MODULE && original.len() > 1;
-            let prefix = provider_prefix(provider, include_nested_bridge)?;
-            path.segments = prefix.segments;
-            if first == "crate" {
-                path.segments.extend(original.into_iter().skip(1));
-            } else {
-                path.segments.extend(original);
-            }
-            path.leading_colon = Some(Default::default());
-        }
-        Qualification::Manifest { provider } => {
-            if matches!(first.as_str(), "self" | "super") {
-                return Err(format!(
-                    "provider-owned Rust type display cannot retain relative `{first}::` paths"
-                ));
-            }
-            let original = std::mem::take(&mut path.segments);
-            let include_nested_bridge = first != "crate" && first != PROVIDER_RUST_BRIDGE_MODULE && original.len() > 1;
-            let prefix = manifest_prefix(provider, include_nested_bridge)?;
-            path.segments = prefix.segments;
-            if first == "crate" {
-                path.segments.extend(original.into_iter().skip(1));
-            } else {
-                path.segments.extend(original);
-            }
-        }
+    if matches!(first.as_str(), "self" | "super") {
+        return Err(format!(
+            "provider-owned Rust type display cannot retain relative `{first}::` paths"
+        ));
+    }
+    let original = std::mem::take(&mut path.segments);
+    let nested = first != "crate" && first != PROVIDER_RUST_BRIDGE_MODULE && original.len() > 1;
+    path.segments = manifest_prefix(qualification.provider, nested)?.segments;
+    if first == "crate" {
+        path.segments.extend(original.into_iter().skip(1));
+    } else {
+        path.segments.extend(original);
     }
     Ok(())
-}
-
-/// Build the absolute generated-Rust prefix that reaches one provider-owned type.
-fn provider_prefix(provider: &str, include_bridge: bool) -> Result<syn::Path, String> {
-    let provider = escaped_crate_name(provider);
-    let display = if include_bridge {
-        format!("{provider}::{PROVIDER_RUST_BRIDGE_MODULE}")
-    } else {
-        provider
-    };
-    syn::parse_str(&display).map_err(|error| format!("invalid provider dependency path `{display}`: {error}"))
 }
 
 /// Build the relocatable manifest prefix that republishes one provider-owned type.
@@ -582,69 +498,40 @@ fn is_rust_prelude_type(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Qualification, normalize_for_emission, public_bridge_roots, qualify_for_manifest, transform_display};
+    use super::{
+        Qualification, public_bridge_roots, qualify_for_manifest, transform_display, validate_emission_display,
+    };
     use crate::symbols::ResolvedType;
 
+    /// Compare syntax independently of token-rendering whitespace.
     fn compact(display: &str) -> String {
         display.chars().filter(|character| !character.is_whitespace()).collect()
     }
 
+    /// Publication retains each provider bridge on a transitive Rust path.
     #[test]
-    fn emission_routes_nested_provider_paths_and_nominals() {
-        let normalized = transform_display(
-            "rust_shadow::Envelope<Vec<Payload>>",
-            Qualification::Emission {
-                provider: Some("compiled_parent"),
-            },
-            &[],
-        )
-        .expect("valid Rust display");
-
-        assert_eq!(
-            compact(&normalized),
-            "::compiled_parent::__incan_provider_rust::rust_shadow::Envelope<Vec<::compiled_parent::Payload>>"
-        );
-    }
-
-    #[test]
-    fn manifest_wraps_transitive_provider_paths() {
+    fn manifest_wraps_transitive_provider_paths() -> Result<(), String> {
         let normalized = transform_display(
             "__incan_provider_rust::leaf::__incan_provider_rust::rust_shadow::Token",
-            Qualification::Manifest { provider: "middle" },
+            Qualification { provider: "middle" },
             &[],
-        )
-        .expect("valid Rust display");
+        )?;
 
         assert_eq!(
             compact(&normalized),
             "__incan_provider_rust::middle::__incan_provider_rust::leaf::__incan_provider_rust::rust_shadow::Token"
         );
+        Ok(())
     }
 
+    /// Native dependency roots cover every type-bearing bound position.
     #[test]
-    fn qualified_associated_paths_root_both_sides() {
-        let normalized = transform_display(
-            "<Payload as rust_traits::Carrier>::Item",
-            Qualification::Emission {
-                provider: Some("compiled_parent"),
-            },
-            &[],
-        )
-        .expect("valid Rust display");
-
-        assert_eq!(
-            compact(&normalized),
-            "<::compiled_parent::Payloadas::compiled_parent::__incan_provider_rust::rust_traits::Carrier>::Item"
-        );
-    }
-
-    #[test]
-    fn bridge_roots_cover_trait_objects_impl_traits_and_associated_bounds() {
+    fn bridge_roots_cover_trait_objects_impl_traits_and_associated_bounds() -> Result<(), String> {
         let trait_object = ResolvedType::RustPath(
             "Box<dyn rust_traits::Carrier<Item = payload_crate::Payload> + support::Marker>".to_string(),
         );
         assert_eq!(
-            public_bridge_roots(&trait_object, &[]).expect("valid trait-object display"),
+            public_bridge_roots(&trait_object, &[])?,
             ["payload_crate", "rust_traits", "support"]
                 .into_iter()
                 .map(str::to_string)
@@ -656,37 +543,32 @@ mod tests {
                 .to_string(),
         );
         assert_eq!(
-            public_bridge_roots(&implementation, &[]).expect("valid impl-trait display"),
+            public_bridge_roots(&implementation, &[])?,
             ["callable", "input", "output", "rust_traits", "support"]
                 .into_iter()
                 .map(str::to_string)
                 .collect()
         );
+        Ok(())
     }
 
+    /// Root collection and validation preserve a structured provider type.
     #[test]
-    fn structured_box_retains_nested_provider_identity() {
-        let mut ty = ResolvedType::Generic(
+    fn structured_box_retains_nested_provider_identity() -> Result<(), String> {
+        let ty = ResolvedType::Generic(
             "Box".to_string(),
             vec![ResolvedType::Named("pub::compiled_parent::Payload".to_string())],
         );
         assert_eq!(
-            public_bridge_roots(&ty, &[]).expect("valid structured provider type"),
+            public_bridge_roots(&ty, &[])?,
             ["compiled_parent"].into_iter().map(str::to_string).collect()
         );
 
-        normalize_for_emission(&mut ty, Some("compiled_middle"), &[]).expect("provider path should normalize");
-        assert_eq!(
-            ty,
-            ResolvedType::Generic(
-                "Box".to_string(),
-                vec![ResolvedType::Named(
-                    "::compiled_middle::__incan_provider_rust::compiled_parent::Payload".to_string()
-                )]
-            )
-        );
+        validate_emission_display(&ty)?;
+        Ok(())
     }
 
+    /// A manifest names the exact provider of a structured nominal.
     #[test]
     fn structured_provider_nominals_rebase_through_exact_owner() -> Result<(), String> {
         let provider_owned = ResolvedType::Generic(
@@ -704,20 +586,11 @@ mod tests {
             )
         );
 
-        let mut emission = manifest;
-        normalize_for_emission(&mut emission, Some("compiled_middle"), &[])?;
-        assert_eq!(
-            emission,
-            ResolvedType::Generic(
-                "Box".to_string(),
-                vec![ResolvedType::Named(
-                    "::compiled_middle::__incan_provider_rust::compiled_parent::Payload".to_string()
-                )]
-            )
-        );
+        validate_emission_display(&manifest)?;
         Ok(())
     }
 
+    /// Republishing a foreign nominal retains the nested provider route.
     #[test]
     fn structured_transitive_nominals_rebase_through_nested_provider_bridge() -> Result<(), String> {
         let dependency_owned = ResolvedType::Generic(
@@ -736,18 +609,7 @@ mod tests {
             )
         );
 
-        let mut emission = manifest;
-        normalize_for_emission(&mut emission, Some("compiled_middle"), &[])?;
-        assert_eq!(
-            emission,
-            ResolvedType::Generic(
-                "Box".to_string(),
-                vec![ResolvedType::Named(
-                    "::compiled_middle::__incan_provider_rust::compiled_parent::__incan_provider_rust::compiled_leaf::ForeignPayload"
-                        .to_string()
-                )]
-            )
-        );
+        validate_emission_display(&manifest)?;
         Ok(())
     }
 }

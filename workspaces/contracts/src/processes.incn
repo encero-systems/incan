@@ -9,7 +9,7 @@ from rust::std::time import Instant
 from std.fs import Path
 
 
-# A deadline is explicit; zero preserves the original runner's unrestricted invocation duration.
+# A deadline is explicit; zero means an invocation may run for as long as it takes.
 static timeout_seconds: int = 0
 
 
@@ -38,6 +38,11 @@ pub def trace_file(project: Path) -> Path:
     return project.joinpath("target").joinpath("incan").joinpath("oven.trace")
 
 
+pub def built_program(project: Path, name: str) -> Path:
+    """Where a debug build of a project stores the program `name`."""
+    return project.joinpath("target").joinpath("incan").joinpath("debug").joinpath("bin").joinpath(name)
+
+
 pub def clear_trace(project: Path) -> Result[None, str]:
     """Start one case or shared compilation's trace without erasing notes between its commands."""
     trace = trace_file(project)
@@ -55,11 +60,25 @@ pub def unit_notes(trace: Path) -> list[str]:
         Ok(text) => return [line for line in text.split("\n") if line.startswith("oven: unit ")]
 
 
-pub def launch(incan: str, arguments: list[str], project: Path, selector: Option[str]) -> Result[Child, str]:
-    """Start one child with separate captured streams; the caller owns waiting and collection."""
+pub def launch(
+    incan: str,
+    arguments: list[str],
+    project: Path,
+    selector: Option[str],
+    environment: list[str],
+) -> Result[Child, str]:
+    """
+    Start one child with separate captured streams; the caller owns waiting and collection.
+
+    `environment` holds `NAME=value` settings added to the inherited environment, as a case's `environment:` block
+    declares them.
+    """
     mut command = Command.new(incan)
     trace = trace_file(project)
     command.env("OVEN_TRACE", trace.0)
+    for setting in environment:
+        name, value = environment_setting(setting)?
+        command.env(name, value)
     command.process_group(0)
     command.stdin(Stdio.null())
     command.stdout(File.create(stream_path(project, "stdout").0).map_err((error) => str(error))?)
@@ -67,9 +86,7 @@ pub def launch(incan: str, arguments: list[str], project: Path, selector: Option
     match selector:
         Some(value) =>
             command.env("INCAN_CONTRACT_CASE", value)
-            name = project.name().split("-")[-1]
-            binary = project.joinpath("target").joinpath("incan").joinpath("debug").joinpath("bin").joinpath(name)
-            command.arg0(binary.0)
+            command.arg0(built_program(project, project.name().split("-")[-1]).0)
         None => pass
     for argument in arguments:
         command.arg(argument)
@@ -77,6 +94,14 @@ pub def launch(incan: str, arguments: list[str], project: Path, selector: Option
     match command.spawn():
         Err(error) => return Err(f"cannot start `{incan}`: {error}")
         Ok(child) => return Ok(child)
+
+
+def environment_setting(setting: str) -> Result[tuple[str, str], str]:
+    """Split one `NAME=value` setting; a setting without a name refuses the command."""
+    parts = setting.split("=")
+    if len(parts) < 2 or parts[0] == "":
+        return Err(f"an environment setting must be NAME=value: `{setting}`")
+    return Ok((parts[0], "=".join(parts[1:])))
 
 
 pub def expired(clock: Instant, deadline_seconds: int = 0) -> bool:

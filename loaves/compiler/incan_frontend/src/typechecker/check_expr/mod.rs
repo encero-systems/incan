@@ -479,7 +479,6 @@ impl TypeChecker {
             let ty = self.check_expr(expr);
             match format {
                 FStringFormat::Display => {
-                    self.record_error_message_display(expr.span, &ty);
                     self.check_display_operand(errors::DisplayPosition::Interpolation, expr, &ty);
                 }
                 FStringFormat::Debug => self.check_debug_operand(expr, &ty),

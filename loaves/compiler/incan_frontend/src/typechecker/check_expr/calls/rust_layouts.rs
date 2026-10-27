@@ -203,10 +203,41 @@ impl TypeChecker {
             .is_some()
     }
 
-    /// Retain ordered public field templates once, keyed by their public native owner. No hidden-field access is
-    /// inferred: the adapter must verify the complete native field count, visibility and instantiated types.
+    /// Retain one canonical Copy layout across modules. Readable owners keep their complete field layout; owners
+    /// with no public fields remain opaque, so a by-value method grants no access to internal storage.
+    pub(in crate::typechecker::check_expr) fn retain_rust_copy_owner(&mut self, path: &str, info: &RustTypeInfo) {
+        if info
+            .fields
+            .iter()
+            .any(|field| info.metadata_completeness.field_is_public(&field.name))
+        {
+            self.retain_rust_layout(path, info);
+            return;
+        }
+        let path = Self::rust_generic_base_and_args(path).map_or(path, |(base, _)| base);
+        self.type_info
+            .rust
+            .checked_layouts
+            .entry(path.to_owned())
+            .or_insert_with(|| RustCheckedLayout {
+                field_public: Vec::new(),
+                is_copy: true,
+                type_parameters: info.type_params.clone(),
+                fields: Vec::new(),
+                field_identities: Vec::new(),
+            });
+    }
+
+    /// Retain exact native field templates once, keyed by their public native owner. Private slots retain order and
+    /// storage for adapter validation; source reads and construction require their own metadata authority.
     pub(in crate::typechecker::check_expr) fn retain_rust_layout(&mut self, path: &str, info: &RustTypeInfo) {
         let path = Self::rust_generic_base_and_args(path).map_or(path, |(base, _)| base);
+        // A layout already retained for this owner, with the same field count and type parameters, is the same one.
+        if self.type_info.rust.checked_layouts.get(path).is_some_and(|layout| {
+            layout.fields.len() == info.fields.len() && layout.type_parameters == info.type_params
+        }) {
+            return;
+        }
         let Some(owner) = body_ir::rust_item_identity(path) else {
             return;
         };
@@ -232,6 +263,11 @@ impl TypeChecker {
         self.type_info.rust.checked_layouts.insert(
             path.to_owned(),
             RustCheckedLayout {
+                field_public: info
+                    .fields
+                    .iter()
+                    .map(|field| info.metadata_completeness.field_is_public(&field.name))
+                    .collect(),
                 is_copy: self.derive_support(
                     &ResolvedType::RustPath(path.into()),
                     incan_lang::lang::derives::DeriveId::Copy,

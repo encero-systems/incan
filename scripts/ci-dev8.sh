@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Install one host's dev.8 release bundle and verify the checkout's contracts.
-# Usage: ci-dev8.sh ARCHIVE OVEN LSP | ci-dev8.sh GHCR_TAG@sha256:DIGEST
-# CI_DEV8_OUT selects the evidence directory; CI_DEV8_JOBS defaults to two.
+# Usage: ci-dev8.sh [--install] ARCHIVE OVEN LSP | ci-dev8.sh [--install] GHCR_TAG@sha256:DIGEST
+# CI_DEV8_OUT selects the evidence directory; CI_DEV8_JOBS defaults to two. `--install` stops after installing and,
+# under GitHub Actions, hands the installation to the job's later steps instead of verifying it.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -80,6 +81,24 @@ select_standard_packages() {
     export INCAN_STDLIB=$run/stdlib
 }
 
+# Hand the installed toolchain to the job's later steps; GitHub Actions reads environment and PATH additions from
+# these files. Outside Actions this only reports the home.
+export_installation() {
+    if [[ -n ${GITHUB_ENV:-} ]]; then
+        {
+            printf 'INCAN_HOME=%s\n' "$INCAN_HOME"
+            printf 'INCAN_STDLIB=%s\n' "$INCAN_STDLIB"
+            printf 'INCAN_SYSROOT=%s\n' "$INCAN_SYSROOT"
+            printf 'RUSTUP_TOOLCHAIN=%s\n' "$RUSTUP_TOOLCHAIN"
+            printf 'INCAN_NO_BANNER=1\n'
+        } >> "$GITHUB_ENV"
+    fi
+    if [[ -n ${GITHUB_PATH:-} ]]; then
+        printf '%s\n' "$INCAN_HOME/bin" >> "$GITHUB_PATH"
+    fi
+    echo "dev.8 installed: $INCAN_HOME"
+}
+
 # Build this checkout's runner with the installed compiler, preserving compiler diagnostics on failure.
 build_runner() {
     mkdir "$run/runner"
@@ -99,9 +118,14 @@ run_oven_tests() {
     done
     passed=$(awk '/^test_[[:alnum:]_]+[.]incn::test_[[:alnum:]_]+ PASSED$/ {n++} END {print n+0}' "$run/oven-tests.log")
     failed=$(awk '/^test_[[:alnum:]_]+[.]incn::test_[[:alnum:]_]+ (FAILED|XPASS)( |$)/ {n++} END {print n+0}' "$run/oven-tests.log")
+    awk '/^test_[[:alnum:]_]+[.]incn::test_[[:alnum:]_]+ PASSED$/ {print $1}' "$run/oven-tests.log" \
+        | sort > "$run/oven-passed-ids.txt"
+    sort "$ROOT/workspaces/contracts/dev8-oven-tests.txt" > "$run/oven-expected-ids.txt"
     jq -n --argjson passed "$passed" --argjson failed "$failed" \
-        '{passed:$passed, failed:$failed, expected:133}' > "$run/oven-tests.json"
-    [[ $status == 0 && $passed == 133 && $failed == 0 ]] || fail "Oven tests: $passed PASS, $failed FAIL; expected 133 PASS"
+        --argjson expected "$(wc -l < "$run/oven-expected-ids.txt" | tr -d ' ')" \
+        '{passed:$passed, failed:$failed, expected:$expected}' > "$run/oven-tests.json"
+    diff -u "$run/oven-expected-ids.txt" "$run/oven-passed-ids.txt" > "$run/oven-test-diff.txt" || status=1
+    [[ $status == 0 && $failed == 0 ]] || fail "Oven tests: $passed PASS, $failed FAIL; test ids differ or an invocation failed"
     echo "Oven tests: $passed PASS, $failed FAIL"
 }
 
@@ -124,7 +148,12 @@ run_contracts() {
         "$run/contracts.log" | tee "$run/summary.txt"
 }
 
-[[ $# == 1 || $# == 3 ]] || fail 'usage: ci-dev8.sh ARCHIVE OVEN LSP | GHCR_TAG@sha256:DIGEST'
+install_only=false
+if [[ ${1:-} == --install ]]; then
+    install_only=true
+    shift
+fi
+[[ $# == 1 || $# == 3 ]] || fail 'usage: ci-dev8.sh [--install] ARCHIVE OVEN LSP | [--install] GHCR_TAG@sha256:DIGEST'
 command -v jq >/dev/null || fail 'jq is required'
 case "$(uname -s)/$(uname -m)" in
     Darwin/arm64) target=aarch64-apple-darwin ;;
@@ -151,6 +180,10 @@ lsp=$INCAN_HOME/bin/incan-lsp
 export PATH=$INCAN_HOME/bin:$PATH
 logged_step install 'toolchain installation' "$oven" toolchain install "$archive"
 select_standard_packages
+if $install_only; then
+    export_installation
+    exit 0
+fi
 build_runner
 run_oven_tests
 verify_lsp

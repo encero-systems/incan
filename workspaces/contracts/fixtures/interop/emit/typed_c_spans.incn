@@ -1,0 +1,50 @@
+# behavior: a byte span moves its buffer into a span whose pointer and count reach a bounded C symbol, and a mutable byte span reports its capacity and finishes with its first written bytes or refuses a count outside its capacity (rust-22af)
+# expect-stdout:
+#   907060870 0
+#   4 2 ab
+#   4 4 abcd
+#   written count is outside the span capacity
+#   written count is outside the span capacity
+
+from std.interop import c
+
+binding Zlib:
+    header = "zlib.h"
+    link = c.system_library("z")
+
+    symbol checksum(crc: c.Size, buffer: c.ConstPtr[c.u8], length: c.Size) -> c.Size:
+        native = "crc32_z"
+        bounds = { buffer: length }
+
+
+def checksum(data: bytes) -> usize:
+    """Checksum the bytes through the pointer and count of one byte span."""
+    source = c.bytes_span(data)
+    unsafe:
+        return Zlib.checksum(0usize, source.as_const_ptr(), source.byte_length())
+
+
+def finish_bytes(written: int) -> str:
+    """Report a mutable byte span's capacity, then keep its first `written` bytes."""
+    mut buffer = c.mutable_bytes_span(b"abcd")
+    unsafe:
+        capacity = buffer.byte_capacity()
+        match buffer.into_bytes(written):
+            Ok(kept) => return f"{capacity} {len(kept)} {kept.decode().unwrap_or("?")}"
+            Err(error) => return error
+
+
+def main() -> None:
+    """
+    Pass and finish byte spans.
+
+    1. Checksum a byte span and an empty one through zlib's bounded `crc32_z`.
+    2. Finish a mutable byte span within, at, above and below its capacity.
+    """
+    # 1. The span's pointer and count reach the bounded symbol together.
+    println(f"{checksum(b"hello")} {checksum(b"")}")
+    # 2. A finished span keeps exactly the written prefix.
+    println(finish_bytes(2))
+    println(finish_bytes(4))
+    println(finish_bytes(5))
+    println(finish_bytes(-1))

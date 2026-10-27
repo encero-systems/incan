@@ -317,14 +317,18 @@ const COLLECTION_ANNOTATION_REQUIRES_TYPE_ARGUMENTS: DiagnosticCatalogEntry = Di
 
 const RUST_BORROW_WITHOUT_LIFETIME_CONTRACT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-T0120",
-    title: "Borrowed Rust signature requires a lifetime contract",
+    title: "Returned or stored Rust borrow requires a lifetime contract",
     severity: "error",
     phase: "typecheck",
-    summary: "A borrowed source signature contains a lifetime-bearing Rust type without a retained lifetime contract.",
-    explanation: "Rust lifetime arguments are erased for local native values. A source parameter borrowing a lifetime-bearing native owner needs the relationship between that borrow and the owner's regions. DD-0006 refuses that signature until the compiler retains a lifetime contract, before it reaches rustc.",
-    examples: &["from rust::regex import Captures\n\ndef observe(value: &Captures) -> None:\n    pass"],
-    common_causes: &["Passing a regex capture value through a shared source parameter."],
-    fixes: &["Keep the borrowed native value local to its creating function, or pass an owned value."],
+    summary: "A source return or field type names a lifetime-bearing Rust type without a retained lifetime contract.",
+    explanation: "A lifetime-bearing Rust type borrows data from somewhere. A parameter of that type is accepted: each call binds its lifetimes independently. A returned value or a stored field needs the relationship between the value and the data it borrows, which no source type states, so DD-0006 refuses it before it reaches rustc.",
+    examples: &[
+        "from rust::regex import Captures, Regex\n\ndef first(pattern: &Regex, text: str) -> Option[Captures]:\n    return pattern.captures(text)",
+    ],
+    common_causes: &["Returning a regex capture value from a helper function."],
+    fixes: &[
+        "Keep the borrowed native value inside the function that creates it, or return owned data such as the captured text.",
+    ],
     docs_url: None,
 };
 
@@ -881,7 +885,7 @@ fn diagnostic_span(file_name: &str, source: &str, span: Span) -> DiagnosticSpan 
 }
 
 /// Convert a byte offset into the 1-based line and column shape used by the stable diagnostic schema.
-fn position_for_offset(source: &str, offset: usize) -> DiagnosticPosition {
+pub fn position_for_offset(source: &str, offset: usize) -> DiagnosticPosition {
     let offset = offset.min(source.len());
     let mut line = 1usize;
     let mut column = 1usize;

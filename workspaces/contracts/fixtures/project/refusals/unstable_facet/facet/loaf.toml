@@ -1,0 +1,7 @@
+[project]
+name = "unstable_facet"
+version = "0.1.0"
+
+[[rust.bin]]
+name = "unstable_facet"
+path = "main.rs"

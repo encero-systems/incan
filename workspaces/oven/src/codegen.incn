@@ -1,18 +1,35 @@
 """Select optimization flags for native units and frame the flags the Incan compiler receives."""
 
 
-pub def optimization_level(profile: str) -> str:
-    """Release units optimize fully; other profiles retain Rust's unoptimized development behavior."""
-    if profile == "release":
-        return "3"
-    return "0"
+model CodegenProfile:
+    """Effective native compiler flags for each authored unit language."""
+
+    incan_flags: list[str]
+    rust_flags: list[str]
+
+
+def selected_profile(profile: str) -> CodegenProfile:
+    """One profile table preserves each unit language's optimization, assertions and debug-information policy."""
+    profiles = {"debug": CodegenProfile(incan_flags=["opt-level=0", "debug-assertions=no"], rust_flags=["debuginfo=0"]), "release": CodegenProfile(
+        incan_flags=["opt-level=3"],
+        rust_flags=["opt-level=3", "debuginfo=0"],
+    )}
+    if profile in profiles:
+        return profiles[profile]
+    return CodegenProfile(incan_flags=["opt-level=0"], rust_flags=["debuginfo=0"])
 
 
 pub def native_arguments(profile: str) -> list[str]:
     """Bind optimization into the unit identity while preserving the native driver's debug assertion policy."""
-    if profile == "debug":
-        return [f"-Copt-level={optimization_level(profile)}", "-Cdebug-assertions=no"]
-    return [f"-Copt-level={optimization_level(profile)}"]
+    return [f"-C{argument}" for argument in selected_profile(profile).incan_flags]
+
+
+pub def rust_arguments(profile: str) -> list[str]:
+    """Frame the selected profile's Rust flags for a direct rustc invocation."""
+    mut arguments: list[str] = []
+    for option in selected_profile(profile).rust_flags:
+        arguments = arguments + ["-C", option]
+    return arguments
 
 
 pub def driver_arguments(profile: str) -> list[str]:

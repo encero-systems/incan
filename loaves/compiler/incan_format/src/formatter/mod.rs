@@ -76,8 +76,8 @@ impl Formatter {
                 self.format_type(&return_type.node);
             }
         } else {
-            for arg in &block.header_args {
-                self.writer.write(" ");
+            for (index, arg) in block.header_args.iter().enumerate() {
+                self.writer.write(if index == 0 { " " } else { ", " });
                 self.format_spanned_expr(arg);
             }
         }

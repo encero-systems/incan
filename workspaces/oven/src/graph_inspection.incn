@@ -39,7 +39,13 @@ from cli_help import render as render_help
 const QUERY_KINDS: FrozenList[str] = ["defs", "refs", "callers", "callees", "imports"]
 pub const USAGE: str = "incan inspect codegraph PATH [GRAPH OPTIONS]"
 pub const VALUE_OPTIONS: FrozenList[str] = [
-    "--query", "--format", "--limit", "--substitute", "--stale", "--task", "--budget",
+    "--query",
+    "--format",
+    "--limit",
+    "--substitute",
+    "--stale",
+    "--task",
+    "--budget",
 ]
 # The version of the key an answer is cached under; changing it discards every cached answer.
 const PRESENTATION_DOMAIN: str = "incan.codegraph.presentation/16"
@@ -225,9 +231,7 @@ def selected_response(selected: GraphOptions, preferences: Dict[str, int] = {}) 
         paths = inspect_source(source, toolchain, selected.substitutes)?
     else:
         root = owning_project(path, selected.path)?
-        paths = inspect_rust(
-            root, "debug", FeatureRequest(), selected.substitutes, toolchain, selected.query == "defs",
-        )?
+        paths = inspect_rust(root, "debug", FeatureRequest(), selected.substitutes, toolchain, selected.query == "defs")?
     trace(f"graph preparation: {started.elapsed().as_millis()} ms")
     # 3. CLI and service consumers share the same rendered facts and freshness checks.
     return response(paths, path.0, selected, toolchain, preferences)
@@ -247,13 +251,9 @@ def owning_project(path: Path, given: str) -> Result[Path, str]:
     """The project directory of a path: itself, or the nearest directory above a file that holds a `loaf.toml`."""
     if not path.is_file():
         return Ok(path)
-    mut root = path.parent()
-    while not root.joinpath("loaf.toml").is_file():
-        parent = root.parent()
-        if parent.0 == root.0:
-            return Err(f"{given}: no owning loaf.toml")
-        root = parent
-    return Ok(root)
+    match project_root_of(path):
+        Some(root) => return Ok(root)
+        None => return Err(f"{given}: no owning loaf.toml")
 
 
 def response(
@@ -352,11 +352,17 @@ def render(
     """The answer to a query, at most `limit` hits, or the merged records as one JSON array or one record per line."""
     if selected.task != "":
         started = Instant.now()
-        mut index = context_index(paths, root, toolchain.driver, process)?
+        mut index = context_index(paths, root, toolchain, process)?
         trace(f"graph context index: {started.elapsed().as_millis()} ms")
         return pack(
-            index, snapshot, JsonValue.bool(degraded), selected.task, selected.budget,
-            anchor_root(Path(root)).0, selected.format, preferences,
+            index,
+            snapshot,
+            JsonValue.bool(degraded),
+            selected.task,
+            selected.budget,
+            anchor_root(Path(root)).0,
+            selected.format,
+            preferences,
         )
     if selected.query != "":
         started = Instant.now()
@@ -378,7 +384,10 @@ def render(
 
 
 def context_index(
-    paths: list[GraphUnit], root: str, driver: str, process: list[JsonValue],
+    paths: list[GraphUnit],
+    root: str,
+    toolchain: Toolchain,
+    process: list[JsonValue],
 ) -> Result[ContextIndex, str]:
     """
     Prepare demand-readable context facts without joining full graph payloads.
@@ -393,7 +402,7 @@ def context_index(
     # 1. Header validation stays at the inspection boundary, shared with ordinary exports.
     for unit in paths:
         previous = len(index.headers)
-        index.add(unit, driver, owner)?
+        index.add(unit, toolchain, owner)?
         for header in index.headers[previous:]:
             check_identity(unit, header)?
             header_languages(header)?
@@ -459,7 +468,7 @@ def own_unit_graph(
     """The graph of a source of the project's own target unit, checked against the interfaces of its dependencies."""
     for facet in prepared.facets:
         if facet.project == root.0 and facet.domain.value() == "target":
-            natives = unit_natives(facet, prepared.built, prepared.request)?
+            natives = unit_natives(facet, prepared.built, prepared.request, unit_loaves(facet, prepared.interfaces)?)?
             loaves = unit_loaves(facet, prepared.interfaces)?
             graph = inspect_incan(source, toolchain, natives, prepared.interfaces, facet.features, false, loaves)?
             return Ok(GraphUnit(path=graph, root=root, source_root=root.0))
@@ -495,7 +504,7 @@ def read_records(
     for unit in paths:
         started = Instant.now()
         # 1. Each unit's records are read for the group the query needs, one JSON document to a line.
-        document = read_graph(unit, toolchain.driver, group)?
+        document = read_graph(unit, toolchain, group)?
         mut package_name = unit.package
         for line in document.split("\n"):
             if line.strip() == "":

@@ -6,6 +6,7 @@ from rust::std::thread import sleep
 from rust::std::time import Duration
 from std.fs import Path
 from std.json import JsonValue, parse
+from files import optional_text as text
 from protocol_peer import Peer, decode, start
 from run import invoke
 
@@ -169,13 +170,6 @@ def git(project: Path, arguments: list[str]) -> Result[None, str]:
     if not output.status.success():
         return Err(f"fixture git operation failed: {decode(output.stderr)?}")
     return Ok(None)
-
-
-def text(value: JsonValue, key: str) -> str:
-    """Read an optional record label without treating a missing field as evidence."""
-    match value.get(key):
-        Some(item) => return item.as_str().unwrap_or("")
-        None => return ""
 
 
 def local_source(record: JsonValue, project: Path) -> bool:

@@ -16,7 +16,7 @@ from pub::incan_mir_plan import PlanType, Place, Operand, RvalueKind, ExternalFu
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, temporary, read_place, terminate_call, place_type, external_call
 from type_parameters import substitute
-from unions import native_source_type
+from layout_types import native_source_type
 from options import carrier_layout
 from text_ownership import drop_borrowed_text_temporaries
 from lowering import scalar_place, text_argument, lower_callable_result, native_format_text, materialized_receiver

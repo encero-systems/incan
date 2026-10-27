@@ -22,9 +22,8 @@ from toolchain import Toolchain
 from unit import UnitDescription
 from unit_compiler import compile_prepared_unit, crate_name, described_by, run_compiler, write_unit
 from unit_freshness import Key, install_all, reusable, staleness, unit_key
-from unit_rust import prepare_native
+from unit_rust import compile_library_unit, prepare_native
 from shared_link import development_link, library_witness, linkage_key, shared_current
-from vocabulary import stage_vocabulary
 
 
 pub def check_unit(unit: UnitDescription, toolchain: Toolchain, format: str) -> Result[i32, str]:
@@ -72,10 +71,9 @@ pub def compile_unit(
     """
     # 1. Every provider is current before the unit receives the exact artifacts and ABI caches it reads.
     ready = prepare_native(unit, toolchain)?
-    # 2. A library is always compiled; an executable is compiled only when its key has changed.
+    # 2. Both libraries and executables reuse their complete, unchanged artifact sets.
     if ready.kind == "library":
-        stage_vocabulary(ready, output.parent())?
-        return compile_prepared_unit(ready, toolchain, output)
+        return compile_library_unit(ready, toolchain, output)
     return compile_executable(ready, toolchain, output, unit_key(ready, toolchain)?, development)
 
 

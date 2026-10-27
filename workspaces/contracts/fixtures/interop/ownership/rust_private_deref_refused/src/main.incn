@@ -1,0 +1,34 @@
+# behavior: Private paths and invalid Rust calls, writes, element types and const arguments are refused (#2425)
+# expect-diagnostic: INCAN-T0001
+
+"""Refuse source access beyond the public wrapper's admitted API."""
+
+from rust::wrappers import Fixed, Wrapper
+from rust::wrappers::private import Alias, Allocation, Target
+import rust::wrappers
+
+
+def main() -> None:
+    """Reject immutable mutation, a wrong element type and unavailable methods."""
+    values = Wrapper.new[u32]()
+    values.push(7)
+    mut mutable_values = Wrapper.new[u32]()
+    mutable_values.push("wrong")
+    println(mutable_values.secret())
+    println(mutable_values.absent())
+    explicit_const = Fixed.new[2]()
+
+
+def name_target(value: Target) -> None:
+    """A direct import cannot name a compiler-only dependency."""
+    pass
+
+
+def name_alias(value: Alias) -> None:
+    """An alias inside a private module cannot become a source type."""
+    pass
+
+
+def name_qualified(value: wrappers::private::Receipt) -> None:
+    """A crate import cannot bypass the private module boundary."""
+    pass

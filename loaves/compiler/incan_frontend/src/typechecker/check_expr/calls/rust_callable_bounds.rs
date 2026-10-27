@@ -4,7 +4,7 @@ use super::TypeChecker;
 use crate::ast::{CallArg, Expr, Spanned};
 use crate::resolved_type_subst::map_resolved_type_leaves;
 use crate::symbols::{CallableParam, ResolvedType};
-use incan_lang::interop::{RustFunctionSig, RustItemKind};
+use incan_lang::interop::{RustFunctionSig, RustItemKind, rust_auto_trait, rust_callable_trait};
 use incan_semantics_core::body_ir::NativeClosureStorage;
 
 impl TypeChecker {
@@ -43,7 +43,7 @@ impl TypeChecker {
     ) -> Option<ResolvedType> {
         let bound = signature.bounds.iter().find(|bound| {
             bound.self_type == parameter
-                && matches!(bound.path.rsplit("::").next(), Some("Fn" | "FnMut" | "FnOnce"))
+                && rust_callable_trait(&bound.path).is_some()
                 && bound
                     .associated_type_bindings
                     .iter()
@@ -134,7 +134,7 @@ impl TypeChecker {
             if let Some(bound) = signature
                 .bounds
                 .iter()
-                .find(|bound| bound.self_type == parameter && native_callback_auto_trait(&bound.path).is_some())
+                .find(|bound| bound.self_type == parameter && rust_auto_trait(&bound.path).is_some())
             {
                 self.refuse_capturing_callable(
                     expression,
@@ -154,7 +154,7 @@ impl TypeChecker {
             ..Default::default()
         };
         for bound in signature.bounds.iter().filter(|bound| bound.self_type == parameter) {
-            let marker = match native_callback_auto_trait(&bound.path) {
+            let marker = match rust_auto_trait(&bound.path) {
                 Some("Send") => {
                     storage.send = true;
                     "Send"
@@ -232,37 +232,23 @@ impl TypeChecker {
             native
         };
         info.implemented_traits.iter().any(|implementation| {
-            if !matches!(
-                implementation.path.as_str(),
-                "std::marker::Send" | "core::marker::Send" | "std::marker::Sync" | "core::marker::Sync"
-            ) || implementation.path.rsplit("::").next() != Some(marker)
-            {
+            if rust_auto_trait(&implementation.path) != Some(marker) {
                 return false;
             }
             let Some(bindings) = self.rust_impl_self_bindings(implementation, &native) else {
                 return false;
             };
             implementation.bounds.iter().all(|bound| {
-                let required = bound.path.rsplit("::").next().unwrap_or("");
                 if matches!(bound.path.as_str(), "std::marker::Sized" | "core::marker::Sized") {
                     return true;
                 }
-                if !matches!(required, "Send" | "Sync") {
+                let Some(required) = rust_auto_trait(&bound.path) else {
                     return false;
-                }
+                };
                 let subject = self.native_rust_signature_type(&bound.self_type, "");
                 let subject = crate::resolved_type_subst::substitute_resolved_type(&subject, &bindings);
                 self.capture_has_native_auto_trait(&subject, required, depth + 1)
             })
         })
-    }
-}
-
-/// Recognize only the canonical native auto traits this callback storage contract carries.
-fn native_callback_auto_trait(path: &str) -> Option<&'static str> {
-    match path {
-        "core::marker::Send" | "std::marker::Send" => Some("Send"),
-        "core::marker::Sync" | "std::marker::Sync" => Some("Sync"),
-        _ => None,
     }
 }

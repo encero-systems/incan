@@ -1,6 +1,6 @@
 # Project configuration (`loaf.toml`)
 
-A dev.8 project manifest is a TOML file named `loaf.toml`. Source commands select the nearest manifest above the source file. Without one, the source is a standalone unit.
+A project manifest is a TOML file named `loaf.toml`. Source commands select the nearest manifest above the source file. Without one, the source is a standalone unit.
 
 ## Root tables
 
@@ -86,7 +86,7 @@ Accepted fields are `name`, `type`, `edition` and `source`. `type` accepts `lib`
 
 ## `[vocab]`
 
-Accepts `crate`. This table does not build a companion crate or a Wasm desugarer.
+Accepts a required nonempty string `entry`; `crate` and other keys are refused. [Vocabulary entries](vocabulary.md) specifies the entry contract.
 
 ## `[tool.incan.metadata]`
 
@@ -98,7 +98,7 @@ Accepts `crate`. This table does not build a companion crate or a Wasm desugarer
 
 ## `[interop.c]`
 
-`[[interop.c.targets]]` entries can declare `headers`, an array of project-relative paths supplied to the checker. Header and binding contracts are specified in [`std.interop`](../../language/reference/stdlib/interop.md). Dev.8 exposes no interop bake, stage or deployment-plan command.
+`[[interop.c.targets]]` entries can declare `headers`, an array of project-relative paths supplied to the checker. Header and binding contracts are specified in [`std.interop`](../../language/reference/stdlib/interop.md).
 
 ## Related contracts
 

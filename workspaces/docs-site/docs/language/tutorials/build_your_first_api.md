@@ -8,7 +8,7 @@ This tutorial builds and runs the included web application, then traces one requ
     <div><dt>Prerequisites</dt><dd>Getting started with compiled dev.8 web and async packages</dd></div>
     <div><dt>Time</dt><dd>15–20 minutes</dd></div>
     <div><dt>Verified</dt><dd>Incan <code>0.6.0-dev.8</code></dd></div>
-    <div><dt>Status</dt><dd>Source exercise; native compilation is refused in the tested dev.8 installation</dd></div>
+    <div><dt>Status</dt><dd>Development-toolchain executable</dd></div>
     <div><dt>Outcome</dt><dd>A running native API with typed responses</dd></div>
     <div><dt>Artifacts</dt><dd>Native server and four route contracts</dd></div>
   </dl>
@@ -36,11 +36,11 @@ incan build examples/web/hello_web.incn
 incan run examples/web/hello_web.incn
 ```
 
-The tested dev.8 driver refuses this example with a nonlocal model-constructor error before starting a server. The commands require compiled web, async and data packages, but their presence alone does not remove this compiler refusal.
+The server prints its routes and listens on `127.0.0.1:8080` until you stop it with Ctrl+C.
 
 ## Step 2: Request the endpoints
 
-These requests exercise a successfully built server. They cannot complete against this example while the native compilation refusal prevents startup:
+From a second terminal, request each route:
 
 ```bash
 curl http://127.0.0.1:8080/
@@ -68,7 +68,7 @@ flowchart LR
 
 <section class="inc-learning-panel inc-learning-panel--result" data-label="Expected" markdown="1">
 
-The source declares four route contracts. A successful server build and responses to the requests above are the runtime acceptance condition.
+The home page returns its HTML, `/api/greet/World` returns `{"message":"Hello, World!"}`, `/api/user/42` returns `{"id":42,"name":"User 42","email":"user42@example.com"}`, and `/health` returns status 200.
 
 </section>
 
@@ -90,7 +90,7 @@ Learn more:
 
 <section class="inc-learning-panel inc-learning-panel--complete inc-incus-slot" data-label="Complete" data-incus-category="success" markdown="1">
 
-You can trace the source from route selection to a typed response model. The tested dev.8 driver does not satisfy the native server completion condition.
+You ran a native server and traced each request from route selection to a typed response model.
 
 </section>
 

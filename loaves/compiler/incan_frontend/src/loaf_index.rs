@@ -8,10 +8,9 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use incan_lang::interop::{RustAbiCache, RustItemMetadata};
 use incan_lang::lang::standard_packages::{STANDARD_PACKAGE_NAMESPACE_POLICIES, StandardPackageNamespacePolicy};
@@ -23,6 +22,30 @@ mod manifest_input;
 mod retained;
 
 use lazy_entry::IndexedLoaf;
+
+/// Publish one private cache record atomically: write `bytes` to a new owner-only file beside `path`, named with this
+/// process and `suffix`, and rename it over `path`. A failed write removes the temporary file; concurrent readers see
+/// either the old record or the complete new one.
+fn publish_private_record(path: &Path, bytes: &[u8], suffix: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    #[cfg(unix)]
+    use std::os::unix::fs::OpenOptionsExt;
+    let parent = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("the private record has no parent directory"))?;
+    std::fs::create_dir_all(parent)?;
+    let temporary = path.with_extension(format!("{}.{suffix}", std::process::id()));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(&temporary)?;
+    let result = file.write_all(bytes).and_then(|()| std::fs::rename(&temporary, path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
 
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
@@ -129,7 +152,7 @@ impl LoafArtifact {
         if digest != *expected {
             return Err(unreadable("native ABI cache digest differs from the manifest".into()));
         }
-        let cache = RustAbiCache::decode(&bytes).map_err(unreadable)?;
+        let cache = RustAbiCache::decode_owned(bytes).map_err(unreadable)?;
         Ok(Some(Arc::new(cache)))
     }
 
@@ -142,11 +165,6 @@ impl LoafArtifact {
     pub fn bodies_path(&self) -> PathBuf {
         self.dir
             .join(format!("{}.{EXECUTABLE_REPRESENTATION_EXTENSION}", self.name))
-    }
-
-    /// The library unit.
-    pub fn rlib_path(&self) -> PathBuf {
-        self.dir.join(format!("lib{}.rlib", self.name))
     }
 
     /// The library unit's native closure: the rlibs and search paths it links.
@@ -300,6 +318,9 @@ pub struct LoafIndex {
     /// Items already resolved through the lookup order, decoded once and shared: the checker asks for the same
     /// items many times, and a trait's metadata carries every implementation it has.
     resolved_rust_items: Arc<Mutex<HashMap<String, Arc<RustItemMetadata>>>>,
+    /// The first Rust ABI cache read that failed during a lookup, which `validate_demands` reports: a cache that
+    /// cannot answer refuses the compilation instead of looking like a missing item.
+    rust_abi_failure: Arc<OnceLock<LoafIndexError>>,
 }
 
 impl LoafIndex {
@@ -327,6 +348,7 @@ impl LoafIndex {
             declared_rust_crates: BTreeSet::new(),
             rust_facts: BTreeMap::new(),
             resolved_rust_items: Arc::default(),
+            rust_abi_failure: Arc::default(),
         })
     }
 
@@ -364,12 +386,16 @@ impl LoafIndex {
         Ok(Some(entry))
     }
 
-    /// Refuse any failed demand before an analysis or executable closure can be accepted. Untouched entries stay lazy.
+    /// Refuse any failed demand, or a Rust ABI cache read that failed, before an analysis or executable closure can be
+    /// accepted. Untouched entries stay lazy.
     pub fn validate_demands(&self) -> Result<(), LoafIndexError> {
         for entry in self.entries.values() {
             if let Some(error) = entry.failure() {
                 return Err(error.clone());
             }
+        }
+        if let Some(error) = self.rust_abi_failure.get() {
+            return Err(error.clone());
         }
         Ok(())
     }
@@ -562,8 +588,11 @@ impl LoafIndex {
                 .values()
                 .filter(move |entry| !(declared && matches!(entry.namespace, LoafNamespace::Standard { .. })))
         };
+        // A Loaf whose demand fails is skipped here; `validate_demands` reports its retained failure.
         for entry in shipping().filter(|entry| entry.summary.rust_paths.contains(canonical_path)) {
-            let entry = entry.demand().ok()?;
+            let Ok(entry) = entry.demand() else {
+                continue;
+            };
             if let Some(item) = entry
                 .artifact
                 .manifest
@@ -575,20 +604,42 @@ impl LoafIndex {
             }
         }
         for entry in shipping().filter(|entry| entry.summary.rust_abi_cache) {
-            let entry = entry.demand().ok()?;
-            if let Some(item) = entry
-                .artifact
-                .rust_abi_cache
-                .as_ref()
-                .and_then(|cache| cache.get(canonical_path))
+            let Ok(entry) = entry.demand() else {
+                continue;
+            };
+            let Some(cache) = entry.artifact.rust_abi_cache.as_ref() else {
+                continue;
+            };
+            if let Some(item) = self.cache_item(cache, canonical_path, || entry.artifact.dir.clone()) {
+                return Some(item);
+            }
+        }
+        for cache in &self.rust_abi_caches {
+            if let Some(item) = self.cache_item(cache, canonical_path, || PathBuf::from("the toolchain Rust ABI cache"))
             {
                 return Some(item);
             }
         }
-        self.rust_abi_caches
-            .iter()
-            .find_map(|cache| cache.get(canonical_path))
-            .or_else(|| self.rust_facts.get(canonical_path).cloned())
+        self.rust_facts.get(canonical_path).cloned()
+    }
+
+    /// Read one path from one ABI cache, retaining a read failure for `validate_demands` instead of treating it as a
+    /// missing item. `origin` names the cache in that failure.
+    fn cache_item(
+        &self,
+        cache: &RustAbiCache,
+        canonical_path: &str,
+        origin: impl FnOnce() -> PathBuf,
+    ) -> Option<RustItemMetadata> {
+        match cache.get(canonical_path) {
+            Ok(item) => item,
+            Err(reason) => {
+                let _ = self
+                    .rust_abi_failure
+                    .set(LoafIndexError::Unreadable { path: origin(), reason });
+                None
+            }
+        }
     }
 
     /// Keyword registrations the indexed Loaves export, keyed by Loaf, for the consumer's parser.
@@ -633,21 +684,6 @@ impl LoafIndex {
             }
         }
         map
-    }
-
-    /// A key that changes whenever any indexed Loaf or its manifest changes, for persisted readings.
-    pub fn persistent_key(&self) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(b"incan-loaf-index-v1\0");
-        for entry in self.entries.values() {
-            hasher.update(entry.key.as_bytes());
-            hasher.update([0]);
-            hasher.update(entry.dir.as_os_str().as_encoded_bytes());
-            hasher.update([0]);
-            hasher.update(entry.summary.identity.stable_key().as_bytes());
-            hasher.update([0]);
-        }
-        format!("{:x}", hasher.finalize())
     }
 }
 

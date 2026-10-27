@@ -222,12 +222,14 @@ def frozen_text_key_index[K with (Display, Static), V with Static](
 ) -> Option[int]:
     """Find the first displayed key in baked order without cloning or displaying any stored value."""
     entries: RuntimeFrozenList[tuple[K, V]] = frozen_dict_entries[K, V](value)
+    # The sought key's text is the same for every entry, so it is formatted once.
+    sought = f"{key}"
     mut index = 0
     while true:
         match entries.get(nonnegative_count(index)):
             Some(entry) =>
                 stored: &K = entry[0]
-                if f"{stored}" == f"{key}":
+                if f"{stored}" == sought:
                     return Some(index)
             None => return None
         index += 1

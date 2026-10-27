@@ -1,0 +1,10 @@
+"""Register addition as a scoped surface only inside a note declaration."""
+
+from std.vocab import DeclarationSurface, DslSurface, ScopedSurfaceDescriptor, VocabRegistration
+
+
+pub def library_vocab() -> VocabRegistration:
+    """Publish a positive declaration-body position for the addition glyph."""
+    addition = ScopedSurfaceDescriptor.operator("note.add", "+").in_declaration_body("note")
+    surface = DslSurface.on_import("words").with_declaration(DeclarationSurface.named("note"))
+    return VocabRegistration.new().with_surface(surface.with_scoped_surface(addition))

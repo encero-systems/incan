@@ -31,24 +31,12 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
-      - name: Require a pinned release bundle
-        env:
-          TOOLCHAIN_REF: ${{ fromJSON(vars.DEV8_TOOLCHAINS || '{}')[matrix.target] }}
-        run: test -n "$TOOLCHAIN_REF"
-      - name: Install oras
-        uses: oras-project/setup-oras@v1
-        with:
-          version: 1.3.0
-      - name: Authenticate for the release bundle
-        env:
-          GHCR_USER: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: printf '%s' "$GHCR_TOKEN" | oras login ghcr.io --username "$GHCR_USER" --password-stdin
       - name: Install and verify dev.8
-        env:
-          TOOLCHAIN_REF: ${{ fromJSON(vars.DEV8_TOOLCHAINS || '{}')[matrix.target] }}
-          CI_DEV8_OUT: ${{ runner.temp }}/dev8
-        run: scripts/ci-dev8.sh "$TOOLCHAIN_REF"
+        uses: ./.github/actions/install-dev8-toolchain
+        with:
+          reference: ${{ fromJSON(vars.DEV8_TOOLCHAINS || '{}')[matrix.target] }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          verify: 'true'
       - name: Retain installation and contract evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -72,6 +60,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Install dev.8
+        uses: ./.github/actions/install-dev8-toolchain
+        with:
+          reference: ${{ fromJSON(vars.DEV8_TOOLCHAINS || '{}')['x86_64-unknown-linux-gnu'] }}
+          token: ${{ secrets.GITHUB_TOKEN }}
       - name: Check US English
         run: make us-english-check
       - name: Install docs dependencies

@@ -288,8 +288,8 @@ Before a module with a binding is checked, built or run, each binding is verifie
 | Linux x86-64 host | Default on that host | `x86_64-unknown-linux-gnu` |
 | macOS arm64 host | Default on that host | `arm64-apple-macos11` |
 
-- Dev.8's CLI exposes no `--interop-target` selector. Package header declarations are specified in [`[interop.c]`](../../../tooling/reference/project_configuration.md#interopc).
-- `INCAN_C_ABI_CLANG`, when set, is the Clang executable. Otherwise the executable is Xcode's Clang, with the macOS, iPhoneOS or iPhoneSimulator SDK as sysroot, on macOS, and `clang` on Linux. An Android target requires `INCAN_C_ABI_CLANG`.
+- The host selects the target. Package header declarations are specified in [`[interop.c]`](../../../tooling/reference/project_configuration.md#interopc).
+- `INCAN_C_ABI_CLANG`, when set, is the Clang executable. Otherwise the executable is Xcode's Clang with the macOS SDK as sysroot on macOS arm64, and `clang` on Linux x86-64.
 - A `native` name, enum constant or struct field name is a C identifier; a struct or resource `native` may also be `struct tag`.
 - Refused (`INCAN-T0001`): a binding that fails verification; a name that is not a C identifier; a binding that Clang cannot verify; and a host binding on a platform other than Linux x86-64 and macOS arm64.
 
@@ -299,5 +299,4 @@ Before a module with a binding is checked, built or run, each binding is verifie
 - [Work with checked C bindings](../../how-to/checked_c_bindings.md)
 - [How checked C interop is structured](../../explanation/checked_c_interop.md)
 - [Inspect checked C bindings](../../../tooling/how-to/inspect_checked_c_bindings.md)
-- [Binding inspection JSON schema](../../../tooling/reference/binding_inspection_schema.md)
-- [Oven interop deployment plans](../../../tooling/reference/interop_deployment_plans.md)
+- [Binding inspection schema](../../../tooling/reference/binding_inspection_schema.md)

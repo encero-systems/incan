@@ -1,0 +1,268 @@
+"""Generate the public feature inventory from the compiler's checked structural registry records."""
+
+from rust::std::env import var
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from std.fs import Path
+from std.json import JsonValue
+from check_support import read, repository_root
+
+const SOURCE: str = "loaves/stdlib/core/src/features.incn"
+const OUTPUT: str = "workspaces/docs-site/docs/language/reference/feature_inventory.md"
+
+
+model Feature:
+    """One source-authored feature decoded from a checked descriptor."""
+
+    id: str
+    name: str
+    category: str
+    since: str
+    rfc: str
+    stability: str
+    activation: str
+    summary: str
+    forms: list[str]
+    prefer_over: str
+    references: list[str]
+
+
+def main() -> Result[None, str]:
+    """
+    Write a deterministic Markdown inventory without reading descriptors from source text.
+
+    1. Ask the installed compiler for a strict checked codegraph of the authored catalog.
+    2. Decode only the catalog's checked registry entries, refusing duplicates or an empty result.
+    3. Render the inventory in declaration order and write it only when its content changes.
+    """
+    root = repository_root()?
+    # 1. The compiler owns the source's descriptor evaluation and complete checking.
+    graph = checked_graph(root)?
+    # 2. Structural records, not loaded runtime registrations, supply the inventory.
+    features = checked_features(graph)?
+    # 3. Stable text avoids needless file changes and supports a repeatable regeneration check.
+    output = root.joinpath(OUTPUT)
+    text = render(features)
+    if not output.is_file() or read(output)? != text:
+        output.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
+    println(f"feature inventory: {len(features)} checked entries")
+    return Ok(None)
+
+
+def checked_graph(root: Path) -> Result[str, str]:
+    """Export current source through Oven, refusing any unchecked unit or failed command."""
+    mut command = Command.new(var("INCAN").unwrap_or("incan"))
+    command.current_dir(root.0)
+    for argument in ["inspect", "codegraph", SOURCE, "--format", "jsonl", "--strict"]:
+        command.arg(argument)
+    output = command.output().map_err((error) => error.to_string())?
+    if not output.status.success():
+        return Err(RustString.from_utf8(output.stderr).map_err((error) => error.to_string())?)
+    return RustString.from_utf8(output.stdout).map_err((error) => error.to_string())
+
+
+def checked_features(graph: str) -> Result[list[Feature], str]:
+    """Decode the source module's catalog once, ignoring its duplicate entry-source projection."""
+    mut features: list[Feature] = []
+    mut ids: list[str] = []
+    for line in graph.split("\n"):
+        if line.strip() == "":
+            continue
+        record = JsonValue.parse(line).map_err((error) => error.message())?
+        if text(record, "record")? != "registry":
+            continue
+        if text(record, "registry_identity")? != "features::features":
+            continue
+        if text(record, "provenance")? != "checked" or field(record, "degraded")?.as_bool() != Some(false):
+            return Err("feature registry record is not completely checked")
+        feature = checked_feature(field(record, "descriptor")?)?
+        if feature.id in ids:
+            return Err(f"duplicate checked feature id {feature.id}")
+        ids.append(feature.id)
+        features.append(feature)
+    if len(features) == 0:
+        return Err("checked std.features registry has no entries")
+    return Ok(features)
+
+
+def checked_feature(descriptor: JsonValue) -> Result[Feature, str]:
+    """Require the authored descriptor, typed id and enum identities before rendering its values."""
+    fields = model_fields(descriptor, "FeatureDescriptor")?
+    id = tagged(descriptor_field(fields, "id")?, "newtype")?
+    if text(id, "name")? != "FeatureId":
+        return Err("feature id is not FeatureId")
+    references = checked_references(descriptor_field(fields, "references")?)?
+    return Ok(
+        Feature(
+            id=string(field(id, "value")?)?,
+            name=string(descriptor_field(fields, "name")?)?,
+            category=enum_name(descriptor_field(fields, "category")?, "FeatureCategory")?,
+            since=string(descriptor_field(fields, "since")?)?,
+            rfc=string(descriptor_field(fields, "rfc")?)?,
+            stability=enum_name(descriptor_field(fields, "stability")?, "FeatureStability")?,
+            activation=string(descriptor_field(fields, "activation")?)?,
+            summary=string(descriptor_field(fields, "summary")?)?,
+            forms=checked_strings(descriptor_field(fields, "canonical_forms")?)?,
+            prefer_over=string(descriptor_field(fields, "prefer_over")?)?,
+            references=references,
+        ),
+    )
+
+
+def checked_references(value: JsonValue) -> Result[list[str], str]:
+    """Render only typed CapabilityReference descriptors, preserving their authored order."""
+    mut references: list[str] = []
+    for reference in array(tagged(value, "list")?)?:
+        fields = model_fields(reference, "CapabilityReference")?
+        label = string(descriptor_field(fields, "label")?)?
+        path = string(descriptor_field(fields, "path")?)?
+        references.append(f"[{label}]({path})")
+    return Ok(references)
+
+
+def model_fields(value: JsonValue, name: str) -> Result[list[JsonValue], str]:
+    """Decode a named checked model and refuse repeated fields."""
+    body = tagged(value, "model")?
+    if text(body, "name")? != name:
+        return Err(f"expected checked {name} model")
+    fields = array(field(body, "fields")?)?
+    mut names: list[str] = []
+    for entry in fields:
+        key = text(entry, "name")?
+        if key in names:
+            return Err(f"duplicate descriptor field {key}")
+        names.append(key)
+    return Ok(fields)
+
+
+def descriptor_field(fields: list[JsonValue], key: str) -> Result[JsonValue, str]:
+    """Find a required checked model field without accepting absent or mistyped data."""
+    for entry in fields:
+        if text(entry, "name")? == key:
+            return field(entry, "value")
+    return Err(f"missing checked descriptor field {key}")
+
+
+def enum_name(value: JsonValue, name: str) -> Result[str, str]:
+    """Require a fieldless member of the named source enum."""
+    mut path: list[str] = []
+    for segment in array(tagged(value, "const_ref")?)?:
+        path.append(required(segment.as_str(), f"invalid {name} alternative")?)
+    if len(path) != 2 or path[0] != name:
+        return Err(f"expected checked {name} alternative")
+    return Ok(path[1])
+
+
+def checked_strings(value: JsonValue) -> Result[list[str], str]:
+    """Decode an ordered list of checked string values."""
+    mut strings: list[str] = []
+    for item in array(tagged(value, "list")?)?:
+        strings.append(string(item)?)
+    return Ok(strings)
+
+
+def string(value: JsonValue) -> Result[str, str]:
+    """Require a checked string, rejecting other structural value kinds."""
+    return required(tagged(value, "string")?.as_str(), "expected string payload")
+
+
+def tagged(value: JsonValue, kind: str) -> Result[JsonValue, str]:
+    """Read one checked structural value with the required tag."""
+    if text(value, "kind")? != kind:
+        return Err(f"expected checked {kind} value")
+    return field(value, "value")
+
+
+def text(value: JsonValue, key: str) -> Result[str, str]:
+    """Require a textual field on an exported record."""
+    return required(field(value, key)?.as_str(), f"expected text in {key}")
+
+
+def field(value: JsonValue, key: str) -> Result[JsonValue, str]:
+    """Refuse a missing record field instead of silently substituting null."""
+    return required(value.get(key), f"missing checked descriptor field {key}")
+
+
+def array(value: JsonValue) -> Result[list[JsonValue], str]:
+    """Require an ordered array at a structural list boundary."""
+    return required(value.as_array(), "expected checked array")
+
+
+def required[T](value: Option[T], message: str) -> Result[T, str]:
+    """Turn an absent required structural value into a generation refusal."""
+    match value:
+        Some(found) => return Ok(found)
+        None => return Err(message)
+
+
+def render(features: list[Feature]) -> str:
+    """Render the overview and detail sections from the same ordered descriptor list."""
+    mut lines = [
+        "# Incan feature inventory",
+        "",
+        "!!! warning \"Generated file\"",
+        "    Do not edit this page by hand. Update `loaves/stdlib/core/src/features.incn` and regenerate it.",
+        "",
+        "    Regenerate with: `incan run scripts/generate_feature_inventory.incn`",
+        "",
+        "This inventory describes the source-authored public features in the compiler's checked catalog.",
+        "",
+        "## Contents",
+        "",
+        "- [All features](#all-features)",
+        "- [Feature details](#feature-details)",
+        "",
+        "## All features",
+        "",
+        "| Feature | Category | Since | Activation | Canonical forms | Summary | Prefer over | References |",
+        "|---|---|---:|---|---|---|---|---|",
+    ]
+    for feature in features:
+        lines.append(table_row(feature))
+    lines = lines + ["", "## Feature details", ""]
+    for feature in features:
+        lines = lines + detail(feature)
+    return "\n".join(lines).strip() + "\n"
+
+
+def table_row(feature: Feature) -> str:
+    """Escape table syntax while preserving each feature's authored forms and references."""
+    mut forms = "<br>".join([cell(code(form)) for form in feature.forms])
+    if forms == "":
+        forms = "-"
+    values = [feature.name, feature.category, feature.since, feature.activation]
+    start = " | ".join([cell(value) for value in values])
+    end = " | ".join([cell(feature.summary), cell(feature.prefer_over), cell(", ".join(feature.references))])
+    return f"| {start} | {forms} | {end} |"
+
+
+def detail(feature: Feature) -> list[str]:
+    """Render a lookup section with the same complete metadata as the overview."""
+    lines = [
+        f"### {feature.name}",
+        "",
+        f"- **Id:** `{feature.id}`",
+        f"- **Category:** `{feature.category}`",
+        f"- **Since:** `{feature.since}`",
+        f"- **RFC:** `{feature.rfc}`",
+        f"- **Stability:** `{feature.stability}`",
+        f"- **Activation:** {feature.activation}",
+        f"- **Use instead of:** {feature.prefer_over}",
+        f"- **References:** {", ".join(feature.references)}",
+        "",
+        feature.summary,
+        "",
+    ]
+    if len(feature.forms) > 0:
+        return lines + ["Canonical forms:", ""] + [f"- {code(form)}" for form in feature.forms] + [""]
+    return lines
+
+
+def cell(value: str) -> str:
+    """Escape Markdown table delimiters and fold embedded line breaks."""
+    return value.replace("|", "\\|").replace("\n", " ")
+
+
+def code(value: str) -> str:
+    """Quote one canonical form as inline code."""
+    return "`" + value.replace("`", "\\`") + "`"

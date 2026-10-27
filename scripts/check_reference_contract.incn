@@ -21,6 +21,7 @@ options:
 
 pub model Finding:
     """A source location and lexical rule violated by one reference line."""
+
     pub page: str
     pub line: int
     pub rule: str
@@ -29,14 +30,16 @@ pub model Finding:
 
 model Rule:
     """A named prose pattern compiled once for a page."""
+
     name: str
     pattern: Regex
 
 
 model Options:
     """The base comparison, full-inventory flag and explicit page arguments."""
+
     base: str = ""
-    all: bool = False
+    all: bool = false
     paths: list[str] = []
 
 
@@ -73,9 +76,7 @@ def main() -> Result[None, str]:
     for finding in findings:
         println(f"  {finding.page}:{finding.line}: {finding.rule}: {finding.text[:160]}")
     println(
-        "A reference page states the contract only; see *Reference pages state the contract only* in"
-        + " .agents/skills/review-docs-claims/SKILL.md. Move removed true sentences to the matching how-to or"
-        + " explanation page. Record a justified exception in scripts/check_reference_contract.allow."
+        "A reference page states the contract only; see *Reference pages state the contract only* in" + " .agents/skills/review-docs-claims/SKILL.md. Move removed true sentences to the matching how-to or" + " explanation page. Record a justified exception in scripts/check_reference_contract.allow.",
     )
     exit(1)
 
@@ -94,16 +95,16 @@ def parse_options(arguments: list[str]) -> Result[Options, str]:
     """Read the existing --base, --all and explicit page selection arguments."""
     mut options = Options(base=var("INCAN_REFERENCE_CHECK_BASE").unwrap_or(""))
     mut index = 0
-    mut positional = False
+    mut positional = false
     while index < len(arguments):
         argument = arguments[index]
         if not positional and (argument == "--help" or argument == "-h"):
             println(HELP)
             exit(0)
         elif not positional and argument == "--":
-            positional = True
+            positional = true
         elif not positional and argument == "--all":
-            options.all = True
+            options.all = true
         elif not positional and argument == "--base":
             index += 1
             if index >= len(arguments):
@@ -140,8 +141,11 @@ pub def changed_pages(root: Path, base: str) -> Result[list[str], str]:
     if base != "":
         commands = [["diff", "--name-only", f"{base}...HEAD"], ["diff", "--name-only", "HEAD"]]
     else:
-        commands = [["diff", "--name-only"], ["diff", "--cached", "--name-only"],
-            ["ls-files", "--others", "--exclude-standard"]]
+        commands = [
+            ["diff", "--name-only"],
+            ["diff", "--cached", "--name-only"],
+            ["ls-files", "--others", "--exclude-standard"],
+        ]
     for command in commands:
         for line in source_lines(git(root, command)?)?:
             name = line.strip()
@@ -172,9 +176,8 @@ def docs_relative(path: str) -> str:
 
 def is_reference_page(path: str) -> bool:
     """Exclude generated pages while selecting Markdown below a reference directory."""
-    if path in ["contributing/reference/test_corpus_inventory.md", "language/reference/feature_inventory.md",
-        "language/reference/language.md"]:
-        return False
+    if path in ["language/reference/feature_inventory.md", "language/reference/language.md"]:
+        return false
     return "/reference/" in f"/{path}" and path.endswith(".md")
 
 
@@ -206,9 +209,9 @@ pub def page_findings(source: str, page: str, allowed: list[tuple[str, str]]) ->
     see_also = regex("(?i)^#{1,6}\\s+See also\\b")?
     comment = regex("(?i)^(?:accepted|refused)\\b|^[\\w./-]+\\.(?:incn|toml)$")?
     mut findings: list[Finding] = []
-    mut fenced = False
+    mut fenced = false
     mut language = ""
-    mut in_see_also = False
+    mut in_see_also = false
     lines = source_lines(source)?
     for index in range(len(lines)):
         line = lines[index]
@@ -244,22 +247,34 @@ pub def page_findings(source: str, page: str, allowed: list[tuple[str, str]]) ->
 def prose_rules(internal: bool) -> Result[list[Rule], str]:
     """Compile the original lexical rules, expressing the issue-prefix boundary without lookbehind."""
     mut rules = [
-        Rule(name="comparison with another language", pattern=regex(
-            "\\bPython\\b|\\bRust's\\b|\\blike Rust\\b|\\bas in Rust\\b"
-        )?),
-        Rule(name="time-bound wording", pattern=regex(
-            "(?i)\\bcurrently\\b|\\btoday\\b|\\byet\\b|\\bfor now\\b|\\bno longer\\b|"
-            + "\\bat present\\b|\\bat the moment\\b")?),
+        Rule(
+            name="comparison with another language",
+            pattern=regex("\\bPython\\b|\\bRust's\\b|\\blike Rust\\b|\\bas in Rust\\b")?,
+        ),
+        Rule(
+            name="time-bound wording",
+            pattern=regex(
+                "(?i)\\bcurrently\\b|\\btoday\\b|\\byet\\b|\\bfor now\\b|\\bno longer\\b|" + "\\bat present\\b|\\bat the moment\\b",
+            )?,
+        ),
         Rule(name="issue or RFC number", pattern=regex("(?:^|[^\\w`/\\[#&-])#\\d{3,5}\\b|\\bRFC[ -]?\\d{2,3}\\b")?),
-        Rule(name="advice", pattern=regex(
-            "(?i)\\byou should\\b|\\bprefer\\b|\\brecommend(?:ed|s)?\\b|\\bconsider\\b|\\bmake sure\\b"
-            + "|\\bkeep in mind\\b|\\bbest practice\\b|\\bwe suggest\\b|\\btip:")?),
+        Rule(
+            name="advice",
+            pattern=regex(
+                "(?i)\\byou should\\b|\\bprefer\\b|\\brecommend(?:ed|s)?\\b|\\bconsider\\b|\\bmake sure\\b" + "|\\bkeep in mind\\b|\\bbest practice\\b|\\bwe suggest\\b|\\btip:",
+            )?,
+        ),
         Rule(name="rationale", pattern=regex("(?i)\\bbecause\\b|\\bso that\\b")?),
     ]
     if internal:
-        rules.append(Rule(name="compiler-internal vocabulary", pattern=regex(
-            "(?i)\\blowering\\b|\\blowers? to\\b|\\bemitter\\b|\\bcodegen\\b|\\bthe checker\\b"
-            + "|\\btype ?checker\\b|\\bgenerated Rust\\b")?))
+        rules.append(
+            Rule(
+                name="compiler-internal vocabulary",
+                pattern=regex(
+                    "(?i)\\blowering\\b|\\blowers? to\\b|\\bemitter\\b|\\bcodegen\\b|\\bthe checker\\b" + "|\\btype ?checker\\b|\\bgenerated Rust\\b",
+                )?,
+            ),
+        )
     return Ok(rules)
 
 
@@ -280,5 +295,5 @@ def exempt(finding: Finding, allowed: list[tuple[str, str]]) -> bool:
     """Require both the selected page scope and an enclosing exact phrase."""
     for page, phrase in allowed:
         if (page == "*" or page == finding.page) and phrase in finding.text:
-            return True
-    return False
+            return true
+    return false

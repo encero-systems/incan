@@ -6,7 +6,7 @@ incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
 incan_semantics_stdlib = { loaf = "incan_semantics_stdlib", optional = true, path = "../incan_semantics_stdlib" }
 incan_syntax = { loaf = "incan_syntax", path = "../../kernel/incan_syntax" }
-incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab", version = "0.3.0" }
+incan_vocab = { loaf = "incan_vocab", path = "../../kernel/incan_vocab", version = "0.6.0-dev.8" }
 quote = { loaf = "crates-io/quote", version = "1.0" }
 semver = { loaf = "crates-io/semver", version = "1.0.27" }
 serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
@@ -23,7 +23,7 @@ description = "The Incan compiler frontend: parsed modules, symbols, the typeche
 license = "Apache-2.0"
 name = "incan_frontend"
 private = true
-version = "0.6.0-dev.6"
+version = "0.6.0-dev.8"
 
 [project.features]
 default = [

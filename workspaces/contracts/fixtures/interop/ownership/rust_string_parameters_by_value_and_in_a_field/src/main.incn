@@ -1,4 +1,4 @@
-# behavior: Incan text keeps its owner across the String parameters of a local Rust crate: a str variable handed to a Rust method generic over Into[String] is encoded twice while the caller keeps it and once more at its last use, and a str literal and a str variable fill a Rust struct's String field and are handed to a Rust function taking a String by value, a str method result is handed to it too, a wrapper's str field is lent to a Rust function taking a borrowed text, and the variable and the wrapper are unchanged afterwards
+# behavior: Rust String calls preserve owners; public fields and generic constructors work beside private storage (#2424)
 # expect-stdout:
 #   hello world
 #   HELLO WORLD
@@ -12,11 +12,20 @@
 #   NAME
 #   <tag>
 #   tag
+#   mixed
+#   public lifetime
+#   mixed lifetime
+#   non-exhaustive
+#   constructed
+
+"""Exercise Rust text boundaries and independent field visibility."""
 
 from rust::string_fixtures::into_method_helper import Tokenizer
 from rust::string_fixtures::tiny_option import FunctionOption, describe, option_name, shout
+from rust::string_fixtures import Mixed, mixed, mixed_lifetime, non_exhaustive, public_lifetime
 
 pub const OPTION_NAME: str = "sketch_family"
+
 
 type Label = newtype str
 
@@ -46,5 +55,16 @@ def show_string_parameters() -> None:
 
 
 def main() -> None:
+    """Exercise text calls, construction and field reads."""
     show_into_bound_variables()
     show_string_parameters()
+    show_readable_fields()
+
+
+def show_readable_fields() -> None:
+    """Read public fields independently of construction authority (#2424)."""
+    println(mixed().code)
+    println(public_lifetime().code)
+    println(mixed_lifetime().code)
+    println(non_exhaustive().code)
+    println(Mixed.new("constructed").code)

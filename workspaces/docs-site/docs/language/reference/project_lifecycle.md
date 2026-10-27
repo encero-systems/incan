@@ -16,4 +16,4 @@ A source unit's project root is the nearest directory at or above the source's p
 
 `run`, `check`, `test` and `describe-unit` require explicit source paths. `build` accepts a source or project directory. `fmt` accepts one or more files or trees.
 
-Dev.8 provides no scaffolding, version-bump, named-environment or workspace-selection command. The accepted manifest tables and CLI options are specified in [Project configuration](../../tooling/reference/project_configuration.md) and [CLI reference](../../tooling/reference/cli_reference.md).
+The accepted manifest tables and CLI options are specified in [Project configuration](../../tooling/reference/project_configuration.md) and [CLI reference](../../tooling/reference/cli_reference.md).

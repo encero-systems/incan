@@ -377,29 +377,23 @@ impl TypeChecker {
     }
 
     /// Read native payload columns and field order from the same complete layout retained for lowering. Reference
-    /// binding mode does not change coverage, and owner arguments instantiate templates before the matrix walk.
+    /// binding mode does not change coverage, and payload types come from `native_enum_payload_types`, which pattern
+    /// checking reads too, so a defaulted owner argument the column leaves out closes before the matrix walk.
     fn native_coverage_constructors(&self, column: &ResolvedType) -> Option<Vec<CoverageConstructor>> {
         let (column, _) = borrowed_pattern_subject(column);
         let path = self.rust_canonical_path_for_receiver_type(column)?;
         let public_path = self.rust_public_type_path(&path);
         let layout = self.type_info.rust.checked_enums.get(&public_path)?;
-        let arguments = self.rust_owner_type_args(column, &path)?;
-        let substitution = type_param_subst_map(&layout.type_parameters, &arguments);
-        Some(
-            layout
-                .variants
-                .iter()
-                .map(|(name, fields, names)| {
-                    let fields = fields
-                        .iter()
-                        .map(|field| substitute_resolved_type(field, &substitution))
-                        .collect();
-                    let mut constructor = CoverageConstructor::variant(name, Vec::new(), fields);
-                    constructor.field_names = names.clone();
-                    constructor
-                })
-                .collect(),
-        )
+        layout
+            .variants
+            .iter()
+            .map(|(name, _, names)| {
+                let fields = self.native_enum_payload_types(column, &path, name)?;
+                let mut constructor = CoverageConstructor::variant(name, Vec::new(), fields);
+                constructor.field_names = names.clone();
+                Some(constructor)
+            })
+            .collect()
     }
 
     /// Enumerate the constructors of a column type, or `None` when the checker cannot enumerate its values.

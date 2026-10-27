@@ -2,8 +2,6 @@
 
 Keep the raw foreign boundary private and expose ordinary Incan functions to application code.
 
-The tested dev.8 interop artifact does not activate the `binding` vocabulary. Its checker refuses the source form below with `INCAN-P0001`; the examples illustrate source organization rather than a verified executable workflow.
-
 ## Create the source layout
 
 Create an ordinary manifest as in [Getting started](../../tooling/tutorials/getting_started.md). Put binding declarations under `src/native/`, private raw calls in a bridge module, and public Incan functions in a facade.

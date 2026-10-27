@@ -127,7 +127,7 @@ fn declaration(block: &ast::VocabBlockStmt, span: ast::Span) -> Result<Value, St
         }
     };
     if block.signature_head.is_some() || !block.decorators.is_empty() {
-        return Err("public vocabulary schema does not yet represent decorated or signature heads".into());
+        return Err("vocabulary requests refuse decorators and signature heads; use a declaration with header arguments or no head".into());
     }
     let args = args.map(expression).collect::<Result<Vec<_>, _>>()?;
     let body = block.body.iter().map(body_item).collect::<Result<Vec<_>, _>>()?;
@@ -294,7 +294,7 @@ fn statement(value: &ast::Spanned<ast::Statement>) -> Result<Value, String> {
             ast::BindingKind::Reassign => json!({"Assign": [binding.name, expression(&binding.value)?]}),
             kind => json!({"Let": [binding.name, kind == ast::BindingKind::Mutable, expression(&binding.value)?]}),
         },
-        _ => return Err("host statement is not represented by the vocabulary input bridge yet".into()),
+        _ => return Err("this statement cannot be passed to a vocabulary desugarer; use an expression, return, binding or pass statement".into()),
     };
     Ok(json!({"span": source_span(value.span), "kind": kind}))
 }

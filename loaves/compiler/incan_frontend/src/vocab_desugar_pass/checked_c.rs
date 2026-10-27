@@ -3,6 +3,8 @@
 //! This is compiler-owned semantics, selected only for the standard namespace owner; dependency vocabulary still
 //! requires its own expansion implementation. Registration itself remains ordinary Incan producer code.
 
+use incan_lang::lang::c_abi::BINDING_DECLARATION_BASE;
+use incan_lang::lang::stdlib::{STDLIB_INTEROP, STDLIB_ROOT};
 use incan_vocab::{
     Decorator, DecoratorArg, DecoratorArgValue, IncanClassDeclaration, IncanDeclaration, IncanExpr,
     IncanFromImportDeclaration, IncanImportItem, IncanStatement, IncanVisibility, VocabBodyItem, VocabDeclaration,
@@ -25,9 +27,9 @@ pub(super) fn binding(declaration: &VocabDeclaration) -> Result<Vec<IncanDeclara
     Ok(vec![
         IncanDeclaration::FromImport(IncanFromImportDeclaration {
             visibility: IncanVisibility::Private,
-            module: vec!["std".to_string(), "interop".to_string()],
+            module: vec![STDLIB_ROOT.to_string(), STDLIB_INTEROP.to_string()],
             items: vec![IncanImportItem {
-                name: "BindingDeclaration".to_string(),
+                name: BINDING_DECLARATION_BASE.to_string(),
                 alias: None,
             }],
         }),
@@ -39,7 +41,7 @@ pub(super) fn binding(declaration: &VocabDeclaration) -> Result<Vec<IncanDeclara
                 args: decorators,
                 span: declaration.span,
             }],
-            extends: Some("BindingDeclaration".to_string()),
+            extends: Some(BINDING_DECLARATION_BASE.to_string()),
             declarative_members: members.collect(),
         }),
     ])

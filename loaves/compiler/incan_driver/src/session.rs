@@ -1,10 +1,10 @@
 //! The compilation session: one per unit, owning the unit's description, the compiled Loaves it imports from, and
 //! the analysis every stage after parsing consumes (DD-0007).
 //!
-//! A session is opened once from the unit description the Oven supplies (DD-0008) and reused by every stage, so the
+//! A session is opened once from the unit description Oven supplies (DD-0008) and reused by every stage, so the
 //! Loaves, the vocabulary they bring and the active features are decided once per unit.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -26,9 +26,6 @@ use incan_frontend::testing_markers::{TestingMarkerSemantics, testing_marker_sem
 use incan_frontend::typechecker::{TypeCheckInfo, TypeChecker};
 use incan_frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
 
-/// The build profile a command reads Loaf artifacts for unless it names another.
-pub const DEFAULT_PROFILE: &str = "debug";
-
 /// Checked products produced by one [`CompilationSession`] analysis pass: each module's checked facts, which Body IR
 /// lowers from, and its portable semantic snapshot, which tooling reads.
 #[derive(Debug, Clone)]
@@ -38,33 +35,7 @@ pub struct CompilationAnalysis {
     semantic_snapshots_by_path: BTreeMap<PathBuf, incan_semantics_core::SemanticModuleSnapshot>,
 }
 
-/// One module's checked facts and portable semantic snapshot from one [`CompilationAnalysis`].
-pub struct CompilationModuleAnalysis<'analysis> {
-    type_info: &'analysis TypeCheckInfo,
-    semantic_snapshot: &'analysis incan_semantics_core::SemanticModuleSnapshot,
-}
-
-impl CompilationModuleAnalysis<'_> {
-    /// The module's checked facts.
-    pub fn type_info(&self) -> &TypeCheckInfo {
-        self.type_info
-    }
-
-    /// The module's portable semantic snapshot.
-    pub fn semantic_snapshot(&self) -> &incan_semantics_core::SemanticModuleSnapshot {
-        self.semantic_snapshot
-    }
-}
-
 impl CompilationAnalysis {
-    /// Return the paired checked products for one collected source file.
-    pub fn module_analysis_for_path(&self, path: &Path) -> Option<CompilationModuleAnalysis<'_>> {
-        Some(CompilationModuleAnalysis {
-            type_info: self.type_info_by_path.get(path)?.as_ref(),
-            semantic_snapshot: self.semantic_snapshots_by_path.get(path)?,
-        })
-    }
-
     /// Return the checked facts of one collected source file.
     pub fn type_info_for_path(&self, path: &Path) -> Option<&TypeCheckInfo> {
         self.type_info_by_path.get(path).map(Arc::as_ref)
@@ -97,7 +68,9 @@ pub trait RustFactsSource: std::fmt::Debug + Send + Sync {
 /// Where one session's Rust facts come from: the ABI caches of the crates the unit links, then the source.
 #[derive(Debug, Clone, Default)]
 pub struct RustFactsSetup {
+    /// The ABI caches the session reads first, in order.
     pub caches: Vec<PathBuf>,
+    /// Where the facts of paths no cache holds come from, when the caller can read them.
     pub source: Option<Arc<dyn RustFactsSource>>,
 }
 
@@ -110,24 +83,26 @@ pub struct CompilationSession {
     /// Where Rust facts no ABI cache holds come from, when the compiler can read them.
     rust_facts_source: Option<Arc<dyn RustFactsSource>>,
     /// Native vocabulary workers and pure responses shared across cloned sessions.
-    pub(crate) vocab_runtime: Arc<Mutex<Option<vocab_desugar_pass::NativeDesugarerRuntime>>>,
+    pub(crate) vocab_runtime: Arc<Mutex<vocab_desugar_pass::NativeDesugarerRuntime>>,
     /// Node-local expansion failures retained while the rest of each module undergoes ordinary checking.
     desugar_diagnostics: Arc<Mutex<BTreeMap<PathBuf, Vec<diagnostics::CompileError>>>>,
-    /// The unit as the Oven describes it.
+    /// The unit as Oven describes it.
     unit: UnitDescription,
+    /// The unit's source root, copied from its description.
     pub source_root: PathBuf,
     /// The compiled Loaves the program imports from: its dependencies and the standard packages.
     loaves: Arc<LoafIndex>,
     /// The standard package the program is, when it is one; its `std.*` roots are its own modules.
     own_standard_package: Option<&'static StandardPackageNamespacePolicy>,
-    /// The build profile whose Loaf artifacts the session reads.
-    profile: String,
     /// Active root-package features used to project compilation-unit `when feature(...)` declarations.
     pub active_features: BTreeSet<String>,
     /// Declared root-package features used for source diagnostics before projection.
     pub declared_features: BTreeSet<String>,
+    /// Vocabulary keywords the imported Loaves register, which the parser activates.
     pub library_imported_vocab: parser::ImportedLibraryVocab,
+    /// DSL surfaces the imported Loaves register, which the parser activates.
     pub library_imported_dsl_surfaces: parser::ImportedLibraryDslSurfaces,
+    /// The project's contract model bundles, read when the session opens.
     pub contract_model_bundles: Vec<CanonicalModelBundle>,
 }
 
@@ -195,7 +170,6 @@ impl CompilationSession {
             library_imported_dsl_surfaces,
             loaves,
             own_standard_package: standard_package_namespace_policy(&unit.package),
-            profile: unit.profile.clone(),
             active_features: unit.active_features.clone(),
             declared_features: unit.declared_features.clone(),
             contract_model_bundles,
@@ -203,7 +177,7 @@ impl CompilationSession {
         })
     }
 
-    /// The unit as the Oven describes it.
+    /// The unit as Oven describes it.
     pub fn unit(&self) -> &UnitDescription {
         &self.unit
     }
@@ -251,11 +225,6 @@ impl CompilationSession {
     /// The standard package the program is, when it is one.
     pub fn own_standard_package(&self) -> Option<&'static StandardPackageNamespacePolicy> {
         self.own_standard_package
-    }
-
-    /// The build profile whose Loaf artifacts the session reads.
-    pub fn profile(&self) -> &str {
-        &self.profile
     }
 
     /// Analyze one collected module graph exactly once: no command re-runs checking to derive its own facts.
@@ -370,11 +339,6 @@ impl CompilationSession {
         })
     }
 
-    /// The Rust crate names the package declares.
-    pub fn declared_crate_names(&self) -> HashSet<String> {
-        self.unit.rust_crates.iter().cloned().collect()
-    }
-
     /// Lex and parse one source file using the project-aware vocabulary surfaces, without running desugarers or
     /// compile-time materialization passes.
     ///
@@ -388,10 +352,27 @@ impl CompilationSession {
         source: &str,
     ) -> Result<Program, Vec<diagnostics::CompileError>> {
         let file_path_display = file_path.to_string_lossy();
+        self.parse_source_in_context(Some(file_path_display.as_ref()), source)
+    }
+
+    /// Parse syntax for formatting with the unit's vocabulary, without enforcing source-file placement rules.
+    ///
+    /// Formatting a standalone module must preserve public reexports even before that module is placed under `src/`.
+    /// Compilation and collection retain their actual module path and its context-sensitive diagnostics.
+    pub fn parse_source_for_formatting(&self, source: &str) -> Result<Program, Vec<diagnostics::CompileError>> {
+        self.parse_source_in_context(None, source)
+    }
+
+    /// Share vocabulary activation and tolerant fragment lexing across contextual parsing and syntax-only formatting.
+    fn parse_source_in_context(
+        &self,
+        module_path: Option<&str>,
+        source: &str,
+    ) -> Result<Program, Vec<diagnostics::CompileError>> {
         match lexer::lex(source) {
             Ok(tokens) => parser::parse_with_source(
                 &tokens,
-                Some(file_path_display.as_ref()),
+                module_path,
                 Some(&self.library_imported_vocab),
                 Some(&self.library_imported_dsl_surfaces),
                 source,
@@ -400,7 +381,7 @@ impl CompilationSession {
                 let (tokens, lex_errors) = lexer::lex_tolerant(source);
                 parser::parse_with_source_and_lex_errors(
                     &tokens,
-                    Some(file_path_display.as_ref()),
+                    module_path,
                     Some(&self.library_imported_vocab),
                     Some(&self.library_imported_dsl_surfaces),
                     source,
@@ -441,22 +422,11 @@ impl CompilationSession {
                     Span::default(),
                 )]
             })?;
-            if let Some(runtime) = runtime.as_mut() {
-                runtime.configure(
-                    self.unit.vocab_admissions.clone(),
-                    self.unit.project_root.clone(),
-                    self.unit.vocab_policy.clone(),
-                );
-            } else {
-                let mut created = vocab_desugar_pass::NativeDesugarerRuntime::new()
-                    .map_err(|error| vec![diagnostics::CompileError::new(error.to_string(), Span::default())])?;
-                created.configure(
-                    self.unit.vocab_admissions.clone(),
-                    self.unit.project_root.clone(),
-                    self.unit.vocab_policy.clone(),
-                );
-                *runtime = Some(created);
-            }
+            runtime.configure(
+                self.unit.vocab_admissions.clone(),
+                self.unit.project_root.clone(),
+                self.unit.vocab_policy.clone(),
+            );
             let expansion = vocab_desugar_pass::desugar_program_vocab_blocks_with_runtime(
                 &mut ast,
                 Some(file_path_display.as_ref()),

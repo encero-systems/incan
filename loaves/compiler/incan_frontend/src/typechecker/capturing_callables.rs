@@ -530,11 +530,6 @@ impl TypeChecker {
                 continue;
             }
             if admitted.is_some_and(|admitted| admitted.contains(&index)) {
-                if self.capturing_callable_description(value).is_some()
-                    && matches!(strip_parens(value).node, Expr::Ident(_))
-                {
-                    self.type_info.calls.borrowed_callable_arguments.insert(value.span);
-                }
                 continue;
             }
             let slot = match &param.name {
@@ -553,11 +548,6 @@ impl TypeChecker {
             .is_some_and(|identity| self.capturing_callables.closure_returning.contains(identity));
         if !returns_closure {
             self.refuse_capturing_callable(value, "returned as a function type");
-            return;
-        }
-        let value = strip_parens(value);
-        if matches!(value.node, Expr::Closure(..)) {
-            self.type_info.calls.returned_closures.insert(value.span);
         }
     }
 

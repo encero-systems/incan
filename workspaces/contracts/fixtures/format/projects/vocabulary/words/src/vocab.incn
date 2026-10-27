@@ -1,0 +1,14 @@
+"""Publish import-activated and always-on syntax without a desugarer."""
+
+from std.vocab import ClauseSurface, DeclarationSurface, DslSurface, VocabRegistration
+
+
+pub def library_vocab() -> VocabRegistration:
+    """Return the two descriptors formatting needs without running an expansion hook."""
+    note_clause = ClauseSurface.expr("VALUE OF").required()
+    note = DeclarationSurface.named("note").with_header_args().with_clause_body().with_clause(note_clause)
+    query_clause = ClauseSurface.expr("FROM").required()
+    query = DeclarationSurface.named("query").with_clause_body().desugars_to_expression().with_clause(query_clause)
+    imported = DslSurface.on_import("words").with_declaration(note)
+    always_active = DslSurface.always_on().with_declaration(query)
+    return VocabRegistration.new().with_surface(imported).with_surface(always_active)

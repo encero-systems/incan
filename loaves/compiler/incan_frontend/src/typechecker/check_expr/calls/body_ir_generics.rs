@@ -124,8 +124,10 @@ impl TypeChecker {
         let logical_result = substitute_resolved_type(&normalized(&info.return_type, &names, self), legacy_bindings);
         let mut bindings: HashMap<_, _> = legacy_bindings
             .iter()
-            .filter(|(_, ty)| concrete(&normalized(ty, &names, self)))
-            .map(|(name, ty)| (name.clone(), normalized(ty, &names, self)))
+            .filter_map(|(name, ty)| {
+                let ty = normalized(ty, &names, self);
+                concrete(&ty).then(|| (name.clone(), ty))
+            })
             .collect();
         let mut native_binders = HashSet::new();
         let rest = info

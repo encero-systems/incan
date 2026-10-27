@@ -795,6 +795,10 @@ impl TypeChecker {
         member_ty: &ResolvedType,
         span: Span,
     ) {
+        // A lifetime-bearing native member has no lifetime contract to derive anything for (DD-0006).
+        if self.refuse_lifetime_bearing_rust_type(member_ty, span) {
+            return;
+        }
         if self.native_field_clone_candidate(member_ty) == Some(false)
             && self.native_derive_support(member_ty, DeriveId::Clone) != DeriveSupport::Supported
         {

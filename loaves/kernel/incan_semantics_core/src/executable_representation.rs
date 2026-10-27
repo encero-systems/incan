@@ -49,10 +49,12 @@ use crate::body_ir::{
 /// Version 33 retains verified foreign call descriptors independently of source class layouts.
 /// Version 34 retains checked private pointer carriers and foreign bridge operations.
 /// Version 35 retains expansion contexts in every checked source span and canonical identity.
-pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 35;
+/// Version 36 appends the typed C span bridge operations.
+pub const EXECUTABLE_REPRESENTATION_VERSION: u32 = 36;
 
-/// Combined positional changes require regenerated providers; no older payload is compatible with this reader.
-const OLDEST_SUPPORTED_VERSION: u32 = EXECUTABLE_REPRESENTATION_VERSION;
+/// Version 36 only appends enum variants, so a version 35 payload decodes unchanged; older layouts are incompatible
+/// with this reader and require regenerated providers.
+const OLDEST_SUPPORTED_VERSION: u32 = 35;
 
 /// Required-field witnesses transported separately from the legacy positional nominal layout.
 #[derive(Serialize, Deserialize)]
@@ -188,9 +190,9 @@ pub fn require_supported_version(bytes: &[u8]) -> Result<(), ExecutableRepresent
     Ok(())
 }
 
-/// Accept only the current positional schema and its typed optional facts.
+/// Accept the current positional schema and the oldest version whose layout it still decodes unchanged.
 pub fn supports_version(version: u32) -> bool {
-    version == EXECUTABLE_REPRESENTATION_VERSION
+    (OLDEST_SUPPORTED_VERSION..=EXECUTABLE_REPRESENTATION_VERSION).contains(&version)
 }
 
 /// Append canonical required-field witnesses without changing any positional nominal or adoption field.

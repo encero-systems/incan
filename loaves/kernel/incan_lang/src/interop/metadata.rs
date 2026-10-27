@@ -1383,14 +1383,15 @@ pub struct RustTypeInfo {
     /// Trait implementations rust-inspect can prove for this Rust type.
     #[serde(default)]
     pub implemented_traits: Vec<RustImplementedTrait>,
-    /// Public fields for struct/union-like types.
+    /// Native fields for struct-like types. The completeness record restricts source reads of private slots;
+    /// their retained types and order exist only to verify native field projections.
     pub fields: Vec<RustFieldInfo>,
     /// Enum variants when the type is an enum; empty for non-enums.
     pub variants: Vec<RustVariantInfo>,
 }
 
-/// Whether Rust type metadata came from a full HIR extraction or from a partial syntax fallback.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+/// Which operations an extracted Rust type surface proves independently of readable fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum RustTypeMetadataCompleteness {
     /// Full rust-inspect HIR metadata, including methods and proven trait impls when available.
@@ -1398,22 +1399,43 @@ pub enum RustTypeMetadataCompleteness {
     Complete,
     /// Syntax-only metadata from generated source, limited to public fields and enum variants.
     FieldsAndVariantsOnly,
+    /// Complete signatures and readable fields, without authority to construct a struct layout.
+    /// Includes cross-crate non-exhaustive structs and items that are not structs.
+    CompleteWithoutConstruction,
+    /// Complete native layout and signatures with the named fields unavailable to source reads or construction.
+    CompleteWithPrivateFields(Vec<String>),
 }
 
 impl RustTypeMetadataCompleteness {
     /// Return whether this metadata can be treated as a full rust-inspect type surface.
     pub const fn is_complete(&self) -> bool {
-        matches!(self, Self::Complete)
+        matches!(
+            self,
+            Self::Complete | Self::CompleteWithoutConstruction | Self::CompleteWithPrivateFields(_)
+        )
     }
 
     /// Return whether this metadata can prove inherent methods.
-    pub const fn has_methods(self) -> bool {
-        matches!(self, Self::Complete)
+    pub const fn has_methods(&self) -> bool {
+        self.is_complete()
     }
 
     /// Return whether this metadata can prove trait implementations.
-    pub const fn has_trait_impls(self) -> bool {
-        matches!(self, Self::Complete)
+    pub const fn has_trait_impls(&self) -> bool {
+        self.is_complete()
+    }
+
+    /// Return whether the field list proves an externally constructible native layout.
+    pub const fn has_constructible_layout(&self) -> bool {
+        matches!(self, Self::Complete | Self::FieldsAndVariantsOnly)
+    }
+
+    /// Return whether a retained native field is visible to a source read or assignment.
+    pub fn field_is_public(&self, name: &str) -> bool {
+        match self {
+            Self::CompleteWithPrivateFields(private) => !private.iter().any(|field| field == name),
+            _ => true,
+        }
     }
 }
 

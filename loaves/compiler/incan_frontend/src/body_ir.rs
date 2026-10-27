@@ -115,10 +115,10 @@ pub fn registry_helper_identities(info: &TypeCheckInfo) -> Vec<CanonicalSymbolId
 /// # Input contract
 ///
 /// `program` must be a **desugared, feature-projected, typechecked** module, and `type_info` must be the checker
-/// output for exactly that projected program. Every caller owes the same preparation the legacy pipeline performs
-/// before emission (`CompilationSession::parse_source` in `loaves/compiler/incan_driver/src/session.rs`: parse, then
-/// `vocab_desugar_pass::desugar_program_vocab_blocks`, then feature projection, and only then typecheck), so a
-/// vocab-authored body means the same thing through either backend (#1166).
+/// output for exactly that projected program. Every caller owes the preparation `CompilationSession::parse_source`
+/// (`loaves/compiler/incan_driver/src/session.rs`) performs: parse, then
+/// `vocab_desugar_pass::desugar_program_vocab_blocks_with_runtime`, then feature projection, and only then typecheck,
+/// so a vocab-authored body means the same thing to every consumer (#1166).
 ///
 /// What must **not** cross this boundary:
 ///
@@ -346,7 +346,6 @@ pub fn build_body_ir_module(
     let opaque_carriers = opaque_returns::collect(&module, type_info);
     // Retain source trait annotations before local opaque propagation replaces return types with model witnesses.
     trait_values::retain_inputs(&mut module, program, type_info, context);
-    nominal_carriers::retain_return_owners(&mut module, context);
     trait_returns::retain_returns(&mut module, program, type_info, context);
     opaque_returns::retain(&mut module, &opaque_carriers);
     nominal_carriers::retain(&mut module, type_info, context);
@@ -509,23 +508,6 @@ struct LocalReceiverMethod {
     name: String,
     /// Physical method span selecting its checked signature and canonical target.
     span: ast::Span,
-}
-
-/// Determine whether a model can carry the small direct-replacement declaration fact.
-///
-/// This is deliberately a source-local data-model shape, not a general nominal-semantics predicate. The replacement
-/// runtime admits builtin Rust derives, checked JSON protocol derives, and field aliases without serde renames, but
-/// cannot execute other model decorators. Ordered owner and method binders remain placeholders for checked concrete
-/// instance selection; adopted trait slots, including those of a trait adopted with checked type arguments, are
-/// retained in the module implementation registry. Field defaults have
-/// declaration-owned deferred computations; each construction's checked binding selects the omitted slots without
-/// repeating source expressions at call sites.
-pub fn is_direct_replacement_plain_model(model: &ast::ModelDecl) -> bool {
-    model
-        .decorators
-        .iter()
-        .all(|decorator| is_direct_replacement_model_derive(&decorator.node))
-        && has_direct_replacement_model_shape(model, None)
 }
 
 /// Admit serde derives only after checked derive metadata resolves all selections to canonical supported paths, Copy
@@ -755,8 +737,10 @@ pub fn is_direct_replacement_model_derive(decorator: &ast::Decorator) -> bool {
 }
 
 /// Admit a transparent rusttype only when checking retained its underlying storage and it authors no executable
-/// members or trait implementations. Native declaration stubs and infallible edges require exact checked native
-/// signatures for every edge. It introduces no wrapper layout or constructor.
+/// members or trait implementations. A trait adoption the checker proved the backing type already implements
+/// (`rusttype_forwarded_trait_adoptions`) is satisfied by that type and authors nothing; any other adoption
+/// disqualifies the alias. Native declaration stubs and infallible edges require exact checked native signatures for
+/// every edge. It introduces no wrapper layout or constructor.
 pub fn is_direct_native_rusttype_alias(newtype: &ast::NewtypeDecl, type_info: &TypeCheckInfo) -> bool {
     let alias = if newtype.type_params.is_empty() {
         IncanType::Named(newtype.name.clone())
@@ -775,7 +759,12 @@ pub fn is_direct_native_rusttype_alias(newtype: &ast::NewtypeDecl, type_info: &T
             .decorators
             .iter()
             .all(|decorator| is_lint_suppression_decorator(&decorator.node))
-        && newtype.traits.is_empty()
+        && newtype.traits.iter().all(|adoption| {
+            type_info
+                .rust
+                .rusttype_forwarded_trait_adoptions
+                .contains(&(newtype.name.clone(), adoption.node.name.clone()))
+        })
         && newtype.methods.iter().all(|method| {
             method
                 .node

@@ -2,9 +2,9 @@
 
 ## Standard packages
 
-Standard packages are compiled Loaves. Source imports use `std.*`. `INCAN_STDLIB` names a directory of standard-package source projects, each with `loaf.toml`. Artifacts for package `PACKAGE` and profile `PROFILE` reside under `INCAN_HOME/toolchains/0.6.0-dev.8/loaves/PACKAGE/PROFILE/`.
+Standard packages are compiled Loaves. Source imports use `std.*`. `INCAN_STDLIB` names a directory of standard-package source projects, each with `loaf.toml`. A package's artifacts for a profile reside under `<home>/toolchains/0.6.0-dev.8/loaves/<package>/<profile>/`, where `<home>` is the selected Incan home.
 
-A unit can use the standard packages available in that installation. The unit's own package is excluded from its standard dependencies. Missing compiled artifacts fail compilation. No SDK profile or component selection is accepted.
+A unit can use the standard packages available in that installation. The unit's own package is excluded from its standard dependencies. Missing compiled artifacts fail compilation.
 
 ## Package features
 

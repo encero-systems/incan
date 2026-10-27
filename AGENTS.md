@@ -1,9 +1,9 @@
 # Agent Instructions for Incan Development
 
-Incan is a Python-like language that compiles to Rust. The compiler itself is written in Rust and generates native Rust code via an IR-based pipeline. This document contains guidance for AI agents working on the codebase.
+Incan is a Python-like language that compiles to native code through the pinned Rust compiler. The compiler is written in Rust and Incan; it lowers checked Body IR to rustc MIR without generating Rust source. This document contains guidance for AI agents working on the codebase.
 
 > **CRITICAL — NO `.unwrap()` / `.expect()` ANYWHERE.** This is the single most important rule.
-> Multiple modules enforce `#![deny(clippy::unwrap_used)]` and `#![deny(clippy::expect_used)]`.
+> This is a review rule; the native build does not run Clippy.
 > This applies to **all** code — production, tests, examples. No exceptions, no shortcuts.
 > Use `?` with `Result`-returning test functions, or propagate errors explicitly.
 > See [Error handling in tests](#error-handling-in-tests) for the correct pattern.
@@ -96,7 +96,7 @@ When debugging a Rust compiler error, capture the full error context before prop
 
 - the exact command that failed;
 - the complete diagnostic, including error code, notes, help text, and secondary spans;
-- active feature flags or build mode, especially default build vs. `rust-metadata`;
+- the active package features and selected build profile;
 - the relevant function signature and nearby type definitions;
 - the local files or tests that establish the intended pattern.
 
@@ -144,13 +144,13 @@ Spell everything in US English -- identifiers, comments, docstrings, diagnostics
 
 **No Python in production logic.** Product and tooling behavior is written in Rust or Incan, never Python:
 
-- the compiler and the Oven;
+- the compiler and Oven;
 - the Loaf registry side;
 - the CI evidence and release pipeline that decides what an artifact or a test result is.
 
-New evidence operations belong beside the existing ones as `incan oven` subcommands. Python remains only for:
+New evidence operations belong beside the existing ones as Oven commands in `workspaces/oven/src/`. Python remains only for:
 
-- the repository-hygiene `check_*` gates and the test-inventory generator;
+- the docs site's MkDocs hooks, Pygments lexer and asset extraction script;
 - the benchmarks' Python baselines;
 - the pip installer shim;
 - agent hooks and research scripts.
@@ -210,7 +210,7 @@ The project style guide covers broad principles. This section is a concrete quic
 
 | Instead of                                    | Prefer                                 | Why                                                               |
 | --------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------- |
-| `.unwrap()` / `.expect("…")` **anywhere**     | `?`, `.context()`, or explicit `match` | Panics crash the compiler; deny lints reject these in CI          |
+| `.unwrap()` / `.expect("…")` **anywhere**     | `?`, `.context()`, or explicit `match` | Panic paths violate the repository's review rule                 |
 | `.clone()` to appease the borrow checker      | Restructure ownership or borrow        | Hides design issues and adds unnecessary allocations              |
 | `&String`, `&Vec<T>`, `&Box<T>` in parameters | `&str`, `&[T]`, `&T`                   | More general — accepts owned and borrowed callers alike           |
 | `x as u32` (silent truncation)                | `x.try_into()` or `From`/`Into`        | `as` silently wraps/truncates; conversions should be explicit     |
@@ -223,10 +223,10 @@ The project style guide covers broad principles. This section is a concrete quic
 
 ### Error handling — NEVER use `.unwrap()` or `.expect()`
 
-**This is non-negotiable.** Any `.unwrap()` or `.expect()` call — in production code **or test code** — will be rejected by clippy and fail CI. Always propagate errors with `?`:
+**This is non-negotiable.** Any `.unwrap()` or `.expect()` call — in production code **or test code** — is refused in review. Always propagate errors with `?`:
 
 ```rust
-// WRONG — will not compile due to deny lint
+// WRONG — violates the review rule
 let file = File::open(path).unwrap();
 
 // CORRECT — propagate with ?
@@ -344,7 +344,7 @@ Subagents in `.agents/` run as isolated specialists that can be delegated to:
 
 | Agent        | When it's used                                   | What it does                                                  |
 | ------------ | ------------------------------------------------ | ------------------------------------------------------------- |
-| `test-suite` | Validating changes, checking regressions, pre-PR | Analyzes diff, runs targeted tests, checks snapshots + clippy |
+| `test-suite` | Validating changes, checking regressions, pre-PR | Analyzes diff, runs focused contract selectors and families   |
 
 ## Implementation Learnings
 

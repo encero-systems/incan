@@ -1,0 +1,6 @@
+"""Activate the scoped syntax without using its eligible declaration."""
+
+
+pub def marker() -> int:
+    """Return the ordinary addition's left operand."""
+    return 1

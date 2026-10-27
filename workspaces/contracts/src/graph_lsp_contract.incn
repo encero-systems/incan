@@ -23,6 +23,8 @@ pub def check_lsp(incan: str, project: Path) -> Result[None, str]:
     match var(environment_key):
         Ok(value) => binary = str(value)
         Err(_) => return Ok(None)
+    if project.joinpath("deps").joinpath("words").is_dir():
+        return check_vocabulary(incan, binary, project)
     # 1. Prepare declared Loaves and analyze the opened source.
     prepare(incan, project)?
     source = source_path.read_text("utf-8", "strict").map_err((error) => error.message())?
@@ -65,6 +67,19 @@ pub def check_lsp(incan: str, project: Path) -> Result[None, str]:
     outgoing = peer.request(7, "callHierarchy/outgoingCalls", JsonValue.object({"item": main[0]}))?
     if "helper" not in outgoing.to_json().map_err((error) => error.message())?:
         return Err("LSP outgoing calls omitted the recorded helper target")
+    # A dependency declaration still navigates through its manifest after another open buffer stales this graph.
+    provider_path = project.joinpath("src").joinpath("provider.incn")
+    provider_source = provider_path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    provider_uri = file_uri(provider_path)
+    peer.notify("textDocument/didOpen", JsonValue.object({"textDocument": JsonValue.object({
+        "uri": JsonValue.string(provider_uri), "languageId": JsonValue.string("incan"),
+        "version": JsonValue.int(1), "text": JsonValue.string(f"\n{provider_source}"),
+    })}))?
+    peer.diagnostics(provider_uri, 1)?
+    at_dependency = cursor(uri, source, "println(checked_helper())", "checked_helper")?
+    dependency_definition = peer.request(10, "textDocument/definition", at_dependency)?
+    if "/deps/checked/src/lib.incn" not in dependency_definition.to_json().map_err((error) => error.message())?:
+        return Err("LSP lost a checked dependency definition while its graph was stale")
     # 3. An edited buffer invalidates the old hierarchy item before shutdown.
     peer.notify("textDocument/didChange", JsonValue.object({
         "textDocument": JsonValue.object({"uri": JsonValue.string(uri), "version": JsonValue.int(2)}),
@@ -78,6 +93,32 @@ pub def check_lsp(incan: str, project: Path) -> Result[None, str]:
     peer.notify("exit", JsonValue.null())?
     peer.finish()?
     return Ok(None)
+
+
+def check_vocabulary(incan: str, binary: str, project: Path) -> Result[None, str]:
+    """An authored vocabulary keyword must not navigate to the identity of its generated expression."""
+    prepare(incan, project)?
+    path = project.joinpath("src").joinpath("main.incn")
+    source = path.read_text("utf-8", "strict").map_err((error) => error.message())?
+    uri = file_uri(path)
+    mut peer = start(binary, project)?
+    peer.request(1, "initialize", JsonValue.object({
+        "processId": JsonValue.null(), "rootUri": JsonValue.string(file_uri(project)),
+        "capabilities": JsonValue.object({}),
+    }))?
+    peer.notify("initialized", JsonValue.object({}))?
+    peer.notify("textDocument/didOpen", JsonValue.object({"textDocument": JsonValue.object({
+        "uri": JsonValue.string(uri), "languageId": JsonValue.string("incan"),
+        "version": JsonValue.int(1), "text": JsonValue.string(source),
+    })}))?
+    peer.diagnostics(uri, 1)?
+    position = cursor(uri, source, "value = query:", "query")?
+    hover = peer.request(2, "textDocument/hover", position)?
+    if "helper" in hover.to_json().map_err((error) => error.message())?:
+        return Err("LSP attributed a generated helper identity to the authored vocabulary keyword")
+    peer.request(3, "shutdown", JsonValue.null())?
+    peer.notify("exit", JsonValue.null())?
+    return peer.finish()
 
 
 def prepare(incan: str, project: Path) -> Result[None, str]:

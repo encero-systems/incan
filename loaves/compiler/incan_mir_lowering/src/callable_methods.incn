@@ -10,7 +10,8 @@ from rust::incan_semantics_core import (
 from rust::incan_semantics_core::body_ir import BodyIrModule
 from pub::incan_mir_plan import PlanType, EnumDeclaration
 from classes import frame_type, function_name, parameter_local_index
-from unions import native_source_type, collect_unions
+from layout_types import native_source_type
+from unions import collect_unions
 from native_arguments import uses_native_argument
 from decls import library_item
 from trait_links import contains

@@ -18,7 +18,7 @@ from pub::incan_mir_plan import Constant, Operand, OperandKind, PlanType, Rvalue
 from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, temporary, read_place, literal, track_rvalue_moves, drop_owned, forget_owned, place_type
 from type_parameters import substitute
-from unions import native_source_type
+from layout_types import native_source_type
 from defaults import evaluate_default
 from text_plan import owned_literal
 from options import none_operand
