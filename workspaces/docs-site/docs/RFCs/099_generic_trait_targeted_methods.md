@@ -1,6 +1,6 @@
 # RFC 099: Generic trait-targeted methods
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-05-15
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**

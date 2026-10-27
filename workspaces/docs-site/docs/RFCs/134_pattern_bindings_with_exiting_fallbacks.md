@@ -1,6 +1,6 @@
 # RFC 134: Pattern bindings with exiting fallbacks
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-11
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -10,7 +10,7 @@
     - RFC 071 (pattern alternation)
     - RFC 129 (binding declarations and mutation permissions)
     - RFC 131 (first-class error declarations)
-- **Issue:** —
+- **Issue:** <https://github.com/encero-systems/incan/issues/2461>
 - **RFC PR:** —
 - **Written against:** v0.6
 - **Shipped in:** —
