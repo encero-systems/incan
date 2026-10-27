@@ -17,7 +17,7 @@
 
 ## Summary
 
-Propose compiler-defined `@must_use` annotations on value types and callable declarations, with source-level diagnostics when an expression statement discards a protected result. `@may_discard` is the candidate callable-specific exemption. The proposal covers discarded expressions; it does not claim that a bound resource was finalized or that a variable was subsequently used. Diagnostic severity, the explicit-discard spelling, and exemption precedence remain open.
+Propose compiler-defined `@must_use` annotations on value types and callable declarations, with source-level diagnostics when an expression statement discards a protected result. `@may_discard` is the candidate callable-specific exemption. The proposal covers discarded expressions; it does not claim that a bound resource was finalized or that a variable was subsequently used. Violating a declared obligation is an Incan source error by default; the explicit-discard spelling, built-in defaults, and exemption precedence remain open.
 
 ## Motivation
 
@@ -42,10 +42,13 @@ A checked conversion can fail correctly while the application accidentally ignor
 These compiler-defined annotations use decorator syntax; they do not resolve to ordinary decorator functions or add runtime wrapper calls. They are proposed. The application function below is fully defined; Result and ordinary control flow are existing language facilities.
 
 ```incan
+error CountError:
+    Negative(value: int) = "Count must be non-negative; got {value}."
+
 @must_use(message="check whether the requested count is valid")
-def checked_count(raw: int) -> Result[int, str]:
+def checked_count(raw: int) -> Result[int, CountError]:
     if raw < 0:
-        return Err("count must be non-negative")
+        return Err(CountError.Negative(value=raw))
     return Ok(raw)
 
 
@@ -77,7 +80,7 @@ Here the returned Price matters because the method constructs a replacement. The
 ## Reference-level explanation
 
 - `@must_use` and the candidate `@may_discard` must be compiler-defined declaration annotations, not ordinary callable decorators under RFC 036. They must not add runtime wrappers.
-- A must-use check must apply to an expression statement whose resolved callable or resulting type carries the obligation.
+- A must-use check must apply to an expression statement whose resolved callable or resulting type carries the obligation. Violating a declared obligation must be an Incan source error by default. The diagnostic must identify the responsible declaration and reason, and explain handling, explicit `?` propagation where legal, or deliberate per-expression discard. Existing diagnostic-policy controls must remain explicit; generated Rust suppression is not a substitute for this check.
 - A binding, return, argument, or enclosing expression must not be diagnosed as a direct discard merely because its value may later go unused.
 - Annotation arguments must be compile-time metadata. Messages must remain subject to RFC 103's non-disclosure rules.
 - The obligation must follow canonical declaration identity across imports, aliases, and package metadata.
@@ -111,11 +114,12 @@ Built-in Result and Option protection will surface existing silent discards. An 
 
 ## Design Decisions
 
+- **Default diagnostic severity:** discarding a declared must-use result is an Incan source error, with a visible deliberate local escape once its spelling is settled. This does not choose built-in obligations or imply that a bound value was handled.
+
 - **Composition with compile-time selection:** RFC 163's `@when(condition)` and `when condition:` select declarations before annotation semantics. `@must_use` applies only to retained declarations and types. This ordering does not decide the diagnostic defaults or discard mechanisms still open below.
 
 ## Unresolved questions
 
-- Should the default severity be warning or error, and what existing diagnostic policy may change it?
 - Should Result and Option be protected by default, or should every non-None callable be protected?
 - What is the explicit-discard spelling and how does it interact with wildcard binding?
 - Is `may_discard` the final name, and which type-level obligations may it override?

@@ -1,6 +1,6 @@
 # RFC 138: Chained pattern conditions
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-11
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**

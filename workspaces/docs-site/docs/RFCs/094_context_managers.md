@@ -19,7 +19,7 @@
     - RFC 131 (typed error values and propagation)
     - RFC 134 (exiting pattern bindings inside resource scopes)
     - RFC 147 (independent local Result matching)
-- **Issue:** #560
+- **Issue:** [#560](https://github.com/encero-systems/incan/issues/560)
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —
@@ -373,6 +373,11 @@ Vocabulary blocks that lower through context managers can use the same internal 
 
 ## Design Decisions
 
+- Retain `__enter__` and `__exit__` as the protocol hook names.
+- RFC 122's active validation policy belongs to the current execution context and survives suspension there. Cleanup restores the previous policy on every exit where cleanup executes, including return, propagation and cancellation. Independent execution contexts must not leak policy into one another. This rule does not choose inheritance for explicitly spawned tasks, which belongs to RFC 142, or permit every synchronous manager to suspend safely.
+- `as` accepts ordinary irrefutable binding patterns. A refutable extraction requires an explicit failure path rather than an implicit panic; no new starred pattern syntax is introduced.
+- Entered borrowed views invalidated by exit cannot escape through returns, storage, closures or tasks. Independently owned results may escape under ordinary ownership rules; explicit resource-specific checked transfer can preserve a resource beyond the scope. Retaining an owned path does not keep its resource alive. Receiver and protocol details must enforce these rules without changing them.
+
 - Retain with for explicit scoped resource lifetimes and temporary runtime state with guaranteed finalization attempts or restoration. Temporary workspaces and scoped validation policy are motivating cases. Existing drop-based resource cleanup remains relevant; the context adaptation must establish the promised explicit boundary rather than claim to invent automatic cleanup. Ordinary Result handling does not require with. Scope-result capture and local except handling remain separate design work under RFC 147.
 
 - Separate local except matching into RFC 147. The preferred single match-arm block is retained there as an independent Result-handling direction; it is not part of the with grammar specified here. Resource lifetime and finalization must remain complete without that extension.
@@ -385,13 +390,10 @@ Vocabulary blocks that lower through context managers can use the same internal 
 
 ## Unresolved questions
 
-- How does RFC 122's validation_policy scope preserve restoration and execution-context isolation across suspension, coordinated with RFC 142's explicitly spawned tasks? Ordinary-call inheritance is already specified by RFC 122.
 - What is the exact public spelling and payload shape of `ScopeExit`?
-- Should `__enter__` and `__exit__` use double-underscore names, or should Incan prefer explicit protocol names such as `enter_context` and `exit_context`?
 - What public aggregate and static propagation contract represents simultaneous body and cleanup failures, and what deterministic presentation and panic precedence apply? All failures must be retained regardless of precedence; retention is settled.
 - What complete protocol declaration binds E for the selected `__exit__ -> Result[None, E]` form, and how do finalization failures propagate through an enclosing Result and interact with pending returns and loop control? Typed finalization failure, its Result return shape, checked fallibility, and rejection of false success are settled. Infallible cleanup retains its None-returning form.
 - What receiver, borrowed-view, and ownership-transfer rules connect the retained manager to its entered value, especially for existing reference-counted handles and guards? The protocol must prevent invalid escape and make promised resource release enforceable.
-- Should `as` allow pattern bindings, or only a single identifier?
 - What is the exact async-safety rule: reject `await` in synchronous context-manager suites, require an await-safe marker, or introduce a separate async context-manager protocol?
 - How should tooling display vocabulary blocks that lower through context managers without pretending the user wrote a `with` statement?
 

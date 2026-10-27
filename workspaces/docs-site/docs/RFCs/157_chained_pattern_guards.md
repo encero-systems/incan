@@ -77,13 +77,13 @@ The fallback Request arm remains necessary. The guarded Request arm cannot estab
 - Guard failure must continue ordinary ordered arm selection.
 - Guarded arms must not contribute unconditional exhaustiveness coverage.
 - Effects already performed must not be rolled back. Moves or mutations must remain valid for any subsequent arm that can execute; unsafe shapes must receive an ownership diagnostic.
-- Rebinding a name already supplied by an arm pattern or earlier chain term must not silently change which value later terms read.
+- A guard binding that duplicates a name from its arm pattern or an earlier guard binding must be rejected. The diagnostic must identify both binding locations and suggest a distinct capture name. Ordinary outer-scope shadowing rules remain unchanged.
 
 ## Design details
 
 This RFC deliberately supplements rather than expands the scope of RFC 138 silently. Both are associated with the original proposal issue, which asked for ordinary condition chains and guards. They should share one condition model even if reviewed or delivered separately.
 
-The recommended collision rule is a diagnostic for a duplicate binding in the same arm/guard scope, with a renamed-capture suggestion. That recommendation still needs verification against the language's ordinary pattern binding rules. A failed guard cannot be used to smuggle a moved payload into later matching; source ownership, not a backend cloning workaround, decides what is permitted.
+The collision boundary is the current arm and its guard chain. Duplicate captures there are rejected; this rule does not introduce a global prohibition on shadowing an outer binding. A failed guard cannot be used to smuggle a moved payload into later matching; source ownership, not a backend cloning workaround, decides what is permitted.
 
 ## Alternatives considered
 
@@ -102,10 +102,7 @@ A guard can hide substantial work if authors use effectful extraction. Ownership
 - **Match checking / lowering:** non-covering guards and ordered short-circuit execution.
 - **Formatter / LSP:** multiline chains and binding diagnostics.
 
-## Unresolved questions
+## Design Decisions
 
-- Should duplicate guard bindings follow an existing shadowing rule or be rejected explicitly?
-- Which payload borrows or moves remain valid when a guard fails and another arm is attempted?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- Duplicate bindings within an arm and its guard chain are rejected with both source spans and a renamed-capture suggestion. Shadowing an outer binding follows ordinary language rules.
+- A failed guard continues ordered arm selection. Ordinary checked ownership must keep every reachable continuation valid; this construct introduces no rollback, hidden cloning, or separate permission to move a payload needed by a later arm.

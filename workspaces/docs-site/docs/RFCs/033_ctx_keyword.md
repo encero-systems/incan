@@ -84,7 +84,7 @@ Static checking validates authored field references, defaults, and overrides. It
 - Implicit transport of configuration between an orchestrator and worker processes.
 - Defining managed resource entry, exit, ownership transfer, cleanup, or shutdown; that design is deferred to RFC 094.
 
-Multiple selectors, compound Boolean conditions, nested `if` blocks, and dotted field contributions are included. Selected blocks compose in source order; recursive merging preserves unspecified fields and dictionary entries and appends list contributions. Environment-specific entries belong in their corresponding conditional blocks or selected YAML files. Explicit collection replacement and removal are out of scope; permitted expression effects and whole-collection environment decoding remain questions below.
+Multiple selectors, compound Boolean conditions, nested `if` blocks, and dotted field contributions are included. Selected blocks compose in source order; recursive merging preserves unspecified fields and dictionary entries and appends list contributions. Environment-specific entries belong in their corresponding conditional blocks or selected YAML files. Explicit collection replacement and removal are out of scope; explicit factories govern external work, and declared collection types select checked JSON environment decoding.
 
 ## Guide-level explanation (how users think about it)
 
@@ -246,7 +246,7 @@ Direct environment inputs       ← highest
 
 Selector inputs such as `APP_ENV` must be available when their conditions are evaluated. Giving direct field inputs highest priority must not mean that production selection observes a stale development default. Conditions must observe their inputs' resolved values. A reached circular dependency through defaults or conditions produces a typed configuration failure rather than iterative recalculation.
 
-Within the conditional layer, later matching contributions win for the same scalar leaf. Declared YAML sources contribute above conditional settings and compose in their listed order. Nested fields and dictionary entries merge recursively; list contributions append in order. Direct environment inputs have higher priority. Whole-model environment inputs use JSON objects decoded into checked model-field contributions; whole-collection environment decoding and its source-composition details remain open below. Explicit descendant inputs override the corresponding parts of a whole-model input with an overlap warning.
+Within the conditional layer, later matching contributions win for the same scalar leaf. Declared YAML sources contribute above conditional settings and compose in their listed order. Nested fields and dictionary entries merge recursively; list contributions append in order. Direct environment inputs have higher priority. Whole-model environment inputs use JSON objects decoded into checked model-field contributions; declared collection types select checked JSON environment decoding under the same source-composition rules. Explicit descendant inputs override the corresponding parts of a whole-model input with an overlap warning.
 
 An absent override must preserve the previously selected value. An explicitly supplied `None` for an optional field must replace it. Resolution must not flatten these two cases together, even though the final field has an ordinary `Option[T]` type. The external spelling for explicitly clearing an optional environment setting remains open.
 
@@ -648,7 +648,7 @@ report = AppConfig.explain()
 
 Before any resolution attempt, the report must identify the context as not resolved. It may describe declarations and declared source mappings, but must not claim that runtime inputs have been observed. Calling explain must not read environment variables, load source files, evaluate initializers, initiate resolution, or retry a failed attempt. This permits interactive inspection without activating the context. First runtime field use and explicit preflight retain their normal initialization behavior.
 
-After successful resolution, explain uses the retained successful resolution evidence. After a failed attempt, available failure evidence must be clearly identified as belonging to an unsuccessful attempt, not a published configuration. A report must distinguish unresolved or in-progress state from successful publication. Exact report types and accessors remain open.
+After successful resolution, explain uses the retained successful resolution evidence. After a failed attempt, available failure evidence must be clearly identified as belonging to an unsuccessful attempt, not a published configuration. A report must distinguish unresolved or in-progress state from successful publication. The typed ContextReport contract below preserves those facts.
 
 Inspection must be able to explain which source supplied a field and which lower-priority candidates it superseded. For example, a timeout report can distinguish a declaration default of 30 from an environment override of 60, and identify the contributing declaration and environment-variable name. Missing or unavailable evidence must be visible rather than inferred after the fact by rereading the environment. The report retains the full observed, ordered contribution history, including superseded scalar contributions and surviving collection contributions, rather than only the winning source. Retention does not require copies of entire source files or raw secrets. Any unavailable or omitted evidence must be identified explicitly; the report must not silently present an incomplete history as complete. This contract does not require evaluating a discarded default or an unselected expression merely to populate history.
 
@@ -662,7 +662,7 @@ workers = 2
     if mode == "replay":        2  <- selected
 ```
 
-Secret fields and sensitive inputs must remain redacted in inspection, failures, and retained provenance. RFC 103 owns secret-value handling; RFC 104 owns capability checks and receipts at environment or secret-provider boundaries. The exact report schema and accessors within the report remain open.
+Secret fields and sensitive inputs must remain redacted in inspection, failures, and retained provenance. RFC 103 owns secret-value handling; RFC 104 owns capability checks and receipts at environment or secret-provider boundaries. The report uses the typed ContextReport contract below.
 
 ## Reference-level explanation
 
@@ -717,7 +717,7 @@ Environment variables are strings. Resolution must distinguish a missing variabl
 
 Resolution of invalid input must produce a typed configuration error retaining the original parsing or validation failure under RFC 131's error contract. Structured details must identify the field, contributing source, and expected type; sensitive actual values must remain redacted. Explicit preflight returns that failure as a recoverable Result. An unchecked first-use read must report the full retained diagnostic and terminate execution unsuccessfully. Neither path turns invalid configuration into a generated panic. The standard `ConfigError` hierarchy below classifies the failure without replacing the retained original error.
 
-Whole-model environment inputs must decode JSON objects into checked field contributions rather than require a complete model to be constructed before composition. Omitted fields retain their lower-priority inputs or defaults; required fields still missing after composition must fail. Supplied fields must satisfy their declared decoding and validation contracts, and unknown fields must receive diagnostics. Malformed JSON or incompatible supplied values must fail rather than silently fall back to defaults. A field declared as `str` must preserve supplied text even when that text resembles JSON; resolution must not guess an encoding from its contents. This rule does not settle whole-collection environment decoding; custom scalar conversions and validated-newtype construction follow the contracts below.
+Whole-model environment inputs must decode JSON objects into checked field contributions rather than require a complete model to be constructed before composition. Omitted fields retain their lower-priority inputs or defaults; required fields still missing after composition must fail. Supplied fields must satisfy their declared decoding and validation contracts, and unknown fields must receive diagnostics. Malformed JSON or incompatible supplied values must fail rather than silently fall back to defaults. A field declared as `str` must preserve supplied text even when that text resembles JSON; resolution must not guess an encoding from its contents. Collection-valued inputs follow the checked JSON contract below; custom scalar conversions and validated-newtype construction follow their declared conversion contracts.
 
 Literal conversion must reuse RFC 133's checked membership rules. Parsing an environment string into an underlying integer is the environment decoder's explicit responsibility; Literal conversion itself must not acquire implicit parsing or widening behavior.
 
@@ -760,9 +760,9 @@ Resolution must apply selected `if` contributions in source order. It must desce
 
 For overlapping scalar leaves, the later selected contribution must replace the earlier value. For nested model inputs and dictionaries, composition must retain unspecified fields or entries and recursively combine supplied ones. Conflicting dictionary keys must retain their ordinary declared equality semantics, with later scalar values winning. List contributions must append in source order without implied deduplication. Empty lists or dictionaries must contribute no new contents rather than clear lower-priority contents. Resolution must not infer replacement or removal intent from an empty collection. Other leaves must retain checked value semantics; composition must not infer dictionary structure from strings or arbitrary object attributes.
 
-Selector environment inputs must be available before their conditions are evaluated. Direct environment inputs must retain higher priority than conditional contributions. Defaults and conditions must observe their field dependencies' resolved values, independent of field declaration order. Resolution must diagnose reached dependency cycles, including a condition that needs a field whose selection depends on that condition. It must not use repeated evaluation or condition-specificity ranking to find a fixed point. Which expression effects are permitted remains open.
+Selector environment inputs must be available before their conditions are evaluated. Direct environment inputs must retain higher priority than conditional contributions. Defaults and conditions must observe their field dependencies' resolved values, independent of field declaration order. Resolution must diagnose reached dependency cycles, including a condition that needs a field whose selection depends on that condition. It must not use repeated evaluation or condition-specificity ranking to find a fixed point. Ordinary conditions and expressions must be deterministic; declared sources and explicit factories govern external effects.
 
-Provenance must retain the applicable condition path and ordered contributions, including superseded scalar values and contributing collection fragments, subject to secret redaction. Inspection must be able to explain why a nested block applied and which later contribution superseded it. The exact inspection schema remains open; collection replacement and removal are excluded from this RFC.
+Provenance must retain the applicable condition path and ordered contributions, including superseded scalar values and contributing collection fragments, subject to secret redaction. Inspection must be able to explain why a nested block applied and which later contribution superseded it. Inspection follows the typed ContextReport contract; collection replacement and removal are excluded from this RFC.
 
 ### Declared source contract
 
@@ -782,7 +782,51 @@ When a selected higher-priority scalar replacement supplies a field, resolution 
 
 Within one resolution attempt, a successfully resolved field must supply a consistent value to its dependents. A reached cycle through field defaults, conditional selection, or context dependencies must produce a typed failure with the dependency chain and available declaration or condition locations. Resolution must not publish partial values or retry calculations until they stabilize. Preflight returns such a failure; unchecked first use follows the existing fatal diagnostic rule.
 
-A dependent default is construction input, not a continuously computed property. After successful resolution, reads and preflight must reuse the completed value. Context cloning is prohibited; separate declarations have independent resolution lifecycles. Permitted expression effects remain an open question.
+A dependent default is construction input, not a continuously computed property. After successful resolution, reads and preflight must reuse the completed value. Context cloning is prohibited; separate declarations have independent resolution lifecycles. Conditions, ordinary defaults and ordinary contribution expressions must be deterministic over their resolved inputs. External work belongs to declared source adapters or explicit `default_factory` metadata under RFC 085 and the capability rules of RFC 104. A needed factory runs at most once per resolution attempt; an explicit supplied replacement skips it. Successful publication retains the resulting value. An explicit fresh attempt after failure may repeat permitted effects, without rollback.
+
+### Callable defaults and effect boundaries
+
+Ctx fields and contained models reuse RFC 085's checked `default_factory` metadata, including declared field dependencies and fallible factories. This RFC introduces no separate provider-registration operation. Ordinary expressions and conditions remain deterministic over resolved dependencies; external reads must be declared source adapters or explicit factories subject to RFC 104.
+
+```incan
+from std.environ import get, EnvironError
+
+# Application factory. get is the existing fallible environment read.
+def fallback_endpoint() -> Result[str, EnvironError]:
+    return get("SERVICE_ENDPOINT")
+
+def database_dsn(host: str, port: int) -> str:
+    return f"postgresql://{host}:{port}/warehouse"
+
+ctx ServiceConfig(env_prefix="APP_"):
+    endpoint [default_factory=fallback_endpoint]: str
+    host: str = "localhost"
+    port: int = 5432
+    dsn [env=false, default_factory=database_dsn]: str
+```
+
+`APP_ENDPOINT` supplies endpoint without invoking its factory. Otherwise the factory may read `SERVICE_ENDPOINT`; a failed read retains its real failure under ConfigError. The DSN uses the resolved host and port. Declaration import performs no external read. Each needed factory runs at most once per attempt, and later accesses after successful publication reuse its value rather than call it again.
+
+### Collection-valued environment inputs
+
+A declared collection type must select its checked JSON environment decoder. A `list[Model]` input is a JSON array of objects decoded into checked field contributions and constructed as validated model elements. Primitive lists must check their declared element type. A declared dictionary may decode a JSON object only where its checked key and value types have a supported decoder. Resolution must not infer a dictionary destination merely because the input is an object.
+
+Collection contributions must retain source priority, recursive dictionary composition and ordered list appends. No CSV guessing, implicit element widening, empty-list reset, or general collection removal marker is introduced. Malformed input, unknown model fields, and incompatible values must fail with their checked paths. A `str` destination must continue to preserve supplied text unchanged.
+
+```incan
+model Destination:
+    name: str
+    endpoint: str
+
+ctx DeliveryConfig(env_prefix="APP_"):
+    destinations: list[Destination] = []
+
+# APP_DESTINATIONS='[{"name":"archive","endpoint":"https://archive.example.com"}]'
+# Resolution produces Destination instances, not dictionaries.
+# DeliveryConfig.destinations[0].name == "archive"
+# An omitted endpoint fails required-field validation.
+# [] contributes no elements; it does not delete earlier source elements.
+```
 
 ### Standard configuration errors
 
@@ -834,7 +878,7 @@ The compiler lowers each `ctx` declaration to a resolved-value representation, a
 6. validates the complete result and constructs a frozen value;
 7. retains source-selection provenance and publishes the successful application value for ordinary read access.
 
-These are logical resolution requirements, not rigid execution phases. Dependencies must resolve before their consumers use them, and discarded scalar defaults must not be evaluated solely for construction. Field declaration order must not affect dependency results; selected conditional contributions retain their source order. Permitted expression effects remain an explicit open question.
+These are logical resolution requirements, not rigid execution phases. Dependencies must resolve before their consumers use them, and discarded scalar defaults must not be evaluated solely for construction. Field declaration order must not affect dependency results; selected conditional contributions retain their source order. The explicit-factory effect boundary above applies throughout resolution.
 
 The backend implementation may use a once-only singleton primitive or an equivalent runtime mechanism for publication. The contract is fallible resolution, complete frozen construction, set-once application publication, typed reads, and explainable source selection; the runtime representation does not require configuration failures to panic.
 
@@ -844,7 +888,13 @@ Decoding, validation, and inspection must consume checked field identities and s
 
 Retained provenance must preserve the full observed, ordered contribution history, including selected and superseded scalar contributions, surviving collection contributions, and source declaration locations or external source names when available. Retention must not silently reduce that history to only the winning source. Unavailable or omitted evidence must be identified explicitly so an incomplete history cannot be mistaken for a complete one. This requirement must not cause discarded defaults or unselected expressions to be evaluated solely for evidence, and it does not require whole-file copies or raw-secret retention. It must distinguish unavailable evidence from known absence. The generated `ContextName.explain()` API must return a structured report using retained resolution facts rather than repeat environment reads and present later values as historical evidence. Inspection must not initiate or retry resolution, read runtime sources, or evaluate initializers. Before resolution it must identify the context as unresolved; failed-attempt evidence must remain distinct from a successful published value. In-progress state must not be presented as completed resolution. Redaction must apply when evidence is captured as well as when it is displayed, including upstream failure payloads.
 
-Environment and secret-provider access must remain subject to RFC 104's governed boundary checks and receipts. Configuration resolution must not grant implicit authority or bypass those checks. Full observed contribution-history retention is settled; exact provenance schemas, storage representation and lifetime, and accessors within the explain report remain open.
+Environment and secret-provider access must remain subject to RFC 104's governed boundary checks and receipts. Configuration resolution must not grant implicit authority or bypass those checks. Full observed contribution-history retention and its typed inspection contract are settled. Storage must preserve this evidence without retaining raw secrets or copying whole sources.
+
+### Typed passive inspection
+
+`ContextName.explain()` must return `ContextReport`, containing typed resolution state and checked field and contribution records. Records must preserve source identity and the dispositions `Selected`, `Superseded`, `Merged`, `Blocked`, and `NotEvaluated`, with explicit safe-value availability and redaction. Checked paths and source identities must remain structured facts; their rendered text must not become dispatch keys.
+
+The report must describe the retained attempt without initiating resolution, retrying, rereading sources, or evaluating skipped defaults. An unresolved or in-progress report must not claim successful publication. Unavailable evidence, known absence and deliberately redacted values must remain distinguishable. Superseded scalar inputs and contributing collection fragments remain inspectable without raw-secret copies or whole-source retention. Display text is presentation of these facts, not a replacement for their typed representation.
 
 ## Design details
 
@@ -975,6 +1025,10 @@ Ship `ctx` as a library-provided soft keyword instead of a core keyword.
 
 ## Design Decisions
 
+- Explicit callable defaults reuse checked `default_factory` metadata; ordinary conditions and expressions are deterministic over resolved inputs. Needed factories run at most once per attempt, supplied replacements skip them, and successful publication caches their values. Explicit retry may repeat permitted effects without rollback.
+- Passive inspection returns typed ContextReport state and checked contribution records with source identity, dispositions, safe value availability and redaction. It never resolves, rereads, retries or evaluates skipped expressions to fill evidence gaps.
+- Collection-valued environment inputs use checked JSON decoding selected by their declared types. Model elements remain validated models; composition preserves ordered list appends and recursive dictionaries without guessing CSV, widening values, or interpreting an empty list as reset.
+
 - Runtime conditional contributions in ctx use `if`, including nested blocks. `when` and compiler-owned `@when` remain compile-time selectors under RFC 163. This spelling change preserves dependency-based resolution, source-order recursive merging, lazy first use and retained successful preflight values.
 - Retain concise ctx declarations and convenient declaration-name reads. First runtime use resolves the whole context and publishes the completed frozen value. Imports and static references do not activate contexts, and there is no automatic pre-main sweep.
 - `ContextName.preflight()` performs the same whole-context resolution early, returning a recoverable Result with None on success and the configuration error umbrella on failure. Successful preflight prepares the retained value used by subsequent reads; it does not merely validate inputs for later rereading. The error is the standard `ConfigError` umbrella with retained original failures.
@@ -999,19 +1053,13 @@ Ship `ctx` as a library-provided soft keyword instead of a core keyword.
 - Environment-specific collection entries belong in their respective `if` blocks or selected environment files, with unconditional defaults and common files reserved for universal contributions. Empty collections do not clear lower-priority contents. Explicit replacement, clearing, and removal markers are out of scope.
 - Managed resource lifetimes and their integration with ctx are deferred to RFC 094, including cleanup after partial initialization and the lifetime of successfully retained resources. RFC 033 introduces no separate resource lifecycle or destructor-only public cleanup guarantee. This is a scope deferral, not an unresolved question for RFC 033.
 - An absent override preserves the previously selected value; an explicit optional clear replaces it with None. Nested absence must not be flattened during layer resolution. External clearing syntax remains open.
-- `ContextName.explain()` returns a structured report of resolution state and available retained evidence without initializing or retrying the context, reading runtime sources, or evaluating initializers. It supports passive interactive inspection before first use, clearly distinguishes unresolved, in-progress, failed, and successfully resolved state, and does not present failure evidence as a published value. Resolution retains the full observed, ordered contribution history, including superseded scalar and surviving collection contributions, with RFC 103 redaction and RFC 104 authority checks and receipts. Missing or omitted evidence is explicit rather than silently truncating the explanation to the winning source; evidence retention does not require whole-file copies, raw secrets, or evaluating otherwise skipped expressions. Inspection does not reread sources and misrepresent current values as historical evidence. Exact report schemas and accessors remain open.
+- `ContextName.explain()` returns a structured report of resolution state and available retained evidence without initializing or retrying the context, reading runtime sources, or evaluating initializers. It supports passive interactive inspection before first use, clearly distinguishes unresolved, in-progress, failed, and successfully resolved state, and does not present failure evidence as a published value. Resolution retains the full observed, ordered contribution history, including superseded scalar and surviving collection contributions, with RFC 103 redaction and RFC 104 authority checks and receipts. Missing or omitted evidence is explicit rather than silently truncating the explanation to the winning source; evidence retention does not require whole-file copies, raw secrets, or evaluating otherwise skipped expressions. Inspection does not reread sources and misrepresent current values as historical evidence. Typed ContextReport records expose these facts independently of rendering.
 - The standard configuration umbrella is `std.config.ConfigError`, with MissingInput, InvalidInput, SourceFailure, DependencyCycle and Multiple categories. Checked paths, source identities, retained originals and blocked dependencies remain structured and secret-safe. Single failures retain their category; independent failures aggregate without evaluating blocked expressions. Preflight returns `Result[None, ConfigError]`; unchecked reads report the same attempt facts and terminate unsuccessfully.
 
 ## Unresolved questions
 
-1. **Expression effects during resolution.** Which function calls and effects may default expressions, contribution expressions, and conditions perform? How are their capabilities and evaluation guarantees communicated without making configuration depend on incidental field traversal order? Resolved-value dependencies, field declaration-order independence, skipped discarded scalar defaults, ordered conditional composition, and typed cycle failures are settled.
+1. **Explicit optional clearing.** What external spelling distinguishes an intentional None from missing input, and how are empty strings handled for Option[str] without silently losing valid text? A companion __CLEAR flag was proposed and rejected in review; neither it nor __NONE is accepted syntax.
 
-2. **Explicit optional clearing.** What external spelling distinguishes an intentional None from missing input, and how are empty strings handled for Option[str] without silently losing valid text?
-
-3. **Resolved-value construction and sharing.** What checked representation exposes fields, validation, and eligible traits while keeping the context frozen and non-cloneable? Which retained field types and access paths permit global or cross-thread publication while preserving RFC 132's shallow contract?
-
-4. **Provenance and inspection API.** What structured report types and accessors within `ContextName.explain()` expose selected and superseded sources, unavailable evidence, and ordered contribution history? The passive entry point, its non-activating behavior, and full observed ordered history with explicit evidence gaps are settled. How should storage representation, lifetime, and redaction preserve that contract without storing raw secrets or copying entire sources?
-
-5. **Remaining environment decoding contracts.** Which checked decoders accept collection-valued environment inputs, and how do those contributions participate in recursive composition while preserving declared source priority? Reusing checked text conversions and canonical newtype validation without duplicate parsers is settled, as are whole-model JSON inputs and explicit descendant overrides with an overlap warning. Conditional and YAML dictionary merging and ordered list appends are settled. Explicit collection replacement, clearing, and removal markers are excluded rather than awaiting syntax.
+2. **Resolved-value construction and sharing.** What checked representation exposes fields, validation, and eligible traits while keeping the context frozen and non-cloneable? Which retained field types and access paths permit global or cross-thread publication while preserving RFC 132's shallow contract?
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
