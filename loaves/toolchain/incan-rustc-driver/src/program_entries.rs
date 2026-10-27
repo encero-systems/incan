@@ -4,7 +4,9 @@
 //! reports the selected result, just as it reports a standalone main. Executors and integer-main handling belong
 //! entirely to Incan lowering.
 
-use crate::ast_build::{binding, block, expression, expression_statement, global_path, local, path_ty};
+use crate::ast_build::{
+    RUST_RESULT_OK_SYMBOL, binding, block, expression, expression_statement, global_path, local, path_ty,
+};
 use crate::plan::Plan;
 use rustc_ast as ast;
 use rustc_span::{Span, Symbol, respan};
@@ -19,7 +21,7 @@ pub(crate) fn dispatcher(plan: &Plan, span: Span) -> Result<Box<ast::Item>, crat
             id: ast::DUMMY_NODE_ID,
             kind: ast::PatKind::TupleStruct(
                 None,
-                global_path(&["std", "result", "Result", "Ok"], span),
+                global_path(&["std", "result", "Result", RUST_RESULT_OK_SYMBOL], span),
                 thin_vec![*binding("selected", span)],
             ),
             span,

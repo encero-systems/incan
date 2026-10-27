@@ -4,7 +4,7 @@
 //! concrete environment, and `Box` implements `Clone` by dispatching through its pointee, so SDK `Clone + Callable1`
 //! bounds retain their ordinary native meaning. AST construction is structural; no Rust source is generated or parsed.
 
-use crate::ast_build::ident;
+use crate::ast_build::{RUST_CLONE_SYMBOL, ident};
 use crate::error::PlanError;
 use crate::plan::{Plan, PlanType};
 use crate::{callees, closures, declarations, types};
@@ -220,7 +220,7 @@ fn signature_items(signature: &[PlanType], span: Span) -> Vec<Box<ast::Item>> {
     let boxed = boxed(object.clone(), span);
     let mut bounds = vec![
         fn_bound(signature, span),
-        bound(path(&["std", "clone", "Clone"], span), span),
+        bound(path(&["std", "clone", RUST_CLONE_SYMBOL], span), span),
     ];
     bounds.push(ast::GenericBound::Outlives(ast::Lifetime {
         id: ast::DUMMY_NODE_ID,
@@ -279,7 +279,7 @@ fn signature_items(signature: &[PlanType], span: Span) -> Vec<Box<ast::Item>> {
             span,
         ),
         implementation(
-            path(&["std", "clone", "Clone"], span),
+            path(&["std", "clone", RUST_CLONE_SYMBOL], span),
             boxed.clone(),
             ast::Generics::default(),
             method("clone", boxed, Some(dispatched), span),

@@ -14,6 +14,9 @@ use super::decoded_manifest::compiler_generation;
 use super::manifest_input::{self, Generation, generation};
 use super::{LoafArtifact, LoafEntry, LoafIdentity, LoafIndexError, LoafNamespace};
 
+/// Maximum encoded inventory proof size; larger optional records fall back to ordinary manifest admission.
+const MAX_INVENTORY_RECORD_BYTES: u64 = 4 * 1024 * 1024;
+
 /// Demand-independent inventory derived from an admitted manifest, including every global contributor.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct Summary {
@@ -169,16 +172,16 @@ fn retained(path: &Path) -> Option<Summary> {
     let observed = observation(path)?;
     let cache = record_path(path)?;
     let metadata = fs::symlink_metadata(&cache).ok()?;
-    if !metadata.is_file() || metadata.len() > 4 * 1024 * 1024 {
+    if !metadata.is_file() || metadata.len() > MAX_INVENTORY_RECORD_BYTES {
         return None;
     }
     let mut bytes = Vec::new();
     fs::File::open(cache)
         .ok()?
-        .take(4 * 1024 * 1024 + 1)
+        .take(MAX_INVENTORY_RECORD_BYTES + 1)
         .read_to_end(&mut bytes)
         .ok()?;
-    if bytes.len() > 4 * 1024 * 1024 {
+    if u64::try_from(bytes.len()).ok()? > MAX_INVENTORY_RECORD_BYTES {
         return None;
     }
     let record: Record = serde_json::from_slice(&bytes).ok()?;

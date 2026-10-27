@@ -19,6 +19,11 @@ use crate::ast;
 use crate::library_manifest::VocabExports;
 use crate::loaf_index::{LoafEntry, LoafIndex};
 
+/// Externally tagged serde Result::Ok reply in the native vocabulary protocol.
+const RUST_VOCAB_RESULT_OK_SYMBOL: &str = "Ok";
+/// Externally tagged serde Result::Err reply in the native vocabulary protocol.
+const RUST_VOCAB_RESULT_ERR_SYMBOL: &str = "Err";
+
 /// Every framed invocation, including blocked input and output, shares this deadline.
 const INVOCATION_TIMEOUT: Duration = Duration::from_secs(10);
 /// Refuse unbounded provider output before JSON allocation or decoding.
@@ -522,7 +527,7 @@ fn validate_reply(
             "malformed response: expected exactly one result variant".into(),
         ));
     }
-    if let Some(response) = reply.get("Ok") {
+    if let Some(response) = reply.get(RUST_VOCAB_RESULT_OK_SYMBOL) {
         let output = surface::response(response, span, request_identity).map_err(malformed)?;
         let position_matches = matches!(
             (&output, provider.target),
@@ -538,7 +543,7 @@ fn validate_reply(
             ))
         };
     }
-    if let Some(error) = reply.get("Err") {
+    if let Some(error) = reply.get(RUST_VOCAB_RESULT_ERR_SYMBOL) {
         let message = error
             .get("message")
             .and_then(Value::as_str)

@@ -279,15 +279,7 @@ impl<'a> Parser<'a> {
                 match self.feature_conditioned_declarations(&[]) {
                     Ok(conditioned) => {
                         for decl in conditioned {
-                            if matches!(decl.node, Declaration::TestModule(_)) {
-                                if seen_test_module {
-                                    self.errors.push(CompileError::syntax(
-                                        "Only one `module tests:` block is allowed per file".to_string(),
-                                        decl.span,
-                                    ));
-                                }
-                                seen_test_module = true;
-                            }
+                            self.note_test_module_declaration(&decl, &mut seen_test_module);
                             if !matches!(decl.node, Declaration::Docstring(_)) {
                                 seen_non_doc_decl = true;
                             }
@@ -307,15 +299,7 @@ impl<'a> Parser<'a> {
             // ---- Context: normal declarations ----
             match self.declaration() {
                 Ok(decl) => {
-                    if matches!(decl.node, Declaration::TestModule(_)) {
-                        if seen_test_module {
-                            self.errors.push(CompileError::syntax(
-                                "Only one `module tests:` block is allowed per file".to_string(),
-                                decl.span,
-                            ));
-                        }
-                        seen_test_module = true;
-                    }
+                    self.note_test_module_declaration(&decl, &mut seen_test_module);
                     self.activate_soft_keywords_for_declaration(&decl.node);
                     if !matches!(decl.node, Declaration::Docstring(_)) {
                         seen_non_doc_decl = true;
@@ -333,20 +317,7 @@ impl<'a> Parser<'a> {
             self.skip_dedents();
         }
 
-        // ---- Reconcile tolerant-lex errors against claimed embedded fragments (RFC 081, #1023) ----
-        // Any `pending_lex_errors` entry whose span falls inside a fragment this parse actually claimed is
-        // expected noise: that byte range was re-tokenized independently by the fragment's own submode grammar,
-        // so the ordinary lexer's confusion about it never reflects a real user mistake. Everything else is real
-        // and must still reach the user, exactly as if the strict lexer had produced it directly.
-        for lex_error in self.pending_lex_errors.drain(..) {
-            let is_expected_fragment_noise = self
-                .claimed_embedded_fragment_spans
-                .iter()
-                .any(|fragment_span| span_contains(*fragment_span, lex_error.span));
-            if !is_expected_fragment_noise {
-                self.errors.push(lex_error);
-            }
-        }
+        self.retain_unclaimed_lex_errors();
 
         if self.errors.is_empty() {
             Ok(Program {
@@ -361,6 +332,36 @@ impl<'a> Parser<'a> {
             // needed.
             self.errors.append(&mut self.warnings);
             Err(self.errors)
+        }
+    }
+
+    /// Enforce one test module per file across ordinary and feature-conditioned declarations.
+    fn note_test_module_declaration(&mut self, declaration: &Spanned<Declaration>, seen: &mut bool) {
+        if !matches!(declaration.node, Declaration::TestModule(_)) {
+            return;
+        }
+        if *seen {
+            self.errors.push(CompileError::syntax(
+                "Only one `module tests:` block is allowed per file".to_string(),
+                declaration.span,
+            ));
+        }
+        *seen = true;
+    }
+
+    /// Retain tolerant-lex errors outside claimed embedded fragments (RFC 081, #1023).
+    ///
+    /// A claimed fragment was re-tokenized by its own submode grammar, so ordinary lexer errors within its span are
+    /// expected noise. Errors elsewhere must reach the user exactly as if the strict lexer had emitted them.
+    fn retain_unclaimed_lex_errors(&mut self) {
+        for lex_error in self.pending_lex_errors.drain(..) {
+            let is_expected_fragment_noise = self
+                .claimed_embedded_fragment_spans
+                .iter()
+                .any(|fragment_span| span_contains(*fragment_span, lex_error.span));
+            if !is_expected_fragment_noise {
+                self.errors.push(lex_error);
+            }
         }
     }
 

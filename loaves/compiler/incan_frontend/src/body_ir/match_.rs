@@ -32,18 +32,15 @@ impl PatternReadScope<'_> {
 }
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
-    /// Lower a `match` expression (`ast::Expr::Match`) into a single [`bir::Rvalue::Match`], mirroring the existing
-    /// Rust-emission backend's own `IrExprKind::Match { scrutinee, arms }` node -- see [`bir::Rvalue::Match`]'s docs
-    /// for why matching stays one structured node rather than being decomposed into a chain of `If` statements, and
-    /// [`bir::Pattern`]'s docs for the closed pattern vocabulary, retained union member targets, and the remaining
-    /// RFC 021 field-alias refinement gap.
+    /// Lower a match expression into one structured [`bir::Rvalue::Match`] with arm-scoped bindings and results.
     ///
-    /// Bails the whole expression to an explicit unsupported placeholder *before* lowering the scrutinee when any
-    /// arm's pattern contains a byte-string literal (a pattern form outside Body IR's current closed matching
-    /// vocabulary -- see [`match_pattern_is_supported`]), mirroring [`Self::lower_binary`]'s "check before
-    /// partially lowering" precedent so an unrepresentable pattern never produces a partially-lowered
-    /// `Rvalue::Match`. Source reads in an arm preserve enclosing owners across alternative paths; arm-local
-    /// payload transfers remain governed by their checked pattern facts.
+    /// The scrutinee is borrowed; each payload read retains its checked ownership fact. Guards and bodies see only
+    /// their arm's bindings. Range-layout facts after the match are the intersection of the arm outcomes, since
+    /// textual arm order does not establish which arm executes. Source reads in an arm preserve enclosing owners
+    /// across alternative paths; arm-local payload transfers remain governed by their checked pattern facts.
+    ///
+    /// A byte-string literal pattern is outside the supported pattern vocabulary. Refuse the whole expression
+    /// before lowering its scrutinee so an unsupported pattern cannot leave partially lowered effects.
     pub(super) fn lower_match(
         &mut self,
         subject: &ast::Spanned<ast::Expr>,
@@ -134,16 +131,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             self.conditional_scopes.pop();
 
             // ---- Restore the enclosing scope's bindings before moving on to the next (mutually exclusive) arm ----
-            for (name, previous) in saved_bindings {
-                match previous {
-                    Some(local) => {
-                        self.bindings.insert(name, local);
-                    }
-                    None => {
-                        self.bindings.remove(&name);
-                    }
-                }
-            }
+            self.restore_local_bindings(saved_bindings);
             range_layouts_after_arms.push(self.materialized_range_locals.clone());
 
             lowered_arms.push(bir::MatchArm {
@@ -253,7 +241,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 .values()
                 .find(|declaration| &declaration.canonical == identity)
                 .is_some_and(|declaration| {
-                    declaration.fields == ["0"] && !declaration.derives.iter().any(|derive| derive == "Clone")
+                    declaration.fields == ["0"]
+                        && !declaration
+                            .derives
+                            .iter()
+                            .any(|derive| derives::from_str(derive) == Some(DeriveId::Clone))
                 })
         })
     }
@@ -314,16 +306,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.conditional_scopes.pop();
         self.insert_scope_drops(&mut body_stmts, arm_scope);
 
-        for (name, previous) in saved_bindings {
-            match previous {
-                Some(local) => {
-                    self.bindings.insert(name, local);
-                }
-                None => {
-                    self.bindings.remove(&name);
-                }
-            }
-        }
+        self.restore_local_bindings(saved_bindings);
 
         bir::MatchArm {
             pattern: lowered_pattern,

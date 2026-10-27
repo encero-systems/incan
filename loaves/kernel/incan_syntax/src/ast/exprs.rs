@@ -90,7 +90,7 @@ pub enum Expr {
     ///
     /// Unlike [`Expr::Surface`], this variant is not eliminated by the pre-typecheck vocab desugar pass — its
     /// [`EmbeddedNode::Hole`] sub-expressions are genuine Incan expressions that must be typechecked and lowered
-    /// like any other expression, so the container must survive into `check_expr`/`lower/expr` as itself.
+    /// like any other expression, so the container must survive checking and lowering as itself.
     Embedded(Box<EmbeddedFragmentExpr>),
 }
 

@@ -20,6 +20,16 @@ def test_addition() -> None:
 
 The command reports each test by file and name. A failed assertion or compilation returns nonzero. Running it again executes the tests again, even when Oven reuses their executable.
 
+## Run a Rust facet's unit tests
+
+Pass the Loaf directory to compile and run its Rust library and declared binary unit tests:
+
+```bash
+incan test loaves/kernel/incan_syntax
+```
+
+Oven adds the root Loaf's `[envs.test.dependencies]` and `[envs.test.rust-dependencies]` to its production dependency closure. A partial dependency override preserves fields it does not specify and adds its requested features. Dependencies retain their production environments. Library and binary unit harnesses and direct `tests/*.rs` integration entries beside the Rust source root run independently. Each Rust test is reported beside tests from `test_*.incn` modules directly under the Loaf's source root and `tests` directory; failure in either language makes the command fail. Pass an Incan source file explicitly to test inline declarations elsewhere. Rust doctests are not selected.
+
 ## Run more than one source
 
 Invoke the command for each source and retain a nonzero result if any invocation fails:
@@ -32,7 +42,7 @@ done
 test "$status" -eq 0
 ```
 
-The shell loop assumes at least one matching file. Directory discovery, `-k`, marker-selection flags, `--jobs`, `--list`, JUnit and JSON-report flags are not dev.8 CLI options.
+The shell loop assumes at least one matching file. Recursive Incan test discovery, `-k`, marker-selection flags, `--jobs`, `--list`, JUnit and JSON-report flags are not dev.8 CLI options.
 
 ## Select features
 

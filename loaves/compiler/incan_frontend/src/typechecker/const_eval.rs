@@ -33,22 +33,33 @@ pub enum ConstKind {
     Frozen,
 }
 
+/// The limited values known during const validation; absence leaves evaluation to native compilation.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConstValue {
+    /// A known signed integer.
     Int(i64),
+    /// A known binary floating-point value.
     Float(f64),
+    /// A known Boolean value.
     Bool(bool),
+    /// Known immutable UTF-8 text.
     FrozenStr(String),
+    /// Known immutable bytes.
     FrozenBytes(Vec<u8>),
 }
 
+/// A constant initializer's type, publication category and optional known value.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstEvalResult {
+    /// The initializer's resolved type, including frozen collection carriers.
     pub ty: ResolvedType,
+    /// Whether native const evaluation suffices or a frozen carrier is required.
     pub kind: ConstKind,
+    /// A value retained only when the limited evaluator knows it.
     pub value: Option<ConstValue>,
 }
 
+/// Borrow known frozen text without reconstructing or copying the value.
 fn const_str(value: &ConstValue) -> Option<&str> {
     match value {
         ConstValue::FrozenStr(s) => Some(s.as_str()),
@@ -56,6 +67,7 @@ fn const_str(value: &ConstValue) -> Option<&str> {
     }
 }
 
+/// Read a known integer for string indexing or slicing.
 fn const_int(value: &ConstValue) -> Option<i64> {
     match value {
         ConstValue::Int(i) => Some(*i),
@@ -80,10 +92,14 @@ fn unsigned_int_literal_fits_numeric_target(lit: &IntLiteral, id: NumericTypeId)
     }
 }
 
+/// Dependency traversal state used to detect const-initializer cycles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConstEvalState {
+    /// The declaration has not entered evaluation.
     NotStarted,
+    /// The declaration is on the active dependency stack.
     InProgress,
+    /// The declaration's evaluation attempt has finished.
     Done,
 }
 
@@ -284,626 +300,18 @@ impl TypeChecker {
     ) -> Option<ConstEvalResult> {
         match &expr.node {
             Expr::Literal(lit) => Some(self.eval_const_literal(lit, expected, expr.span, decl_span)),
-            Expr::Ident(name) => {
-                // Other Incan consts are resolved by name.
-                if self.const_decls.contains_key(name) {
-                    return self.eval_const_by_name(name, stack);
-                }
-                // Rust imports (e.g. `from rust::std::f64::consts import PI`) are valid const references — Rust can
-                // evaluate them at compile time. We treat them as opaque `RustNative` values with no known Incan value;
-                // the type is inferred from the enclosing const annotation when available, otherwise left `Unknown`.
-                // Any actual type mismatch is caught by Rust's compiler.
-                if let Some(sym) = self.lookup_symbol(name)
-                    && match &sym.kind {
-                        SymbolKind::RustItem(_) => true,
-                        SymbolKind::Module(info) => info.path.first().is_some_and(|seg| seg == "rust"),
-                        _ => false,
-                    }
-                {
-                    let ty = expected.cloned().unwrap_or(ResolvedType::Unknown);
-                    return Some(ConstEvalResult {
-                        ty,
-                        kind: ConstKind::RustNative,
-                        value: None,
-                    });
-                }
-                self.errors.push(errors::const_non_const_name(name, expr.span));
-                None
-            }
-            Expr::Tuple(items) => {
-                let mut tys = Vec::with_capacity(items.len());
-                let mut kind = ConstKind::RustNative;
-                for item in items {
-                    let r = self.eval_const_expr(item, None, stack, decl_span)?;
-                    tys.push(r.ty);
-                    if r.kind == ConstKind::Frozen {
-                        kind = ConstKind::Frozen;
-                    }
-                }
-                Some(ConstEvalResult {
-                    ty: ResolvedType::Tuple(tys),
-                    kind,
-                    value: None,
-                })
-            }
-            Expr::Unary(op, inner) => {
-                if *op == UnaryOp::Neg
-                    && let Expr::Literal(Literal::Int(literal)) = &inner.node
-                {
-                    return Some(Self::eval_const_integer_literal(literal, true, expected));
-                }
-                let r = self.eval_const_expr(inner, None, stack, decl_span)?;
-                match op {
-                    UnaryOp::Neg => {
-                        if matches!(r.ty, ResolvedType::Int | ResolvedType::Float) {
-                            let value = match r.value.as_ref() {
-                                Some(ConstValue::Int(n)) => n.checked_neg().map(ConstValue::Int),
-                                Some(ConstValue::Float(f)) => Some(ConstValue::Float(-f)),
-                                _ => None,
-                            };
-                            Some(ConstEvalResult {
-                                ty: r.ty,
-                                kind: r.kind,
-                                value,
-                            })
-                        } else {
-                            self.errors
-                                .push(errors::const_unary_op_not_supported("-", &r.ty.to_string(), expr.span));
-                            None
-                        }
-                    }
-                    UnaryOp::Not => {
-                        if matches!(r.ty, ResolvedType::Bool) {
-                            let value = match r.value.as_ref() {
-                                Some(ConstValue::Bool(b)) => Some(ConstValue::Bool(!b)),
-                                _ => None,
-                            };
-                            Some(ConstEvalResult {
-                                ty: ResolvedType::Bool,
-                                kind: r.kind,
-                                value,
-                            })
-                        } else {
-                            self.errors.push(errors::const_unary_op_not_supported(
-                                "not",
-                                &r.ty.to_string(),
-                                expr.span,
-                            ));
-                            None
-                        }
-                    }
-                    UnaryOp::Invert => {
-                        if matches!(r.ty, ResolvedType::Int) {
-                            let value = match r.value.as_ref() {
-                                Some(ConstValue::Int(n)) => Some(ConstValue::Int(!n)),
-                                _ => None,
-                            };
-                            Some(ConstEvalResult {
-                                ty: ResolvedType::Int,
-                                kind: r.kind,
-                                value,
-                            })
-                        } else {
-                            self.errors
-                                .push(errors::const_unary_op_not_supported("~", &r.ty.to_string(), expr.span));
-                            None
-                        }
-                    }
-                }
-            }
-            Expr::Binary(left, op, right) => {
-                let mut l = self.eval_const_expr(left, None, stack, decl_span)?;
-                let mut r = self.eval_const_expr(right, None, stack, decl_span)?;
+            Expr::Ident(name) => self.eval_const_ident(name, expected, stack, expr.span),
+            Expr::Tuple(items) => self.eval_const_tuple(items, stack, decl_span),
+            Expr::Unary(op, inner) => self.eval_const_unary(op, inner, expected, stack, decl_span, expr.span),
+            Expr::Binary(left, op, right) => self.eval_const_binary(left, op, right, stack, decl_span, expr.span),
+            Expr::List(items) => self.eval_const_list(items, expected, stack, decl_span, expr.span),
+            Expr::Set(items) => self.eval_const_set(items, expected, stack, decl_span, expr.span),
+            Expr::Dict(pairs) => self.eval_const_dict(pairs, expected, stack, decl_span, expr.span),
 
-                // When one operand is a Rust-imported constant whose type couldn't be determined (Unknown), coerce it
-                // to the other operand's numeric type. Rust's own compiler will catch real type mismatches later.
-                if l.kind == ConstKind::RustNative
-                    && l.ty == ResolvedType::Unknown
-                    && numeric_ty_from_resolved(&r.ty).is_some()
-                {
-                    l.ty = r.ty.clone();
-                } else if r.kind == ConstKind::RustNative
-                    && r.ty == ResolvedType::Unknown
-                    && numeric_ty_from_resolved(&l.ty).is_some()
-                {
-                    r.ty = l.ty.clone();
-                }
-
-                // String concatenation (str + str)
-                if matches!(op, BinaryOp::Add) && is_str_like(&l.ty) && is_str_like(&r.ty) {
-                    let value = match (
-                        l.value.as_ref().and_then(const_str),
-                        r.value.as_ref().and_then(const_str),
-                    ) {
-                        (Some(lhs), Some(rhs)) => Some(ConstValue::FrozenStr(strings::str_concat(lhs, rhs))),
-                        _ => None,
-                    };
-                    return Some(ConstEvalResult {
-                        ty: frozen_str_ty(),
-                        kind: ConstKind::Frozen,
-                        value,
-                    });
-                }
-
-                // String comparisons
-                if matches!(
-                    op,
-                    BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::Gt | BinaryOp::LtEq | BinaryOp::GtEq
-                ) && is_str_like(&l.ty)
-                    && is_str_like(&r.ty)
-                {
-                    return Some(ConstEvalResult {
-                        ty: ResolvedType::Bool,
-                        kind: ConstKind::RustNative,
-                        value: None,
-                    });
-                }
-
-                // String membership
-                if matches!(op, BinaryOp::In | BinaryOp::NotIn) && is_str_like(&l.ty) && is_str_like(&r.ty) {
-                    let value = match (
-                        l.value.as_ref().and_then(const_str),
-                        r.value.as_ref().and_then(const_str),
-                    ) {
-                        (Some(needle), Some(haystack)) => {
-                            let contains = strings::str_contains(haystack, needle);
-                            let result = if matches!(op, BinaryOp::NotIn) {
-                                !contains
-                            } else {
-                                contains
-                            };
-                            Some(ConstValue::Bool(result))
-                        }
-                        _ => None,
-                    };
-                    return Some(ConstEvalResult {
-                        ty: ResolvedType::Bool,
-                        kind: ConstKind::RustNative,
-                        value,
-                    });
-                }
-
-                let (result_ty, result_kind, value) = match op {
-                    // Numeric ops (Python-like semantics via numeric policy)
-                    BinaryOp::Add
-                    | BinaryOp::Sub
-                    | BinaryOp::Mul
-                    | BinaryOp::Div
-                    | BinaryOp::FloorDiv
-                    | BinaryOp::Mod
-                    | BinaryOp::Pow => {
-                        // Convert to NumericTy
-                        let lhs_num = numeric_ty_from_resolved(&l.ty);
-                        let rhs_num = numeric_ty_from_resolved(&r.ty);
-
-                        match (lhs_num, rhs_num) {
-                            (Some(lhs), Some(rhs)) => {
-                                let Some(num_op) = numeric_op_from_ast(op) else {
-                                    self.errors.push(errors::const_binary_op_not_supported(
-                                        &op.to_string(),
-                                        &l.ty.to_string(),
-                                        &r.ty.to_string(),
-                                        expr.span,
-                                    ));
-                                    return None;
-                                };
-                                let pow_exp = if matches!(op, BinaryOp::Pow) {
-                                    Some(pow_exponent_kind_from_ast(right, &r.ty))
-                                } else {
-                                    None
-                                };
-                                let result = result_numeric_type(num_op, lhs, rhs, pow_exp);
-                                let ty = match result {
-                                    NumericTy::Int => ResolvedType::Int,
-                                    NumericTy::Float => ResolvedType::Float,
-                                };
-                                (ty, ConstKind::RustNative, None)
-                            }
-                            _ => {
-                                self.errors.push(errors::const_binary_op_not_supported(
-                                    &op.to_string(),
-                                    &l.ty.to_string(),
-                                    &r.ty.to_string(),
-                                    expr.span,
-                                ));
-                                return None;
-                            }
-                        }
-                    }
-                    BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::Shl | BinaryOp::Shr => {
-                        if !matches!((&l.ty, &r.ty), (ResolvedType::Int, ResolvedType::Int)) {
-                            self.errors.push(errors::const_binary_op_not_supported(
-                                &op.to_string(),
-                                &l.ty.to_string(),
-                                &r.ty.to_string(),
-                                expr.span,
-                            ));
-                            return None;
-                        }
-                        let value = match (l.value.as_ref(), r.value.as_ref(), op) {
-                            (Some(ConstValue::Int(lhs)), Some(ConstValue::Int(rhs)), BinaryOp::BitAnd) => {
-                                Some(ConstValue::Int(lhs & rhs))
-                            }
-                            (Some(ConstValue::Int(lhs)), Some(ConstValue::Int(rhs)), BinaryOp::BitOr) => {
-                                Some(ConstValue::Int(lhs | rhs))
-                            }
-                            (Some(ConstValue::Int(lhs)), Some(ConstValue::Int(rhs)), BinaryOp::BitXor) => {
-                                Some(ConstValue::Int(lhs ^ rhs))
-                            }
-                            (Some(ConstValue::Int(lhs)), Some(ConstValue::Int(rhs)), BinaryOp::Shl) if *rhs >= 0 => {
-                                u32::try_from(*rhs)
-                                    .ok()
-                                    .and_then(|rhs| lhs.checked_shl(rhs))
-                                    .map(ConstValue::Int)
-                            }
-                            (Some(ConstValue::Int(lhs)), Some(ConstValue::Int(rhs)), BinaryOp::Shr) if *rhs >= 0 => {
-                                u32::try_from(*rhs)
-                                    .ok()
-                                    .and_then(|rhs| lhs.checked_shr(rhs))
-                                    .map(ConstValue::Int)
-                            }
-                            _ => None,
-                        };
-                        (ResolvedType::Int, ConstKind::RustNative, value)
-                    }
-                    // Comparisons always yield bool (mixed numeric allowed)
-                    BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::Gt | BinaryOp::LtEq | BinaryOp::GtEq => {
-                        // Validate operands are comparable (same type or both numeric)
-                        let lhs_num = numeric_ty_from_resolved(&l.ty);
-                        let rhs_num = numeric_ty_from_resolved(&r.ty);
-                        if lhs_num.is_some() && rhs_num.is_some() {
-                            // Mixed numeric comparison is valid
-                            (ResolvedType::Bool, ConstKind::RustNative, None)
-                        } else if self.types_compatible(&l.ty, &r.ty) {
-                            (ResolvedType::Bool, ConstKind::RustNative, None)
-                        } else {
-                            self.errors.push(errors::const_compare_incompatible(
-                                &l.ty.to_string(),
-                                &r.ty.to_string(),
-                                expr.span,
-                            ));
-                            return None;
-                        }
-                    }
-                    BinaryOp::And | BinaryOp::Or => {
-                        if matches!(l.ty, ResolvedType::Bool) && matches!(r.ty, ResolvedType::Bool) {
-                            let value = match (l.value.as_ref(), r.value.as_ref()) {
-                                (Some(ConstValue::Bool(lb)), Some(ConstValue::Bool(rb))) => {
-                                    let res = if matches!(op, BinaryOp::And) {
-                                        *lb && *rb
-                                    } else {
-                                        *lb || *rb
-                                    };
-                                    Some(ConstValue::Bool(res))
-                                }
-                                _ => None,
-                            };
-                            (ResolvedType::Bool, ConstKind::RustNative, value)
-                        } else {
-                            self.errors.push(errors::const_logical_op_requires_bool(
-                                &op.to_string(),
-                                &l.ty.to_string(),
-                                &r.ty.to_string(),
-                                expr.span,
-                            ));
-                            return None;
-                        }
-                    }
-                    BinaryOp::MatMul
-                    | BinaryOp::PipeForward
-                    | BinaryOp::PipeBackward
-                    | BinaryOp::In
-                    | BinaryOp::NotIn
-                    | BinaryOp::Is
-                    | BinaryOp::IsNot => {
-                        self.errors
-                            .push(errors::const_operator_not_allowed(&op.to_string(), expr.span));
-                        return None;
-                    }
-                };
-
-                Some(ConstEvalResult {
-                    ty: result_ty,
-                    kind: result_kind,
-                    value,
-                })
-            }
-            Expr::List(items) => {
-                if items.iter().any(|item| matches!(item, ListEntry::Spread(_))) {
-                    self.errors.push(errors::const_expression_not_allowed(expr.span));
-                    return None;
-                }
-
-                let elem_expected = expected.and_then(|t| match t {
-                    ResolvedType::FrozenList(elem) => Some(elem.as_ref()),
-                    ResolvedType::Generic(name, args)
-                        if crate::typechecker::helpers::collection_type_id(name.as_str())
-                            == Some(incan_lang::lang::types::collections::CollectionTypeId::FrozenList)
-                            && !args.is_empty() =>
-                    {
-                        Some(&args[0])
-                    }
-                    _ => None,
-                });
-
-                let elem_ty = if items.is_empty() {
-                    elem_expected.cloned().unwrap_or(ResolvedType::Unknown)
-                } else {
-                    let ListEntry::Element(ast_first) = &items[0] else {
-                        unreachable!("list spreads were rejected before const list evaluation");
-                    };
-                    let first = self.eval_const_expr(ast_first, elem_expected, stack, decl_span)?;
-                    // Evaluate the rest just for validation.
-                    for it in items.iter().skip(1) {
-                        let ListEntry::Element(value) = it else {
-                            unreachable!("list spreads were rejected before const list evaluation");
-                        };
-                        self.eval_const_expr(value, elem_expected, stack, decl_span)?;
-                    }
-                    first.ty
-                };
-
-                if items.is_empty() && matches!(elem_ty, ResolvedType::Unknown) {
-                    self.errors.push(errors::const_empty_list_type_inference(expr.span));
-                }
-
-                Some(ConstEvalResult {
-                    ty: ResolvedType::FrozenList(Box::new(elem_ty)),
-                    kind: ConstKind::Frozen,
-                    value: None,
-                })
-            }
-            Expr::Set(items) => {
-                let elem_expected = expected.and_then(|t| match t {
-                    ResolvedType::FrozenSet(elem) => Some(elem.as_ref()),
-                    ResolvedType::Generic(name, args)
-                        if crate::typechecker::helpers::collection_type_id(name.as_str())
-                            == Some(incan_lang::lang::types::collections::CollectionTypeId::FrozenSet)
-                            && !args.is_empty() =>
-                    {
-                        Some(&args[0])
-                    }
-                    _ => None,
-                });
-
-                let elem_ty = if items.is_empty() {
-                    elem_expected.cloned().unwrap_or(ResolvedType::Unknown)
-                } else {
-                    let first = self.eval_const_expr(&items[0], elem_expected, stack, decl_span)?;
-                    for it in items.iter().skip(1) {
-                        self.eval_const_expr(it, elem_expected, stack, decl_span)?;
-                    }
-                    first.ty
-                };
-
-                if items.is_empty() && matches!(elem_ty, ResolvedType::Unknown) {
-                    self.errors.push(errors::const_empty_set_type_inference(expr.span));
-                }
-
-                Some(ConstEvalResult {
-                    ty: ResolvedType::FrozenSet(Box::new(elem_ty)),
-                    kind: ConstKind::Frozen,
-                    value: None,
-                })
-            }
-            Expr::Dict(pairs) => {
-                let (k_expected, v_expected) = match expected {
-                    Some(ResolvedType::FrozenDict(k, v)) => (Some(k.as_ref()), Some(v.as_ref())),
-                    Some(ResolvedType::Generic(name, args))
-                        if crate::typechecker::helpers::collection_type_id(name.as_str())
-                            == Some(incan_lang::lang::types::collections::CollectionTypeId::FrozenDict)
-                            && args.len() >= 2 =>
-                    {
-                        (Some(&args[0]), Some(&args[1]))
-                    }
-                    _ => (None, None),
-                };
-
-                let (key_ty, val_ty) = if pairs.is_empty() {
-                    (
-                        k_expected.cloned().unwrap_or(ResolvedType::Unknown),
-                        v_expected.cloned().unwrap_or(ResolvedType::Unknown),
-                    )
-                } else {
-                    let DictEntry::Pair(k0, v0) = &pairs[0] else {
-                        self.errors.push(errors::const_expression_not_allowed(expr.span));
-                        return None;
-                    };
-                    let kk = self.eval_const_expr(k0, k_expected, stack, decl_span)?;
-                    let vv = self.eval_const_expr(v0, v_expected, stack, decl_span)?;
-                    for entry in pairs.iter().skip(1) {
-                        let DictEntry::Pair(k, v) = entry else {
-                            self.errors.push(errors::const_expression_not_allowed(expr.span));
-                            return None;
-                        };
-                        self.eval_const_expr(k, k_expected, stack, decl_span)?;
-                        self.eval_const_expr(v, v_expected, stack, decl_span)?;
-                    }
-                    (kk.ty, vv.ty)
-                };
-
-                if pairs.is_empty()
-                    && (matches!(key_ty, ResolvedType::Unknown) || matches!(val_ty, ResolvedType::Unknown))
-                {
-                    self.errors.push(errors::const_empty_dict_type_inference(expr.span));
-                }
-
-                Some(ConstEvalResult {
-                    ty: ResolvedType::FrozenDict(Box::new(key_ty), Box::new(val_ty)),
-                    kind: ConstKind::Frozen,
-                    value: None,
-                })
-            }
-
-            Expr::Index(base, idx) => {
-                let b = self.eval_const_expr(base, None, stack, decl_span)?;
-                let i = self.eval_const_expr(idx, None, stack, decl_span)?;
-                if !is_frozen_str(&b.ty) && !matches!(b.ty, ResolvedType::Str) {
-                    self.errors.push(errors::const_indexing_requires_string(expr.span));
-                    return None;
-                }
-                if !is_intlike_for_index(&i.ty) {
-                    self.errors
-                        .push(errors::const_string_index_requires_int(&i.ty.to_string(), idx.span));
-                    return None;
-                }
-                let mut value = None;
-                if let (Some(base_str), Some(idx_val)) = (
-                    b.value.as_ref().and_then(const_str),
-                    i.value.as_ref().and_then(const_int),
-                ) {
-                    match strings::str_char_at(base_str, idx_val) {
-                        Ok(ch) => value = Some(ConstValue::FrozenStr(ch)),
-                        Err(StringAccessError::IndexOutOfRange) => {
-                            self.errors.push(errors::const_string_index_out_of_range(expr.span));
-                            return None;
-                        }
-                        Err(StringAccessError::SliceStepZero) => {
-                            unreachable!("step zero is not used for index")
-                        }
-                    }
-                }
-                Some(ConstEvalResult {
-                    ty: frozen_str_ty(),
-                    kind: ConstKind::Frozen,
-                    value,
-                })
-            }
-
-            Expr::Slice(base, slice) => {
-                let b = self.eval_const_expr(base, None, stack, decl_span)?;
-                if !is_frozen_str(&b.ty) && !matches!(b.ty, ResolvedType::Str) {
-                    self.errors.push(errors::const_slicing_requires_string(base.span));
-                    return None;
-                }
-
-                let mut start_val = None;
-                if let Some(s) = &slice.start {
-                    let ty = self.eval_const_expr(s, None, stack, decl_span)?;
-                    if !is_intlike_for_index(&ty.ty) {
-                        self.errors.push(errors::const_slice_component_requires_int(
-                            "start",
-                            &ty.ty.to_string(),
-                            s.span,
-                        ));
-                        return None;
-                    }
-                    start_val = ty.value.as_ref().and_then(const_int);
-                }
-                let mut end_val = None;
-                if let Some(e) = &slice.end {
-                    let ty = self.eval_const_expr(e, None, stack, decl_span)?;
-                    if !is_intlike_for_index(&ty.ty) {
-                        self.errors.push(errors::const_slice_component_requires_int(
-                            "end",
-                            &ty.ty.to_string(),
-                            e.span,
-                        ));
-                        return None;
-                    }
-                    end_val = ty.value.as_ref().and_then(const_int);
-                }
-                let mut step_val = None;
-                if let Some(st) = &slice.step {
-                    let ty = self.eval_const_expr(st, None, stack, decl_span)?;
-                    if !is_intlike_for_index(&ty.ty) {
-                        self.errors.push(errors::const_slice_component_requires_int(
-                            "step",
-                            &ty.ty.to_string(),
-                            st.span,
-                        ));
-                        return None;
-                    }
-                    step_val = ty.value.as_ref().and_then(const_int);
-                }
-
-                let mut value = None;
-                if let Some(base_str) = b.value.as_ref().and_then(const_str) {
-                    match strings::str_slice(base_str, start_val, end_val, step_val) {
-                        Ok(out) => value = Some(ConstValue::FrozenStr(out)),
-                        Err(StringAccessError::SliceStepZero) => {
-                            let span = slice.step.as_ref().map(|s| s.span).unwrap_or(expr.span);
-                            self.errors.push(errors::const_slice_step_zero(span));
-                            return None;
-                        }
-                        Err(StringAccessError::IndexOutOfRange) => {
-                            // Should not normally occur due to clamping but keep in sync with semantics.
-                            self.errors.push(errors::const_string_index_out_of_range(expr.span));
-                            return None;
-                        }
-                    }
-                }
-
-                Some(ConstEvalResult {
-                    ty: frozen_str_ty(),
-                    kind: ConstKind::Frozen,
-                    value,
-                })
-            }
-
+            Expr::Index(base, index) => self.eval_const_index(base, index, stack, decl_span, expr.span),
+            Expr::Slice(base, slice) => self.eval_const_slice(base, slice, stack, decl_span, expr.span),
             Expr::Call(callee, type_args, args) if type_args.is_empty() => {
-                if let Expr::Ident(callee_name) = &callee.node
-                    && self.is_const_model_constructor_name(callee_name)
-                {
-                    return self.eval_const_model_constructor(callee_name, args, expected, stack, decl_span, expr.span);
-                }
-                if let Expr::Ident(callee_name) = &callee.node
-                    && let Some(result) = self.eval_const_partial_constructor_call(
-                        callee_name,
-                        args,
-                        expected,
-                        stack,
-                        decl_span,
-                        expr.span,
-                    )
-                {
-                    return Some(result);
-                }
-
-                let Some(ResolvedType::Named(expected_name)) = expected else {
-                    self.errors.push(errors::const_expression_not_allowed(expr.span));
-                    return None;
-                };
-                let Expr::Ident(callee_name) = &callee.node else {
-                    self.errors.push(errors::const_expression_not_allowed(expr.span));
-                    return None;
-                };
-                let Some(TypeInfo::Newtype(newtype)) = self.lookup_type_info(callee_name) else {
-                    self.errors.push(errors::const_expression_not_allowed(expr.span));
-                    return None;
-                };
-                let underlying = newtype.underlying.clone();
-                if callee_name != expected_name {
-                    self.errors.push(errors::const_expression_not_allowed(expr.span));
-                    return None;
-                }
-                let [CallArg::Positional(arg)] = args.as_slice() else {
-                    self.errors.push(errors::const_expression_not_allowed(expr.span));
-                    return None;
-                };
-                let Some(target) = super::numeric_type_id_for_compat(&underlying) else {
-                    self.errors.push(errors::const_expression_not_allowed(expr.span));
-                    return None;
-                };
-                let Expr::Literal(Literal::Int(lit)) = &arg.node else {
-                    self.errors.push(errors::const_expression_not_allowed(expr.span));
-                    return None;
-                };
-                if !unsigned_int_literal_fits_numeric_target(lit, target) {
-                    self.errors.push(CompileError::type_error(
-                        format!("Integer literal {} does not fit in {}", lit.repr, underlying),
-                        arg.span,
-                    ));
-                    return None;
-                }
-                if lit.suffix.is_none() {
-                    self.retain_body_ir_const_newtype(callee_name, &underlying, lit.magnitude, expr.span);
-                }
-                Some(ConstEvalResult {
-                    ty: ResolvedType::Named(expected_name.clone()),
-                    kind: ConstKind::RustNative,
-                    value: None,
-                })
+                self.eval_const_call(callee, args, expected, stack, decl_span, expr.span)
             }
             Expr::Constructor(name, args) if self.is_const_model_constructor_name(name) => {
                 self.eval_const_model_constructor(name, args, expected, stack, decl_span, expr.span)
@@ -938,6 +346,726 @@ impl TypeChecker {
                 None
             }
         }
+    }
+
+    /// Resolve an Incan constant or retain an imported Rust constant as an opaque native value.
+    ///
+    /// An enclosing annotation supplies an opaque value's type when available; rustc remains responsible for its
+    /// actual value and type compatibility. Incan declarations keep the existing dependency-cycle stack.
+    fn eval_const_ident(
+        &mut self,
+        name: &str,
+        expected: Option<&ResolvedType>,
+        stack: &mut Vec<String>,
+        span: Span,
+    ) -> Option<ConstEvalResult> {
+        if self.const_decls.contains_key(name) {
+            return self.eval_const_by_name(name, stack);
+        }
+        if let Some(symbol) = self.lookup_symbol(name)
+            && match &symbol.kind {
+                SymbolKind::RustItem(_) => true,
+                SymbolKind::Module(info) => info.path.first().is_some_and(|segment| segment == "rust"),
+                _ => false,
+            }
+        {
+            return Some(ConstEvalResult {
+                ty: expected.cloned().unwrap_or(ResolvedType::Unknown),
+                kind: ConstKind::RustNative,
+                value: None,
+            });
+        }
+        self.errors.push(errors::const_non_const_name(name, span));
+        None
+    }
+
+    /// Validate tuple members in source order and retain a frozen classification if any member requires it.
+    fn eval_const_tuple(
+        &mut self,
+        items: &[Spanned<Expr>],
+        stack: &mut Vec<String>,
+        decl_span: Span,
+    ) -> Option<ConstEvalResult> {
+        let mut types = Vec::with_capacity(items.len());
+        let mut kind = ConstKind::RustNative;
+        for item in items {
+            let result = self.eval_const_expr(item, None, stack, decl_span)?;
+            types.push(result.ty);
+            if result.kind == ConstKind::Frozen {
+                kind = ConstKind::Frozen;
+            }
+        }
+        Some(ConstEvalResult {
+            ty: ResolvedType::Tuple(types),
+            kind,
+            value: None,
+        })
+    }
+
+    /// Convert a negative integer literal by its exact signed magnitude before ordinary unary constant evaluation.
+    fn eval_const_unary(
+        &mut self,
+        op: &UnaryOp,
+        inner: &Spanned<Expr>,
+        expected: Option<&ResolvedType>,
+        stack: &mut Vec<String>,
+        decl_span: Span,
+        span: Span,
+    ) -> Option<ConstEvalResult> {
+        if *op == UnaryOp::Neg
+            && let Expr::Literal(Literal::Int(literal)) = &inner.node
+        {
+            return Some(Self::eval_const_integer_literal(literal, true, expected));
+        }
+        let result = self.eval_const_expr(inner, None, stack, decl_span)?;
+        match op {
+            UnaryOp::Neg => {
+                if matches!(result.ty, ResolvedType::Int | ResolvedType::Float) {
+                    let value = match result.value.as_ref() {
+                        Some(ConstValue::Int(number)) => number.checked_neg().map(ConstValue::Int),
+                        Some(ConstValue::Float(number)) => Some(ConstValue::Float(-number)),
+                        _ => None,
+                    };
+                    Some(ConstEvalResult {
+                        ty: result.ty,
+                        kind: result.kind,
+                        value,
+                    })
+                } else {
+                    self.errors
+                        .push(errors::const_unary_op_not_supported("-", &result.ty.to_string(), span));
+                    None
+                }
+            }
+            UnaryOp::Not => {
+                if matches!(result.ty, ResolvedType::Bool) {
+                    let value = match result.value.as_ref() {
+                        Some(ConstValue::Bool(value)) => Some(ConstValue::Bool(!value)),
+                        _ => None,
+                    };
+                    Some(ConstEvalResult {
+                        ty: ResolvedType::Bool,
+                        kind: result.kind,
+                        value,
+                    })
+                } else {
+                    self.errors.push(errors::const_unary_op_not_supported(
+                        "not",
+                        &result.ty.to_string(),
+                        span,
+                    ));
+                    None
+                }
+            }
+            UnaryOp::Invert => {
+                if matches!(result.ty, ResolvedType::Int) {
+                    let value = match result.value.as_ref() {
+                        Some(ConstValue::Int(number)) => Some(ConstValue::Int(!number)),
+                        _ => None,
+                    };
+                    Some(ConstEvalResult {
+                        ty: ResolvedType::Int,
+                        kind: result.kind,
+                        value,
+                    })
+                } else {
+                    self.errors
+                        .push(errors::const_unary_op_not_supported("~", &result.ty.to_string(), span));
+                    None
+                }
+            }
+        }
+    }
+
+    /// Evaluate binary operands in source order and preserve string policy before general numeric validation.
+    ///
+    /// An opaque Rust constant may borrow the other operand's numeric type; rustc still checks the actual native
+    /// value. String operations retain the same limited known values as the existing const domain.
+    fn eval_const_binary(
+        &mut self,
+        left_expr: &Spanned<Expr>,
+        op: &BinaryOp,
+        right_expr: &Spanned<Expr>,
+        stack: &mut Vec<String>,
+        decl_span: Span,
+        span: Span,
+    ) -> Option<ConstEvalResult> {
+        let mut left = self.eval_const_expr(left_expr, None, stack, decl_span)?;
+        let mut right = self.eval_const_expr(right_expr, None, stack, decl_span)?;
+        if left.kind == ConstKind::RustNative
+            && left.ty == ResolvedType::Unknown
+            && numeric_ty_from_resolved(&right.ty).is_some()
+        {
+            left.ty = right.ty.clone();
+        } else if right.kind == ConstKind::RustNative
+            && right.ty == ResolvedType::Unknown
+            && numeric_ty_from_resolved(&left.ty).is_some()
+        {
+            right.ty = left.ty.clone();
+        }
+
+        if matches!(op, BinaryOp::Add) && is_str_like(&left.ty) && is_str_like(&right.ty) {
+            let value = match (
+                left.value.as_ref().and_then(const_str),
+                right.value.as_ref().and_then(const_str),
+            ) {
+                (Some(lhs), Some(rhs)) => Some(ConstValue::FrozenStr(strings::str_concat(lhs, rhs))),
+                _ => None,
+            };
+            return Some(ConstEvalResult {
+                ty: frozen_str_ty(),
+                kind: ConstKind::Frozen,
+                value,
+            });
+        }
+        if matches!(
+            op,
+            BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::Gt | BinaryOp::LtEq | BinaryOp::GtEq
+        ) && is_str_like(&left.ty)
+            && is_str_like(&right.ty)
+        {
+            return Some(ConstEvalResult {
+                ty: ResolvedType::Bool,
+                kind: ConstKind::RustNative,
+                value: None,
+            });
+        }
+        if matches!(op, BinaryOp::In | BinaryOp::NotIn) && is_str_like(&left.ty) && is_str_like(&right.ty) {
+            let value = match (
+                left.value.as_ref().and_then(const_str),
+                right.value.as_ref().and_then(const_str),
+            ) {
+                (Some(needle), Some(haystack)) => {
+                    let contains = strings::str_contains(haystack, needle);
+                    let result = if matches!(op, BinaryOp::NotIn) {
+                        !contains
+                    } else {
+                        contains
+                    };
+                    Some(ConstValue::Bool(result))
+                }
+                _ => None,
+            };
+            return Some(ConstEvalResult {
+                ty: ResolvedType::Bool,
+                kind: ConstKind::RustNative,
+                value,
+            });
+        }
+        self.eval_const_binary_operands(op, &left, &right, right_expr, span)
+    }
+
+    /// Validate a frozen list, rejecting spreads before evaluating any element and using the first element's type.
+    fn eval_const_list(
+        &mut self,
+        items: &[ListEntry],
+        expected: Option<&ResolvedType>,
+        stack: &mut Vec<String>,
+        decl_span: Span,
+        span: Span,
+    ) -> Option<ConstEvalResult> {
+        if items.iter().any(|item| matches!(item, ListEntry::Spread(_))) {
+            self.errors.push(errors::const_expression_not_allowed(span));
+            return None;
+        }
+        let elem_expected = expected.and_then(|ty| match ty {
+            ResolvedType::FrozenList(elem) => Some(elem.as_ref()),
+            ResolvedType::Generic(name, args)
+                if crate::typechecker::helpers::collection_type_id(name.as_str())
+                    == Some(incan_lang::lang::types::collections::CollectionTypeId::FrozenList)
+                    && !args.is_empty() =>
+            {
+                Some(&args[0])
+            }
+            _ => None,
+        });
+        let elem_ty = if items.is_empty() {
+            elem_expected.cloned().unwrap_or(ResolvedType::Unknown)
+        } else {
+            let ListEntry::Element(first) = &items[0] else {
+                unreachable!("list spreads were rejected before const list evaluation");
+            };
+            let first = self.eval_const_expr(first, elem_expected, stack, decl_span)?;
+            for item in items.iter().skip(1) {
+                let ListEntry::Element(value) = item else {
+                    unreachable!("list spreads were rejected before const list evaluation");
+                };
+                self.eval_const_expr(value, elem_expected, stack, decl_span)?;
+            }
+            first.ty
+        };
+        if items.is_empty() && matches!(elem_ty, ResolvedType::Unknown) {
+            self.errors.push(errors::const_empty_list_type_inference(span));
+        }
+        Some(ConstEvalResult {
+            ty: ResolvedType::FrozenList(Box::new(elem_ty)),
+            kind: ConstKind::Frozen,
+            value: None,
+        })
+    }
+
+    /// Validate frozen set members against an available annotation, retaining the first member's type.
+    fn eval_const_set(
+        &mut self,
+        items: &[Spanned<Expr>],
+        expected: Option<&ResolvedType>,
+        stack: &mut Vec<String>,
+        decl_span: Span,
+        span: Span,
+    ) -> Option<ConstEvalResult> {
+        let elem_expected = expected.and_then(|ty| match ty {
+            ResolvedType::FrozenSet(elem) => Some(elem.as_ref()),
+            ResolvedType::Generic(name, args)
+                if crate::typechecker::helpers::collection_type_id(name.as_str())
+                    == Some(incan_lang::lang::types::collections::CollectionTypeId::FrozenSet)
+                    && !args.is_empty() =>
+            {
+                Some(&args[0])
+            }
+            _ => None,
+        });
+        let elem_ty = if items.is_empty() {
+            elem_expected.cloned().unwrap_or(ResolvedType::Unknown)
+        } else {
+            let first = self.eval_const_expr(&items[0], elem_expected, stack, decl_span)?;
+            for item in items.iter().skip(1) {
+                self.eval_const_expr(item, elem_expected, stack, decl_span)?;
+            }
+            first.ty
+        };
+        if items.is_empty() && matches!(elem_ty, ResolvedType::Unknown) {
+            self.errors.push(errors::const_empty_set_type_inference(span));
+        }
+        Some(ConstEvalResult {
+            ty: ResolvedType::FrozenSet(Box::new(elem_ty)),
+            kind: ConstKind::Frozen,
+            value: None,
+        })
+    }
+
+    /// Validate frozen dictionary pairs in source order, inferring key and value types from the first pair.
+    fn eval_const_dict(
+        &mut self,
+        pairs: &[DictEntry],
+        expected: Option<&ResolvedType>,
+        stack: &mut Vec<String>,
+        decl_span: Span,
+        span: Span,
+    ) -> Option<ConstEvalResult> {
+        let (key_expected, value_expected) = match expected {
+            Some(ResolvedType::FrozenDict(key, value)) => (Some(key.as_ref()), Some(value.as_ref())),
+            Some(ResolvedType::Generic(name, args))
+                if crate::typechecker::helpers::collection_type_id(name.as_str())
+                    == Some(incan_lang::lang::types::collections::CollectionTypeId::FrozenDict)
+                    && args.len() >= 2 =>
+            {
+                (Some(&args[0]), Some(&args[1]))
+            }
+            _ => (None, None),
+        };
+        let (key_ty, value_ty) = if pairs.is_empty() {
+            (
+                key_expected.cloned().unwrap_or(ResolvedType::Unknown),
+                value_expected.cloned().unwrap_or(ResolvedType::Unknown),
+            )
+        } else {
+            let DictEntry::Pair(first_key, first_value) = &pairs[0] else {
+                self.errors.push(errors::const_expression_not_allowed(span));
+                return None;
+            };
+            let key = self.eval_const_expr(first_key, key_expected, stack, decl_span)?;
+            let value = self.eval_const_expr(first_value, value_expected, stack, decl_span)?;
+            for entry in pairs.iter().skip(1) {
+                let DictEntry::Pair(key, value) = entry else {
+                    self.errors.push(errors::const_expression_not_allowed(span));
+                    return None;
+                };
+                self.eval_const_expr(key, key_expected, stack, decl_span)?;
+                self.eval_const_expr(value, value_expected, stack, decl_span)?;
+            }
+            (key.ty, value.ty)
+        };
+        if pairs.is_empty() && (matches!(key_ty, ResolvedType::Unknown) || matches!(value_ty, ResolvedType::Unknown)) {
+            self.errors.push(errors::const_empty_dict_type_inference(span));
+        }
+        Some(ConstEvalResult {
+            ty: ResolvedType::FrozenDict(Box::new(key_ty), Box::new(value_ty)),
+            kind: ConstKind::Frozen,
+            value: None,
+        })
+    }
+
+    /// Apply the non-string const policy to already evaluated binary operands.
+    fn eval_const_binary_operands(
+        &mut self,
+        op: &BinaryOp,
+        left: &ConstEvalResult,
+        right: &ConstEvalResult,
+        right_expr: &Spanned<Expr>,
+        span: Span,
+    ) -> Option<ConstEvalResult> {
+        match op {
+            BinaryOp::Add
+            | BinaryOp::Sub
+            | BinaryOp::Mul
+            | BinaryOp::Div
+            | BinaryOp::FloorDiv
+            | BinaryOp::Mod
+            | BinaryOp::Pow => self.eval_const_numeric_binary(op, left, right, right_expr, span),
+            BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::Shl | BinaryOp::Shr => {
+                self.eval_const_bitwise_binary(op, left, right, span)
+            }
+            BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::Gt | BinaryOp::LtEq | BinaryOp::GtEq => {
+                self.eval_const_comparison(left, right, span)
+            }
+            BinaryOp::And | BinaryOp::Or => self.eval_const_logical_binary(op, left, right, span),
+            BinaryOp::MatMul
+            | BinaryOp::PipeForward
+            | BinaryOp::PipeBackward
+            | BinaryOp::In
+            | BinaryOp::NotIn
+            | BinaryOp::Is
+            | BinaryOp::IsNot => {
+                self.errors
+                    .push(errors::const_operator_not_allowed(&op.to_string(), span));
+                None
+            }
+        }
+    }
+
+    /// Select an arithmetic constant's numeric type without taking evaluation away from rustc.
+    fn eval_const_numeric_binary(
+        &mut self,
+        op: &BinaryOp,
+        left: &ConstEvalResult,
+        right: &ConstEvalResult,
+        right_expr: &Spanned<Expr>,
+        span: Span,
+    ) -> Option<ConstEvalResult> {
+        let left_numeric = numeric_ty_from_resolved(&left.ty);
+        let right_numeric = numeric_ty_from_resolved(&right.ty);
+        match (left_numeric, right_numeric) {
+            (Some(lhs), Some(rhs)) => {
+                let Some(numeric_op) = numeric_op_from_ast(op) else {
+                    self.errors.push(errors::const_binary_op_not_supported(
+                        &op.to_string(),
+                        &left.ty.to_string(),
+                        &right.ty.to_string(),
+                        span,
+                    ));
+                    return None;
+                };
+                let exponent = if matches!(op, BinaryOp::Pow) {
+                    Some(pow_exponent_kind_from_ast(right_expr, &right.ty))
+                } else {
+                    None
+                };
+                let ty = match result_numeric_type(numeric_op, lhs, rhs, exponent) {
+                    NumericTy::Int => ResolvedType::Int,
+                    NumericTy::Float => ResolvedType::Float,
+                };
+                Some(ConstEvalResult {
+                    ty,
+                    kind: ConstKind::RustNative,
+                    value: None,
+                })
+            }
+            _ => {
+                self.errors.push(errors::const_binary_op_not_supported(
+                    &op.to_string(),
+                    &left.ty.to_string(),
+                    &right.ty.to_string(),
+                    span,
+                ));
+                None
+            }
+        }
+    }
+
+    /// Validate integer bitwise operands and retain only values supported by the existing checked-shift policy.
+    fn eval_const_bitwise_binary(
+        &mut self,
+        op: &BinaryOp,
+        left: &ConstEvalResult,
+        right: &ConstEvalResult,
+        span: Span,
+    ) -> Option<ConstEvalResult> {
+        if !matches!((&left.ty, &right.ty), (ResolvedType::Int, ResolvedType::Int)) {
+            self.errors.push(errors::const_binary_op_not_supported(
+                &op.to_string(),
+                &left.ty.to_string(),
+                &right.ty.to_string(),
+                span,
+            ));
+            return None;
+        }
+        let value = match (left.value.as_ref(), right.value.as_ref(), op) {
+            (Some(ConstValue::Int(lhs)), Some(ConstValue::Int(rhs)), BinaryOp::BitAnd) => {
+                Some(ConstValue::Int(lhs & rhs))
+            }
+            (Some(ConstValue::Int(lhs)), Some(ConstValue::Int(rhs)), BinaryOp::BitOr) => {
+                Some(ConstValue::Int(lhs | rhs))
+            }
+            (Some(ConstValue::Int(lhs)), Some(ConstValue::Int(rhs)), BinaryOp::BitXor) => {
+                Some(ConstValue::Int(lhs ^ rhs))
+            }
+            (Some(ConstValue::Int(lhs)), Some(ConstValue::Int(rhs)), BinaryOp::Shl) if *rhs >= 0 => u32::try_from(*rhs)
+                .ok()
+                .and_then(|rhs| lhs.checked_shl(rhs))
+                .map(ConstValue::Int),
+            (Some(ConstValue::Int(lhs)), Some(ConstValue::Int(rhs)), BinaryOp::Shr) if *rhs >= 0 => u32::try_from(*rhs)
+                .ok()
+                .and_then(|rhs| lhs.checked_shr(rhs))
+                .map(ConstValue::Int),
+            _ => None,
+        };
+        Some(ConstEvalResult {
+            ty: ResolvedType::Int,
+            kind: ConstKind::RustNative,
+            value,
+        })
+    }
+
+    /// Validate comparison compatibility, admitting mixed numeric types and leaving the value to rustc.
+    fn eval_const_comparison(
+        &mut self,
+        left: &ConstEvalResult,
+        right: &ConstEvalResult,
+        span: Span,
+    ) -> Option<ConstEvalResult> {
+        let left_numeric = numeric_ty_from_resolved(&left.ty);
+        let right_numeric = numeric_ty_from_resolved(&right.ty);
+        if !(left_numeric.is_some() && right_numeric.is_some()) && !self.types_compatible(&left.ty, &right.ty) {
+            self.errors.push(errors::const_compare_incompatible(
+                &left.ty.to_string(),
+                &right.ty.to_string(),
+                span,
+            ));
+            return None;
+        }
+        Some(ConstEvalResult {
+            ty: ResolvedType::Bool,
+            kind: ConstKind::RustNative,
+            value: None,
+        })
+    }
+
+    /// Validate Boolean logical operands and preserve a known result only when both operand values are known.
+    fn eval_const_logical_binary(
+        &mut self,
+        op: &BinaryOp,
+        left: &ConstEvalResult,
+        right: &ConstEvalResult,
+        span: Span,
+    ) -> Option<ConstEvalResult> {
+        if !matches!(left.ty, ResolvedType::Bool) || !matches!(right.ty, ResolvedType::Bool) {
+            self.errors.push(errors::const_logical_op_requires_bool(
+                &op.to_string(),
+                &left.ty.to_string(),
+                &right.ty.to_string(),
+                span,
+            ));
+            return None;
+        }
+        let value = match (left.value.as_ref(), right.value.as_ref()) {
+            (Some(ConstValue::Bool(lhs)), Some(ConstValue::Bool(rhs))) => {
+                Some(ConstValue::Bool(if matches!(op, BinaryOp::And) {
+                    *lhs && *rhs
+                } else {
+                    *lhs || *rhs
+                }))
+            }
+            _ => None,
+        };
+        Some(ConstEvalResult {
+            ty: ResolvedType::Bool,
+            kind: ConstKind::RustNative,
+            value,
+        })
+    }
+
+    /// Validate constant string indexing and retain its character when the base and index values are known.
+    fn eval_const_index(
+        &mut self,
+        base: &Spanned<Expr>,
+        index: &Spanned<Expr>,
+        stack: &mut Vec<String>,
+        decl_span: Span,
+        span: Span,
+    ) -> Option<ConstEvalResult> {
+        let base_result = self.eval_const_expr(base, None, stack, decl_span)?;
+        let index_result = self.eval_const_expr(index, None, stack, decl_span)?;
+        if !is_frozen_str(&base_result.ty) && !matches!(base_result.ty, ResolvedType::Str) {
+            self.errors.push(errors::const_indexing_requires_string(span));
+            return None;
+        }
+        if !is_intlike_for_index(&index_result.ty) {
+            self.errors.push(errors::const_string_index_requires_int(
+                &index_result.ty.to_string(),
+                index.span,
+            ));
+            return None;
+        }
+        let mut value = None;
+        if let (Some(base_str), Some(index_value)) = (
+            base_result.value.as_ref().and_then(const_str),
+            index_result.value.as_ref().and_then(const_int),
+        ) {
+            match strings::str_char_at(base_str, index_value) {
+                Ok(character) => value = Some(ConstValue::FrozenStr(character)),
+                Err(StringAccessError::IndexOutOfRange) => {
+                    self.errors.push(errors::const_string_index_out_of_range(span));
+                    return None;
+                }
+                Err(StringAccessError::SliceStepZero) => unreachable!("step zero is not used for index"),
+            }
+        }
+        Some(ConstEvalResult {
+            ty: frozen_str_ty(),
+            kind: ConstKind::Frozen,
+            value,
+        })
+    }
+
+    /// Validate constant string slice components in source order and apply the existing clamping and step policy.
+    fn eval_const_slice(
+        &mut self,
+        base: &Spanned<Expr>,
+        slice: &SliceExpr,
+        stack: &mut Vec<String>,
+        decl_span: Span,
+        span: Span,
+    ) -> Option<ConstEvalResult> {
+        let base_result = self.eval_const_expr(base, None, stack, decl_span)?;
+        if !is_frozen_str(&base_result.ty) && !matches!(base_result.ty, ResolvedType::Str) {
+            self.errors.push(errors::const_slicing_requires_string(base.span));
+            return None;
+        }
+        let mut start_value = None;
+        if let Some(start) = &slice.start {
+            let result = self.eval_const_expr(start, None, stack, decl_span)?;
+            if !is_intlike_for_index(&result.ty) {
+                self.errors.push(errors::const_slice_component_requires_int(
+                    "start",
+                    &result.ty.to_string(),
+                    start.span,
+                ));
+                return None;
+            }
+            start_value = result.value.as_ref().and_then(const_int);
+        }
+        let mut end_value = None;
+        if let Some(end) = &slice.end {
+            let result = self.eval_const_expr(end, None, stack, decl_span)?;
+            if !is_intlike_for_index(&result.ty) {
+                self.errors.push(errors::const_slice_component_requires_int(
+                    "end",
+                    &result.ty.to_string(),
+                    end.span,
+                ));
+                return None;
+            }
+            end_value = result.value.as_ref().and_then(const_int);
+        }
+        let mut step_value = None;
+        if let Some(step) = &slice.step {
+            let result = self.eval_const_expr(step, None, stack, decl_span)?;
+            if !is_intlike_for_index(&result.ty) {
+                self.errors.push(errors::const_slice_component_requires_int(
+                    "step",
+                    &result.ty.to_string(),
+                    step.span,
+                ));
+                return None;
+            }
+            step_value = result.value.as_ref().and_then(const_int);
+        }
+        let mut value = None;
+        if let Some(base_str) = base_result.value.as_ref().and_then(const_str) {
+            match strings::str_slice(base_str, start_value, end_value, step_value) {
+                Ok(sliced) => value = Some(ConstValue::FrozenStr(sliced)),
+                Err(StringAccessError::SliceStepZero) => {
+                    let span = slice.step.as_ref().map(|step| step.span).unwrap_or(span);
+                    self.errors.push(errors::const_slice_step_zero(span));
+                    return None;
+                }
+                Err(StringAccessError::IndexOutOfRange) => {
+                    self.errors.push(errors::const_string_index_out_of_range(span));
+                    return None;
+                }
+            }
+        }
+        Some(ConstEvalResult {
+            ty: frozen_str_ty(),
+            kind: ConstKind::Frozen,
+            value,
+        })
+    }
+
+    /// Validate a const model, partial constructor or expected numeric newtype call without explicit type arguments.
+    fn eval_const_call(
+        &mut self,
+        callee: &Spanned<Expr>,
+        args: &[CallArg],
+        expected: Option<&ResolvedType>,
+        stack: &mut Vec<String>,
+        decl_span: Span,
+        span: Span,
+    ) -> Option<ConstEvalResult> {
+        if let Expr::Ident(name) = &callee.node
+            && self.is_const_model_constructor_name(name)
+        {
+            return self.eval_const_model_constructor(name, args, expected, stack, decl_span, span);
+        }
+        if let Expr::Ident(name) = &callee.node
+            && let Some(result) = self.eval_const_partial_constructor_call(name, args, expected, stack, decl_span, span)
+        {
+            return Some(result);
+        }
+        let Some(ResolvedType::Named(expected_name)) = expected else {
+            self.errors.push(errors::const_expression_not_allowed(span));
+            return None;
+        };
+        let Expr::Ident(name) = &callee.node else {
+            self.errors.push(errors::const_expression_not_allowed(span));
+            return None;
+        };
+        let Some(TypeInfo::Newtype(newtype)) = self.lookup_type_info(name) else {
+            self.errors.push(errors::const_expression_not_allowed(span));
+            return None;
+        };
+        let underlying = newtype.underlying.clone();
+        if name != expected_name {
+            self.errors.push(errors::const_expression_not_allowed(span));
+            return None;
+        }
+        let [CallArg::Positional(arg)] = args else {
+            self.errors.push(errors::const_expression_not_allowed(span));
+            return None;
+        };
+        let Some(target) = super::numeric_type_id_for_compat(&underlying) else {
+            self.errors.push(errors::const_expression_not_allowed(span));
+            return None;
+        };
+        let Expr::Literal(Literal::Int(literal)) = &arg.node else {
+            self.errors.push(errors::const_expression_not_allowed(span));
+            return None;
+        };
+        if !unsigned_int_literal_fits_numeric_target(literal, target) {
+            self.errors.push(CompileError::type_error(
+                format!("Integer literal {} does not fit in {}", literal.repr, underlying),
+                arg.span,
+            ));
+            return None;
+        }
+        if literal.suffix.is_none() {
+            self.retain_body_ir_const_newtype(name, &underlying, literal.magnitude, span);
+        }
+        Some(ConstEvalResult {
+            ty: ResolvedType::Named(expected_name.clone()),
+            kind: ConstKind::RustNative,
+            value: None,
+        })
     }
 
     /// Retain only an already range-checked unsuffixed sized integer constructor, without altering legacy evaluation.

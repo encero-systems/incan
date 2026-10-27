@@ -396,11 +396,14 @@ impl TypeChecker {
             method.to_owned(),
             format!("{:?}", self.native_call_type_parameters()),
         );
-        if let Some(selected) = self.native_iteration_calls.borrow().get(&key) {
+        if let Some(selected) = self.native_queries.native_iteration_calls.borrow().get(&key) {
             return selected.clone();
         }
         let selected = self.select_rust_iteration_call(expression, owner, trait_path, method);
-        self.native_iteration_calls.borrow_mut().insert(key, selected.clone());
+        self.native_queries
+            .native_iteration_calls
+            .borrow_mut()
+            .insert(key, selected.clone());
         selected
     }
 

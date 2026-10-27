@@ -9,6 +9,9 @@ use std::path::PathBuf;
 
 use incan_lang::lang::highlighting;
 
+/// Maximum byte distance between a keyword pattern's match line and its name in the maintained grammar layout.
+const PATTERN_LOOKBACK_BYTES: usize = 240;
+
 /// Rewrite the checked-in VS Code grammar so keyword regexes match the canonical language registry.
 ///
 /// This is intended for repository maintenance and should be run after changing `incan_lang::lang::highlighting` or the
@@ -35,7 +38,7 @@ fn workspace_root() -> PathBuf {
         return PathBuf::from(root);
     }
     if let Ok(current_dir) = std::env::current_dir()
-        && current_dir.join("Cargo.toml").is_file()
+        && current_dir.join("loaves/kernel/incan_lang/loaf.toml").is_file()
         && current_dir.join("workspaces/ide/vscode").is_dir()
     {
         return current_dir;
@@ -68,7 +71,7 @@ fn replace_named_pattern_match(contents: &str, pattern_name: &str, regex: &str) 
 
     while let Some(relative_name_idx) = contents[cursor..].find(&name_needle) {
         let name_idx = cursor + relative_name_idx;
-        let search_start = name_idx.saturating_sub(240);
+        let search_start = contents.ceil_char_boundary(name_idx.saturating_sub(PATTERN_LOOKBACK_BYTES));
         let prefix = &contents[search_start..name_idx];
         if let Some(relative_match_idx) = prefix.rfind("\"match\":") {
             selected_match_idx = Some(search_start + relative_match_idx);
@@ -128,6 +131,7 @@ mod tests {
     use super::*;
 
     #[test]
+    /// Keep the checked-in keyword buckets in exact agreement with their registry source.
     fn committed_grammar_is_synced_with_registry_buckets() -> Result<(), Box<dyn std::error::Error>> {
         let grammar_path = workspace_root().join("workspaces/ide/vscode/incan.tmLanguage.json");
         let contents = fs::read_to_string(grammar_path)?;
@@ -137,6 +141,7 @@ mod tests {
     }
 
     #[test]
+    /// Replace the selected line without changing surrounding UTF-8 text, even when the byte window cuts a character.
     fn replacement_updates_named_pattern_match_line() -> Result<(), Box<dyn std::error::Error>> {
         let sample = r#"{
   "patterns": [],
@@ -155,6 +160,18 @@ mod tests {
 
         let updated = replace_named_pattern_match(sample, "keyword.control.flow.incan", r"\b(new|old)\b")?;
         assert!(updated.contains(r#""match": "\\b(new|old)\\b","#));
+        for padding in ["", " "] {
+            let prefix = format!("{}{}", "é".repeat(PATTERN_LOOKBACK_BYTES), padding);
+            let unicode_sample = format!("{prefix}{sample}");
+            let updated = replace_named_pattern_match(&unicode_sample, "keyword.control.flow.incan", r"\b(new|old)\b")?;
+            assert_eq!(
+                updated,
+                format!(
+                    "{prefix}{}",
+                    replace_named_pattern_match(sample, "keyword.control.flow.incan", r"\b(new|old)\b")?
+                )
+            );
+        }
         Ok(())
     }
 }

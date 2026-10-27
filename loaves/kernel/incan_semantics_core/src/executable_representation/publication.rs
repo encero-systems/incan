@@ -1044,49 +1044,7 @@ impl<'a> PublicationAudit<'a> {
                     self.place(place)?;
                 }
                 self.arguments(args)?;
-                match callee {
-                    Callee::Function(CallableTarget::Named(target)) => {
-                        for ty in &target.type_args {
-                            self.ty(ty)?;
-                        }
-                        if target.builtin.is_none() {
-                            let identity = target.canonical.as_mut().ok_or(CoverageReason::UnresolvedReference)?;
-                            self.identity(identity, true)?;
-                            if matches!(identity.origin, SymbolOrigin::RustCrate(_)) {
-                                let selection = (identity.clone(), target.type_args.clone());
-                                if !self.native_calls.contains(&selection) {
-                                    self.native_calls.push(selection);
-                                }
-                            }
-                            // Package dispatch is canonical throughout, including calls within the same fragment.
-                            target.direct_call_id = None;
-                        }
-                    }
-                    Callee::Function(CallableTarget::Local(target)) => self.place(&mut target.operand.place)?,
-                    Callee::Method(target) => {
-                        self.native_trait_selection(target)?;
-                        if let Some(arguments) = &target.trait_arguments {
-                            for ty in arguments {
-                                self.ty(ty)?;
-                            }
-                        }
-                        for ty in &target.type_args {
-                            self.ty(ty)?;
-                        }
-                        if let Some(identity) = &mut target.canonical {
-                            self.identity(identity, true)?;
-                        }
-                    }
-                    Callee::Helper(_) => {}
-                    // The activation state is a producer-session fact. Until the portable host-requirement
-                    // contract exists it must not be exported as if it were the consumer's provider plan.
-                    Callee::ProviderOperation(_) => {
-                        return Err(CoverageReason::UnsupportedConstruct);
-                    }
-                    Callee::TypeMetadata(_) => return Err(CoverageReason::UnsupportedConstruct),
-                    Callee::CheckedForeign(_) => return Err(CoverageReason::UnsupportedConstruct),
-                    Callee::CheckedBridge(_) => return Err(CoverageReason::UnsupportedConstruct),
-                }
+                self.callee(callee)?;
             }
             StatementKind::If {
                 cond,
@@ -1164,6 +1122,52 @@ impl<'a> PublicationAudit<'a> {
             }
             StatementKind::Drop { .. } | StatementKind::Continue => {}
             StatementKind::Unsupported { .. } => return Err(CoverageReason::UnsupportedConstruct),
+        }
+        Ok(())
+    }
+
+    /// Audit the checked callee and retain exact native selections without exporting producer-session activation.
+    ///
+    /// Package calls keep canonical dispatch even within their own fragment. Provider, metadata, foreign and bridge
+    /// targets remain refused until their portable execution requirements have a represented contract.
+    fn callee(&mut self, callee: &mut Callee) -> Result<(), CoverageReason> {
+        match callee {
+            Callee::Function(CallableTarget::Named(target)) => {
+                for ty in &target.type_args {
+                    self.ty(ty)?;
+                }
+                if target.builtin.is_none() {
+                    let identity = target.canonical.as_mut().ok_or(CoverageReason::UnresolvedReference)?;
+                    self.identity(identity, true)?;
+                    if matches!(identity.origin, SymbolOrigin::RustCrate(_)) {
+                        let selection = (identity.clone(), target.type_args.clone());
+                        if !self.native_calls.contains(&selection) {
+                            self.native_calls.push(selection);
+                        }
+                    }
+                    target.direct_call_id = None;
+                }
+            }
+            Callee::Function(CallableTarget::Local(target)) => self.place(&mut target.operand.place)?,
+            Callee::Method(target) => {
+                self.native_trait_selection(target)?;
+                if let Some(arguments) = &target.trait_arguments {
+                    for ty in arguments {
+                        self.ty(ty)?;
+                    }
+                }
+                for ty in &target.type_args {
+                    self.ty(ty)?;
+                }
+                if let Some(identity) = &mut target.canonical {
+                    self.identity(identity, true)?;
+                }
+            }
+            Callee::Helper(_) => {}
+            Callee::ProviderOperation(_)
+            | Callee::TypeMetadata(_)
+            | Callee::CheckedForeign(_)
+            | Callee::CheckedBridge(_) => return Err(CoverageReason::UnsupportedConstruct),
         }
         Ok(())
     }

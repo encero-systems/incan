@@ -12,10 +12,11 @@ from unit import describe, project_root_of
 from unit_rust import compile_incan_library, describe_native, toolchain_for
 from incan_units import check_unit, compile_unit, program_binary, run_program
 from unit_compiler import crate_name
-from rust_units import RustBuild, build_rust, read_registry_units
+from rust_units import RustBuild, build_rust, read_registry_units, rust_facet
+from rust_testing import build_rust_tests
 from toolchain import load_toolchain, rust_compiler
 from formatting import format_paths, parse_arguments as format_options
-from testing import run_collected, run_tests
+from testing import run_collected, run_tests, run_rust_harness, test_sources
 from owner_client import owned, status_code
 from owner_protocol import Reply
 from owner_endpoint import stop_owners
@@ -295,6 +296,31 @@ def test(arguments: list[str]) -> None:
 
 def tested(options: Options) -> Result[i32, str]:
     """Make a test unit's executable, through its owner or in this process, and report each test's fresh outcome."""
+    if Path(options.path).is_dir():
+        declared = rust_facet(options.path, false)?
+        if declared.kind != "" or len(declared.binaries) > 0:
+            return tested_project(options)
+    return tested_incan(options)
+
+
+def tested_project(options: Options) -> Result[i32, str]:
+    """Run Rust harnesses and Incan test modules, retaining failure from either language."""
+    mut failed = false
+    for binary in build_rust_tests(rust_request(options)?)?:
+        if run_rust_harness(Path(binary), Path(options.path))? != 0:
+            failed = true
+    for source in test_sources(Path(options.path))?:
+        mut selected = options
+        selected.path = source.0
+        if tested_incan(selected)? != 0:
+            failed = true
+    if failed:
+        return Ok(1)
+    return Ok(0)
+
+
+def tested_incan(options: Options) -> Result[i32, str]:
+    """Preserve owner-backed Incan test compilation and per-entry execution."""
     match via_owner("test", options, Path(options.path)):
         Some(reply) =>
             if reply.exit != 0:
@@ -423,6 +449,11 @@ def build_selected(options: Options) -> None:
 
 def build_project(options: Options) -> Result[list[str], str]:
     """Compile a Rust project against the registry units of its installed toolchain."""
+    return build_rust(rust_request(options)?)
+
+
+def rust_request(options: Options) -> Result[RustBuild, str]:
+    """Select one installed toolchain and its registry for either a Rust production build or its tests."""
     toolchain = load_toolchain()?
     registry = read_registry_units(Path(toolchain.registry_units), options.path, options.manifests)?
     request = RustBuild(
@@ -434,12 +465,13 @@ def build_project(options: Options) -> Result[list[str], str]:
         default_features=options.request.default_features,
         all_features=options.request.all_features,
         substitutes=options.substitutes,
+        rust_facet_dependencies=true,
         incan_compiler=Some(compile_incan_library),
         toolchain_search=toolchain.search,
         toolchain=Some(toolchain),
         manifests=options.manifests,
     )
-    return build_rust(request)
+    return Ok(request)
 
 
 def build_source(path: Path, reader: ManifestReader) -> Result[Option[Path], str]:

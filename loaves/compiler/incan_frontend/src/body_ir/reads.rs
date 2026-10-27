@@ -119,49 +119,10 @@ pub(super) fn count_reads_in_expr(name: &str, expr: &ast::Expr) -> usize {
         }
         ast::Expr::Field(e, _) => count_reads_in_expr(name, &e.node),
         ast::Expr::Index(e, idx) => count_reads_in_expr(name, &e.node) + count_reads_in_expr(name, &idx.node),
-        ast::Expr::Slice(base, slice) => {
-            count_reads_in_expr(name, &base.node)
-                + slice
-                    .start
-                    .as_ref()
-                    .map(|e| count_reads_in_expr(name, &e.node))
-                    .unwrap_or(0)
-                + slice
-                    .end
-                    .as_ref()
-                    .map(|e| count_reads_in_expr(name, &e.node))
-                    .unwrap_or(0)
-                + slice
-                    .step
-                    .as_ref()
-                    .map(|e| count_reads_in_expr(name, &e.node))
-                    .unwrap_or(0)
-        }
+        ast::Expr::Slice(base, slice) => count_reads_in_expr(name, &base.node) + count_reads_in_slice(name, slice),
         ast::Expr::Paren(e) | ast::Expr::Try(e) => count_reads_in_expr(name, &e.node),
         // The supported async surface lowers these operands too; omitting them would select a premature move.
-        ast::Expr::Surface(surface) => match (&surface.key, &surface.payload) {
-            (SurfaceFeatureKey::SoftKeyword(KeywordId::Await), ast::SurfaceExprPayload::PrefixUnary(value)) => {
-                count_reads_in_expr(name, &value.node)
-            }
-            (
-                SurfaceFeatureKey::ScopedDslSurface {
-                    dependency_key,
-                    descriptor_key,
-                },
-                ast::SurfaceExprPayload::RaceFor(race),
-            ) if dependency_key == "std.async" && descriptor_key == "race_for" => race
-                .arms
-                .iter()
-                .map(|arm| {
-                    count_reads_in_expr(name, &arm.awaitable.node)
-                        + match &arm.body {
-                            ast::RaceForBody::Expr(value) => count_reads_in_expr(name, &value.node),
-                            ast::RaceForBody::Block(body) => count_reads_in_stmts(name, body),
-                        }
-                })
-                .sum(),
-            _ => 0,
-        },
+        ast::Expr::Surface(surface) => count_reads_in_surface(name, surface),
         ast::Expr::Tuple(items) | ast::Expr::Set(items) => {
             items.iter().map(|i| count_reads_in_expr(name, &i.node)).sum()
         }
@@ -222,18 +183,7 @@ pub(super) fn count_reads_in_expr(name: &str, expr: &ast::Expr) -> usize {
             count_reads_in_comprehension_clauses(name, &generator.clauses)
                 + count_reads_in_expr(name, &generator.expr.node)
         }
-        ast::Expr::Closure(params, body) => {
-            // `BodyBuilder::lower_closure` reads a captured free variable exactly once at the closure-creation
-            // site, however many times the closure body itself uses it afterward (subsequent uses read the
-            // closure's own captured-binding local, not the outer one this count seeds) -- so this contributes at
-            // most 1, not the raw in-body occurrence count. A name shadowed by the closure's own parameter is never
-            // captured at all and so contributes 0, regardless of how many times the body uses its own parameter.
-            if params.iter().any(|p| p.node.name == name) {
-                0
-            } else {
-                usize::from(count_reads_in_expr(name, &body.node) > 0)
-            }
-        }
+        ast::Expr::Closure(params, body) => count_reads_in_closure_capture(name, params, &body.node),
         ast::Expr::Partial(partial) => {
             // Unlike a closure's captures, a partial callable's preset values are lowered as ordinary sub-expression
             // reads (see `BodyBuilder::lower_partial`), not deduplicated per free-variable name, so this counts them
@@ -266,6 +216,64 @@ pub(super) fn count_reads_in_expr(name: &str, expr: &ast::Expr) -> usize {
         _ => 0,
     }
 }
+
+/// Count the optional slice bounds that operand lowering evaluates, in start/end/step order.
+fn count_reads_in_slice(name: &str, slice: &ast::SliceExpr) -> usize {
+    slice
+        .start
+        .as_ref()
+        .map(|e| count_reads_in_expr(name, &e.node))
+        .unwrap_or(0)
+        + slice
+            .end
+            .as_ref()
+            .map(|e| count_reads_in_expr(name, &e.node))
+            .unwrap_or(0)
+        + slice
+            .step
+            .as_ref()
+            .map(|e| count_reads_in_expr(name, &e.node))
+            .unwrap_or(0)
+}
+
+/// Count only surface payloads supported by Body IR, including every deferred race arm. Unsupported surface
+/// forms contribute zero, matching the expression walk's existing lowered-subset boundary.
+fn count_reads_in_surface(name: &str, surface: &ast::SurfaceExpr) -> usize {
+    match (&surface.key, &surface.payload) {
+        (SurfaceFeatureKey::SoftKeyword(KeywordId::Await), ast::SurfaceExprPayload::PrefixUnary(value)) => {
+            count_reads_in_expr(name, &value.node)
+        }
+        (
+            SurfaceFeatureKey::ScopedDslSurface {
+                dependency_key,
+                descriptor_key,
+            },
+            ast::SurfaceExprPayload::RaceFor(race),
+        ) if dependency_key == "std.async" && descriptor_key == "race_for" => race
+            .arms
+            .iter()
+            .map(|arm| {
+                count_reads_in_expr(name, &arm.awaitable.node)
+                    + match &arm.body {
+                        ast::RaceForBody::Expr(value) => count_reads_in_expr(name, &value.node),
+                        ast::RaceForBody::Block(body) => count_reads_in_stmts(name, body),
+                    }
+            })
+            .sum(),
+        _ => 0,
+    }
+}
+
+/// Count the single outer read performed when a closure captures a free variable. Later body reads use the
+/// captured local; a closure parameter with the same spelling shadows the outer binding and is never captured.
+fn count_reads_in_closure_capture(name: &str, params: &[ast::Spanned<ast::Param>], body: &ast::Expr) -> usize {
+    if params.iter().any(|p| p.node.name == name) {
+        0
+    } else {
+        usize::from(count_reads_in_expr(name, body) > 0)
+    }
+}
+
 /// Count `name` occurrences reachable from one `match` arm's guard and body, for seeding a pattern-bound local's
 /// last-use countdown the same way [`count_reads_in_stmts`] seeds an ordinary binding's -- see
 /// [`BodyBuilder::lower_match_pattern`]. Also reused by [`count_reads_in_expr`]'s own `Match` arm so both counting

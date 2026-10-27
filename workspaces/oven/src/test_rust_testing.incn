@@ -1,0 +1,117 @@
+"""Rust facets use their test dependencies and report both passing and failing unit tests."""
+
+from std.fs import Path
+from files import make_directory, write
+from rust_testing import build_rust_tests
+from loaf_local_graph import LocalFacet
+from rust_activation import DependencyDomain
+from rust_units import RustBuild, identity, read_registry_units, rust_output
+from scratch import scratch_directory
+from testing import run_rust_harness, test_sources
+from toolchain import load_toolchain, rust_compiler
+
+
+pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]:
+    """
+    Exercise the real Rust test producer and reporter, including a test-only local dependency.
+
+    1. Create a Rust library with a passing test and a failing test using a test-only helper.
+    2. Compile and run both tests, requiring a failing command outcome.
+    3. Repair the failing assertion and require the same harness path to rebuild and pass.
+    4. Compile procedural macro unit and integration harnesses in their producer's host domain.
+    """
+    temporary = scratch_directory()?
+    root = temporary.path()
+    project = root.joinpath("project")
+    helper = root.joinpath("helper")
+    make_directory(project.joinpath("src"))?
+    make_directory(helper.joinpath("src"))?
+    make_directory(project.joinpath("tests"))?
+    # 1. The test helper is absent from production dependencies.
+    manifest = "[project]\nname='facet_tests'\nversion='1.0.0'\n[rust]\ntype='lib'\nedition='2024'\n"
+    binaries = "[[rust.bin]]\nname='facet_tests'\npath='src/main.rs'\n"
+    test_dependencies = "[envs.test.dependencies]\nhelper={loaf='helper',path='../helper'}\n"
+    write(project.joinpath("loaf.toml"), manifest + binaries + test_dependencies)?
+    write(helper.joinpath("loaf.toml"), "[project]\nname='helper'\nversion='1.0.0'\n[rust]\ntype='lib'\n")?
+    helper_source = "/// Return the support facet's fixture value.\npub fn value() -> u32 { 7 }\n"
+    write(helper.joinpath("src/lib.rs"), helper_source)?
+    write(helper.joinpath("src/lib.incn"), incan_fixture("pub def facade_only() -> int:", "return 99"))?
+    source = project.joinpath("src/lib.rs")
+    write(source, rust_tests(8))?
+    binary = "fn main() {}\n#[test]\nfn in_binary() { assert_eq!(facet_tests::value(), 7); }\n"
+    write(project.joinpath("src/main.rs"), binary)?
+    integration = "#[test]\nfn imported() { assert_eq!(facet_tests::value(), 7); }\n"
+    write(project.joinpath("tests/imported.rs"), integration)?
+    write(project.joinpath("src/lib.incn"), incan_fixture("def ordinary_library_function() -> None:", "pass"))?
+    write(project.joinpath("tests/test_inline.incn"), incan_fixture("def test_inline() -> None:", "assert true"))?
+    assert [path.0 for path in test_sources(project)?] == [project.joinpath("tests/test_inline.incn").0]
+    toolchain = load_toolchain()?
+    request = RustBuild(
+        project=project.0,
+        rustc=rust_compiler(toolchain),
+        registry=read_registry_units(Path(toolchain.registry_units))?,
+        toolchain=Some(toolchain),
+        toolchain_search=toolchain.search,
+    )
+    # 2. A failure must not hide the other test or become a successful command.
+    programs = build_rust_tests(request)?
+    assert len(programs) == 3
+    assert run_rust_harness(Path(programs[0]), project)? == 1
+    for program in programs[1:]:
+        assert run_rust_harness(Path(program), project)? == 0
+    # 3. Source edits invalidate the ordinary executable proof.
+    write(source, rust_tests(7))?
+    rebuilt = build_rust_tests(request)?
+    assert rebuilt == programs
+    for program in rebuilt:
+        assert run_rust_harness(Path(program), project)? == 0
+    # 4. A procedural macro retains its crate kind and sysroot proc_macro binding.
+    macro = root.joinpath("macro")
+    make_directory(macro.joinpath("src"))?
+    macro_manifest = "[project]\nname='macro_fixture'\nversion='1.0.0'\n[rust]\ntype='proc-macro'\nedition='2024'\n"
+    macro_dependencies = "[envs.test.dependencies]\nhelper={loaf='helper',path='../helper',default-features=false}\n"
+    write(macro.joinpath("loaf.toml"), macro_manifest + macro_dependencies)?
+    macro_source = "use proc_macro::TokenStream;\n"
+    macro_docs = "/// Preserve the macro input.\n"
+    macro_entry = "#[proc_macro]\npub fn passthrough(tokens: TokenStream) -> TokenStream { tokens }\n"
+    macro_test = "#[test]\nfn marker() { assert_eq!(helper::value(), 7); }\n"
+    write(macro.joinpath("src/lib.rs"), macro_source + macro_docs + macro_entry + macro_test)?
+    make_directory(macro.joinpath("tests"))?
+    use_macro = "macro_fixture::passthrough! { const VALUE: u32 = 4; }\n"
+    macro_integration = "#[test]\nfn imported() { assert_eq!((VALUE, helper::value()), (4, 7)); }\n"
+    write(macro.joinpath("tests/imported.rs"), use_macro + macro_integration)?
+    mut macro_request = request
+    macro_request.project = macro.0
+    macro_request.default_features = false
+    macro_programs = build_rust_tests(macro_request)?
+    assert len(macro_programs) == 2
+    verify_macro_domains(macro, helper, macro_request)?
+    for program in macro_programs:
+        assert run_rust_harness(Path(program), macro)? == 0
+    return Ok(None)
+
+
+def verify_macro_domains(macro: Path, helper: Path, request: RustBuild) -> Result[None, str]:
+    """Require one host macro producer and a target-domain test dependency, using canonical project identities."""
+    roles = [(macro, DependencyDomain.Host, "macro_fixture"), (helper, DependencyDomain.Target, "helper")]
+    for project, domain, name in roles:
+        root = project.resolve().map_err((error) => error.message())?
+        facet = LocalFacet(project=root.0, domain=domain, features=[], local=[], registry=[], registry_aliases=[])
+        directory = rust_output(macro, request.profile).joinpath(f"{name}-{identity(facet, request.profile)}")
+        assert directory.is_dir(), f"{name} must retain its {domain.value()} producer identity"
+    return Ok(None)
+
+
+def incan_fixture(header: str, body: str) -> str:
+    """Give each generated Incan fixture a module contract and a declaration docstring."""
+    module = "\"\"\"Exercise Rust facet test selection.\"\"\"\n\n"
+    docstring = "    \"\"\"Provide the fixture behavior.\"\"\"\n"
+    return module + header + "\n" + docstring + "    " + body + "\n"
+
+
+def rust_tests(expected: int) -> str:
+    """The same two observable tests with one changeable expected helper value."""
+    passing = "#[test]\nfn a_passing() { assert_eq!(helper::value(), 7); }\n"
+    checked = "#[test]\nfn z_checked() { assert_eq!(helper::value(), " + str(expected) + "); }\n"
+    source = "/// Return the library fixture value.\npub fn value() -> u32 { 7 }\n"
+    return source + passing + checked

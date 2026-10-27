@@ -760,46 +760,7 @@ impl TypeChecker {
             && let Some(tid) = self.constructor_surface_type(name)
         {
             if matches!(tid, SurfaceTypeId::ValidationError) {
-                let mut message_count = 0usize;
-                let mut invalid_named = false;
-                for arg in args {
-                    match arg {
-                        CallArg::Positional(expr) => {
-                            message_count += 1;
-                            let actual = self.check_expr_with_expected(expr, Some(&ResolvedType::Str));
-                            if !self.types_compatible(&actual, &ResolvedType::Str) {
-                                self.errors
-                                    .push(errors::type_mismatch("str", &actual.to_string(), expr.span));
-                            }
-                        }
-                        CallArg::Named(field, expr) if field.node == "message" => {
-                            message_count += 1;
-                            let actual = self.check_expr_with_expected(expr, Some(&ResolvedType::Str));
-                            if !self.types_compatible(&actual, &ResolvedType::Str) {
-                                self.errors
-                                    .push(errors::type_mismatch("str", &actual.to_string(), expr.span));
-                            }
-                        }
-                        CallArg::Named(field, expr) if field.node == "code" => {
-                            let actual = self.check_expr_with_expected(expr, Some(&ResolvedType::Str));
-                            if !self.types_compatible(&actual, &ResolvedType::Str) {
-                                self.errors
-                                    .push(errors::type_mismatch("str", &actual.to_string(), expr.span));
-                            }
-                        }
-                        CallArg::Named(_, expr) => {
-                            invalid_named = true;
-                            self.check_expr(expr);
-                        }
-                        CallArg::PositionalUnpack(expr) | CallArg::KeywordUnpack(expr) => {
-                            invalid_named = true;
-                            self.check_expr(expr);
-                        }
-                    }
-                }
-                if message_count != 1 || invalid_named {
-                    self.errors.push(errors::validation_error_constructor_shape(span));
-                }
+                self.check_validation_error_fields(args, span);
                 self.record_direct_callee_identity(name, span);
                 return ResolvedType::Named(surface_types::as_str(tid).to_string());
             }
@@ -876,6 +837,51 @@ impl TypeChecker {
                 self.errors.push(errors::unknown_symbol(name, span));
                 ResolvedType::Unknown
             }
+        }
+    }
+
+    /// Check ValidationError's single message and optional code without admitting unknown names or unpacking.
+    /// Payloads retain their string expectation and source order, including independent checks of invalid fields.
+    fn check_validation_error_fields(&mut self, args: &[CallArg], span: Span) {
+        let mut message_count = 0usize;
+        let mut invalid_named = false;
+        for arg in args {
+            match arg {
+                CallArg::Positional(expr) => {
+                    message_count += 1;
+                    let actual = self.check_expr_with_expected(expr, Some(&ResolvedType::Str));
+                    if !self.types_compatible(&actual, &ResolvedType::Str) {
+                        self.errors
+                            .push(errors::type_mismatch("str", &actual.to_string(), expr.span));
+                    }
+                }
+                CallArg::Named(field, expr) if field.node == "message" => {
+                    message_count += 1;
+                    let actual = self.check_expr_with_expected(expr, Some(&ResolvedType::Str));
+                    if !self.types_compatible(&actual, &ResolvedType::Str) {
+                        self.errors
+                            .push(errors::type_mismatch("str", &actual.to_string(), expr.span));
+                    }
+                }
+                CallArg::Named(field, expr) if field.node == "code" => {
+                    let actual = self.check_expr_with_expected(expr, Some(&ResolvedType::Str));
+                    if !self.types_compatible(&actual, &ResolvedType::Str) {
+                        self.errors
+                            .push(errors::type_mismatch("str", &actual.to_string(), expr.span));
+                    }
+                }
+                CallArg::Named(_, expr) => {
+                    invalid_named = true;
+                    self.check_expr(expr);
+                }
+                CallArg::PositionalUnpack(expr) | CallArg::KeywordUnpack(expr) => {
+                    invalid_named = true;
+                    self.check_expr(expr);
+                }
+            }
+        }
+        if message_count != 1 || invalid_named {
+            self.errors.push(errors::validation_error_constructor_shape(span));
         }
     }
 

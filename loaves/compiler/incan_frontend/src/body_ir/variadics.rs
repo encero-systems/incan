@@ -172,30 +172,8 @@ impl BodyBuilder<'_, '_> {
         let mut defaulted_slots = Vec::new();
         for (slot, declaration) in slots.iter().enumerate() {
             let supplied = if declaration.kind != IncanCallableParamKind::Normal {
-                let rvalue = match declaration.kind {
-                    IncanCallableParamKind::RestPositional => {
-                        bir::Rvalue::Aggregate(bir::AggregateKind::List, std::mem::take(&mut sequences[slot]))
-                    }
-                    IncanCallableParamKind::RestKeyword => bir::Rvalue::Dict(std::mem::take(&mut mappings[slot])),
-                    IncanCallableParamKind::Normal => return Err("invalid Body IR rest declaration kind".to_string()),
-                };
-                self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
-                let source_kind = match declaration.kind {
-                    IncanCallableParamKind::Normal => ast::ParamKind::Normal,
-                    IncanCallableParamKind::RestPositional => ast::ParamKind::RestPositional,
-                    IncanCallableParamKind::RestKeyword => ast::ParamKind::RestKeyword,
-                };
-                let checked = parameter_storage_type(declaration.ty.clone(), source_kind);
-                // A rest list owns the already evaluated SDK carriers, whose checked call outputs may be more
-                // concrete than the legacy slot template. Preserve only homogeneous matching runtime storage.
-                let ty = match &rvalue {
-                    bir::Rvalue::Aggregate(bir::AggregateKind::List, elements) => {
-                        self.retained_list_type(&checked, elements)
-                    }
-                    _ => checked,
-                };
                 Some((
-                    self.push_assign_temp(rvalue, ty, scope, hir_span(span), out),
+                    self.pack_rest_slot(declaration, &mut sequences[slot], &mut mappings[slot], scope, span, out)?,
                     args.len() + slot,
                 ))
             } else {
@@ -219,5 +197,37 @@ impl BodyBuilder<'_, '_> {
                 defaulted_slots,
             },
         ))
+    }
+
+    /// Materialize one checked rest slot without reevaluating its already ordered source operands.
+    ///
+    /// Empty rest collections still require allocation. A rest list may retain a more concrete homogeneous SDK
+    /// carrier type than its declaration template; dictionaries keep the checked mapping storage type.
+    fn pack_rest_slot(
+        &mut self,
+        declaration: &DeclaredSlot,
+        sequence: &mut Vec<bir::ArgumentElement>,
+        mapping: &mut Vec<bir::DictEntry>,
+        scope: bir::ScopeId,
+        span: ast::Span,
+        out: &mut Vec<bir::Statement>,
+    ) -> Result<bir::Operand, String> {
+        let (rvalue, source_kind) = match declaration.kind {
+            IncanCallableParamKind::RestPositional => (
+                bir::Rvalue::Aggregate(bir::AggregateKind::List, std::mem::take(sequence)),
+                ast::ParamKind::RestPositional,
+            ),
+            IncanCallableParamKind::RestKeyword => {
+                (bir::Rvalue::Dict(std::mem::take(mapping)), ast::ParamKind::RestKeyword)
+            }
+            IncanCallableParamKind::Normal => return Err("invalid Body IR rest declaration kind".to_string()),
+        };
+        self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
+        let checked = parameter_storage_type(declaration.ty.clone(), source_kind);
+        let ty = match &rvalue {
+            bir::Rvalue::Aggregate(bir::AggregateKind::List, elements) => self.retained_list_type(&checked, elements),
+            _ => checked,
+        };
+        Ok(self.push_assign_temp(rvalue, ty, scope, hir_span(span), out))
     }
 }

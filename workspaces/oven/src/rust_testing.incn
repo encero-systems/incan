@@ -1,0 +1,135 @@
+"""Build Rust facet unit harnesses with the ordinary facet graph and executable producer."""
+
+from std.fs import Path
+from loaf_local_graph import LocalDemand, LocalFacet, local_facets
+from rust_activation import DependencyDomain
+from rust_units import (
+    RustBuild,
+    build_dependencies,
+    compile_binary,
+    prepared_build,
+    selected_registry,
+    rust_facet,
+    rust_output,
+    target_configuration,
+)
+
+
+pub def build_rust_tests(request: RustBuild) -> Result[list[str], str]:
+    """
+    Compile every unit harness of the root's Rust facet through the shared executable producer.
+
+    1. Select the root's test environment and producer domain while dependencies retain their normal environments.
+    2. Build the selected production and test dependency closure once.
+    3. Compile library, binary and integration harnesses with distinct executable reuse proofs.
+    """
+    mut prepared = prepared_build(request)?
+    prepared.rust_facet_dependencies = true
+    root = Path(prepared.project).resolve().map_err((error) => error.message())?
+    prepared.project = root.0
+    declared = rust_facet(root.0)?
+    # 1. Harness dependencies retain their target domain; a procedural macro's production library is a host root.
+    integrations = integration_sources(declared.library)?
+    needs_library = declared.kind != "" and (len(declared.binaries) > 0 or len(integrations) > 0)
+    demand = LocalDemand(
+        project=root.0,
+        domain=DependencyDomain.Target,
+        features=prepared.features,
+        defaults=prepared.default_features,
+        all_features=prepared.all_features,
+        environment="test",
+    )
+    producers = production_roots(root, declared.kind, needs_library, prepared)
+    facets = local_facets(
+        demand,
+        target_configuration(prepared.rustc)?,
+        prepared.substitutes,
+        prepared.manifests,
+        producers,
+    )?
+    # 2. A binary harness may link the root's production library, while a library harness compiles its own source.
+    prepared.registry = selected_registry(prepared.registry, facets, prepared.profile)?
+    built = build_dependencies(prepared, facets, needs_library and declared.kind != "proc-macro")?
+    library_key = production_library_key(root, facets, len(producers) > 0)?
+    output = rust_output(root, prepared.profile)
+    mut programs: list[str] = []
+    # 3. Harnesses share crate arguments, linking, environments and keys with ordinary executables.
+    for facet in facets:
+        if facet.project != root.0 or facet.domain != DependencyDomain.Target:
+            continue
+        if declared.library != "" and declared.kind != "incan":
+            name = declared.crate_name
+            binary = compile_binary(
+                name,
+                declared.library,
+                facet,
+                declared,
+                output,
+                prepared,
+                built,
+                [],
+                true,
+                "lib",
+                library_key,
+            )?
+            programs.append(binary)
+        for name, source in declared.binaries:
+            programs.append(
+                compile_binary(name, source, facet, declared, output, prepared, built, [], true, "bin", library_key)?,
+            )
+        for source in integrations:
+            name = source.name()[0:len(source.name()) - len(".rs")]
+            binary = compile_binary(
+                name,
+                source.0,
+                facet,
+                declared,
+                output,
+                prepared,
+                built,
+                [],
+                true,
+                "integration",
+                library_key,
+            )?
+            programs.append(binary)
+    return Ok(programs)
+
+
+def production_roots(root: Path, kind: str, needed: bool, request: RustBuild) -> list[LocalDemand]:
+    """Add a procedural macro's production environment only when a harness imports its compiled library."""
+    if kind != "proc-macro" or not needed:
+        return []
+    return [
+        LocalDemand(
+            project=root.0,
+            domain=DependencyDomain.Host,
+            features=request.features,
+            defaults=request.default_features,
+            all_features=request.all_features,
+        ),
+    ]
+
+
+def production_library_key(root: Path, facets: list[LocalFacet], host: bool) -> Result[str, str]:
+    """Name the selected host producer explicitly; ordinary harnesses retain their root's library key."""
+    if not host:
+        return Ok("")
+    for facet in facets:
+        if facet.project == root.0 and facet.domain == DependencyDomain.Host:
+            return Ok(facet.key())
+    return Err("procedural macro test graph has no host library producer")
+
+
+def integration_sources(library: str) -> Result[list[Path], str]:
+    """Find direct Rust tests/*.rs entries relative to the facet's library source root, never another Loaf's tests."""
+    if library == "":
+        return Ok([])
+    directory = Path(library).parent().parent().joinpath("tests")
+    if not directory.is_dir():
+        return Ok([])
+    mut paths: list[str] = []
+    for source in directory.iterdir().map_err((error) => error.message())?:
+        if source.is_file() and source.name().endswith(".rs"):
+            paths.append(source.0)
+    return Ok([Path(path) for path in sorted(paths)])

@@ -1,6 +1,9 @@
 //! Publish derived Display beside its owning layout, delegating to that layout's Debug implementation.
 
-use crate::ast_build::{block, expression, expression_statement, global_path, inherited, local, self_value};
+use crate::ast_build::{
+    RUST_FMT_DEBUG_SYMBOL, RUST_FMT_DISPLAY_SYMBOL, block, expression, expression_statement, global_path, inherited,
+    local, self_value,
+};
 use rustc_ast as ast;
 use rustc_span::Span;
 use thin_vec::thin_vec;
@@ -11,7 +14,7 @@ pub(crate) fn implementation(self_ty: Box<ast::Ty>, generics: ast::Generics, spa
     let delegate = expression(
         ast::ExprKind::Call(
             expression(
-                ast::ExprKind::Path(None, global_path(&["core", "fmt", "Debug", "fmt"], span)),
+                ast::ExprKind::Path(None, global_path(&["core", "fmt", RUST_FMT_DEBUG_SYMBOL, "fmt"], span)),
                 span,
             ),
             thin_vec![self_value(span), local("formatter", span)],
@@ -33,7 +36,7 @@ pub(crate) fn implementation(self_ty: Box<ast::Ty>, generics: ast::Generics, spa
                 safety: ast::Safety::Default,
                 polarity: ast::ImplPolarity::Positive,
                 trait_ref: ast::TraitRef {
-                    path: global_path(&["core", "fmt", "Display"], span),
+                    path: global_path(&["core", "fmt", RUST_FMT_DISPLAY_SYMBOL], span),
                     ref_id: ast::DUMMY_NODE_ID,
                 },
             })),

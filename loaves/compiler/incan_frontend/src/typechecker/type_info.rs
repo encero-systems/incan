@@ -13,7 +13,6 @@ use crate::symbols::{
     CallableParam, ClassInfo, FunctionOverloadInfo, ImplementationTypeParamInfo, MethodInfo,
     NewtypePrimitiveConstraint, ResolvedType, TypeBoundInfo,
 };
-use crate::testing_markers::TestingFixtureScope;
 use incan_lang::interop::{CoercionPolicy, RustFunctionSig};
 use incan_lang::lang::builtins::BuiltinFnId;
 use incan_lang::lang::c_abi::{LinkCapabilityId, ScalarTypeId, link_capability_as_str, scalar_type_as_str};

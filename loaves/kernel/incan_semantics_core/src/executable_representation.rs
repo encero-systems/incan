@@ -1516,7 +1516,7 @@ mod tests {
         Ok(())
     }
 
-    /// Native implementation calls do not enter compiled contracts; governed bodies still need a portable closure.
+    /// Native implementations stay outside compiled frames; governed calls require a retained checked native selection.
     #[test]
     fn compiled_contract_excludes_native_implementation() -> Result<(), Box<dyn std::error::Error>> {
         let mut native = identity("serialize", 9);
@@ -1540,7 +1540,7 @@ mod tests {
         assert!(reader.declaration(&identity("compiled", 1)).is_err());
         assert!(matches!(
             reader.index().coverage(&identity("governed", 2))?,
-            DeclarationCoverage::Uncovered(CoverageReason::UnsupportedConstruct)
+            DeclarationCoverage::Uncovered(CoverageReason::UnresolvedReference)
         ));
         Ok(())
     }
@@ -1590,6 +1590,7 @@ mod tests {
         );
         // A compiled export's checked signature survives an unavailable implementation without becoming a body.
         let mut compiled = module;
+        compiled.bodies[2].type_parameters.clear();
         compiled.bodies[2].callable_representation = Some(crate::body_ir::CallableRepresentation {
             function_pointer_locals: Vec::new(),
             closure_holding_locals: Vec::new(),
@@ -1899,6 +1900,42 @@ mod tests {
         Ok(())
     }
 
+    /// Build the generic Holder layout used to test parameter scope and lazy protocol dependencies together.
+    fn generic_holder_declaration(
+        owner: CanonicalSymbolId,
+        field: CanonicalSymbolId,
+    ) -> crate::body_ir::NominalDeclaration {
+        crate::body_ir::NominalDeclaration {
+            trait_adoptions: Vec::new(),
+            native_item: String::new(),
+            class_inheritance: None,
+            native_type_arguments: Vec::new(),
+            direct_declaration_id: CompilerNodeId::declaration_span("lib", 200, 499),
+            canonical: owner,
+            name: "Holder".into(),
+            fields: vec!["value".into()],
+            field_identities: vec![field],
+            field_aliases: Vec::new(),
+            field_types: vec![IncanType::TypeVar("T".into())],
+            owned_callable_fields: Vec::new(),
+            field_public: vec![true],
+            reflection_fields: None,
+            display_method: None,
+            newtype_deserialize: crate::body_ir::NewtypeDeserialize::Unselected,
+            newtype_string_conversion: crate::body_ir::NewtypeStringConversion::Unselected,
+            reflection_metadata: None,
+            comparison_equality: None,
+            public: true,
+            has_field_defaults: false,
+            field_default_body: None,
+            method_partial_defaults: Vec::new(),
+            derives: Vec::new(),
+            named_type_identities: Default::default(),
+            type_parameters: vec!["T".into()],
+            type_parameter_count: 1,
+        }
+    }
+
     /// A generic nominal layout and its receiver method share the owner's binders, with canonical use requirements.
     #[test]
     fn published_nominals_cover_their_declared_parameters() -> Result<(), Box<dyn std::error::Error>> {
@@ -1920,35 +1957,9 @@ mod tests {
             args: vec![IncanType::Primitive(IncanPrimitiveType::Int)],
         };
         let mut module = module(vec![method, user]);
-        module.nominal_declarations.push(crate::body_ir::NominalDeclaration {
-            trait_adoptions: Vec::new(),
-            native_item: String::new(),
-            class_inheritance: None,
-            native_type_arguments: Vec::new(),
-            direct_declaration_id: CompilerNodeId::declaration_span("lib", 200, 499),
-            canonical: owner.clone(),
-            name: "Holder".into(),
-            fields: vec!["value".into()],
-            field_identities: vec![field.clone()],
-            field_aliases: Vec::new(),
-            field_types: vec![IncanType::TypeVar("T".into())],
-            owned_callable_fields: Vec::new(),
-            field_public: vec![true],
-            reflection_fields: None,
-            display_method: None,
-            newtype_deserialize: crate::body_ir::NewtypeDeserialize::Unselected,
-            newtype_string_conversion: crate::body_ir::NewtypeStringConversion::Unselected,
-            reflection_metadata: None,
-            comparison_equality: None,
-            public: true,
-            has_field_defaults: false,
-            field_default_body: None,
-            method_partial_defaults: Vec::new(),
-            derives: Vec::new(),
-            named_type_identities: Default::default(),
-            type_parameters: vec!["T".into()],
-            type_parameter_count: 1,
-        });
+        module
+            .nominal_declarations
+            .push(generic_holder_declaration(owner.clone(), field.clone()));
         let public = BTreeSet::from([owner.clone(), field, method_id.clone(), identity("use_holder", 1)]);
         let bytes = publish(&module, &public)?;
         let reader = SurfaceReader::open(&bytes)?;

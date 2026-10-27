@@ -9,6 +9,36 @@ use incan_lang::lang::surface::result_methods::ResultMethodId;
 use incan_lang::lang::surface::{dict_methods, list_methods, set_methods};
 use incan_semantics_core::SymbolOrigin;
 
+/// Borrow one written call's arguments and carry its already converted source range through lowering helpers.
+struct CallLoweringSite<'ast> {
+    type_args: &'ast [ast::Spanned<ast::Type>],
+    args: &'ast [ast::CallArg],
+    span: ast::Span,
+    scope: bir::ScopeId,
+    hir_span: HirSourceSpan,
+}
+
+/// Own the selected identity and bound arguments after declaration-slot binding has consumed its parameter plan.
+struct BoundNamedCall {
+    name: String,
+    canonical: Option<CanonicalSymbolId>,
+    direct_call_id: Option<CompilerNodeId>,
+    builtin: Option<BuiltinFnId>,
+    type_args: Vec<IncanType>,
+    binding: bir::ArgumentBinding,
+    arguments: Vec<bir::ArgumentElement>,
+    is_async: bool,
+}
+
+/// Own the selected method identity and slots while retaining native/provider return contracts for post-binding
+/// refinement.
+struct MethodCallBinding {
+    canonical: Option<CanonicalSymbolId>,
+    declared: Option<Vec<DeclaredSlot>>,
+    native_member: Option<bir::LoafCallable>,
+    retained_method: Option<super::published_methods::PublishedMethod>,
+}
+
 /// Put a fully bound two-slot call's single-value arguments in declared slot order.
 ///
 /// `None` unless each slot is supplied exactly once by one written value and nothing is left to a default.
@@ -1479,13 +1509,13 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let ast::Expr::Ident(name) = &callee.node else {
             return false;
         };
-        name == "Some"
+        name == constructors::as_str(ConstructorId::Some)
             && !self.bindings.contains_key(name)
             && !self.local_function_declarations.contains_key(name)
-            && self
-                .type_info
-                .resolved_identity(callee.span)
-                .is_some_and(|identity| identity.origin == SymbolOrigin::Builtin && identity.declaration_name == "Some")
+            && self.type_info.resolved_identity(callee.span).is_some_and(|identity| {
+                identity.origin == SymbolOrigin::Builtin
+                    && identity.declaration_name == constructors::as_str(ConstructorId::Some)
+            })
     }
 
     /// Settle each `Ok(...)` or `Err(...)` argument of the call at `span` to the parameter type the checker resolved
@@ -1537,70 +1567,114 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
-        let hir_span_value = hir_span(span);
-        if let Some(value) = self.lower_diverging_error_helper(callee, type_args, args, span, scope, out) {
+        let call = CallLoweringSite {
+            type_args,
+            args,
+            span,
+            scope,
+            hir_span: hir_span(span),
+        };
+        if let Some(value) = self.lower_known_direct_call(callee, &call, out) {
             return value;
+        }
+        self.settle_open_call_arguments(span, args);
+        let ast::Expr::Ident(name) = &callee.node else {
+            return self.lower_evaluated_callable_call(callee, type_args, args, span, scope, out);
+        };
+        self.lower_named_call(callee, name.clone(), &call, out)
+    }
+
+    /// Lower compiler-retained direct-call forms before open argument settlement and ordinary name dispatch.
+    fn lower_known_direct_call(
+        &mut self,
+        callee: &ast::Spanned<ast::Expr>,
+        call: &CallLoweringSite<'_>,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::Operand> {
+        let (type_args, args, span, scope) = (call.type_args, call.args, call.span, call.scope);
+        if let Some(value) = self.lower_diverging_error_helper(callee, type_args, args, span, scope, out) {
+            return Some(value);
         }
         if let Some(owner) = self.type_info.body_ir_native_constructor_identity(span)
             && incan_semantics_core::body_ir::native_nominal_item(owner)
                 .is_some_and(|path| self.type_info.rust.checked_layouts.contains_key(&path))
         {
             let name = owner.declaration_name.clone();
-            return self.lower_nominal_construction(&name, args, span, callee.span, scope, out);
+            return Some(self.lower_nominal_construction(&name, args, span, callee.span, scope, out));
         }
         if let Some(value) = self.lower_checked_rust_call(None, args, span, scope, out) {
-            return value;
+            return Some(value);
         }
         if let Some(value) = self.lower_testing_raises_call(callee, type_args, args, span, scope, out) {
-            return value;
+            return Some(value);
         }
         if let Some(value) = self.lower_type_field_count(type_args, args, span, scope, out) {
-            return value;
+            return Some(value);
         }
         if let Some(value) = self.lower_checked_length_call(args, span, scope, out) {
-            return value;
+            return Some(value);
         }
         if let Some(error) = self.lower_validation_error_construction(callee, type_args, args, span, scope, out) {
-            return error;
+            return Some(error);
         }
         if self.type_info.resolved_builtin_call(span) == Some(BuiltinFnId::IsInstance) {
-            return self.lower_checked_isinstance_call(type_args, args, span, scope, out);
+            return Some(self.lower_checked_isinstance_call(type_args, args, span, scope, out));
         }
-        self.settle_open_call_arguments(span, args);
-        let ast::Expr::Ident(name) = &callee.node else {
-            return self.lower_evaluated_callable_call(callee, type_args, args, span, scope, out);
-        };
-        let name = name.clone();
+        None
+    }
 
-        // The checked constructor identity distinguishes this conversion from a same-spelled source callable.
+    /// Lower checked List, Set and Dict conversion or empty construction without guessing from the written name.
+    fn lower_checked_collection_call(
+        &mut self,
+        call: &CallLoweringSite<'_>,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::Operand> {
+        let (type_args, args, span, scope) = (call.type_args, call.args, call.span, call.scope);
         if type_args.is_empty()
             && let [ast::CallArg::Positional(source)] = args
         {
             match self.type_info.resolved_collection_constructor(span) {
-                Some(CollectionTypeId::Set) => return self.lower_set_constructor_source(source, span, scope, out),
-                Some(CollectionTypeId::List) => return self.lower_list_constructor_source(source, span, scope, out),
-                Some(CollectionTypeId::Dict) => return self.lower_dict_constructor_source(source, span, scope, out),
+                Some(CollectionTypeId::Set) => {
+                    return Some(self.lower_set_constructor_source(source, span, scope, out));
+                }
+                Some(CollectionTypeId::List) => {
+                    return Some(self.lower_list_constructor_source(source, span, scope, out));
+                }
+                Some(CollectionTypeId::Dict) => {
+                    return Some(self.lower_dict_constructor_source(source, span, scope, out));
+                }
                 _ => {}
             }
         }
-
-        // A retained zero-argument constructor fact distinguishes builtin construction from a same-spelled source
-        // callable. Only empty List/Set/Dict construction is admitted here; iterable conversions stay on their
-        // existing path.
         if args.is_empty()
             && type_args.is_empty()
             && let Some(constructor) = self.type_info.resolved_collection_constructor(span)
         {
             match constructor {
                 CollectionTypeId::List => {
-                    return self.lower_aggregate(bir::AggregateKind::List, &[], span, scope, out);
+                    return Some(self.lower_aggregate(bir::AggregateKind::List, &[], span, scope, out));
                 }
                 CollectionTypeId::Set => {
-                    return self.lower_aggregate(bir::AggregateKind::Set, &[], span, scope, out);
+                    return Some(self.lower_aggregate(bir::AggregateKind::Set, &[], span, scope, out));
                 }
-                CollectionTypeId::Dict => return self.lower_dict(&[], span, scope, out),
+                CollectionTypeId::Dict => return Some(self.lower_dict(&[], span, scope, out)),
                 _ => {}
             }
+        }
+        None
+    }
+
+    /// Lower a checked identifier call after compiler-known forms and argument settlement have completed.
+    fn lower_named_call(
+        &mut self,
+        callee: &ast::Spanned<ast::Expr>,
+        name: String,
+        call: &CallLoweringSite<'_>,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let (args, span, scope) = (call.args, call.span, call.scope);
+        if let Some(value) = self.lower_checked_collection_call(call, out) {
+            return value;
         }
 
         // A recorded constructor field binding is the typechecker's own statement that this spelling constructs a
@@ -1612,7 +1686,22 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if self.type_info.body_ir_constructor_field_binding(span).is_some() {
             return self.lower_nominal_construction(&name, args, span, callee.span, scope, out);
         }
+        if let Some(value) = self.lower_intrinsic_named_call(callee, &name, call, out) {
+            return value;
+        }
+        self.lower_resolved_named_call(callee, name, call, out)
+    }
 
+    /// Lower intrinsic Result and Option payloads; same-spelled source declarations retain ordinary call dispatch.
+    fn lower_intrinsic_named_call(
+        &mut self,
+        callee: &ast::Spanned<ast::Expr>,
+        name: &str,
+        call: &CallLoweringSite<'_>,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::Operand> {
+        let (type_args, args, span, scope, hir_span_value) =
+            (call.type_args, call.args, call.span, call.scope, call.hir_span);
         // `Ok` and `Err` are intrinsic Result constructors, not ordinary direct calls. Retain that checked
         // distinction explicitly: a same-spelled source binding (a local callable, local function, or imported
         // target) must remain on the normal call path and refuse unless its own direct callable facts are available.
@@ -1622,20 +1711,20 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         {
             let result_ty = self.resolve_ty(span);
             let Some((ok_type, error_type)) = result_type_parts(&result_ty) else {
-                return self.unsupported_operand(
+                return Some(self.unsupported_operand(
                     format!("intrinsic Result constructor `{name}` without a resolved Result carrier"),
                     scope,
                     hir_span_value,
                     out,
-                );
+                ));
             };
             let [ast::CallArg::Positional(payload)] = args else {
-                return self.unsupported_operand(
+                return Some(self.unsupported_operand(
                     format!("intrinsic Result constructor `{name}` requires one positional payload"),
                     scope,
                     hir_span_value,
                     out,
-                );
+                ));
             };
             let operand = self.lower_expr_to_operand(payload, scope, out);
             // A Result owns its payload, so a generic or nominal field follows the same clone boundary as a value
@@ -1654,7 +1743,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             } else {
                 recorded
             };
-            return self.push_assign_temp(
+            return Some(self.push_assign_temp(
                 bir::Rvalue::ResultVariant(bir::ResultVariant {
                     kind,
                     payload,
@@ -1666,7 +1755,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 scope,
                 hir_span_value,
                 out,
-            );
+            ));
         }
 
         if self.intrinsic_option_constructor(callee)
@@ -1675,15 +1764,26 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             && let [ast::CallArg::Positional(payload)] = args
         {
             let payload = self.lower_expr_to_operand(payload, scope, out);
-            return self.push_assign_temp(
+            return Some(self.push_assign_temp(
                 bir::Rvalue::Aggregate(bir::AggregateKind::OptionSome, fixed_elements(vec![payload])),
                 self.resolve_ty(span),
                 scope,
                 hir_span_value,
                 out,
-            );
+            ));
         }
+        None
+    }
 
+    /// Resolve explicit call-site arguments before selecting an operator, local callable or named declaration.
+    fn lower_resolved_named_call(
+        &mut self,
+        callee: &ast::Spanned<ast::Expr>,
+        name: String,
+        call: &CallLoweringSite<'_>,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let (type_args, span, scope, hir_span_value) = (call.type_args, call.span, call.scope, call.hir_span);
         let resolved_type_args = match self.call_site_type_arguments(span, type_args) {
             Ok(resolved_type_args) => resolved_type_args,
             Err(description) => {
@@ -1696,91 +1796,135 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let Some(dispatch) = self.type_info.resolved_operator_call(span)
             && dispatch.kind == ResolvedOperatorKind::Call
         {
-            let method = dispatch.method.clone();
-            let receiver_place = self.lower_expr_to_place(callee, scope, out);
-            let receiver = bir::Operand::place(receiver_place, bir::OwnershipFact::Borrow, false);
-            let declared: Option<Vec<DeclaredSlot>> = self
-                .type_info
-                .body_ir_call_site_callable_params(span)
-                .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect());
-            let (mut operands, binding) =
-                match self.bind_declared_args(&format!("`{method}` of `{name}`"), declared, args, scope, out) {
-                    Ok(bound) => bound,
-                    Err(description) => {
-                        return self.unsupported_operand(description, scope, hir_span_value, out);
-                    }
-                };
-            let mut call_args = Vec::with_capacity(operands.len() + 1);
-            call_args.push(bir::ArgumentElement::One(receiver));
-            call_args.append(&mut operands);
-            let ty = self.resolve_ty(span);
-            return self.push_call_temp(
-                bir::Callee::Method(bir::MethodTarget {
-                    native_trait_delegation: None,
-                    name: method,
-                    intrinsic_carrier: None,
-                    reflection: None,
-                    loaf_trait: None,
-                    trait_arguments: self
-                        .checked_trait_arguments(self.type_info.resolved_method_call(span).map(|call| &call.dispatch)),
-                    canonical: self.type_info.resolved_identity(span).cloned(),
-                    type_args: resolved_type_args,
-                    binding,
-                }),
-                call_args,
-                ty,
-                scope,
-                hir_span_value,
-                false,
+            return self.lower_call_operator_value(
+                callee,
+                &name,
+                dispatch.method.clone(),
+                resolved_type_args,
+                call,
                 out,
             );
         }
-
         if let Some(&local) = self.bindings.get(&name) {
-            let checked = self.resolve_ty(callee.span);
-            let storage = &self.locals[local.index()].ty;
-            let local_ty = if matches!(storage, IncanType::Generic { base, .. } if base == "Union") {
-                checked.clone()
-            } else {
-                storage.clone()
-            };
-            let IncanType::Function { params, return_type: _ } = local_ty else {
-                return self.unsupported_operand(
-                    format!("call to non-callable local `{name}`"),
-                    scope,
-                    hir_span_value,
-                    out,
-                );
-            };
-            let slots: Vec<DeclaredSlot> = params.iter().map(DeclaredSlot::from_semantic_param).collect();
-
-            // Source evaluation observes the callable value before its arguments. The target read also performs the
-            // one ownership/last-use decision for that lexical environment, which `CallableTarget::Local` preserves
-            // for a later executor instead of re-deriving it from the local's source spelling.
-            let mut place = bir::Place::from_local(local);
-            super::carrier_projection::retain_checked_narrowing(&mut place, &self.locals[local.index()].ty, &checked);
-            let (fact, last_use) = self.ownership_fact_for_place(&place, &self.locals[local.index()].ty.clone());
-            let (mut operands, binding) =
-                match self.bind_declared_args(&format!("local callable `{name}`"), Some(slots), args, scope, out) {
-                    Ok(bound) => bound,
-                    Err(description) => {
-                        return self.unsupported_operand(description, scope, hir_span_value, out);
-                    }
-                };
-            let shared = params
-                .iter()
-                .enumerate()
-                .filter_map(|(index, parameter)| matches!(parameter.ty, IncanType::Ref(_)).then_some(index))
-                .collect::<Vec<_>>();
-            self.share_argument_slots(&mut operands, &binding, &shared);
-            let callee = bir::Callee::Function(bir::CallableTarget::Local(bir::LocalCallableTarget {
-                operand: bir::PlaceOperand { place, fact, last_use },
-                binding,
-            }));
-            let ty = self.resolve_ty(span);
-            return self.push_call_temp(callee, operands, ty, scope, hir_span_value, false, out);
+            return self.lower_local_callable_value(callee, &name, local, call, out);
         }
+        self.lower_declared_named_call(callee, name, resolved_type_args, call, out)
+    }
 
+    /// Borrow the checked call-dunder receiver before binding arguments to its retained method slots.
+    fn lower_call_operator_value(
+        &mut self,
+        callee: &ast::Spanned<ast::Expr>,
+        name: &str,
+        method: String,
+        resolved_type_args: Vec<IncanType>,
+        call: &CallLoweringSite<'_>,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let (args, span, scope, hir_span_value) = (call.args, call.span, call.scope, call.hir_span);
+        let receiver_place = self.lower_expr_to_place(callee, scope, out);
+        let receiver = bir::Operand::place(receiver_place, bir::OwnershipFact::Borrow, false);
+        let declared: Option<Vec<DeclaredSlot>> = self
+            .type_info
+            .body_ir_call_site_callable_params(span)
+            .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect());
+        let (mut operands, binding) =
+            match self.bind_declared_args(&format!("`{method}` of `{name}`"), declared, args, scope, out) {
+                Ok(bound) => bound,
+                Err(description) => {
+                    return self.unsupported_operand(description, scope, hir_span_value, out);
+                }
+            };
+        let mut call_args = Vec::with_capacity(operands.len() + 1);
+        call_args.push(bir::ArgumentElement::One(receiver));
+        call_args.append(&mut operands);
+        let ty = self.resolve_ty(span);
+        self.push_call_temp(
+            bir::Callee::Method(bir::MethodTarget {
+                native_trait_delegation: None,
+                name: method,
+                intrinsic_carrier: None,
+                reflection: None,
+                loaf_trait: None,
+                trait_arguments: self
+                    .checked_trait_arguments(self.type_info.resolved_method_call(span).map(|call| &call.dispatch)),
+                canonical: self.type_info.resolved_identity(span).cloned(),
+                type_args: resolved_type_args,
+                binding,
+            }),
+            call_args,
+            ty,
+            scope,
+            hir_span_value,
+            false,
+            out,
+        )
+    }
+
+    /// Read a proven live local callable and its ownership fact before lowering its declared arguments.
+    fn lower_local_callable_value(
+        &mut self,
+        callee: &ast::Spanned<ast::Expr>,
+        name: &str,
+        local: bir::LocalId,
+        call: &CallLoweringSite<'_>,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let (args, span, scope, hir_span_value) = (call.args, call.span, call.scope, call.hir_span);
+        let checked = self.resolve_ty(callee.span);
+        let storage = &self.locals[local.index()].ty;
+        let local_ty = if matches!(storage, IncanType::Generic { base, .. } if base == "Union") {
+            checked.clone()
+        } else {
+            storage.clone()
+        };
+        let IncanType::Function { params, return_type: _ } = local_ty else {
+            return self.unsupported_operand(
+                format!("call to non-callable local `{name}`"),
+                scope,
+                hir_span_value,
+                out,
+            );
+        };
+        let slots: Vec<DeclaredSlot> = params.iter().map(DeclaredSlot::from_semantic_param).collect();
+
+        // Source evaluation observes the callable value before its arguments. The target read also performs the
+        // one ownership/last-use decision for that lexical environment, which `CallableTarget::Local` preserves
+        // for a later executor instead of re-deriving it from the local's source spelling.
+        let mut place = bir::Place::from_local(local);
+        super::carrier_projection::retain_checked_narrowing(&mut place, &self.locals[local.index()].ty, &checked);
+        let (fact, last_use) = self.ownership_fact_for_place(&place, &self.locals[local.index()].ty.clone());
+        let (mut operands, binding) =
+            match self.bind_declared_args(&format!("local callable `{name}`"), Some(slots), args, scope, out) {
+                Ok(bound) => bound,
+                Err(description) => {
+                    return self.unsupported_operand(description, scope, hir_span_value, out);
+                }
+            };
+        let shared = params
+            .iter()
+            .enumerate()
+            .filter_map(|(index, parameter)| matches!(parameter.ty, IncanType::Ref(_)).then_some(index))
+            .collect::<Vec<_>>();
+        self.share_argument_slots(&mut operands, &binding, &shared);
+        let callee = bir::Callee::Function(bir::CallableTarget::Local(bir::LocalCallableTarget {
+            operand: bir::PlaceOperand { place, fact, last_use },
+            binding,
+        }));
+        let ty = self.resolve_ty(span);
+        self.push_call_temp(callee, operands, ty, scope, hir_span_value, false, out)
+    }
+
+    /// Resolve the checked declaration and its factory/provider contract before binding a named call.
+    fn lower_declared_named_call(
+        &mut self,
+        callee: &ast::Spanned<ast::Expr>,
+        name: String,
+        resolved_type_args: Vec<IncanType>,
+        call: &CallLoweringSite<'_>,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let (args, span, scope, hir_span_value) = (call.args, call.span, call.scope, call.hir_span);
         // A selected static constructor executes its checked method. Only an ordinary nominal construction without
         // a field binding was declined by the checker and must refuse before generic call lowering.
         let factory = self.checked_nominal_factory_declaration(callee.span, span).is_some();
@@ -1869,7 +2013,33 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if shared_receiver {
             self.share_argument_slots(&mut operands, &binding, &[0]);
         }
+        self.finish_named_call(
+            callee,
+            call,
+            BoundNamedCall {
+                name,
+                canonical: declaration.canonical,
+                direct_call_id: declaration.direct_call_id,
+                builtin: declaration.builtin,
+                type_args: resolved_type_args,
+                binding,
+                arguments: operands,
+                is_async,
+            },
+            out,
+        )
+    }
 
+    /// Refine a bound call's checked result without overriding a provenance refusal, then retain its exact named
+    /// target.
+    fn finish_named_call(
+        &mut self,
+        callee: &ast::Spanned<ast::Expr>,
+        call: &CallLoweringSite<'_>,
+        bound: BoundNamedCall,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let (span, scope, hir_span_value) = (call.span, call.scope, call.hir_span);
         // The checked expression type is the eventual output for immediately awaited source calls. Body IR
         // represents construction and awaiting separately, so their intervening local must own the future.
         let checked_return = self.resolve_ty(span);
@@ -1877,7 +2047,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let returned = if matches!(checked_return, IncanType::Unsupported(_)) {
             checked_return
         } else {
-            declaration
+            bound
                 .canonical
                 .as_ref()
                 .and_then(|identity| self.published_callable_returns.get(identity))
@@ -1885,7 +2055,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 .cloned()
                 .unwrap_or(checked_return)
         };
-        let ty = if is_async {
+        let ty = if bound.is_async {
             IncanType::Generic {
                 base: "Awaitable".to_string(),
                 args: vec![returned],
@@ -1896,14 +2066,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.push_call_temp(
             bir::Callee::Function(bir::CallableTarget::Named(bir::NamedCallableTarget {
                 receiver_type: self.checked_nominal_factory_owner(callee.span, span),
-                name,
-                direct_call_id: declaration.direct_call_id,
-                canonical: declaration.canonical,
-                builtin: declaration.builtin,
-                type_args: resolved_type_args,
-                binding,
+                name: bound.name,
+                direct_call_id: bound.direct_call_id,
+                canonical: bound.canonical,
+                builtin: bound.builtin,
+                type_args: bound.type_args,
+                binding: bound.binding,
             })),
-            operands,
+            bound.arguments,
             ty,
             scope,
             hir_span_value,
@@ -2425,9 +2595,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         (identity.kind == SemanticSourceTargetKind::Method).then_some(binding)
     }
 
-    /// Lower a method call `recv.name(args)` to a [`bir::Callee::Method`] call, with the receiver prepended to
-    /// `args[0]` as a shared or exclusive borrow operand (see the inline comment on the receiver-borrow decision
-    /// below).
+    /// Lower a checked method expression. An ordinary instance call prepends its receiver as a shared or exclusive
+    /// borrow operand.
     ///
     /// Argument binding goes through the same [`plan_declared_args`] planner every other call shape uses, against
     /// the typechecker's own rest-aware call-site signature for this span -- which already has the receiver's
@@ -2448,46 +2617,95 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         scope: bir::ScopeId,
         out: &mut Vec<bir::Statement>,
     ) -> bir::Operand {
-        let hir_span_value = hir_span(span);
-        if let Some(value) = self.lower_checked_foreign_call(args, span, scope, out) {
+        let call = CallLoweringSite {
+            type_args,
+            args,
+            span,
+            scope,
+            hir_span: hir_span(span),
+        };
+        if let Some(value) = self.lower_initial_method_forms(recv, name, &call, out) {
             return value;
-        }
-        if let Some(value) = self.lower_checked_bridge_call(recv, args, span, scope, out) {
-            return value;
-        }
-        if let Some(value) = self.lower_checked_rust_call(Some(recv), args, span, scope, out) {
-            return value;
-        }
-        if let Some(target) = self.checked_enum_variant_target(recv, name, span) {
-            return self.lower_enum_variant_call(target, args, span, scope, out);
-        }
-        if self.type_info.resolved_builtin_call(span) == Some(BuiltinFnId::IsInstance) {
-            return self.lower_checked_isinstance_call(type_args, args, span, scope, out);
         }
         self.settle_open_call_arguments(span, args);
+        if let Some(value) = self.lower_special_method_forms(recv, name, &call, out) {
+            return value;
+        }
+        self.lower_bound_method_call(recv, name, &call, out)
+    }
+
+    /// Lower checked foreign, bridge, enum and isinstance forms before open arguments are settled.
+    fn lower_initial_method_forms(
+        &mut self,
+        recv: &ast::Spanned<ast::Expr>,
+        name: &str,
+        call: &CallLoweringSite<'_>,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::Operand> {
+        let (type_args, args, span, scope) = (call.type_args, call.args, call.span, call.scope);
+        if let Some(value) = self.lower_checked_foreign_call(args, span, scope, out) {
+            return Some(value);
+        }
+        if let Some(value) = self.lower_checked_bridge_call(recv, args, span, scope, out) {
+            return Some(value);
+        }
+        if let Some(value) = self.lower_checked_rust_call(Some(recv), args, span, scope, out) {
+            return Some(value);
+        }
+        if let Some(target) = self.checked_enum_variant_target(recv, name, span) {
+            return Some(self.lower_enum_variant_call(target, args, span, scope, out));
+        }
+        if self.type_info.resolved_builtin_call(span) == Some(BuiltinFnId::IsInstance) {
+            return Some(self.lower_checked_isinstance_call(type_args, args, span, scope, out));
+        }
+        None
+    }
+
+    /// Lower retained builtin, module, metadata, static and newtype forms after argument settlement.
+    fn lower_special_method_forms(
+        &mut self,
+        recv: &ast::Spanned<ast::Expr>,
+        name: &str,
+        call: &CallLoweringSite<'_>,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::Operand> {
+        let (type_args, args, span, scope) = (call.type_args, call.args, call.span, call.scope);
         if let Some(lowered) = self.lower_checked_builtin_method_call(type_args, args, span, scope, out) {
-            return lowered;
+            return Some(lowered);
         }
         if let Some(lowered) = self.lower_list_repeat_call(recv, name, type_args, args, span, scope, out) {
-            return lowered;
+            return Some(lowered);
         }
         if type_args.is_empty()
             && let Some(lowered) = self.lower_text_codec_call(recv, args, span, scope, out)
         {
-            return lowered;
+            return Some(lowered);
         }
         if let Some(lowered) = self.lower_module_qualified_call(recv, name, type_args, args, span, scope, out) {
-            return lowered;
+            return Some(lowered);
         }
         if let Some(value) = self.lower_type_member_metadata(recv, type_args, args, span, scope, out) {
-            return value;
+            return Some(value);
         }
         if self.static_receiver_type(recv, span).is_some() {
-            return self.lower_static_method_call(recv, name, type_args, args, span, scope, out);
+            return Some(self.lower_static_method_call(recv, name, type_args, args, span, scope, out));
         }
         if let Some(sum) = self.lower_newtype_sum(recv, name, type_args, args, span, scope, out) {
-            return sum;
+            return Some(sum);
         }
+        None
+    }
+
+    /// Bind an ordinary method's retained receiver and declaration facts before selecting its final runtime target.
+    fn lower_bound_method_call(
+        &mut self,
+        recv: &ast::Spanned<ast::Expr>,
+        name: &str,
+        call: &CallLoweringSite<'_>,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let (type_args, args, span, scope, hir_span_value) =
+            (call.type_args, call.args, call.span, call.scope, call.hir_span);
         let retained_binding = self.retained_receiver_method_binding(recv, name, span);
         let helper = match self.checked_string_helper_for_method_call(recv, name, span) {
             Ok(helper) => helper,
@@ -2507,42 +2725,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
         };
 
-        // A call on an open `Self` receiver in a standard-library trait default binds against its slot's declared
-        // parameters, which the checker retains for Body IR only.
-        let native_member = super::runtime_nominals::member(self.type_info, &self.resolve_ty(recv.span), name);
-        let canonical = native_member
-            .as_ref()
-            .map(|member| member.canonical.clone())
-            .or_else(|| self.type_info.calls.body_ir_string_slice_members.get(&span).cloned())
-            .or_else(|| {
-                self.type_info
-                    .resolved_identity(span)
-                    .or_else(|| self.type_info.traits.inferred_method_identities.get(&span))
-                    .or_else(|| self.type_info.traits.self_method_identities.get(&span))
-                    .or_else(|| retained_binding.and_then(|binding| binding.identity.as_ref()))
-                    .cloned()
-            });
-        let declared: Option<Vec<DeclaredSlot>> = self
-            .native_source_method_slots(span)
-            .or_else(|| {
-                self.type_info
-                    .traits
-                    .self_method_params
-                    .get(&span)
-                    .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect())
-            })
-            .or_else(|| {
-                retained_binding.map(|binding| binding.params.iter().map(DeclaredSlot::from_checked_param).collect())
-            })
-            // Published task members take only their receiver. The frozen checker leaves their external signature
-            // open, but the guarded SDK contract supplies an empty ordinary parameter list for binding.
-            .or_else(|| native_member.as_ref().map(|_| Vec::new()));
-
-        let retained_method = self.retained_alias_method(recv, name, type_args, args, span);
-        let canonical = canonical
-            .or_else(|| retained_method.as_ref().map(|method| method.canonical.clone()))
-            .or_else(|| self.direct_builtin_method_identity(&self.resolve_ty(recv.span), name));
-        let declared = declared.or_else(|| retained_method.as_ref().map(|_| Vec::new()));
+        let MethodCallBinding {
+            canonical,
+            declared,
+            native_member,
+            retained_method,
+        } = self.method_call_binding(recv, name, call, retained_binding);
 
         let intrinsic_carrier = self.checked_intrinsic_carrier(recv, name);
         let receiver_operand = self.lower_method_receiver(recv, name, intrinsic_carrier.as_deref(), span, scope, out);
@@ -2620,6 +2808,55 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             false,
             out,
         )
+    }
+
+    /// Select method identity and declaration slots in checked precedence order before evaluating the receiver.
+    fn method_call_binding(
+        &self,
+        recv: &ast::Spanned<ast::Expr>,
+        name: &str,
+        call: &CallLoweringSite<'_>,
+        retained_binding: Option<&crate::typechecker::FunctionBindingInfo>,
+    ) -> MethodCallBinding {
+        let (type_args, args, span) = (call.type_args, call.args, call.span);
+        let native_member = super::runtime_nominals::member(self.type_info, &self.resolve_ty(recv.span), name);
+        let canonical = native_member
+            .as_ref()
+            .map(|member| member.canonical.clone())
+            .or_else(|| self.type_info.calls.body_ir_string_slice_members.get(&span).cloned())
+            .or_else(|| {
+                self.type_info
+                    .resolved_identity(span)
+                    .or_else(|| self.type_info.traits.inferred_method_identities.get(&span))
+                    .or_else(|| self.type_info.traits.self_method_identities.get(&span))
+                    .or_else(|| retained_binding.and_then(|binding| binding.identity.as_ref()))
+                    .cloned()
+            });
+        // Open Self calls bind to retained trait slots; receiver-only SDK members supply an empty ordinary signature.
+        let declared = self
+            .native_source_method_slots(span)
+            .or_else(|| {
+                self.type_info
+                    .traits
+                    .self_method_params
+                    .get(&span)
+                    .map(|params| params.iter().map(DeclaredSlot::from_checked_param).collect())
+            })
+            .or_else(|| {
+                retained_binding.map(|binding| binding.params.iter().map(DeclaredSlot::from_checked_param).collect())
+            })
+            .or_else(|| native_member.as_ref().map(|_| Vec::new()));
+        let retained_method = self.retained_alias_method(recv, name, type_args, args, span);
+        let canonical = canonical
+            .or_else(|| retained_method.as_ref().map(|method| method.canonical.clone()))
+            .or_else(|| self.direct_builtin_method_identity(&self.resolve_ty(recv.span), name));
+        let declared = declared.or_else(|| retained_method.as_ref().map(|_| Vec::new()));
+        MethodCallBinding {
+            canonical,
+            declared,
+            native_member,
+            retained_method,
+        }
     }
 
     /// Retain the existing checked standard-carrier method profile once for both receiver evaluation and dispatch.

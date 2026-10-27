@@ -2,6 +2,7 @@
 //! layouts.
 
 use super::*;
+use crate::typechecker::ClassLayoutInfo;
 
 /// Retain imported storage types from their checked owning declarations without resolving a nominal by spelling.
 /// Conflicting copies of one canonical declaration cannot authorize either representation at a consumer global place.
@@ -836,33 +837,42 @@ pub(super) fn collect_local_nominal_declarations(
                 derives: nominal_derives(name, class_layout.is_some(), type_info)?,
                 newtype_deserialize: bir::NewtypeDeserialize::Unselected,
                 newtype_string_conversion: bir::NewtypeStringConversion::Unselected,
-                field_types: fields
-                    .iter()
-                    .map(|field| {
-                        if let Some(layout) = class_layout {
-                            layout
-                                .fields
-                                .iter()
-                                .find(|checked| checked.name == field.node.name)
-                                .map(|checked| {
-                                    parameter_types::checked_parameter_type(&checked.ty, type_info, &type_parameters)
-                                })
-                                .unwrap_or(IncanType::Unknown)
-                        } else {
-                            type_info
-                                .declarations
-                                .model_field_types
-                                .get(&field.span)
-                                .map(|ty| parameter_types::checked_parameter_type(ty, type_info, &type_parameters))
-                                .unwrap_or(IncanType::Unknown)
-                        }
-                    })
-                    .collect(),
+                field_types: nominal_field_types(fields, class_layout, &type_parameters, type_info),
                 named_type_identities: parameter_types::retained_type_identities(type_info),
                 type_parameter_count: type_parameters.len(),
                 type_parameters,
             };
             retain_inherited_layout(retained, type_info)
+        })
+        .collect()
+}
+
+/// Retain source field order while resolving types from the checked class layout or span-keyed model facts.
+/// A missing field fact keeps the existing unknown carrier rather than inferring a layout from source spelling.
+fn nominal_field_types(
+    fields: &[ast::Spanned<ast::FieldDecl>],
+    class_layout: Option<&ClassLayoutInfo>,
+    type_parameters: &[String],
+    type_info: &TypeCheckInfo,
+) -> Vec<IncanType> {
+    fields
+        .iter()
+        .map(|field| {
+            if let Some(layout) = class_layout {
+                layout
+                    .fields
+                    .iter()
+                    .find(|checked| checked.name == field.node.name)
+                    .map(|checked| parameter_types::checked_parameter_type(&checked.ty, type_info, type_parameters))
+                    .unwrap_or(IncanType::Unknown)
+            } else {
+                type_info
+                    .declarations
+                    .model_field_types
+                    .get(&field.span)
+                    .map(|ty| parameter_types::checked_parameter_type(ty, type_info, type_parameters))
+                    .unwrap_or(IncanType::Unknown)
+            }
         })
         .collect()
 }
@@ -1016,10 +1026,13 @@ fn collect_plain_newtype(
         underlying,
         IncanType::Primitive(IncanPrimitiveType::Int | IncanPrimitiveType::Float | IncanPrimitiveType::Bool)
     ) {
-        if !derives.iter().any(|derive| derive == "Clone") {
-            derives.push("Clone".to_owned());
+        if !derives
+            .iter()
+            .any(|derive| derives::from_str(derive) == Some(DeriveId::Clone))
+        {
+            derives.push(derives::as_str(DeriveId::Clone).to_owned());
         }
-        derives.push("Copy".to_owned());
+        derives.push(derives::as_str(DeriveId::Copy).to_owned());
     }
     for selection in type_info.declarations.body_ir_newtype_derives.get(&newtype.name)? {
         if !derives.contains(selection) {

@@ -71,7 +71,7 @@ impl IncanDiagnostic {
         let span_len = (error.span.end - error.span.start).max(1);
 
         // Combine hints into help text
-        let help = if error.hints.is_empty() && error.notes.is_empty() {
+        let help = if error.hints().is_empty() && error.notes().is_empty() {
             if error.related_declarations().is_empty() {
                 None
             } else {
@@ -86,7 +86,7 @@ impl IncanDiagnostic {
             }
         } else {
             let mut help_text = String::new();
-            for note in &error.notes {
+            for note in error.notes() {
                 help_text.push_str("note: ");
                 help_text.push_str(note);
                 help_text.push('\n');
@@ -98,7 +98,7 @@ impl IncanDiagnostic {
                 help_text.push_str(&related.identity.render_compact());
                 help_text.push('\n');
             }
-            for hint in &error.hints {
+            for hint in error.hints() {
                 help_text.push_str("hint: ");
                 help_text.push_str(hint);
                 help_text.push('\n');

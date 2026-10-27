@@ -241,16 +241,7 @@ impl Formatter {
     fn format_method_chain_segment(&mut self, segment: &MethodChainSegment<'_>) {
         self.writer.write(".");
         self.writer.write(segment.method);
-        if !segment.type_args.is_empty() {
-            self.writer.write("[");
-            for (idx, arg) in segment.type_args.iter().enumerate() {
-                if idx > 0 {
-                    self.writer.write(", ");
-                }
-                self.format_type(&arg.node);
-            }
-            self.writer.write("]");
-        }
+        self.format_call_type_args(segment.type_args);
         self.writer.write("(");
         self.format_call_args_with_wrapping(segment.args);
         self.writer.write(")");
@@ -299,44 +290,14 @@ impl Formatter {
                 self.format_unary_op(op);
                 self.format_spanned_expr(operand);
             }
-            Expr::Call(callee, type_args, args) => {
-                self.format_spanned_expr(callee);
-                if !type_args.is_empty() {
-                    self.writer.write("[");
-                    for (i, arg) in type_args.iter().enumerate() {
-                        if i > 0 {
-                            self.writer.write(", ");
-                        }
-                        self.format_type(&arg.node);
-                    }
-                    self.writer.write("]");
-                }
-                self.writer.write("(");
-                self.format_call_args_with_wrapping(args);
-                self.writer.write(")");
-            }
+            Expr::Call(callee, type_args, args) => self.format_call_expression(callee, type_args, args),
             Expr::Index(base, index) => {
                 self.format_spanned_expr(base);
                 self.writer.write("[");
                 self.format_spanned_expr(index);
                 self.writer.write("]");
             }
-            Expr::Slice(base, slice) => {
-                self.format_spanned_expr(base);
-                self.writer.write("[");
-                if let Some(start) = &slice.start {
-                    self.format_spanned_expr(start);
-                }
-                self.writer.write(":");
-                if let Some(end) = &slice.end {
-                    self.format_spanned_expr(end);
-                }
-                if let Some(step) = &slice.step {
-                    self.writer.write(":");
-                    self.format_spanned_expr(step);
-                }
-                self.writer.write("]");
-            }
+            Expr::Slice(base, slice) => self.format_slice_expression(base, slice),
             Expr::Field(base, field) => {
                 self.format_spanned_expr(base);
                 self.writer.write(".");
@@ -353,143 +314,28 @@ impl Formatter {
                     self.format_method_chain_segment(&segment);
                 }
             }
-            Expr::Partial(partial) => {
-                self.writer.write("partial ");
-                self.format_spanned_expr(&partial.target);
-                if !partial.type_args.is_empty() {
-                    self.writer.write("[");
-                    for (i, arg) in partial.type_args.iter().enumerate() {
-                        if i > 0 {
-                            self.writer.write(", ");
-                        }
-                        self.format_type(&arg.node);
-                    }
-                    self.writer.write("]");
-                }
-                self.writer.write("(");
-                self.format_partial_args(&partial.args);
-                self.writer.write(")");
-            }
-            Expr::Surface(surface_expr) => match (&surface_expr.key, &surface_expr.payload) {
-                (SurfaceFeatureKey::SoftKeyword(id), SurfaceExprPayload::PrefixUnary(inner)) => {
-                    self.writer.write(keywords::as_str(*id));
-                    self.writer.write(" ");
-                    self.format_spanned_expr(inner);
-                }
-                (_, SurfaceExprPayload::RaceFor(race)) => {
-                    self.format_race_for_expr(race);
-                }
-                (SurfaceFeatureKey::ScopedDslSurface { .. }, SurfaceExprPayload::LeadingDotPath { segments, .. }) => {
-                    for segment in segments {
-                        self.writer.write(".");
-                        self.writer.write(segment);
-                    }
-                }
-                (
-                    SurfaceFeatureKey::ScopedDslSurface { .. },
-                    SurfaceExprPayload::ScopedGlyph { glyph, left, right, .. },
-                ) => {
-                    self.format_spanned_expr(left);
-                    self.writer.write(" ");
-                    self.writer.write(glyph);
-                    self.writer.write(" ");
-                    self.format_spanned_expr(right);
-                }
-                (
-                    SurfaceFeatureKey::ScopedDslSurface { .. },
-                    SurfaceExprPayload::ScopedSymbolCall { symbol, args, .. },
-                ) => {
-                    self.writer.write(symbol);
-                    self.writer.write("(");
-                    self.format_call_args_with_wrapping(args);
-                    self.writer.write(")");
-                }
-                _ => self.writer.write("<surface_expr>"),
-            },
+            Expr::Partial(partial) => self.format_partial_expression(partial),
+            Expr::Surface(surface_expr) => self.format_surface_expression(surface_expr),
             Expr::VocabBlock(block) => self.format_expression_vocab_block_braced(block),
             Expr::Embedded(fragment) => self.format_embedded_fragment(fragment),
             Expr::Try(inner) => {
                 self.format_spanned_expr(inner);
                 self.writer.write("?");
             }
-            Expr::Match(value, arms) => {
-                self.writer.write("match ");
-                self.format_suite_header_expr(value);
-                self.writer.writeln(":");
-                self.writer.indent();
-                for arm in arms {
-                    self.format_match_arm(arm);
-                }
-                self.writer.dedent();
-            }
+            Expr::Match(value, arms) => self.format_match_expression(value, arms),
             Expr::If(if_expr) => self.format_if_expression(if_expr),
-            Expr::Loop(loop_expr) => {
-                self.writer.writeln("loop:");
-                self.writer.indent();
-                for stmt in &loop_expr.body {
-                    self.format_statement(stmt);
-                }
-                if loop_expr.body.is_empty() {
-                    self.writer.writeln("pass");
-                }
-                self.writer.dedent();
-            }
-            Expr::Generator(generator) => {
-                self.writer.write("(");
-                self.format_spanned_expr(&generator.expr);
-                self.format_comprehension_clauses(&generator.clauses);
-                self.writer.write(")");
-            }
+            Expr::Loop(loop_expr) => self.format_loop_expression(loop_expr),
+            Expr::Generator(generator) => self.format_generator_expression(generator),
             Expr::Closure(params, body) => {
                 self.writer.write("(");
                 self.format_closure_params(params);
                 self.writer.write(") => ");
                 self.format_spanned_expr(body);
             }
-            Expr::Tuple(items) => {
-                self.writer.write("(");
-                for (i, item) in items.iter().enumerate() {
-                    if i > 0 {
-                        self.writer.write(", ");
-                    }
-                    self.format_spanned_expr(item);
-                }
-                if items.len() == 1 {
-                    self.writer.write(",");
-                }
-                self.writer.write(")");
-            }
+            Expr::Tuple(items) => self.format_tuple_expression(items),
             Expr::List(items) => self.format_list(items),
-            Expr::Dict(pairs) => {
-                self.writer.write("{");
-                for (i, entry) in pairs.iter().enumerate() {
-                    if i > 0 {
-                        self.writer.write(", ");
-                    }
-                    match entry {
-                        DictEntry::Pair(k, v) => {
-                            self.format_spanned_expr(k);
-                            self.writer.write(": ");
-                            self.format_spanned_expr(v);
-                        }
-                        DictEntry::Spread(value) => {
-                            self.writer.write("**");
-                            self.format_spanned_expr(value);
-                        }
-                    }
-                }
-                self.writer.write("}");
-            }
-            Expr::Set(items) => {
-                self.writer.write("{");
-                for (i, item) in items.iter().enumerate() {
-                    if i > 0 {
-                        self.writer.write(", ");
-                    }
-                    self.format_spanned_expr(item);
-                }
-                self.writer.write("}");
-            }
+            Expr::Dict(pairs) => self.format_dict_expression(pairs),
+            Expr::Set(items) => self.format_set_expression(items),
             Expr::Paren(inner) => {
                 if Self::is_logical_binary_chain(&inner.node) {
                     self.format_parenthesized_logical_chain(inner);
@@ -503,42 +349,9 @@ impl Formatter {
                 self.format_call_args_with_wrapping(args);
                 self.writer.write(")");
             }
-            Expr::FString(parts) => {
-                self.writer.write("f\"");
-                for part in parts {
-                    match part {
-                        FStringPart::Literal(s) => self.writer.write(&escape_fstring_literal(s)),
-                        FStringPart::Expr { expr, format } => {
-                            self.writer.write("{");
-                            self.format_spanned_expr(expr);
-                            match format {
-                                FStringFormat::Display => {}
-                                FStringFormat::Debug => self.writer.write(":?"),
-                                FStringFormat::Unsupported(spec) => {
-                                    self.writer.write(":");
-                                    self.writer.write(spec);
-                                }
-                            }
-                            self.writer.write("}");
-                        }
-                    }
-                }
-                self.writer.write("\"");
-            }
-            Expr::ListComp(comp) => {
-                self.writer.write("[");
-                self.format_spanned_expr(&comp.expr);
-                self.format_comprehension_clauses(&comp.clauses);
-                self.writer.write("]");
-            }
-            Expr::DictComp(comp) => {
-                self.writer.write("{");
-                self.format_spanned_expr(&comp.key);
-                self.writer.write(": ");
-                self.format_spanned_expr(&comp.value);
-                self.format_comprehension_clauses(&comp.clauses);
-                self.writer.write("}");
-            }
+            Expr::FString(parts) => self.format_fstring_expression(parts),
+            Expr::ListComp(comp) => self.format_list_comprehension(comp),
+            Expr::DictComp(comp) => self.format_dict_comprehension(comp),
             Expr::Yield(inner) => {
                 self.writer.write("yield");
                 if let Some(inner) = inner {
@@ -556,6 +369,217 @@ impl Formatter {
                 self.format_spanned_expr(end);
             }
         }
+    }
+
+    /// Render a call with its explicit type arguments and wrapped value arguments.
+    fn format_call_expression(&mut self, callee: &Spanned<Expr>, type_args: &[Spanned<Type>], args: &[CallArg]) {
+        self.format_spanned_expr(callee);
+        self.format_call_type_args(type_args);
+        self.writer.write("(");
+        self.format_call_args_with_wrapping(args);
+        self.writer.write(")");
+    }
+
+    /// Render an explicit type argument list, omitting brackets when no arguments were authored.
+    fn format_call_type_args(&mut self, type_args: &[Spanned<Type>]) {
+        if type_args.is_empty() {
+            return;
+        }
+        self.writer.write("[");
+        for (index, arg) in type_args.iter().enumerate() {
+            if index > 0 {
+                self.writer.write(", ");
+            }
+            self.format_type(&arg.node);
+        }
+        self.writer.write("]");
+    }
+
+    /// Render a slice, retaining omitted bounds and the presence of an explicit step.
+    fn format_slice_expression(&mut self, base: &Spanned<Expr>, slice: &SliceExpr) {
+        self.format_spanned_expr(base);
+        self.writer.write("[");
+        if let Some(start) = &slice.start {
+            self.format_spanned_expr(start);
+        }
+        self.writer.write(":");
+        if let Some(end) = &slice.end {
+            self.format_spanned_expr(end);
+        }
+        if let Some(step) = &slice.step {
+            self.writer.write(":");
+            self.format_spanned_expr(step);
+        }
+        self.writer.write("]");
+    }
+
+    /// Render a partial callable's target, type arguments and keyword presets.
+    fn format_partial_expression(&mut self, partial: &PartialExpr) {
+        self.writer.write("partial ");
+        self.format_spanned_expr(&partial.target);
+        self.format_call_type_args(&partial.type_args);
+        self.writer.write("(");
+        self.format_partial_args(&partial.args);
+        self.writer.write(")");
+    }
+
+    /// Render the syntax selected by a surface feature and its parsed payload.
+    fn format_surface_expression(&mut self, surface: &SurfaceExpr) {
+        match (&surface.key, &surface.payload) {
+            (SurfaceFeatureKey::SoftKeyword(id), SurfaceExprPayload::PrefixUnary(inner)) => {
+                self.writer.write(keywords::as_str(*id));
+                self.writer.write(" ");
+                self.format_spanned_expr(inner);
+            }
+            (_, SurfaceExprPayload::RaceFor(race)) => self.format_race_for_expr(race),
+            (SurfaceFeatureKey::ScopedDslSurface { .. }, SurfaceExprPayload::LeadingDotPath { segments, .. }) => {
+                for segment in segments {
+                    self.writer.write(".");
+                    self.writer.write(segment);
+                }
+            }
+            (
+                SurfaceFeatureKey::ScopedDslSurface { .. },
+                SurfaceExprPayload::ScopedGlyph { glyph, left, right, .. },
+            ) => {
+                self.format_spanned_expr(left);
+                self.writer.write(" ");
+                self.writer.write(glyph);
+                self.writer.write(" ");
+                self.format_spanned_expr(right);
+            }
+            (SurfaceFeatureKey::ScopedDslSurface { .. }, SurfaceExprPayload::ScopedSymbolCall { symbol, args, .. }) => {
+                self.writer.write(symbol);
+                self.writer.write("(");
+                self.format_call_args_with_wrapping(args);
+                self.writer.write(")");
+            }
+            _ => self.writer.write("<surface_expr>"),
+        }
+    }
+
+    /// Render a match expression and its indented arms.
+    fn format_match_expression(&mut self, value: &Spanned<Expr>, arms: &[Spanned<MatchArm>]) {
+        self.writer.write("match ");
+        self.format_suite_header_expr(value);
+        self.writer.writeln(":");
+        self.writer.indent();
+        for arm in arms {
+            self.format_match_arm(arm);
+        }
+        self.writer.dedent();
+    }
+
+    /// Render a loop expression, supplying `pass` for an empty suite.
+    fn format_loop_expression(&mut self, loop_expr: &LoopExpr) {
+        self.writer.writeln("loop:");
+        self.writer.indent();
+        for stmt in &loop_expr.body {
+            self.format_statement(stmt);
+        }
+        if loop_expr.body.is_empty() {
+            self.writer.writeln("pass");
+        }
+        self.writer.dedent();
+    }
+
+    /// Render a parenthesized generator expression and its clauses.
+    fn format_generator_expression(&mut self, generator: &GeneratorExpr) {
+        self.writer.write("(");
+        self.format_spanned_expr(&generator.expr);
+        self.format_comprehension_clauses(&generator.clauses);
+        self.writer.write(")");
+    }
+
+    /// Render a tuple display, keeping the comma that distinguishes a singleton tuple.
+    fn format_tuple_expression(&mut self, items: &[Spanned<Expr>]) {
+        self.writer.write("(");
+        for (index, item) in items.iter().enumerate() {
+            if index > 0 {
+                self.writer.write(", ");
+            }
+            self.format_spanned_expr(item);
+        }
+        if items.len() == 1 {
+            self.writer.write(",");
+        }
+        self.writer.write(")");
+    }
+
+    /// Render dictionary entries in their authored order, retaining spread prefixes.
+    fn format_dict_expression(&mut self, pairs: &[DictEntry]) {
+        self.writer.write("{");
+        for (index, entry) in pairs.iter().enumerate() {
+            if index > 0 {
+                self.writer.write(", ");
+            }
+            match entry {
+                DictEntry::Pair(key, value) => {
+                    self.format_spanned_expr(key);
+                    self.writer.write(": ");
+                    self.format_spanned_expr(value);
+                }
+                DictEntry::Spread(value) => {
+                    self.writer.write("**");
+                    self.format_spanned_expr(value);
+                }
+            }
+        }
+        self.writer.write("}");
+    }
+
+    /// Render a brace-delimited set display.
+    fn format_set_expression(&mut self, items: &[Spanned<Expr>]) {
+        self.writer.write("{");
+        for (index, item) in items.iter().enumerate() {
+            if index > 0 {
+                self.writer.write(", ");
+            }
+            self.format_spanned_expr(item);
+        }
+        self.writer.write("}");
+    }
+
+    /// Render an f-string, escaping literal parts and retaining each interpolation's format marker.
+    fn format_fstring_expression(&mut self, parts: &[FStringPart]) {
+        self.writer.write("f\"");
+        for part in parts {
+            match part {
+                FStringPart::Literal(text) => self.writer.write(&escape_fstring_literal(text)),
+                FStringPart::Expr { expr, format } => {
+                    self.writer.write("{");
+                    self.format_spanned_expr(expr);
+                    match format {
+                        FStringFormat::Display => {}
+                        FStringFormat::Debug => self.writer.write(":?"),
+                        FStringFormat::Unsupported(spec) => {
+                            self.writer.write(":");
+                            self.writer.write(spec);
+                        }
+                    }
+                    self.writer.write("}");
+                }
+            }
+        }
+        self.writer.write("\"");
+    }
+
+    /// Render a list comprehension and its clauses.
+    fn format_list_comprehension(&mut self, comp: &ListComp) {
+        self.writer.write("[");
+        self.format_spanned_expr(&comp.expr);
+        self.format_comprehension_clauses(&comp.clauses);
+        self.writer.write("]");
+    }
+
+    /// Render a dictionary comprehension and its clauses.
+    fn format_dict_comprehension(&mut self, comp: &DictComp) {
+        self.writer.write("{");
+        self.format_spanned_expr(&comp.key);
+        self.writer.write(": ");
+        self.format_spanned_expr(&comp.value);
+        self.format_comprehension_clauses(&comp.clauses);
+        self.writer.write("}");
     }
 
     /// Format an import-activated `race for value:` expression block.

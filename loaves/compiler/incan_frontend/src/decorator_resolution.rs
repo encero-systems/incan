@@ -14,7 +14,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{Declaration, Decorator, Expr, ImportKind, ImportPath, Program};
+use crate::ast::{Declaration, Decorator, Expr, ImportKind, ImportPath, Program, Spanned};
 use crate::symbols::SymbolTable;
 use incan_lang::lang::builtins::{self, BuiltinFnId};
 use incan_lang::lang::decorators;
@@ -78,6 +78,12 @@ pub fn path_segments_with_prefix(path: &ImportPath) -> Vec<String> {
 /// - `import foo.bar as baz` → `baz` maps to `["foo", "bar"]`
 /// - `from foo.bar import qux as q` → `q` maps to `["foo", "bar", "qux"]`
 pub fn collect_import_aliases(program: &Program) -> HashMap<String, Vec<String>> {
+    collect_declaration_import_aliases(&program.declarations)
+}
+
+/// Collect aliases from one declaration scope without copying its syntax tree. Earlier bindings and declarations
+/// reserve their names, including builtin print names; callers combine nested scopes in their precedence order.
+pub fn collect_declaration_import_aliases(declarations: &[Spanned<Declaration>]) -> HashMap<String, Vec<String>> {
     let mut aliases = HashMap::new();
     let mut occupied = std::iter::once(builtins::as_str(BuiltinFnId::Print).to_string())
         .chain(
@@ -86,7 +92,7 @@ pub fn collect_import_aliases(program: &Program) -> HashMap<String, Vec<String>>
                 .map(|name| (*name).to_string()),
         )
         .collect::<HashSet<_>>();
-    for decl in &program.declarations {
+    for decl in declarations {
         match &decl.node {
             Declaration::Import(import) => match &import.kind {
                 ImportKind::Module(path) => {

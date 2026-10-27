@@ -13,7 +13,7 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
@@ -27,6 +27,9 @@ use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin, canonical_module_ide
 use crate::library_manifest::LibraryManifest;
 use crate::library_manifest::public_identities::public_executable_identities;
 use crate::loaf_index::{LoafIndex, LoafIndexError};
+
+/// Bound temporary storage while verifying the selected executable artifact's content digest.
+const CONTENT_DIGEST_BUFFER_BYTES: usize = 64 * 1024;
 
 /// A package requirement that cannot be satisfied before execution. No variant authorizes a fallback route.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -455,29 +458,8 @@ impl OpenSurface {
                 "declared representation coverage differs from the manifest public surface",
             )));
         }
-        // A descriptor selects immutable publication content; it does not authenticate a package. Use the same open
-        // handle for verification and later range reads, without decoding unrelated declaration payloads.
-        file.seek(SeekFrom::Start(0))
-            .map_err(|error| package.unreadable(path.clone(), error))?;
-        let mut digest = Sha256::new();
-        let mut buffer = [0u8; 64 * 1024];
-        let mut content_bytes_verified = 0;
-        loop {
-            let length = file
-                .read(&mut buffer)
-                .map_err(|error| package.unreadable(path.clone(), error))?;
-            if length == 0 {
-                break;
-            }
-            digest.update(&buffer[..length]);
-            content_bytes_verified +=
-                u64::try_from(length).map_err(|_| package.unusable(malformed("read length exceeds wire range")))?;
-        }
-        if hex::encode(digest.finalize()) != descriptor.content_digest {
-            return Err(package.unusable(malformed(
-                "executable content differs from its manifest-selected digest",
-            )));
-        }
+        let content_bytes_verified =
+            Self::verify_content_digest(&mut file, &path, package, &descriptor.content_digest)?;
         Ok(Self {
             file,
             path,
@@ -485,6 +467,40 @@ impl OpenSurface {
             index,
             content_bytes_verified,
         })
+    }
+
+    /// Verify immutable publication content on the handle later used for range reads, without decoding payloads.
+    ///
+    /// The digest binds the manifest-selected bytes; it does not authenticate the package. Successful verification
+    /// leaves the handle at EOF and reports the number of bytes read for the resolution evidence.
+    fn verify_content_digest(
+        file: &mut File,
+        path: &Path,
+        package: &PackageArtifact,
+        expected_digest: &str,
+    ) -> Result<u64, ExecutableResolutionError> {
+        file.seek(SeekFrom::Start(0))
+            .map_err(|error| package.unreadable(path.to_path_buf(), error))?;
+        let mut digest = Sha256::new();
+        let mut buffer = [0u8; CONTENT_DIGEST_BUFFER_BYTES];
+        let mut content_bytes_verified = 0;
+        loop {
+            let length = file
+                .read(&mut buffer)
+                .map_err(|error| package.unreadable(path.to_path_buf(), error))?;
+            if length == 0 {
+                break;
+            }
+            digest.update(&buffer[..length]);
+            content_bytes_verified +=
+                u64::try_from(length).map_err(|_| package.unusable(malformed("read length exceeds wire range")))?;
+        }
+        if hex::encode(digest.finalize()) != expected_digest {
+            return Err(package.unusable(malformed(
+                "executable content differs from its manifest-selected digest",
+            )));
+        }
+        Ok(content_bytes_verified)
     }
 
     /// Range-read one selected fragment and validate its payload identity against its checked index key.

@@ -191,23 +191,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             saved_bindings.push((param.node.name.clone(), previous));
         }
 
-        let mut closure_params = Vec::with_capacity(params.len());
-        for (param, local) in params.iter().zip(closure_param_locals) {
-            let ty = self.locals[local.index()].ty.clone();
-            closure_params.push(bir::CallableParam {
-                local,
-                kind: parameter_types::source_parameter_kind(param.node.kind),
-                name: param.node.name.clone(),
-                ty,
-                span: hir_span(param.span),
-                default: self.lower_callable_default(param.node.default.as_ref(), closure_scope),
-                mutable: param.node.is_mut,
-                native_owned: self
-                    .type_info
-                    .expr_type(param.span)
-                    .is_some_and(|ty| parameter_types::native_collection_parameter(ty, self.type_info)),
-            });
-        }
+        let closure_params = self.lower_closure_callable_params(params, closure_param_locals, closure_scope);
         self.owned_parameters.extend(
             closure_params
                 .iter()
@@ -227,16 +211,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         let mut body_stmts = Vec::new();
         let result = self.lower_expr_to_operand(body_expr, closure_scope, &mut body_stmts);
-        for (name, previous) in saved_bindings {
-            match previous {
-                Some(local) => {
-                    self.bindings.insert(name, local);
-                }
-                None => {
-                    self.bindings.remove(&name);
-                }
-            }
-        }
+        self.restore_local_bindings(saved_bindings);
         self.identity_bindings = enclosing_identity_bindings;
         self.materialized_range_locals = saved_materialized_range_locals;
 
@@ -263,11 +238,40 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         )
     }
 
+    /// Retain the checked closure parameter surface after its invocation-frame locals have been declared.
+    ///
+    /// Defaults lower in the closure scope. Native ownership is selected from the checker's parameter type rather
+    /// than inferred from a later backend representation.
+    fn lower_closure_callable_params(
+        &mut self,
+        params: &[ast::Spanned<ast::Param>],
+        parameter_locals: Vec<bir::LocalId>,
+        scope: bir::ScopeId,
+    ) -> Vec<bir::CallableParam> {
+        let mut parameters = Vec::with_capacity(params.len());
+        for (param, local) in params.iter().zip(parameter_locals) {
+            let ty = self.locals[local.index()].ty.clone();
+            parameters.push(bir::CallableParam {
+                local,
+                kind: parameter_types::source_parameter_kind(param.node.kind),
+                name: param.node.name.clone(),
+                ty,
+                span: hir_span(param.span),
+                default: self.lower_callable_default(param.node.default.as_ref(), scope),
+                mutable: param.node.is_mut,
+                native_owned: self
+                    .type_info
+                    .expr_type(param.span)
+                    .is_some_and(|ty| parameter_types::native_collection_parameter(ty, self.type_info)),
+            });
+        }
+        parameters
+    }
+
     /// Resolve each of a closure literal's parameter types from the typechecker's resolved callable type at the
     /// closure's own span, falling back to [`IncanType::Unknown`] per parameter when unavailable or of mismatched
-    /// length. Mirrors the existing Rust-emission backend's own `recorded_param_types` fallback
-    /// (`loaves/compiler/incan_ir/src/lower/expr/mod.rs`), minus that backend's additional Rust-display-exact override,
-    /// which is meaningful only for concrete Rust closure syntax, not this target-agnostic model.
+    /// length. This target-agnostic model retains checked types rather than deriving a signature from target-language
+    /// closure syntax.
     pub(super) fn closure_param_types(
         &self,
         params: &[ast::Spanned<ast::Param>],

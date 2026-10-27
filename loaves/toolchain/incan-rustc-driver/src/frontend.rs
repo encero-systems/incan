@@ -15,6 +15,7 @@ use incan_frontend::ast::{DecoratorArg, DecoratorArgValue, Expr, Literal};
 use incan_frontend::library_manifest::LibraryManifest;
 use incan_frontend::loaf_index::{LoafIndex, LoafNativeClosure};
 use incan_frontend::parsed_module::ParsedModule;
+use incan_lang::lang::derives::{self, DeriveId};
 use incan_mir_lowering::{SourceInputs, program_refusals, unit_plan};
 use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable, NativeUnionDeclaration, NominalDeclaration};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
@@ -918,7 +919,7 @@ fn retained_trait_marker(decorator: &incan_frontend::ast::Decorator) -> bool {
         && !decorator.args.is_empty()
         && decorator.args.iter().all(|argument| matches!(argument,
             DecoratorArg::Positional(value) if matches!(&value.node,
-                Expr::Literal(Literal::String(path)) if matches!(path.as_str(), "Debug" | "Clone" | "serde::Serialize" | "serde::Deserialize"))))
+                Expr::Literal(Literal::String(path)) if matches!(derives::from_str(path), Some(DeriveId::Debug | DeriveId::Clone)) || matches!(path.as_str(), "serde::Serialize" | "serde::Deserialize"))))
 }
 
 /// Name the first trait feature the direct route cannot retain.

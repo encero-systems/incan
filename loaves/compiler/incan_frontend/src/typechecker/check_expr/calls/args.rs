@@ -30,6 +30,257 @@ struct CallArgumentValidationContext<'a> {
     compatibility: CallArgumentCompatibility,
 }
 
+/// Per-call binding state shared by ordinary arguments and shaped unpack items. Parameter and source names are
+/// borrowed; only the validator's existing slot, duplicate-name and cursor inventories are retained here.
+struct CallArgumentBindings<'params, 'args, 'call> {
+    normal_params: Vec<(usize, &'params CallableParam)>,
+    positional_param_indices: Vec<usize>,
+    rest_positional: Option<&'params CallableParam>,
+    rest_keyword: Option<&'params CallableParam>,
+    normal_bound_spans: Vec<Option<Span>>,
+    named_seen: std::collections::HashMap<&'args str, Span>,
+    positional_index: usize,
+    unexpected_positional: usize,
+    type_bindings: &'call mut std::collections::HashMap<String, ResolvedType>,
+    context: CallArgumentValidationContext<'call>,
+}
+
+impl<'params, 'args, 'call> CallArgumentBindings<'params, 'args, 'call> {
+    /// Build the fixed/rest parameter projection once for this call. Preset slots remain name-addressable but do
+    /// not consume positional arguments, matching the partial callable's retained declaration contract.
+    fn new(
+        params: &'params [CallableParam],
+        type_bindings: &'call mut std::collections::HashMap<String, ResolvedType>,
+        context: CallArgumentValidationContext<'call>,
+    ) -> Self {
+        let normal_params: Vec<_> = params
+            .iter()
+            .enumerate()
+            .filter(|(_, param)| param.kind == ParamKind::Normal)
+            .collect();
+        let positional_param_indices = normal_params
+            .iter()
+            .enumerate()
+            .filter_map(|(normal_idx, (_, param))| (!param.is_partial_preset).then_some(normal_idx))
+            .collect();
+        let normal_bound_spans = vec![None; normal_params.len()];
+        Self {
+            normal_params,
+            positional_param_indices,
+            rest_positional: params.iter().find(|param| param.kind == ParamKind::RestPositional),
+            rest_keyword: params.iter().find(|param| param.kind == ParamKind::RestKeyword),
+            normal_bound_spans,
+            named_seen: std::collections::HashMap::new(),
+            positional_index: 0,
+            unexpected_positional: 0,
+            type_bindings,
+            context,
+        }
+    }
+
+    /// Infer binders before checking one parameter's compatibility, retaining the selected call-local integer
+    /// bridge and argument-adjustment behavior for both direct arguments and unpacked items.
+    fn validate_parameter(
+        &mut self,
+        checker: &mut TypeChecker,
+        param: &CallableParam,
+        actual: &ResolvedType,
+        span: Span,
+    ) {
+        checker.infer_call_argument_type_param_bindings(&param.ty, actual, self.type_bindings);
+        checker.emit_arg_type_mismatch_if_needed(
+            self.context.callee,
+            param.name(),
+            &param.ty,
+            actual,
+            span,
+            self.context.compatibility,
+        );
+    }
+
+    /// Bind one positional value to the next non-preset slot or positional rest parameter. Rest values do not
+    /// advance the fixed-slot cursor; surplus values are counted for the call-wide arity diagnostic.
+    fn bind_positional(&mut self, checker: &mut TypeChecker, actual: &ResolvedType, span: Span) {
+        if let Some(&normal_idx) = self.positional_param_indices.get(self.positional_index) {
+            let (_, param) = self.normal_params[normal_idx];
+            self.normal_bound_spans[normal_idx] = Some(span);
+            self.validate_parameter(checker, param, actual, span);
+            self.positional_index += 1;
+        } else if let Some(param) = self.rest_positional {
+            self.validate_parameter(checker, param, actual, span);
+        } else {
+            self.unexpected_positional += 1;
+        }
+    }
+
+    /// Bind a named value after recording its source-name occurrence. A slot already bound emits its separate
+    /// duplicate diagnostic and skips inference, preserving the distinction between name and slot collisions.
+    fn bind_named(
+        &mut self,
+        checker: &mut TypeChecker,
+        name: &'args str,
+        name_span: Span,
+        actual: &ResolvedType,
+        value_span: Span,
+    ) {
+        if let Some(first_span) = self.named_seen.insert(name, name_span) {
+            checker.errors.push(errors::duplicate_call_argument(
+                self.context.callee,
+                name,
+                first_span,
+                name_span,
+            ));
+        }
+        if let Some((normal_idx, (_, param))) = self
+            .normal_params
+            .iter()
+            .enumerate()
+            .find(|(_, (_, param))| param.name() == Some(name))
+        {
+            if let Some(first_span) = self.normal_bound_spans[normal_idx] {
+                checker.errors.push(errors::duplicate_call_argument(
+                    self.context.callee,
+                    name,
+                    first_span,
+                    name_span,
+                ));
+                return;
+            }
+            let param = *param;
+            self.normal_bound_spans[normal_idx] = Some(value_span);
+            self.validate_parameter(checker, param, actual, value_span);
+        } else if let Some(param) = self.rest_keyword {
+            self.validate_parameter(checker, param, actual, value_span);
+        } else {
+            checker
+                .errors
+                .push(errors::unknown_keyword_argument(self.context.callee, name, name_span));
+        }
+    }
+
+    /// Expand a statically shaped positional unpack before binding its items. Missing tuple facts retain the
+    /// existing fallback expression checks; unshaped operands require the declared positional rest carrier.
+    fn validate_positional_unpack(&mut self, checker: &mut TypeChecker, expr: &Spanned<Expr>, actual: &ResolvedType) {
+        if let Some(items) = TypeChecker::shaped_positional_unpack_items(expr) {
+            let fallback_item_types;
+            let item_types = match actual {
+                ResolvedType::Tuple(item_types) => item_types.as_slice(),
+                _ => {
+                    fallback_item_types = items.iter().map(|item| checker.check_expr(item)).collect::<Vec<_>>();
+                    fallback_item_types.as_slice()
+                }
+            };
+            checker.record_fixed_unpack_plan(expr.span, FixedUnpackPlan::Positional(item_types.to_vec()));
+            for (item, item_ty) in items.iter().zip(item_types.iter()) {
+                self.bind_positional(checker, item_ty, item.span);
+            }
+        } else if let Some(item_types) = TypeChecker::shaped_positional_unpack_types(actual) {
+            checker.record_fixed_unpack_plan(expr.span, FixedUnpackPlan::Positional(item_types.to_vec()));
+            for item_ty in item_types {
+                self.bind_positional(checker, item_ty, expr.span);
+            }
+        } else if let Some(param) = self.rest_positional {
+            let expected = list_ty(param.ty.clone());
+            checker.infer_call_argument_type_param_bindings(&expected, actual, self.type_bindings);
+            checker.emit_arg_type_mismatch_if_needed(
+                self.context.callee,
+                param.name(),
+                &expected,
+                actual,
+                expr.span,
+                self.context.compatibility,
+            );
+        } else {
+            checker
+                .errors
+                .push(errors::call_unpack_without_rest(self.context.callee, "*", expr.span));
+        }
+    }
+
+    /// Expand fixed keyword entries in source order, retaining key spans for name collisions and value spans for
+    /// type checks. An unshaped mapping is compatible only with the declared keyword rest carrier.
+    fn validate_keyword_unpack(
+        &mut self,
+        checker: &mut TypeChecker,
+        expr: &'args Spanned<Expr>,
+        actual: &ResolvedType,
+    ) {
+        if let Some(entries) = TypeChecker::shaped_keyword_unpack_entries(expr) {
+            let fallback_value_types;
+            let value_types = match actual {
+                ResolvedType::Tuple(value_types) => value_types.as_slice(),
+                _ => {
+                    fallback_value_types = entries
+                        .iter()
+                        .map(|(_, value)| checker.check_expr(value))
+                        .collect::<Vec<_>>();
+                    fallback_value_types.as_slice()
+                }
+            };
+            checker.record_fixed_unpack_plan(
+                expr.span,
+                FixedUnpackPlan::Keyword(
+                    entries
+                        .iter()
+                        .filter_map(|(key, _)| TypeChecker::static_string_key(key).map(str::to_string))
+                        .collect(),
+                ),
+            );
+            for ((key, value), value_ty) in entries.iter().zip(value_types.iter()) {
+                if let Some(name) = TypeChecker::static_string_key(key) {
+                    self.bind_named(checker, name, key.span, value_ty, value.span);
+                } else if let Some(param) = self.rest_keyword {
+                    self.validate_parameter(checker, param, value_ty, value.span);
+                } else {
+                    checker
+                        .errors
+                        .push(errors::call_unpack_without_rest(self.context.callee, "**", key.span));
+                }
+            }
+        } else if let Some(param) = self.rest_keyword {
+            let expected = dict_ty(ResolvedType::Str, param.ty.clone());
+            checker.infer_call_argument_type_param_bindings(&expected, actual, self.type_bindings);
+            checker.emit_arg_type_mismatch_if_needed(
+                self.context.callee,
+                param.name(),
+                &expected,
+                actual,
+                expr.span,
+                self.context.compatibility,
+            );
+        } else {
+            checker
+                .errors
+                .push(errors::call_unpack_without_rest(self.context.callee, "**", expr.span));
+        }
+    }
+
+    /// Emit aggregate arity and missing-slot errors only after every argument has contributed its own diagnostics
+    /// and binding facts. Required slots follow declaration order, including name-addressable preset positions.
+    fn finish(self, checker: &mut TypeChecker) {
+        if self.unexpected_positional > 0 {
+            checker.errors.push(errors::builtin_arity(
+                self.context.callee,
+                self.positional_param_indices.len(),
+                self.positional_param_indices.len() + self.unexpected_positional,
+                self.context.call_span,
+            ));
+        }
+        for (idx, (_, param)) in self.normal_params.iter().enumerate() {
+            if self.normal_bound_spans[idx].is_none()
+                && !param.has_default
+                && let Some(name) = param.name()
+            {
+                checker.errors.push(errors::missing_required_argument(
+                    self.context.callee,
+                    name,
+                    self.context.call_span,
+                ));
+            }
+        }
+    }
+}
+
 impl TypeChecker {
     /// Infer a call argument's binders through the outer shared borrow already admitted by argument compatibility.
     /// Matching reference arguments retain structural inference. This adjustment belongs to argument binding rather
@@ -417,305 +668,24 @@ impl TypeChecker {
         type_bindings: &mut std::collections::HashMap<String, ResolvedType>,
         context: CallArgumentValidationContext<'_>,
     ) {
-        let CallArgumentValidationContext {
-            callee,
-            call_span,
-            compatibility,
-        } = context;
-        let normal_params: Vec<(usize, &CallableParam)> = params
-            .iter()
-            .enumerate()
-            .filter(|(_, param)| param.kind == ParamKind::Normal)
-            .collect();
-        let positional_param_indices: Vec<usize> = normal_params
-            .iter()
-            .enumerate()
-            .filter_map(|(normal_idx, (_, param))| (!param.is_partial_preset).then_some(normal_idx))
-            .collect();
-        let rest_positional = params.iter().find(|param| param.kind == ParamKind::RestPositional);
-        let rest_keyword = params.iter().find(|param| param.kind == ParamKind::RestKeyword);
-
-        let mut normal_bound_spans: Vec<Option<Span>> = vec![None; normal_params.len()];
-        let mut named_seen: std::collections::HashMap<&str, Span> = std::collections::HashMap::new();
-        let mut positional_index = 0usize;
-        let mut unexpected_positional = 0usize;
-
+        let mut bindings = CallArgumentBindings::new(params, type_bindings, context);
         for (arg, arg_ty) in args.iter().zip(arg_types.iter()) {
             let arg_span = Self::call_arg_expr(arg).span;
             match arg {
-                CallArg::Positional(_) => {
-                    if let Some(&normal_idx) = positional_param_indices.get(positional_index) {
-                        let (_, param) = normal_params[normal_idx];
-                        normal_bound_spans[normal_idx] = Some(arg_span);
-                        self.infer_call_argument_type_param_bindings(&param.ty, arg_ty, type_bindings);
-                        self.emit_arg_type_mismatch_if_needed(
-                            callee,
-                            param.name(),
-                            &param.ty,
-                            arg_ty,
-                            arg_span,
-                            compatibility,
-                        );
-                        positional_index += 1;
-                    } else if let Some(param) = rest_positional {
-                        self.infer_call_argument_type_param_bindings(&param.ty, arg_ty, type_bindings);
-                        self.emit_arg_type_mismatch_if_needed(
-                            callee,
-                            param.name(),
-                            &param.ty,
-                            arg_ty,
-                            arg_span,
-                            compatibility,
-                        );
-                    } else {
-                        unexpected_positional += 1;
-                    }
-                }
+                CallArg::Positional(_) => bindings.bind_positional(self, arg_ty, arg_span),
                 CallArg::PositionalUnpack(_) => {
-                    if let Some(items) = Self::shaped_positional_unpack_items(Self::call_arg_expr(arg)) {
-                        let fallback_item_types;
-                        let item_types = match arg_ty {
-                            ResolvedType::Tuple(item_types) => item_types.as_slice(),
-                            _ => {
-                                fallback_item_types =
-                                    items.iter().map(|item| self.check_expr(item)).collect::<Vec<_>>();
-                                fallback_item_types.as_slice()
-                            }
-                        };
-                        self.record_fixed_unpack_plan(arg_span, FixedUnpackPlan::Positional(item_types.to_vec()));
-                        for (item, item_ty) in items.iter().zip(item_types.iter()) {
-                            let item_span = item.span;
-                            if let Some(&normal_idx) = positional_param_indices.get(positional_index) {
-                                let (_, param) = normal_params[normal_idx];
-                                normal_bound_spans[normal_idx] = Some(item_span);
-                                self.infer_call_argument_type_param_bindings(&param.ty, item_ty, type_bindings);
-                                self.emit_arg_type_mismatch_if_needed(
-                                    callee,
-                                    param.name(),
-                                    &param.ty,
-                                    item_ty,
-                                    item_span,
-                                    compatibility,
-                                );
-                                positional_index += 1;
-                            } else if let Some(param) = rest_positional {
-                                self.infer_call_argument_type_param_bindings(&param.ty, item_ty, type_bindings);
-                                self.emit_arg_type_mismatch_if_needed(
-                                    callee,
-                                    param.name(),
-                                    &param.ty,
-                                    item_ty,
-                                    item_span,
-                                    compatibility,
-                                );
-                            } else {
-                                unexpected_positional += 1;
-                            }
-                        }
-                    } else if let Some(item_types) = Self::shaped_positional_unpack_types(arg_ty) {
-                        self.record_fixed_unpack_plan(arg_span, FixedUnpackPlan::Positional(item_types.to_vec()));
-                        for item_ty in item_types {
-                            if let Some(&normal_idx) = positional_param_indices.get(positional_index) {
-                                let (_, param) = normal_params[normal_idx];
-                                normal_bound_spans[normal_idx] = Some(arg_span);
-                                self.infer_call_argument_type_param_bindings(&param.ty, item_ty, type_bindings);
-                                self.emit_arg_type_mismatch_if_needed(
-                                    callee,
-                                    param.name(),
-                                    &param.ty,
-                                    item_ty,
-                                    arg_span,
-                                    compatibility,
-                                );
-                                positional_index += 1;
-                            } else if let Some(param) = rest_positional {
-                                self.infer_call_argument_type_param_bindings(&param.ty, item_ty, type_bindings);
-                                self.emit_arg_type_mismatch_if_needed(
-                                    callee,
-                                    param.name(),
-                                    &param.ty,
-                                    item_ty,
-                                    arg_span,
-                                    compatibility,
-                                );
-                            } else {
-                                unexpected_positional += 1;
-                            }
-                        }
-                    } else if let Some(param) = rest_positional {
-                        let expected = list_ty(param.ty.clone());
-                        self.infer_call_argument_type_param_bindings(&expected, arg_ty, type_bindings);
-                        self.emit_arg_type_mismatch_if_needed(
-                            callee,
-                            param.name(),
-                            &expected,
-                            arg_ty,
-                            arg_span,
-                            compatibility,
-                        );
-                    } else {
-                        self.errors
-                            .push(errors::call_unpack_without_rest(callee, "*", arg_span));
-                    }
+                    bindings.validate_positional_unpack(self, Self::call_arg_expr(arg), arg_ty);
                 }
                 CallArg::Named(name, _) => {
-                    if let Some(first_span) = named_seen.insert(name.node.as_str(), name.span) {
-                        self.errors.push(errors::duplicate_call_argument(
-                            callee, &name.node, first_span, name.span,
-                        ));
-                    }
-
-                    if let Some((normal_idx, (_, param))) = normal_params
-                        .iter()
-                        .enumerate()
-                        .find(|(_, (_, param))| param.name() == Some(name.node.as_str()))
-                    {
-                        if let Some(first_span) = normal_bound_spans[normal_idx] {
-                            self.errors.push(errors::duplicate_call_argument(
-                                callee, &name.node, first_span, name.span,
-                            ));
-                            continue;
-                        }
-                        normal_bound_spans[normal_idx] = Some(arg_span);
-                        self.infer_call_argument_type_param_bindings(&param.ty, arg_ty, type_bindings);
-                        self.emit_arg_type_mismatch_if_needed(
-                            callee,
-                            param.name(),
-                            &param.ty,
-                            arg_ty,
-                            arg_span,
-                            compatibility,
-                        );
-                    } else if let Some(param) = rest_keyword {
-                        self.infer_call_argument_type_param_bindings(&param.ty, arg_ty, type_bindings);
-                        self.emit_arg_type_mismatch_if_needed(
-                            callee,
-                            param.name(),
-                            &param.ty,
-                            arg_ty,
-                            arg_span,
-                            compatibility,
-                        );
-                    } else {
-                        self.errors
-                            .push(errors::unknown_keyword_argument(callee, &name.node, name.span));
-                    }
+                    bindings.bind_named(self, name.node.as_str(), name.span, arg_ty, arg_span);
                 }
                 CallArg::KeywordUnpack(_) => {
-                    if let Some(entries) = Self::shaped_keyword_unpack_entries(Self::call_arg_expr(arg)) {
-                        let fallback_value_types;
-                        let value_types = match arg_ty {
-                            ResolvedType::Tuple(value_types) => value_types.as_slice(),
-                            _ => {
-                                fallback_value_types = entries
-                                    .iter()
-                                    .map(|(_, value)| self.check_expr(value))
-                                    .collect::<Vec<_>>();
-                                fallback_value_types.as_slice()
-                            }
-                        };
-                        self.record_fixed_unpack_plan(
-                            arg_span,
-                            FixedUnpackPlan::Keyword(
-                                entries
-                                    .iter()
-                                    .filter_map(|(key, _)| Self::static_string_key(key).map(str::to_string))
-                                    .collect(),
-                            ),
-                        );
-                        for ((key, value), value_ty) in entries.iter().zip(value_types.iter()) {
-                            if let Some(name) = Self::static_string_key(key) {
-                                if let Some(first_span) = named_seen.insert(name, key.span) {
-                                    self.errors
-                                        .push(errors::duplicate_call_argument(callee, name, first_span, key.span));
-                                }
-
-                                if let Some((normal_idx, (_, param))) = normal_params
-                                    .iter()
-                                    .enumerate()
-                                    .find(|(_, (_, param))| param.name() == Some(name))
-                                {
-                                    if let Some(first_span) = normal_bound_spans[normal_idx] {
-                                        self.errors
-                                            .push(errors::duplicate_call_argument(callee, name, first_span, key.span));
-                                        continue;
-                                    }
-                                    normal_bound_spans[normal_idx] = Some(value.span);
-                                    self.infer_call_argument_type_param_bindings(&param.ty, value_ty, type_bindings);
-                                    self.emit_arg_type_mismatch_if_needed(
-                                        callee,
-                                        param.name(),
-                                        &param.ty,
-                                        value_ty,
-                                        value.span,
-                                        compatibility,
-                                    );
-                                } else if let Some(param) = rest_keyword {
-                                    self.infer_call_argument_type_param_bindings(&param.ty, value_ty, type_bindings);
-                                    self.emit_arg_type_mismatch_if_needed(
-                                        callee,
-                                        param.name(),
-                                        &param.ty,
-                                        value_ty,
-                                        value.span,
-                                        compatibility,
-                                    );
-                                } else {
-                                    self.errors
-                                        .push(errors::unknown_keyword_argument(callee, name, key.span));
-                                }
-                            } else if let Some(param) = rest_keyword {
-                                self.infer_call_argument_type_param_bindings(&param.ty, value_ty, type_bindings);
-                                self.emit_arg_type_mismatch_if_needed(
-                                    callee,
-                                    param.name(),
-                                    &param.ty,
-                                    value_ty,
-                                    value.span,
-                                    compatibility,
-                                );
-                            } else {
-                                self.errors
-                                    .push(errors::call_unpack_without_rest(callee, "**", key.span));
-                            }
-                        }
-                    } else if let Some(param) = rest_keyword {
-                        let expected = dict_ty(ResolvedType::Str, param.ty.clone());
-                        self.infer_call_argument_type_param_bindings(&expected, arg_ty, type_bindings);
-                        self.emit_arg_type_mismatch_if_needed(
-                            callee,
-                            param.name(),
-                            &expected,
-                            arg_ty,
-                            arg_span,
-                            compatibility,
-                        );
-                    } else {
-                        self.errors
-                            .push(errors::call_unpack_without_rest(callee, "**", arg_span));
-                    }
+                    bindings.validate_keyword_unpack(self, Self::call_arg_expr(arg), arg_ty);
                 }
             }
         }
 
-        if unexpected_positional > 0 {
-            self.errors.push(errors::builtin_arity(
-                callee,
-                positional_param_indices.len(),
-                positional_param_indices.len() + unexpected_positional,
-                call_span,
-            ));
-        }
-
-        for (idx, (_, param)) in normal_params.iter().enumerate() {
-            if normal_bound_spans[idx].is_none()
-                && !param.has_default
-                && let Some(name) = param.name()
-            {
-                self.errors
-                    .push(errors::missing_required_argument(callee, name, call_span));
-            }
-        }
+        bindings.finish(self);
     }
 
     /// Validate a source call argument, retaining metadata-selected dereferences and owned target materialization at

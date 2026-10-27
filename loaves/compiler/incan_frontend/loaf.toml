@@ -54,5 +54,4 @@ type = "lib"
 
 # Test-only dependencies and helper features; production defaults are unchanged.
 [envs.test.dependencies]
-incan_std_core = { loaf = "incan_std_core", path = "../../stdlib/core" }
 tempfile = { optional = false }

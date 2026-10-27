@@ -18,11 +18,11 @@
 //! loaves/kernel/incan_lang/target/incan/rust/debug/bin/generate_lang_reference
 //! ```
 //!
-//! ## Panics
-//! - If the workspace root cannot be resolved.
-//! - If output files cannot be written.
+//! ## Errors
+//! - Returns an I/O error if the workspace root cannot be resolved or output files cannot be written.
 
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use incan_lang::lang::types::{collections, numerics, stringlike};
@@ -92,22 +92,22 @@ fn start_section(out: &mut String, heading: &str) {
     out.push_str("\n\n");
 }
 
-/// Generate the language reference from this checkout's source registries.
-fn main() {
-    let root = workspace_root();
+/// Generate the language reference from this checkout's source registries, propagating workspace and filesystem
+/// failures through the command's ordinary error exit instead of panicking.
+fn main() -> io::Result<()> {
+    let root = workspace_root()?;
 
     let out_dir = root.join("workspaces/docs-site/docs/language/reference");
-    if let Err(err) = fs::create_dir_all(&out_dir) {
-        panic!("create workspaces/docs-site/docs/language/reference/: {err}");
-    }
+    fs::create_dir_all(&out_dir)?;
 
-    write_language_reference(&out_dir.join("language.md"));
+    write_language_reference(&out_dir.join("language.md"))
 }
 
 /// Write `workspaces/docs-site/docs/language/reference/language.md`.
 ///
-/// This is a single consolidated reference document generated from `incan_lang::lang` registries.
-fn write_language_reference(path: &Path) {
+/// This is a single consolidated reference document generated from `incan_lang::lang` registries. Filesystem failures
+/// return to the command boundary without replacing them with a panic.
+fn write_language_reference(path: &Path) -> io::Result<()> {
     let mut out = String::new();
     out.push_str("# Incan language reference\n\n");
     out.push_str("!!! warning \"Generated file\"\n");
@@ -155,9 +155,7 @@ fn write_language_reference(path: &Path) {
 
     trim_trailing_newlines(&mut out);
     out.push('\n');
-    if let Err(err) = fs::write(path, out) {
-        panic!("write language.md: {err}");
-    }
+    fs::write(path, out)
 }
 
 /// Render the keyword registry table, then an examples subsection when any keyword carries examples.
@@ -879,299 +877,100 @@ fn render_surface_methods_section(out: &mut String) {
     // Float
     out.push_str("### float methods\n\n");
     out.push_str(table_header());
-    for m in surface::float_methods::FLOAT_METHODS {
-        let id = format!("{:?}", m.id);
-        let canonical = format!("`{}`", m.canonical);
-        let aliases = if m.aliases.is_empty() {
-            String::new()
-        } else {
-            m.aliases
-                .iter()
-                .map(|a| format!("`{}`", a))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        let desc = m.description;
-        let rfc = m.introduced_in_rfc;
-        let since = m.since;
-        let stability = format!("{:?}", m.stability);
-        out.push_str(&format!(
-            "| {id} | {canonical} | {aliases} | {desc} | {rfc} | {since} | {stability} |\n"
-        ));
-    }
+    render_surface_method_rows(out, surface::float_methods::FLOAT_METHODS);
     out.push('\n');
 
     // List
     out.push_str("\n### List methods\n\n");
     out.push_str(table_header());
-    for m in surface::list_methods::LIST_METHODS {
-        let id = format!("{:?}", m.id);
-        let canonical = format!("`{}`", m.canonical);
-        let aliases = if m.aliases.is_empty() {
-            String::new()
-        } else {
-            m.aliases
-                .iter()
-                .map(|a| format!("`{}`", a))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        let desc = m.description;
-        let rfc = m.introduced_in_rfc;
-        let since = m.since;
-        let stability = format!("{:?}", m.stability);
-        out.push_str(&format!(
-            "| {id} | {canonical} | {aliases} | {desc} | {rfc} | {since} | {stability} |\n"
-        ));
-    }
+    render_surface_method_rows(out, surface::list_methods::LIST_METHODS);
     out.push('\n');
 
     // Dict
     out.push_str("\n### Dict methods\n\n");
     out.push_str(table_header());
-    for m in surface::dict_methods::DICT_METHODS {
-        let id = format!("{:?}", m.id);
-        let canonical = format!("`{}`", m.canonical);
-        let aliases = if m.aliases.is_empty() {
-            String::new()
-        } else {
-            m.aliases
-                .iter()
-                .map(|a| format!("`{}`", a))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        let desc = m.description;
-        let rfc = m.introduced_in_rfc;
-        let since = m.since;
-        let stability = format!("{:?}", m.stability);
-        out.push_str(&format!(
-            "| {id} | {canonical} | {aliases} | {desc} | {rfc} | {since} | {stability} |\n"
-        ));
-    }
+    render_surface_method_rows(out, surface::dict_methods::DICT_METHODS);
     out.push('\n');
     out.push_str(DICT_LOOKUP_CONTRACT);
 
     // Set
     out.push_str("\n### Set methods\n\n");
     out.push_str(table_header());
-    for m in surface::set_methods::SET_METHODS {
-        let id = format!("{:?}", m.id);
-        let canonical = format!("`{}`", m.canonical);
-        let aliases = if m.aliases.is_empty() {
-            String::new()
-        } else {
-            m.aliases
-                .iter()
-                .map(|a| format!("`{}`", a))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        let desc = m.description;
-        let rfc = m.introduced_in_rfc;
-        let since = m.since;
-        let stability = format!("{:?}", m.stability);
-        out.push_str(&format!(
-            "| {id} | {canonical} | {aliases} | {desc} | {rfc} | {since} | {stability} |\n"
-        ));
-    }
+    render_surface_method_rows(out, surface::set_methods::SET_METHODS);
     out.push('\n');
 
     // Option
     out.push_str("\n### Option methods\n\n");
     out.push_str(table_header());
-    for m in surface::option_methods::OPTION_METHODS {
-        let id = format!("{:?}", m.id);
-        let canonical = format!("`{}`", m.canonical);
-        let aliases = if m.aliases.is_empty() {
-            String::new()
-        } else {
-            m.aliases
-                .iter()
-                .map(|a| format!("`{}`", a))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        let desc = m.description;
-        let rfc = m.introduced_in_rfc;
-        let since = m.since;
-        let stability = format!("{:?}", m.stability);
-        out.push_str(&format!(
-            "| {id} | {canonical} | {aliases} | {desc} | {rfc} | {since} | {stability} |\n"
-        ));
-    }
+    render_surface_method_rows(out, surface::option_methods::OPTION_METHODS);
     out.push('\n');
 
     // Result
     out.push_str("\n### Result methods\n\n");
     out.push_str(table_header());
-    for m in surface::result_methods::RESULT_METHODS {
-        let id = format!("{:?}", m.id);
-        let canonical = format!("`{}`", m.canonical);
-        let aliases = if m.aliases.is_empty() {
-            String::new()
-        } else {
-            m.aliases
-                .iter()
-                .map(|a| format!("`{}`", a))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        let desc = m.description;
-        let rfc = m.introduced_in_rfc;
-        let since = m.since;
-        let stability = format!("{:?}", m.stability);
-        out.push_str(&format!(
-            "| {id} | {canonical} | {aliases} | {desc} | {rfc} | {since} | {stability} |\n"
-        ));
-    }
+    render_surface_method_rows(out, surface::result_methods::RESULT_METHODS);
     out.push('\n');
 
     // Iterator
     out.push_str("\n### Iterator methods\n\n");
     out.push_str(table_header());
-    for m in surface::iterator_methods::ITERATOR_METHODS {
-        let id = format!("{:?}", m.id);
-        let canonical = format!("`{}`", m.canonical);
-        let aliases = if m.aliases.is_empty() {
-            String::new()
-        } else {
-            m.aliases
-                .iter()
-                .map(|a| format!("`{}`", a))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        let desc = m.description;
-        let rfc = m.introduced_in_rfc;
-        let since = m.since;
-        let stability = format!("{:?}", m.stability);
-        out.push_str(&format!(
-            "| {id} | {canonical} | {aliases} | {desc} | {rfc} | {since} | {stability} |\n"
-        ));
-    }
+    render_surface_method_rows(out, surface::iterator_methods::ITERATOR_METHODS);
     out.push('\n');
 
     // Frozen containers
     out.push_str("\n### FrozenList methods\n\n");
     out.push_str(table_header());
-    for m in surface::frozen_list_methods::FROZEN_LIST_METHODS {
-        let id = format!("{:?}", m.id);
-        let canonical = format!("`{}`", m.canonical);
-        let aliases = if m.aliases.is_empty() {
-            String::new()
-        } else {
-            m.aliases
-                .iter()
-                .map(|a| format!("`{}`", a))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        let desc = m.description;
-        let rfc = m.introduced_in_rfc;
-        let since = m.since;
-        let stability = format!("{:?}", m.stability);
-        out.push_str(&format!(
-            "| {id} | {canonical} | {aliases} | {desc} | {rfc} | {since} | {stability} |\n"
-        ));
-    }
+    render_surface_method_rows(out, surface::frozen_list_methods::FROZEN_LIST_METHODS);
     out.push('\n');
 
     out.push_str("\n### FrozenDict methods\n\n");
     out.push_str(table_header());
-    for m in surface::frozen_dict_methods::FROZEN_DICT_METHODS {
-        let id = format!("{:?}", m.id);
-        let canonical = format!("`{}`", m.canonical);
-        let aliases = if m.aliases.is_empty() {
-            String::new()
-        } else {
-            m.aliases
-                .iter()
-                .map(|a| format!("`{}`", a))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        let desc = m.description;
-        let rfc = m.introduced_in_rfc;
-        let since = m.since;
-        let stability = format!("{:?}", m.stability);
-        out.push_str(&format!(
-            "| {id} | {canonical} | {aliases} | {desc} | {rfc} | {since} | {stability} |\n"
-        ));
-    }
+    render_surface_method_rows(out, surface::frozen_dict_methods::FROZEN_DICT_METHODS);
     out.push('\n');
 
     out.push_str("\n### FrozenSet methods\n\n");
     out.push_str(table_header());
-    for m in surface::frozen_set_methods::FROZEN_SET_METHODS {
-        let id = format!("{:?}", m.id);
-        let canonical = format!("`{}`", m.canonical);
-        let aliases = if m.aliases.is_empty() {
-            String::new()
-        } else {
-            m.aliases
-                .iter()
-                .map(|a| format!("`{}`", a))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        let desc = m.description;
-        let rfc = m.introduced_in_rfc;
-        let since = m.since;
-        let stability = format!("{:?}", m.stability);
-        out.push_str(&format!(
-            "| {id} | {canonical} | {aliases} | {desc} | {rfc} | {since} | {stability} |\n"
-        ));
-    }
+    render_surface_method_rows(out, surface::frozen_set_methods::FROZEN_SET_METHODS);
     out.push('\n');
 
     out.push_str("\n### Bytes methods\n\n");
     out.push_str(table_header());
-    for m in surface::bytes_methods::BYTES_METHODS {
-        let id = format!("{:?}", m.id);
-        let canonical = format!("`{}`", m.canonical);
-        let aliases = if m.aliases.is_empty() {
-            String::new()
-        } else {
-            m.aliases
-                .iter()
-                .map(|a| format!("`{}`", a))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        let desc = m.description;
-        let rfc = m.introduced_in_rfc;
-        let since = m.since;
-        let stability = format!("{:?}", m.stability);
-        out.push_str(&format!(
-            "| {id} | {canonical} | {aliases} | {desc} | {rfc} | {since} | {stability} |\n"
-        ));
-    }
+    render_surface_method_rows(out, surface::bytes_methods::BYTES_METHODS);
     out.push('\n');
 
     out.push_str("\n### FrozenBytes methods\n\n");
     out.push_str(table_header());
-    for m in surface::frozen_bytes_methods::FROZEN_BYTES_METHODS {
-        let id = format!("{:?}", m.id);
-        let canonical = format!("`{}`", m.canonical);
-        let aliases = if m.aliases.is_empty() {
+    render_surface_method_rows(out, surface::frozen_bytes_methods::FROZEN_BYTES_METHODS);
+    out.push('\n');
+}
+
+/// Render registry-owned surface method rows in declaration order through one shared metadata layout. Receiver
+/// headings, table headers and contract notes remain with the section coordinator so their exact whitespace survives.
+fn render_surface_method_rows<Id: std::fmt::Debug>(
+    out: &mut String,
+    methods: &[incan_lang::lang::registry::LangItemInfo<Id>],
+) {
+    for method in methods {
+        let id = format!("{:?}", method.id);
+        let canonical = format!("`{}`", method.canonical);
+        let aliases = if method.aliases.is_empty() {
             String::new()
         } else {
-            m.aliases
+            method
+                .aliases
                 .iter()
-                .map(|a| format!("`{}`", a))
+                .map(|alias| format!("`{alias}`"))
                 .collect::<Vec<_>>()
                 .join(", ")
         };
-        let desc = m.description;
-        let rfc = m.introduced_in_rfc;
-        let since = m.since;
-        let stability = format!("{:?}", m.stability);
+        let description = method.description;
+        let rfc = method.introduced_in_rfc;
+        let since = method.since;
+        let stability = format!("{:?}", method.stability);
         out.push_str(&format!(
-            "| {id} | {canonical} | {aliases} | {desc} | {rfc} | {since} | {stability} |\n"
+            "| {id} | {canonical} | {aliases} | {description} | {rfc} | {since} | {stability} |\n"
         ));
     }
-    out.push('\n');
 }
 
 /// Resolve the workspace root directory.
@@ -1179,16 +978,16 @@ fn render_surface_methods_section(out: &mut String) {
 /// ## Returns
 /// - The workspace root path (three levels above `loaves/kernel/incan_lang`).
 ///
-/// ## Panics
-/// - If the path cannot be resolved (this indicates a broken workspace layout).
-fn workspace_root() -> PathBuf {
+/// ## Errors
+/// Returns [`io::ErrorKind::InvalidInput`] when the build's manifest directory has no workspace ancestor.
+fn workspace_root() -> io::Result<PathBuf> {
     if let Ok(current_dir) = std::env::current_dir()
         && current_dir.join("loaves/kernel/incan_lang").is_dir()
     {
-        return current_dir;
+        return Ok(current_dir);
     }
     if let Some(root) = std::env::var_os("INCAN_SOURCE_ROOT").filter(|path| !path.is_empty()) {
-        return PathBuf::from(root);
+        return Ok(PathBuf::from(root));
     }
 
     // loaves/kernel/incan_lang -> kernel -> loaves -> workspace root
@@ -1199,7 +998,10 @@ fn workspace_root() -> PathBuf {
         .and_then(Path::parent)
         .map(Path::to_path_buf)
     {
-        Some(path) => path,
-        None => panic!("workspace root (three levels above loaves/kernel/incan_lang)"),
+        Some(path) => Ok(path),
+        None => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "workspace root (three levels above loaves/kernel/incan_lang)",
+        )),
     }
 }

@@ -6,6 +6,7 @@ use super::TypeChecker;
 use super::type_info::BodyIrClassInheritance;
 use crate::ast::{Declaration, ParamKind, Program};
 use crate::symbols::{ClassInfo, ResolvedType, TypeInfo};
+use incan_lang::lang::derives::{self, DeriveId};
 use incan_semantics_core::body_ir::{ClassInheritance, ClassMethodImplementation};
 
 impl TypeChecker {
@@ -112,7 +113,7 @@ fn plain_class(info: &ClassInfo) -> bool {
         && info
             .derives
             .iter()
-            .all(|derive| matches!(derive.as_str(), "Debug" | "Clone"))
+            .all(|derive| matches!(derives::from_str(derive), Some(DeriveId::Debug | DeriveId::Clone)))
         && info
             .fields
             .values()

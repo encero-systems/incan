@@ -249,7 +249,7 @@ Vocabulary blocks that lower through context managers can use the same internal 
 - **Typechecker / Symbol resolution**: context expressions must satisfy the context-manager protocol, `as` bindings must receive the entered type, and async-safety constraints must be enforced.
 - **IR Lowering**: all suite exit edges must carry cleanup while preserving original control flow.
 - **Emission**: generated code must guarantee exactly-once cleanup after successful entry without relying on user-written cleanup calls.
-- **Stdlib / Runtime (`incan_stdlib`)**: standard resources such as files, temporary directories, locks, capture helpers, scoped environment overrides, and telemetry span handles may implement the protocol.
+- **Stdlib / Runtime (`loaves/stdlib/`)**: standard resources such as files, temporary directories, locks, capture helpers, scoped environment overrides, and telemetry span handles may implement the protocol.
 - **Formatter**: `with` suites need stable formatting and vocabulary blocks must preserve their descriptor-owned layout.
 - **LSP / Tooling**: hover, go-to-definition, diagnostics, and control-flow explanation should show the context-manager protocol and scoped binding.
 

@@ -2,6 +2,7 @@
 
 use super::args::fixed_elements;
 use super::{BodyBuilder, CanonicalSymbolId, HirSourceSpan, IncanPrimitiveType, IncanType, ast, bir, parameter_types};
+use incan_lang::lang::traits::{self, TraitId};
 
 impl BodyBuilder<'_, '_> {
     /// Retain the checked item projection and the single post-exhaustion reconstruction before native planning.
@@ -23,7 +24,7 @@ impl BodyBuilder<'_, '_> {
         let IncanType::Generic { base, args } = self.resolve_ty(receiver.span) else {
             return None;
         };
-        if base != "Iterator" || args.len() != 1 {
+        if base != traits::as_str(TraitId::Iterator) || args.len() != 1 {
             return None;
         }
         let IncanType::Named(owner) = &args[0] else {

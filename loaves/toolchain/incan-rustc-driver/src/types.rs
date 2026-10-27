@@ -2,6 +2,7 @@
 
 use crate::error::PlanError;
 use crate::plan::{ListLeaf, PlanType, SizedNumeric, list_leaf_type, range_field_types, tuple_element_type};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::RuntimeCarrier;
 use rustc_middle::ty::{ExistentialPredicateStableCmpExt as _, Ty, TyCtxt};
 
@@ -92,12 +93,8 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::ScalarMutRef(elements) => scalar_reference_type(tcx, elements, true)?,
         PlanType::Future(arguments) => future_alias_type(tcx, arguments)?,
         PlanType::ZipIterator(left, right) => zip_type(tcx, left, right)?,
-        PlanType::ZipIteratorRef(left, right) => {
-            Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, zip_type(tcx, left, right)?)
-        }
-        PlanType::ZipIteratorMutRef(left, right) => {
-            Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, zip_type(tcx, left, right)?)
-        }
+        PlanType::ZipIteratorRef(left, right) => native_reference(tcx, zip_type(tcx, left, right)?, false),
+        PlanType::ZipIteratorMutRef(left, right) => native_reference(tcx, zip_type(tcx, left, right)?, true),
         PlanType::EnumTag => tcx.types.isize,
         PlanType::Generator(leaf, depth) => generator_type(tcx, "Generator", leaf, *depth)?,
         PlanType::GeneratorMutRef(leaf, depth) => generator_reference_type(tcx, "Generator", leaf, *depth, true)?,
@@ -119,12 +116,10 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::List(leaf, depth) => list_type(tcx, leaf, *depth)?,
         PlanType::ListIntoIter(leaf, depth) => list_into_iter_type(tcx, leaf, *depth)?,
         PlanType::ListIntoIterMutRef(leaf, depth) => {
-            Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, list_into_iter_type(tcx, leaf, *depth)?)
+            native_reference(tcx, list_into_iter_type(tcx, leaf, *depth)?, true)
         }
         PlanType::ListRef(leaf, depth) => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, list_type(tcx, leaf, *depth)?),
-        PlanType::ListMutRef(leaf, depth) => {
-            Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, list_type(tcx, leaf, *depth)?)
-        }
+        PlanType::ListMutRef(leaf, depth) => native_reference(tcx, list_type(tcx, leaf, *depth)?, true),
         PlanType::Set(leaf) => hash_collection_type(tcx, "HashSet", &[leaf])?,
         PlanType::SetRef(leaf) => hash_reference_type(tcx, "HashSet", &[leaf], false)?,
         PlanType::SetMutRef(leaf) => hash_reference_type(tcx, "HashSet", &[leaf], true)?,
@@ -161,10 +156,7 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::FunctionItem(name, _) => function_item_type(tcx, name)?,
         PlanType::Unit => tcx.types.unit,
         PlanType::Never => tcx.types.never,
-        PlanType::UnitFunction => Ty::new_fn_ptr(
-            tcx,
-            rustc_middle::ty::Binder::dummy(tcx.mk_fn_sig_safe_rust_abi([], tcx.types.unit)),
-        ),
+        PlanType::UnitFunction => unit_function_type(tcx),
         PlanType::CheckedInt => Ty::new_tup(tcx, &[tcx.types.i64, tcx.types.bool]),
         PlanType::String => string_type(tcx)?,
         PlanType::NativeStr => tcx.types.str_,
@@ -177,11 +169,9 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::FrozenStr => runtime_carrier_type(tcx, RuntimeCarrier::FrozenStr)?,
         PlanType::FrozenBytes => runtime_carrier_type(tcx, RuntimeCarrier::FrozenBytes)?,
         PlanType::FrozenCollection(name, elements) => frozen_collection_type(tcx, name, elements)?,
-        PlanType::FrozenCollectionRef(name, elements) => Ty::new_imm_ref(
-            tcx,
-            tcx.lifetimes.re_erased,
-            frozen_collection_type(tcx, name, elements)?,
-        ),
+        PlanType::FrozenCollectionRef(name, elements) => {
+            native_reference(tcx, frozen_collection_type(tcx, name, elements)?, false)
+        }
         PlanType::StaticText => Ty::new_imm_ref(tcx, tcx.lifetimes.re_static, tcx.types.str_),
         PlanType::StaticBytes => Ty::new_imm_ref(tcx, tcx.lifetimes.re_static, Ty::new_slice(tcx, tcx.types.u8)),
         PlanType::StringRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, string_type(tcx)?),
@@ -197,6 +187,14 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::StringSlice => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, Ty::new_slice(tcx, string_type(tcx)?)),
         PlanType::StrSlice => native_reference(tcx, Ty::new_slice(tcx, native_type(tcx, &PlanType::StrRef)?), false),
     })
+}
+
+/// Form the executor's exact safe Rust-ABI callback type with no inputs or bound lifetimes and a unit result.
+fn unit_function_type(tcx: TyCtxt<'_>) -> Ty<'_> {
+    Ty::new_fn_ptr(
+        tcx,
+        rustc_middle::ty::Binder::dummy(tcx.mk_fn_sig_safe_rust_abi([], tcx.types.unit)),
+    )
 }
 
 /// Require one pointee and preserve its checked pointer mutability without introducing a reference lifetime.
@@ -371,8 +369,13 @@ pub fn frozen_collection_type<'tcx>(
     elements: &[PlanType],
 ) -> Result<Ty<'tcx>, PlanError> {
     let expected = match name {
-        "FrozenList" | "FrozenSet" => 1,
-        "FrozenDict" => 2,
+        name if [CollectionTypeId::FrozenList, CollectionTypeId::FrozenSet]
+            .iter()
+            .any(|id| name == collections::as_str(*id)) =>
+        {
+            1
+        }
+        name if name == collections::as_str(CollectionTypeId::FrozenDict) => 2,
         _ => {
             return Err(PlanError::UnknownCallee(format!(
                 "unsupported frozen collection {name}"

@@ -6,9 +6,12 @@
 
 INCAN ?= incan
 
-# Workspace Rust sources rustfmt owns; fixture crates keep the shape their tests assert, and vendored crates keep
-# their upstream form.
-RUST_SOURCES = git ls-files -z 'loaves/*.rs' ':!:loaves/**/fixtures/**' ':!:loaves/third_party/**'
+.PHONY: rust-facet-tests  ## tests - Run every production Loaf's Rust facet unit tests through Oven
+rust-facet-tests:
+	@scripts/test-rust-facets.sh "$(INCAN)"
+
+# Workspace Rust sources rustfmt owns; fixture crates keep the shape their tests assert.
+RUST_SOURCES = git ls-files -z 'loaves/*.rs' ':!:loaves/**/fixtures/**'
 
 # =============================================================================
 # Help

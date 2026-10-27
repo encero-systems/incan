@@ -871,7 +871,7 @@ pub enum ExportIdentityProjection {
 
 /// Versioned Rust ABI payload persisted into `.incnlib`.
 ///
-/// The payload stores the same backend-neutral metadata shape that `rust_inspect` extracts, but ships it with the
+/// The payload stores the backend-neutral metadata shape extracted from rustc, but ships it with the
 /// library artifact so consumers can resolve Rust-backed imports without loading the producer workspace.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LibraryRustAbi {

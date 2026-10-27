@@ -1,9 +1,10 @@
 // Parser unit tests for RFC 081 (#1023) descriptor-gated embedded fragments.
 //
-// Follows the existing scoped-surface fixture model in `parser/tests/vocab_scoped_symbols.rs` (hand-built
-// `KeywordRegistration`/`DslSurface` maps, no manifest file, no WASM): one accept fixture per submode's grammar,
-// source-span assertions, rejection-boundary fixtures (unrecognized syntax inside a submode, and the same spelling
-// outside an eligible position), and a same-depth ambiguity fixture, per `research-notes.md` §5's fixture precedent.
+// Follows the scoped-surface fixture model in `loaves/kernel/incan_syntax/src/parser/tests/vocab_scoped_symbols.rs`
+// (hand-built `KeywordRegistration`/`DslSurface` maps, no manifest file, no WASM): one accept fixture per submode's
+// grammar, source-span assertions, rejection-boundary fixtures (unrecognized syntax inside a submode, and the same
+// spelling outside an eligible position), and a same-depth ambiguity fixture, per `research-notes.md` §5's fixture
+// precedent.
 
 #[cfg(test)]
 mod embedded_fragment_tests {

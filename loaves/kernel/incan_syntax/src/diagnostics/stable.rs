@@ -839,8 +839,8 @@ pub fn stable_diagnostic(
         origin: origin_for_phase(phase),
         message: error.message.clone(),
         primary_span: diagnostic_span(file_name, source, error.span),
-        notes: error.notes.clone(),
-        hints: error.hints.clone(),
+        notes: error.notes().to_vec(),
+        hints: error.hints().to_vec(),
         expected: error.expected().map(str::to_owned),
         actual: error.actual().map(str::to_owned),
         related_spans: error
@@ -1059,6 +1059,7 @@ mod tests {
         }
     }
 
+    /// Checker refusal families retain distinct codes and the remedies attached by their owning catalog entries.
     #[test]
     fn checker_refusals_of_unbuildable_programs_use_distinct_stable_codes() -> Result<(), Box<dyn std::error::Error>> {
         let self_mutation = errors::self_mutation_requires_mut_self(
@@ -1134,11 +1135,11 @@ mod tests {
         }
         assert!(
             open_generics
-                .hints
+                .hints()
                 .iter()
                 .any(|hint| hint.contains("HashMap.new[str, int]()") && hint.contains("untyped: HashMap[str, int]")),
             "the remedy must spell both the call and the binding form, got {:?}",
-            open_generics.hints
+            open_generics.hints()
         );
         assert_eq!(print_union.message, "'print' cannot print the union value 'value'");
         assert_eq!(
@@ -1155,24 +1156,25 @@ mod tests {
         );
         assert!(
             bound_enum
-                .hints
+                .hints()
                 .iter()
                 .all(|hint| hint.contains("__str__") && !hint.contains(":?")),
             "a bound's remedy names __str__ and no f-string part the caller does not have, got {:?}",
-            bound_enum.hints
+            bound_enum.hints()
         );
         assert_eq!(
             bare_option.message,
             "Option annotation 'Option' is missing its value type"
         );
         assert!(
-            bare_option.hints.iter().any(|hint| hint.contains("'Option[int]'")),
+            bare_option.hints().iter().any(|hint| hint.contains("'Option[int]'")),
             "the remedy must spell the parameterized annotation, got {:?}",
-            bare_option.hints
+            bare_option.hints()
         );
         Ok(())
     }
 
+    /// Reserved compiler names retain an explainable code and a usable source-name suggestion.
     #[test]
     fn reserved_compiler_name_refusal_uses_its_own_stable_code() -> Result<(), Box<dyn std::error::Error>> {
         let function = errors::reserved_compiler_name("__incan_original_target", "function", Span::default());
@@ -1186,16 +1188,16 @@ mod tests {
         assert_eq!(entry.phase, "typecheck");
         assert!(
             function
-                .hints
+                .hints()
                 .iter()
                 .any(|hint| hint.contains("for example 'original_target'")),
             "the remedy must suggest the name without the prefix, got {:?}",
-            function.hints
+            function.hints()
         );
         assert!(
-            bare_prefix.hints.iter().all(|hint| !hint.contains("for example")),
+            bare_prefix.hints().iter().all(|hint| !hint.contains("for example")),
             "a name that is only the prefix has nothing left to suggest, got {:?}",
-            bare_prefix.hints
+            bare_prefix.hints()
         );
         Ok(())
     }
@@ -1215,6 +1217,7 @@ mod tests {
         Ok(())
     }
 
+    /// Mutable argument diagnostics preserve distinct remedies for bindings, positions and element writes.
     #[test]
     fn immutable_argument_to_mut_parameter_uses_its_stable_code_issue1773() -> Result<(), String> {
         let binding = errors::immutable_argument_to_mut_parameter(
@@ -1244,16 +1247,16 @@ mod tests {
         );
         assert!(
             positional
-                .notes
+                .notes()
                 .iter()
                 .any(|note| note.starts_with("'step' may change")),
             "a callee whose body is not known is said to possibly change the parameter, got {:?}",
-            positional.notes
+            positional.notes()
         );
         assert!(
-            binding.notes.iter().any(|note| note.starts_with("'extend' changes")),
+            binding.notes().iter().any(|note| note.starts_with("'extend' changes")),
             "a callee known to change the parameter is said to change it, got {:?}",
-            binding.notes
+            binding.notes()
         );
         for error in [&binding, &element, &positional] {
             assert_eq!(code_for_error(error, DiagnosticPhase::Typecheck), "INCAN-T0117");
@@ -1271,25 +1274,26 @@ mod tests {
         assert_eq!(code_for_error(&uncopyable, DiagnosticPhase::Typecheck), "INCAN-T0117");
         assert!(
             uncopyable
-                .notes
+                .notes()
                 .iter()
                 .any(|note| note.contains("does not change") && note.contains("'Generator[int]' cannot be copied")),
             "a refusal for an unchanged parameter says the argument cannot be copied, got {:?}",
-            uncopyable.notes
+            uncopyable.notes()
         );
         assert!(
-            binding.hints.iter().any(|hint| hint.contains("mut items = ...")),
+            binding.hints().iter().any(|hint| hint.contains("mut items = ...")),
             "an immutable binding's remedy names the binding to declare 'mut', got {:?}",
-            binding.hints
+            binding.hints()
         );
         assert!(
-            element.hints.iter().any(|hint| hint.contains("store it back")),
+            element.hints().iter().any(|hint| hint.contains("store it back")),
             "an element's remedy says to pass a 'mut' variable and store it back, got {:?}",
-            element.hints
+            element.hints()
         );
         Ok(())
     }
 
+    /// An uncopyable retained dictionary lookup reports its stable code and explains the unavailable copy.
     #[test]
     fn kept_dict_lookup_of_a_value_that_cannot_be_copied_uses_its_stable_code() {
         let refusal = errors::kept_dict_lookup_value_cannot_be_copied("Generator[int]", Span::default());
@@ -1305,22 +1309,23 @@ mod tests {
         );
         assert!(
             refusal
-                .hints
+                .hints()
                 .iter()
                 .any(|hint| hint.contains("`len`, `print` or `println`") && hint.contains("f-string")),
             "the hint names the uses that count as reading, got {:?}",
-            refusal.hints
+            refusal.hints()
         );
         assert!(
-            refusal.hints.iter().any(|hint| {
+            refusal.hints().iter().any(|hint| {
                 hint.contains("a Rust method with a shared receiver whose result is not kept")
                     && hint.contains("an Incan method taking `self` does not count")
             }),
             "the hint names exactly which method calls count as reading, got {:?}",
-            refusal.hints
+            refusal.hints()
         );
     }
 
+    /// Route and operator refusals retain their distinct codes, notes and source-level remedies.
     #[test]
     fn route_handler_and_type_parameter_operator_refusals_use_distinct_stable_codes() {
         let return_type = errors::route_handler_return_not_response("create_user", "int", Span::default());
@@ -1340,9 +1345,9 @@ mod tests {
         assert_eq!(code_for_error(&operator, DiagnosticPhase::Typecheck), "INCAN-T0109");
         assert_eq!(code_for_error(&payload, DiagnosticPhase::Typecheck), "INCAN-T0112");
         assert!(
-            payload.hints.iter().any(|hint| hint.contains("'@derive(json)'")),
+            payload.hints().iter().any(|hint| hint.contains("'@derive(json)'")),
             "the remedy must name the JSON derive, got {:?}",
-            payload.hints
+            payload.hints()
         );
         for code in ["INCAN-T0107", "INCAN-T0108", "INCAN-T0109", "INCAN-T0112"] {
             let Some(entry) = explain(code) else {
@@ -1352,22 +1357,22 @@ mod tests {
             assert_eq!(entry.phase, "typecheck");
         }
         assert!(
-            unbound.hints.iter().any(|hint| hint.contains("'/things/{id}'")),
+            unbound.hints().iter().any(|hint| hint.contains("'/things/{id}'")),
             "the remedy must spell the path with the segment added, got {:?}",
-            unbound.hints
+            unbound.hints()
         );
         assert!(
             unbound
-                .notes
+                .notes()
                 .iter()
                 .any(|note| note == "The path binds 'year', 'month'"),
             "the captures the path does bind must be listed, got {:?}",
-            unbound.notes
+            unbound.notes()
         );
         assert!(
-            operator.hints.iter().any(|hint| hint.contains("'__mod__'")),
+            operator.hints().iter().any(|hint| hint.contains("'__mod__'")),
             "the remedy must name the operator's trait hook, got {:?}",
-            operator.hints
+            operator.hints()
         );
     }
 
@@ -1399,11 +1404,11 @@ mod tests {
         ] {
             assert_eq!(code_for_error(refusal, DiagnosticPhase::Typecheck), "INCAN-T0110");
             assert!(
-                refusal.hints.iter().any(|hint| hint.contains(shape)
+                refusal.hints().iter().any(|hint| hint.contains(shape)
                     && hint.contains(receiver)
                     && hint.contains("the compiler decides how the receiver is passed")),
                 "the remedy must spell the replacement shape, got {:?}",
-                refusal.hints
+                refusal.hints()
             );
         }
         let Some(entry) = explain("INCAN-T0110") else {
@@ -1416,6 +1421,7 @@ mod tests {
 
     /// Issue #1790: a `self`-method decorator chain the receiver cannot be passed through has its own explainable
     /// code, and the refusal says what is refused, why, and what to write instead.
+    /// Invalid method decorator receiver plans retain the dedicated remedy and catalog explanation.
     #[test]
     fn method_decorator_receiver_plan_refusal_uses_a_distinct_stable_code() -> Result<(), Box<dyn std::error::Error>> {
         let refusal = errors::method_decorator_receiver_not_planned(
@@ -1433,11 +1439,11 @@ mod tests {
         );
         assert!(
             refusal
-                .hints
+                .hints()
                 .iter()
                 .any(|hint| hint == "Call 'parse' directly, or give this use a function of its own"),
             "the refusal must say what to write instead, got {:?}",
-            refusal.hints
+            refusal.hints()
         );
         let Some(entry) = explain("INCAN-T0116") else {
             return Err("INCAN-T0116 must have a catalog explanation".into());
@@ -1449,6 +1455,7 @@ mod tests {
 
     /// Issue #1844: a list used again after a `for` loop took its items has its own explainable code, and the
     /// refusal names the list, points back at the loop and says what to write instead.
+    /// Reusing a taken list points to a binding before the loop under its dedicated stable diagnostic code.
     #[test]
     fn taken_list_reuse_refusal_uses_a_distinct_stable_code() -> Result<(), Box<dyn std::error::Error>> {
         let refusal = errors::taken_list_used_again(
@@ -1469,9 +1476,9 @@ mod tests {
             "the refusal must point back at the loop"
         );
         assert!(
-            refusal.hints.iter().any(|hint| hint.contains("before the loop")),
+            refusal.hints().iter().any(|hint| hint.contains("before the loop")),
             "the refusal must say what to write instead, got {:?}",
-            refusal.hints
+            refusal.hints()
         );
         let Some(entry) = explain("INCAN-T0119") else {
             return Err("INCAN-T0119 must have a catalog explanation".into());
@@ -1491,6 +1498,7 @@ mod tests {
         Ok(())
     }
 
+    /// Unmet capability requirements preserve separate codes and actionable key and task remedies.
     #[test]
     fn capability_requirement_refusals_use_distinct_stable_codes() -> Result<(), Box<dyn std::error::Error>> {
         let field = errors::member_type_lacks_automatic_derives(
@@ -1537,16 +1545,16 @@ mod tests {
             assert_eq!(entry.phase, "typecheck");
         }
         assert!(
-            key.hints.iter().any(|hint| hint.contains("@derive(Eq, Hash)")),
+            key.hints().iter().any(|hint| hint.contains("@derive(Eq, Hash)")),
             "the remedy must name the derives to add, got {:?}",
-            key.hints
+            key.hints()
         );
         assert!(
-            task.hints
+            task.hints()
                 .iter()
                 .any(|hint| hint.contains("'work()' in place of 'work'")),
             "the remedy must rewrite only the offending argument, got {:?}",
-            task.hints
+            task.hints()
         );
         Ok(())
     }

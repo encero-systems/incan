@@ -7,6 +7,7 @@ from std.json import JsonValue
 from files import json_text, make_directory, read, remove, write as write_file
 from compiler_refusals import check_or_replay, compile_or_replay
 from incan_units import executable_outputs, install_executable, test_report
+from intake import ManifestReader
 from observation import load_ledger
 from native_closure_input import NativeClosureInput, native_bindings
 from standalone_rust import published_bindings
@@ -618,7 +619,7 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
     A complete installed proof reuses one producer without invoking a compiler; every changed input still refuses.
 
     1. Stamp a source facet with an external included file and one exact native dependency.
-    2. Require installed reuse even after unrelated toolchain search directories are added.
+    2. Require installed reuse after unrelated search directories are added or the artifact store is relocated.
     3. Refuse changed features, rustc, source, environment, output and exact extern artifacts.
     """
     # 1. This synthetic producer's compiler path is deliberately not executable.
@@ -655,12 +656,14 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
     write(dependencies, f"library: {declared.library} {escaped}\n\n# env-dep:CARGO_PKG_VERSION=0.1.0\n")?
     mut toolchain = consumer.toolchain
     toolchain.externs.append(NativeCrate(name="data", path=artifact.0))
+    # #2427: supply the fresh empty reader before later fields instead of deferring its nested default.
     mut request = RustBuild(
         project=setup.facet.0,
         profile="release",
         rustc="must-not-run-rustc",
         registry=RegistryUnits(units=[], search=[]),
         toolchain=Some(toolchain),
+        manifests=ManifestReader(),
         native_compiler="pinned native compiler",
         installed=native_artifacts(toolchain.externs),
     )
@@ -677,6 +680,7 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
     retained = compile_rust_library(facet, declared, output, request, built, [])?
     assert retained.reused and retained.artifact == artifact.0
     assert not output.is_dir()
+    verify_relocated_rust_producer(facet, declared, output, request, built, artifact)?
     verify_installed_graph_refresh(facet, declared, output, request, built, artifact, graph, dependencies, included)?
     # 3. Each proof dimension independently prevents reuse.
     request.installed["data"] = [artifact.0, artifact.0]
@@ -704,6 +708,68 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
     write(setup.dependency, "rebuilt exact native dependency")?
     require_installed_refusal(facet, declared, output, request, built, "artifacts")?
     assert not output.is_dir()
+    return Ok(None)
+
+
+def verify_relocated_rust_producer(
+    facet: LocalFacet,
+    declared: RustFacet,
+    output: Path,
+    request: RustBuild,
+    built: Dict[str, BuiltUnit],
+    artifact: Path,
+) -> Result[None, str]:
+    """
+    Relocate an unchanged native producer and its dependency, retaining all changed-input refusals.
+
+    1. Give graph refresh an observer that cannot compile native code.
+    2. Copy the complete producer and exact dependency into another store.
+    3. Reuse those bytes, then refuse replaced native and dependency bytes.
+    """
+    # 1. Only graph analysis is permitted after the producer was already completed.
+    selected = request
+    toolchain = match selected.toolchain:
+        Some(value) => value
+        None => return Err("relocation fixture has no selected toolchain")
+
+    driver = Path(toolchain.driver)
+    script = "#!/bin/sh\nset -eu\n[ \"$1\" = --rust-codegraph ] || exit 2\n"
+    write(driver, script + "printf 'relocated checked graph' > \"$2\"\n")?
+    mut chmod = Command.new("/bin/chmod")
+    assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
+    _ = compile_rust_library(facet, declared, output, selected, built, [])?
+    # 2. A fresh installation changes paths, inodes and status-change times, while preserving complete bytes.
+    directory = artifact.parent().parent().joinpath("relocated")
+    for source in artifact.parent().iterdir().map_err((error) => error.message())?:
+        if source.is_file():
+            write(directory.joinpath(source.name()), read(source)?)?
+    dependency = directory.joinpath("libcore.rlib")
+    write(dependency, read(Path(built["native-core@target"].artifact))?)?
+    mut relocated = built
+    relocated["native-core@target"] = BuiltUnit(crate_name="core", artifact=dependency.0, directory=directory.0)
+    moved = directory.joinpath(artifact.name())
+    mut moved_request = request
+    moved_request.installed["data"] = [moved.0]
+    # 3. Filesystem relocation must not authorize changed content or another native compilation.
+    proof = directory.joinpath("library.portable-inputs")
+    saved = read(proof)?
+    remove(proof)?
+    require_installed_refusal(facet, declared, output, moved_request, relocated, "command")?
+    write(proof, saved)?
+    retained = compile_rust_library(facet, declared, output, moved_request, relocated, [])?
+    assert retained.reused and retained.artifact == moved.0
+    assert read(moved)? == "one installed library"
+    assert not output.is_dir()
+    write(moved, "replaced relocated library")?
+    require_installed_refusal(facet, declared, output, moved_request, relocated, "replaced")?
+    write(moved, "one installed library")?
+    graph = directory.joinpath("data.incngraph")
+    original_graph = read(graph)?
+    write(graph, "replaced relocated graph")?
+    require_installed_refusal(facet, declared, output, moved_request, relocated, "replaced")?
+    write(graph, original_graph)?
+    write(dependency, "replaced relocated dependency")?
+    require_installed_refusal(facet, declared, output, moved_request, relocated, "artifacts")?
     return Ok(None)
 
 

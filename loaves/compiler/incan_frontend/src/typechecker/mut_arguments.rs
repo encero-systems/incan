@@ -1303,38 +1303,7 @@ impl TypeChecker {
                 continue;
             };
             let place = self.classify_argument_place(value);
-            if let ArgumentPlace::Mutable {
-                forwarded_param: Some(param),
-            } = &place
-                && self
-                    .mut_params
-                    .current
-                    .as_ref()
-                    .is_some_and(|body| body.closure_depth > 0)
-            {
-                // A closure that passes the parameter on to a parameter that may change it holds the parameter.
-                self.refuse_held_mut_param(param, value.span);
-            }
-            if let ArgumentPlace::Mutable {
-                forwarded_param: Some(param),
-            } = &place
-                && let Some(body) = &self.mut_params.current
-            {
-                match &identity {
-                    Some(callee) => self.mut_params.forwards.push(MutParamForward {
-                        owner: body.identity.clone(),
-                        param: param.clone(),
-                        callee: callee.clone(),
-                        callee_param: slot.name.clone(),
-                        through_local,
-                    }),
-                    // Passing the parameter on to a callee whose body is unknown may change it.
-                    None => {
-                        let owner = body.identity.clone();
-                        self.mut_params.changed.entry(owner).or_default().insert(param.clone());
-                    }
-                }
-            }
+            self.record_mut_argument_forwarding(&place, identity.as_ref(), &slot.name, through_local, value.span);
             let uncopyable_type = self
                 .type_info
                 .expr_type(value.span)
@@ -1350,6 +1319,49 @@ impl TypeChecker {
                 span: value.span,
                 through_local,
             });
+        }
+    }
+
+    /// Retain caller-visible forwarding effects before recording the argument's eventual copy or refusal policy.
+    ///
+    /// A closure forwarding a mutable parameter holds it. An unknown callee conservatively changes the parameter;
+    /// a known declaration records an edge whose effects are resolved after all bodies have been checked.
+    fn record_mut_argument_forwarding(
+        &mut self,
+        place: &ArgumentPlace,
+        identity: Option<&CanonicalSymbolId>,
+        callee_param: &str,
+        through_local: Option<Span>,
+        span: Span,
+    ) {
+        let ArgumentPlace::Mutable {
+            forwarded_param: Some(param),
+        } = place
+        else {
+            return;
+        };
+        if self
+            .mut_params
+            .current
+            .as_ref()
+            .is_some_and(|body| body.closure_depth > 0)
+        {
+            self.refuse_held_mut_param(param, span);
+        }
+        if let Some(body) = &self.mut_params.current {
+            match identity {
+                Some(callee) => self.mut_params.forwards.push(MutParamForward {
+                    owner: body.identity.clone(),
+                    param: param.clone(),
+                    callee: callee.clone(),
+                    callee_param: callee_param.to_owned(),
+                    through_local,
+                }),
+                None => {
+                    let owner = body.identity.clone();
+                    self.mut_params.changed.entry(owner).or_default().insert(param.clone());
+                }
+            }
         }
     }
 

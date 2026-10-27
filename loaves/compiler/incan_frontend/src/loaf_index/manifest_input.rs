@@ -13,6 +13,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+/// Maximum encoded digest proof size; oversized optional records never bypass the full content hash.
+const MAX_DIGEST_RECORD_BYTES: u64 = 8192;
+
 /// The generation guards used for a digest, including ctime so restored-mtime edits invalidate it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Generation {
@@ -116,11 +119,15 @@ pub(super) fn cache_path(key: &str) -> Option<PathBuf> {
 /// Refuse malformed, oversized, symlinked, stale or corrupt records without changing the manifest's acceptance.
 fn retained_digest(path: &Path, key: &str, generation: Generation) -> Option<String> {
     let metadata = fs::symlink_metadata(path).ok()?;
-    if !metadata.is_file() || metadata.len() > 8192 {
+    if !metadata.is_file() || metadata.len() > MAX_DIGEST_RECORD_BYTES {
         return None;
     }
     let mut bytes = Vec::new();
-    File::open(path).ok()?.take(8192).read_to_end(&mut bytes).ok()?;
+    File::open(path)
+        .ok()?
+        .take(MAX_DIGEST_RECORD_BYTES)
+        .read_to_end(&mut bytes)
+        .ok()?;
     let record: Record = serde_json::from_slice(&bytes).ok()?;
     if record.version != 1 || record.key != key || record.generation != generation {
         return None;

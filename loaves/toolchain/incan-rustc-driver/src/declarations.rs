@@ -2,6 +2,7 @@
 
 use crate::ast_build::ident;
 use crate::plan::{Function, ListLeaf, PlanType, SizedNumeric, list_leaf_type, range_field_types, tuple_element_type};
+use incan_lang::lang::derives::{self, DeriveId};
 use incan_semantics_core::RuntimeCarrier;
 use rustc_ast as ast;
 use rustc_span::{Span, Symbol};
@@ -707,7 +708,11 @@ pub(crate) fn model_items(
         return vec![library_alias(&model.name, model.public, span)];
     }
     let mut declaration = self::model(model, span);
-    for derive in model.derives.iter().filter(|derive| derive.as_str() != "Display") {
+    for derive in model
+        .derives
+        .iter()
+        .filter(|derive| derives::from_str(derive) != Some(DeriveId::Display))
+    {
         declaration.attrs.push(derive_attribute(generator, derive, span));
     }
     if !model.checked_deserialize.is_empty() {
@@ -715,13 +720,17 @@ pub(crate) fn model_items(
             .attrs
             .push(crate::checked_json::deserialize_attribute(generator, span));
     }
-    let display = model.derives.iter().any(|derive| derive == "Display").then(|| {
-        crate::derived_display::implementation(
-            crate::ast_build::path_ty(ast::Path::from_ident(ident(&model.name, span)), span),
-            ast::Generics::default(),
-            span,
-        )
-    });
+    let display = model
+        .derives
+        .iter()
+        .any(|derive| derives::from_str(derive) == Some(DeriveId::Display))
+        .then(|| {
+            crate::derived_display::implementation(
+                crate::ast_build::path_ty(ast::Path::from_ident(ident(&model.name, span)), span),
+                ast::Generics::default(),
+                span,
+            )
+        });
     if !specialized_model(model) {
         return std::iter::once(declaration).chain(display).collect();
     }

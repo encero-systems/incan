@@ -33,8 +33,8 @@ use serde_json::{Value, json};
 
 use incan_frontend::ast::{
     AssertKind, CallArg, ComprehensionClause, Condition, Declaration, Decorator, DecoratorArg, DecoratorArgValue,
-    DictEntry, Expr, FStringPart, FunctionDecl, ImportDecl, ImportItem, ImportKind, ImportPath, ListEntry, MatchBody,
-    RaceForBody, Span, Spanned, Statement, SurfaceExprPayload, SurfaceStmtPayload, TypeParam, Visibility,
+    DictEntry, Expr, FStringPart, FunctionDecl, ImportDecl, ImportItem, ImportKind, ImportPath, ListEntry, MatchArm,
+    MatchBody, RaceForBody, Span, Spanned, Statement, SurfaceExprPayload, SurfaceStmtPayload, TypeParam, Visibility,
 };
 use incan_frontend::diagnostics::{self, StableDiagnostic};
 use incan_frontend::library_manifest::LibraryManifest;
@@ -673,6 +673,15 @@ struct CodegraphBuilder<'analysis> {
     call_ids: BTreeMap<(String, Span), String>,
 }
 
+/// Borrowed source and owner context shared by one expression-record walk. Helper boundaries retain the same
+/// module identity and degraded status without copying the parsed module or deriving new checking authority.
+struct ExpressionRecordContext<'source> {
+    module: &'source ParsedModule,
+    module_id: &'source str,
+    owner_id: Option<&'source str>,
+    degraded: bool,
+}
+
 /// Compact source declaration facts used before serializing a public declaration record.
 struct DeclarationSummary {
     kind: String,
@@ -977,9 +986,9 @@ impl<'analysis> CodegraphBuilder<'analysis> {
     ///
     /// The declaration these point at is not emitted here. It cannot be: naming a Rust item is not the same as
     /// locating one, and inventing a module and file node for a crate whose source this pass never opens would put
-    /// a placeholder where a fact belongs. `rust_inspect` resolves crate, module, item and defining file together,
-    /// and the declaration half arrives with it; until then `target_id` says unresolved, which RFC 106 already
-    /// binds consumers to read as affected rather than as absent.
+    /// a placeholder where a fact belongs. Rust declarations arrive through the native driver's rustc metadata
+    /// export; until that export supplies the declaration, `target_id` says unresolved, which RFC 106 binds
+    /// consumers to read as affected rather than as absent.
     ///
     /// The identity is not guessed either. Where the typechecker resolved the binding, the import's own checked
     /// projection carries it and the reference is `Checked`; where it did not, the reference is `Syntax` and the
@@ -1202,11 +1211,21 @@ impl<'analysis> CodegraphBuilder<'analysis> {
     ///
     /// The generic codegraph walker still emits ordinary syntax-level `call` records. These records attach the
     /// compiler-owned ABI facts to those source spans rather than asking consumers to infer C interop from a spelling.
+    /// Temporarily move the owned snapshot out of the builder while projecting records, then restore it for any
+    /// repeated module collection; borrowing the builder's map across its record mutations would alias `self`.
     fn collect_checked_c_binding_records(&mut self, module: &ParsedModule, module_id: &str) {
-        let Some(c_abi) = self.c_abi_by_path.get(&module.file_path).cloned() else {
+        let Some((path, c_abi)) = self.c_abi_by_path.remove_entry(&module.file_path) else {
             return;
         };
+        self.collect_c_binding_declarations(module, module_id, &c_abi);
+        self.collect_c_binding_raw_calls(module, module_id, &c_abi);
+        self.collect_c_binding_facades(module, module_id, &c_abi);
+        self.c_abi_by_path.insert(path, c_abi);
+    }
 
+    /// Emit checked C binding declarations and their containment records in the existing span/name order.
+    /// The shared artifact snapshot remains owned by the caller across all three C-record phases.
+    fn collect_c_binding_declarations(&mut self, module: &ParsedModule, module_id: &str, c_abi: &CAbiInteropArtifacts) {
         let mut bindings = c_abi.bindings.values().collect::<Vec<_>>();
         bindings.sort_by(|left, right| {
             left.span
@@ -1248,7 +1267,11 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                 false,
             )));
         }
+    }
 
+    /// Attach checked raw-call authority to already collected source call spans, preserving span/binding/symbol
+    /// ordering and the refusal to invent a descriptor when the shared checked artifact has none.
+    fn collect_c_binding_raw_calls(&mut self, module: &ParsedModule, module_id: &str, c_abi: &CAbiInteropArtifacts) {
         let mut raw_calls = c_abi.raw_calls.iter().collect::<Vec<_>>();
         raw_calls.sort_by(|left, right| {
             left.span
@@ -1287,7 +1310,11 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                     degraded: false,
                 }));
         }
+    }
 
+    /// Emit facade-to-bridge records only when both declarations and checked raw-call coverage exist. Coverage IDs
+    /// retain their existing sorting and deduplication before the facade record is published.
+    fn collect_c_binding_facades(&mut self, module: &ParsedModule, module_id: &str, c_abi: &CAbiInteropArtifacts) {
         let mut facades = c_abi.facades.iter().collect::<Vec<_>>();
         facades.sort_by(|left, right| {
             left.facade
@@ -1348,63 +1375,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
         for (index, declaration) in module.ast.declarations.iter().enumerate() {
             match &declaration.node {
                 Declaration::Import(import) => {
-                    let import_id = import_id(module, index);
-                    let import_bindings = self.import_canonical_bindings(module, declaration.span);
-                    let import_provenance = if import_bindings
-                        .iter()
-                        .any(|binding| binding.canonical_identity.is_some())
-                    {
-                        CodegraphProvenance::Checked
-                    } else {
-                        CodegraphProvenance::Syntax
-                    };
-                    self.records.push(CodegraphRecord::Import(import_record(
-                        module,
-                        module_id,
-                        &import_id,
-                        import,
-                        declaration.span,
-                        import_bindings.clone(),
-                        import_provenance,
-                        degraded,
-                    )));
-                    self.records.push(CodegraphRecord::Containment(containment_record(
-                        module_id,
-                        &import_id,
-                        "module_contains_import",
-                        &module.file_path,
-                        &module.source,
-                        declaration.span,
-                        degraded,
-                    )));
-                    self.collect_rust_item_references(
-                        module,
-                        module_id,
-                        &import_id,
-                        import,
-                        declaration.span,
-                        &import_bindings,
-                        degraded,
-                    );
-                    if import.visibility == Visibility::Public {
-                        for name in import_export_names(import) {
-                            let exported_binding = import_bindings.iter().find(|binding| binding.local_name == name);
-                            let canonical_identity =
-                                exported_binding.and_then(|binding| binding.canonical_identity.clone());
-                            let stable_identity = exported_binding.and_then(|binding| binding.stable_identity.clone());
-                            self.records.push(CodegraphRecord::Export(export_record(
-                                module,
-                                module_id,
-                                &import_id,
-                                &name,
-                                "import",
-                                declaration.span,
-                                canonical_identity,
-                                stable_identity,
-                                degraded,
-                            )));
-                        }
-                    }
+                    self.collect_import_records(module, module_id, index, import, declaration.span, degraded);
                 }
                 Declaration::Docstring(_) => {}
                 _ => {
@@ -1462,6 +1433,67 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                     }
                     self.collect_declaration_body_records(module, module_id, &declaration_id, declaration, degraded);
                 }
+            }
+        }
+    }
+
+    /// Add an import before containment, Rust references and public exports. Canonical binding evidence alone
+    /// selects checked provenance; source/degraded imports do not gain authority by entering a helper.
+    fn collect_import_records(
+        &mut self,
+        module: &ParsedModule,
+        module_id: &str,
+        index: usize,
+        import: &ImportDecl,
+        span: Span,
+        degraded: bool,
+    ) {
+        let import_id = import_id(module, index);
+        let import_bindings = self.import_canonical_bindings(module, span);
+        let provenance = if import_bindings
+            .iter()
+            .any(|binding| binding.canonical_identity.is_some())
+        {
+            CodegraphProvenance::Checked
+        } else {
+            CodegraphProvenance::Syntax
+        };
+        self.records.push(CodegraphRecord::Import(import_record(
+            module,
+            module_id,
+            &import_id,
+            import,
+            span,
+            import_bindings.clone(),
+            provenance,
+            degraded,
+        )));
+        self.records.push(CodegraphRecord::Containment(containment_record(
+            module_id,
+            &import_id,
+            "module_contains_import",
+            &module.file_path,
+            &module.source,
+            span,
+            degraded,
+        )));
+        self.collect_rust_item_references(module, module_id, &import_id, import, span, &import_bindings, degraded);
+        if import.visibility == Visibility::Public {
+            for name in import_export_names(import) {
+                let binding = import_bindings.iter().find(|binding| binding.local_name == name);
+                let canonical_identity = binding.and_then(|binding| binding.canonical_identity.clone());
+                let stable_identity = binding.and_then(|binding| binding.stable_identity.clone());
+                self.records.push(CodegraphRecord::Export(export_record(
+                    module,
+                    module_id,
+                    &import_id,
+                    &name,
+                    "import",
+                    span,
+                    canonical_identity,
+                    stable_identity,
+                    degraded,
+                )));
             }
         }
     }
@@ -1766,6 +1798,12 @@ impl<'analysis> CodegraphBuilder<'analysis> {
         expr: &Spanned<Expr>,
         degraded: bool,
     ) {
+        let context = ExpressionRecordContext {
+            module,
+            module_id,
+            owner_id,
+            degraded,
+        };
         match &expr.node {
             Expr::Ident(name) => {
                 self.push_reference(module, module_id, owner_id, name, "identifier", expr.span, degraded)
@@ -1779,53 +1817,8 @@ impl<'analysis> CodegraphBuilder<'analysis> {
             Expr::Unary(_, value) | Expr::Try(value) | Expr::Paren(value) => {
                 self.collect_expr(module, module_id, owner_id, value, degraded);
             }
-            Expr::Call(callee, type_args, args) => {
-                self.push_call(
-                    module,
-                    module_id,
-                    owner_id,
-                    &expr_label(&callee.node),
-                    "function",
-                    args.len(),
-                    type_args.len(),
-                    expr.span,
-                    codegraph_callee_identity_span(callee),
-                    degraded,
-                );
-                self.collect_expr(module, module_id, owner_id, callee, degraded);
-                for arg in args {
-                    self.collect_call_arg(module, module_id, owner_id, arg, degraded);
-                }
-            }
-            Expr::MethodCall(receiver, method, type_args, args) => {
-                // `helpers.make_widget(..)` parses as a method call, but it is a call into an imported module, not a
-                // method on a value. Labeling it by the bare method name loses which module answers the call and
-                // makes it indistinguishable from a local `make_widget(..)` in the same file.
-                let qualified;
-                let callee_label = if Self::receiver_names_an_imported_module(module, receiver)
-                    || Self::receiver_names_a_declared_type(module, receiver)
-                {
-                    qualified = format!("{}.{method}", expr_label(&receiver.node));
-                    qualified.as_str()
-                } else {
-                    method.as_str()
-                };
-                self.push_call(
-                    module,
-                    module_id,
-                    owner_id,
-                    callee_label,
-                    "method",
-                    args.len(),
-                    type_args.len(),
-                    expr.span,
-                    expr.span,
-                    degraded,
-                );
-                self.collect_expr(module, module_id, owner_id, receiver, degraded);
-                for arg in args {
-                    self.collect_call_arg(module, module_id, owner_id, arg, degraded);
-                }
+            Expr::Call(..) | Expr::MethodCall(..) | Expr::Constructor(..) => {
+                self.collect_callable_expression(context, expr)
             }
             Expr::Partial(partial) => {
                 self.collect_expr(module, module_id, owner_id, &partial.target, degraded);
@@ -1843,35 +1836,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                 self.collect_expr(module, module_id, owner_id, base, degraded);
                 self.push_reference(module, module_id, owner_id, field, "field", expr.span, degraded);
             }
-            Expr::Constructor(name, args) => {
-                self.push_call(
-                    module,
-                    module_id,
-                    owner_id,
-                    name,
-                    "constructor",
-                    args.len(),
-                    0,
-                    expr.span,
-                    expr.span,
-                    degraded,
-                );
-                for arg in args {
-                    self.collect_call_arg(module, module_id, owner_id, arg, degraded);
-                }
-            }
-            Expr::Match(scrutinee, arms) => {
-                self.collect_expr(module, module_id, owner_id, scrutinee, degraded);
-                for arm in arms {
-                    if let Some(guard) = &arm.node.guard {
-                        self.collect_expr(module, module_id, owner_id, guard, degraded);
-                    }
-                    match &arm.node.body {
-                        MatchBody::Expr(value) => self.collect_expr(module, module_id, owner_id, value, degraded),
-                        MatchBody::Block(body) => self.collect_statements(module, module_id, owner_id, body, degraded),
-                    }
-                }
-            }
+            Expr::Match(scrutinee, arms) => self.collect_match_expression(context, scrutinee, arms),
             Expr::If(if_expr) => {
                 self.collect_expr(module, module_id, owner_id, &if_expr.condition, degraded);
                 self.collect_statements(module, module_id, owner_id, &if_expr.then_body, degraded);
@@ -1911,17 +1876,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                     }
                 }
             }
-            Expr::Dict(entries) => {
-                for entry in entries {
-                    match entry {
-                        DictEntry::Pair(key, value) => {
-                            self.collect_expr(module, module_id, owner_id, key, degraded);
-                            self.collect_expr(module, module_id, owner_id, value, degraded);
-                        }
-                        DictEntry::Spread(value) => self.collect_expr(module, module_id, owner_id, value, degraded),
-                    }
-                }
-            }
+            Expr::Dict(entries) => self.collect_dictionary_entries(context, entries),
             Expr::FString(parts) => {
                 for part in parts {
                     if let FStringPart::Expr { expr, .. } = part {
@@ -1934,56 +1889,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                 self.collect_expr(module, module_id, owner_id, start, degraded);
                 self.collect_expr(module, module_id, owner_id, end, degraded);
             }
-            Expr::Surface(surface) => match &surface.payload {
-                SurfaceExprPayload::PrefixUnary(value) => {
-                    self.collect_expr(module, module_id, owner_id, value, degraded);
-                }
-                SurfaceExprPayload::RaceFor(race) => {
-                    for arm in &race.arms {
-                        self.collect_expr(module, module_id, owner_id, &arm.awaitable, degraded);
-                        match &arm.body {
-                            RaceForBody::Expr(value) => {
-                                self.collect_expr(module, module_id, owner_id, value, degraded);
-                            }
-                            RaceForBody::Block(body) => {
-                                self.collect_statements(module, module_id, owner_id, body, degraded);
-                            }
-                        }
-                    }
-                }
-                SurfaceExprPayload::LeadingDotPath { segments, .. } => {
-                    self.push_reference(
-                        module,
-                        module_id,
-                        owner_id,
-                        &segments.join("."),
-                        "surface_path",
-                        expr.span,
-                        degraded,
-                    );
-                }
-                SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
-                    self.collect_expr(module, module_id, owner_id, left, degraded);
-                    self.collect_expr(module, module_id, owner_id, right, degraded);
-                }
-                SurfaceExprPayload::ScopedSymbolCall { symbol, args, .. } => {
-                    self.push_call(
-                        module,
-                        module_id,
-                        owner_id,
-                        symbol,
-                        "surface_symbol",
-                        args.len(),
-                        0,
-                        expr.span,
-                        expr.span,
-                        degraded,
-                    );
-                    for arg in args {
-                        self.collect_call_arg(module, module_id, owner_id, arg, degraded);
-                    }
-                }
-            },
+            Expr::Surface(surface) => self.collect_surface_expression(context, &surface.payload, expr.span),
             Expr::VocabBlock(block) => {
                 self.collect_decorators(module, module_id, owner_id, &block.decorators, degraded);
                 for arg in &block.header_args {
@@ -2000,6 +1906,192 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                 }
             }
             Expr::Yield(None) => {}
+        }
+    }
+
+    /// Record callable forms before walking their receiver/callee and arguments. The dispatcher admits only Call,
+    /// MethodCall and Constructor here; other expression variants remain owned by its ordinary walk.
+    fn collect_callable_expression(&mut self, context: ExpressionRecordContext<'_>, expr: &Spanned<Expr>) {
+        let ExpressionRecordContext {
+            module,
+            module_id,
+            owner_id,
+            degraded,
+        } = context;
+        match &expr.node {
+            Expr::Call(callee, type_args, args) => {
+                self.push_call(
+                    module,
+                    module_id,
+                    owner_id,
+                    &expr_label(&callee.node),
+                    "function",
+                    args.len(),
+                    type_args.len(),
+                    expr.span,
+                    codegraph_callee_identity_span(callee),
+                    degraded,
+                );
+                self.collect_expr(module, module_id, owner_id, callee, degraded);
+                for arg in args {
+                    self.collect_call_arg(module, module_id, owner_id, arg, degraded);
+                }
+            }
+            Expr::MethodCall(receiver, method, type_args, args) => {
+                // Imported module and declared type calls retain their qualified label rather than collapsing
+                // onto an unrelated same-name local method.
+                let qualified;
+                let callee_label = if Self::receiver_names_an_imported_module(module, receiver)
+                    || Self::receiver_names_a_declared_type(module, receiver)
+                {
+                    qualified = format!("{}.{method}", expr_label(&receiver.node));
+                    qualified.as_str()
+                } else {
+                    method.as_str()
+                };
+                self.push_call(
+                    module,
+                    module_id,
+                    owner_id,
+                    callee_label,
+                    "method",
+                    args.len(),
+                    type_args.len(),
+                    expr.span,
+                    expr.span,
+                    degraded,
+                );
+                self.collect_expr(module, module_id, owner_id, receiver, degraded);
+                for arg in args {
+                    self.collect_call_arg(module, module_id, owner_id, arg, degraded);
+                }
+            }
+            Expr::Constructor(name, args) => {
+                self.push_call(
+                    module,
+                    module_id,
+                    owner_id,
+                    name,
+                    "constructor",
+                    args.len(),
+                    0,
+                    expr.span,
+                    expr.span,
+                    degraded,
+                );
+                for arg in args {
+                    self.collect_call_arg(module, module_id, owner_id, arg, degraded);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Walk the match scrutinee before each arm's guard and body in source order. Patterns remain outside this
+    /// expression walk, and block arms retain the ordinary statement collector rather than inventing references.
+    fn collect_match_expression(
+        &mut self,
+        context: ExpressionRecordContext<'_>,
+        scrutinee: &Spanned<Expr>,
+        arms: &[Spanned<MatchArm>],
+    ) {
+        let ExpressionRecordContext {
+            module,
+            module_id,
+            owner_id,
+            degraded,
+        } = context;
+        self.collect_expr(module, module_id, owner_id, scrutinee, degraded);
+        for arm in arms {
+            if let Some(guard) = &arm.node.guard {
+                self.collect_expr(module, module_id, owner_id, guard, degraded);
+            }
+            match &arm.node.body {
+                MatchBody::Expr(value) => self.collect_expr(module, module_id, owner_id, value, degraded),
+                MatchBody::Block(body) => self.collect_statements(module, module_id, owner_id, body, degraded),
+            }
+        }
+    }
+
+    /// Walk dictionary key/value pairs and spreads in source order, using the same owner and provenance context as
+    /// the surrounding expression. Literal keys retain the ordinary expression walk's no-reference behavior.
+    fn collect_dictionary_entries(&mut self, context: ExpressionRecordContext<'_>, entries: &[DictEntry]) {
+        let ExpressionRecordContext {
+            module,
+            module_id,
+            owner_id,
+            degraded,
+        } = context;
+        for entry in entries {
+            match entry {
+                DictEntry::Pair(key, value) => {
+                    self.collect_expr(module, module_id, owner_id, key, degraded);
+                    self.collect_expr(module, module_id, owner_id, value, degraded);
+                }
+                DictEntry::Spread(value) => self.collect_expr(module, module_id, owner_id, value, degraded),
+            }
+        }
+    }
+
+    /// Walk surface payloads without reconstructing their DSL semantics. Prefix/race/glyph operands retain their
+    /// expression/body order; explicit paths and symbols keep the authored surface span and record kind.
+    fn collect_surface_expression(
+        &mut self,
+        context: ExpressionRecordContext<'_>,
+        payload: &SurfaceExprPayload,
+        span: Span,
+    ) {
+        let ExpressionRecordContext {
+            module,
+            module_id,
+            owner_id,
+            degraded,
+        } = context;
+        match payload {
+            SurfaceExprPayload::PrefixUnary(value) => self.collect_expr(module, module_id, owner_id, value, degraded),
+            SurfaceExprPayload::RaceFor(race) => {
+                for arm in &race.arms {
+                    self.collect_expr(module, module_id, owner_id, &arm.awaitable, degraded);
+                    match &arm.body {
+                        RaceForBody::Expr(value) => self.collect_expr(module, module_id, owner_id, value, degraded),
+                        RaceForBody::Block(body) => {
+                            self.collect_statements(module, module_id, owner_id, body, degraded)
+                        }
+                    }
+                }
+            }
+            SurfaceExprPayload::LeadingDotPath { segments, .. } => {
+                self.push_reference(
+                    module,
+                    module_id,
+                    owner_id,
+                    &segments.join("."),
+                    "surface_path",
+                    span,
+                    degraded,
+                );
+            }
+            SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+                self.collect_expr(module, module_id, owner_id, left, degraded);
+                self.collect_expr(module, module_id, owner_id, right, degraded);
+            }
+            SurfaceExprPayload::ScopedSymbolCall { symbol, args, .. } => {
+                self.push_call(
+                    module,
+                    module_id,
+                    owner_id,
+                    symbol,
+                    "surface_symbol",
+                    args.len(),
+                    0,
+                    span,
+                    span,
+                    degraded,
+                );
+                for arg in args {
+                    self.collect_call_arg(module, module_id, owner_id, arg, degraded);
+                }
+            }
         }
     }
 

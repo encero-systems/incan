@@ -670,7 +670,7 @@ The task-context ranker should start simple: exact identifiers, module/name/doc 
 - **Typechecker / Symbol resolution**: checked declarations, imports, aliases, references, calls, public API signatures, dispatch targets where known, and diagnostics provide high-provenance graph facts.
 - **IR Lowering**: lowering does not define the graph, but generated or materialized structures may need source/metadata anchors so tools can connect emitted behavior back to source.
 - **Emission**: generated Rust is not the graph source of truth, but emission may expose artifact metadata that can be linked to source graph identities.
-- **Stdlib / Runtime (`incan_stdlib`)**: stdlib source and manifests should be graphable as ordinary Incan packages, and stdlib builtins should appear as external or stdlib nodes when referenced.
+- **Stdlib / Runtime (`loaves/stdlib/`)**: stdlib source and manifests should be graphable as ordinary Incan packages, and stdlib builtins should appear as external or stdlib nodes when referenced.
 - **Generated behavior explanation**: derives, decorators, vocabularies, trait resolution, type-directed mappings, ownership plans, and generated artifacts should contribute source-anchored explanation records when available.
 - **Formatter**: no syntax changes are required by this RFC, but compact graph/context output should have deterministic formatting.
 - **LSP / Tooling**: CLI, MCP, editor integrations, graph export, graph stale checks, live graph snapshots, context packing, architecture-advice tooling, risk scoring, and checked metadata/documentation tooling are directly affected.

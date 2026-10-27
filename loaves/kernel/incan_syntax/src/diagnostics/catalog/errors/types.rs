@@ -2554,7 +2554,7 @@ pub fn rusttype_forwarding_requires_metadata(type_name: &str, trait_name: &str, 
         format!("Cannot forward Rust trait `{trait_name}` for rusttype `{type_name}` without metadata proof"),
         span,
     )
-    .with_hint("Enable rust-inspect metadata for the backing type or provide a local newtype wrapper instead")
+    .with_hint("Provide Rust ABI metadata for the backing type or use a local newtype wrapper instead")
 }
 
 /// Metadata proves the backing type does not satisfy a body-less rusttype trait adoption.
@@ -2579,7 +2579,7 @@ pub fn rusttype_forwarding_generic_trait_blocked(type_name: &str, trait_name: &s
         format!("Cannot safely forward generic Rust trait `{trait_name}` for rusttype `{type_name}` yet"),
         span,
     )
-    .with_hint("Use a local newtype wrapper for a handwritten impl until rust-inspect records trait type arguments")
+    .with_hint("Use a local newtype wrapper for a handwritten impl when Rust metadata omits trait type arguments")
 }
 
 /// Awaitable-to-Future rusttype bridging is intentionally gated until pin/projection metadata exists.

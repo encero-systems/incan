@@ -2,10 +2,12 @@
 //! consumers alias its instantiations. A private zero-sized marker retains unused source type parameters.
 
 use crate::ast_build::{
-    block, expression, expression_statement, global_path, ident, inherited, local, path_ty, self_value, trait_bound,
+    RUST_CLONE_SYMBOL, RUST_FMT_DEBUG_SYMBOL, block, expression, expression_statement, global_path, ident, inherited,
+    local, path_ty, self_value, trait_bound,
 };
 use crate::plan::{GenericLayoutType, GenericModelDeclaration};
 use crate::{declarations, union_debug};
+use incan_lang::lang::derives::{self, DeriveId};
 use rustc_ast as ast;
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_span::{Ident, Span, Symbol, kw, respan};
@@ -14,8 +16,9 @@ use thin_vec::{ThinVec, thin_vec};
 /// Name prefix of the private zero-sized marker field; the declaration and the layout reader must agree on it.
 const MARKER_PREFIX: &str = "__incan_phantom";
 
-/// Declare the generic ADT and its source-shaped Debug implementation, excluding its private marker from output.
-/// The compiled ABI exposes every retained layout; the checked manifest governs source visibility separately.
+/// Declare the generic ADT and its checked derived implementations, excluding its private marker from output.
+/// Derive choices use the shared registry, while emitted Rust trait bounds name their physical owners. The compiled ABI
+/// exposes every retained layout; the checked manifest governs source visibility separately.
 pub(crate) fn items(
     model: &GenericModelDeclaration,
     generator: &ast::attr::AttrIdGenerator,
@@ -54,27 +57,40 @@ pub(crate) fn items(
         ),
         span,
     );
-    for derive in model
-        .derives
-        .iter()
-        .filter(|derive| !matches!(derive.as_str(), "Debug" | "Clone" | "Display"))
-    {
+    for derive in model.derives.iter().filter(|derive| {
+        !matches!(
+            derives::from_str(derive),
+            Some(DeriveId::Debug | DeriveId::Clone | DeriveId::Display)
+        )
+    }) {
         declaration
             .attrs
             .push(declarations::derive_attribute(generator, derive, span));
     }
     declaration.tokens = tokens;
     let mut items = vec![declaration];
-    if model.derives.iter().any(|derive| derive == "Debug") {
+    if model
+        .derives
+        .iter()
+        .any(|derive| derives::from_str(derive) == Some(DeriveId::Debug))
+    {
         items.push(debug_impl(model, span));
     }
-    if model.derives.iter().any(|derive| derive == "Clone") {
+    if model
+        .derives
+        .iter()
+        .any(|derive| derives::from_str(derive) == Some(DeriveId::Clone))
+    {
         items.push(clone_impl(model, span));
     }
-    if model.derives.iter().any(|derive| derive == "Display") {
+    if model
+        .derives
+        .iter()
+        .any(|derive| derives::from_str(derive) == Some(DeriveId::Display))
+    {
         items.push(crate::derived_display::implementation(
             self_type(model, span),
-            parameters_of(model, Some(&["core", "fmt", "Debug"]), span),
+            parameters_of(model, Some(&["core", "fmt", RUST_FMT_DEBUG_SYMBOL]), span),
             span,
         ));
     }
@@ -298,7 +314,7 @@ fn debug_impl(model: &GenericModelDeclaration, span: Span) -> Box<ast::Item> {
         span,
     );
     let method = trait_method("fmt", union_debug::fmt_signature(span), body, span);
-    trait_impl(model, &["core", "fmt", "Debug"], method, span)
+    trait_impl(model, &["core", "fmt", RUST_FMT_DEBUG_SYMBOL], method, span)
 }
 
 /// Clone authored fields and recreate the zero-sized marker without requiring unused parameters to implement Clone.
@@ -344,7 +360,7 @@ fn clone_impl(model: &GenericModelDeclaration, span: Span) -> Box<ast::Item> {
     let body = block(thin_vec![expression_statement(value, span)], span);
     trait_impl(
         model,
-        &["core", "clone", "Clone"],
+        &["core", "clone", RUST_CLONE_SYMBOL],
         trait_method("clone", signature, body, span),
         span,
     )

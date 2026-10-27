@@ -303,7 +303,7 @@ impl TypeChecker {
         });
     }
 
-    /// Return whether cache-only identity prewarm should ask rust-inspect for this Rust display base.
+    /// Return whether cache-only identity prewarm should query Rust metadata for this display base.
     ///
     /// This prewarm exists only to reuse already-known nominal metadata for returned opaque handles. Standard generic
     /// wrappers such as `Box<T>` and `Arc<T>` are not the semantic identity, and rust-analyzer sometimes renders them
@@ -661,11 +661,14 @@ impl TypeChecker {
             return self.resolve_native_rust_signature_type(display, owner);
         }
         let key = (display.to_owned(), owner.to_owned());
-        if let Some(resolved) = self.native_signature_types.borrow().get(&key) {
+        if let Some(resolved) = self.native_queries.native_signature_types.borrow().get(&key) {
             return resolved.clone();
         }
         let resolved = self.resolve_native_rust_signature_type(display, owner);
-        self.native_signature_types.borrow_mut().insert(key, resolved.clone());
+        self.native_queries
+            .native_signature_types
+            .borrow_mut()
+            .insert(key, resolved.clone());
         resolved
     }
 
@@ -983,7 +986,7 @@ impl TypeChecker {
 
     /// Return whether a borrowed Rust parameter is a dynamically-dispatched trait object.
     ///
-    /// Trait-object compatibility is established from rust-inspect metadata, but Rust still requires the reference
+    /// Trait-object compatibility is established from checked Rust metadata, but Rust still requires the reference
     /// syntax at the call site. Recording it here keeps typechecking and generated-Rust ownership in agreement.
     fn rust_display_is_trait_object(rust_ty: &str) -> bool {
         rust_ty.trim_start().starts_with("dyn ")
@@ -1689,6 +1692,19 @@ impl TypeChecker {
             ));
         }
 
+        self.refuse_missing_rust_call_parameters(callable_display, params, bound_spans, argument_count, span);
+    }
+
+    /// Emit missing Rust parameter diagnostics after every argument has bound. Named parameters retain individual
+    /// errors; any missing unnamed parameter adds the existing call-wide arity error using the source arg count.
+    fn refuse_missing_rust_call_parameters(
+        &mut self,
+        callable_display: &str,
+        params: &[RustParam],
+        bound_spans: &[Option<Span>],
+        source_arg_count: usize,
+        span: Span,
+    ) {
         let mut missing_unnamed_param = false;
         for (idx, param) in params.iter().enumerate() {
             if bound_spans[idx].is_some() {
@@ -1705,7 +1721,7 @@ impl TypeChecker {
             self.errors.push(errors::builtin_arity(
                 callable_display,
                 params.len(),
-                argument_count,
+                source_arg_count,
                 span,
             ));
         }
@@ -2731,7 +2747,7 @@ mod validate_rust_function_call_tests {
 
     /// Keyword arguments bind by inspected Rust parameter names even when written in another order.
     #[test]
-    fn rust_function_call_binds_keyword_args_by_inspected_param_name() {
+    fn rust_function_call_binds_keyword_args_by_inspected_param_name() -> Result<(), String> {
         let mut checker = TypeChecker::new();
         let span = Span::new(0, 60);
         let text_span = Span::new(10, 20);
@@ -2777,9 +2793,10 @@ mod validate_rust_function_call_tests {
             .calls
             .call_site_callable_params
             .get(&span)
-            .expect("keyword Rust calls should record exact call-site params for lowering");
+            .ok_or("keyword Rust calls should record exact call-site params for lowering")?;
         let names: Vec<_> = recorded.iter().filter_map(|param| param.name.as_deref()).collect();
         assert_eq!(names, vec!["count", "text"]);
+        Ok(())
     }
 
     #[test]
@@ -2866,7 +2883,7 @@ mod validate_rust_function_call_tests {
         );
     }
 
-    /// Rust method validation checks value parameter types after excluding the receiver.
+    /// A method's first authored argument is checked after the receiver and retains structured mismatch facts.
     #[test]
     fn rust_method_call_rejects_type_mismatch_after_receiver() {
         let mut checker = TypeChecker::new();

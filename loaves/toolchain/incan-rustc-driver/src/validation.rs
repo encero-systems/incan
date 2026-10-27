@@ -1,5 +1,8 @@
 //! Preflight validation of the Incan-owned scalar plan. No rustc type crosses this module.
 
+use incan_lang::lang::derives::{self, DeriveId};
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use std::collections::BTreeSet;
 
 use crate::error::PlanError;
@@ -252,24 +255,9 @@ fn scalar(ty: &PlanType) -> Scalar {
         PlanType::DictMutRef(key, value) => Scalar::DictMutRef(Leaf::of(key), Leaf::of(value)),
         PlanType::RangeValue => Scalar::RangeValue,
         PlanType::CallableArguments(inputs) => Scalar::Tuple(inputs.iter().map(scalar).collect()),
-        PlanType::Tuple(elements) => Scalar::Tuple(
-            elements
-                .iter()
-                .map(|element| scalar(&tuple_element_type(element.clone())))
-                .collect(),
-        ),
-        PlanType::TupleRef(elements) => Scalar::TupleRef(
-            elements
-                .iter()
-                .map(|element| scalar(&tuple_element_type(element.clone())))
-                .collect(),
-        ),
-        PlanType::TupleMutRef(elements) => Scalar::TupleMutRef(
-            elements
-                .iter()
-                .map(|element| scalar(&tuple_element_type(element.clone())))
-                .collect(),
-        ),
+        PlanType::Tuple(elements) => Scalar::Tuple(tuple_scalars(elements)),
+        PlanType::TupleRef(elements) => Scalar::TupleRef(tuple_scalars(elements)),
+        PlanType::TupleMutRef(elements) => Scalar::TupleMutRef(tuple_scalars(elements)),
         PlanType::Int => Scalar::Int,
         PlanType::Float => Scalar::Float,
         PlanType::I8 => Scalar::I8,
@@ -327,6 +315,15 @@ fn scalar(ty: &PlanType) -> Scalar {
             Scalar::FunctionItem(name.clone(), signature.iter().map(scalar).collect())
         }
     }
+}
+
+/// Mirror tuple fields once through the plan's existing tuple-element conversion. The enclosing scalar retains the
+/// distinction between owned tuples and shared or exclusive references; this helper changes no ownership policy.
+fn tuple_scalars(elements: &[crate::plan::TupleElement]) -> Vec<Scalar> {
+    elements
+        .iter()
+        .map(|element| scalar(&tuple_element_type(element.clone())))
+        .collect()
 }
 
 /// Describe a refusal in the containing source function.
@@ -1014,20 +1011,7 @@ fn require(
 /// Validate scalar and aggregate rvalues against their exact destination layout.
 fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar) -> Result<Scalar, PlanError> {
     match value {
-        RvalueKind::UnitFunction(name) => {
-            let callback = plan
-                .functions
-                .iter()
-                .find(|value| &value.name == name)
-                .ok_or_else(|| PlanError::UnknownCallee(name.clone()))?;
-            if !callback.parameters.is_empty() || scalar(&callback.return_type) != Scalar::Unit {
-                return Err(invalid(
-                    function,
-                    "executor callback must take no arguments and return unit",
-                ));
-            }
-            Ok(Scalar::UnitFunction)
-        }
+        RvalueKind::UnitFunction(name) => unit_function_result(plan, function, name),
         RvalueKind::Use(value) => operand(plan, function, value),
         RvalueKind::NativeAlias(value, source, target) => {
             require(
@@ -1039,18 +1023,7 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             require(function, scalar(target), expected.clone(), "native alias destination")?;
             Ok(expected)
         }
-        RvalueKind::FrozenText(value) => {
-            if !matches!(value.kind, OperandKind::Literal(Constant::Text(_))) {
-                return Err(invalid(function, "FrozenStr construction requires static literal text"));
-            }
-            require(
-                function,
-                operand(plan, function, value)?,
-                Scalar::StrRef,
-                "frozen literal",
-            )?;
-            Ok(Scalar::FrozenStr)
-        }
+        RvalueKind::FrozenText(value) => frozen_text_result(plan, function, value),
         RvalueKind::FrozenBytes(values) => {
             if values.iter().any(|value| u8::try_from(*value).is_err()) {
                 return Err(invalid(
@@ -1064,41 +1037,14 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             validate_frozen_values(plan, function, ty, values)?;
             Ok(scalar(ty))
         }
-        RvalueKind::NumericCast(value, source, target) => {
-            let source = scalar(source);
-            let target = scalar(target);
-            require(
-                function,
-                operand(plan, function, value)?,
-                source.clone(),
-                "numeric cast source",
-            )?;
-            let numeric = |ty: &Scalar| sized_numeric(ty).is_some() || matches!(ty, Scalar::Int | Scalar::Float);
-            if !numeric(&source) || !numeric(&target) {
-                return Err(invalid(function, "numeric cast requires numeric carriers"));
-            }
-            Ok(target)
-        }
+        RvalueKind::NumericCast(value, source, target) => numeric_cast_result(plan, function, value, source, target),
         RvalueKind::Discriminant(value) => {
             if !matches!(place(plan, function, value)?, Scalar::Enum(_)) {
                 return Err(invalid(function, "discriminant requires an enum"));
             }
             Ok(Scalar::EnumTag)
         }
-        RvalueKind::IsVariant(value, variant) => {
-            let Scalar::Enum(owner) = place(plan, function, value)? else {
-                return Err(invalid(function, "variant test requires an enum"));
-            };
-            let declaration = enum_declaration(plan, owner).ok_or_else(|| invalid(function, "unknown tested enum"))?;
-            if usize::try_from(*variant)
-                .ok()
-                .and_then(|index| declaration.variants.get(index))
-                .is_none()
-            {
-                return Err(invalid(function, "unknown tested variant"));
-            }
-            Ok(Scalar::Bool)
-        }
+        RvalueKind::IsVariant(value, variant) => variant_test_result(plan, function, value, *variant),
         RvalueKind::TagToInt(value) => {
             require(
                 function,
@@ -1109,42 +1055,9 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             Ok(Scalar::Int)
         }
         RvalueKind::Enum(owner, variant, elements) => {
-            require(
-                function,
-                expected.clone(),
-                Scalar::Enum(*owner),
-                "enum aggregate destination",
-            )?;
-            let declaration =
-                enum_declaration(plan, *owner).ok_or_else(|| invalid(function, "unknown constructed enum"))?;
-            let variant = usize::try_from(*variant)
-                .ok()
-                .and_then(|index| declaration.variants.get(index))
-                .ok_or_else(|| invalid(function, "unknown constructed variant"))?;
-            if variant.fields.len() != elements.len() {
-                return Err(invalid(function, "enum payload count differs from declaration"));
-            }
-            for (element, field) in elements.iter().zip(&variant.fields) {
-                require(
-                    function,
-                    operand(plan, function, element)?,
-                    scalar(field),
-                    "enum payload",
-                )?;
-            }
-            Ok(expected)
+            enum_aggregate_result(plan, function, *owner, *variant, elements, expected)
         }
-        RvalueKind::FunctionItem(callee) => {
-            let name = match &callee.kind {
-                CalleeKind::Planned(name) | CalleeKind::External(name) => name,
-                _ => {
-                    return Err(invalid(function, "function item requires a retained declaration"));
-                }
-            };
-            let (mut parameters, result) = signature(plan, function, callee)?;
-            parameters.push(result);
-            Ok(Scalar::FunctionItem(name.clone(), parameters))
-        }
+        RvalueKind::FunctionItem(callee) => function_item_result(plan, function, callee),
         RvalueKind::ClosureObject(value) => match place(plan, function, value)? {
             Scalar::Closure(signature) => Ok(Scalar::ClosureRef(signature)),
             _ => Err(invalid(
@@ -1168,122 +1081,24 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             Ok(Scalar::USize)
         }
         RvalueKind::IntToFloat(value) => {
-            require(function, operand(plan, function, value)?, &Scalar::Int, "int-to-float")?;
-            Ok(Scalar::Float)
+            converted_scalar_result(plan, function, value, Scalar::Int, Scalar::Float, "int-to-float")
         }
         RvalueKind::FloatToInt(value) => {
-            require(function, operand(plan, function, value)?, Scalar::Float, "float-to-int")?;
-            Ok(Scalar::Int)
+            converted_scalar_result(plan, function, value, Scalar::Float, Scalar::Int, "float-to-int")
         }
         RvalueKind::BoolToInt(value) => {
-            require(function, operand(plan, function, value)?, Scalar::Bool, "bool-to-int")?;
-            Ok(Scalar::Int)
+            converted_scalar_result(plan, function, value, Scalar::Bool, Scalar::Int, "bool-to-int")
         }
-        RvalueKind::Unary(op, value) => {
-            let ty = operand(plan, function, value)?;
-            match op {
-                UnaryOp::Not if ty == Scalar::Bool => Ok(ty),
-                UnaryOp::Invert if integer(&ty) => Ok(ty),
-                UnaryOp::Negate
-                    if matches!(
-                        ty,
-                        Scalar::Int
-                            | Scalar::Float
-                            | Scalar::I8
-                            | Scalar::I16
-                            | Scalar::I32
-                            | Scalar::I128
-                            | Scalar::F32
-                            | Scalar::F64
-                    ) =>
-                {
-                    Ok(ty)
-                }
-                _ => Err(invalid(function, "invalid unary operand type")),
-            }
-        }
-        RvalueKind::Binary(op, left, right) => {
-            let ty = operand(plan, function, left)?;
-            let count = operand(plan, function, right)?;
-            if matches!(op, BinaryOp::ShiftLeft | BinaryOp::ShiftRight) {
-                return shift_result(function, ty, &count);
-            }
-            require(function, count, ty.clone(), "binary operands")?;
-            binary_result(function, op, ty, expected)
-        }
+        RvalueKind::Unary(op, value) => unary_result(plan, function, op, value),
+        RvalueKind::Binary(op, left, right) => binary_rvalue_result(plan, function, op, left, right, expected),
         RvalueKind::Array(elements) => validate_array(plan, function, elements, &expected),
-        RvalueKind::Tuple(elements) => {
-            let Scalar::Tuple(fields) = &expected else {
-                return Err(invalid(function, "tuple aggregate requires a tuple destination"));
-            };
-            if fields.len() != elements.len() {
-                return Err(invalid(function, "tuple element count differs from destination"));
-            }
-            for (element, field) in elements.iter().zip(fields) {
-                require(
-                    function,
-                    operand(plan, function, element)?,
-                    field.clone(),
-                    "tuple element",
-                )?;
-            }
-            Ok(expected)
-        }
-        RvalueKind::Range(elements) => {
-            require(function, expected, Scalar::RangeValue, "range aggregate destination")?;
-            let fields = range_field_types();
-            if elements.len() != fields.len() {
-                return Err(invalid(function, "range aggregate requires every declared range field"));
-            }
-            for (element, field) in elements.iter().zip(&fields) {
-                require(
-                    function,
-                    operand(plan, function, element)?,
-                    &scalar(field),
-                    "range field",
-                )?;
-            }
-            Ok(Scalar::RangeValue)
-        }
-        RvalueKind::Model(index, elements) => {
-            require(
-                function,
-                expected.clone(),
-                Scalar::Model(*index),
-                "model aggregate destination",
-            )?;
-            let model = model(plan, *index).ok_or_else(|| invalid(function, "unknown constructed model"))?;
-            if elements.len() != model.fields.len() {
-                return Err(invalid(function, "model field count differs from declaration"));
-            }
-            for (element, field) in elements.iter().zip(&model.fields) {
-                require(
-                    function,
-                    operand(plan, function, element)?,
-                    &scalar(&field.ty),
-                    "model field",
-                )?;
-            }
-            Ok(Scalar::Model(*index))
-        }
+        RvalueKind::Tuple(elements) => tuple_aggregate_result(plan, function, elements, expected),
+        RvalueKind::Range(elements) => range_aggregate_result(plan, function, elements, expected),
+        RvalueKind::Model(index, elements) => model_aggregate_result(plan, function, *index, elements, expected),
         RvalueKind::RawAddressOf(value, mutable) => {
             Ok(Scalar::RawPointer(*mutable, vec![place(plan, function, value)?]))
         }
-        RvalueKind::PointerCast(value, target) => {
-            let source = operand(plan, function, value)?;
-            let Scalar::RawPointer(mutable, pointee) = scalar(target) else {
-                return Err(invalid(function, "pointer cast requires a raw pointer destination"));
-            };
-            if pointee.len() != 1
-                || !match source {
-                    Scalar::RawPointer(source_mutable, _) => !mutable || source_mutable,
-                    _ => false,
-                }
-            {
-                return Err(invalid(function, "pointer cast requires a compatible raw pointer"));
-            }
-            Ok(scalar(target))
-        }
+        RvalueKind::PointerCast(value, target) => pointer_cast_result(plan, function, value, target),
         RvalueKind::PointerOffset(pointer, offset) => {
             let pointer = operand(plan, function, pointer)?;
             if !matches!(pointer, Scalar::RawPointer(_, _)) || operand(plan, function, offset)? != Scalar::ISize {
@@ -1294,20 +1109,7 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             }
             Ok(pointer)
         }
-        RvalueKind::PointerAddress(pointer) => {
-            let Scalar::RawPointer(_, elements) = operand(plan, function, pointer)? else {
-                return Err(invalid(function, "address observation requires a raw pointer"));
-            };
-            if elements.len() != 1
-                || matches!(
-                    elements.first(),
-                    Some(Scalar::NativeStr | Scalar::NativeSlice(_) | Scalar::NativeTraitObject(..))
-                )
-            {
-                return Err(invalid(function, "address observation requires a thin raw pointer"));
-            }
-            Ok(Scalar::USize)
-        }
+        RvalueKind::PointerAddress(pointer) => pointer_address_result(plan, function, pointer),
         RvalueKind::MutBorrow(value) => borrow_result(plan, function, value, true),
         RvalueKind::Borrow(value) => borrow_result(plan, function, value, false),
         RvalueKind::UnsizeSlice(value) => match operand(plan, function, value)? {
@@ -1319,6 +1121,291 @@ fn rvalue(plan: &Plan, function: &Function, value: &RvalueKind, expected: Scalar
             )),
         },
     }
+}
+
+/// Require a static text literal before checking its string-reference carrier; dynamic text remains a refusal.
+fn frozen_text_result(plan: &Plan, function: &Function, value: &Operand) -> Result<Scalar, PlanError> {
+    if !matches!(value.kind, OperandKind::Literal(Constant::Text(_))) {
+        return Err(invalid(function, "FrozenStr construction requires static literal text"));
+    }
+    require(
+        function,
+        operand(plan, function, value)?,
+        Scalar::StrRef,
+        "frozen literal",
+    )?;
+    Ok(Scalar::FrozenStr)
+}
+
+/// Resolve a retained planned or external function declaration and append its result to the callable carrier.
+fn function_item_result(plan: &Plan, function: &Function, callee: &Callee) -> Result<Scalar, PlanError> {
+    let name = match &callee.kind {
+        CalleeKind::Planned(name) | CalleeKind::External(name) => name,
+        _ => return Err(invalid(function, "function item requires a retained declaration")),
+    };
+    let (mut parameters, result) = signature(plan, function, callee)?;
+    parameters.push(result);
+    Ok(Scalar::FunctionItem(name.clone(), parameters))
+}
+
+/// Check a fixed scalar conversion's exact input carrier before returning its declared output carrier.
+fn converted_scalar_result(
+    plan: &Plan,
+    function: &Function,
+    value: &Operand,
+    source: Scalar,
+    target: Scalar,
+    context: &str,
+) -> Result<Scalar, PlanError> {
+    require(function, operand(plan, function, value)?, source, context)?;
+    Ok(target)
+}
+
+/// Resolve an executor callback by its retained name and require its exact no-argument, unit-returning signature.
+fn unit_function_result(plan: &Plan, function: &Function, name: &str) -> Result<Scalar, PlanError> {
+    let callback = plan
+        .functions
+        .iter()
+        .find(|value| value.name == name)
+        .ok_or_else(|| PlanError::UnknownCallee(name.to_string()))?;
+    if !callback.parameters.is_empty() || scalar(&callback.return_type) != Scalar::Unit {
+        return Err(invalid(
+            function,
+            "executor callback must take no arguments and return unit",
+        ));
+    }
+    Ok(Scalar::UnitFunction)
+}
+
+/// Check the operand against its declared source carrier before admitting a numeric source and target pair.
+fn numeric_cast_result(
+    plan: &Plan,
+    function: &Function,
+    value: &Operand,
+    source: &PlanType,
+    target: &PlanType,
+) -> Result<Scalar, PlanError> {
+    let source = scalar(source);
+    let target = scalar(target);
+    require(
+        function,
+        operand(plan, function, value)?,
+        source.clone(),
+        "numeric cast source",
+    )?;
+    let numeric = |ty: &Scalar| sized_numeric(ty).is_some() || matches!(ty, Scalar::Int | Scalar::Float);
+    if !numeric(&source) || !numeric(&target) {
+        return Err(invalid(function, "numeric cast requires numeric carriers"));
+    }
+    Ok(target)
+}
+
+/// Prove that the tested place is an enum and that its declaration owns the requested variant before returning bool.
+fn variant_test_result(plan: &Plan, function: &Function, value: &Place, variant: i64) -> Result<Scalar, PlanError> {
+    let Scalar::Enum(owner) = place(plan, function, value)? else {
+        return Err(invalid(function, "variant test requires an enum"));
+    };
+    let declaration = enum_declaration(plan, owner).ok_or_else(|| invalid(function, "unknown tested enum"))?;
+    if usize::try_from(variant)
+        .ok()
+        .and_then(|index| declaration.variants.get(index))
+        .is_none()
+    {
+        return Err(invalid(function, "unknown tested variant"));
+    }
+    Ok(Scalar::Bool)
+}
+
+/// Check the destination enum first, then variant arity and payloads in declaration order. The owned expected carrier
+/// returns unchanged after every payload has been checked against the same retained plan declaration.
+fn enum_aggregate_result(
+    plan: &Plan,
+    function: &Function,
+    owner: i64,
+    variant: i64,
+    elements: &[Operand],
+    expected: Scalar,
+) -> Result<Scalar, PlanError> {
+    require(
+        function,
+        expected.clone(),
+        Scalar::Enum(owner),
+        "enum aggregate destination",
+    )?;
+    let declaration = enum_declaration(plan, owner).ok_or_else(|| invalid(function, "unknown constructed enum"))?;
+    let variant = usize::try_from(variant)
+        .ok()
+        .and_then(|index| declaration.variants.get(index))
+        .ok_or_else(|| invalid(function, "unknown constructed variant"))?;
+    if variant.fields.len() != elements.len() {
+        return Err(invalid(function, "enum payload count differs from declaration"));
+    }
+    for (element, field) in elements.iter().zip(&variant.fields) {
+        require(
+            function,
+            operand(plan, function, element)?,
+            scalar(field),
+            "enum payload",
+        )?;
+    }
+    Ok(expected)
+}
+
+/// Admit a unary operation only for its existing scalar carriers after resolving the operand's exact plan type.
+fn unary_result(plan: &Plan, function: &Function, op: &UnaryOp, value: &Operand) -> Result<Scalar, PlanError> {
+    let ty = operand(plan, function, value)?;
+    match op {
+        UnaryOp::Not if ty == Scalar::Bool => Ok(ty),
+        UnaryOp::Invert if integer(&ty) => Ok(ty),
+        UnaryOp::Negate
+            if matches!(
+                ty,
+                Scalar::Int
+                    | Scalar::Float
+                    | Scalar::I8
+                    | Scalar::I16
+                    | Scalar::I32
+                    | Scalar::I128
+                    | Scalar::F32
+                    | Scalar::F64
+            ) =>
+        {
+            Ok(ty)
+        }
+        _ => Err(invalid(function, "invalid unary operand type")),
+    }
+}
+
+/// Resolve binary operands left to right. Shifts retain their distinct count rule before ordinary same-carrier checks.
+fn binary_rvalue_result(
+    plan: &Plan,
+    function: &Function,
+    op: &BinaryOp,
+    left: &Operand,
+    right: &Operand,
+    expected: Scalar,
+) -> Result<Scalar, PlanError> {
+    let ty = operand(plan, function, left)?;
+    let count = operand(plan, function, right)?;
+    if matches!(op, BinaryOp::ShiftLeft | BinaryOp::ShiftRight) {
+        return shift_result(function, ty, &count);
+    }
+    require(function, count, ty.clone(), "binary operands")?;
+    binary_result(function, op, ty, expected)
+}
+
+/// Require a tuple destination and its exact arity before checking fields in source order; preserve its owned carrier.
+fn tuple_aggregate_result(
+    plan: &Plan,
+    function: &Function,
+    elements: &[Operand],
+    expected: Scalar,
+) -> Result<Scalar, PlanError> {
+    let Scalar::Tuple(fields) = &expected else {
+        return Err(invalid(function, "tuple aggregate requires a tuple destination"));
+    };
+    if fields.len() != elements.len() {
+        return Err(invalid(function, "tuple element count differs from destination"));
+    }
+    for (element, field) in elements.iter().zip(fields) {
+        require(
+            function,
+            operand(plan, function, element)?,
+            field.clone(),
+            "tuple element",
+        )?;
+    }
+    Ok(expected)
+}
+
+/// Check the range destination and complete field count before comparing each operand with the plan's range layout.
+fn range_aggregate_result(
+    plan: &Plan,
+    function: &Function,
+    elements: &[Operand],
+    expected: Scalar,
+) -> Result<Scalar, PlanError> {
+    require(function, expected, Scalar::RangeValue, "range aggregate destination")?;
+    let fields = range_field_types();
+    if elements.len() != fields.len() {
+        return Err(invalid(function, "range aggregate requires every declared range field"));
+    }
+    for (element, field) in elements.iter().zip(&fields) {
+        require(
+            function,
+            operand(plan, function, element)?,
+            &scalar(field),
+            "range field",
+        )?;
+    }
+    Ok(Scalar::RangeValue)
+}
+
+/// Check the retained aggregate declaration's destination, arity and fields without copying its field inventory.
+fn model_aggregate_result(
+    plan: &Plan,
+    function: &Function,
+    index: i64,
+    elements: &[Operand],
+    expected: Scalar,
+) -> Result<Scalar, PlanError> {
+    require(
+        function,
+        expected.clone(),
+        Scalar::Model(index),
+        "model aggregate destination",
+    )?;
+    let model = model(plan, index).ok_or_else(|| invalid(function, "unknown constructed model"))?;
+    if elements.len() != model.fields.len() {
+        return Err(invalid(function, "model field count differs from declaration"));
+    }
+    for (element, field) in elements.iter().zip(&model.fields) {
+        require(
+            function,
+            operand(plan, function, element)?,
+            &scalar(&field.ty),
+            "model field",
+        )?;
+    }
+    Ok(Scalar::Model(index))
+}
+
+/// Preserve pointer mutability and the single-pointee requirement, checking the operand before the target carrier.
+fn pointer_cast_result(
+    plan: &Plan,
+    function: &Function,
+    value: &Operand,
+    target: &PlanType,
+) -> Result<Scalar, PlanError> {
+    let source = operand(plan, function, value)?;
+    let Scalar::RawPointer(mutable, pointee) = scalar(target) else {
+        return Err(invalid(function, "pointer cast requires a raw pointer destination"));
+    };
+    if pointee.len() != 1
+        || !match source {
+            Scalar::RawPointer(source_mutable, _) => !mutable || source_mutable,
+            _ => false,
+        }
+    {
+        return Err(invalid(function, "pointer cast requires a compatible raw pointer"));
+    }
+    Ok(scalar(target))
+}
+
+/// Admit address observation only for a thin raw pointer, retaining the existing refusal for unsized pointees.
+fn pointer_address_result(plan: &Plan, function: &Function, pointer: &Operand) -> Result<Scalar, PlanError> {
+    let Scalar::RawPointer(_, elements) = operand(plan, function, pointer)? else {
+        return Err(invalid(function, "address observation requires a raw pointer"));
+    };
+    if elements.len() != 1
+        || matches!(
+            elements.first(),
+            Some(Scalar::NativeStr | Scalar::NativeSlice(_) | Scalar::NativeTraitObject(..))
+        )
+    {
+        return Err(invalid(function, "address observation requires a thin raw pointer"));
+    }
+    Ok(Scalar::USize)
 }
 
 /// Form the exact borrowed carrier, rejecting mutable reborrows through a shared owner before native MIR construction.
@@ -1981,29 +2068,7 @@ fn signature(plan: &Plan, function: &Function, callee: &Callee) -> Result<(Vec<S
             validate_model_type(plan, ty)?;
             Ok((vec![scalar(ty)], Scalar::String))
         }
-        CalleeKind::SpawnGenerator(name, leaf, depth) => {
-            let producer = plan
-                .functions
-                .iter()
-                .find(|function| &function.name == name)
-                .ok_or_else(|| PlanError::UnknownCallee(name.clone()))?;
-            if producer.parameters.is_empty()
-                || scalar(&producer.parameters[0].ty) != Scalar::GeneratorYield(Leaf::of(leaf), *depth)
-                || scalar(&producer.return_type) != Scalar::Unit
-            {
-                return Err(invalid(
-                    producer,
-                    "generator producer signature differs from yield handle contract",
-                ));
-            }
-            Ok((
-                producer.parameters[1..]
-                    .iter()
-                    .map(|parameter| scalar(&parameter.ty))
-                    .collect(),
-                Scalar::Generator(Leaf::of(leaf), *depth),
-            ))
-        }
+        CalleeKind::SpawnGenerator(name, leaf, depth) => generator_spawn_signature(plan, name, leaf, *depth),
         CalleeKind::YieldGenerator(leaf, depth) => Ok((
             vec![
                 Scalar::GeneratorYieldRef(Leaf::of(leaf), *depth),
@@ -2015,73 +2080,11 @@ fn signature(plan: &Plan, function: &Function, callee: &Callee) -> Result<(Vec<S
             vec![Scalar::Generator(Leaf::of(leaf), *depth)],
             Scalar::List(Leaf::of(leaf), depth + 1),
         )),
-        CalleeKind::CallClosure(signature) => {
-            let signature: Vec<_> = signature.iter().map(scalar).collect();
-            if !callable_object_signature(&signature) {
-                return Err(invalid(
-                    function,
-                    "callable-object call requires admitted inputs and a result",
-                ));
-            }
-            let (result, inputs) = signature
-                .split_last()
-                .ok_or_else(|| invalid(function, "callable-object call has no result type"))?;
-            Ok((
-                vec![Scalar::ClosureRef(signature.clone()), Scalar::Tuple(inputs.to_vec())],
-                result.clone(),
-            ))
-        }
-        CalleeKind::CallClosureOnce(signature) => {
-            let signature: Vec<_> = signature.iter().map(scalar).collect();
-            if !callable_object_signature(&signature) {
-                return Err(invalid(function, "consuming callable-object signature is unsupported"));
-            }
-            let (result, inputs) = signature
-                .split_last()
-                .ok_or_else(|| invalid(function, "consuming callable-object has no result"))?;
-            Ok((
-                vec![Scalar::ClosureOnce(signature.clone()), Scalar::Tuple(inputs.to_vec())],
-                result.clone(),
-            ))
-        }
-        CalleeKind::CloneClosure(signature) => {
-            let signature: Vec<_> = signature.iter().map(scalar).collect();
-            if !callable_object_signature(&signature) {
-                return Err(invalid(
-                    function,
-                    "callable-object clone requires admitted inputs and a result",
-                ));
-            }
-            Ok((vec![Scalar::ClosureRef(signature.clone())], Scalar::Closure(signature)))
-        }
+        CalleeKind::CallClosure(signature) => closure_call_signature(function, signature, false),
+        CalleeKind::CallClosureOnce(signature) => closure_call_signature(function, signature, true),
+        CalleeKind::CloneClosure(signature) => closure_clone_signature(function, signature),
         CalleeKind::ClosureBody(name, count) | CalleeKind::ClosureBodyOnce(name, count) => {
-            let lifted = plan
-                .functions
-                .iter()
-                .find(|lifted| &lifted.name == name)
-                .ok_or_else(|| PlanError::UnknownCallee(name.clone()))?;
-            let count = usize::try_from(*count)
-                .ok()
-                .filter(|count| *count <= lifted.parameters.len())
-                .ok_or_else(|| invalid(function, "closure capture count exceeds the lifted parameters"))?;
-            let mut object: Vec<_> = lifted.parameters[count..]
-                .iter()
-                .map(|parameter| scalar(&parameter.ty))
-                .collect();
-            object.push(scalar(&lifted.return_type));
-            Ok((
-                lifted.parameters[..count]
-                    .iter()
-                    .map(|parameter| scalar(&parameter.ty))
-                    .collect(),
-                if matches!(callee.kind, CalleeKind::ClosureBodyOnce(..)) {
-                    Scalar::ClosureOnce(object)
-                } else if let PlanType::NativeClosure(_, send, sync) = &function.return_type {
-                    Scalar::NativeClosure(object, *send, *sync)
-                } else {
-                    Scalar::Closure(object)
-                },
-            ))
+            lifted_closure_signature(plan, function, callee, name, *count)
         }
         CalleeKind::SharedCallableBody(signature) => Ok((
             vec![Scalar::Closure(signature.iter().map(scalar).collect())],
@@ -2129,28 +2132,8 @@ fn signature(plan: &Plan, function: &Function, callee: &Callee) -> Result<(Vec<S
                 scalar(&method.return_type),
             ))
         }
-        CalleeKind::Planned(name) => {
-            let function = plan
-                .functions
-                .iter()
-                .find(|function| &function.name == name)
-                .ok_or_else(|| PlanError::UnknownCallee(name.clone()))?;
-            Ok((
-                function
-                    .parameters
-                    .iter()
-                    .map(|parameter| scalar(&parameter.ty))
-                    .collect(),
-                scalar(&function.return_type),
-            ))
-        }
-        CalleeKind::CloneEnum(index, name) => {
-            let declaration = enum_declaration(plan, *index).ok_or_else(|| PlanError::UnknownCallee(name.clone()))?;
-            if declaration.name != *name || !declaration.derives.iter().any(|derive| derive == "Clone") {
-                return Err(PlanError::UnknownCallee(name.clone()));
-            }
-            Ok((vec![Scalar::EnumRef(*index)], Scalar::Enum(*index)))
-        }
+        CalleeKind::Planned(name) => planned_function_signature(plan, name),
+        CalleeKind::CloneEnum(index, name) => clone_enum_signature(plan, *index, name),
         CalleeKind::CloneModel(index, name) => {
             let declaration = model(plan, *index).ok_or_else(|| PlanError::UnknownCallee(name.clone()))?;
             if declaration.name != *name {
@@ -2176,26 +2159,176 @@ fn signature(plan: &Plan, function: &Function, callee: &Callee) -> Result<(Vec<S
                 scalar(&declaration.return_type),
             ))
         }
-        CalleeKind::External(path) | CalleeKind::Instantiated(path, _) => {
-            let external = plan
-                .externals
-                .iter()
-                .find(|external| {
-                    &external.path == path
-                        && match &callee.kind {
-                            CalleeKind::Instantiated(_, types) => {
-                                external.type_arguments.iter().map(scalar).eq(types.iter().map(scalar))
-                            }
-                            _ => external.type_arguments.is_empty(),
-                        }
-                })
-                .ok_or_else(|| PlanError::UnknownCallee(path.clone()))?;
-            Ok((
-                external.parameters.iter().map(scalar).collect(),
-                scalar(&external.return_type),
-            ))
-        }
+        CalleeKind::External(path) | CalleeKind::Instantiated(path, _) => external_callee_signature(plan, callee, path),
     }
+}
+
+/// Require the exact enum declaration and its checked Clone derive before admitting the borrowed clone call.
+fn clone_enum_signature(plan: &Plan, index: i64, name: &str) -> Result<(Vec<Scalar>, Scalar), PlanError> {
+    let declaration = enum_declaration(plan, index).ok_or_else(|| PlanError::UnknownCallee(name.into()))?;
+    if declaration.name != name
+        || !declaration
+            .derives
+            .iter()
+            .any(|derive| derives::from_str(derive) == Some(DeriveId::Clone))
+    {
+        return Err(PlanError::UnknownCallee(name.into()));
+    }
+    Ok((vec![Scalar::EnumRef(index)], Scalar::Enum(index)))
+}
+
+/// Select the retained external by exact path and native argument carriers; a plain external admits only the
+/// non-generic declaration. Parameter/result projection follows the existing first matching declaration rule.
+fn external_callee_signature(plan: &Plan, callee: &Callee, path: &str) -> Result<(Vec<Scalar>, Scalar), PlanError> {
+    let external = plan
+        .externals
+        .iter()
+        .find(|external| {
+            external.path == path
+                && match &callee.kind {
+                    CalleeKind::Instantiated(_, types) => {
+                        external.type_arguments.iter().map(scalar).eq(types.iter().map(scalar))
+                    }
+                    _ => external.type_arguments.is_empty(),
+                }
+        })
+        .ok_or_else(|| PlanError::UnknownCallee(path.to_string()))?;
+    Ok((
+        external.parameters.iter().map(scalar).collect(),
+        scalar(&external.return_type),
+    ))
+}
+
+/// Resolve a generator producer and validate its yield-handle input before projecting the caller's remaining inputs.
+fn generator_spawn_signature(
+    plan: &Plan,
+    name: &str,
+    leaf: &ListLeaf,
+    depth: i64,
+) -> Result<(Vec<Scalar>, Scalar), PlanError> {
+    let producer = plan
+        .functions
+        .iter()
+        .find(|function| function.name == name)
+        .ok_or_else(|| PlanError::UnknownCallee(name.to_string()))?;
+    if producer.parameters.is_empty()
+        || scalar(&producer.parameters[0].ty) != Scalar::GeneratorYield(Leaf::of(leaf), depth)
+        || scalar(&producer.return_type) != Scalar::Unit
+    {
+        return Err(invalid(
+            producer,
+            "generator producer signature differs from yield handle contract",
+        ));
+    }
+    Ok((
+        producer.parameters[1..]
+            .iter()
+            .map(|parameter| scalar(&parameter.ty))
+            .collect(),
+        Scalar::Generator(Leaf::of(leaf), depth),
+    ))
+}
+
+/// Validate one callable object's signature before exposing its receiver and packed inputs. Consuming and borrowed
+/// calls keep their distinct carrier and refusal text while sharing the same admitted-signature rule.
+fn closure_call_signature(
+    function: &Function,
+    signature: &[PlanType],
+    consuming: bool,
+) -> Result<(Vec<Scalar>, Scalar), PlanError> {
+    let signature: Vec<_> = signature.iter().map(scalar).collect();
+    if !callable_object_signature(&signature) {
+        let reason = if consuming {
+            "consuming callable-object signature is unsupported"
+        } else {
+            "callable-object call requires admitted inputs and a result"
+        };
+        return Err(invalid(function, reason));
+    }
+    let (result, inputs) = signature.split_last().ok_or_else(|| {
+        invalid(
+            function,
+            if consuming {
+                "consuming callable-object has no result"
+            } else {
+                "callable-object call has no result type"
+            },
+        )
+    })?;
+    let receiver = if consuming {
+        Scalar::ClosureOnce(signature.clone())
+    } else {
+        Scalar::ClosureRef(signature.clone())
+    };
+    Ok((vec![receiver, Scalar::Tuple(inputs.to_vec())], result.clone()))
+}
+
+/// Check a cloneable callable's admitted signature before retaining its borrowed input and owned output carriers.
+fn closure_clone_signature(function: &Function, signature: &[PlanType]) -> Result<(Vec<Scalar>, Scalar), PlanError> {
+    let signature: Vec<_> = signature.iter().map(scalar).collect();
+    if !callable_object_signature(&signature) {
+        return Err(invalid(
+            function,
+            "callable-object clone requires admitted inputs and a result",
+        ));
+    }
+    Ok((vec![Scalar::ClosureRef(signature.clone())], Scalar::Closure(signature)))
+}
+
+/// Separate capture inputs from a retained lifted function's callable signature, preserving consuming closure
+/// precedence over a native closure result's Send/Sync facts. Invalid capture counts retain the caller's diagnostic.
+fn lifted_closure_signature(
+    plan: &Plan,
+    function: &Function,
+    callee: &Callee,
+    name: &str,
+    count: i64,
+) -> Result<(Vec<Scalar>, Scalar), PlanError> {
+    let lifted = plan
+        .functions
+        .iter()
+        .find(|lifted| lifted.name == name)
+        .ok_or_else(|| PlanError::UnknownCallee(name.to_string()))?;
+    let count = usize::try_from(count)
+        .ok()
+        .filter(|count| *count <= lifted.parameters.len())
+        .ok_or_else(|| invalid(function, "closure capture count exceeds the lifted parameters"))?;
+    let mut object: Vec<_> = lifted.parameters[count..]
+        .iter()
+        .map(|parameter| scalar(&parameter.ty))
+        .collect();
+    object.push(scalar(&lifted.return_type));
+    let result = if matches!(callee.kind, CalleeKind::ClosureBodyOnce(..)) {
+        Scalar::ClosureOnce(object)
+    } else if let PlanType::NativeClosure(_, send, sync) = &function.return_type {
+        Scalar::NativeClosure(object, *send, *sync)
+    } else {
+        Scalar::Closure(object)
+    };
+    Ok((
+        lifted.parameters[..count]
+            .iter()
+            .map(|parameter| scalar(&parameter.ty))
+            .collect(),
+        result,
+    ))
+}
+
+/// Project the exact parameter/result carriers of a retained planned function without copying its declaration.
+fn planned_function_signature(plan: &Plan, name: &str) -> Result<(Vec<Scalar>, Scalar), PlanError> {
+    let function = plan
+        .functions
+        .iter()
+        .find(|function| function.name == name)
+        .ok_or_else(|| PlanError::UnknownCallee(name.to_string()))?;
+    Ok((
+        function
+            .parameters
+            .iter()
+            .map(|parameter| scalar(&parameter.ty))
+            .collect(),
+        scalar(&function.return_type),
+    ))
 }
 
 /// Compare the yielded element with the same primitive/list vocabulary used for ordinary values.
@@ -2357,8 +2490,14 @@ fn model(plan: &Plan, index: i64) -> Option<&crate::plan::ModelDeclaration> {
 fn hashable_model(plan: &Plan, index: i64) -> bool {
     model(plan, index).is_some_and(|declaration| {
         !declaration.library_item.is_empty()
-            || (declaration.derives.iter().any(|derive| derive == "Hash")
-                && (declaration.derives.iter().any(|derive| derive == "Eq")
+            || (declaration
+                .derives
+                .iter()
+                .any(|derive| derives::from_str(derive) == Some(DeriveId::Hash))
+                && (declaration
+                    .derives
+                    .iter()
+                    .any(|derive| derives::from_str(derive) == Some(DeriveId::Eq))
                     || crate::comparison_bridges::has_equality(plan, index)))
     })
 }
@@ -2366,7 +2505,11 @@ fn hashable_model(plan: &Plan, index: i64) -> bool {
 /// Admit a local Hash layout or a linked layout without inventing traits; native callee bounds remain required.
 fn hashed_model_layout(plan: &Plan, index: i64) -> bool {
     model(plan, index).is_some_and(|declaration| {
-        !declaration.library_item.is_empty() || declaration.derives.iter().any(|derive| derive == "Hash")
+        !declaration.library_item.is_empty()
+            || declaration
+                .derives
+                .iter()
+                .any(|derive| derives::from_str(derive) == Some(DeriveId::Hash))
     })
 }
 
@@ -2383,9 +2526,12 @@ fn hashable_enum(plan: &Plan, index: i64) -> bool {
         return false;
     }
     if declaration.carrier.is_empty() {
-        return ["Eq", "Hash"]
-            .iter()
-            .all(|required| declaration.derives.iter().any(|derive| derive == required));
+        return [DeriveId::Eq, DeriveId::Hash].iter().all(|required| {
+            declaration
+                .derives
+                .iter()
+                .any(|derive| derives::from_str(derive) == Some(*required))
+        });
     }
     matches!(declaration.carrier.as_str(), "Option" | "Result")
         && declaration
@@ -2479,40 +2625,21 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
         });
     }
 
+    validate_nested_carrier_components(plan, ty)?;
+    validate_retained_type_declaration(plan, ty)
+}
+
+/// Validate nested carriers before the enclosing nominal or callable declaration. Element traversal retains source
+/// order and exact borrowed/owned forms; leaf conversion follows the plan's existing arity validation.
+fn validate_nested_carrier_components(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
     match ty {
         PlanType::NativeArray(elements, length)
         | PlanType::NativeArrayRef(elements, length)
         | PlanType::NativeArrayMutRef(elements, length) => {
-            if *length < 0 || elements.len() != 1 {
-                return Err(PlanError::Invalid {
-                    function: "native array".into(),
-                    reason: "array requires one element type and a nonnegative length".into(),
-                });
-            }
-            for element in elements {
-                if !native_sequence_element(&scalar(element)) {
-                    return Err(PlanError::Unsupported {
-                        function: "native array".into(),
-                        reason: "unsupported array element".into(),
-                    });
-                }
-                validate_model_type(plan, element)?;
-            }
+            validate_native_array_type(plan, elements, *length)?;
         }
         PlanType::NativeSlice(elements) | PlanType::SliceRef(elements) | PlanType::SliceMutRef(elements) => {
-            let [element] = elements.as_slice() else {
-                return Err(PlanError::Invalid {
-                    function: "native slice".into(),
-                    reason: "slice requires one element".into(),
-                });
-            };
-            if !native_payload_type(&scalar(element)) {
-                return Err(PlanError::Unsupported {
-                    function: "native slice".into(),
-                    reason: format!("unsupported slice element {:?}", scalar(element)),
-                });
-            }
-            validate_model_type(plan, element)?;
+            validate_native_slice_type(plan, elements)?;
         }
         PlanType::Future(outputs) => {
             let [output] = outputs.as_slice() else {
@@ -2542,8 +2669,13 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
         }
         PlanType::FrozenCollection(name, elements) | PlanType::FrozenCollectionRef(name, elements) => {
             let arity = match name.as_str() {
-                "FrozenList" | "FrozenSet" => 1,
-                "FrozenDict" => 2,
+                name if [CollectionTypeId::FrozenList, CollectionTypeId::FrozenSet]
+                    .iter()
+                    .any(|id| name == collections::as_str(*id)) =>
+                {
+                    1
+                }
+                name if name == collections::as_str(CollectionTypeId::FrozenDict) => 2,
                 _ => 0,
             };
             if arity == 0 || elements.len() != arity {
@@ -2600,6 +2732,49 @@ fn validate_model_type(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
         }
         _ => {}
     }
+    Ok(())
+}
+
+/// Require a single admitted element and nonnegative length before recursively validating a native array's carrier.
+fn validate_native_array_type(plan: &Plan, elements: &[PlanType], length: i64) -> Result<(), PlanError> {
+    if length < 0 || elements.len() != 1 {
+        return Err(PlanError::Invalid {
+            function: "native array".into(),
+            reason: "array requires one element type and a nonnegative length".into(),
+        });
+    }
+    for element in elements {
+        if !native_sequence_element(&scalar(element)) {
+            return Err(PlanError::Unsupported {
+                function: "native array".into(),
+                reason: "unsupported array element".into(),
+            });
+        }
+        validate_model_type(plan, element)?;
+    }
+    Ok(())
+}
+
+/// Check native slice arity and payload admission before recursively validating its retained element type.
+fn validate_native_slice_type(plan: &Plan, elements: &[PlanType]) -> Result<(), PlanError> {
+    let [element] = elements else {
+        return Err(PlanError::Invalid {
+            function: "native slice".into(),
+            reason: "slice requires one element".into(),
+        });
+    };
+    if !native_payload_type(&scalar(element)) {
+        return Err(PlanError::Unsupported {
+            function: "native slice".into(),
+            reason: format!("unsupported slice element {:?}", scalar(element)),
+        });
+    }
+    validate_model_type(plan, element)
+}
+
+/// Verify the enclosing tuple, nominal or callable declaration after its nested carriers. Callable shape admission
+/// still precedes recursive signature validation, and retained names must agree with their plan declarations.
+fn validate_retained_type_declaration(plan: &Plan, ty: &PlanType) -> Result<(), PlanError> {
     if matches!(ty, PlanType::Tuple(_)) && !native_payload_type(&scalar(ty)) {
         return Err(PlanError::Invalid {
             function: "tuple".into(),
@@ -2744,18 +2919,32 @@ fn validate_frozen_values(
 /// either shape and remain subject to rustc's trait checks. Qualified macro paths are checked selections from native
 /// dependency facts; rustc validates their derive namespace and expands them on the real type.
 fn valid_nominal_derives(derives: &[String], tuple: bool) -> bool {
-    let required: &[&str] = if tuple {
-        &[]
-    } else {
-        &["Clone", "FieldInfo", "IncanClass"]
-    };
-    required
-        .iter()
-        .all(|required| derives.iter().any(|derive| derive == required))
-        && derives.iter().all(|derive| match derive.as_str() {
-            "Debug" | "Clone" | "Eq" | "PartialEq" | "Hash" | "Ord" | "PartialOrd" | "Default" | "Display" => true,
-            "serde::Serialize" | "serde::Deserialize" | "Copy" => true,
-            "FieldInfo" | "IncanClass" => !tuple,
+    let required = [
+        derives::as_str(DeriveId::Clone),
+        derives::FIELD_INFO_DERIVE_NAME,
+        derives::INCAN_CLASS_DERIVE_NAME,
+    ];
+    (tuple
+        || required
+            .iter()
+            .all(|required| derives.iter().any(|derive| derive == required)))
+        && derives.iter().all(|derive| match derives::from_str(derive) {
+            Some(
+                DeriveId::Debug
+                | DeriveId::Clone
+                | DeriveId::Eq
+                | DeriveId::PartialEq
+                | DeriveId::Hash
+                | DeriveId::Ord
+                | DeriveId::PartialOrd
+                | DeriveId::Default
+                | DeriveId::Display
+                | DeriveId::Copy,
+            ) => true,
+            _ if matches!(derive.as_str(), "serde::Serialize" | "serde::Deserialize") => true,
+            _ if [derives::FIELD_INFO_DERIVE_NAME, derives::INCAN_CLASS_DERIVE_NAME].contains(&derive.as_str()) => {
+                !tuple
+            }
             _ => derive.contains("::") && valid_library_item(derive),
         })
         && derives.iter().collect::<BTreeSet<_>>().len() == derives.len()
@@ -2808,8 +2997,17 @@ fn validate_generic_models(plan: &Plan) -> Result<(), PlanError> {
             || parameters.iter().any(|name| !identifier(name))
             || model.derives.iter().any(|name| {
                 !matches!(
-                    name.as_str(),
-                    "Clone" | "Debug" | "Display" | "PartialEq" | "Eq" | "PartialOrd" | "Ord" | "Hash"
+                    derives::from_str(name),
+                    Some(
+                        DeriveId::Clone
+                            | DeriveId::Debug
+                            | DeriveId::Display
+                            | DeriveId::PartialEq
+                            | DeriveId::Eq
+                            | DeriveId::PartialOrd
+                            | DeriveId::Ord
+                            | DeriveId::Hash
+                    )
                 ) && !(name.contains("::") && valid_library_item(name))
             })
             || model.fields.iter().any(|field| {
@@ -3029,16 +3227,16 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
             let valid = match declaration.carrier.as_str() {
                 "Option" => {
                     variants.len() == 2
-                        && variants[0].name == "None"
+                        && variants[0].name == constructors::as_str(ConstructorId::None)
                         && variants[0].fields.is_empty()
-                        && variants[1].name == "Some"
+                        && variants[1].name == constructors::as_str(ConstructorId::Some)
                         && variants[1].fields.len() == 1
                 }
                 "Result" => {
                     variants.len() == 2
-                        && variants[0].name == "Ok"
+                        && variants[0].name == constructors::as_str(ConstructorId::Ok)
                         && variants[0].fields.len() == 1
-                        && variants[1].name == "Err"
+                        && variants[1].name == constructors::as_str(ConstructorId::Err)
                         && variants[1].fields.len() == 1
                 }
                 _ => false,
@@ -3059,11 +3257,20 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
                     || declaration
                         .derives
                         .iter()
-                        .any(|derive| !matches!(derive.as_str(), "Clone" | "Copy"))
+                        .any(|derive| !matches!(derives::from_str(derive), Some(DeriveId::Clone | DeriveId::Copy)))
                     || !declaration.raw_kind.is_empty()))
-            || declaration.derives.iter().any(|name| match name.as_str() {
-                "Debug" | "Clone" | "Copy" | "PartialEq" | "Eq" | "PartialOrd" | "Ord" | "Hash" => false,
-                "serde::Serialize" | "serde::Deserialize" => {
+            || declaration.derives.iter().any(|name| match derives::from_str(name) {
+                Some(
+                    DeriveId::Debug
+                    | DeriveId::Clone
+                    | DeriveId::Copy
+                    | DeriveId::PartialEq
+                    | DeriveId::Eq
+                    | DeriveId::PartialOrd
+                    | DeriveId::Ord
+                    | DeriveId::Hash,
+                ) => false,
+                _ if matches!(name.as_str(), "serde::Serialize" | "serde::Deserialize") => {
                     !declaration.carrier.is_empty() || declaration.member_debug
                 }
                 _ => !(name.contains("::") && valid_library_item(name)),
@@ -3117,7 +3324,10 @@ fn native_payload_type(ty: &Scalar) -> bool {
 fn member_debug_layout(declaration: &crate::plan::EnumDeclaration) -> bool {
     declaration.carrier.is_empty()
         && declaration.name.starts_with("__IncanUnion")
-        && !declaration.derives.iter().any(|name| name == "Debug")
+        && !declaration
+            .derives
+            .iter()
+            .any(|name| derives::from_str(name) == Some(DeriveId::Debug))
         && declaration.variants.iter().all(|variant| variant.fields.len() == 1)
 }
 

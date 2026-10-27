@@ -37,6 +37,8 @@ pub model LocalDemand:
     pub defaults: bool
     # `--all-features` asks the root for every feature its manifest declares; dependencies never inherit it.
     pub all_features: bool = false
+    # Only the requested root selects an environment; dependencies keep their production declarations.
+    pub environment: str = ""
 
 
 pub def unique(values: list[str]) -> list[str]:
@@ -119,7 +121,7 @@ def declaration(
     )
 
 
-pub def catalog(document: TomlValue) -> Result[RustDependencyCatalog, str]:
+pub def catalog(document: TomlValue, environment: str = "") -> Result[RustDependencyCatalog, str]:
     """
     Build the existing activation catalog from converted Loaf declarations, including target alternatives.
 
@@ -140,9 +142,107 @@ pub def catalog(document: TomlValue) -> Result[RustDependencyCatalog, str]:
                     dependencies.append(declaration(alias, alternative, len(dependencies), group)?)
             else:
                 dependencies.append(declaration(alias, value, len(dependencies), group)?)
+    selected_dependencies = environment_dependencies(root, dependencies, environment)?
     # 2. Each feature is spelled the way the activation policy reads it, whichever way the manifest wrote it.
-    features = catalog_features(root)?
-    return Ok(RustDependencyCatalog(document=document, dependencies=dependencies, features=features, library_name=None))
+    features = environment_features(catalog_features(root)?, dependencies, selected_dependencies)
+    return Ok(
+        RustDependencyCatalog(
+            document=document,
+            dependencies=selected_dependencies,
+            features=features,
+            library_name=None,
+        ),
+    )
+
+
+def environment_features(
+    features: Dict[str, list[str]],
+    normal: list[RustDependencyDeclaration],
+    selected: list[RustDependencyDeclaration],
+) -> Dict[str, list[str]]:
+    """Keep production feature references valid when a test override makes an optional dependency unconditional."""
+    mut promoted: list[str] = []
+    for base in normal:
+        for dependency in selected:
+            if base.field == dependency.field and base.optional == Some(true) and dependency.optional == Some(false):
+                promoted.append(base.alias)
+    if len(promoted) == 0:
+        return features
+    mut result = features
+    mut tokens: set[str] = set()
+    for alias in promoted:
+        tokens.add(f"dep:{alias}")
+    mut suppressed: set[str] = set()
+    for name in sorted([name for name in features.keys()]):
+        mut entries: list[str] = []
+        for entry in features[name]:
+            if entry in tokens:
+                suppressed.add(entry)
+            else:
+                entries.append(entry)
+        result[name] = entries
+    for alias in promoted:
+        if alias not in result and f"dep:{alias}" not in suppressed:
+            result[alias] = []
+    return result
+
+
+def environment_dependencies(
+    root: Dict[str, TomlValue],
+    dependencies: list[RustDependencyDeclaration],
+    environment: str,
+) -> Result[list[RustDependencyDeclaration], str]:
+    """Overlay only the selected root environment, preserving unspecified production dependency fields."""
+    if environment == "" or "envs" not in root:
+        return Ok(dependencies)
+    environments = catalog_table(root["envs"])?
+    if environment not in environments:
+        return Ok(dependencies)
+    selected = catalog_table(environments[environment])?
+    mut result = dependencies
+    for group in ["dependencies", "rust-dependencies"]:
+        if group not in selected:
+            continue
+        overrides = catalog_table(selected[group])?
+        for alias in sorted([name for name in overrides.keys()]):
+            mut replaced = false
+            for index in range(len(result)):
+                if result[index].field == [group, alias]:
+                    result[index] = overlay_dependency(result[index], overrides[alias], group)?
+                    replaced = true
+            if not replaced:
+                result.append(declaration(alias, overrides[alias], len(result), group)?)
+    return Ok(result)
+
+
+def overlay_dependency(
+    base: RustDependencyDeclaration,
+    override: TomlValue,
+    group: str,
+) -> Result[RustDependencyDeclaration, str]:
+    """Apply explicit fields of a partial test dependency without resetting its source, features or defaults."""
+    replacement = declaration(base.alias, override, base.index, group)?
+    if override.kind() == TomlKind.String:
+        mut versioned = base
+        versioned.version_requirement = replacement.version_requirement
+        return Ok(versioned)
+    fields = catalog_table(override)?
+    mut result = base
+    if "loaf" in fields or "package" in fields:
+        result.package = replacement.package
+    if "version" in fields:
+        result.version_requirement = replacement.version_requirement
+    if "path" in fields:
+        result.source = replacement.source
+    if "features" in fields:
+        result.features = unique(base.features + replacement.features)
+    if "default-features" in fields:
+        result.default_features = replacement.default_features
+    if "optional" in fields:
+        result.optional = replacement.optional
+    if "target" in fields:
+        result.target_condition = replacement.target_condition
+    return Ok(result)
 
 
 def catalog_table(value: TomlValue) -> Result[Dict[str, TomlValue], str]:
@@ -218,7 +318,10 @@ def add(demands: Dict[str, LocalDemand], demand: LocalDemand) -> Dict[str, Local
             features=unique(previous.features + demand.features),
             defaults=previous.defaults or demand.defaults,
             all_features=previous.all_features or demand.all_features,
+            environment=previous.environment,
         )
+        if selected.environment == "":
+            selected.environment = demand.environment
     result[identity] = selected
     return result
 
@@ -363,13 +466,13 @@ pub class LocalFacetSession:
 
     configuration: TargetConfiguration
     substitutes: Dict[str, str]
-    reader: ManifestReader
+    reader: ManifestReader = ManifestReader()
     selections: list[FacetSelection] = []
     by_owner: Dict[str, int] = {}
 
-    def facets(mut self, root: LocalDemand) -> Result[list[LocalFacet], str]:
+    def facets(mut self, root: LocalDemand, additional_roots: list[LocalDemand] = []) -> Result[list[LocalFacet], str]:
         """
-        Select one root without inheriting another root's feature demands.
+        Select an explicit root set without inheriting a previous invocation's feature demands.
 
         1. Start an independent monotonic demand inventory.
         2. Activate each changed demand once and retain its children in this root's closure.
@@ -378,6 +481,8 @@ pub class LocalFacetSession:
         # 1. The cache shares activation facts, never another root's demand inventory.
         mut demands: Dict[str, LocalDemand] = {}
         demands = add(demands, root)
+        for demand in additional_roots:
+            demands = add(demands, demand)
         mut previous: Dict[str, LocalDemand] = {}
         mut selected: Dict[str, int] = {}
         # 2. An unchanged choice has already contributed all its children to this monotonic closure.
@@ -424,10 +529,18 @@ pub def local_facets(
     configuration: TargetConfiguration,
     substitutes: Dict[str, str] = {},
     reader: ManifestReader = ManifestReader(),
+    additional_roots: list[LocalDemand] = [],
 ) -> Result[list[LocalFacet], str]:
-    """Select both languages' edges in a fresh source/configuration session; substitutes replace packages throughout."""
+    """Select explicit roots in one shared feature graph, retaining the caller's reconciled manifest reader."""
+    clock = begin()
     mut session = local_facet_session(configuration, substitutes, reader)
-    return session.facets(root)
+    facets = session.facets(root, additional_roots)?
+    mut domain = "target"
+    if root.domain == DependencyDomain.Host:
+        domain = "host"
+    key = (f"{root.project}|{domain}|{configuration.triple}|{",".join(sorted(root.features))}|" + f"{root.defaults}|{root.all_features}")
+    record("graph_resolution", key, clock)
+    return Ok(facets)
 
 
 pub def local_facet_session(
@@ -447,6 +560,7 @@ def canonical_demand(demand: LocalDemand) -> LocalDemand:
         features=unique(demand.features),
         defaults=demand.defaults,
         all_features=demand.all_features,
+        environment=demand.environment,
     )
 
 
@@ -470,7 +584,7 @@ def activated(
     """
     # 1. The authored manifest is the only feature and dependency authority.
     document = read_manifest(Path(demand.project), reader)?
-    inputs = catalog(document)?
+    inputs = catalog(document, demand.environment)?
     requested = requested_features(demand, inputs)
     # 2. The slots are activated for the features demanded and for the domain the demand is built in.
     context = ActivationContext(

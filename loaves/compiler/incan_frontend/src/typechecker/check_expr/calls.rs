@@ -8,7 +8,7 @@ use crate::diagnostics::errors::TypeArgumentOrigin;
 use crate::diagnostics::{CompileError, errors};
 use crate::resolved_type_subst::substitute_resolved_type;
 use crate::symbols::{
-    CallableParam, FieldInfo, FunctionInfo, FunctionOverloadInfo, ResolvedType, SymbolKind, TypeInfo,
+    CallableParam, FieldInfo, FunctionInfo, FunctionOverloadInfo, ResolvedType, RustItemInfo, SymbolKind, TypeInfo,
 };
 use crate::typechecker::type_info::{
     CAbiBridgeCall, CAbiOutputSlot, CAbiSpanKind, CBindingRawCall, CBindingSymbol, CBindingType, COutputMode,
@@ -51,6 +51,15 @@ pub(super) struct PublicModuleConstructorContext<'a> {
     pub display_name: &'a str,
     pub canonical_name: &'a str,
     pub type_info: &'a TypeInfo,
+}
+
+/// Borrow the written call and its destination while the checker selects a declaration and checks arguments.
+struct DirectCallSite<'a> {
+    callee: &'a Spanned<Expr>,
+    type_args: &'a [Spanned<Type>],
+    args: &'a [CallArg],
+    span: Span,
+    expected_return_ty: Option<&'a ResolvedType>,
 }
 
 /// Return whether the last Rust path segment looks like a type name.
@@ -132,25 +141,47 @@ impl TypeChecker {
         span: Span,
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
+        let call = DirectCallSite {
+            callee,
+            type_args,
+            args,
+            span,
+            expected_return_ty,
+        };
+        if let Some(result) = self.check_compiler_known_direct_call(&call) {
+            return result;
+        }
+        if let Some(result) = self.check_direct_field_constructor(&call) {
+            return result;
+        }
+        if let Some(result) = self.check_imported_module_direct_call(&call) {
+            return result;
+        }
+        self.check_remaining_direct_call(&call)
+    }
+
+    /// Check C ABI and explicit builtin syntax before general receiver evaluation or declaration lookup.
+    fn check_compiler_known_direct_call(&mut self, call: &DirectCallSite<'_>) -> Option<ResolvedType> {
+        let (callee, type_args, args, span) = (call.callee, call.type_args, call.args, call.span);
         if let Expr::Field(base, member) = &callee.node
             && let Some(result) = self.check_c_abi_c_string_constructor(base, member, type_args, args, span)
         {
-            return result;
+            return Some(result);
         }
         if let Expr::Field(base, member) = &callee.node
             && let Some(result) = self.check_c_abi_span_constructor(base, member, type_args, args, span)
         {
-            return result;
+            return Some(result);
         }
         if let Expr::Field(base, member) = &callee.node
             && let Some(result) = self.check_c_abi_output_slot_constructor(base, member, type_args, args, span)
         {
-            return result;
+            return Some(result);
         }
         if let Expr::Field(base, member) = &callee.node
             && let Some(result) = self.check_c_binding_symbol_member_call(base, member, type_args, args, span)
         {
-            return result;
+            return Some(result);
         }
         if let Expr::Field(base, member) = &callee.node
             && let Some((_, module_path)) = self.imported_module_for_expr(base)
@@ -166,7 +197,7 @@ impl TypeChecker {
                 &source_modules,
                 span,
             ));
-            return ResolvedType::Unknown;
+            return Some(ResolvedType::Unknown);
         }
         if let Some(name) = Self::explicit_builtin_member_name(callee) {
             let result = self.check_explicit_builtin_call(name, args, span);
@@ -178,11 +209,16 @@ impl TypeChecker {
             if !type_args.is_empty() {
                 self.errors
                     .push(errors::explicit_call_site_type_args_not_supported(span));
-                return ResolvedType::Unknown;
+                return Some(ResolvedType::Unknown);
             }
-            return result;
+            return Some(result);
         }
+        None
+    }
 
+    /// Resolve field-spelled enum constructors and refuse computed properties before ordinary module calls.
+    fn check_direct_field_constructor(&mut self, call: &DirectCallSite<'_>) -> Option<ResolvedType> {
+        let (callee, type_args, args, span) = (call.callee, call.type_args, call.args, call.span);
         // Special-case: Enum variant constructor syntax `Enum.Variant(...)`. If callee is a field access where the
         // base resolves to a known enum type and the field name matches a variant, treat this as a constructor and
         // return the enum type.
@@ -194,10 +230,10 @@ impl TypeChecker {
                 && let Some(value_enum) = enum_info.value_enum.clone()
             {
                 if member_name == "from_value" && base_is_enum_type_name {
-                    return self.check_value_enum_from_value_call(enum_name, &value_enum, type_args, args, span);
+                    return Some(self.check_value_enum_from_value_call(enum_name, &value_enum, type_args, args, span));
                 }
                 if member_name == "value" && !base_is_enum_type_name {
-                    return self.check_value_enum_value_call(enum_name, &value_enum, type_args, args, span);
+                    return Some(self.check_value_enum_value_call(enum_name, &value_enum, type_args, args, span));
                 }
             }
             if let ResolvedType::Named(enum_name) = &base_ty
@@ -224,15 +260,20 @@ impl TypeChecker {
                 if let Some(identity) = variant_identity {
                     self.type_info.record_resolved_identity(callee.span, identity);
                 }
-                return ResolvedType::Named(enum_name.clone());
+                return Some(ResolvedType::Named(enum_name.clone()));
             }
             if self.receiver_has_computed_property(&base_ty, member_name, span) {
                 self.check_call_args(args);
                 self.errors.push(errors::property_called_as_method(member_name, span));
-                return ResolvedType::Unknown;
+                return Some(ResolvedType::Unknown);
             }
         }
+        None
+    }
 
+    /// Resolve imported module members and retain their source and canonical identities before checking arguments.
+    fn check_imported_module_direct_call(&mut self, call: &DirectCallSite<'_>) -> Option<ResolvedType> {
+        let (callee, span) = (call.callee, call.span);
         // Imported module function calls whose signatures are known via the stdlib AST cache
         // (for example `math.sqrt(...)`).
         if let Expr::Field(base, method) = &callee.node
@@ -261,7 +302,7 @@ impl TypeChecker {
                             &source_modules,
                             span,
                         ));
-                        return ResolvedType::Unknown;
+                        return Some(ResolvedType::Unknown);
                     }
                 }
             } else {
@@ -297,473 +338,575 @@ impl TypeChecker {
                 if let Some(identity) = canonical {
                     self.type_info.record_resolved_identity(callee.span, identity);
                 }
-                return match (kind, public_library) {
-                    (SymbolKind::Function(info), _) => {
-                        let errors_before_call = self.errors.len();
-                        let result = self.validate_stdlib_module_function_call(
-                            callable.as_str(),
-                            &info,
-                            type_args,
-                            args,
-                            span,
-                            expected_return_ty,
-                        );
-                        let identity = self.type_info.resolved_identity(callee.span).cloned();
-                        self.check_capturing_call_arguments(identity.as_ref(), &callable, &info.params, args);
-                        self.retain_body_ir_async_call_target(
-                            info.is_async,
-                            &source_name,
-                            span,
-                            callee.span,
-                            errors_before_call,
-                        );
-                        result
-                    }
-                    (SymbolKind::FunctionOverloads(overloads), _) => self
-                        .validate_function_overload_call_with_callee_span(
-                            callable.as_str(),
-                            &overloads,
-                            type_args,
-                            args,
-                            span,
-                            Some(callee.span),
-                            expected_return_ty,
-                        ),
-                    (
-                        SymbolKind::Type(type_info @ (TypeInfo::Model(_) | TypeInfo::Class(_) | TypeInfo::Newtype(_))),
-                        Some(library),
-                    ) => {
-                        let mut source_type_path = source_module_path.iter().skip(2).cloned().collect::<Vec<_>>();
-                        source_type_path.push(source_name);
-                        let canonical_name = canonical_public_library_type_name(&library, &source_type_path.join("::"));
-                        self.check_public_module_type_constructor_call(
-                            PublicModuleConstructorContext {
-                                display_name: &callable,
-                                canonical_name: &canonical_name,
-                                type_info: &type_info,
-                            },
-                            type_args,
-                            args,
-                            span,
-                            callee.span,
-                        )
-                    }
-                    _ => ResolvedType::Unknown,
-                };
+                return Some(self.check_resolved_module_direct_call(
+                    call,
+                    &callable,
+                    kind,
+                    source_module_path,
+                    source_name,
+                    public_library,
+                ));
             }
         }
+        None
+    }
 
-        if let Expr::Ident(name) = &callee.node {
-            let class_receiver_identity = self
-                .symbols
-                .lookup(name)
-                .and_then(|symbol_id| self.symbols.identity_of(symbol_id))
-                .filter(|identity| {
-                    identity.kind == SemanticSourceTargetKind::Receiver && identity.declaration_name == "cls"
-                })
-                .cloned();
-            if keywords::from_str(name.as_str()) == Some(KeywordId::Cls)
-                && let Some(identity) = class_receiver_identity
-                && let (Some(owner_name), Some(self_ty)) = (
-                    self.current_method_owner.clone(),
-                    self.current_classmethod_self_ty.clone(),
+    /// Check a resolved module function, overload set or public constructor using its retained declaration facts.
+    fn check_resolved_module_direct_call(
+        &mut self,
+        call: &DirectCallSite<'_>,
+        callable: &str,
+        kind: SymbolKind,
+        source_module_path: Vec<String>,
+        source_name: String,
+        public_library: Option<String>,
+    ) -> ResolvedType {
+        let (callee, type_args, args, span, expected_return_ty) = (
+            call.callee,
+            call.type_args,
+            call.args,
+            call.span,
+            call.expected_return_ty,
+        );
+        match (kind, public_library) {
+            (SymbolKind::Function(info), _) => {
+                let errors_before_call = self.errors.len();
+                let result = self.validate_stdlib_module_function_call(
+                    callable,
+                    &info,
+                    type_args,
+                    args,
+                    span,
+                    expected_return_ty,
+                );
+                let identity = self.type_info.resolved_identity(callee.span).cloned();
+                self.check_capturing_call_arguments(identity.as_ref(), callable, &info.params, args);
+                self.retain_body_ir_async_call_target(
+                    info.is_async,
+                    &source_name,
+                    span,
+                    callee.span,
+                    errors_before_call,
+                );
+                result
+            }
+            (SymbolKind::FunctionOverloads(overloads), _) => self.validate_function_overload_call_with_callee_span(
+                callable,
+                &overloads,
+                type_args,
+                args,
+                span,
+                Some(callee.span),
+                expected_return_ty,
+            ),
+            (
+                SymbolKind::Type(type_info @ (TypeInfo::Model(_) | TypeInfo::Class(_) | TypeInfo::Newtype(_))),
+                Some(library),
+            ) => {
+                let mut source_type_path = source_module_path.iter().skip(2).cloned().collect::<Vec<_>>();
+                source_type_path.push(source_name);
+                let canonical_name = canonical_public_library_type_name(&library, &source_type_path.join("::"));
+                self.check_public_module_type_constructor_call(
+                    PublicModuleConstructorContext {
+                        display_name: callable,
+                        canonical_name: &canonical_name,
+                        type_info: &type_info,
+                    },
+                    type_args,
+                    args,
+                    span,
+                    callee.span,
                 )
-            {
-                let ctor_fields: Option<std::collections::HashMap<String, FieldInfo>> =
-                    self.lookup_type_info(&owner_name).and_then(|info| match info {
-                        TypeInfo::Model(m) => Some(m.fields.clone()),
-                        TypeInfo::Class(c) => Some(c.fields.clone()),
-                        _ => None,
-                    });
-                if let Some(fields) = ctor_fields {
-                    self.type_info.record_resolved_identity(callee.span, identity);
-                    self.record_expr_type(callee.span, self_ty.clone());
-                    self.type_info
-                        .expressions
-                        .ident_kinds
-                        .insert(callee.span, IdentKind::TypeName);
-                    self.check_model_or_class_constructor_call(&owner_name, &owner_name, &fields, args, span);
-                    return self_ty;
-                }
             }
+            _ => ResolvedType::Unknown,
+        }
+    }
 
-            let marker_binding_in_scope = self
-                .symbols
-                .lookup(name)
-                .and_then(|id| self.symbols.get(id))
-                .is_some_and(|sym| matches!(sym.kind, SymbolKind::Function(_)) && sym.scope == 0);
-            if self.testing_marker_import_bindings.contains(name) && marker_binding_in_scope {
-                self.check_call_args(args);
-                self.errors
-                    .push(errors::testing_marker_runtime_call_not_supported(name, span));
-                return ResolvedType::Unknown;
-            }
-
-            if let Some(result) = self.check_builtin_call(name, args, span, expected_return_ty) {
-                if !type_args.is_empty() {
-                    self.errors
-                        .push(errors::explicit_call_site_type_args_not_supported(span));
-                    return ResolvedType::Unknown;
-                }
-                if let Some(builtin) = self.type_info.resolved_builtin_call(span)
-                    && let Some(identity) = self.symbols.builtin_function_identity(builtin)
-                {
-                    self.type_info.record_resolved_identity(callee.span, identity);
-                } else if incan_lang::lang::surface::constructors::from_str(name).is_some()
-                    || self.active_surface_function_import(name).is_some()
-                {
-                    // Constructor checking has already excluded source shadowing, and an active surface-function
-                    // import is the binding lookup selects. Retain that binding's proven identity at the callee, so
-                    // Body IR never recovers it from the import's local name.
-                    self.record_direct_callee_identity(name, callee.span);
-                }
+    /// Resolve named and value calls after syntax-specific and imported-module checking has declined.
+    fn check_remaining_direct_call(&mut self, call: &DirectCallSite<'_>) -> ResolvedType {
+        if let Expr::Ident(name) = &call.callee.node {
+            if let Some(result) = self.check_class_receiver_direct_call(name, call) {
                 return result;
             }
-
-            if let Some(sym) = self.lookup_symbol(name).cloned() {
-                match sym.kind {
-                    SymbolKind::Type(type_info) => {
-                        if let Some(target) = self.source_target_for_symbol(name, &SymbolKind::Type(type_info.clone()))
-                        {
-                            self.record_source_target(
-                                callee.span,
-                                target.module_path.clone(),
-                                target.name.clone(),
-                                target.kind.clone(),
-                            );
-                            self.record_source_target(span, target.module_path, target.name, target.kind);
-                        }
-                        if let Some(ret) =
-                            self.check_type_constructor_hook_call(name, &type_info, type_args, args, span)
-                        {
-                            self.record_direct_callee_identity(name, callee.span);
-                            self.record_expr_type(callee.span, ResolvedType::Named(name.clone()));
-                            self.type_info
-                                .expressions
-                                .ident_kinds
-                                .insert(callee.span, IdentKind::TypeName);
-                            return ret;
-                        }
-                        if stdlib::is_graph_constructor_type(name) && args.is_empty() {
-                            self.record_direct_callee_identity(name, callee.span);
-                            return self.check_graph_constructor_call(name, &type_info, type_args, args, span);
-                        }
-                        if let Some(tid) = self.constructor_surface_type(name) {
-                            if !type_args.is_empty() {
-                                self.errors
-                                    .push(errors::explicit_call_site_type_args_not_supported(span));
-                                self.check_call_args(args);
-                                return ResolvedType::Unknown;
-                            }
-                            self.record_direct_callee_identity(name, callee.span);
-                            self.record_expr_type(callee.span, ResolvedType::Named(name.clone()));
-                            self.type_info
-                                .expressions
-                                .ident_kinds
-                                .insert(callee.span, IdentKind::TypeName);
-                            if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
-                                return self.check_json_query_constructor_call(tid, args, span);
-                            }
-                            if matches!(tid, SurfaceTypeId::Html) {
-                                self.record_body_ir_html_constructor(args, span);
-                                // The value is typed by the binding the call spells, so `Page(...)` under
-                                // `from std.web import Html as Page` is a `Page`, as its annotations are.
-                                return ResolvedType::Named(name.clone());
-                            }
-                            if matches!(tid, SurfaceTypeId::ValidationError) {
-                                return self.check_constructor(name, args, span);
-                            }
-                        }
-                        let explicit_constructor_context =
-                            self.explicit_constructor_type_context(name, &type_info, type_args, span);
-                        if let Some((_, type_bindings)) = &explicit_constructor_context {
-                            self.refuse_unsatisfied_nominal_type_arguments(
-                                name,
-                                type_bindings,
-                                TypeArgumentOrigin::Explicit,
-                                span,
-                            );
-                        }
-                        let constructor_context = explicit_constructor_context
-                            .or_else(|| self.expected_constructor_type_context(name, &type_info, expected_return_ty));
-                        let contextual_constructor_ty = constructor_context.as_ref().map(|(ty, _)| ty.clone());
-                        if let TypeInfo::Model(model) = &type_info
-                            && model
-                                .derives
-                                .iter()
-                                .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Validate))
-                        {
-                            self.check_call_args(args);
-                            self.errors
-                                .push(errors::validate_derive_disallows_raw_construction(name, span));
-                            return ResolvedType::Unknown;
-                        }
-                        if matches!(type_info, TypeInfo::Newtype(_)) {
-                            self.record_direct_callee_identity(name, callee.span);
-                            self.record_expr_type(callee.span, ResolvedType::Named(name.clone()));
-                            self.type_info
-                                .expressions
-                                .ident_kinds
-                                .insert(callee.span, IdentKind::TypeName);
-                            let constructor_ty = self.check_constructor(name, args, span);
-                            return contextual_constructor_ty.unwrap_or(constructor_ty);
-                        }
-                        let ctor_fields = match &type_info {
-                            TypeInfo::Model(info) => Some(info.fields.clone()),
-                            TypeInfo::Class(info) => Some(info.fields.clone()),
-                            _ => None,
-                        };
-                        let Some(mut fields) = ctor_fields else {
-                            return self.check_constructor(name, args, span);
-                        };
-                        self.record_direct_callee_identity(name, callee.span);
-                        if let Some((_, type_bindings)) = &constructor_context {
-                            for field in fields.values_mut() {
-                                field.ty = substitute_resolved_type(&field.ty, type_bindings);
-                            }
-                        }
-                        let errors_before_constructor = self.errors.len();
-                        let constructor_ty =
-                            self.check_model_or_class_constructor_call(name, name, &fields, args, span);
-                        if self.errors.len() == errors_before_constructor {
-                            self.retain_body_ir_constructor_type(
-                                name,
-                                &type_info,
-                                constructor_context.as_ref(),
-                                args,
-                                span,
-                            );
-                        }
-                        self.record_expr_type(callee.span, ResolvedType::Named(name.clone()));
-                        self.type_info
-                            .expressions
-                            .ident_kinds
-                            .insert(callee.span, IdentKind::TypeName);
-                        return contextual_constructor_ty.unwrap_or(constructor_ty);
-                    }
-                    SymbolKind::Function(func_info) => {
-                        if let Some(target) =
-                            self.source_target_for_symbol(name, &SymbolKind::Function(func_info.clone()))
-                        {
-                            self.record_source_target(
-                                callee.span,
-                                target.module_path.clone(),
-                                target.name.clone(),
-                                target.kind.clone(),
-                            );
-                            self.record_source_target(
-                                span,
-                                target.module_path.clone(),
-                                target.name.clone(),
-                                target.kind.clone(),
-                            );
-                            self.record_c_abi_function_call_target(span, target);
-                        }
-                        self.record_direct_callee_identity(name, callee.span);
-                        let declaration = self.type_info.resolved_identity(callee.span).cloned();
-                        let first_error = self.errors.len();
-                        let result =
-                            self.validate_function_call(name, &func_info, type_args, args, span, expected_return_ty);
-                        self.check_capturing_call_arguments(declaration.as_ref(), name, &func_info.params, args);
-                        self.retain_body_ir_async_call_target(func_info.is_async, name, span, callee.span, first_error);
-                        if let Some(declaration) = declaration {
-                            self.attach_related_declaration_to_new_errors(first_error, &declaration);
-                        }
-                        return result;
-                    }
-                    SymbolKind::FunctionOverloads(overloads) => {
-                        if let Some(target) =
-                            self.source_target_for_symbol(name, &SymbolKind::FunctionOverloads(overloads.clone()))
-                        {
-                            self.record_source_target(
-                                callee.span,
-                                target.module_path.clone(),
-                                target.name.clone(),
-                                target.kind.clone(),
-                            );
-                            self.record_source_target(
-                                span,
-                                target.module_path.clone(),
-                                target.name.clone(),
-                                target.kind.clone(),
-                            );
-                            self.record_c_abi_function_call_target(span, target);
-                        }
-                        return self.validate_direct_function_overload_call(
-                            name,
-                            &overloads,
-                            type_args,
-                            args,
-                            span,
-                            callee.span,
-                            expected_return_ty,
-                        );
-                    }
-                    SymbolKind::RustItem(info) => {
-                        if !type_args.is_empty() {
-                            self.errors
-                                .push(errors::explicit_call_site_type_args_not_supported(span));
-                            self.check_call_args(args);
-                            return ResolvedType::Unknown;
-                        }
-                        if let Some(sig) = compiler_owned_function_signature(info.path.as_str()) {
-                            return self.validate_and_record_rust_import_function_call(
-                                info.path.as_str(),
-                                &sig,
-                                args,
-                                span,
-                                callee.span,
-                                expected_return_ty,
-                            );
-                        }
-                        let metadata = info
-                            .metadata
-                            .clone()
-                            .or_else(|| self.rust_item_metadata_for_path(info.path.as_str()));
-                        if let Some(meta) = metadata.as_ref() {
-                            match &meta.kind {
-                                RustItemKind::Function(sig) => {
-                                    return self.validate_and_record_rust_import_function_call(
-                                        info.path.as_str(),
-                                        sig,
-                                        args,
-                                        span,
-                                        callee.span,
-                                        expected_return_ty,
-                                    );
-                                }
-                                RustItemKind::Type(type_info)
-                                    if type_info.metadata_completeness.has_constructible_layout()
-                                        && (!type_info.fields.is_empty()
-                                            || (type_info.variants.is_empty() && args.is_empty())) =>
-                                {
-                                    let error_count_before = self.errors.len();
-                                    let result = if type_info.fields.iter().all(|field| field.name.is_empty()) {
-                                        self.check_rust_tuple_struct_constructor_call(
-                                            info.path.as_str(),
-                                            type_info,
-                                            args,
-                                            span,
-                                        )
-                                    } else {
-                                        self.check_rust_named_field_constructor_call(
-                                            info.path.as_str(),
-                                            type_info,
-                                            args,
-                                            span,
-                                        )
-                                    };
-                                    if self.errors.len() == error_count_before {
-                                        self.record_expr_type(callee.span, ResolvedType::RustPath(info.path.clone()));
-                                        self.type_info
-                                            .expressions
-                                            .ident_kinds
-                                            .insert(callee.span, IdentKind::RustImport);
-                                    }
-                                    return result;
-                                }
-                                RustItemKind::Type(_) => {
-                                    self.check_call_args(args);
-                                    self.errors
-                                        .push(errors::rust_constructor_metadata_unavailable(info.path.as_str(), span));
-                                    return ResolvedType::Unknown;
-                                }
-                                RustItemKind::Unsupported { description } => {
-                                    self.check_call_args(args);
-                                    self.errors.push(errors::rust_item_shape_not_supported(
-                                        info.path.as_str(),
-                                        description.as_str(),
-                                        span,
-                                    ));
-                                    return ResolvedType::Unknown;
-                                }
-                                _ => {
-                                    self.check_call_args(args);
-                                    self.errors
-                                        .push(errors::rust_constructor_metadata_unavailable(info.path.as_str(), span));
-                                    return ResolvedType::Unknown;
-                                }
-                            }
-                        } else if let Some(sig) = metadata_free_function_signature(info.path.as_str()) {
-                            return self.validate_and_record_rust_import_function_call(
-                                info.path.as_str(),
-                                &sig,
-                                args,
-                                span,
-                                callee.span,
-                                expected_return_ty,
-                            );
-                        } else if rust_path_last_segment_looks_like_type(info.path.as_str()) {
-                            return self.check_metadata_free_rust_named_field_constructor_call(
-                                info.path.as_str(),
-                                args,
-                                span,
-                            );
-                        }
-                    }
-                    // RFC 042: traits are abstract — reject `TraitName(...)` constructor syntax.
-                    SymbolKind::Trait(_) => {
-                        self.check_call_args(args);
-                        self.errors.push(errors::cannot_instantiate_trait(name, span));
-                        return ResolvedType::Unknown;
-                    }
-                    _ => {}
-                }
+            if let Some(result) = self.check_named_builtin_direct_call(name, call) {
+                return result;
             }
-
-            let in_scope = self.symbols.lookup(name).is_some();
-            if in_scope && let Some(tid) = self.constructor_surface_type(name) {
-                if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
-                    return self.check_json_query_constructor_call(tid, args, span);
-                }
-                if matches!(tid, SurfaceTypeId::Html) {
-                    self.record_body_ir_html_constructor(args, span);
-                    return ResolvedType::Named(name.clone());
-                }
+            if let Some(result) = self.check_declared_direct_call(name, call) {
+                return result;
             }
-
-            // Strict validated construction: `@derive(Validate)` models must be constructed via `TypeName.new(...)`.
-            if let Some(TypeInfo::Model(m)) = self.lookup_type_info(name)
-                && m.derives
-                    .iter()
-                    .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Validate))
-            {
-                // Still typecheck argument expressions for better downstream errors.
-                self.check_call_args(args);
-                self.errors
-                    .push(errors::validate_derive_disallows_raw_construction(name, span));
-                return ResolvedType::Unknown;
+            if let Some(result) = self.check_legacy_named_constructor_call(name, call) {
+                return result;
             }
+        }
+        if let Some(result) = self.check_decorated_generic_direct_call(call) {
+            return result;
+        }
+        self.check_direct_value_call(call)
+    }
 
-            // Model/class constructor calls: validate field arguments at the Incan level.
-            // NOTE: `lookup_type_info` returns a reference into `self`, so we clone the needed field map to avoid
-            // borrow conflicts (we need `&mut self` for validation).
+    /// Check `cls(...)` only when the active receiver binding proves the classmethod construction context.
+    fn check_class_receiver_direct_call(&mut self, name: &str, call: &DirectCallSite<'_>) -> Option<ResolvedType> {
+        let (callee, args, span) = (call.callee, call.args, call.span);
+        let class_receiver_identity = self
+            .symbols
+            .lookup(name)
+            .and_then(|symbol_id| self.symbols.identity_of(symbol_id))
+            .filter(|identity| {
+                identity.kind == SemanticSourceTargetKind::Receiver && identity.declaration_name == "cls"
+            })
+            .cloned();
+        if keywords::from_str(name) == Some(KeywordId::Cls)
+            && let Some(identity) = class_receiver_identity
+            && let (Some(owner_name), Some(self_ty)) = (
+                self.current_method_owner.clone(),
+                self.current_classmethod_self_ty.clone(),
+            )
+        {
             let ctor_fields: Option<std::collections::HashMap<String, FieldInfo>> =
-                self.lookup_type_info(name).and_then(|info| match info {
+                self.lookup_type_info(&owner_name).and_then(|info| match info {
                     TypeInfo::Model(m) => Some(m.fields.clone()),
                     TypeInfo::Class(c) => Some(c.fields.clone()),
                     _ => None,
                 });
             if let Some(fields) = ctor_fields {
-                let constructor_ty = self.check_model_or_class_constructor_call(name, name, &fields, args, span);
-                self.record_expr_type(callee.span, ResolvedType::Named(name.clone()));
+                self.type_info.record_resolved_identity(callee.span, identity);
+                self.record_expr_type(callee.span, self_ty.clone());
                 self.type_info
                     .expressions
                     .ident_kinds
                     .insert(callee.span, IdentKind::TypeName);
-                if in_scope && let Some(tid) = self.constructor_surface_type(name) {
-                    if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
-                        return self.check_json_query_constructor_call(tid, args, span);
-                    }
-                    if matches!(tid, SurfaceTypeId::Html) {
-                        self.record_body_ir_html_constructor(args, span);
-                        return ResolvedType::Named(name.clone());
-                    }
+                self.check_model_or_class_constructor_call(&owner_name, &owner_name, &fields, args, span);
+                return Some(self_ty);
+            }
+        }
+        None
+    }
+
+    /// Refuse test markers and check named builtins before ordinary declaration dispatch.
+    fn check_named_builtin_direct_call(&mut self, name: &str, call: &DirectCallSite<'_>) -> Option<ResolvedType> {
+        let (callee, type_args, args, span, expected_return_ty) = (
+            call.callee,
+            call.type_args,
+            call.args,
+            call.span,
+            call.expected_return_ty,
+        );
+        let marker_binding_in_scope = self
+            .symbols
+            .lookup(name)
+            .and_then(|id| self.symbols.get(id))
+            .is_some_and(|sym| matches!(sym.kind, SymbolKind::Function(_)) && sym.scope == 0);
+        if self.testing_marker_import_bindings.contains(name) && marker_binding_in_scope {
+            self.check_call_args(args);
+            self.errors
+                .push(errors::testing_marker_runtime_call_not_supported(name, span));
+            return Some(ResolvedType::Unknown);
+        }
+
+        if let Some(result) = self.check_builtin_call(name, args, span, expected_return_ty) {
+            if !type_args.is_empty() {
+                self.errors
+                    .push(errors::explicit_call_site_type_args_not_supported(span));
+                return Some(ResolvedType::Unknown);
+            }
+            if let Some(builtin) = self.type_info.resolved_builtin_call(span)
+                && let Some(identity) = self.symbols.builtin_function_identity(builtin)
+            {
+                self.type_info.record_resolved_identity(callee.span, identity);
+            } else if incan_lang::lang::surface::constructors::from_str(name).is_some()
+                || self.active_surface_function_import(name).is_some()
+            {
+                // Constructor checking has already excluded source shadowing, and an active surface-function
+                // import is the binding lookup selects. Retain that binding's proven identity at the callee, so
+                // Body IR never recovers it from the import's local name.
+                self.record_direct_callee_identity(name, callee.span);
+            }
+            return Some(result);
+        }
+        None
+    }
+
+    /// Dispatch a snapshot of the resolved declaration without borrowing the symbol table during argument checks.
+    fn check_declared_direct_call(&mut self, name: &str, call: &DirectCallSite<'_>) -> Option<ResolvedType> {
+        let kind = self.lookup_symbol(name)?.kind.clone();
+        self.record_declared_direct_call_source(name, &kind, call);
+        Some(match kind {
+            SymbolKind::Type(info) => self.check_declared_type_direct_call(name, &info, call),
+            SymbolKind::Function(info) => self.check_declared_function_direct_call(name, &info, call),
+            SymbolKind::FunctionOverloads(overloads) => self.validate_direct_function_overload_call(
+                name,
+                &overloads,
+                call.type_args,
+                call.args,
+                call.span,
+                call.callee.span,
+                call.expected_return_ty,
+            ),
+            SymbolKind::RustItem(info) => return self.check_declared_rust_direct_call(&info, call),
+            SymbolKind::Trait(_) => {
+                self.check_call_args(call.args);
+                self.errors.push(errors::cannot_instantiate_trait(name, call.span));
+                ResolvedType::Unknown
+            }
+            _ => return None,
+        })
+    }
+
+    /// Retain source targets for declaration-backed calls; function targets also carry checked C ABI contracts.
+    fn record_declared_direct_call_source(&mut self, name: &str, kind: &SymbolKind, call: &DirectCallSite<'_>) {
+        if !matches!(
+            kind,
+            SymbolKind::Type(_) | SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_)
+        ) {
+            return;
+        }
+        let Some(target) = self.source_target_for_symbol(name, kind) else {
+            return;
+        };
+        self.record_source_target(
+            call.callee.span,
+            target.module_path.clone(),
+            target.name.clone(),
+            target.kind.clone(),
+        );
+        if matches!(kind, SymbolKind::Type(_)) {
+            self.record_source_target(call.span, target.module_path, target.name, target.kind);
+        } else {
+            self.record_source_target(
+                call.span,
+                target.module_path.clone(),
+                target.name.clone(),
+                target.kind.clone(),
+            );
+            self.record_c_abi_function_call_target(call.span, target);
+        }
+    }
+
+    /// Check construction hooks and surface constructors before contextual nominal construction.
+    fn check_declared_type_direct_call(
+        &mut self,
+        name: &str,
+        type_info: &TypeInfo,
+        call: &DirectCallSite<'_>,
+    ) -> ResolvedType {
+        let (callee, type_args, args, span) = (call.callee, call.type_args, call.args, call.span);
+        if let Some(ret) = self.check_type_constructor_hook_call(name, type_info, type_args, args, span) {
+            self.record_direct_callee_identity(name, callee.span);
+            self.record_expr_type(callee.span, ResolvedType::Named(name.to_owned()));
+            self.type_info
+                .expressions
+                .ident_kinds
+                .insert(callee.span, IdentKind::TypeName);
+            return ret;
+        }
+        if stdlib::is_graph_constructor_type(name) && args.is_empty() {
+            self.record_direct_callee_identity(name, callee.span);
+            return self.check_graph_constructor_call(name, type_info, type_args, args, span);
+        }
+        if let Some(tid) = self.constructor_surface_type(name) {
+            if !type_args.is_empty() {
+                self.errors
+                    .push(errors::explicit_call_site_type_args_not_supported(span));
+                self.check_call_args(args);
+                return ResolvedType::Unknown;
+            }
+            self.record_direct_callee_identity(name, callee.span);
+            self.record_expr_type(callee.span, ResolvedType::Named(name.to_owned()));
+            self.type_info
+                .expressions
+                .ident_kinds
+                .insert(callee.span, IdentKind::TypeName);
+            if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
+                return self.check_json_query_constructor_call(tid, args, span);
+            }
+            if matches!(tid, SurfaceTypeId::Html) {
+                self.record_body_ir_html_constructor(args, span);
+                // The value is typed by the binding the call spells, so `Page(...)` under
+                // `from std.web import Html as Page` is a `Page`, as its annotations are.
+                return ResolvedType::Named(name.to_owned());
+            }
+            if matches!(tid, SurfaceTypeId::ValidationError) {
+                return self.check_constructor(name, args, span);
+            }
+        }
+        self.check_contextual_nominal_direct_call(name, type_info, call)
+    }
+
+    /// Bind explicit or destination-provided nominal arguments before validating fields and retaining Body IR facts.
+    fn check_contextual_nominal_direct_call(
+        &mut self,
+        name: &str,
+        type_info: &TypeInfo,
+        call: &DirectCallSite<'_>,
+    ) -> ResolvedType {
+        let (callee, type_args, args, span, expected_return_ty) = (
+            call.callee,
+            call.type_args,
+            call.args,
+            call.span,
+            call.expected_return_ty,
+        );
+        let explicit_constructor_context = self.explicit_constructor_type_context(name, type_info, type_args, span);
+        if let Some((_, type_bindings)) = &explicit_constructor_context {
+            self.refuse_unsatisfied_nominal_type_arguments(name, type_bindings, TypeArgumentOrigin::Explicit, span);
+        }
+        let constructor_context = explicit_constructor_context
+            .or_else(|| self.expected_constructor_type_context(name, type_info, expected_return_ty));
+        let contextual_constructor_ty = constructor_context.as_ref().map(|(ty, _)| ty.clone());
+        if let TypeInfo::Model(model) = type_info
+            && model
+                .derives
+                .iter()
+                .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Validate))
+        {
+            self.check_call_args(args);
+            self.errors
+                .push(errors::validate_derive_disallows_raw_construction(name, span));
+            return ResolvedType::Unknown;
+        }
+        if matches!(type_info, TypeInfo::Newtype(_)) {
+            self.record_direct_callee_identity(name, callee.span);
+            self.record_expr_type(callee.span, ResolvedType::Named(name.to_owned()));
+            self.type_info
+                .expressions
+                .ident_kinds
+                .insert(callee.span, IdentKind::TypeName);
+            let constructor_ty = self.check_constructor(name, args, span);
+            return contextual_constructor_ty.unwrap_or(constructor_ty);
+        }
+        let ctor_fields = match type_info {
+            TypeInfo::Model(info) => Some(info.fields.clone()),
+            TypeInfo::Class(info) => Some(info.fields.clone()),
+            _ => None,
+        };
+        let Some(mut fields) = ctor_fields else {
+            return self.check_constructor(name, args, span);
+        };
+        self.record_direct_callee_identity(name, callee.span);
+        if let Some((_, type_bindings)) = &constructor_context {
+            for field in fields.values_mut() {
+                field.ty = substitute_resolved_type(&field.ty, type_bindings);
+            }
+        }
+        let errors_before_constructor = self.errors.len();
+        let constructor_ty = self.check_model_or_class_constructor_call(name, name, &fields, args, span);
+        if self.errors.len() == errors_before_constructor {
+            self.retain_body_ir_constructor_type(name, type_info, constructor_context.as_ref(), args, span);
+        }
+        self.record_expr_type(callee.span, ResolvedType::Named(name.to_owned()));
+        self.type_info
+            .expressions
+            .ident_kinds
+            .insert(callee.span, IdentKind::TypeName);
+        contextual_constructor_ty.unwrap_or(constructor_ty)
+    }
+
+    /// Validate a direct function call and attach capturing, async and related-declaration facts in diagnostic order.
+    fn check_declared_function_direct_call(
+        &mut self,
+        name: &str,
+        func_info: &FunctionInfo,
+        call: &DirectCallSite<'_>,
+    ) -> ResolvedType {
+        let (callee, type_args, args, span, expected_return_ty) = (
+            call.callee,
+            call.type_args,
+            call.args,
+            call.span,
+            call.expected_return_ty,
+        );
+        self.record_direct_callee_identity(name, callee.span);
+        let declaration = self.type_info.resolved_identity(callee.span).cloned();
+        let first_error = self.errors.len();
+        let result = self.validate_function_call(name, func_info, type_args, args, span, expected_return_ty);
+        self.check_capturing_call_arguments(declaration.as_ref(), name, &func_info.params, args);
+        self.retain_body_ir_async_call_target(func_info.is_async, name, span, callee.span, first_error);
+        if let Some(declaration) = declaration {
+            self.attach_related_declaration_to_new_errors(first_error, &declaration);
+        }
+        result
+    }
+
+    /// Use authoritative Rust signatures or constructible layout metadata before metadata-free fallback.
+    fn check_declared_rust_direct_call(
+        &mut self,
+        info: &RustItemInfo,
+        call: &DirectCallSite<'_>,
+    ) -> Option<ResolvedType> {
+        let (callee, type_args, args, span, expected_return_ty) = (
+            call.callee,
+            call.type_args,
+            call.args,
+            call.span,
+            call.expected_return_ty,
+        );
+        if !type_args.is_empty() {
+            self.errors
+                .push(errors::explicit_call_site_type_args_not_supported(span));
+            self.check_call_args(args);
+            return Some(ResolvedType::Unknown);
+        }
+        if let Some(sig) = compiler_owned_function_signature(info.path.as_str()) {
+            return Some(self.validate_and_record_rust_import_function_call(
+                info.path.as_str(),
+                &sig,
+                args,
+                span,
+                callee.span,
+                expected_return_ty,
+            ));
+        }
+        let metadata = info
+            .metadata
+            .clone()
+            .or_else(|| self.rust_item_metadata_for_path(info.path.as_str()));
+        if let Some(meta) = metadata.as_ref() {
+            return Some(self.check_rust_metadata_direct_call(&info.path, &meta.kind, call));
+        }
+        if let Some(sig) = metadata_free_function_signature(info.path.as_str()) {
+            return Some(self.validate_and_record_rust_import_function_call(
+                info.path.as_str(),
+                &sig,
+                args,
+                span,
+                callee.span,
+                expected_return_ty,
+            ));
+        }
+        if rust_path_last_segment_looks_like_type(info.path.as_str()) {
+            return Some(self.check_metadata_free_rust_named_field_constructor_call(info.path.as_str(), args, span));
+        }
+        None
+    }
+
+    /// Check a cached Rust item without weakening metadata completeness or emitting constructor facts on error.
+    fn check_rust_metadata_direct_call(
+        &mut self,
+        rust_path: &str,
+        kind: &RustItemKind,
+        call: &DirectCallSite<'_>,
+    ) -> ResolvedType {
+        let (callee, args, span, expected_return_ty) = (call.callee, call.args, call.span, call.expected_return_ty);
+        match kind {
+            RustItemKind::Function(sig) => {
+                return self.validate_and_record_rust_import_function_call(
+                    rust_path,
+                    sig,
+                    args,
+                    span,
+                    callee.span,
+                    expected_return_ty,
+                );
+            }
+            RustItemKind::Type(type_info)
+                if type_info.metadata_completeness.has_constructible_layout()
+                    && (!type_info.fields.is_empty() || (type_info.variants.is_empty() && args.is_empty())) =>
+            {
+                let error_count_before = self.errors.len();
+                let result = if type_info.fields.iter().all(|field| field.name.is_empty()) {
+                    self.check_rust_tuple_struct_constructor_call(rust_path, type_info, args, span)
+                } else {
+                    self.check_rust_named_field_constructor_call(rust_path, type_info, args, span)
+                };
+                if self.errors.len() == error_count_before {
+                    self.record_expr_type(callee.span, ResolvedType::RustPath(rust_path.to_owned()));
+                    self.type_info
+                        .expressions
+                        .ident_kinds
+                        .insert(callee.span, IdentKind::RustImport);
                 }
-                return constructor_ty;
+                return result;
+            }
+            RustItemKind::Type(_) => {
+                self.check_call_args(args);
+                self.errors
+                    .push(errors::rust_constructor_metadata_unavailable(rust_path, span));
+                return ResolvedType::Unknown;
+            }
+            RustItemKind::Unsupported { description } => {
+                self.check_call_args(args);
+                self.errors.push(errors::rust_item_shape_not_supported(
+                    rust_path,
+                    description.as_str(),
+                    span,
+                ));
+                return ResolvedType::Unknown;
+            }
+            _ => {
+                self.check_call_args(args);
+                self.errors
+                    .push(errors::rust_constructor_metadata_unavailable(rust_path, span));
+                return ResolvedType::Unknown;
+            }
+        }
+    }
+
+    /// Preserve legacy in-scope surface aliases and constructor fallback after resolved declarations decline.
+    fn check_legacy_named_constructor_call(&mut self, name: &str, call: &DirectCallSite<'_>) -> Option<ResolvedType> {
+        let (callee, args, span) = (call.callee, call.args, call.span);
+        let in_scope = self.symbols.lookup(name).is_some();
+        if in_scope && let Some(tid) = self.constructor_surface_type(name) {
+            if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
+                return Some(self.check_json_query_constructor_call(tid, args, span));
+            }
+            if matches!(tid, SurfaceTypeId::Html) {
+                self.record_body_ir_html_constructor(args, span);
+                return Some(ResolvedType::Named(name.to_owned()));
             }
         }
 
+        // Strict validated construction: `@derive(Validate)` models must be constructed via `TypeName.new(...)`.
+        if let Some(TypeInfo::Model(m)) = self.lookup_type_info(name)
+            && m.derives
+                .iter()
+                .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Validate))
+        {
+            // Still typecheck argument expressions for better downstream errors.
+            self.check_call_args(args);
+            self.errors
+                .push(errors::validate_derive_disallows_raw_construction(name, span));
+            return Some(ResolvedType::Unknown);
+        }
+
+        // Model/class constructor calls: validate field arguments at the Incan level.
+        // NOTE: `lookup_type_info` returns a reference into `self`, so we clone the needed field map to avoid
+        // borrow conflicts (we need `&mut self` for validation).
+        let ctor_fields: Option<std::collections::HashMap<String, FieldInfo>> =
+            self.lookup_type_info(name).and_then(|info| match info {
+                TypeInfo::Model(m) => Some(m.fields.clone()),
+                TypeInfo::Class(c) => Some(c.fields.clone()),
+                _ => None,
+            });
+        if let Some(fields) = ctor_fields {
+            let constructor_ty = self.check_model_or_class_constructor_call(name, name, &fields, args, span);
+            self.record_expr_type(callee.span, ResolvedType::Named(name.to_owned()));
+            self.type_info
+                .expressions
+                .ident_kinds
+                .insert(callee.span, IdentKind::TypeName);
+            if in_scope && let Some(tid) = self.constructor_surface_type(name) {
+                if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
+                    return Some(self.check_json_query_constructor_call(tid, args, span));
+                }
+                if matches!(tid, SurfaceTypeId::Html) {
+                    self.record_body_ir_html_constructor(args, span);
+                    return Some(ResolvedType::Named(name.to_owned()));
+                }
+            }
+            return Some(constructor_ty);
+        }
+        None
+    }
+
+    /// Bind explicit arguments on decorated generic functions before ordinary callable-value inference.
+    fn check_decorated_generic_direct_call(&mut self, call: &DirectCallSite<'_>) -> Option<ResolvedType> {
+        let (callee, type_args, args, span, expected_return_ty) = (
+            call.callee,
+            call.type_args,
+            call.args,
+            call.span,
+            call.expected_return_ty,
+        );
         if let Expr::Ident(name) = &callee.node
             && !type_args.is_empty()
             && let Some(binding) = self
@@ -784,15 +927,22 @@ impl TypeChecker {
                 type_param_bound_details: binding.type_param_bound_details,
                 emitted_name: None,
             };
-            // Every other callee path proves which declaration the call selects: the `SymbolKind::Function` arm
-            // records it directly, and a decorated call without explicit type arguments reaches `check_expr(callee)`
-            // below, which records it there. This branch returns before either, so a decorated generic called as
-            // `f[T]()` left the reference unproven and lowering fell back to the source spelling -- which RFC 120
-            // renamed, so the generated Rust named a function that no longer exists.
+            // This branch returns before `check_expr(callee)`, so retain the declaration identity here as well.
             self.record_direct_callee_identity(name, callee.span);
-            return self.validate_function_call(name, &info, type_args, args, span, expected_return_ty);
+            return Some(self.validate_function_call(name, &info, type_args, args, span, expected_return_ty));
         }
+        None
+    }
 
+    /// Infer callable values and operator receivers only after declaration-specific call policies decline.
+    fn check_direct_value_call(&mut self, call: &DirectCallSite<'_>) -> ResolvedType {
+        let (callee, type_args, args, span, expected_return_ty) = (
+            call.callee,
+            call.type_args,
+            call.args,
+            call.span,
+            call.expected_return_ty,
+        );
         if !type_args.is_empty() {
             self.errors
                 .push(errors::explicit_call_site_type_args_not_supported(span));
@@ -899,17 +1049,7 @@ impl TypeChecker {
             return Some(ResolvedType::Unknown);
         }
 
-        let parameters = symbol
-            .parameters
-            .iter()
-            .map(|parameter| {
-                CallableParam::named(
-                    parameter.name.clone(),
-                    Self::c_raw_call_type(&binding, &parameter.ty),
-                    ParamKind::Normal,
-                )
-            })
-            .collect::<Vec<_>>();
+        let parameters = Self::c_raw_call_parameters(&binding, &symbol);
         let raw_argument_spans = args
             .iter()
             .filter_map(|argument| match argument {
@@ -974,6 +1114,21 @@ impl TypeChecker {
             );
         }
         Some(return_type)
+    }
+
+    /// Project the descriptor's declared parameter order and raw C types into the shared argument binder's surface.
+    fn c_raw_call_parameters(binding: &str, symbol: &CBindingSymbol) -> Vec<CallableParam> {
+        symbol
+            .parameters
+            .iter()
+            .map(|parameter| {
+                CallableParam::named(
+                    parameter.name.clone(),
+                    Self::c_raw_call_type(binding, &parameter.ty),
+                    ParamKind::Normal,
+                )
+            })
+            .collect()
     }
 
     /// Return whether the contained direct-call bridge can preserve every argument and result contract faithfully.
@@ -1466,34 +1621,13 @@ impl TypeChecker {
                 ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::USize),
             ),
             (false, true, _) if method == finish_method => {
-                if !type_args.is_empty() || args.len() != 1 || !matches!(args.first(), Some(CallArg::Positional(_))) {
-                    self.errors.push(CompileError::type_error(
-                        format!("a checked mutable C span requires {finish_method}(written) with one positional usize"),
-                        span,
-                    ));
-                    self.check_call_args(args);
-                    return Some(ResolvedType::Unknown);
-                }
-                let actual = self
-                    .check_call_arg_types(args)
-                    .into_iter()
-                    .next()
-                    .unwrap_or(ResolvedType::Unknown);
-                let count_type = ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::USize);
-                if !self.types_compatible(&actual, &count_type)
-                    && !Self::checked_c_integer_bridge_compatible(&actual, &count_type)
-                {
-                    self.errors.push(CompileError::type_error(
-                        format!("{finish_method}(written) requires an integer count, found {actual}"),
-                        span,
-                    ));
-                    return Some(ResolvedType::Unknown);
-                }
-                self.record_c_abi_span_operation(span, CheckedBridgeOperation::FinishSpan);
-                self.consumed_c_abi_span_bindings.insert(local.binding_span, span);
-                return Some(ResolvedType::Generic(
-                    "Result".to_string(),
-                    vec![Self::c_abi_span_storage_type(local.kind.element), ResolvedType::Str],
+                return Some(self.check_c_abi_span_finish(
+                    finish_method,
+                    type_args,
+                    args,
+                    span,
+                    local.binding_span,
+                    local.kind.element,
                 ));
             }
             _ => return None,
@@ -1508,6 +1642,50 @@ impl TypeChecker {
         }
         self.record_c_abi_span_operation(span, access);
         Some(return_type)
+    }
+
+    /// Validate the written element count before consuming a checked mutable C span's binding.
+    ///
+    /// Argument shapes or count types refused here leave the binding unconsumed. A checked finish retains the
+    /// operation and returns the corresponding owned storage through the existing fallible result carrier.
+    fn check_c_abi_span_finish(
+        &mut self,
+        method: &str,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+        binding_span: Span,
+        element: c_abi::ScalarTypeId,
+    ) -> ResolvedType {
+        if !type_args.is_empty() || args.len() != 1 || !matches!(args.first(), Some(CallArg::Positional(_))) {
+            self.errors.push(CompileError::type_error(
+                format!("a checked mutable C span requires {method}(written) with one positional usize"),
+                span,
+            ));
+            self.check_call_args(args);
+            return ResolvedType::Unknown;
+        }
+        let actual = self
+            .check_call_arg_types(args)
+            .into_iter()
+            .next()
+            .unwrap_or(ResolvedType::Unknown);
+        let count_type = ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::USize);
+        if !self.types_compatible(&actual, &count_type)
+            && !Self::checked_c_integer_bridge_compatible(&actual, &count_type)
+        {
+            self.errors.push(CompileError::type_error(
+                format!("{method}(written) requires an integer count, found {actual}"),
+                span,
+            ));
+            return ResolvedType::Unknown;
+        }
+        self.record_c_abi_span_operation(span, CheckedBridgeOperation::FinishSpan);
+        self.consumed_c_abi_span_bindings.insert(binding_span, span);
+        ResolvedType::Generic(
+            "Result".to_string(),
+            vec![Self::c_abi_span_storage_type(element), ResolvedType::Str],
+        )
     }
 
     /// Retain one authorized span bridge operation at its call exactly once, so Body IR lowers the checked operation
@@ -1795,55 +1973,12 @@ impl TypeChecker {
             let CBindingType::Output { mode, value } = &parameter.ty else {
                 continue;
             };
-            let Expr::Ident(local_name) = &expr.node else {
-                self.errors.push(CompileError::type_error(
-                    format!(
-                        "C output parameter `{binding}.{}.{}` requires a local c.out[...]() or c.inout(...) slot",
-                        symbol.name, parameter.name
-                    ),
-                    expr.span,
-                ));
+            let Some((local_name, slot)) =
+                self.check_pending_c_raw_output_slot(binding, &symbol.name, &parameter.name, expr, *mode)
+            else {
                 continue;
             };
-            let Some(slot) = self.pending_c_abi_output_slots.get(local_name).cloned() else {
-                self.errors.push(CompileError::type_error(
-                    format!(
-                        "C output parameter `{binding}.{}.{}` requires local `{local_name}` to be initialized by c.out[...]() or c.inout(...)",
-                        symbol.name, parameter.name
-                    ),
-                    expr.span,
-                ));
-                continue;
-            };
-            if slot.bound {
-                self.errors.push(CompileError::type_error(
-                    format!("C output slot `{local_name}` is already bound to an earlier raw call"),
-                    expr.span,
-                ));
-                continue;
-            }
-            if slot.mode != *mode {
-                self.errors.push(CompileError::type_error(
-                    format!(
-                        "C output parameter `{binding}.{}.{}` requires {}, but `{local_name}` was created as {}",
-                        symbol.name,
-                        parameter.name,
-                        if matches!(mode, COutputMode::Out) {
-                            "c.out[...]()"
-                        } else {
-                            "c.inout(...)"
-                        },
-                        if matches!(slot.mode, COutputMode::Out) {
-                            "c.out[...]()"
-                        } else {
-                            "c.inout(...)"
-                        },
-                    ),
-                    expr.span,
-                ));
-                continue;
-            }
-            if !seen_slots.insert(local_name.clone()) {
+            if !seen_slots.insert(local_name.to_owned()) {
                 self.errors.push(CompileError::type_error(
                     format!("C output slot `{local_name}` may be passed to only one output parameter per call"),
                     expr.span,
@@ -1908,7 +2043,7 @@ impl TypeChecker {
                 closure_depth: slot.closure_depth,
                 constructor_span: slot.constructor_span,
                 identity: slot_identity.clone(),
-                local_name: local_name.clone(),
+                local_name: local_name.to_owned(),
                 binding: binding.to_string(),
                 symbol: symbol.name.clone(),
                 parameter: parameter.name.clone(),
@@ -1918,6 +2053,50 @@ impl TypeChecker {
             slots_by_parameter.insert(parameter.name.clone(), slot_identity);
         }
         slots_by_parameter
+    }
+
+    /// Require an unbound local slot with the parameter's mode before duplicate and value-contract checks.
+    fn check_pending_c_raw_output_slot<'a>(
+        &mut self,
+        binding: &str,
+        symbol: &str,
+        parameter: &str,
+        expr: &'a Spanned<Expr>,
+        mode: COutputMode,
+    ) -> Option<(&'a str, PendingCAbiOutputSlot)> {
+        let Expr::Ident(local_name) = &expr.node else {
+            self.errors.push(CompileError::type_error(
+                format!("C output parameter `{binding}.{symbol}.{parameter}` requires a local c.out[...]() or c.inout(...) slot"),
+                expr.span,
+            ));
+            return None;
+        };
+        let Some(slot) = self.pending_c_abi_output_slots.get(local_name).cloned() else {
+            self.errors.push(CompileError::type_error(
+                format!("C output parameter `{binding}.{symbol}.{parameter}` requires local `{local_name}` to be initialized by c.out[...]() or c.inout(...)"),
+                expr.span,
+            ));
+            return None;
+        };
+        if slot.bound {
+            self.errors.push(CompileError::type_error(
+                format!("C output slot `{local_name}` is already bound to an earlier raw call"),
+                expr.span,
+            ));
+            return None;
+        }
+        if slot.mode != mode {
+            self.errors.push(CompileError::type_error(
+                format!(
+                    "C output parameter `{binding}.{symbol}.{parameter}` requires {}, but `{local_name}` was created as {}",
+                    if matches!(mode, COutputMode::Out) { "c.out[...]()" } else { "c.inout(...)" },
+                    if matches!(slot.mode, COutputMode::Out) { "c.out[...]()" } else { "c.inout(...)" },
+                ),
+                expr.span,
+            ));
+            return None;
+        }
+        Some((local_name, slot))
     }
 
     /// Record local handle transfers for direct raw C calls.
@@ -2276,7 +2455,7 @@ impl TypeChecker {
             .any(|implemented| is_default(implemented.path.as_str()))
     }
 
-    /// Type-check a call to an imported Rust named-field struct using rust-inspect field metadata.
+    /// Type-check a call to an imported Rust named-field struct using checked field metadata.
     fn check_rust_named_field_constructor_call(
         &mut self,
         path: &str,
@@ -2375,7 +2554,7 @@ impl TypeChecker {
         ResolvedType::RustPath(path.to_string())
     }
 
-    /// Type-check a positional imported Rust tuple-struct constructor using rust-inspect field metadata.
+    /// Type-check a positional imported Rust tuple-struct constructor using checked field metadata.
     ///
     /// Empty field labels are the shared metadata representation for tuple positions. Keeping that distinction in
     /// metadata lets lowering emit `Type(value)` instead of incorrectly treating the type as an unconstructible

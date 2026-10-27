@@ -477,7 +477,7 @@ def close_layout(instance: NominalInstance) -> Result[NominalDeclaration, str]:
 
 
 def retain_field_storage(mut declaration: NominalDeclaration, template: &NominalDeclaration) -> NominalDeclaration:
-    """Return the updated imported value explicitly and retain its borrowed template across stage zero's method boundary (#2256)."""
+    """Retain owned callable fields from the borrowed template and return the updated declaration."""
     declaration.retain_owned_callable_fields(template)
     return declaration
 

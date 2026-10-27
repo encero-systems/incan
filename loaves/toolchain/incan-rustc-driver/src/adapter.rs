@@ -7,6 +7,7 @@ use crate::plan::{CalleeKind, Plan, PlanType, TerminatorKind};
 use crate::spans::Sources;
 use crate::{bodies, callees, declarations, types, union_debug, validation, value_enum_serde};
 use incan_driver::unit::UnitKind;
+use incan_lang::lang::derives::{self, DeriveId};
 use rustc_ast as ast;
 use rustc_data_structures::steal::Steal;
 use rustc_hir::def_id::LocalDefId;
@@ -279,73 +280,6 @@ struct Callbacks<'manifest> {
 }
 
 impl Callbacks<'_> {
-    /// Declare layouts in their dependency order using the callback's single source-span cache.
-    fn declare_source_layouts(
-        &self,
-        compiler: &interface::Compiler,
-        krate: &mut ast::Crate,
-        sources: &Sources<'_>,
-        span: rustc_span::Span,
-    ) {
-        match crate::cloneable_closures::items(&self.plan, span) {
-            Ok(items) => krate.items.extend(items),
-            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-        }
-        krate.items.extend(crate::formatting::items(&self.plan, span));
-        match crate::zip_carriers::items(&self.plan, span) {
-            Ok(items) => krate.items.extend(items),
-            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-        }
-        for output in crate::futures::outputs(&self.plan) {
-            krate.items.push(crate::futures::alias(&output, krate.spans.inner_span));
-            krate
-                .items
-                .push(crate::futures::borrowed_alias(&output, krate.spans.inner_span));
-        }
-        for value in &self.plan.enums {
-            let span = match sources.span(&value.span) {
-                Ok(span) => span,
-                Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-            };
-            krate
-                .items
-                .extend(enum_items(value, &compiler.sess.psess.attr_id_generator, span));
-        }
-        for model in &self.plan.generic_models {
-            let span = match sources.span(&model.span) {
-                Ok(span) => span,
-                Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-            };
-            krate.items.extend(crate::generic_layouts::items(
-                model,
-                &compiler.sess.psess.attr_id_generator,
-                span,
-            ));
-        }
-        for model in &self.plan.models {
-            let span = match sources.span(&model.span) {
-                Ok(span) => span,
-                Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-            };
-            krate.items.extend(declarations::model_items(
-                model,
-                &compiler.sess.psess.attr_id_generator,
-                span,
-            ));
-            if !model.checked_deserialize.is_empty() {
-                krate.items.push(crate::checked_json::forwarding_impl(model, span));
-            }
-        }
-        match crate::foreign::items(
-            &self.plan,
-            &compiler.sess.psess.attr_id_generator,
-            krate.spans.inner_span,
-        ) {
-            Ok(items) => krate.items.extend(items),
-            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-        }
-    }
-
     /// Declare checked callables before their program entries, retaining typed function-span failures across fatal
     /// errors.
     fn declare_callables(&self, compiler: &interface::Compiler, krate: &mut ast::Crate, sources: &Sources<'_>) {
@@ -463,13 +397,13 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
     ) -> rustc_driver::Compilation {
         self.timing.mark("rustc_session");
         let sources = Sources::new(compiler.sess.source_map());
-        let span = match sources.span(&self.plan.span) {
-            Ok(span) => span,
-            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-        };
 
         // ---- Source-backed native declarations ----
-        self.declare_source_layouts(compiler, krate, &sources, span);
+        if let Err(error) =
+            add_source_backed_declarations(&self.plan, &sources, &compiler.sess.psess.attr_id_generator, krate)
+        {
+            compiler.sess.dcx().fatal(error.to_string());
+        }
 
         // ---- Callable declarations and canonical entries ----
         self.declare_callables(compiler, krate, &sources);
@@ -591,6 +525,47 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
         self.timing.mark("dynamic_library_snapshot");
         rustc_driver::Compilation::Continue
     }
+}
+
+/// Append source-backed carrier and nominal declarations in their established order. The shared source cache maps
+/// each declaration span before construction; typed failures return to the callback's existing fatal boundary.
+fn add_source_backed_declarations(
+    plan: &Plan,
+    sources: &Sources<'_>,
+    generator: &ast::attr::AttrIdGenerator,
+    krate: &mut ast::Crate,
+) -> Result<(), PlanError> {
+    let span = sources.span(&plan.span)?;
+    krate.items.extend(crate::cloneable_closures::items(plan, span)?);
+    krate.items.extend(crate::formatting::items(plan, span));
+    krate.items.extend(crate::zip_carriers::items(plan, span)?);
+    for output in crate::futures::outputs(plan) {
+        krate.items.push(crate::futures::alias(&output, krate.spans.inner_span));
+        krate
+            .items
+            .push(crate::futures::borrowed_alias(&output, krate.spans.inner_span));
+    }
+    for value in &plan.enums {
+        let span = sources.span(&value.span)?;
+        krate.items.extend(enum_items(value, generator, span));
+    }
+    for model in &plan.generic_models {
+        let span = sources.span(&model.span)?;
+        krate
+            .items
+            .extend(crate::generic_layouts::items(model, generator, span));
+    }
+    for model in &plan.models {
+        let span = sources.span(&model.span)?;
+        krate.items.extend(declarations::model_items(model, generator, span));
+        if !model.checked_deserialize.is_empty() {
+            krate.items.push(crate::checked_json::forwarding_impl(model, span));
+        }
+    }
+    krate
+        .items
+        .extend(crate::foreign::items(plan, generator, krate.spans.inner_span)?);
+    Ok(())
 }
 
 /// Keep the declaration order of compiler-owned adapters while propagating their typed preflight refusals.
@@ -729,13 +704,21 @@ fn verify_library_enum(tcx: TyCtxt<'_>, value: &crate::plan::EnumDeclaration) ->
     }
     let arguments = callees::arguments(tcx, def, &value.library_type_arguments)?;
     callees::verify_bounds(tcx, def, arguments)?;
-    if value.derives.iter().any(|derive| derive == "Copy") {
+    if value
+        .derives
+        .iter()
+        .any(|derive| derives::from_str(derive) == Some(DeriveId::Copy))
+    {
         let native = rustc_middle::ty::Ty::new_adt(tcx, owner, arguments);
         if !tcx.type_is_copy_modulo_regions(rustc_middle::ty::TypingEnv::fully_monomorphized(), native) {
             return Err(invalid("native enum Copy capability differs from metadata"));
         }
     }
-    if value.derives.iter().any(|derive| derive == "Clone") {
+    if value
+        .derives
+        .iter()
+        .any(|derive| derives::from_str(derive) == Some(DeriveId::Clone))
+    {
         let owner = rustc_middle::ty::Ty::new_adt(tcx, tcx.adt_def(def), arguments);
         callees::verify_bounds(tcx, callees::clone_method(tcx)?, tcx.mk_args(&[owner.into()]))?;
     }

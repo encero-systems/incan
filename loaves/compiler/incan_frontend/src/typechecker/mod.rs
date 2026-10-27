@@ -62,13 +62,14 @@ mod mut_arguments;
 mod mut_marker;
 mod native_newtype_facts;
 mod native_storage;
+mod nominal_identities;
 mod nominal_type_param_bounds;
 mod reachability;
 mod receiver_change;
 mod reserved_names;
 mod trait_bound_relations;
 mod type_info;
-pub(crate) use type_info::RustCheckedCall;
+pub(crate) use type_info::{ClassLayoutInfo, RustCheckedCall};
 pub(crate) use validate_rust_module::is_trivial_body;
 mod union_member_identity;
 mod validate_rust_module;
@@ -504,7 +505,6 @@ struct CheckingNominalScope {
 }
 
 /// Collect and check a program while retaining accepted semantic facts for Body IR and analysis consumers.
-#[derive(Default)]
 pub struct TypeChecker {
     /// Symbol table populated during the first pass.
     pub symbols: SymbolTable,
@@ -577,10 +577,8 @@ pub struct TypeChecker {
     open_rust_generic_calls: HashMap<crate::ast::Span, OpenRustGenericCall>,
     /// Locals bound to open Rust associated calls that nothing has read yet (#1720).
     open_rust_generic_bindings: Vec<OpenRustGenericBinding>,
-    /// Identity of the statement block being checked, and the count that mints those identities. A block's
-    /// identity keys the bindings it declared so its end reports only those.
-    current_statement_block: usize,
-    statement_block_serial: usize,
+    /// Statement-block identities used to scope pending generic-call bindings.
+    statement_blocks: StatementBlockState,
     /// Slot identities currently readable in the active control-flow path.
     pub available_c_abi_output_slots: HashSet<String>,
     /// Slot identities already consumed by `take()` in the active checking flow.
@@ -733,7 +731,8 @@ pub struct TypeChecker {
     /// answer across the dependency boundary.
     pub dependency_direct_member_identities: HashMap<String, HashMap<String, CanonicalSymbolId>>,
     /// Nominal bindings captured in a source declaration's own scope before its signature enters a consumer.
-    /// Contextual empty values use these bindings rather than the caller's same-spelled declarations.
+    /// Contextual empty values use these bindings rather than the caller's same-spelled declarations. A declaration
+    /// and its members share one immutable snapshot instead of retaining a full map for every member.
     declaration_nominal_scopes: HashMap<CanonicalSymbolId, Arc<std::collections::BTreeMap<String, CanonicalSymbolId>>>,
     /// Carrier contributions of retained declaration scopes, indexed once per immutable scope admission. The owning
     /// scopes are append-only, so this inventory contains one spelling per retained canonical nominal, not
@@ -784,16 +783,8 @@ pub struct TypeChecker {
     /// The derive relation reads it for builtin derives spelled through `@rust.derive`, and an entry's presence marks
     /// the declaration as local, whose derive list is complete.
     pub(in crate::typechecker) local_derive_facts: HashMap<String, derive_requirements::LocalDeriveFacts>,
-    /// Type parameters each generic function or method hashes, by declaration identity, inferred when it is collected
-    /// for this module and for every imported source module (#1758).
-    pub(in crate::typechecker) hash_key_type_params: HashMap<CanonicalSymbolId, BTreeSet<String>>,
-    /// This module's inferred hashed type parameters by callable name, written into its exported signatures once it is
-    /// checked.
-    pub(in crate::typechecker) local_hash_key_requirements:
-        Vec<(hash_key_inference::HashKeyCallable, BTreeSet<String>)>,
-    /// The bounds that writing `local_hash_key_requirements` added to each module-level function, by function and type
-    /// parameter; a function's export reads its declared bounds from source, so these are exported beside them.
-    pub(in crate::typechecker) inferred_function_bounds: HashMap<String, HashMap<String, Vec<TypeBoundInfo>>>,
+    /// Hash-key requirements inferred during collection and the bounds exported after checking (#1758).
+    hash_key_inference: HashKeyInferenceState,
     /// The compiled Loaves this program imports from: its dependencies and the standard packages (DD-0007).
     pub loaves: Arc<LoafIndex>,
     /// Builtin traits' standard declarations by trait name, read once from the standard package owning each.
@@ -880,6 +871,33 @@ pub struct TypeChecker {
     /// Ensures supertrait names are not mistaken for free type parameters when the supertrait is declared later in the
     /// same module.
     pub pending_trait_supertraits: Vec<(SymbolId, Vec<Spanned<TraitBound>>)>,
+    /// Recursion guards and native fact caches owned by this checker, never shared across checks.
+    native_queries: NativeQueryState,
+}
+
+/// Hash-key requirements retained from collection through checked signature publication.
+#[derive(Default)]
+struct HashKeyInferenceState {
+    /// Type parameters each generic function or method hashes, by declaration identity, for this module and imports.
+    type_params: HashMap<CanonicalSymbolId, BTreeSet<String>>,
+    /// This module's inferred hashed parameters, written into exported signatures once checking finishes.
+    local_requirements: Vec<(hash_key_inference::HashKeyCallable, BTreeSet<String>)>,
+    /// Additional bounds by function and type parameter, exported beside the function's declared source bounds.
+    function_bounds: HashMap<String, HashMap<String, Vec<TypeBoundInfo>>>,
+}
+
+/// Identity of the active statement block and the serial that mints nested blocks.
+#[derive(Default)]
+struct StatementBlockState {
+    /// A pending binding belongs to exactly the block that declared it.
+    current: usize,
+    /// Monotonically increasing identity source within one checker.
+    serial: usize,
+}
+
+/// Per-checker recursion guards, observed Rust facts and memoized native signature/protocol selections.
+#[derive(Default)]
+struct NativeQueryState {
     /// Current recursive compatibility-check depth.
     ///
     /// Recursive source aliases and Rust facade identities can route compatibility back through the same structural
@@ -923,9 +941,129 @@ pub struct DependencyRegistryDefinitions {
 }
 
 impl TypeChecker {
-    /// Create fresh checking state with an initialized builtin root scope and no active yield context.
+    /// Create an empty typechecker with fresh symbol, diagnostic, import, and lowering-metadata state.
+    ///
+    /// Native queries, statement-block tracking and hash-key inference each initialize their own empty state.
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            symbols: SymbolTable::new(),
+            errors: Vec::new(),
+            warnings: Vec::new(),
+            mutable_bindings: HashSet::new(),
+            mut_params: mut_arguments::MutParamFacts::default(),
+            current_immutable_self_method: None,
+            consumed_iterator_bindings: HashMap::new(),
+            pending_uncopyable_dict_lookups: Vec::new(),
+            static_alias_bindings: HashMap::new(),
+            read_only_binding_spans: HashSet::new(),
+            closure_depth: 0,
+            scoped_c_string_view_receivers: HashSet::new(),
+            c_abi_raw_argument_spans: HashSet::new(),
+            unbound_scoped_c_string_views: HashSet::new(),
+            scoped_c_string_view_bindings: HashMap::new(),
+            transferred_c_resource_bindings: HashMap::new(),
+            for_item_taking: for_item_taking::ForItemTaking::default(),
+            capturing_callables: capturing_callables::CapturingCallables::default(),
+            own_standard_package: None,
+            unbound_c_abi_span_constructors: HashMap::new(),
+            c_abi_span_bindings: HashMap::new(),
+            consumed_c_abi_span_bindings: HashMap::new(),
+            pending_c_abi_output_slots: HashMap::new(),
+            unbound_c_abi_output_slot_constructors: HashMap::new(),
+            unbound_c_abi_raw_call_results: HashMap::new(),
+            open_rust_generic_calls: HashMap::new(),
+            open_rust_generic_bindings: Vec::new(),
+            statement_blocks: StatementBlockState::default(),
+            c_abi_raw_call_results: Vec::new(),
+            available_c_abi_output_slots: HashSet::new(),
+            consumed_c_abi_output_slots: HashMap::new(),
+            current_return_error_type: None,
+            current_yield_context: YieldContext::Disallowed,
+            in_async_body: false,
+            await_operand_span: None,
+            call_argument_depth: 0,
+            unsafe_depth: 0,
+            type_receiver_spans: Vec::new(),
+            type_token_value_spans: Vec::new(),
+            generic_partial_target_span: None,
+            generic_partial_target: None,
+            loop_stack: Vec::new(),
+            current_trait_requires: None,
+            current_trait_properties: None,
+            current_trait_name: None,
+            current_method_owner: None,
+            current_classmethod_self_ty: None,
+            current_c_abi_raw_call_owner: None,
+            warned_public_c_abi_raw_call_owners: HashSet::new(),
+            current_type_param_bound_details: Vec::new(),
+            nominal_type_param_bounds: HashMap::new(),
+            current_trait_missing_requires_emitted: None,
+            const_decls: HashMap::new(),
+            static_decls: Vec::new(),
+            local_function_decls: HashMap::new(),
+            current_module_public_declarations: HashSet::new(),
+            receiver_plan_inputs: Default::default(),
+            body_ir_decorator_factory_span: None,
+            current_module_function_symbols: HashMap::new(),
+            type_aliases: NominalInventory::default(),
+            rejected_member_bindings: HashSet::new(),
+            dependency_import_type_alias_transaction: None,
+            validate_source_type_names: false,
+            unknown_source_type_names_emitted: HashSet::new(),
+            source_type_declaration_names: HashSet::new(),
+            annotation_owner: None,
+            static_decl_positions: HashMap::new(),
+            checking_registry_entry_static_initializer: false,
+            checking_callable_default: false,
+            const_eval_state: HashMap::new(),
+            const_eval_cache: HashMap::new(),
+            type_info: TypeCheckInfo::default(),
+            dependency_exports: HashMap::new(),
+            dependency_member_symbols: HashMap::new(),
+            dependency_member_type_aliases: HashMap::new(),
+            dependency_registry_definitions: HashMap::new(),
+            dependency_member_partial_projections: HashMap::new(),
+            dependency_direct_member_symbols: HashMap::new(),
+            dependency_direct_member_type_aliases: HashMap::new(),
+            dependency_direct_member_identities: HashMap::new(),
+            declaration_nominal_scopes: HashMap::new(),
+            retained_nominal_carriers: std::collections::BTreeMap::new(),
+            checking_nominal_scope: RefCell::new(None),
+            declaration_callables: HashMap::new(),
+            dependency_member_reexports: HashMap::new(),
+            body_ir_dependency_pub_reexports: HashMap::new(),
+            dependency_module_path_segments: HashMap::new(),
+            nominal_declarations: union_member_identity::NominalDeclarationContext::default(),
+            dependency_direct_member_partial_projections: HashMap::new(),
+            dependency_derivable_modules: HashMap::new(),
+            dependency_module_traits: HashMap::new(),
+            dependency_trait_rust_derive_paths: HashMap::new(),
+            local_rust_derive_paths: HashMap::new(),
+            local_derive_facts: HashMap::new(),
+            hash_key_inference: HashKeyInferenceState::default(),
+            loaves: Arc::new(LoafIndex::default()),
+            standard_traits: HashMap::new(),
+            transitive_pub_types: HashMap::new(),
+            public_library_type_identities: NominalInventory::default(),
+            transitive_pub_traits: HashMap::new(),
+            cached_pub_libraries: HashSet::new(),
+            foreign_pub_type_remappings: HashMap::new(),
+            pub_library_declaration_scopes: HashMap::new(),
+            dependency_semantics_pending: false,
+            current_module_path: None,
+            source_import_targets: HashMap::new(),
+            declared_crate_names: None,
+            testing_marker_import_bindings: HashSet::new(),
+            surface_function_import_bindings: HashMap::new(),
+            surface_type_import_bindings: HashMap::new(),
+            module_declared_type_names: HashSet::new(),
+            testing_fixture_names: HashSet::new(),
+            testing_marker_semantics: None,
+            surface_context: SurfaceContext::default(),
+            supertrait_closure: HashMap::new(),
+            pending_trait_supertraits: Vec::new(),
+            native_queries: NativeQueryState::default(),
+        }
     }
 
     /// Reject a source binding that would replace a protected builtin spelling.
@@ -1072,14 +1210,14 @@ impl TypeChecker {
     /// Library publication uses these paths in addition to explicit imports so inferred return receivers and other
     /// transitive ABI lookups survive the source-to-Loaf boundary. Failed speculative lookups are not requirements.
     pub fn observed_rust_metadata_queries(&self) -> BTreeSet<String> {
-        self.rust_metadata_queries.borrow().clone()
+        self.native_queries.rust_metadata_queries.borrow().clone()
     }
 
     /// Retain a successful lookup's nominal query spelling without turning missing speculative paths into demands.
     fn record_rust_metadata_query(&self, canonical_path: &str) {
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
         if let Some(lookup_path) = Self::rust_metadata_lookup_path(canonical_path) {
-            let mut queries = self.rust_metadata_queries.borrow_mut();
+            let mut queries = self.native_queries.rust_metadata_queries.borrow_mut();
             if !queries.contains(lookup_path) {
                 queries.insert(lookup_path.to_string());
             }
@@ -1112,8 +1250,9 @@ impl TypeChecker {
     /// Return complete type metadata from the shipped ABI of the Loaves the checker reaches.
     pub fn rust_item_metadata_for_complete_type(&self, canonical_path: &str) -> Option<Arc<RustItemMetadata>> {
         #[cfg(test)]
-        self.rust_complete_type_lookup_requests
-            .set(self.rust_complete_type_lookup_requests.get() + 1);
+        self.native_queries
+            .rust_complete_type_lookup_requests
+            .set(self.native_queries.rust_complete_type_lookup_requests.get() + 1);
         self.rust_item_metadata_for_path(canonical_path)
     }
 
@@ -1122,7 +1261,7 @@ impl TypeChecker {
         split_top_level_rust_args(args)
     }
 
-    /// Normalize a rust-inspect lookup path down to the nominal item path.
+    /// Normalize a Rust metadata lookup path down to the nominal item path.
     ///
     /// rust-analyzer metadata is keyed by the item path (`foo::Bar`), not by instantiated spellings like
     /// `foo::Bar<T>` or placeholder displays like `{unknown}`. This strips outer generic instantiation from a Rust
@@ -1148,7 +1287,7 @@ impl TypeChecker {
 
     /// Strip the synthetic `rust::` namespace prefix used in Incan source paths.
     ///
-    /// rust-inspect canonical item keys are crate-rooted Rust paths (`crate_name::...`), so compatibility checks and
+    /// Canonical Rust metadata item keys are crate-rooted paths (`crate_name::...`), so compatibility checks and
     /// metadata lookups should normalize away the language surface namespace first.
     fn normalize_rust_namespace_path(path: &str) -> &str {
         path.strip_prefix("rust::").unwrap_or(path)
@@ -1328,8 +1467,8 @@ impl TypeChecker {
     /// Extract the cheap Rust identity already known to the checker for compatibility checks.
     ///
     /// This must stay metadata-light. `types_compatible(...)` calls it frequently, so it may only use symbol-local
-    /// metadata already attached during import collection plus cache-only Rust ABI/rust-inspect reads. Fresh
-    /// rust-inspect extraction from this path would leak a heavy workspace/indexing concern into ordinary semantic
+    /// metadata already attached during import collection plus cache-only Rust ABI reads. Fresh
+    /// rustc extraction from this path would leak a heavy metadata-loading concern into ordinary semantic
     /// checks. Transparent rusttypes and Rust aliases use their retained native targets before identity comparison.
     fn rust_identity_for_type(&self, ty: &ResolvedType) -> Option<RustTypeIdentity> {
         if let Some(target) = self.rusttype_native_target(ty) {
@@ -1402,8 +1541,8 @@ impl TypeChecker {
 
     /// Resolve a bare Rust display name through imported Rust items when the local scope makes that identity unique.
     ///
-    /// rust-inspect can report field and payload displays relative to the Rust module that owns the item, for example a
-    /// field displayed as `Payload` while Incan imported the same Rust type as `DemoPayload`. Source aliases are
+    /// Rust metadata can report field and payload displays relative to the Rust module that owns the item, for example
+    /// a field displayed as `Payload` while Incan imported the same Rust type as `DemoPayload`. Source aliases are
     /// display projections; the Rust boundary still needs the canonical Rust identity so local/import/reexport
     /// paths do not diverge.
     fn unique_imported_rust_item_path_for_display_tail(&self, display_tail: &str) -> Option<String> {
@@ -2099,7 +2238,7 @@ impl TypeChecker {
         }
     }
 
-    /// Map structured rust-inspect [`RustTypeShape`] into a [`ResolvedType`] for field access and pattern typing.
+    /// Map structured Rust metadata [`RustTypeShape`] into a [`ResolvedType`] for field access and pattern typing.
     ///
     /// `Option`/`Result` become [`ResolvedType::Generic`] with constructor names `Option` and `Result`. Concrete paths
     /// are rendered through the ordinary Rust-display resolver so a structured metadata path receives the same
@@ -2144,7 +2283,7 @@ impl TypeChecker {
         }
     }
 
-    /// Return callable-parameter metadata for one rust-inspect-backed enum variant constructor.
+    /// Return checked Rust metadata for one enum variant constructor's callable parameters.
     ///
     /// Rust enum variants are callable constructors at the source surface, but they are not ordinary inherent
     /// functions. Named fields retain their metadata names and declaration order for ordinary argument binding;
@@ -2171,7 +2310,7 @@ impl TypeChecker {
         )
     }
 
-    /// Return the storage carrier of each payload field of one rust-inspect-backed enum variant.
+    /// Return the storage carrier of each payload field of one Rust enum variant from its metadata.
     ///
     /// The callable parameters above are the semantic payload types; this is the parallel fact lowering needs to
     /// emit the Rust constructor, such as the `Box<T>` prost writes around a recursive `oneof` payload.
@@ -2321,60 +2460,7 @@ impl TypeChecker {
             "str" | "&str" => ResolvedType::Str,
             "Vec<u8>" | "std::vec::Vec<u8>" | "alloc::vec::Vec<u8>" | "&[u8]" => ResolvedType::Bytes,
             "()" => ResolvedType::Unit,
-            _ if normalized.ends_with('>') => {
-                if let Some((base, args)) = Self::rust_generic_base_and_args(display.as_str()) {
-                    let tail = base.rsplit("::").next().unwrap_or(base);
-                    match collection_type_id(tail) {
-                        Some(CollectionTypeId::Option) => {
-                            let inner = args.first().copied().unwrap_or("");
-                            return ResolvedType::Generic(
-                                collection_name(CollectionTypeId::Option).to_string(),
-                                vec![self.resolved_type_from_rust_display(inner)],
-                            );
-                        }
-                        Some(CollectionTypeId::Result) => {
-                            // A `Result` alias (`std::thread::Result<T>`, `std::io::Result<T>`) fixes the error arm its
-                            // display omits; the alias item's recorded target names it.
-                            if args.len() != 2
-                                && let Some(expanded) = self.rust_alias_expansion(base, &args)
-                            {
-                                return self.resolved_type_from_rust_display(expanded.as_str());
-                            }
-                            let ok_ty = args
-                                .first()
-                                .map(|p| self.resolved_type_from_rust_display(p))
-                                .unwrap_or(ResolvedType::Unknown);
-                            // Without alias metadata (`datafusion_common::error::Result<T>` outside the inspected
-                            // graph) keep the success path semantic and degrade only the
-                            // missing error arm.
-                            let err_ty = args
-                                .get(1)
-                                .map(|p| self.resolved_type_from_rust_display(p))
-                                .unwrap_or(ResolvedType::Unknown);
-                            return ResolvedType::Generic(
-                                collection_name(CollectionTypeId::Result).to_string(),
-                                vec![ok_ty, err_ty],
-                            );
-                        }
-                        _ => {}
-                    }
-                    if let Some(structural) = self
-                        .resolved_structural_rust_param_display(display.as_str(), |checker, arg| {
-                            checker.resolved_type_from_rust_display(arg)
-                        })
-                    {
-                        return structural;
-                    }
-                    if let Some(source) = self.resolved_source_generic_from_rust_display(base, &args) {
-                        return source;
-                    }
-                }
-                if self.lookup_type_info(normalized.as_str()).is_some() {
-                    ResolvedType::Named(normalized)
-                } else {
-                    ResolvedType::RustPath(display)
-                }
-            }
+            _ if normalized.ends_with('>') => self.resolved_parameterized_rust_display(display, normalized),
             _ if !normalized.is_empty() => {
                 if self.lookup_type_info(normalized.as_str()).is_some() {
                     ResolvedType::Named(normalized)
@@ -2385,6 +2471,63 @@ impl TypeChecker {
                 }
             }
             _ => ResolvedType::Unknown,
+        }
+    }
+
+    /// Resolve parameterized Rust displays using wrapper aliases, structural facts and source nominal declarations.
+    ///
+    /// Consume the already normalized strings so the opaque-path fallback keeps the original display without another
+    /// copy.
+    fn resolved_parameterized_rust_display(&self, display: String, normalized: String) -> ResolvedType {
+        if let Some((base, args)) = Self::rust_generic_base_and_args(display.as_str()) {
+            let tail = base.rsplit("::").next().unwrap_or(base);
+            match collection_type_id(tail) {
+                Some(CollectionTypeId::Option) => {
+                    let inner = args.first().copied().unwrap_or("");
+                    return ResolvedType::Generic(
+                        collection_name(CollectionTypeId::Option).to_string(),
+                        vec![self.resolved_type_from_rust_display(inner)],
+                    );
+                }
+                Some(CollectionTypeId::Result) => {
+                    // A `Result` alias (`std::thread::Result<T>`, `std::io::Result<T>`) fixes the error arm its
+                    // display omits; the alias item's recorded target names it.
+                    if args.len() != 2
+                        && let Some(expanded) = self.rust_alias_expansion(base, &args)
+                    {
+                        return self.resolved_type_from_rust_display(expanded.as_str());
+                    }
+                    let ok_ty = args
+                        .first()
+                        .map(|p| self.resolved_type_from_rust_display(p))
+                        .unwrap_or(ResolvedType::Unknown);
+                    // Without alias metadata (`datafusion_common::error::Result<T>` outside the inspected
+                    // graph) keep the success path semantic and degrade only the
+                    // missing error arm.
+                    let err_ty = args
+                        .get(1)
+                        .map(|p| self.resolved_type_from_rust_display(p))
+                        .unwrap_or(ResolvedType::Unknown);
+                    return ResolvedType::Generic(
+                        collection_name(CollectionTypeId::Result).to_string(),
+                        vec![ok_ty, err_ty],
+                    );
+                }
+                _ => {}
+            }
+            if let Some(structural) = self.resolved_structural_rust_param_display(display.as_str(), |checker, arg| {
+                checker.resolved_type_from_rust_display(arg)
+            }) {
+                return structural;
+            }
+            if let Some(source) = self.resolved_source_generic_from_rust_display(base, &args) {
+                return source;
+            }
+        }
+        if self.lookup_type_info(normalized.as_str()).is_some() {
+            ResolvedType::Named(normalized)
+        } else {
+            ResolvedType::RustPath(display)
         }
     }
 
@@ -2776,7 +2919,7 @@ impl TypeChecker {
         }
         match self.lookup_semantic_type_info(name) {
             Some(TypeInfo::Model(_)) => true,
-            Some(TypeInfo::Class(_)) => self.type_implements_trait(name, "Clone"),
+            Some(TypeInfo::Class(_)) => self.type_implements_trait(name, builtin_traits::as_str(TraitId::Clone)),
             _ => false,
         }
     }
@@ -3779,8 +3922,13 @@ impl TypeChecker {
                     .insert(type_name, aliases);
             }
         }
+        self.record_newtype_construction_metadata(newtype_construction);
+    }
+
+    /// Consume the staged newtype snapshots after trait methods and rebindings establish their construction contracts.
+    fn record_newtype_construction_metadata(&mut self, newtypes: Vec<(String, NewtypeInfo)>) {
         let string_conversion = trait_capabilities::string_try_from();
-        for (name, info) in newtype_construction {
+        for (name, info) in newtypes {
             let concrete_type = if info.type_params.is_empty() {
                 ResolvedType::Named(name.clone())
             } else {
@@ -3796,13 +3944,13 @@ impl TypeChecker {
             let checked_constructor_binding = checked_constructor
                 .as_deref()
                 .and_then(|constructor| info.methods.get(constructor))
-                .map(|method| Self::newtype_constructor_binding(method, concrete_type.clone()));
+                .map(|method| Self::newtype_constructor_binding(method, concrete_type));
             let checked_constructor_identity = checked_constructor_binding
                 .as_ref()
                 .and_then(|binding| binding.identity.clone());
             let automatic_derives = self.newtype_automatic_derive_names(&name, &info);
             // The selection itself is not retained; whether native derives cover every `@rust.derive` is.
-            let mut derives = info.derives.clone();
+            let mut derives = info.derives;
             Self::append_implied_derives(&mut derives);
             if self.append_native_rust_derives(&name, &mut derives) {
                 self.type_info
@@ -3811,15 +3959,15 @@ impl TypeChecker {
                     .insert(name.clone());
             }
             self.type_info.declarations.newtype_construction.insert(
-                name.clone(),
+                name,
                 crate::typechecker::type_info::NewtypeConstructionInfo {
                     automatic_derives,
-                    type_params: info.type_params.clone(),
-                    underlying: info.underlying.clone(),
+                    type_params: info.type_params,
+                    underlying: info.underlying,
                     checked_constructor,
                     checked_constructor_identity,
                     checked_constructor_binding,
-                    constraints: info.constraints.clone(),
+                    constraints: info.constraints,
                     implicit_coercion_enabled: info.implicit_coercion_enabled,
                     supports_string_conversion,
                 },
@@ -3925,74 +4073,14 @@ impl TypeChecker {
                         .with_hint("Rebuild the declaring library with a compatible Incan compiler"),
                     );
                 }
-                let default = if let Some(value) = info.field_default_metadata.get(name) {
-                    if let Some(provider) = provider_library.as_deref()
-                        && let Err(message) = crate::library_exports::qualify_checked_default_for_manifest(
-                            value,
-                            provider,
-                            &info.type_params,
-                        )
-                    {
-                        unmaterializable_defaults.push(name.clone());
-                        self.errors.push(
-                            CompileError::type_error(
-                                format!(
-                                    "Checked class '{}' cannot republish default metadata for field '{}': {}",
-                                    class.name, name, message
-                                ),
-                                declaration.span,
-                            )
-                            .with_hint("Rebuild the declaring library with a compatible Incan compiler"),
-                        );
-                    }
-                    match (provider_library.as_ref(), value) {
-                        (Some(library), crate::library_exports::CheckedParamDefault::Unsupported) => {
-                            unmaterializable_defaults.push(name.clone());
-                            self.errors.push(
-                                CompileError::type_error(
-                                    format!(
-                                        "Class '{}' cannot inherit compiled default for field '{}' because the \
-                                         provider artifact cannot materialize that expression",
-                                        class.name, name
-                                    ),
-                                    declaration.span,
-                                )
-                                .with_hint(format!(
-                                    "Override '{}' in '{}' with a local default expression",
-                                    name, class.name
-                                )),
-                            );
-                            Some(type_info::ClassFieldDefaultInfo::PublicDependency {
-                                library: library.clone(),
-                                value: value.clone(),
-                            })
-                        }
-                        (Some(library), _) => Some(type_info::ClassFieldDefaultInfo::PublicDependency {
-                            library: library.clone(),
-                            value: value.clone(),
-                        }),
-                        (None, _) => {
-                            unmaterializable_defaults.push(name.clone());
-                            self.errors.push(
-                                CompileError::type_error(
-                                    format!(
-                                        "Checked class '{}' lost the dependency identity for inherited default field \
-                                         '{}'",
-                                        class.name, name
-                                    ),
-                                    declaration.span,
-                                )
-                                .with_hint("Re-import the compiled parent through its declared package dependency"),
-                            );
-                            None
-                        }
-                    }
-                } else {
-                    info.field_defaults
-                        .get(name)
-                        .cloned()
-                        .map(type_info::ClassFieldDefaultInfo::Source)
-                };
+                let default = self.checked_class_field_default(
+                    &class.name,
+                    &info,
+                    name,
+                    provider_library.as_deref(),
+                    declaration.span,
+                    &mut unmaterializable_defaults,
+                );
                 if field.has_default && default.is_none() {
                     unmaterializable_defaults.push(name.clone());
                     self.errors.push(CompileError::type_error(
@@ -4027,6 +4115,67 @@ impl TypeChecker {
             );
         }
         self.type_info.declarations.class_layouts = layouts;
+    }
+
+    /// Resolve a field's local or inherited default, preserving provider failures before layout completeness checks.
+    fn checked_class_field_default(
+        &mut self,
+        class_name: &str,
+        info: &ClassInfo,
+        name: &str,
+        provider: Option<&str>,
+        span: Span,
+        unmaterializable_defaults: &mut Vec<String>,
+    ) -> Option<type_info::ClassFieldDefaultInfo> {
+        let Some(value) = info.field_default_metadata.get(name) else {
+            return info
+                .field_defaults
+                .get(name)
+                .cloned()
+                .map(type_info::ClassFieldDefaultInfo::Source);
+        };
+        if let Some(provider) = provider
+            && let Err(message) =
+                crate::library_exports::qualify_checked_default_for_manifest(value, provider, &info.type_params)
+        {
+            unmaterializable_defaults.push(name.to_owned());
+            self.errors.push(
+                CompileError::type_error(
+                    format!(
+                        "Checked class '{class_name}' cannot republish default metadata for field '{name}': {message}"
+                    ),
+                    span,
+                )
+                .with_hint("Rebuild the declaring library with a compatible Incan compiler"),
+            );
+        }
+        match (provider, value) {
+            (Some(library), crate::library_exports::CheckedParamDefault::Unsupported) => {
+                unmaterializable_defaults.push(name.to_owned());
+                self.errors.push(
+                    CompileError::type_error(
+                        format!("Class '{class_name}' cannot inherit compiled default for field '{name}' because the provider artifact cannot materialize that expression"), span,
+                    ).with_hint(format!("Override '{name}' in '{class_name}' with a local default expression")),
+                );
+                Some(type_info::ClassFieldDefaultInfo::PublicDependency {
+                    library: library.to_owned(),
+                    value: value.clone(),
+                })
+            }
+            (Some(library), _) => Some(type_info::ClassFieldDefaultInfo::PublicDependency {
+                library: library.to_owned(),
+                value: value.clone(),
+            }),
+            (None, _) => {
+                unmaterializable_defaults.push(name.to_owned());
+                self.errors.push(
+                    CompileError::type_error(
+                        format!("Checked class '{class_name}' lost the dependency identity for inherited default field '{name}'"), span,
+                    ).with_hint("Re-import the compiled parent through its declared package dependency"),
+                );
+                None
+            }
+        }
     }
 
     /// Snapshot checked model field visibility for backend lowering.
@@ -4173,7 +4322,7 @@ impl TypeChecker {
                 }
             }
             Expr::Literal(_) | Expr::SelfExpr => {}
-            Expr::Binary(left, _, right) => {
+            Expr::Binary(left, _, right) | Expr::Index(left, right) => {
                 self.collect_static_dependencies_from_expr(&left.node, deps, visiting_functions);
                 self.collect_static_dependencies_from_expr(&right.node, deps, visiting_functions);
             }
@@ -4184,19 +4333,7 @@ impl TypeChecker {
             Expr::Call(func, _type_args, args) => {
                 self.collect_static_dependencies_from_expr(&func.node, deps, visiting_functions);
                 self.collect_static_dependencies_from_call_args(args, deps, visiting_functions);
-                if let Expr::Ident(function_name) = &func.node
-                    && let Some(function_decl) = self.local_function_decls.get(function_name)
-                    && visiting_functions.insert(function_name.clone())
-                {
-                    for stmt in &function_decl.body {
-                        self.collect_static_dependencies_from_statement(&stmt.node, deps, visiting_functions);
-                    }
-                    visiting_functions.remove(function_name);
-                }
-            }
-            Expr::Index(object, index) => {
-                self.collect_static_dependencies_from_expr(&object.node, deps, visiting_functions);
-                self.collect_static_dependencies_from_expr(&index.node, deps, visiting_functions);
+                self.collect_local_function_static_dependencies(&func.node, deps, visiting_functions);
             }
             Expr::Slice(target, slice) => {
                 self.collect_static_dependencies_from_expr(&target.node, deps, visiting_functions);
@@ -4225,65 +4362,18 @@ impl TypeChecker {
             }
             Expr::Match(scrutinee, arms) => {
                 self.collect_static_dependencies_from_expr(&scrutinee.node, deps, visiting_functions);
-                for arm in arms {
-                    if let Some(guard) = &arm.node.guard {
-                        self.collect_static_dependencies_from_expr(&guard.node, deps, visiting_functions);
-                    }
-                    match &arm.node.body {
-                        MatchBody::Expr(expr) => {
-                            self.collect_static_dependencies_from_expr(&expr.node, deps, visiting_functions);
-                        }
-                        MatchBody::Block(stmts) => {
-                            for stmt in stmts {
-                                self.collect_static_dependencies_from_statement(&stmt.node, deps, visiting_functions);
-                            }
-                        }
-                    }
-                }
+                self.collect_match_static_dependencies(arms, deps, visiting_functions);
             }
             Expr::If(if_expr) => {
-                self.collect_static_dependencies_from_expr(&if_expr.condition.node, deps, visiting_functions);
-                for stmt in &if_expr.then_body {
-                    self.collect_static_dependencies_from_statement(&stmt.node, deps, visiting_functions);
-                }
-                if let Some(else_body) = &if_expr.else_body {
-                    for stmt in else_body {
-                        self.collect_static_dependencies_from_statement(&stmt.node, deps, visiting_functions);
-                    }
-                }
+                self.collect_if_static_dependencies(if_expr, deps, visiting_functions);
             }
             Expr::Loop(loop_expr) => {
                 for stmt in &loop_expr.body {
                     self.collect_static_dependencies_from_statement(&stmt.node, deps, visiting_functions);
                 }
             }
-            Expr::Generator(generator) => {
-                self.collect_static_dependencies_from_expr(&generator.expr.node, deps, visiting_functions);
-                for clause in &generator.clauses {
-                    match clause {
-                        ComprehensionClause::For { iter, .. } => {
-                            self.collect_static_dependencies_from_expr(&iter.node, deps, visiting_functions);
-                        }
-                        ComprehensionClause::If(condition) => {
-                            self.collect_static_dependencies_from_expr(&condition.node, deps, visiting_functions);
-                        }
-                    }
-                }
-            }
-            Expr::ListComp(list_comp) => {
-                self.collect_static_dependencies_from_expr(&list_comp.expr.node, deps, visiting_functions);
-                self.collect_static_dependencies_from_expr(&list_comp.iter.node, deps, visiting_functions);
-                if let Some(filter) = &list_comp.filter {
-                    self.collect_static_dependencies_from_expr(&filter.node, deps, visiting_functions);
-                }
-            }
-            Expr::DictComp(dict_comp) => {
-                self.collect_static_dependencies_from_expr(&dict_comp.key.node, deps, visiting_functions);
-                self.collect_static_dependencies_from_expr(&dict_comp.value.node, deps, visiting_functions);
-                self.collect_static_dependencies_from_expr(&dict_comp.iter.node, deps, visiting_functions);
-                if let Some(filter) = &dict_comp.filter {
-                    self.collect_static_dependencies_from_expr(&filter.node, deps, visiting_functions);
-                }
+            Expr::Generator(_) | Expr::ListComp(_) | Expr::DictComp(_) => {
+                self.collect_comprehension_static_dependencies(expr, deps, visiting_functions);
             }
             Expr::Closure(_, _) => {}
             Expr::Tuple(items) | Expr::Set(items) => {
@@ -4301,17 +4391,7 @@ impl TypeChecker {
                 }
             }
             Expr::Dict(items) => {
-                for item in items {
-                    match item {
-                        DictEntry::Pair(key, value) => {
-                            self.collect_static_dependencies_from_expr(&key.node, deps, visiting_functions);
-                            self.collect_static_dependencies_from_expr(&value.node, deps, visiting_functions);
-                        }
-                        DictEntry::Spread(value) => {
-                            self.collect_static_dependencies_from_expr(&value.node, deps, visiting_functions);
-                        }
-                    }
-                }
+                self.collect_dict_static_dependencies(items, deps, visiting_functions);
             }
             Expr::Constructor(_, args) => {
                 self.collect_static_dependencies_from_call_args(args, deps, visiting_functions);
@@ -4327,38 +4407,9 @@ impl TypeChecker {
                 self.collect_static_dependencies_from_expr(&start.node, deps, visiting_functions);
                 self.collect_static_dependencies_from_expr(&end.node, deps, visiting_functions);
             }
-            Expr::Surface(surface) => match &surface.payload {
-                SurfaceExprPayload::PrefixUnary(expr) => {
-                    self.collect_static_dependencies_from_expr(&expr.node, deps, visiting_functions);
-                }
-                SurfaceExprPayload::RaceFor(race) => {
-                    for arm in &race.arms {
-                        self.collect_static_dependencies_from_expr(&arm.awaitable.node, deps, visiting_functions);
-                        match &arm.body {
-                            RaceForBody::Expr(expr) => {
-                                self.collect_static_dependencies_from_expr(&expr.node, deps, visiting_functions);
-                            }
-                            RaceForBody::Block(stmts) => {
-                                for stmt in stmts {
-                                    self.collect_static_dependencies_from_statement(
-                                        &stmt.node,
-                                        deps,
-                                        visiting_functions,
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-                SurfaceExprPayload::LeadingDotPath { .. } => {}
-                SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
-                    self.collect_static_dependencies_from_expr(&left.node, deps, visiting_functions);
-                    self.collect_static_dependencies_from_expr(&right.node, deps, visiting_functions);
-                }
-                SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
-                    self.collect_static_dependencies_from_call_args(args, deps, visiting_functions);
-                }
-            },
+            Expr::Surface(surface) => {
+                self.collect_surface_static_dependencies(&surface.payload, deps, visiting_functions)
+            }
             Expr::VocabBlock(block) => {
                 for arg in &block.header_args {
                     self.collect_static_dependencies_from_expr(&arg.node, deps, visiting_functions);
@@ -4367,13 +4418,165 @@ impl TypeChecker {
                     self.collect_static_dependencies_from_statement(&stmt.node, deps, visiting_functions);
                 }
             }
-            // Only a fragment's expression holes are ordinary Incan and can name a static; the surrounding
-            // DSL-owned structure cannot. `holes` is the single authority on which expressions those are
-            // (RFC 081, #1022).
+            // Only expression holes belong to ordinary Incan; the surrounding fragment is DSL-owned (RFC 081).
             Expr::Embedded(fragment) => {
                 for hole in fragment.holes() {
                     self.collect_static_dependencies_from_expr(&hole.node, deps, visiting_functions);
                 }
+            }
+        }
+    }
+
+    /// Collect match-arm dependencies in guard-before-body order after the scrutinee has been visited.
+    fn collect_match_static_dependencies(
+        &self,
+        arms: &[Spanned<MatchArm>],
+        deps: &mut HashSet<String>,
+        visiting_functions: &mut HashSet<String>,
+    ) {
+        for arm in arms {
+            if let Some(guard) = &arm.node.guard {
+                self.collect_static_dependencies_from_expr(&guard.node, deps, visiting_functions);
+            }
+            match &arm.node.body {
+                MatchBody::Expr(expr) => {
+                    self.collect_static_dependencies_from_expr(&expr.node, deps, visiting_functions)
+                }
+                MatchBody::Block(stmts) => {
+                    for stmt in stmts {
+                        self.collect_static_dependencies_from_statement(&stmt.node, deps, visiting_functions);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Follow a directly called local helper once on the active stack, leaving closure creation unevaluated.
+    fn collect_local_function_static_dependencies(
+        &self,
+        callee: &Expr,
+        deps: &mut HashSet<String>,
+        visiting_functions: &mut HashSet<String>,
+    ) {
+        if let Expr::Ident(name) = callee
+            && let Some(declaration) = self.local_function_decls.get(name)
+            && visiting_functions.insert(name.clone())
+        {
+            for stmt in &declaration.body {
+                self.collect_static_dependencies_from_statement(&stmt.node, deps, visiting_functions);
+            }
+            visiting_functions.remove(name);
+        }
+    }
+
+    /// Collect an if expression's condition and both branch bodies in the original traversal order.
+    fn collect_if_static_dependencies(
+        &self,
+        expr: &IfExpr,
+        deps: &mut HashSet<String>,
+        visiting_functions: &mut HashSet<String>,
+    ) {
+        self.collect_static_dependencies_from_expr(&expr.condition.node, deps, visiting_functions);
+        for stmt in &expr.then_body {
+            self.collect_static_dependencies_from_statement(&stmt.node, deps, visiting_functions);
+        }
+        if let Some(body) = &expr.else_body {
+            for stmt in body {
+                self.collect_static_dependencies_from_statement(&stmt.node, deps, visiting_functions);
+            }
+        }
+    }
+
+    /// Collect result, source and filter dependencies for the comprehension forms selected by the expression visitor.
+    fn collect_comprehension_static_dependencies(
+        &self,
+        expr: &Expr,
+        deps: &mut HashSet<String>,
+        visiting_functions: &mut HashSet<String>,
+    ) {
+        match expr {
+            Expr::Generator(generator) => {
+                self.collect_static_dependencies_from_expr(&generator.expr.node, deps, visiting_functions);
+                for clause in &generator.clauses {
+                    let expr = match clause {
+                        ComprehensionClause::For { iter, .. } => iter,
+                        ComprehensionClause::If(condition) => condition,
+                    };
+                    self.collect_static_dependencies_from_expr(&expr.node, deps, visiting_functions);
+                }
+            }
+            Expr::ListComp(comp) => {
+                self.collect_static_dependencies_from_expr(&comp.expr.node, deps, visiting_functions);
+                self.collect_static_dependencies_from_expr(&comp.iter.node, deps, visiting_functions);
+                if let Some(filter) = &comp.filter {
+                    self.collect_static_dependencies_from_expr(&filter.node, deps, visiting_functions);
+                }
+            }
+            Expr::DictComp(comp) => {
+                self.collect_static_dependencies_from_expr(&comp.key.node, deps, visiting_functions);
+                self.collect_static_dependencies_from_expr(&comp.value.node, deps, visiting_functions);
+                self.collect_static_dependencies_from_expr(&comp.iter.node, deps, visiting_functions);
+                if let Some(filter) = &comp.filter {
+                    self.collect_static_dependencies_from_expr(&filter.node, deps, visiting_functions);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Collect dictionary keys, values and spread dependencies in their written order.
+    fn collect_dict_static_dependencies(
+        &self,
+        items: &[DictEntry],
+        deps: &mut HashSet<String>,
+        visiting_functions: &mut HashSet<String>,
+    ) {
+        for item in items {
+            match item {
+                DictEntry::Pair(key, value) => {
+                    self.collect_static_dependencies_from_expr(&key.node, deps, visiting_functions);
+                    self.collect_static_dependencies_from_expr(&value.node, deps, visiting_functions);
+                }
+                DictEntry::Spread(value) => {
+                    self.collect_static_dependencies_from_expr(&value.node, deps, visiting_functions)
+                }
+            }
+        }
+    }
+
+    /// Collect ordinary Incan dependencies within surface payloads without visiting DSL-owned syntax.
+    fn collect_surface_static_dependencies(
+        &self,
+        payload: &SurfaceExprPayload,
+        deps: &mut HashSet<String>,
+        visiting_functions: &mut HashSet<String>,
+    ) {
+        match payload {
+            SurfaceExprPayload::PrefixUnary(expr) => {
+                self.collect_static_dependencies_from_expr(&expr.node, deps, visiting_functions);
+            }
+            SurfaceExprPayload::RaceFor(race) => {
+                for arm in &race.arms {
+                    self.collect_static_dependencies_from_expr(&arm.awaitable.node, deps, visiting_functions);
+                    match &arm.body {
+                        RaceForBody::Expr(expr) => {
+                            self.collect_static_dependencies_from_expr(&expr.node, deps, visiting_functions);
+                        }
+                        RaceForBody::Block(stmts) => {
+                            for stmt in stmts {
+                                self.collect_static_dependencies_from_statement(&stmt.node, deps, visiting_functions);
+                            }
+                        }
+                    }
+                }
+            }
+            SurfaceExprPayload::LeadingDotPath { .. } => {}
+            SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+                self.collect_static_dependencies_from_expr(&left.node, deps, visiting_functions);
+                self.collect_static_dependencies_from_expr(&right.node, deps, visiting_functions);
+            }
+            SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
+                self.collect_static_dependencies_from_call_args(args, deps, visiting_functions);
             }
         }
     }
@@ -4419,19 +4622,7 @@ impl TypeChecker {
             Expr::Call(func, _type_args, args) => {
                 self.collect_static_initializer_static_writes_from_expr(func, current_static, visiting_functions);
                 self.collect_static_initializer_static_writes_from_call_args(args, current_static, visiting_functions);
-                if let Expr::Ident(function_name) = &func.node
-                    && let Some(function_decl) = self.local_function_decls.get(function_name).cloned()
-                    && visiting_functions.insert(function_name.clone())
-                {
-                    for stmt in &function_decl.body {
-                        self.collect_static_initializer_static_writes_from_stmt(
-                            stmt,
-                            current_static,
-                            visiting_functions,
-                        );
-                    }
-                    visiting_functions.remove(function_name);
-                }
+                self.collect_static_initializer_local_function_writes(func, current_static, visiting_functions);
             }
             Expr::MethodCall(object, _, _type_args, args) => {
                 self.collect_static_initializer_static_writes_from_expr(object, current_static, visiting_functions);
@@ -4476,50 +4667,13 @@ impl TypeChecker {
                 }
             }
             Expr::List(items) => {
-                for item in items {
-                    match item {
-                        ListEntry::Element(value) | ListEntry::Spread(value) => self
-                            .collect_static_initializer_static_writes_from_expr(
-                                value,
-                                current_static,
-                                visiting_functions,
-                            ),
-                    }
-                }
+                self.collect_static_initializer_list_writes(items, current_static, visiting_functions);
             }
             Expr::Dict(items) => {
-                for item in items {
-                    match item {
-                        DictEntry::Pair(key, value) => {
-                            self.collect_static_initializer_static_writes_from_expr(
-                                key,
-                                current_static,
-                                visiting_functions,
-                            );
-                            self.collect_static_initializer_static_writes_from_expr(
-                                value,
-                                current_static,
-                                visiting_functions,
-                            );
-                        }
-                        DictEntry::Spread(value) => self.collect_static_initializer_static_writes_from_expr(
-                            value,
-                            current_static,
-                            visiting_functions,
-                        ),
-                    }
-                }
+                self.collect_static_initializer_dict_writes(items, current_static, visiting_functions);
             }
             Expr::FString(parts) => {
-                for part in parts {
-                    if let FStringPart::Expr { expr: inner, .. } = part {
-                        self.collect_static_initializer_static_writes_from_expr(
-                            inner,
-                            current_static,
-                            visiting_functions,
-                        );
-                    }
-                }
+                self.collect_static_initializer_fstring_writes(parts, current_static, visiting_functions);
             }
             Expr::Range { start, end, .. } => {
                 self.collect_static_initializer_static_writes_from_expr(start, current_static, visiting_functions);
@@ -4530,52 +4684,10 @@ impl TypeChecker {
             }
             Expr::Match(scrutinee, arms) => {
                 self.collect_static_initializer_static_writes_from_expr(scrutinee, current_static, visiting_functions);
-                for arm in arms {
-                    if let Some(guard) = &arm.node.guard {
-                        self.collect_static_initializer_static_writes_from_expr(
-                            guard,
-                            current_static,
-                            visiting_functions,
-                        );
-                    }
-                    match &arm.node.body {
-                        MatchBody::Expr(inner) => {
-                            self.collect_static_initializer_static_writes_from_expr(
-                                inner,
-                                current_static,
-                                visiting_functions,
-                            );
-                        }
-                        MatchBody::Block(stmts) => {
-                            for stmt in stmts {
-                                self.collect_static_initializer_static_writes_from_stmt(
-                                    stmt,
-                                    current_static,
-                                    visiting_functions,
-                                );
-                            }
-                        }
-                    }
-                }
+                self.collect_static_initializer_match_writes(arms, current_static, visiting_functions);
             }
             Expr::If(if_expr) => {
-                self.collect_static_initializer_static_writes_from_expr(
-                    &if_expr.condition,
-                    current_static,
-                    visiting_functions,
-                );
-                for stmt in &if_expr.then_body {
-                    self.collect_static_initializer_static_writes_from_stmt(stmt, current_static, visiting_functions);
-                }
-                if let Some(else_body) = &if_expr.else_body {
-                    for stmt in else_body {
-                        self.collect_static_initializer_static_writes_from_stmt(
-                            stmt,
-                            current_static,
-                            visiting_functions,
-                        );
-                    }
-                }
+                self.collect_static_initializer_if_writes(if_expr, current_static, visiting_functions);
             }
             Expr::Loop(loop_expr) => {
                 for stmt in &loop_expr.body {
@@ -4583,108 +4695,18 @@ impl TypeChecker {
                 }
             }
             Expr::Generator(generator) => {
-                self.collect_static_initializer_static_writes_from_expr(
-                    &generator.expr,
-                    current_static,
-                    visiting_functions,
-                );
-                for clause in &generator.clauses {
-                    match clause {
-                        ComprehensionClause::For { iter, .. } => {
-                            self.collect_static_initializer_static_writes_from_expr(
-                                iter,
-                                current_static,
-                                visiting_functions,
-                            );
-                        }
-                        ComprehensionClause::If(condition) => {
-                            self.collect_static_initializer_static_writes_from_expr(
-                                condition,
-                                current_static,
-                                visiting_functions,
-                            );
-                        }
-                    }
-                }
+                self.collect_static_initializer_generator_writes(generator, current_static, visiting_functions);
             }
             Expr::ListComp(list_comp) => {
-                self.collect_static_initializer_static_writes_from_expr(
-                    &list_comp.expr,
-                    current_static,
-                    visiting_functions,
-                );
-                self.collect_static_initializer_static_writes_from_expr(
-                    &list_comp.iter,
-                    current_static,
-                    visiting_functions,
-                );
-                if let Some(filter) = &list_comp.filter {
-                    self.collect_static_initializer_static_writes_from_expr(filter, current_static, visiting_functions);
-                }
+                self.collect_static_initializer_list_comp_writes(list_comp, current_static, visiting_functions);
             }
             Expr::DictComp(dict_comp) => {
-                self.collect_static_initializer_static_writes_from_expr(
-                    &dict_comp.key,
-                    current_static,
-                    visiting_functions,
-                );
-                self.collect_static_initializer_static_writes_from_expr(
-                    &dict_comp.value,
-                    current_static,
-                    visiting_functions,
-                );
-                self.collect_static_initializer_static_writes_from_expr(
-                    &dict_comp.iter,
-                    current_static,
-                    visiting_functions,
-                );
-                if let Some(filter) = &dict_comp.filter {
-                    self.collect_static_initializer_static_writes_from_expr(filter, current_static, visiting_functions);
-                }
+                self.collect_static_initializer_dict_comp_writes(dict_comp, current_static, visiting_functions);
             }
             Expr::Closure(_, _) => {}
-            Expr::Surface(surface) => match &surface.payload {
-                SurfaceExprPayload::PrefixUnary(inner) => {
-                    self.collect_static_initializer_static_writes_from_expr(inner, current_static, visiting_functions);
-                }
-                SurfaceExprPayload::RaceFor(race) => {
-                    for arm in &race.arms {
-                        self.collect_static_initializer_static_writes_from_expr(
-                            &arm.awaitable,
-                            current_static,
-                            visiting_functions,
-                        );
-                        match &arm.body {
-                            RaceForBody::Expr(expr) => self.collect_static_initializer_static_writes_from_expr(
-                                expr,
-                                current_static,
-                                visiting_functions,
-                            ),
-                            RaceForBody::Block(stmts) => {
-                                for stmt in stmts {
-                                    self.collect_static_initializer_static_writes_from_stmt(
-                                        stmt,
-                                        current_static,
-                                        visiting_functions,
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-                SurfaceExprPayload::LeadingDotPath { .. } => {}
-                SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
-                    self.collect_static_initializer_static_writes_from_expr(left, current_static, visiting_functions);
-                    self.collect_static_initializer_static_writes_from_expr(right, current_static, visiting_functions);
-                }
-                SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
-                    self.collect_static_initializer_static_writes_from_call_args(
-                        args,
-                        current_static,
-                        visiting_functions,
-                    );
-                }
-            },
+            Expr::Surface(surface) => {
+                self.collect_static_initializer_surface_writes(&surface.payload, current_static, visiting_functions)
+            }
             Expr::VocabBlock(block) => {
                 for arg in &block.header_args {
                     self.collect_static_initializer_static_writes_from_expr(arg, current_static, visiting_functions);
@@ -4699,6 +4721,204 @@ impl TypeChecker {
                 for hole in fragment.holes() {
                     self.collect_static_initializer_static_writes_from_expr(hole, current_static, visiting_functions);
                 }
+            }
+        }
+    }
+
+    /// Follow a local direct helper once on the active call stack; closure creation alone does not execute its body.
+    fn collect_static_initializer_local_function_writes(
+        &mut self,
+        func: &Spanned<Expr>,
+        current_static: &str,
+        visiting_functions: &mut HashSet<String>,
+    ) {
+        if let Expr::Ident(function_name) = &func.node
+            && let Some(function_decl) = self.local_function_decls.get(function_name).cloned()
+            && visiting_functions.insert(function_name.clone())
+        {
+            self.collect_static_initializer_body_writes(&function_decl.body, current_static, visiting_functions);
+            visiting_functions.remove(function_name);
+        }
+    }
+
+    /// Check statements in source order without changing the initializer call-stack cycle guard.
+    fn collect_static_initializer_body_writes(
+        &mut self,
+        body: &[Spanned<Statement>],
+        current_static: &str,
+        visiting_functions: &mut HashSet<String>,
+    ) {
+        for stmt in body {
+            self.collect_static_initializer_static_writes_from_stmt(stmt, current_static, visiting_functions);
+        }
+    }
+
+    /// Check dictionary keys, values and spreads in their written order.
+    fn collect_static_initializer_dict_writes(
+        &mut self,
+        items: &[DictEntry],
+        current_static: &str,
+        visiting_functions: &mut HashSet<String>,
+    ) {
+        for item in items {
+            match item {
+                DictEntry::Pair(key, value) => {
+                    self.collect_static_initializer_static_writes_from_expr(key, current_static, visiting_functions);
+                    self.collect_static_initializer_static_writes_from_expr(value, current_static, visiting_functions);
+                }
+                DictEntry::Spread(value) => {
+                    self.collect_static_initializer_static_writes_from_expr(value, current_static, visiting_functions);
+                }
+            }
+        }
+    }
+
+    /// Check list elements and spread values in their written order.
+    fn collect_static_initializer_list_writes(
+        &mut self,
+        items: &[ListEntry],
+        current_static: &str,
+        visiting_functions: &mut HashSet<String>,
+    ) {
+        for item in items {
+            let (ListEntry::Element(value) | ListEntry::Spread(value)) = item;
+            self.collect_static_initializer_static_writes_from_expr(value, current_static, visiting_functions);
+        }
+    }
+
+    /// Check interpolated expressions while leaving literal format text outside the static-write analysis.
+    fn collect_static_initializer_fstring_writes(
+        &mut self,
+        parts: &[FStringPart],
+        current_static: &str,
+        visiting_functions: &mut HashSet<String>,
+    ) {
+        for part in parts {
+            if let FStringPart::Expr { expr, .. } = part {
+                self.collect_static_initializer_static_writes_from_expr(expr, current_static, visiting_functions);
+            }
+        }
+    }
+
+    /// Check a list comprehension's result, source and optional filter in the existing analysis order.
+    fn collect_static_initializer_list_comp_writes(
+        &mut self,
+        expr: &ListComp,
+        current_static: &str,
+        visiting_functions: &mut HashSet<String>,
+    ) {
+        self.collect_static_initializer_static_writes_from_expr(&expr.expr, current_static, visiting_functions);
+        self.collect_static_initializer_static_writes_from_expr(&expr.iter, current_static, visiting_functions);
+        if let Some(filter) = &expr.filter {
+            self.collect_static_initializer_static_writes_from_expr(filter, current_static, visiting_functions);
+        }
+    }
+
+    /// Check a dictionary comprehension's key, value, source and optional filter in the existing analysis order.
+    fn collect_static_initializer_dict_comp_writes(
+        &mut self,
+        expr: &DictComp,
+        current_static: &str,
+        visiting_functions: &mut HashSet<String>,
+    ) {
+        self.collect_static_initializer_static_writes_from_expr(&expr.key, current_static, visiting_functions);
+        self.collect_static_initializer_static_writes_from_expr(&expr.value, current_static, visiting_functions);
+        self.collect_static_initializer_static_writes_from_expr(&expr.iter, current_static, visiting_functions);
+        if let Some(filter) = &expr.filter {
+            self.collect_static_initializer_static_writes_from_expr(filter, current_static, visiting_functions);
+        }
+    }
+
+    /// Check each match guard before its expression or statement body.
+    fn collect_static_initializer_match_writes(
+        &mut self,
+        arms: &[Spanned<MatchArm>],
+        current_static: &str,
+        visiting_functions: &mut HashSet<String>,
+    ) {
+        for arm in arms {
+            if let Some(guard) = &arm.node.guard {
+                self.collect_static_initializer_static_writes_from_expr(guard, current_static, visiting_functions);
+            }
+            match &arm.node.body {
+                MatchBody::Expr(inner) => {
+                    self.collect_static_initializer_static_writes_from_expr(inner, current_static, visiting_functions)
+                }
+                MatchBody::Block(body) => {
+                    self.collect_static_initializer_body_writes(body, current_static, visiting_functions)
+                }
+            }
+        }
+    }
+
+    /// Check the condition and both branches of an initializer-reachable if expression.
+    fn collect_static_initializer_if_writes(
+        &mut self,
+        expr: &IfExpr,
+        current_static: &str,
+        visiting_functions: &mut HashSet<String>,
+    ) {
+        self.collect_static_initializer_static_writes_from_expr(&expr.condition, current_static, visiting_functions);
+        self.collect_static_initializer_body_writes(&expr.then_body, current_static, visiting_functions);
+        if let Some(body) = &expr.else_body {
+            self.collect_static_initializer_body_writes(body, current_static, visiting_functions);
+        }
+    }
+
+    /// Check the generator result followed by its source and filter clauses, preserving existing traversal order.
+    fn collect_static_initializer_generator_writes(
+        &mut self,
+        generator: &GeneratorExpr,
+        current_static: &str,
+        visiting_functions: &mut HashSet<String>,
+    ) {
+        self.collect_static_initializer_static_writes_from_expr(&generator.expr, current_static, visiting_functions);
+        for clause in &generator.clauses {
+            let expr = match clause {
+                ComprehensionClause::For { iter, .. } => iter,
+                ComprehensionClause::If(condition) => condition,
+            };
+            self.collect_static_initializer_static_writes_from_expr(expr, current_static, visiting_functions);
+        }
+    }
+
+    /// Check ordinary Incan slots within a surface payload, including race-arm bodies and scoped call arguments.
+    fn collect_static_initializer_surface_writes(
+        &mut self,
+        payload: &SurfaceExprPayload,
+        current_static: &str,
+        visiting_functions: &mut HashSet<String>,
+    ) {
+        match payload {
+            SurfaceExprPayload::PrefixUnary(inner) => {
+                self.collect_static_initializer_static_writes_from_expr(inner, current_static, visiting_functions)
+            }
+            SurfaceExprPayload::RaceFor(race) => {
+                for arm in &race.arms {
+                    self.collect_static_initializer_static_writes_from_expr(
+                        &arm.awaitable,
+                        current_static,
+                        visiting_functions,
+                    );
+                    match &arm.body {
+                        RaceForBody::Expr(expr) => self.collect_static_initializer_static_writes_from_expr(
+                            expr,
+                            current_static,
+                            visiting_functions,
+                        ),
+                        RaceForBody::Block(body) => {
+                            self.collect_static_initializer_body_writes(body, current_static, visiting_functions)
+                        }
+                    }
+                }
+            }
+            SurfaceExprPayload::LeadingDotPath { .. } => {}
+            SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+                self.collect_static_initializer_static_writes_from_expr(left, current_static, visiting_functions);
+                self.collect_static_initializer_static_writes_from_expr(right, current_static, visiting_functions);
+            }
+            SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
+                self.collect_static_initializer_static_writes_from_call_args(args, current_static, visiting_functions)
             }
         }
     }
@@ -4724,6 +4944,73 @@ impl TypeChecker {
 
     /// Recurse through statements reachable from an initializer expression and reject any write to static storage.
     fn collect_static_initializer_static_writes_from_stmt(
+        &mut self,
+        stmt: &Spanned<Statement>,
+        current_static: &str,
+        visiting_functions: &mut HashSet<String>,
+    ) {
+        match &stmt.node {
+            Statement::Assignment(_)
+            | Statement::CompoundAssignment(_)
+            | Statement::TupleUnpack(_)
+            | Statement::ChainedAssignment(_) => {
+                self.collect_static_initializer_binding_writes(stmt, current_static, visiting_functions);
+            }
+            Statement::FieldAssignment(_) | Statement::IndexAssignment(_) | Statement::TupleAssign(_) => {
+                self.collect_static_initializer_place_writes(stmt, current_static, visiting_functions);
+            }
+            Statement::Assert(assert_stmt) => {
+                self.collect_static_initializer_assert_writes(assert_stmt, current_static, visiting_functions);
+            }
+            Statement::If(if_stmt) => {
+                self.collect_static_initializer_if_statement_writes(if_stmt, current_static, visiting_functions);
+            }
+            Statement::Return(Some(expr)) | Statement::Expr(expr) | Statement::Break(Some(expr)) => {
+                self.collect_static_initializer_static_writes_from_expr(expr, current_static, visiting_functions);
+            }
+            Statement::Loop(loop_stmt) => {
+                self.collect_static_initializer_body_writes(&loop_stmt.body, current_static, visiting_functions);
+            }
+            Statement::While(while_stmt) => {
+                self.collect_static_initializer_static_writes_from_condition(
+                    &while_stmt.condition,
+                    current_static,
+                    visiting_functions,
+                );
+                self.collect_static_initializer_body_writes(&while_stmt.body, current_static, visiting_functions);
+            }
+            Statement::For(for_stmt) => {
+                self.collect_static_initializer_static_writes_from_expr(
+                    &for_stmt.iter,
+                    current_static,
+                    visiting_functions,
+                );
+                self.collect_static_initializer_body_writes(&for_stmt.body, current_static, visiting_functions);
+            }
+            Statement::Unsafe(unsafe_stmt) => {
+                self.collect_static_initializer_body_writes(&unsafe_stmt.body, current_static, visiting_functions);
+            }
+            Statement::VocabExpressionItem(item) => {
+                self.collect_static_initializer_static_writes_from_expr(&item.expr, current_static, visiting_functions);
+                for modifier in &item.modifiers {
+                    self.collect_static_initializer_static_writes_from_expr(
+                        &modifier.value,
+                        current_static,
+                        visiting_functions,
+                    );
+                }
+            }
+            Statement::Return(None)
+            | Statement::Pass
+            | Statement::Break(None)
+            | Statement::Continue
+            | Statement::Surface(_)
+            | Statement::VocabBlock(_) => {}
+        }
+    }
+
+    /// Check direct binding assignments and named assignment lists selected by the statement coordinator.
+    fn collect_static_initializer_binding_writes(
         &mut self,
         stmt: &Spanned<Statement>,
         current_static: &str,
@@ -4758,6 +5045,57 @@ impl TypeChecker {
                     visiting_functions,
                 );
             }
+            Statement::TupleUnpack(assign) => {
+                self.collect_static_initializer_named_targets_writes(
+                    &assign.names,
+                    &assign.value,
+                    stmt.span,
+                    current_static,
+                    visiting_functions,
+                );
+            }
+            Statement::ChainedAssignment(assign) => {
+                self.collect_static_initializer_named_targets_writes(
+                    &assign.targets,
+                    &assign.value,
+                    stmt.span,
+                    current_static,
+                    visiting_functions,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    /// Check each named target before the common assignment value, retaining source diagnostic order.
+    fn collect_static_initializer_named_targets_writes(
+        &mut self,
+        targets: &[String],
+        value: &Spanned<Expr>,
+        span: Span,
+        current_static: &str,
+        visiting_functions: &mut HashSet<String>,
+    ) {
+        for target in targets {
+            if self.static_decl_positions.contains_key(target) {
+                self.errors.push(errors::static_initializer_static_write_not_allowed(
+                    current_static,
+                    target,
+                    span,
+                ));
+            }
+        }
+        self.collect_static_initializer_static_writes_from_expr(value, current_static, visiting_functions);
+    }
+
+    /// Check receiver and index expressions for the assignment-place forms selected by the statement coordinator.
+    fn collect_static_initializer_place_writes(
+        &mut self,
+        stmt: &Spanned<Statement>,
+        current_static: &str,
+        visiting_functions: &mut HashSet<String>,
+    ) {
+        match &stmt.node {
             Statement::FieldAssignment(assign) => {
                 if let Some(target_static) = self.static_assignment_target_name(&assign.object) {
                     self.errors.push(errors::static_initializer_static_write_not_allowed(
@@ -4818,149 +5156,58 @@ impl TypeChecker {
                     visiting_functions,
                 );
             }
-            Statement::TupleUnpack(assign) => {
-                for target in &assign.names {
-                    if self.static_decl_positions.contains_key(target) {
-                        self.errors.push(errors::static_initializer_static_write_not_allowed(
-                            current_static,
-                            target,
-                            stmt.span,
-                        ));
-                    }
-                }
-                self.collect_static_initializer_static_writes_from_expr(
-                    &assign.value,
-                    current_static,
-                    visiting_functions,
-                );
+            _ => {}
+        }
+    }
+
+    /// Check the assertion value before its optional message for every assertion form.
+    fn collect_static_initializer_assert_writes(
+        &mut self,
+        assert_stmt: &AssertStmt,
+        current_static: &str,
+        visiting_functions: &mut HashSet<String>,
+    ) {
+        match &assert_stmt.kind {
+            AssertKind::Condition(condition) => {
+                self.collect_static_initializer_static_writes_from_expr(condition, current_static, visiting_functions)
             }
-            Statement::ChainedAssignment(assign) => {
-                for target in &assign.targets {
-                    if self.static_decl_positions.contains_key(target) {
-                        self.errors.push(errors::static_initializer_static_write_not_allowed(
-                            current_static,
-                            target,
-                            stmt.span,
-                        ));
-                    }
-                }
-                self.collect_static_initializer_static_writes_from_expr(
-                    &assign.value,
-                    current_static,
-                    visiting_functions,
-                );
+            AssertKind::IsPattern { value, .. } => {
+                self.collect_static_initializer_static_writes_from_expr(value, current_static, visiting_functions)
             }
-            Statement::Assert(assert_stmt) => {
-                match &assert_stmt.kind {
-                    AssertKind::Condition(condition) => self.collect_static_initializer_static_writes_from_expr(
-                        condition,
-                        current_static,
-                        visiting_functions,
-                    ),
-                    AssertKind::IsPattern { value, .. } => self.collect_static_initializer_static_writes_from_expr(
-                        value,
-                        current_static,
-                        visiting_functions,
-                    ),
-                    AssertKind::Raises { call, .. } => self.collect_static_initializer_static_writes_from_expr(
-                        call,
-                        current_static,
-                        visiting_functions,
-                    ),
-                }
-                if let Some(message) = &assert_stmt.message {
-                    self.collect_static_initializer_static_writes_from_expr(
-                        message,
-                        current_static,
-                        visiting_functions,
-                    );
-                }
+            AssertKind::Raises { call, .. } => {
+                self.collect_static_initializer_static_writes_from_expr(call, current_static, visiting_functions)
             }
-            Statement::Return(Some(expr)) | Statement::Expr(expr) => {
-                self.collect_static_initializer_static_writes_from_expr(expr, current_static, visiting_functions);
+        }
+        if let Some(message) = &assert_stmt.message {
+            self.collect_static_initializer_static_writes_from_expr(message, current_static, visiting_functions);
+        }
+    }
+
+    /// Check an if statement's condition and branches in written order, including each elif condition.
+    fn collect_static_initializer_if_statement_writes(
+        &mut self,
+        if_stmt: &IfStmt,
+        current_static: &str,
+        visiting_functions: &mut HashSet<String>,
+    ) {
+        self.collect_static_initializer_static_writes_from_condition(
+            &if_stmt.condition,
+            current_static,
+            visiting_functions,
+        );
+        for inner in &if_stmt.then_body {
+            self.collect_static_initializer_static_writes_from_stmt(inner, current_static, visiting_functions);
+        }
+        for (condition, body) in &if_stmt.elif_branches {
+            self.collect_static_initializer_static_writes_from_expr(condition, current_static, visiting_functions);
+            for inner in body {
+                self.collect_static_initializer_static_writes_from_stmt(inner, current_static, visiting_functions);
             }
-            Statement::If(if_stmt) => {
-                self.collect_static_initializer_static_writes_from_condition(
-                    &if_stmt.condition,
-                    current_static,
-                    visiting_functions,
-                );
-                for inner in &if_stmt.then_body {
-                    self.collect_static_initializer_static_writes_from_stmt(inner, current_static, visiting_functions);
-                }
-                for (condition, body) in &if_stmt.elif_branches {
-                    self.collect_static_initializer_static_writes_from_expr(
-                        condition,
-                        current_static,
-                        visiting_functions,
-                    );
-                    for inner in body {
-                        self.collect_static_initializer_static_writes_from_stmt(
-                            inner,
-                            current_static,
-                            visiting_functions,
-                        );
-                    }
-                }
-                if let Some(else_body) = &if_stmt.else_body {
-                    for inner in else_body {
-                        self.collect_static_initializer_static_writes_from_stmt(
-                            inner,
-                            current_static,
-                            visiting_functions,
-                        );
-                    }
-                }
+        }
+        if let Some(else_body) = &if_stmt.else_body {
+            for inner in else_body {
+                self.collect_static_initializer_static_writes_from_stmt(inner, current_static, visiting_functions);
             }
-            Statement::Loop(loop_stmt) => {
-                for inner in &loop_stmt.body {
-                    self.collect_static_initializer_static_writes_from_stmt(inner, current_static, visiting_functions);
-                }
-            }
-            Statement::While(while_stmt) => {
-                self.collect_static_initializer_static_writes_from_condition(
-                    &while_stmt.condition,
-                    current_static,
-                    visiting_functions,
-                );
-                for inner in &while_stmt.body {
-                    self.collect_static_initializer_static_writes_from_stmt(inner, current_static, visiting_functions);
-                }
-            }
-            Statement::For(for_stmt) => {
-                self.collect_static_initializer_static_writes_from_expr(
-                    &for_stmt.iter,
-                    current_static,
-                    visiting_functions,
-                );
-                for inner in &for_stmt.body {
-                    self.collect_static_initializer_static_writes_from_stmt(inner, current_static, visiting_functions);
-                }
-            }
-            Statement::Unsafe(unsafe_stmt) => {
-                for inner in &unsafe_stmt.body {
-                    self.collect_static_initializer_static_writes_from_stmt(inner, current_static, visiting_functions);
-                }
-            }
-            Statement::Break(Some(expr)) => {
-                self.collect_static_initializer_static_writes_from_expr(expr, current_static, visiting_functions);
-            }
-            Statement::VocabExpressionItem(item) => {
-                self.collect_static_initializer_static_writes_from_expr(&item.expr, current_static, visiting_functions);
-                for modifier in &item.modifiers {
-                    self.collect_static_initializer_static_writes_from_expr(
-                        &modifier.value,
-                        current_static,
-                        visiting_functions,
-                    );
-                }
-            }
-            Statement::Return(None)
-            | Statement::Pass
-            | Statement::Break(None)
-            | Statement::Continue
-            | Statement::Surface(_)
-            | Statement::VocabBlock(_) => {}
         }
     }
 
@@ -6079,46 +6326,13 @@ impl TypeChecker {
 
         for decl in &program.declarations {
             match &decl.node {
-                Declaration::Alias(alias) => {
-                    if let [target] = alias.target.segments.as_slice() {
-                        alias_targets.insert(alias.name.clone(), (target.clone(), decl.span));
-                        if matches!(alias.visibility, Visibility::Public)
-                            && public_decls.get(target).is_some_and(|is_public| !*is_public)
-                        {
-                            self.errors.push(CompileError::type_error(
-                                format!(
-                                    "Public alias '{}' targets private symbol '{}'",
-                                    alias.name,
-                                    alias.target.segments.join(".")
-                                ),
-                                decl.span,
-                            ));
-                        }
-                    }
-                }
-                Declaration::Partial(partial) => {
-                    if let [target] = partial.target.segments.as_slice() {
-                        partial_targets.insert(partial.name.clone(), (target.clone(), decl.span));
-                        if matches!(partial.visibility, Visibility::Public)
-                            && public_decls.get(target).is_some_and(|is_public| !*is_public)
-                        {
-                            self.errors.push(CompileError::type_error(
-                                format!(
-                                    "Public partial '{}' targets private symbol '{}'",
-                                    partial.name,
-                                    partial.target.segments.join(".")
-                                ),
-                                decl.span,
-                            ));
-                        }
-                    }
-                    if matches!(partial.visibility, Visibility::Public) {
-                        self.validate_public_partial_presets_do_not_reference_private_symbols(
-                            &partial.name,
-                            &partial.args,
-                            &public_decls,
-                        );
-                    }
+                Declaration::Alias(_) | Declaration::Partial(_) => {
+                    self.collect_checked_projection_targets(
+                        decl,
+                        &public_decls,
+                        &mut alias_targets,
+                        &mut partial_targets,
+                    );
                 }
                 Declaration::Model(model) => {
                     self.validate_member_name_collisions(
@@ -6201,6 +6415,61 @@ impl TypeChecker {
         self.validate_top_level_alias_cycles(&alias_targets);
         self.validate_top_level_partial_cycles(&alias_targets, &partial_targets);
         self.validate_newtype_underlying_cycles(&newtype_underlyings, &newtype_names);
+    }
+
+    /// Collect local alias or partial targets and reject public projections of private declarations before cycle
+    /// checks.
+    fn collect_checked_projection_targets(
+        &mut self,
+        decl: &Spanned<Declaration>,
+        public_decls: &HashMap<String, bool>,
+        alias_targets: &mut HashMap<String, (String, Span)>,
+        partial_targets: &mut HashMap<String, (String, Span)>,
+    ) {
+        match &decl.node {
+            Declaration::Alias(alias) => {
+                if let [target] = alias.target.segments.as_slice() {
+                    alias_targets.insert(alias.name.clone(), (target.clone(), decl.span));
+                    if matches!(alias.visibility, Visibility::Public)
+                        && public_decls.get(target).is_some_and(|is_public| !*is_public)
+                    {
+                        self.errors.push(CompileError::type_error(
+                            format!(
+                                "Public alias '{}' targets private symbol '{}'",
+                                alias.name,
+                                alias.target.segments.join(".")
+                            ),
+                            decl.span,
+                        ));
+                    }
+                }
+            }
+            Declaration::Partial(partial) => {
+                if let [target] = partial.target.segments.as_slice() {
+                    partial_targets.insert(partial.name.clone(), (target.clone(), decl.span));
+                    if matches!(partial.visibility, Visibility::Public)
+                        && public_decls.get(target).is_some_and(|is_public| !*is_public)
+                    {
+                        self.errors.push(CompileError::type_error(
+                            format!(
+                                "Public partial '{}' targets private symbol '{}'",
+                                partial.name,
+                                partial.target.segments.join(".")
+                            ),
+                            decl.span,
+                        ));
+                    }
+                }
+                if matches!(partial.visibility, Visibility::Public) {
+                    self.validate_public_partial_presets_do_not_reference_private_symbols(
+                        &partial.name,
+                        &partial.args,
+                        public_decls,
+                    );
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Reject direct and indirect cycles between top-level aliases.
@@ -6763,13 +7032,17 @@ impl TypeChecker {
     /// or use [`check_with_imports`](Self::check_with_imports) to import dependencies first.
     pub fn check_program(&mut self, program: &Program) -> Result<(), Vec<CompileError>> {
         let preserve_dependency_semantics = std::mem::take(&mut self.dependency_semantics_pending);
-        self.check_program_internal(program, preserve_dependency_semantics)
+        let result = self.check_program_internal(program, preserve_dependency_semantics);
+        self.clear_nominal_identity_cache();
+        result
     }
 
     /// Check one program while retaining semantic-only type metadata collected from its dependency imports.
     fn check_program_with_dependency_semantics(&mut self, program: &Program) -> Result<(), Vec<CompileError>> {
         self.dependency_semantics_pending = false;
-        self.check_program_internal(program, true)
+        let result = self.check_program_internal(program, true);
+        self.clear_nominal_identity_cache();
+        result
     }
 
     /// Check one program in declaration, body and publication order, preserving dependency-only semantic caches
@@ -6824,15 +7097,15 @@ impl TypeChecker {
         self.testing_marker_semantics = None;
         self.local_rust_derive_paths.clear();
         self.local_derive_facts.clear();
-        self.local_hash_key_requirements.clear();
-        self.inferred_function_bounds.clear();
+        self.hash_key_inference.local_requirements.clear();
+        self.hash_key_inference.function_bounds.clear();
         self.source_import_targets.clear();
         self.surface_context = SurfaceContext::from_program(program);
         self.supertrait_closure.clear();
         self.enter_nominal_declaring_module(program);
         if !preserve_dependency_semantics {
             self.clear_nominal_declaring_modules();
-            self.hash_key_type_params.clear();
+            self.hash_key_inference.type_params.clear();
             self.transitive_pub_types.clear();
             self.public_library_type_identities.clear();
             self.transitive_pub_traits.clear();
@@ -6840,6 +7113,10 @@ impl TypeChecker {
             self.foreign_pub_type_remappings.clear();
             self.pub_library_declaration_scopes.clear();
         }
+    }
+
+    /// Validate alias and reserved declaration spellings, then retain public names before signature collection.
+    fn prepare_program_declaration_names(&mut self, program: &Program) {
         self.validate_alias_declarations(program);
         self.report_reserved_compiler_names(program);
         self.current_module_public_declarations = program
@@ -6854,6 +7131,7 @@ impl TypeChecker {
     /// Collect signatures and settle inherited trait requirements before checking any body or call. Dependency
     /// supertraits resolve first, and callable capture planning uses the complete current declaration inventory.
     fn collect_program_check_declarations(&mut self, program: &Program) {
+        self.prepare_program_declaration_names(program);
         // `check_with_imports` / `import_module` can queue supertrait bounds while collecting dependency ASTs.
         // Resolve those queued bounds into trait symbols before we collect and resolve the current program.
         if !self.pending_trait_supertraits.is_empty() {
@@ -6893,7 +7171,7 @@ impl TypeChecker {
         self.type_info.declarations.named_type_identities = nominal_scope
             .iter()
             .filter(|(name, identity)| {
-                incan_semantics_core::body_ir::nominal_carrier_key(identity).as_ref() == Some(*name)
+                incan_semantics_core::body_ir::nominal_carrier_key(identity).as_deref() == Some(name.as_str())
             })
             .map(|(name, identity)| (name.clone(), identity.clone()))
             .collect();
@@ -6924,7 +7202,6 @@ impl TypeChecker {
         self.type_info
             .c_abi
             .resolve_checked_facades(self.current_module_path.as_deref());
-
         self.record_trait_metadata_for_lowering();
         self.record_standard_registry_types();
         self.record_trait_adoption_arguments_for_lowering(program);
@@ -6995,10 +7272,7 @@ impl TypeChecker {
 
     /// Publish the checked module-scope nominal and native identity tables Body IR reads, once the module is checked.
     fn publish_checked_nominal_scope(&mut self) {
-        let identities = self.checked_nominal_type_identities();
-        self.checking_nominal_scope.get_mut().take();
-        self.type_info.declarations.named_type_identities =
-            Arc::try_unwrap(identities).unwrap_or_else(|shared| (*shared).clone());
+        self.type_info.declarations.named_type_identities = self.take_checked_nominal_type_identities();
         self.type_info.declarations.body_ir_native_type_identities = self.checked_native_nominal_type_identities();
         self.type_info.body_ir_runtime_types = self.checked_body_ir_runtime_types();
         self.type_info.rust.item_public_paths = self.checked_rust_item_public_paths();
@@ -7210,19 +7484,6 @@ impl TypeChecker {
     ///
     /// Imported source types already carry their declaring identity in the symbol table. Body IR must retain that
     /// fact before publication; recovering it from a spelling in lowering would lose aliases and module ownership.
-    fn checked_nominal_type_identities(&self) -> Arc<std::collections::BTreeMap<String, CanonicalSymbolId>> {
-        if let Some(identities) = self.checked_body_nominal_scope() {
-            return identities;
-        }
-        let identities = Arc::new(self.collect_checked_nominal_scope());
-        self.checking_nominal_scope.replace(Some(CheckingNominalScope {
-            identities: Arc::clone(&identities),
-            inputs: self.nominal_scope_inputs(),
-        }));
-        identities
-    }
-
-    /// Collect each input inventory once after its owning revision changes, retaining first-binding precedence.
     fn collect_checked_nominal_scope(&self) -> std::collections::BTreeMap<String, CanonicalSymbolId> {
         let mut identities = self.checked_nominal_bindings();
         // Immutable declaration scopes contribute through their admission index, not a scan of every prior snapshot.
@@ -8676,7 +8937,7 @@ impl TypeChecker {
         dependencies: &[(&str, &Program)],
     ) -> Result<(), Vec<CompileError>> {
         self.dependency_semantics_pending = false;
-        self.hash_key_type_params.clear();
+        self.hash_key_inference.type_params.clear();
         self.transitive_pub_types.clear();
         self.public_library_type_identities.clear();
         self.transitive_pub_traits.clear();
@@ -8723,7 +8984,7 @@ impl TypeChecker {
         dependencies: &[(&str, &Program)],
     ) -> Result<(), Vec<CompileError>> {
         self.dependency_semantics_pending = false;
-        self.hash_key_type_params.clear();
+        self.hash_key_inference.type_params.clear();
         self.transitive_pub_types.clear();
         self.public_library_type_identities.clear();
         self.transitive_pub_traits.clear();
@@ -9022,13 +9283,14 @@ impl TypeChecker {
     /// Return whether `actual` can be used where `expected` is required, with a recursion cap for pathological unions.
     pub fn types_compatible(&self, actual: &ResolvedType, expected: &ResolvedType) -> bool {
         const MAX_TYPE_COMPATIBILITY_DEPTH: usize = 512;
-        if self.type_compatibility_depth.get() >= MAX_TYPE_COMPATIBILITY_DEPTH {
+        if self.native_queries.type_compatibility_depth.get() >= MAX_TYPE_COMPATIBILITY_DEPTH {
             return false;
         }
-        self.type_compatibility_depth
-            .set(self.type_compatibility_depth.get() + 1);
+        self.native_queries
+            .type_compatibility_depth
+            .set(self.native_queries.type_compatibility_depth.get() + 1);
         let _guard = TypeCompatibilityDepthGuard {
-            depth: &self.type_compatibility_depth,
+            depth: &self.native_queries.type_compatibility_depth,
         };
         self.types_compatible_unchecked(actual, expected)
     }
@@ -9037,18 +9299,7 @@ impl TypeChecker {
     ///
     /// Returns `true` if `actual` can be used where `expected` is required. Handles `Unknown` (error recovery), type
     /// variables (generics), and recursive checks for generics, functions, and tuples.
-    #[allow(clippy::only_used_in_recursion)]
     fn types_compatible_unchecked(&self, actual: &ResolvedType, expected: &ResolvedType) -> bool {
-        let has_generic_params = |name: &str| -> bool {
-            match self.lookup_semantic_type_info(name) {
-                Some(TypeInfo::Model(model)) => !model.type_params.is_empty(),
-                Some(TypeInfo::Class(class)) => !class.type_params.is_empty(),
-                Some(TypeInfo::Newtype(newtype)) => !newtype.type_params.is_empty(),
-                Some(TypeInfo::Enum(enum_info)) => !enum_info.type_params.is_empty(),
-                _ => false,
-            }
-        };
-
         let expanded_actual = self.expand_type_aliases(actual.clone());
         let expanded_expected = self.expand_type_aliases(expected.clone());
         if &expanded_actual != actual || &expanded_expected != expected {
@@ -9078,7 +9329,11 @@ impl TypeChecker {
         if let Some(matches) = self.rust_type_identities_compatible(actual, expected) {
             return matches;
         }
+        self.types_compatible_inference_and_unions(actual, expected)
+    }
 
+    /// Resolve inference, numeric and union rules before nominal trait or container compatibility.
+    fn types_compatible_inference_and_unions(&self, actual: &ResolvedType, expected: &ResolvedType) -> bool {
         match (actual, expected) {
             (ResolvedType::Never, _) => true,
             (ResolvedType::Unknown, _) | (_, ResolvedType::Unknown) => true,
@@ -9143,7 +9398,13 @@ impl TypeChecker {
                 actual_args.len() == 1 && self.nested_types_compatible(&actual_args[0], &expected_args[0])
             }
 
-            // ---- Context: RFC 042 — `expected` is a trait reference (`Named` or nullary trait on RHS) ----
+            _ => self.types_compatible_trait_upcasts(actual, expected),
+        }
+    }
+
+    /// Check nullary trait references and instantiated supertrait upcasts before iterable trait adapters.
+    fn types_compatible_trait_upcasts(&self, actual: &ResolvedType, expected: &ResolvedType) -> bool {
+        match (actual, expected) {
             (ResolvedType::Named(type_name), ResolvedType::Named(trait_name))
                 if self.lookup_semantic_trait_info(trait_name).is_some() =>
             {
@@ -9192,7 +9453,13 @@ impl TypeChecker {
                     .all(|(e, a)| self.nested_types_compatible(a, e))
             }
 
-            // RFC 088: builtin collection iterables and `Iterator[T]` values satisfy `Iterable[T]`.
+            _ => self.types_compatible_iterable_traits(actual, expected),
+        }
+    }
+
+    /// Check builtin iterable carriers and generic concrete implementations without weakening arity checks.
+    fn types_compatible_iterable_traits(&self, actual: &ResolvedType, expected: &ResolvedType) -> bool {
+        match (actual, expected) {
             (ResolvedType::Generic(actual_name, actual_args), ResolvedType::Generic(trait_name, expected_args))
                 if trait_name == builtin_traits::as_str(TraitId::Iterable)
                     && expected_args.len() == 1
@@ -9250,7 +9517,13 @@ impl TypeChecker {
                     .all(|(e, a)| self.nested_types_compatible(a, e))
             }
 
-            // ---- Context: RFC 042 — `Named` actual vs `Trait` / `Trait[T…]` expected (incl. trait upcast) ----
+            _ => self.types_compatible_named_generics(actual, expected),
+        }
+    }
+
+    /// Check bare nominal trait references and the existing unchecked generic-name compatibility surface.
+    fn types_compatible_named_generics(&self, actual: &ResolvedType, expected: &ResolvedType) -> bool {
+        match (actual, expected) {
             (ResolvedType::Named(type_name), ResolvedType::Generic(trait_name, expected_args))
                 if self.lookup_semantic_trait_info(trait_name).is_some() =>
             {
@@ -9297,15 +9570,33 @@ impl TypeChecker {
                 true
             }
             (ResolvedType::Named(name), ResolvedType::Generic(generic_name, _))
-                if name == generic_name && has_generic_params(name) =>
+                if name == generic_name && self.nominal_has_type_parameters(name) =>
             {
                 true
             }
             (ResolvedType::Generic(generic_name, _), ResolvedType::Named(name))
-                if name == generic_name && has_generic_params(name) =>
+                if name == generic_name && self.nominal_has_type_parameters(name) =>
             {
                 true
             }
+            _ => self.types_compatible_borrowed_and_frozen(actual, expected),
+        }
+    }
+
+    /// Return whether a semantic nominal declaration has parameters, including unchecked bare annotations.
+    fn nominal_has_type_parameters(&self, name: &str) -> bool {
+        match self.lookup_semantic_type_info(name) {
+            Some(TypeInfo::Model(model)) => !model.type_params.is_empty(),
+            Some(TypeInfo::Class(class)) => !class.type_params.is_empty(),
+            Some(TypeInfo::Newtype(newtype)) => !newtype.type_params.is_empty(),
+            Some(TypeInfo::Enum(info)) => !info.type_params.is_empty(),
+            _ => false,
+        }
+    }
+
+    /// Check reference materialization and frozen carrier compatibility before general structural matching.
+    fn types_compatible_borrowed_and_frozen(&self, actual: &ResolvedType, expected: &ResolvedType) -> bool {
+        match (actual, expected) {
             // Internal references: `&mut T` may satisfy `&T`, but not the reverse.
             (ResolvedType::Ref(a), ResolvedType::Ref(b))
             | (ResolvedType::RefMut(a), ResolvedType::Ref(b))
@@ -9389,6 +9680,13 @@ impl TypeChecker {
             {
                 self.nested_types_compatible(&args[0], k2) && self.nested_types_compatible(&args[1], v2)
             }
+            _ => self.types_compatible_structural_values(actual, expected),
+        }
+    }
+
+    /// Compare tuples, generic instances and callable signatures, then apply the existing permissive Rust boundary.
+    fn types_compatible_structural_values(&self, actual: &ResolvedType, expected: &ResolvedType) -> bool {
+        match (actual, expected) {
             // Treat `Tuple` as both:
             // - a concrete tuple type: `Tuple[T1, T2, ...]`
             // - a supertype for any tuple when used without args: `Tuple`
@@ -9444,8 +9742,8 @@ impl TypeChecker {
                         .all(|(t1, t2)| self.nested_types_compatible(t1, t2))
             }
             // Rust names one item several ways (`std::boxed::Box`, `alloc::boxed::Box`, a dependency's re-export of
-            // `alloc`). rust-inspect records the ancestral spelling; Incan source imports the `std` one. Compare in the
-            // ancestral namespace so every re-export of the same item is just another alias of it.
+            // `alloc`). Rust metadata records the ancestral spelling; Incan source imports the `std` one. Compare in
+            // the ancestral namespace so every re-export of the same item is just another alias of it.
             (ResolvedType::RustPath(a), ResolvedType::RustPath(b)) => {
                 incan_lang::interop::ancestral_rust_display(a) == incan_lang::interop::ancestral_rust_display(b)
             }
@@ -9464,10 +9762,10 @@ impl TypeChecker {
     /// a collection, tuple, `Option` value or callable holds or produces have no such conversion, so `list[i8]` is not
     /// a `list[int]` and `(int) -> i8` is not an `(int) -> int`.
     fn nested_types_compatible(&self, actual: &ResolvedType, expected: &ResolvedType) -> bool {
-        let depth = self.nested_type_compatibility_depth.get();
-        self.nested_type_compatibility_depth.set(depth + 1);
+        let depth = self.native_queries.nested_type_compatibility_depth.get();
+        self.native_queries.nested_type_compatibility_depth.set(depth + 1);
         let compatible = self.types_compatible(actual, expected);
-        self.nested_type_compatibility_depth.set(depth);
+        self.native_queries.nested_type_compatibility_depth.set(depth);
         compatible
     }
 
@@ -9475,7 +9773,7 @@ impl TypeChecker {
     /// for a value (see the assignment table in the numeric semantics reference), and only by canonical identity inside
     /// another type (see [`Self::nested_types_compatible`]).
     fn numeric_values_compatible(&self, actual: &ResolvedType, expected: &ResolvedType) -> bool {
-        if self.nested_type_compatibility_depth.get() == 0 {
+        if self.native_queries.nested_type_compatibility_depth.get() == 0 {
             return numeric_lossless_compatible(actual, expected);
         }
         let actual_id = numeric_type_id_for_compat(actual);
@@ -9497,6 +9795,13 @@ impl TypeChecker {
             | (_, ResolvedType::Ref(_) | ResolvedType::RefMut(_)) => false,
             _ => self.nested_types_compatible(actual, expected),
         }
+    }
+}
+
+impl Default for TypeChecker {
+    /// Initialize the same builtin scope and empty field groups as [`Self::new`].
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -9645,7 +9950,7 @@ mod nominal_scope_tests {
     }
 
     /// Reproduce the uncached carrier collection from immutable declaration scopes, independently of the new index.
-    fn fresh_scope(checker: &TypeChecker) -> BTreeMap<String, CanonicalSymbolId> {
+    pub(super) fn fresh_scope(checker: &TypeChecker) -> BTreeMap<String, CanonicalSymbolId> {
         let mut identities = checker.checked_nominal_bindings();
         let mut visited = HashSet::new();
         let carriers = identities

@@ -141,7 +141,7 @@ def registry_fixture(name: str, entry: str, dependencies: list[str], features: l
 
 
 pub def test_local_graph_normal_selection_excludes_test_environment() -> Result[None, str]:
-    """Shared activations preserve independent roots, default selection and the refusal of divergent support features."""
+    """Shared activations preserve independent roots, root-local test overlays and divergent-support refusals."""
     mut session = local_facet_session(configuration())
     enabled = session.facets(root(true)?)?
     facets = session.facets(root(false)?)?
@@ -151,6 +151,20 @@ pub def test_local_graph_normal_selection_excludes_test_environment() -> Result[
     for facet in facets:
         assert not facet.project.endswith("/leaf")
         assert not facet.project.endswith("/support")
+    mut testing = root(false)?
+    testing.environment = "test"
+    selected = session.facets(testing)?
+    assert len(selected) == 5
+    for facet in selected:
+        assert not facet.project.endswith("/absent")
+        if facet.project.endswith("/leaf"):
+            assert facet.features == ["test-only"]
+            assert len(facet.registry) == 1
+    testing.features = ["leaf"]
+    match local_facets(testing, configuration()):
+        Ok(_) => fail("a test override introduced a suppressed implicit dependency feature")
+        Err(reason) =>
+            assert "requested local feature is absent" in reason
     mut admitted: Dict[str, LocalFacet] = {}
     for facet in enabled:
         if facet.project.endswith("/root"):

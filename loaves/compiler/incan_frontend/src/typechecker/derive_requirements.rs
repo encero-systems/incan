@@ -988,7 +988,7 @@ impl TypeChecker {
         span: Span,
     ) {
         let Some(required) = callee
-            .and_then(|identity| self.hash_key_type_params.get(identity))
+            .and_then(|identity| self.hash_key_inference.type_params.get(identity))
             .cloned()
         else {
             return;

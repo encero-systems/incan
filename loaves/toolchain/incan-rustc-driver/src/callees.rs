@@ -2,6 +2,7 @@
 
 use crate::error::PlanError;
 use crate::plan::{Callee, CalleeKind};
+use incan_lang::lang::traits::{self, TraitId};
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::fast_reject::SimplifiedType;
@@ -77,7 +78,7 @@ pub fn clone_method(tcx: TyCtxt<'_>) -> Result<DefId, PlanError> {
     let trait_id = tcx
         .lang_items()
         .clone_trait()
-        .ok_or_else(|| PlanError::UnknownCallee("Clone".into()))?;
+        .ok_or_else(|| PlanError::UnknownCallee(traits::as_str(TraitId::Clone).into()))?;
     tcx.associated_item_def_ids(trait_id)
         .iter()
         .copied()

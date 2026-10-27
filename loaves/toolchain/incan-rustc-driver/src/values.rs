@@ -340,17 +340,7 @@ pub fn rvalue<'tcx>(
     destination_type: &PlanType,
 ) -> Result<mir::Rvalue<'tcx>, PlanError> {
     Ok(match value {
-        RvalueKind::UnitFunction(name) => {
-            let def = crate::callees::planned(tcx, name)?;
-            mir::Rvalue::Cast(
-                mir::CastKind::PointerCoercion(
-                    rustc_middle::ty::adjustment::PointerCoercion::ReifyFnPointer(rustc_hir::Safety::Safe),
-                    mir::CoercionSource::Implicit,
-                ),
-                mir::Operand::function_handle(tcx, def, [], rustc_span::DUMMY_SP),
-                native_type(tcx, &PlanType::UnitFunction)?,
-            )
-        }
+        RvalueKind::UnitFunction(name) => unit_function_rvalue(tcx, name)?,
         RvalueKind::Discriminant(value) => mir::Rvalue::Discriminant(place(tcx, value)?),
         RvalueKind::IsVariant(..) => {
             return Err(PlanError::UnknownCallee(
@@ -367,17 +357,7 @@ pub fn rvalue<'tcx>(
         RvalueKind::NativeAlias(value, source, target) => {
             native_alias(tcx, sources, value, source, target, destination_type)?
         }
-        RvalueKind::NumericCast(value, source, target) => {
-            let source_float = matches!(source, PlanType::Float | PlanType::F32 | PlanType::F64);
-            let target_float = matches!(target, PlanType::Float | PlanType::F32 | PlanType::F64);
-            let kind = match (source_float, target_float) {
-                (true, true) => mir::CastKind::FloatToFloat,
-                (true, false) => mir::CastKind::FloatToInt,
-                (false, true) => mir::CastKind::IntToFloat,
-                (false, false) => mir::CastKind::IntToInt,
-            };
-            mir::Rvalue::Cast(kind, operand(tcx, sources, value)?, native_type(tcx, target)?)
-        }
+        RvalueKind::NumericCast(value, source, target) => numeric_cast_rvalue(tcx, sources, value, source, target)?,
         RvalueKind::FunctionItem(callee) => mir::Rvalue::Use(
             mir::Operand::function_handle(
                 tcx,
@@ -414,14 +394,7 @@ pub fn rvalue<'tcx>(
         RvalueKind::BoolToInt(value) => {
             mir::Rvalue::Cast(mir::CastKind::IntToInt, operand(tcx, sources, value)?, tcx.types.i64)
         }
-        RvalueKind::Unary(op, value) => mir::Rvalue::UnaryOp(
-            match op {
-                UnaryOp::Not => mir::UnOp::Not,
-                UnaryOp::Negate => mir::UnOp::Neg,
-                UnaryOp::Invert => mir::UnOp::Not,
-            },
-            operand(tcx, sources, value)?,
-        ),
+        RvalueKind::Unary(op, value) => unary_rvalue(tcx, sources, op, value)?,
         RvalueKind::Binary(op, left, right) => mir::Rvalue::BinaryOp(
             binary(
                 op,
@@ -430,15 +403,7 @@ pub fn rvalue<'tcx>(
             Box::new((operand(tcx, sources, left)?, operand(tcx, sources, right)?)),
         ),
         // A range value's native layout is the tuple of its declared fields.
-        RvalueKind::Tuple(elements) | RvalueKind::Range(elements) => mir::Rvalue::Aggregate(
-            Box::new(mir::AggregateKind::Tuple),
-            IndexVec::from_raw(
-                elements
-                    .iter()
-                    .map(|element| operand(tcx, sources, element))
-                    .collect::<Result<Vec<_>, _>>()?,
-            ),
-        ),
+        RvalueKind::Tuple(elements) | RvalueKind::Range(elements) => tuple_rvalue(tcx, sources, elements)?,
 
         RvalueKind::Model(_, elements) | RvalueKind::Enum(_, _, elements) => {
             nominal_aggregate(tcx, sources, value, destination_type, elements)?
@@ -485,6 +450,76 @@ pub fn rvalue<'tcx>(
             native_type(tcx, destination_type)?,
         ),
     })
+}
+
+/// Resolve a retained executor callback before reifying its safe no-argument, unit-returning function pointer.
+fn unit_function_rvalue<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Result<mir::Rvalue<'tcx>, PlanError> {
+    let def = crate::callees::planned(tcx, name)?;
+    Ok(mir::Rvalue::Cast(
+        mir::CastKind::PointerCoercion(
+            rustc_middle::ty::adjustment::PointerCoercion::ReifyFnPointer(rustc_hir::Safety::Safe),
+            mir::CoercionSource::Implicit,
+        ),
+        mir::Operand::function_handle(tcx, def, [], rustc_span::DUMMY_SP),
+        native_type(tcx, &PlanType::UnitFunction)?,
+    ))
+}
+
+/// Select the native numeric cast from the checked source/target families, resolving the operand before its target.
+fn numeric_cast_rvalue<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    sources: &Sources<'_>,
+    value: &Operand,
+    source: &PlanType,
+    target: &PlanType,
+) -> Result<mir::Rvalue<'tcx>, PlanError> {
+    let source_float = matches!(source, PlanType::Float | PlanType::F32 | PlanType::F64);
+    let target_float = matches!(target, PlanType::Float | PlanType::F32 | PlanType::F64);
+    let kind = match (source_float, target_float) {
+        (true, true) => mir::CastKind::FloatToFloat,
+        (true, false) => mir::CastKind::FloatToInt,
+        (false, true) => mir::CastKind::IntToFloat,
+        (false, false) => mir::CastKind::IntToInt,
+    };
+    Ok(mir::Rvalue::Cast(
+        kind,
+        operand(tcx, sources, value)?,
+        native_type(tcx, target)?,
+    ))
+}
+
+/// Map checked unary intent to MIR after preflight admission; operand construction still propagates source errors.
+fn unary_rvalue<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    sources: &Sources<'_>,
+    op: &UnaryOp,
+    value: &Operand,
+) -> Result<mir::Rvalue<'tcx>, PlanError> {
+    Ok(mir::Rvalue::UnaryOp(
+        match op {
+            UnaryOp::Not => mir::UnOp::Not,
+            UnaryOp::Negate => mir::UnOp::Neg,
+            UnaryOp::Invert => mir::UnOp::Not,
+        },
+        operand(tcx, sources, value)?,
+    ))
+}
+
+/// Construct a tuple aggregate from its borrowed source operands in order; ranges use this same declared layout.
+fn tuple_rvalue<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    sources: &Sources<'_>,
+    elements: &[Operand],
+) -> Result<mir::Rvalue<'tcx>, PlanError> {
+    Ok(mir::Rvalue::Aggregate(
+        Box::new(mir::AggregateKind::Tuple),
+        IndexVec::from_raw(
+            elements
+                .iter()
+                .map(|element| operand(tcx, sources, element))
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+    ))
 }
 
 /// Construct a checked nominal payload with its exact native field count. An opaque zero-field metadata view never

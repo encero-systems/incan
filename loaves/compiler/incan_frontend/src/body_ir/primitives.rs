@@ -47,9 +47,7 @@ pub(super) fn result_variant_kind(name: &str) -> Option<bir::ResultVariantKind> 
         _ => None,
     }
 }
-/// Whether a type is string-like enough to route binary operators through the compiler-owned string helpers
-/// (mirrors `is_string_like_type` in `loaves/compiler/incan_emit/src/conversions.rs`, restated here so Body IR does not
-/// depend on that Rust-emission-specific module — see this file's module docs).
+/// Whether a type routes binary operators through the compiler-owned string helpers.
 pub(super) fn is_string_like(ty: &IncanType) -> bool {
     matches!(
         ty,

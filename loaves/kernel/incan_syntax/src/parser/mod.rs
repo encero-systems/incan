@@ -4,14 +4,15 @@
 //!
 //! ## Examples
 //!
-//! ```rust,no_run
+//! ```rust
 //! use incan_syntax::{lexer, parser};
-//! # fn main() {
+//! # fn main() -> Result<(), String> {
 //!
 //! let source = "def foo() -> int:\n    return 42\n";
-//! let tokens = lexer::lex(source).expect("source should lex");
-//! let ast = parser::parse(&tokens).expect("tokens should parse");
+//! let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+//! let ast = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
 //! assert_eq!(ast.declarations.len(), 1);
+//! # Ok(())
 //! # }
 //! ```
 

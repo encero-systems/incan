@@ -524,9 +524,9 @@ fn resolve_module_path_from_base(base: &Path, path: &[String]) -> Option<PathBuf
 /// as re-exports by name (including aliases).
 ///
 /// This follows Python semantics: `from foo import bar` at module level makes `bar` part of the module's public
-/// surface. The primary use case is stdlib prelude files (e.g., `std.web/prelude.incn`) that re-export items from
-/// submodules, but it applies uniformly to all modules. The consumer of this list (`validate_import_visibility` in
-/// the typechecker) uses it to check whether `from some_module import X` is valid.
+/// surface. The primary use case is stdlib prelude files (e.g., `loaves/stdlib/web/src/web/prelude.incn`) that
+/// re-export items from submodules, but it applies uniformly to all modules. The consumer of this list
+/// (`validate_import_visibility` in the typechecker) uses it to check whether `from some_module import X` is valid.
 pub fn exported_symbols(ast: &Program) -> Vec<ExportedSymbol> {
     let mut exports = Vec::new();
 

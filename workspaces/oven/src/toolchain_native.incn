@@ -14,7 +14,7 @@ from rust_units import (
     BuiltUnit,
     RegistryUnits,
     RustBuild,
-    compile_rust_library,
+    compile_library,
     facet_bindings,
     identity,
     ordered,
@@ -208,6 +208,7 @@ def installed_support(
             registry=registry,
             toolchain=Some(toolchain),
             toolchain_search=toolchain.search,
+            rust_facet_dependencies=true,
         ),
     )?
     # 2. Validate only requested native facets, preserving their declared order and refusals.
@@ -223,7 +224,7 @@ def installed_support(
             return Err(f"native support generation does not match {facet.project}'s selected features")
         if not artifact.is_file():
             return Err(f"native support artifact does not exist: {artifact.0}")
-        result[facet.key()] = compile_rust_library(facet, declared, artifact.parent(), request, result, [])?
+        result[facet.key()] = compile_library(facet, declared, artifact.parent(), request, result, [])?
     return Ok(result)
 
 
@@ -291,14 +292,16 @@ def build_support(
     """
     # 1. The supplied facet order determines build and publication order.
     output = home()?.joinpath("native-support")
-    request = prepared_build(RustBuild(project=repository.0, profile="release", rustc=rustc, registry=registry))?
+    request = prepared_build(
+        RustBuild(project=repository.0, profile="release", rustc=rustc, registry=registry, rust_facet_dependencies=true),
+    )?
     mut built: Dict[str, BuiltUnit] = {}
     mut built_names: set[str] = set()
     mut directories: list[str] = []
     mut externs: list[NativeCrate] = []
     for facet in facets:
         declared = rust_facet(facet.project)?
-        unit = compile_rust_library(facet, declared, output, request, built, directories)?
+        unit = compile_library(facet, declared, output, request, built, directories)?
         built[facet.key()] = unit
         built_names.add(unit.crate_name)
         directories.append(unit.directory)

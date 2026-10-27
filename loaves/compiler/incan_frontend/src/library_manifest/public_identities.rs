@@ -186,7 +186,8 @@ fn add_public_fields(fields: &[FieldExport], identities: &mut BTreeSet<Canonical
 mod tests {
     use super::public_executable_identities;
     use crate::library_manifest::{
-        CanonicalIdentityExport, ExportIdentity, ExportIdentityKind, ExportIdentityProjection, LibraryManifest,
+        CanonicalIdentityExport, ExportIdentity, ExportIdentityKind, ExportIdentityProjection, FieldExport,
+        FieldVisibilityExport, LibraryManifest, ModelExport, TypeRef,
     };
     use incan_semantics_core::{
         CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
@@ -227,8 +228,79 @@ mod tests {
         manifest.contract_metadata.identity_graph.exports.push(export);
         assert_eq!(
             public_executable_identities(&manifest),
-            [canonical].into_iter().collect()
+            [canonical.clone()].into_iter().collect()
         );
+
+        let owner = published_identity("Value", SemanticSourceTargetKind::Model, 10)?;
+        let visible = published_identity("Value.visible", SemanticSourceTargetKind::Field, 20)?;
+        let private = published_identity("Value.secret", SemanticSourceTargetKind::Field, 30)?;
+        let expected = [
+            canonical,
+            owner.hydrate().ok_or("owner identity missing")?,
+            visible.hydrate().ok_or("public field identity missing")?,
+        ]
+        .into_iter()
+        .collect();
+        manifest.contract_metadata.identity_graph.exports.push(ExportIdentity {
+            public_name: "Value".into(),
+            public_path: vec!["Value".into()],
+            source_path: vec!["main".into(), "Value".into()],
+            kind: ExportIdentityKind::Model,
+            projection: ExportIdentityProjection::Direct,
+            canonical: Some(owner),
+        });
+        manifest.exports.models.push(ModelExport {
+            name: "Value".into(),
+            type_params: Vec::new(),
+            traits: Vec::new(),
+            trait_adoptions: Vec::new(),
+            derives: Vec::new(),
+            fields: vec![
+                field("visible", Some(visible), FieldVisibilityExport::Public),
+                field("secret", Some(private), FieldVisibilityExport::Private),
+                field("unproven", None, FieldVisibilityExport::Public),
+            ],
+            properties: Vec::new(),
+            methods: Vec::new(),
+        });
+        assert_eq!(public_executable_identities(&manifest), expected);
         Ok(())
+    }
+
+    /// Project a source declaration fixture into the package identity domain used by manifest consumers.
+    fn published_identity(
+        name: &str,
+        kind: SemanticSourceTargetKind,
+        start: usize,
+    ) -> Result<CanonicalIdentityExport, &'static str> {
+        let member = matches!(kind, SemanticSourceTargetKind::Field);
+        let mut identity = CanonicalSymbolId::module_declaration(
+            vec!["main".into()],
+            name,
+            kind,
+            HirSourceSpan::new(start, start + 5),
+        );
+        if member {
+            identity.namespace = SymbolNamespace::Member;
+        }
+        CanonicalIdentityExport::from_canonical("pkg", &identity).ok_or("fixture identity cannot be published")
+    }
+
+    /// Retain a field's explicit publication proof and visibility independently of its source spelling.
+    fn field(name: &str, canonical: Option<CanonicalIdentityExport>, visibility: FieldVisibilityExport) -> FieldExport {
+        FieldExport {
+            name: name.into(),
+            canonical,
+            visibility,
+            ty: TypeRef::Named {
+                name: "int".into(),
+                origin: None,
+            },
+            surface_type_name: None,
+            has_default: false,
+            default: None,
+            alias: None,
+            description: None,
+        }
     }
 }

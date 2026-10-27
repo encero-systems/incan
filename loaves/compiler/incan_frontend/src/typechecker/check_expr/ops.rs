@@ -469,159 +469,7 @@ impl TypeChecker {
             | BinaryOp::FloorDiv
             | BinaryOp::Mod
             | BinaryOp::Pow => {
-                // String concatenation special case (both sides must be str).
-                if matches!(op, BinaryOp::Add) {
-                    let lhs_is_str = is_str_like(&left_ty);
-                    let rhs_is_str = is_str_like(&right_ty);
-                    if lhs_is_str && rhs_is_str {
-                        return ResolvedType::Str;
-                    }
-                    if lhs_is_str || rhs_is_str {
-                        if self.is_user_operator_receiver(&left_ty)
-                            && let Some(method) = binary_operator_dunder(op)
-                        {
-                            let args = vec![CallArg::Positional(right.clone())];
-                            let arg_types = vec![right_ty.clone()];
-                            if let Some(ret) = self.resolve_operator_dunder(
-                                &left_ty,
-                                method,
-                                &args,
-                                &arg_types,
-                                span,
-                                expected_return_ty,
-                            ) {
-                                self.type_info.record_resolved_operator_call(
-                                    span,
-                                    method,
-                                    ResolvedOperatorKind::Binary,
-                                );
-                                return ret;
-                            }
-                        }
-                        self.errors.push(errors::type_mismatch(
-                            "str",
-                            &format!("{} {} {}", left_ty, op, right_ty),
-                            span,
-                        ));
-                        return ResolvedType::Unknown;
-                    }
-                }
-
-                if matches!(op, BinaryOp::Add)
-                    && is_runtime_list(&left_ty)
-                    && is_runtime_list(&right_ty)
-                    && self.types_compatible(&left_ty, &right_ty)
-                {
-                    if let Some(elem_ty) = runtime_list_elem_type(&left_ty)
-                        && !self.is_copy_type(elem_ty)
-                        && !self.is_clone_type(elem_ty)
-                    {
-                        self.errors
-                            .push(errors::list_concat_requires_clone(&elem_ty.to_string(), span));
-                        return ResolvedType::Unknown;
-                    }
-                    return left_ty.clone();
-                }
-
-                // RFC 023: allow arithmetic on generic type variables.
-                //
-                // The Rust backend infers and emits the trait bound the operator needs (`T: Add<Output = T>`), so the
-                // typechecker stays permissive for `+`, `-` and `*` and generic stdlib helpers typecheck. A bound
-                // trait's RFC 028 hook is consulted first, so `T with Remainder` resolves `%` through the trait.
-                if self.is_generic_placeholder_type(&left_ty)
-                    && let Some(method) = binary_operator_dunder(op)
-                {
-                    let args = vec![CallArg::Positional(right.clone())];
-                    let arg_types = vec![right_ty.clone()];
-                    if let Some(ret) =
-                        self.resolve_operator_dunder(&left_ty, method, &args, &arg_types, span, expected_return_ty)
-                    {
-                        self.type_info
-                            .record_resolved_operator_call(span, method, ResolvedOperatorKind::Binary);
-                        return ret;
-                    }
-                }
-                match (
-                    self.generic_placeholder_name(&left_ty),
-                    self.generic_placeholder_name(&right_ty),
-                ) {
-                    (Some(left_name), Some(right_name)) if left_name == right_name => {
-                        // `/`, `//`, `%` and `**` have no bound a type argument could satisfy (#1715): their
-                        // Python-shaped numeric semantics belong to the concrete numeric types, not to a trait.
-                        if let Some(dunder) = numeric_only_operator_dunder(op) {
-                            self.errors.push(errors::operator_has_no_type_parameter_bound(
-                                &op.to_string(),
-                                left_name,
-                                dunder,
-                                span,
-                            ));
-                            return ResolvedType::Unknown;
-                        }
-                        return left_ty.clone();
-                    }
-                    (Some(_), None) if matches!(right_ty, ResolvedType::Unknown) => {
-                        return left_ty.clone();
-                    }
-                    (None, Some(_)) if matches!(left_ty, ResolvedType::Unknown) => {
-                        return right_ty.clone();
-                    }
-                    _ => {}
-                }
-
-                // Check both operands are numeric
-                let lhs_num = numeric_ty_from_resolved(&left_ty);
-                let rhs_num = numeric_ty_from_resolved(&right_ty);
-
-                match (lhs_num, rhs_num) {
-                    (Some(_), Some(_)) => {
-                        self.numeric_arithmetic_result_type((left, &left_ty), op, (right, &right_ty), span)
-                    }
-                    // Allow Unknown with numeric partner (treat as that numeric type): an integer partner keeps its
-                    // own integer type, as same-type integer arithmetic does.
-                    (Some(n), None) if matches!(right_ty, ResolvedType::Unknown | ResolvedType::RustPath(_)) => match n
-                    {
-                        NumericTy::Int => left_ty.clone(),
-                        NumericTy::Float => ResolvedType::Float,
-                    },
-                    (None, Some(n)) if matches!(left_ty, ResolvedType::Unknown | ResolvedType::RustPath(_)) => {
-                        match n {
-                            NumericTy::Int => right_ty.clone(),
-                            NumericTy::Float => ResolvedType::Float,
-                        }
-                    }
-                    _ => {
-                        if let Some(method) = binary_operator_dunder(op) {
-                            let args = vec![CallArg::Positional(right.clone())];
-                            let arg_types = vec![right_ty.clone()];
-                            if let Some(ret) = self.resolve_operator_dunder(
-                                &left_ty,
-                                method,
-                                &args,
-                                &arg_types,
-                                span,
-                                expected_return_ty,
-                            ) {
-                                self.type_info.record_resolved_operator_call(
-                                    span,
-                                    method,
-                                    ResolvedOperatorKind::Binary,
-                                );
-                                return ret;
-                            }
-                            if self.is_user_operator_receiver(&left_ty) {
-                                self.errors
-                                    .push(errors::missing_method(&left_ty.to_string(), method, span));
-                                return ResolvedType::Unknown;
-                            }
-                        }
-                        self.errors.push(errors::type_mismatch(
-                            "numeric",
-                            &format!("{} {} {}", left_ty, op, right_ty),
-                            span,
-                        ));
-                        ResolvedType::Unknown
-                    }
-                }
+                self.check_arithmetic_binary((left, left_ty), op, (right, right_ty), span, expected_return_ty)
             }
             BinaryOp::MatMul
             | BinaryOp::PipeForward
@@ -631,230 +479,437 @@ impl TypeChecker {
             | BinaryOp::BitXor
             | BinaryOp::Shl
             | BinaryOp::Shr => {
-                if matches!(
-                    op,
-                    BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::Shl | BinaryOp::Shr
-                ) {
-                    // An unknown operand beside an integer one is treated as that integer's type, as it is for
-                    // arithmetic; a shift keeps its left operand's type whatever it counts with.
-                    match (numeric_ty_from_resolved(&left_ty), numeric_ty_from_resolved(&right_ty)) {
-                        (Some(NumericTy::Int), Some(NumericTy::Int)) => {
-                            return self.integer_bitwise_result_type((left, &left_ty), op, (right, &right_ty), span);
-                        }
-                        (Some(NumericTy::Int), None) if matches!(right_ty, ResolvedType::Unknown) => {
-                            return left_ty.clone();
-                        }
-                        (None, Some(NumericTy::Int)) if matches!(left_ty, ResolvedType::Unknown) => {
-                            return if matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
-                                ResolvedType::Unknown
-                            } else {
-                                right_ty.clone()
-                            };
-                        }
-                        _ => {}
-                    }
-                }
-
-                let Some(method) = binary_operator_dunder(op) else {
-                    self.errors
-                        .push(errors::type_mismatch("overloadable operator", &op.to_string(), span));
-                    return ResolvedType::Unknown;
-                };
-                let args = vec![CallArg::Positional(right.clone())];
-                let arg_types = vec![right_ty.clone()];
-                if let Some(ret) =
-                    self.resolve_operator_dunder(&left_ty, method, &args, &arg_types, span, expected_return_ty)
-                {
-                    self.type_info
-                        .record_resolved_operator_call(span, method, ResolvedOperatorKind::Binary);
-                    return ret;
-                }
-                if self.is_user_operator_receiver(&left_ty) {
-                    self.errors
-                        .push(errors::missing_method(&left_ty.to_string(), method, span));
-                } else {
-                    self.errors.push(errors::type_mismatch(
-                        &format!("operator receiver with {}", method),
-                        &format!("{} {} {}", left_ty, op, right_ty),
-                        span,
-                    ));
-                }
-                ResolvedType::Unknown
+                self.check_overload_binary((left, left_ty), op, (right, right_ty), span, expected_return_ty)
             }
-            // Comparisons: allow mixed numeric types (promote for comparison), result is Bool
             BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::Gt | BinaryOp::LtEq | BinaryOp::GtEq => {
-                let left_ty = self.adopt_partner_type_for_empty_list_operand(left, left_ty, &right_ty);
-                let right_ty = self.adopt_partner_type_for_empty_list_operand(right, right_ty, &left_ty);
-                // If both are numeric, allow mixed comparisons
-                let lhs_num = numeric_ty_from_resolved(&left_ty);
-                let rhs_num = numeric_ty_from_resolved(&right_ty);
-                if lhs_num.is_some() && rhs_num.is_some() {
-                    let (left_ty, right_ty) =
-                        self.integer_literal_operand_takes_partner_type((left, &left_ty), op, (right, &right_ty));
-                    // Mixed numeric comparison is valid (promotion handled at codegen): two integer types compare in
-                    // the narrowest integer type both widen to, and a pair no integer type holds is refused.
-                    if let (Some(left_id), Some(right_id)) = (
-                        numeric_type_id_for_compat(&left_ty),
-                        numeric_type_id_for_compat(&right_ty),
-                    ) && numerics::is_integer(left_id)
-                        && numerics::is_integer(right_id)
-                        && incan_lang::numeric_values::common_lossless_integer_type(left_id, right_id).is_none()
-                    {
-                        self.errors.push(errors::incomparable_integer_types(
-                            &left_ty.to_string(),
-                            &op.to_string(),
-                            &right_ty.to_string(),
-                            span,
-                        ));
-                    }
-                    ResolvedType::Bool
-                } else if (is_str_like)(&left_ty) && (is_str_like)(&right_ty) {
-                    ResolvedType::Bool
-                } else if decimal_shape(&left_ty).is_some() && decimal_shape(&right_ty).is_some() {
-                    // Decimal values compare by value, whatever precision and scale each side declares (#1810);
-                    // assignability between the two shapes does not enter into it.
-                    ResolvedType::Bool
-                } else if let Some(method) = binary_operator_dunder(op)
-                    && self.type_has_derive_backed_comparison_operator(&left_ty, op)
-                    && !self.type_has_inherent_operator_method(&left_ty, method)
-                    && self.types_compatible(&left_ty, &right_ty)
-                {
-                    ResolvedType::Bool
-                } else if let Some(method) = binary_operator_dunder(op)
-                    && self.is_user_operator_receiver(&left_ty)
-                {
+                self.check_comparison_binary((left, left_ty), op, (right, right_ty), span)
+            }
+            BinaryOp::In | BinaryOp::NotIn => self.check_membership_binary((left, left_ty), op, right_ty, span),
+            BinaryOp::And | BinaryOp::Or | BinaryOp::Is | BinaryOp::IsNot => ResolvedType::Bool,
+        }
+    }
+
+    /// Check arithmetic after both operands, preserving concatenation, generic dispatch and numeric precedence.
+    fn check_arithmetic_binary(
+        &mut self,
+        left: (&Spanned<Expr>, ResolvedType),
+        op: BinaryOp,
+        right: (&Spanned<Expr>, ResolvedType),
+        span: Span,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> ResolvedType {
+        let (left, left_ty) = left;
+        let (right, right_ty) = right;
+        if let Some(result) =
+            self.check_string_concatenation(&left_ty, op, (right, &right_ty), span, expected_return_ty)
+        {
+            return result;
+        }
+        if let Some(result) = self.check_list_concatenation(&left_ty, op, &right_ty, span) {
+            return result;
+        }
+        if let Some(result) = self.check_generic_arithmetic(&left_ty, op, (right, &right_ty), span, expected_return_ty)
+        {
+            return result;
+        }
+
+        // Check both operands are numeric
+        let lhs_num = numeric_ty_from_resolved(&left_ty);
+        let rhs_num = numeric_ty_from_resolved(&right_ty);
+
+        match (lhs_num, rhs_num) {
+            (Some(_), Some(_)) => self.numeric_arithmetic_result_type((left, &left_ty), op, (right, &right_ty), span),
+            // Allow Unknown with numeric partner (treat as that numeric type): an integer partner keeps its
+            // own integer type, as same-type integer arithmetic does.
+            (Some(n), None) if matches!(right_ty, ResolvedType::Unknown | ResolvedType::RustPath(_)) => match n {
+                NumericTy::Int => left_ty.clone(),
+                NumericTy::Float => ResolvedType::Float,
+            },
+            (None, Some(n)) if matches!(left_ty, ResolvedType::Unknown | ResolvedType::RustPath(_)) => match n {
+                NumericTy::Int => right_ty.clone(),
+                NumericTy::Float => ResolvedType::Float,
+            },
+            _ => {
+                if let Some(method) = binary_operator_dunder(op) {
                     let args = vec![CallArg::Positional(right.clone())];
                     let arg_types = vec![right_ty.clone()];
-                    if let Some(ret) = self.resolve_operator_dunder(
-                        &left_ty,
-                        method,
-                        &args,
-                        &arg_types,
-                        span,
-                        Some(&ResolvedType::Bool),
-                    ) {
+                    if let Some(ret) =
+                        self.resolve_operator_dunder(&left_ty, method, &args, &arg_types, span, expected_return_ty)
+                    {
                         self.type_info
                             .record_resolved_operator_call(span, method, ResolvedOperatorKind::Binary);
-                        if !self.types_compatible(&ret, &ResolvedType::Bool) {
-                            self.errors.push(errors::type_mismatch("bool", &ret.to_string(), span));
-                        }
-                        ResolvedType::Bool
-                    } else if !self.is_generic_placeholder_type(&left_ty)
-                        && (matches!(op, BinaryOp::Lt | BinaryOp::Gt | BinaryOp::LtEq | BinaryOp::GtEq)
-                            || self.type_has_any_operator_method(&left_ty, comparison_dunders(), span))
-                    {
+                        return ret;
+                    }
+                    if self.is_user_operator_receiver(&left_ty) {
                         self.errors
                             .push(errors::missing_method(&left_ty.to_string(), method, span));
-                        ResolvedType::Unknown
-                    } else if self.refuse_comparison_without_derive(&left_ty, op, span) {
-                        ResolvedType::Unknown
-                    } else if left_ty == right_ty || self.types_compatible(&left_ty, &right_ty) {
-                        ResolvedType::Bool
-                    } else {
-                        self.errors.push(errors::type_mismatch(
-                            &format!("comparable to {}", left_ty),
-                            &right_ty.to_string(),
-                            span,
-                        ));
-                        ResolvedType::Bool
-                    }
-                } else if left_ty == right_ty || self.types_compatible(&left_ty, &right_ty) {
-                    // Same-type or compatible comparison, which the operands' type must implement.
-                    if self.refuse_comparison_without_derive(&left_ty, op, span) {
                         return ResolvedType::Unknown;
                     }
-                    ResolvedType::Bool
-                } else {
-                    // Different non-numeric types
-                    self.errors.push(errors::type_mismatch(
-                        &format!("comparable to {}", left_ty),
-                        &right_ty.to_string(),
+                }
+                self.errors.push(errors::type_mismatch(
+                    "numeric",
+                    &format!("{} {} {}", left_ty, op, right_ty),
+                    span,
+                ));
+                ResolvedType::Unknown
+            }
+        }
+    }
+
+    /// Check text addition before numeric fallback, giving a source receiver's declared operator priority on a mix.
+    fn check_string_concatenation(
+        &mut self,
+        left_ty: &ResolvedType,
+        op: BinaryOp,
+        right: (&Spanned<Expr>, &ResolvedType),
+        span: Span,
+        expected: Option<&ResolvedType>,
+    ) -> Option<ResolvedType> {
+        if !matches!(op, BinaryOp::Add) {
+            return None;
+        }
+        let (right, right_ty) = right;
+        let lhs_is_str = is_str_like(left_ty);
+        let rhs_is_str = is_str_like(right_ty);
+        if lhs_is_str && rhs_is_str {
+            return Some(ResolvedType::Str);
+        }
+        if !lhs_is_str && !rhs_is_str {
+            return None;
+        }
+        if self.is_user_operator_receiver(left_ty)
+            && let Some(method) = binary_operator_dunder(op)
+        {
+            let args = vec![CallArg::Positional(right.clone())];
+            let arg_types = vec![right_ty.clone()];
+            if let Some(result) = self.resolve_operator_dunder(left_ty, method, &args, &arg_types, span, expected) {
+                self.type_info
+                    .record_resolved_operator_call(span, method, ResolvedOperatorKind::Binary);
+                return Some(result);
+            }
+        }
+        self.errors.push(errors::type_mismatch(
+            "str",
+            &format!("{} {} {}", left_ty, op, right_ty),
+            span,
+        ));
+        Some(ResolvedType::Unknown)
+    }
+
+    /// Admit same-type runtime list addition only when its elements can be copied or cloned.
+    fn check_list_concatenation(
+        &mut self,
+        left_ty: &ResolvedType,
+        op: BinaryOp,
+        right_ty: &ResolvedType,
+        span: Span,
+    ) -> Option<ResolvedType> {
+        if !matches!(op, BinaryOp::Add)
+            || !is_runtime_list(left_ty)
+            || !is_runtime_list(right_ty)
+            || !self.types_compatible(left_ty, right_ty)
+        {
+            return None;
+        }
+        if let Some(element) = runtime_list_elem_type(left_ty)
+            && !self.is_copy_type(element)
+            && !self.is_clone_type(element)
+        {
+            self.errors
+                .push(errors::list_concat_requires_clone(&element.to_string(), span));
+            return Some(ResolvedType::Unknown);
+        }
+        Some(left_ty.clone())
+    }
+
+    /// Consult a declared generic operator before the existing same-placeholder arithmetic policy.
+    ///
+    /// Matching placeholders retain the existing arithmetic policy, which refuses unresolved numeric-only operators.
+    /// Unknown operands keep the known generic partner's type; other shapes reach numeric or nominal resolution.
+    fn check_generic_arithmetic(
+        &mut self,
+        left_ty: &ResolvedType,
+        op: BinaryOp,
+        right: (&Spanned<Expr>, &ResolvedType),
+        span: Span,
+        expected: Option<&ResolvedType>,
+    ) -> Option<ResolvedType> {
+        let (right, right_ty) = right;
+        if self.is_generic_placeholder_type(left_ty)
+            && let Some(method) = binary_operator_dunder(op)
+        {
+            let args = vec![CallArg::Positional(right.clone())];
+            let arg_types = vec![right_ty.clone()];
+            if let Some(result) = self.resolve_operator_dunder(left_ty, method, &args, &arg_types, span, expected) {
+                self.type_info
+                    .record_resolved_operator_call(span, method, ResolvedOperatorKind::Binary);
+                return Some(result);
+            }
+        }
+        match (
+            self.generic_placeholder_name(left_ty),
+            self.generic_placeholder_name(right_ty),
+        ) {
+            (Some(left_name), Some(right_name)) if left_name == right_name => {
+                if let Some(dunder) = numeric_only_operator_dunder(op) {
+                    self.errors.push(errors::operator_has_no_type_parameter_bound(
+                        &op.to_string(),
+                        left_name,
+                        dunder,
                         span,
                     ));
-                    ResolvedType::Bool
+                    return Some(ResolvedType::Unknown);
                 }
+                Some(left_ty.clone())
             }
-            BinaryOp::And | BinaryOp::Or => ResolvedType::Bool,
-            BinaryOp::In | BinaryOp::NotIn => {
-                let lhs_is_str = is_str_like(&left_ty);
-                let rhs_is_str = is_str_like(&right_ty);
+            (Some(_), None) if matches!(right_ty, ResolvedType::Unknown) => Some(left_ty.clone()),
+            (None, Some(_)) if matches!(left_ty, ResolvedType::Unknown) => Some(right_ty.clone()),
+            _ => None,
+        }
+    }
 
-                // str in str
-                if lhs_is_str && rhs_is_str {
-                    return ResolvedType::Bool;
+    /// Prefer builtin integer bitwise behavior before resolving the selected overloadable operator.
+    fn check_overload_binary(
+        &mut self,
+        left: (&Spanned<Expr>, ResolvedType),
+        op: BinaryOp,
+        right: (&Spanned<Expr>, ResolvedType),
+        span: Span,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> ResolvedType {
+        let (left, left_ty) = left;
+        let (right, right_ty) = right;
+        if matches!(
+            op,
+            BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::Shl | BinaryOp::Shr
+        ) {
+            // An unknown operand beside an integer one is treated as that integer's type, as it is for
+            // arithmetic; a shift keeps its left operand's type whatever it counts with.
+            match (numeric_ty_from_resolved(&left_ty), numeric_ty_from_resolved(&right_ty)) {
+                (Some(NumericTy::Int), Some(NumericTy::Int)) => {
+                    return self.integer_bitwise_result_type((left, &left_ty), op, (right, &right_ty), span);
                 }
-
-                // A `const` frozen collection answers membership as its mutable form does: an element of a
-                // `FrozenList` or `FrozenSet`, a key of a `FrozenDict`. A text element or key takes any text probe.
-                let frozen_member_ty = match &right_ty {
-                    ResolvedType::FrozenList(elem) | ResolvedType::FrozenSet(elem) => Some(elem.as_ref()),
-                    ResolvedType::FrozenDict(key, _) => Some(key.as_ref()),
-                    _ => None,
-                };
-                if let Some(member_ty) = frozen_member_ty {
-                    let text_probe_for_text_member = lhs_is_str && is_str_like(member_ty);
-                    if !text_probe_for_text_member && self.types_compatible(&left_ty, member_ty) {
-                        // A numeric probe of a narrower type is widened to the member type where it is lowered.
-                        self.record_value_destination_if_compatible(left.span, &left_ty, member_ty);
-                    } else if !text_probe_for_text_member && !matches!(left_ty, ResolvedType::Unknown) {
-                        self.errors.push(errors::type_mismatch(
-                            &member_ty.to_string(),
-                            &left_ty.to_string(),
-                            span,
-                        ));
-                    }
-                    return ResolvedType::Bool;
+                (Some(NumericTy::Int), None) if matches!(right_ty, ResolvedType::Unknown) => {
+                    return left_ty.clone();
                 }
-
-                // List/Set membership: "<item> in <collection>"
-                if let ResolvedType::Generic(name, args) = &right_ty {
-                    match collection_type_id(name.as_str()) {
-                        Some(CollectionTypeId::List | CollectionTypeId::Set) if !args.is_empty() => {
-                            let elem_ty = &args[0];
-                            if self.types_compatible(&left_ty, elem_ty) || matches!(left_ty, ResolvedType::Unknown) {
-                                // A numeric probe of a narrower type is widened to the element type where it is
-                                // lowered (RFC 009).
-                                self.record_value_destination_if_compatible(left.span, &left_ty, elem_ty);
-                                // A list finds its item by equality, which the element type must implement (#1870); a
-                                // set's element type is held to `Eq` and `Hash` where the set type is written.
-                                if collection_type_id(name.as_str()) == Some(CollectionTypeId::List) {
-                                    self.refuse_comparison_without_derive(elem_ty, op, span);
-                                }
-                                return ResolvedType::Bool;
-                            }
-                            self.errors
-                                .push(errors::type_mismatch(&elem_ty.to_string(), &left_ty.to_string(), span));
-                            return ResolvedType::Bool;
-                        }
-                        Some(CollectionTypeId::Dict) if args.len() >= 2 => {
-                            let key_ty = &args[0];
-                            if self.types_compatible(&left_ty, key_ty) || matches!(left_ty, ResolvedType::Unknown) {
-                                self.record_value_destination_if_compatible(left.span, &left_ty, key_ty);
-                                return ResolvedType::Bool;
-                            }
-                            self.errors
-                                .push(errors::type_mismatch(&key_ty.to_string(), &left_ty.to_string(), span));
-                            return ResolvedType::Bool;
-                        }
-                        _ => {}
-                    }
+                (None, Some(NumericTy::Int)) if matches!(left_ty, ResolvedType::Unknown) => {
+                    return if matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
+                        ResolvedType::Unknown
+                    } else {
+                        right_ty.clone()
+                    };
                 }
+                _ => {}
+            }
+        }
 
-                if self.is_user_operator_receiver(&right_ty) {
-                    let _ = self.resolve_contains_dunder(&right_ty, left, &left_ty, span);
-                    return ResolvedType::Bool;
+        let Some(method) = binary_operator_dunder(op) else {
+            self.errors
+                .push(errors::type_mismatch("overloadable operator", &op.to_string(), span));
+            return ResolvedType::Unknown;
+        };
+        let args = vec![CallArg::Positional(right.clone())];
+        let arg_types = vec![right_ty.clone()];
+        if let Some(ret) = self.resolve_operator_dunder(&left_ty, method, &args, &arg_types, span, expected_return_ty) {
+            self.type_info
+                .record_resolved_operator_call(span, method, ResolvedOperatorKind::Binary);
+            return ret;
+        }
+        if self.is_user_operator_receiver(&left_ty) {
+            self.errors
+                .push(errors::missing_method(&left_ty.to_string(), method, span));
+        } else {
+            self.errors.push(errors::type_mismatch(
+                &format!("operator receiver with {}", method),
+                &format!("{} {} {}", left_ty, op, right_ty),
+                span,
+            ));
+        }
+        ResolvedType::Unknown
+    }
+
+    /// Adopt empty-list context before checking numeric, derived and explicit comparison contracts.
+    fn check_comparison_binary(
+        &mut self,
+        left: (&Spanned<Expr>, ResolvedType),
+        op: BinaryOp,
+        right: (&Spanned<Expr>, ResolvedType),
+        span: Span,
+    ) -> ResolvedType {
+        let (left, left_ty) = left;
+        let (right, right_ty) = right;
+        let left_ty = self.adopt_partner_type_for_empty_list_operand(left, left_ty, &right_ty);
+        let right_ty = self.adopt_partner_type_for_empty_list_operand(right, right_ty, &left_ty);
+        // If both are numeric, allow mixed comparisons
+        let lhs_num = numeric_ty_from_resolved(&left_ty);
+        let rhs_num = numeric_ty_from_resolved(&right_ty);
+        if lhs_num.is_some() && rhs_num.is_some() {
+            let (left_ty, right_ty) =
+                self.integer_literal_operand_takes_partner_type((left, &left_ty), op, (right, &right_ty));
+            // Mixed numeric comparison is valid (promotion handled at codegen): two integer types compare in
+            // the narrowest integer type both widen to, and a pair no integer type holds is refused.
+            if let (Some(left_id), Some(right_id)) = (
+                numeric_type_id_for_compat(&left_ty),
+                numeric_type_id_for_compat(&right_ty),
+            ) && numerics::is_integer(left_id)
+                && numerics::is_integer(right_id)
+                && incan_lang::numeric_values::common_lossless_integer_type(left_id, right_id).is_none()
+            {
+                self.errors.push(errors::incomparable_integer_types(
+                    &left_ty.to_string(),
+                    &op.to_string(),
+                    &right_ty.to_string(),
+                    span,
+                ));
+            }
+            ResolvedType::Bool
+        } else if (is_str_like)(&left_ty) && (is_str_like)(&right_ty) {
+            ResolvedType::Bool
+        } else if decimal_shape(&left_ty).is_some() && decimal_shape(&right_ty).is_some() {
+            // Decimal values compare by value, whatever precision and scale each side declares (#1810);
+            // assignability between the two shapes does not enter into it.
+            ResolvedType::Bool
+        } else if let Some(method) = binary_operator_dunder(op)
+            && self.type_has_derive_backed_comparison_operator(&left_ty, op)
+            && !self.type_has_inherent_operator_method(&left_ty, method)
+            && self.types_compatible(&left_ty, &right_ty)
+        {
+            ResolvedType::Bool
+        } else if let Some(method) = binary_operator_dunder(op)
+            && self.is_user_operator_receiver(&left_ty)
+        {
+            let args = vec![CallArg::Positional(right.clone())];
+            let arg_types = vec![right_ty.clone()];
+            if let Some(ret) =
+                self.resolve_operator_dunder(&left_ty, method, &args, &arg_types, span, Some(&ResolvedType::Bool))
+            {
+                self.type_info
+                    .record_resolved_operator_call(span, method, ResolvedOperatorKind::Binary);
+                if !self.types_compatible(&ret, &ResolvedType::Bool) {
+                    self.errors.push(errors::type_mismatch("bool", &ret.to_string(), span));
                 }
-
-                // Fallback: keep previous permissive behavior but note mismatch.
+                ResolvedType::Bool
+            } else if !self.is_generic_placeholder_type(&left_ty)
+                && (matches!(op, BinaryOp::Lt | BinaryOp::Gt | BinaryOp::LtEq | BinaryOp::GtEq)
+                    || self.type_has_any_operator_method(&left_ty, comparison_dunders(), span))
+            {
+                self.errors
+                    .push(errors::missing_method(&left_ty.to_string(), method, span));
+                ResolvedType::Unknown
+            } else if self.refuse_comparison_without_derive(&left_ty, op, span) {
+                ResolvedType::Unknown
+            } else if left_ty == right_ty || self.types_compatible(&left_ty, &right_ty) {
+                ResolvedType::Bool
+            } else {
                 self.errors.push(errors::type_mismatch(
-                    "supported membership (str, list, set, dict)",
-                    &format!("{} {} {}", left_ty, op, right_ty),
+                    &format!("comparable to {}", left_ty),
+                    &right_ty.to_string(),
                     span,
                 ));
                 ResolvedType::Bool
             }
-            BinaryOp::Is | BinaryOp::IsNot => ResolvedType::Bool,
+        } else if left_ty == right_ty || self.types_compatible(&left_ty, &right_ty) {
+            // Same-type or compatible comparison, which the operands' type must implement.
+            if self.refuse_comparison_without_derive(&left_ty, op, span) {
+                return ResolvedType::Unknown;
+            }
+            ResolvedType::Bool
+        } else {
+            // Different non-numeric types
+            self.errors.push(errors::type_mismatch(
+                &format!("comparable to {}", left_ty),
+                &right_ty.to_string(),
+                span,
+            ));
+            ResolvedType::Bool
         }
+    }
+
+    /// Check container membership and retain any numeric widening destination for the written probe.
+    fn check_membership_binary(
+        &mut self,
+        left: (&Spanned<Expr>, ResolvedType),
+        op: BinaryOp,
+        right_ty: ResolvedType,
+        span: Span,
+    ) -> ResolvedType {
+        let (left, left_ty) = left;
+        let lhs_is_str = is_str_like(&left_ty);
+        let rhs_is_str = is_str_like(&right_ty);
+
+        // str in str
+        if lhs_is_str && rhs_is_str {
+            return ResolvedType::Bool;
+        }
+
+        // A `const` frozen collection answers membership as its mutable form does: an element of a
+        // `FrozenList` or `FrozenSet`, a key of a `FrozenDict`. A text element or key takes any text probe.
+        let frozen_member_ty = match &right_ty {
+            ResolvedType::FrozenList(elem) | ResolvedType::FrozenSet(elem) => Some(elem.as_ref()),
+            ResolvedType::FrozenDict(key, _) => Some(key.as_ref()),
+            _ => None,
+        };
+        if let Some(member_ty) = frozen_member_ty {
+            let text_probe_for_text_member = lhs_is_str && is_str_like(member_ty);
+            if !text_probe_for_text_member && self.types_compatible(&left_ty, member_ty) {
+                // A numeric probe of a narrower type is widened to the member type where it is lowered.
+                self.record_value_destination_if_compatible(left.span, &left_ty, member_ty);
+            } else if !text_probe_for_text_member && !matches!(left_ty, ResolvedType::Unknown) {
+                self.errors.push(errors::type_mismatch(
+                    &member_ty.to_string(),
+                    &left_ty.to_string(),
+                    span,
+                ));
+            }
+            return ResolvedType::Bool;
+        }
+
+        // List/Set membership: "<item> in <collection>"
+        if let ResolvedType::Generic(name, args) = &right_ty {
+            match collection_type_id(name.as_str()) {
+                Some(CollectionTypeId::List | CollectionTypeId::Set) if !args.is_empty() => {
+                    let elem_ty = &args[0];
+                    if self.types_compatible(&left_ty, elem_ty) || matches!(left_ty, ResolvedType::Unknown) {
+                        // A numeric probe of a narrower type is widened to the element type where it is
+                        // lowered (RFC 009).
+                        self.record_value_destination_if_compatible(left.span, &left_ty, elem_ty);
+                        // A list finds its item by equality, which the element type must implement (#1870); a
+                        // set's element type is held to `Eq` and `Hash` where the set type is written.
+                        if collection_type_id(name.as_str()) == Some(CollectionTypeId::List) {
+                            self.refuse_comparison_without_derive(elem_ty, op, span);
+                        }
+                        return ResolvedType::Bool;
+                    }
+                    self.errors
+                        .push(errors::type_mismatch(&elem_ty.to_string(), &left_ty.to_string(), span));
+                    return ResolvedType::Bool;
+                }
+                Some(CollectionTypeId::Dict) if args.len() >= 2 => {
+                    let key_ty = &args[0];
+                    if self.types_compatible(&left_ty, key_ty) || matches!(left_ty, ResolvedType::Unknown) {
+                        self.record_value_destination_if_compatible(left.span, &left_ty, key_ty);
+                        return ResolvedType::Bool;
+                    }
+                    self.errors
+                        .push(errors::type_mismatch(&key_ty.to_string(), &left_ty.to_string(), span));
+                    return ResolvedType::Bool;
+                }
+                _ => {}
+            }
+        }
+
+        if self.is_user_operator_receiver(&right_ty) {
+            let _ = self.resolve_contains_dunder(&right_ty, left, &left_ty, span);
+            return ResolvedType::Bool;
+        }
+
+        // Fallback: keep previous permissive behavior but note mismatch.
+        self.errors.push(errors::type_mismatch(
+            "supported membership (str, list, set, dict)",
+            &format!("{} {} {}", left_ty, op, right_ty),
+            span,
+        ));
+        ResolvedType::Bool
     }
 
     /// Type-check a unary operation and return its result type.

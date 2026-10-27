@@ -70,6 +70,7 @@ use incan_semantics_core::{
     IncanCallableParamKind, IncanPrimitiveType, IncanType, SemanticSourceTargetKind, rust_tuple_arity,
 };
 
+use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
@@ -162,31 +163,14 @@ pub fn build_body_ir_module(
     let local_nongeneric_functions = collect_local_nongeneric_function_identities(program, type_info);
     let mut enum_declarations = collect_local_enum_declarations(program, &module_identity, type_info);
     enum_declarations.extend(rust_values::enum_declarations(type_info));
-    let local_enum_declarations = enum_declarations
-        .iter()
-        .chain(context.iter().flat_map(|module| module.enum_declarations.iter()))
-        .map(|declaration| (declaration.canonical.clone(), declaration.clone()))
-        .collect::<HashMap<_, _>>();
+    let local_enum_declarations = collect_visible_enum_declarations(&enum_declarations, context);
     let local_receiver_methods = collect_local_receiver_methods(program, type_info);
     let mut nominal_declarations = collect_local_nominal_declarations(program, &module_identity, type_info);
     nominal_declarations.extend(rust_values::declarations(type_info));
     newtype_string_conversion::finalize_candidates(&mut nominal_declarations);
     // Immutable values bind to retained layout skeletons before deferred defaults are attached.
     let constant_declarations = collect::collect_constants(program, type_info, &nominal_declarations);
-    let published_constants = context
-        .iter()
-        .flat_map(|module| module.constant_declarations.iter())
-        .chain(constant_declarations.iter().filter(|declaration| {
-            matches!(
-                declaration.value,
-                bir::Constant::Int(_)
-                    | bir::Constant::TypedNumeric(_)
-                    | bir::Constant::FrozenAggregate(..)
-                    | bir::Constant::NumericNewtype(_)
-            )
-        }))
-        .map(|declaration| (declaration.canonical.clone(), declaration.value.clone()))
-        .collect::<HashMap<_, _>>();
+    let published_constants = collect_published_constants(context, &constant_declarations);
     let mut local_nominal_declarations = nominal_declarations
         .iter()
         .map(|declaration| (declaration.name.clone(), declaration.clone()))
@@ -201,17 +185,12 @@ pub fn build_body_ir_module(
         .iter()
         .map(|declaration| (declaration.name.clone(), declaration.clone()))
         .collect::<LocalValueEnumDeclarations>();
-    for module in context {
-        for declaration in &module.nominal_declarations {
-            local_nominal_declarations.insert(declaration.canonical.render_compact(), declaration.clone());
-        }
-        for declaration in &module.fieldless_enum_declarations {
-            local_fieldless_enum_declarations.insert(declaration.canonical.render_compact(), declaration.clone());
-        }
-        for declaration in &module.value_enum_declarations {
-            local_value_enum_declarations.insert(declaration.canonical.render_compact(), declaration.clone());
-        }
-    }
+    extend_published_nominal_declarations(
+        context,
+        &mut local_nominal_declarations,
+        &mut local_fieldless_enum_declarations,
+        &mut local_value_enum_declarations,
+    );
     let published_callable_returns = collect::collect_published_callable_returns(context, type_info);
     let published_callable_defaults = collect::collect_published_callable_defaults(context);
     let published_newtype_returns = collect::collect_published_newtype_returns(context);
@@ -247,77 +226,11 @@ pub fn build_body_ir_module(
     };
     defaults::attach_nominal_field_defaults(program, &mut nominal_declarations, &lowering_facts);
     defaults::attach_method_partial_defaults(program, &mut nominal_declarations, &lowering_facts);
-    let mut bodies = program
-        .declarations
-        .iter()
-        .flat_map(|decl| -> Vec<bir::Body> {
-            match &decl.node {
-                ast::Declaration::Partial(partial) => {
-                    vec![partials::lower_source_partial(partial, decl.span, &lowering_facts)]
-                }
-                // An extern naming an attribute macro is applied by rustc to the items it decorates, not called.
-                ast::Declaration::Function(_)
-                    if type_info.declarations.native_attribute_externs.contains_key(&decl.span) =>
-                {
-                    Vec::new()
-                }
-                ast::Declaration::Function(function) => {
-                    vec![lower_function_body(function, decl.span, &lowering_facts)]
-                }
-                ast::Declaration::Model(model) => lower_owner_member_bodies(
-                    &model.methods,
-                    &model.properties,
-                    &model.name,
-                    owner_self_type(&model.name, &model.type_params),
-                    &lowering_facts,
-                ),
-                ast::Declaration::Class(class) => lower_owner_member_bodies(
-                    &class.methods,
-                    &class.properties,
-                    &class.name,
-                    owner_self_type(&class.name, &class.type_params),
-                    &lowering_facts,
-                ),
-                ast::Declaration::Trait(trait_decl) => lower_owner_method_bodies(
-                    &trait_decl.methods,
-                    &trait_decl.name,
-                    IncanType::SelfType,
-                    &lowering_facts,
-                ),
-                // Transparent native stubs supply checked native adapters, never source executable bodies.
-                ast::Declaration::Newtype(newtype) if is_direct_native_rusttype_alias(newtype, type_info) => Vec::new(),
-                // A body-bearing newtype/rusttype method retains its nominal receiver and executable source body.
-                ast::Declaration::Newtype(newtype) => lower_owner_method_bodies(
-                    &newtype.methods,
-                    &newtype.name,
-                    owner_self_type(&newtype.name, &newtype.type_params),
-                    &lowering_facts,
-                ),
-                ast::Declaration::Enum(enum_decl) => lower_owner_method_bodies(
-                    &enum_decl.methods,
-                    &enum_decl.name,
-                    owner_self_type(&enum_decl.name, &enum_decl.type_params),
-                    &lowering_facts,
-                ),
-                _ => Vec::new(),
-            }
-        })
-        .collect::<Vec<_>>();
-    let mut static_declarations = collect::collect_statics(program, &lowering_facts);
-    static_declarations.extend(collect::collect_computed_constants(
-        program,
-        &lowering_facts,
-        &constant_declarations,
-    ));
+    let mut bodies = lower_source_bodies(program, &lowering_facts);
+    let mut static_declarations = collect_source_storage(program, &lowering_facts, &constant_declarations);
     let decorated_bindings =
         decorated_bindings::collect(program, &lowering_facts, &mut bodies, &mut static_declarations);
-    apply_top_level_input_contract_refusal(program, &mut bodies);
-    registry_effects::refuse_unretained_functions(program, type_info, &mut bodies);
-    for body in &mut bodies {
-        representation_facts::retain(body);
-    }
-    let mut enum_declarations = collect_local_enum_declarations(program, &module_identity, type_info);
-    enum_declarations.extend(rust_values::enum_declarations(type_info));
+    retain_source_body_contracts(program, type_info, &mut bodies);
     static_declarations.sort_by_key(|declaration| declaration.canonical.declaration_span.start);
     registry_effects::collect(program, &lowering_facts, &mut static_declarations);
     let mut module = bir::BodyIrModule {
@@ -345,17 +258,167 @@ pub fn build_body_ir_module(
         value_enum_declarations,
         bodies,
     };
-    source_comparison::retain_equality_borrows(&mut module);
-    let opaque_carriers = opaque_returns::collect(&module, type_info);
-    // Retain source trait annotations before local opaque propagation replaces return types with model witnesses.
-    trait_values::retain_inputs(&mut module, program, type_info, context);
-    trait_returns::retain_returns(&mut module, program, type_info, context);
-    opaque_returns::retain(&mut module, &opaque_carriers);
-    nominal_carriers::retain(&mut module, type_info, context);
-    primitive_adapters::retain(&mut module);
-    union_layouts::retain(&mut module);
-    shared_reads::retain(&mut module, program);
+    retain_module_representations(&mut module, program, type_info, context);
     module
+}
+
+/// Collect explicit storage before computed constants; decoration and registry effects append their declarations
+/// afterward, before the module's existing source-span ordering is applied.
+fn collect_source_storage(
+    program: &ast::Program,
+    facts: &BodyIrLoweringFacts<'_, '_>,
+    constants: &[bir::ConstantDeclaration],
+) -> Vec<bir::StaticDeclaration> {
+    let mut declarations = collect::collect_statics(program, facts);
+    declarations.extend(collect::collect_computed_constants(program, facts, constants));
+    declarations
+}
+
+/// Preserve explicit input-contract refusals before retaining each body's executable representation facts.
+/// These checks run after decoration has added its bodies and before module-wide representation passes.
+fn retain_source_body_contracts(program: &ast::Program, type_info: &TypeCheckInfo, bodies: &mut [bir::Body]) {
+    apply_top_level_input_contract_refusal(program, bodies);
+    registry_effects::refuse_unretained_functions(program, type_info, bodies);
+    for body in bodies {
+        representation_facts::retain(body);
+    }
+}
+
+/// Index local and dependency enum declarations by the checked canonical identity, preserving dependency
+/// overwrite precedence when the same identity is already present in the local inventory.
+fn collect_visible_enum_declarations(
+    local: &[bir::EnumDeclaration],
+    context: &[bir::BodyIrModule],
+) -> HashMap<CanonicalSymbolId, bir::EnumDeclaration> {
+    local
+        .iter()
+        .chain(context.iter().flat_map(|module| module.enum_declarations.iter()))
+        .map(|declaration| (declaration.canonical.clone(), declaration.clone()))
+        .collect()
+}
+
+/// Add dependency layouts under their existing compact canonical lookup keys. Local spelling entries stay
+/// available alongside those qualified keys; this does not recreate identity from an unqualified name.
+fn extend_published_nominal_declarations(
+    context: &[bir::BodyIrModule],
+    nominals: &mut LocalNominalDeclarations,
+    fieldless_enums: &mut LocalFieldlessEnumDeclarations,
+    value_enums: &mut LocalValueEnumDeclarations,
+) {
+    for module in context {
+        for declaration in &module.nominal_declarations {
+            nominals.insert(declaration.canonical.render_compact(), declaration.clone());
+        }
+        for declaration in &module.fieldless_enum_declarations {
+            fieldless_enums.insert(declaration.canonical.render_compact(), declaration.clone());
+        }
+        for declaration in &module.value_enum_declarations {
+            value_enums.insert(declaration.canonical.render_compact(), declaration.clone());
+        }
+    }
+}
+
+/// Index dependency constants and the local immutable values whose retained layouts are available before
+/// deferred defaults are attached. Other local constant forms keep their existing lowering path.
+fn collect_published_constants(
+    context: &[bir::BodyIrModule],
+    local_constants: &[bir::ConstantDeclaration],
+) -> HashMap<CanonicalSymbolId, bir::Constant> {
+    context
+        .iter()
+        .flat_map(|module| module.constant_declarations.iter())
+        .chain(local_constants.iter().filter(|declaration| {
+            matches!(
+                declaration.value,
+                bir::Constant::Int(_)
+                    | bir::Constant::TypedNumeric(_)
+                    | bir::Constant::FrozenAggregate(..)
+                    | bir::Constant::NumericNewtype(_)
+            )
+        }))
+        .map(|declaration| (declaration.canonical.clone(), declaration.value.clone()))
+        .collect()
+}
+
+/// Lower executable declarations in source order using the module's already collected checked facts. Attribute
+/// externs and transparent native stubs supply compiler adapters rather than executable source bodies.
+fn lower_source_bodies(program: &ast::Program, facts: &BodyIrLoweringFacts<'_, '_>) -> Vec<bir::Body> {
+    program
+        .declarations
+        .iter()
+        .flat_map(|decl| -> Vec<bir::Body> {
+            match &decl.node {
+                ast::Declaration::Partial(partial) => {
+                    vec![partials::lower_source_partial(partial, decl.span, facts)]
+                }
+                ast::Declaration::Function(_)
+                    if facts
+                        .type_info
+                        .declarations
+                        .native_attribute_externs
+                        .contains_key(&decl.span) =>
+                {
+                    Vec::new()
+                }
+                ast::Declaration::Function(function) => {
+                    vec![lower_function_body(function, decl.span, facts)]
+                }
+                ast::Declaration::Model(model) => lower_owner_member_bodies(
+                    &model.methods,
+                    &model.properties,
+                    &model.name,
+                    owner_self_type(&model.name, &model.type_params),
+                    facts,
+                ),
+                ast::Declaration::Class(class) => lower_owner_member_bodies(
+                    &class.methods,
+                    &class.properties,
+                    &class.name,
+                    owner_self_type(&class.name, &class.type_params),
+                    facts,
+                ),
+                ast::Declaration::Trait(trait_decl) => {
+                    lower_owner_method_bodies(&trait_decl.methods, &trait_decl.name, IncanType::SelfType, facts)
+                }
+                ast::Declaration::Newtype(newtype) if is_direct_native_rusttype_alias(newtype, facts.type_info) => {
+                    Vec::new()
+                }
+                ast::Declaration::Newtype(newtype) => lower_owner_method_bodies(
+                    &newtype.methods,
+                    &newtype.name,
+                    owner_self_type(&newtype.name, &newtype.type_params),
+                    facts,
+                ),
+                ast::Declaration::Enum(enum_decl) => lower_owner_method_bodies(
+                    &enum_decl.methods,
+                    &enum_decl.name,
+                    owner_self_type(&enum_decl.name, &enum_decl.type_params),
+                    facts,
+                ),
+                _ => Vec::new(),
+            }
+        })
+        .collect()
+}
+
+/// Retain representation facts after every declaration and body exists. Pass order preserves source trait
+/// annotations before opaque propagation and keeps ownership refinement after the resulting layouts are settled.
+fn retain_module_representations(
+    module: &mut bir::BodyIrModule,
+    program: &ast::Program,
+    type_info: &TypeCheckInfo,
+    context: &[bir::BodyIrModule],
+) {
+    source_comparison::retain_equality_borrows(module);
+    let opaque_carriers = opaque_returns::collect(module, type_info);
+    // Retain source trait annotations before local opaque propagation replaces return types with model witnesses.
+    trait_values::retain_inputs(module, program, type_info, context);
+    trait_returns::retain_returns(module, program, type_info, context);
+    opaque_returns::retain(module, &opaque_carriers);
+    nominal_carriers::retain(module, type_info, context);
+    primitive_adapters::retain(module);
+    union_layouts::retain(module);
+    shared_reads::retain(module, program);
 }
 
 /// A type leaf whose retained canonical identity must survive Result-side settlement.
@@ -558,22 +621,27 @@ fn has_checked_native_derives(
     }) && names.iter().all(|name| {
         type_info.derivations.native_macro_paths.contains(name)
             || matches!(
-                name.as_str(),
-                "Debug"
-                    | "Clone"
-                    | "Copy"
-                    | "Eq"
-                    | "PartialEq"
-                    | "Hash"
-                    | "Ord"
-                    | "PartialOrd"
-                    | "Default"
-                    | "Display"
-                    | "FieldInfo"
-                    | "IncanClass"
-                    | "serde::Serialize"
-                    | "serde::Deserialize"
+                derives::from_str(name),
+                Some(
+                    DeriveId::Debug
+                        | DeriveId::Clone
+                        | DeriveId::Copy
+                        | DeriveId::Eq
+                        | DeriveId::PartialEq
+                        | DeriveId::Hash
+                        | DeriveId::Ord
+                        | DeriveId::PartialOrd
+                        | DeriveId::Default
+                        | DeriveId::Display
+                )
             )
+            || [
+                derives::FIELD_INFO_DERIVE_NAME,
+                derives::INCAN_CLASS_DERIVE_NAME,
+                "serde::Serialize",
+                "serde::Deserialize",
+            ]
+            .contains(&name.as_str())
     })
 }
 
@@ -735,7 +803,7 @@ pub fn is_direct_replacement_model_derive(decorator: &ast::Decorator) -> bool {
         && decorator.type_args.is_empty()
         && decorator.args.iter().all(|argument| {
             matches!(argument, ast::DecoratorArg::Positional(value) if matches!(&value.node,
-                ast::Expr::Ident(name) if matches!(name.as_str(), "Debug" | "Clone" | "Eq" | "PartialEq" | "Hash" | "Ord" | "PartialOrd" | "Default" | "Display")))
+                ast::Expr::Ident(name) if matches!(derives::from_str(name), Some(DeriveId::Debug | DeriveId::Clone | DeriveId::Eq | DeriveId::PartialEq | DeriveId::Hash | DeriveId::Ord | DeriveId::PartialOrd | DeriveId::Default | DeriveId::Display))))
         })
 }
 
@@ -941,21 +1009,22 @@ pub fn has_direct_native_enum_derives(value: &ast::EnumDecl, type_info: &TypeChe
         .get(&value.name)
         .is_some_and(|names| {
             names.iter().all(|name| {
-                (name == "Display" && value.value_type.is_none())
+                (derives::from_str(name) == Some(DeriveId::Display) && value.value_type.is_none())
                     || type_info.derivations.native_macro_paths.contains(name)
                     || matches!(
-                        name.as_str(),
-                        "Debug"
-                            | "Clone"
-                            | "Copy"
-                            | "PartialEq"
-                            | "Eq"
-                            | "PartialOrd"
-                            | "Ord"
-                            | "Hash"
-                            | "serde::Serialize"
-                            | "serde::Deserialize"
+                        derives::from_str(name),
+                        Some(
+                            DeriveId::Debug
+                                | DeriveId::Clone
+                                | DeriveId::Copy
+                                | DeriveId::PartialEq
+                                | DeriveId::Eq
+                                | DeriveId::PartialOrd
+                                | DeriveId::Ord
+                                | DeriveId::Hash
+                        )
                     )
+                    || matches!(name.as_str(), "serde::Serialize" | "serde::Deserialize")
             })
         })
 }
@@ -1255,6 +1324,22 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     // ---- Scopes and locals ----
 
+    /// Restore source-name bindings after a nested scope, in the order their previous values were saved.
+    ///
+    /// Pattern and closure locals remain in the local inventory; only their source-name visibility ends here.
+    fn restore_local_bindings(&mut self, saved: Vec<(String, Option<bir::LocalId>)>) {
+        for (name, previous) in saved {
+            match previous {
+                Some(local) => {
+                    self.bindings.insert(name, local);
+                }
+                None => {
+                    self.bindings.remove(&name);
+                }
+            }
+        }
+    }
+
     /// Allocate a fresh lexical scope with the given `parent`, recording it in `scopes` for later span lookup.
     fn new_scope(&mut self, parent: Option<bir::ScopeId>, span: HirSourceSpan) -> bir::ScopeId {
         let id = bir::ScopeId(self.next_scope);
@@ -1362,11 +1447,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// The checker settles such a side where the value flows: a generic call's argument takes the parameter type the
     /// call's other arguments or the enclosing function's `Result` side fix, a closure's result takes the closure's
     /// settled return type, and a list comprehension's element the comprehension's element type. It records the
-    /// settled type on the destination but keeps the open side on the constructor's own span, which the legacy
-    /// backend pins from the destination (`pin_settled_closure_result_constructor` and its siblings in
-    /// `loaves/compiler/incan_ir/src/lower/expr/helpers.rs`). Body IR builds the constructor with the settled type
-    /// instead, through [`Self::settled_types`]. An open destination, a value of another shape, and a part whose
-    /// shape differs from the destination's settle nothing.
+    /// settled type on the destination but keeps the open side on the constructor's own span. Body IR builds the
+    /// constructor with the settled type instead, through [`Self::settled_types`]. An open destination, a value of
+    /// another shape, and a part whose shape differs from the destination's settle nothing.
     fn settle_open_result_value(&mut self, value: &ast::Spanned<ast::Expr>, destination: &IncanType) {
         if self.leaves_type_open(destination) {
             return;

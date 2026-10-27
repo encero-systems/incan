@@ -27,16 +27,6 @@ fn parse_collection_program(path: &Path, source: &str, session: &CompilationSess
         .map_err(|e| format!("Parser error: {:?}", e))
 }
 
-/// Build a lightweight [`Program`] wrapper around a declaration slice so existing import-alias collection stays shared.
-fn program_for_decls(declarations: Vec<Spanned<Declaration>>) -> Program {
-    Program {
-        declarations,
-        source_path: None,
-        rust_module_path: None,
-        warnings: Vec::new(),
-    }
-}
-
 /// Return whether declarations use any decorator supplied by `std.testing`.
 fn declarations_use_testing_markers(
     declarations: &[Spanned<Declaration>],
@@ -100,22 +90,19 @@ pub fn discover_tests_and_fixtures_with_context(
         return Err("RFC 018 test files must not contain `module tests:`; put inline tests in production source files or use top-level test functions in test files".to_string());
     }
 
-    let declarations: Vec<Spanned<Declaration>> = if is_named_test_file || is_conftest_file {
-        ast.declarations.clone()
+    let declarations = if is_named_test_file || is_conftest_file {
+        ast.declarations.as_slice()
     } else if let Some(test_module) = test_module {
-        test_module.body.clone()
+        test_module.body.as_slice()
     } else {
-        Vec::new()
+        &[]
     };
 
     let mut import_aliases = incan_frontend::decorator_resolution::collect_import_aliases(&ast);
     if !is_named_test_file {
-        let inline_program = program_for_decls(declarations.clone());
-        import_aliases.extend(incan_frontend::decorator_resolution::collect_import_aliases(
-            &inline_program,
-        ));
+        import_aliases.extend(incan_frontend::decorator_resolution::collect_declaration_import_aliases(declarations));
     }
-    let semantics = if declarations_use_testing_markers(&declarations, &import_aliases) {
+    let semantics = if declarations_use_testing_markers(declarations, &import_aliases) {
         compilation_session
             .require_testing_marker_semantics()
             .map_err(|error| format!("Failed to load std.testing marker semantics: {}", error.message))?
@@ -125,31 +112,12 @@ pub fn discover_tests_and_fixtures_with_context(
 
     let mut tests = Vec::new();
     let mut fixtures = Vec::new();
-    let mut default_marks = inherited_marks.to_vec();
-    let mut known_markers = inherited_known_markers.to_vec();
+    let (mut default_marks, mut known_markers) =
+        collect_module_marks(declarations, inherited_marks, inherited_known_markers);
 
-    for decl in &declarations {
-        if let Declaration::Const(konst) = &decl.node {
-            if konst.name == "TEST_MARKS" {
-                default_marks.extend(extract_string_list(&konst.value.node));
-            } else if konst.name == "TEST_MARKERS" {
-                known_markers.extend(extract_string_list(&konst.value.node));
-            }
-        }
-    }
+    let fixture_names = collect_fixture_names(visible_fixture_names, declarations, &import_aliases, &semantics);
 
-    let mut fixture_names: Vec<String> = Vec::new();
-    fixture_names.extend(visible_fixture_names.iter().cloned());
-    fixture_names.extend(BUILTIN_FIXTURES.iter().map(|name| (*name).to_string()));
-    for decl in &declarations {
-        if let Declaration::Function(func) = &decl.node
-            && has_fixture_decorator(&func.decorators, &import_aliases, &semantics)
-        {
-            fixture_names.push(func.name.clone());
-        }
-    }
-
-    for decl in &declarations {
+    for decl in declarations {
         if let Declaration::Function(func) = &decl.node {
             if has_fixture_decorator(&func.decorators, &import_aliases, &semantics) {
                 let (scope, autouse) = extract_fixture_args(&func.decorators, &import_aliases, &semantics);
@@ -210,6 +178,48 @@ pub fn discover_tests_and_fixtures_with_context(
         default_marks,
         known_markers,
     })
+}
+
+/// Extend inherited marks and known markers from module constants in declaration order. Duplicates remain visible
+/// to test marker construction until the caller's existing final sort/dedup publication step.
+fn collect_module_marks(
+    declarations: &[Spanned<Declaration>],
+    inherited_marks: &[String],
+    inherited_known_markers: &[String],
+) -> (Vec<String>, Vec<String>) {
+    let mut marks = inherited_marks.to_vec();
+    let mut known = inherited_known_markers.to_vec();
+    for declaration in declarations {
+        if let Declaration::Const(konst) = &declaration.node {
+            if konst.name == "TEST_MARKS" {
+                marks.extend(extract_string_list(&konst.value.node));
+            } else if konst.name == "TEST_MARKERS" {
+                known.extend(extract_string_list(&konst.value.node));
+            }
+        }
+    }
+    (marks, known)
+}
+
+/// Collect inherited, builtin and source fixture names in their existing order before validating dependencies.
+/// Marker semantics and import aliases select source fixtures; this inventory introduces no new marker authority.
+fn collect_fixture_names(
+    visible: &[String],
+    declarations: &[Spanned<Declaration>],
+    aliases: &HashMap<String, Vec<String>>,
+    semantics: &TestingMarkerSemantics,
+) -> Vec<String> {
+    let mut names = Vec::new();
+    names.extend(visible.iter().cloned());
+    names.extend(BUILTIN_FIXTURES.iter().map(|name| (*name).to_string()));
+    for declaration in declarations {
+        if let Declaration::Function(function) = &declaration.node
+            && has_fixture_decorator(&function.decorators, aliases, semantics)
+        {
+            names.push(function.name.clone());
+        }
+    }
+    names
 }
 
 /// Reject fixture parameters that cannot be resolved as other fixtures.

@@ -3,6 +3,7 @@
 use super::primitives::*;
 use super::refusals::*;
 use super::*;
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::SymbolNamespace;
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
@@ -45,7 +46,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         while let IncanType::Ref(inner) | IncanType::RefMut(inner) = receiver {
             receiver = inner;
         }
-        let IncanType::Named(owner) = receiver else { return None };
+        let IncanType::Named(owner) = receiver else {
+            return None;
+        };
         let owner = parameter_types::retained_nominal_identity(owner, self.type_info)?;
         let declaration = self.local_nominal_declarations.get(&owner.render_compact())?;
         if !declaration.type_parameters.is_empty() || declaration.type_parameter_count != 0 {
@@ -355,14 +358,28 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     ) -> bir::Operand {
         self.retain_result_scalar_context(expr);
         let span = hir_span(expr.span);
-        if let Some(value) = self.type_info.c_abi.enum_value_for_access(expr.span) {
-            return bir::Operand::Constant(bir::Constant::Int(value));
-        }
-        if let Some(value) = self.lower_checked_rust_function_value(expr, scope, out) {
+        if let Some(value) = self.lower_checked_expression_value(expr, scope, span, out) {
             return value;
         }
+        self.lower_expression_form(expr, scope, span, out)
+    }
+
+    /// Lower compiler-retained scalar, Rust, coercion and operator facts before interpreting an ordinary AST form.
+    fn lower_checked_expression_value(
+        &mut self,
+        expr: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::Operand> {
+        if let Some(value) = self.type_info.c_abi.enum_value_for_access(expr.span) {
+            return Some(bir::Operand::Constant(bir::Constant::Int(value)));
+        }
+        if let Some(value) = self.lower_checked_rust_function_value(expr, scope, out) {
+            return Some(value);
+        }
         if let Some(path) = self.type_info.rust.checked_constants.get(&expr.span) {
-            return self.push_assign_temp(
+            return Some(self.push_assign_temp(
                 bir::Rvalue::Use(bir::Operand::Constant(bir::Constant::RustItem(
                     path.clone(),
                     self.resolve_ty(expr.span),
@@ -371,7 +388,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 scope,
                 span,
                 out,
-            );
+            ));
         }
         // Checking can convert this value into a newtype where it is used. A conversion that only wraps the value in a
         // retained plain newtype is that newtype's construction; one that validates or constrains it has no Body IR
@@ -379,66 +396,24 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let Some(coercion) = self.type_info.validated_newtype_coercion(expr.span)
             && !self.coercions_in_progress.contains(&expr.span)
         {
-            return self.lower_newtype_coercion(expr, coercion, scope, out);
+            return Some(self.lower_newtype_coercion(expr, coercion, scope, out));
         }
-        if let Some(lowered) = self.lower_operator_hook_expr(expr, scope, out) {
-            return lowered;
-        }
+        self.lower_operator_hook_expr(expr, scope, out)
+    }
+
+    /// Dispatch ordinary expression forms after higher-priority retained facts have declined the value.
+    fn lower_expression_form(
+        &mut self,
+        expr: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
         match &expr.node {
-            ast::Expr::Ident(name) => {
-                let ty = self.resolve_ty(expr.span);
-                if !self.bindings.contains_key(name)
-                    && let IncanType::TypeToken(represented) = &ty
-                    && matches!(
-                        **represented,
-                        IncanType::Primitive(
-                            IncanPrimitiveType::Int
-                                | IncanPrimitiveType::Float
-                                | IncanPrimitiveType::Bool
-                                | IncanPrimitiveType::Str
-                        )
-                    )
-                {
-                    return bir::Operand::Constant(bir::Constant::TypeToken(*represented.clone()));
-                }
-                // A function named as a value (`apply(square, 7)`) is a partial with no presets: a capture-free closure
-                // that forwards every argument to it, as a local partial is lowered.
-                if !self.bindings.contains_key(name)
-                    && self
-                        .type_info
-                        .resolved_identity(expr.span)
-                        .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Function)
-                {
-                    let partial = ast::PartialExpr {
-                        target: Box::new(expr.clone()),
-                        type_args: Vec::new(),
-                        args: Vec::new(),
-                    };
-                    let value = self.lower_partial(&partial, expr.span, scope, out);
-                    self.retain_function_item(out);
-                    return value;
-                }
-                let Some(place) = self.place_for_name(name, expr.span, &ty) else {
-                    return self.unsupported_operand(
-                        format!("resolved reference `{name}` has no Body IR value representation"),
-                        scope,
-                        span,
-                        out,
-                    );
-                };
-                if let Some(constant) = self.checked_constant(&place, &ty) {
-                    return self.checked_constant_operand(constant, ty, scope, span, out);
-                }
-                if let Some(value) = self.model_constant_operand(&place, scope, span, out) {
-                    return value;
-                }
-                self.source_place_operand(place, &ty)
-            }
+            ast::Expr::Ident(name) => self.lower_identifier_value(expr, name, scope, span, out),
             ast::Expr::SelfExpr => {
-                // Resolved exactly like `Ident("self")` — see `BodyBuilder::declare_receiver_local`, which binds
-                // the receiver under the name "self" so this shares `place_for_name`'s canonical lookup path. A
-                // top-level function body can never actually contain `SelfExpr` (the parser only accepts it inside
-                // a method), so this arm's unproven-reference fallback to an `External` local is purely defensive.
+                // Receiver locals share identifier lookup and ownership; a missing checked local stays an explicit
+                // refusal.
                 let ty = self.resolve_ty(expr.span);
                 let Some(place) = self.place_for_name("self", expr.span, &ty) else {
                     return self.unsupported_operand(
@@ -452,86 +427,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
             ast::Expr::Literal(lit) => bir::Operand::Constant(lower_checked_literal(lit, &self.resolve_ty(expr.span))),
             ast::Expr::Paren(inner) => self.lower_expr_to_operand(inner, scope, out),
-            ast::Expr::Field(base, name) => {
-                if self
-                    .type_info
-                    .expressions
-                    .body_ir_callable_name_reads
-                    .contains(&expr.span)
-                {
-                    let value = self.lower_expr_to_operand(base, scope, out);
-                    return self.push_call_temp(
-                        bir::Callee::Helper(bir::HelperOp::CallableName),
-                        vec![bir::ArgumentElement::One(value)],
-                        self.resolve_ty(expr.span),
-                        scope,
-                        span,
-                        false,
-                        out,
-                    );
-                }
-                if self
-                    .type_info
-                    .resolved_identity(base.span)
-                    .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Module)
-                    && self
-                        .type_info
-                        .resolved_identity(expr.span)
-                        .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Function)
-                {
-                    let partial = ast::PartialExpr {
-                        target: Box::new(expr.clone()),
-                        type_args: Vec::new(),
-                        args: Vec::new(),
-                    };
-                    let value = self.lower_partial(&partial, expr.span, scope, out);
-                    self.retain_function_item(out);
-                    return value;
-                }
-                if let Some(value) = self.lower_property_read(base, expr.span, scope, out) {
-                    return value;
-                }
-                if let Some(target) = self.local_fieldless_enum_variant_target(base, name, expr.span) {
-                    return self.push_assign_temp(
-                        bir::Rvalue::FieldlessEnumVariant(target),
-                        self.resolve_ty(expr.span),
-                        scope,
-                        span,
-                        out,
-                    );
-                }
-                if let Some(target) = self.local_value_enum_variant_target(base, expr.span) {
-                    return self.push_assign_temp(
-                        bir::Rvalue::ValueEnumVariant(target),
-                        self.resolve_ty(expr.span),
-                        scope,
-                        span,
-                        out,
-                    );
-                }
-                if let Some(target) = self.checked_enum_variant_target(base, name, expr.span) {
-                    return self.push_assign_temp(
-                        bir::Rvalue::Aggregate(bir::AggregateKind::EnumVariant(Box::new(target)), Vec::new()),
-                        self.resolve_ty(expr.span),
-                        scope,
-                        span,
-                        out,
-                    );
-                }
-                if let Some(place) = self.module_member_place(base, expr.span) {
-                    let ty = self.resolve_ty(expr.span);
-                    if let Some(constant) = self.checked_constant(&place, &ty) {
-                        return self.checked_constant_operand(constant, ty, scope, span, out);
-                    }
-                    return self.source_place_operand(place, &ty);
-                }
-                let mut place = self.lower_checked_field_base(base, expr.span, scope, out);
-                place
-                    .projection
-                    .extend(self.lower_checked_field_projections(base, name, expr.span));
-                let ty = self.resolve_ty(expr.span);
-                self.source_place_operand(place, &ty)
-            }
+            ast::Expr::Field(base, name) => self.lower_field_value(expr, base, name, scope, span, out),
             ast::Expr::Index(base, index) => {
                 let index_operand = self.lower_checked_index_operand(base, index, scope, out);
                 let mut place = self.lower_expr_to_place(base, scope, out);
@@ -591,6 +487,156 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
     }
 
+    /// Lower a checked identifier value through type tokens, function items, constants and canonical place ownership.
+    fn lower_identifier_value(
+        &mut self,
+        expr: &ast::Spanned<ast::Expr>,
+        name: &str,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let ty = self.resolve_ty(expr.span);
+        if !self.bindings.contains_key(name)
+            && let IncanType::TypeToken(represented) = &ty
+            && matches!(
+                **represented,
+                IncanType::Primitive(
+                    IncanPrimitiveType::Int
+                        | IncanPrimitiveType::Float
+                        | IncanPrimitiveType::Bool
+                        | IncanPrimitiveType::Str
+                )
+            )
+        {
+            return bir::Operand::Constant(bir::Constant::TypeToken(*represented.clone()));
+        }
+        // A function item is a partial with no presets, forwarding the declaration's arguments without captures.
+        if !self.bindings.contains_key(name)
+            && self
+                .type_info
+                .resolved_identity(expr.span)
+                .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Function)
+        {
+            return self.lower_function_item_value(expr, scope, out);
+        }
+        let Some(place) = self.place_for_name(name, expr.span, &ty) else {
+            return self.unsupported_operand(
+                format!("resolved reference `{name}` has no Body IR value representation"),
+                scope,
+                span,
+                out,
+            );
+        };
+        if let Some(constant) = self.checked_constant(&place, &ty) {
+            return self.checked_constant_operand(constant, ty, scope, span, out);
+        }
+        if let Some(value) = self.model_constant_operand(&place, scope, span, out) {
+            return value;
+        }
+        self.source_place_operand(place, &ty)
+    }
+
+    /// Lower a field's checked callable, property, enum, module or projected value before retaining ownership facts.
+    fn lower_field_value(
+        &mut self,
+        expr: &ast::Spanned<ast::Expr>,
+        base: &ast::Spanned<ast::Expr>,
+        name: &str,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        if self
+            .type_info
+            .expressions
+            .body_ir_callable_name_reads
+            .contains(&expr.span)
+        {
+            let value = self.lower_expr_to_operand(base, scope, out);
+            return self.push_call_temp(
+                bir::Callee::Helper(bir::HelperOp::CallableName),
+                vec![bir::ArgumentElement::One(value)],
+                self.resolve_ty(expr.span),
+                scope,
+                span,
+                false,
+                out,
+            );
+        }
+        if self
+            .type_info
+            .resolved_identity(base.span)
+            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Module)
+            && self
+                .type_info
+                .resolved_identity(expr.span)
+                .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Function)
+        {
+            return self.lower_function_item_value(expr, scope, out);
+        }
+        if let Some(value) = self.lower_property_read(base, expr.span, scope, out) {
+            return value;
+        }
+        if let Some(target) = self.local_fieldless_enum_variant_target(base, name, expr.span) {
+            return self.push_assign_temp(
+                bir::Rvalue::FieldlessEnumVariant(target),
+                self.resolve_ty(expr.span),
+                scope,
+                span,
+                out,
+            );
+        }
+        if let Some(target) = self.local_value_enum_variant_target(base, expr.span) {
+            return self.push_assign_temp(
+                bir::Rvalue::ValueEnumVariant(target),
+                self.resolve_ty(expr.span),
+                scope,
+                span,
+                out,
+            );
+        }
+        if let Some(target) = self.checked_enum_variant_target(base, name, expr.span) {
+            return self.push_assign_temp(
+                bir::Rvalue::Aggregate(bir::AggregateKind::EnumVariant(Box::new(target)), Vec::new()),
+                self.resolve_ty(expr.span),
+                scope,
+                span,
+                out,
+            );
+        }
+        if let Some(place) = self.module_member_place(base, expr.span) {
+            let ty = self.resolve_ty(expr.span);
+            if let Some(constant) = self.checked_constant(&place, &ty) {
+                return self.checked_constant_operand(constant, ty, scope, span, out);
+            }
+            return self.source_place_operand(place, &ty);
+        }
+        let mut place = self.lower_checked_field_base(base, expr.span, scope, out);
+        place
+            .projection
+            .extend(self.lower_checked_field_projections(base, name, expr.span));
+        let ty = self.resolve_ty(expr.span);
+        self.source_place_operand(place, &ty)
+    }
+
+    /// Materialize an already selected function item as a capture-free partial and retain its callable storage.
+    fn lower_function_item_value(
+        &mut self,
+        expr: &ast::Spanned<ast::Expr>,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let partial = ast::PartialExpr {
+            target: Box::new(expr.clone()),
+            type_args: Vec::new(),
+            args: Vec::new(),
+        };
+        let value = self.lower_partial(&partial, expr.span, scope, out);
+        self.retain_function_item(out);
+        value
+    }
+
     /// Lower an expression that is being used as a place base (the target of `.field`/`[index]` projection or a
     /// bare name), synthesizing a temporary to hold the value when the expression is not itself place-shaped.
     pub(super) fn lower_expr_to_place(
@@ -624,7 +670,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
         if (ty == IncanType::Primitive(IncanPrimitiveType::FrozenStr)
             || ty == IncanType::Primitive(IncanPrimitiveType::FrozenBytes)
-            || matches!(&ty, IncanType::Generic { base, .. } if matches!(base.as_str(), "FrozenList" | "FrozenSet" | "FrozenDict")))
+            || matches!(&ty, IncanType::Generic { base, .. } if [
+                CollectionTypeId::FrozenList, CollectionTypeId::FrozenSet, CollectionTypeId::FrozenDict
+            ].iter().any(|id| base == collections::as_str(*id))))
             && matches!(expr.node, ast::Expr::Ident(_) | ast::Expr::Field(..))
         {
             // Const receivers need their retained value, just like argument reads; a global const has no mutable cell.

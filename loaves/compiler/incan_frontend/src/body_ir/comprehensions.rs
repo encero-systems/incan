@@ -6,16 +6,16 @@ use super::free_vars::*;
 use super::primitives::collection_member_types;
 use super::reads::*;
 use super::*;
+use crate::typechecker::ProtocolIterationInfo;
 
 impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower a scalar-literal range comprehension through its retained exact cardinality when available. Other
     /// list comprehensions build an empty list and push each accepted element through the desugared clause loop.
     /// Only v0's single mirrored `(pattern, iter, filter)` clause is lowered -- `comp.clauses` is intentionally
-    /// not consulted, since neither the typechecker (`check_list_comp` in
-    /// `loaves/compiler/incan_frontend/src/typechecker/check_expr/comps.rs`) nor the existing Rust-emission backend
-    /// (`loaves/compiler/incan_ir/src/lower/expr/comprehensions.rs`) reads it either; a list comprehension with more
-    /// than one `for` clause is not actually type-checked or emitted as multi-clause today; treating `comp.clauses`
-    /// as authoritative here would silently lower a shape nothing else in the pipeline validates.
+    /// not consulted, since the typechecker (`check_list_comp` in
+    /// `loaves/compiler/incan_frontend/src/typechecker/check_expr/comps.rs`) does not read it; a list comprehension
+    /// with more than one `for` clause is not actually type-checked or emitted as multi-clause today; treating
+    /// `comp.clauses` as authoritative here would silently lower a shape nothing else in the pipeline validates.
     pub(super) fn lower_list_comp(
         &mut self,
         comp: &ast::ListComp,
@@ -143,9 +143,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// generator-local bindings. Clause polling, later `for` sources, filters, and element evaluation lower only
     /// into the generator body, so the enclosing body neither materializes the sequence nor runs a deferred effect.
     ///
-    /// Body IR currently accepts only plain binding patterns for generator clauses. It rejects a whole generator
-    /// expression before evaluating its source when another pattern shape would require a partially represented
-    /// deferred binding protocol; that keeps unsupported forms visible rather than approximating them as a list.
+    /// Generator clause patterns use the same checked item-binding and projection helpers as statement loops.
+    /// The generator's lexical bindings and deferred range-layout facts do not escape into the enclosing body.
     pub(super) fn lower_generator_expr(
         &mut self,
         generator: &ast::GeneratorExpr,
@@ -203,6 +202,51 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // Only the first source is evaluated at construction. The rest is deferred until polling, so range-layout
         // facts it creates belong to the generator frame rather than the enclosing straight-line body.
         let saved_materialized_range_locals = self.materialized_range_locals.clone();
+        let (captured_operands, capture_locals) =
+            self.lower_generator_captures(generator, generator_scope, hir_span_value);
+        let generator_stmts = self.lower_generator_body(
+            generator,
+            first_pattern,
+            remaining_clauses,
+            first_protocol.as_ref(),
+            effective_first_iter.span,
+            source_local,
+            generator_scope,
+            hir_span_value,
+        );
+        self.bindings = enclosing_bindings;
+        self.identity_bindings = enclosing_identity_bindings;
+        self.materialized_range_locals = saved_materialized_range_locals;
+
+        // `Generator::new` owns a boxed iterator in the legacy runtime, even when every captured source value is
+        // Copy-shaped. Record that allocation fact directly rather than relying on incidental temporary locals.
+        self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
+        let ty = self.resolve_ty(span);
+        self.push_assign_temp(
+            bir::Rvalue::Generator {
+                source,
+                captured_operands,
+                body: Box::new(bir::GeneratorBody {
+                    source_local,
+                    capture_locals,
+                    stmts: generator_stmts,
+                }),
+            },
+            ty,
+            scope,
+            hir_span_value,
+            out,
+        )
+    }
+
+    /// Capture each enclosing local used after the eager source once, retaining its checked ownership fact and
+    /// identity. Names without frame locals remain available for deferred canonical global resolution.
+    fn lower_generator_captures(
+        &mut self,
+        generator: &ast::GeneratorExpr,
+        generator_scope: bir::ScopeId,
+        span: HirSourceSpan,
+    ) -> (Vec<bir::Operand>, Vec<bir::LocalId>) {
         let free_names = free_vars_in_generator_deferred_body(generator);
         let mut captured_operands = Vec::with_capacity(free_names.len());
         let mut capture_locals = Vec::with_capacity(free_names.len());
@@ -220,7 +264,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
             let total_reads = count_reads_in_generator_deferred_body(name, generator);
             let capture_local =
-                self.declare_new_local_with_reads(name.clone(), outer_ty, generator_scope, hir_span_value, total_reads);
+                self.declare_new_local_with_reads(name.clone(), outer_ty, generator_scope, span, total_reads);
             self.locals[capture_local.index()].origin = bir::LocalOrigin::Captured;
             if let Some(identity) = self.locals[outer_local.index()].identity.clone() {
                 self.locals[capture_local.index()].identity = Some(identity.clone());
@@ -228,7 +272,22 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             }
             capture_locals.push(capture_local);
         }
+        (captured_operands, capture_locals)
+    }
 
+    /// Build only deferred polling statements, binding the first item before lowering the remaining clauses.
+    /// Iterator construction stays inside the generator body; its source operand has already been captured.
+    fn lower_generator_body(
+        &mut self,
+        generator: &ast::GeneratorExpr,
+        first_pattern: &ast::Spanned<ast::Pattern>,
+        remaining_clauses: &[ast::ComprehensionClause],
+        first_protocol: Option<&ProtocolIterationInfo>,
+        source_span: ast::Span,
+        source_local: bir::LocalId,
+        generator_scope: bir::ScopeId,
+        hir_span_value: HirSourceSpan,
+    ) -> Vec<bir::Statement> {
         let first_loop_scope = self.new_scope(Some(generator_scope), hir_span_value);
         // The first clause binds through the same helpers a statement `for` uses, so a destructuring generator
         // clause produces the same facts as the equivalent loop (#1161). The item type comes from the pattern's own
@@ -246,37 +305,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         );
 
         let mut generator_stmts = Vec::new();
-        let iterator_ty = match &first_protocol {
-            Some(protocol) => semantic_type_from_resolved(&protocol.iterator_type),
-            None => self.resolve_ty(effective_first_iter.span),
-        };
-        let iterator_local = self.new_temp(iterator_ty, generator_scope, hir_span_value);
-        match &first_protocol {
-            Some(protocol) => generator_stmts.push(bir::Statement {
-                kind: bir::StatementKind::Call {
-                    destination: Some(bir::Place::from_local(iterator_local)),
-                    callee: bir::Callee::Method(bir::MethodTarget::synthesized(protocol.iter_method.clone())),
-                    args: fixed_elements(vec![bir::Operand::place(
-                        bir::Place::from_local(source_local),
-                        bir::OwnershipFact::Borrow,
-                        false,
-                    )]),
-                    may_panic: false,
-                },
-                span: hir_span_value,
-            }),
-            None => generator_stmts.push(bir::Statement {
-                kind: bir::StatementKind::Assign {
-                    place: bir::Place::from_local(iterator_local),
-                    rvalue: bir::Rvalue::Use(bir::Operand::place(
-                        bir::Place::from_local(source_local),
-                        bir::OwnershipFact::Borrow,
-                        false,
-                    )),
-                },
-                span: hir_span_value,
-            }),
-        }
+        let iterator_local = self.lower_generator_iterator(
+            first_protocol,
+            source_span,
+            source_local,
+            generator_scope,
+            hir_span_value,
+            &mut generator_stmts,
+        );
 
         self.loop_break_targets.push(None);
         self.loop_scopes.push(first_loop_scope);
@@ -289,10 +325,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     bir::OwnershipFact::MutBorrow,
                     false,
                 ),
-                protocol: match &first_protocol {
+                protocol: match first_protocol {
                     Some(protocol) => bir::IterProtocol::UserDefined {
                         next_method: protocol.next_method.clone(),
-                        fallible: first_is_fallible,
+                        fallible: protocol.fallible_error_type.is_some(),
                     },
                     None => bir::IterProtocol::Builtin,
                 },
@@ -335,29 +371,52 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             },
             span: hir_span_value,
         });
-        self.bindings = enclosing_bindings;
-        self.identity_bindings = enclosing_identity_bindings;
-        self.materialized_range_locals = saved_materialized_range_locals;
+        generator_stmts
+    }
 
-        // `Generator::new` owns a boxed iterator in the legacy runtime, even when every captured source value is
-        // Copy-shaped. Record that allocation fact directly rather than relying on incidental temporary locals.
-        self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
-        let ty = self.resolve_ty(span);
-        self.push_assign_temp(
-            bir::Rvalue::Generator {
-                source,
-                captured_operands,
-                body: Box::new(bir::GeneratorBody {
-                    source_local,
-                    capture_locals,
-                    stmts: generator_stmts,
-                }),
-            },
-            ty,
-            scope,
-            hir_span_value,
-            out,
-        )
+    /// Initialize the generator-local iterator through the checked protocol or builtin source borrow. This emits
+    /// into the deferred statement list and must not evaluate the source again at construction.
+    fn lower_generator_iterator(
+        &mut self,
+        protocol: Option<&ProtocolIterationInfo>,
+        source_span: ast::Span,
+        source_local: bir::LocalId,
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::LocalId {
+        let iterator_ty = match protocol {
+            Some(protocol) => semantic_type_from_resolved(&protocol.iterator_type),
+            None => self.resolve_ty(source_span),
+        };
+        let iterator_local = self.new_temp(iterator_ty, scope, span);
+        match protocol {
+            Some(protocol) => out.push(bir::Statement {
+                kind: bir::StatementKind::Call {
+                    destination: Some(bir::Place::from_local(iterator_local)),
+                    callee: bir::Callee::Method(bir::MethodTarget::synthesized(protocol.iter_method.clone())),
+                    args: fixed_elements(vec![bir::Operand::place(
+                        bir::Place::from_local(source_local),
+                        bir::OwnershipFact::Borrow,
+                        false,
+                    )]),
+                    may_panic: false,
+                },
+                span,
+            }),
+            None => out.push(bir::Statement {
+                kind: bir::StatementKind::Assign {
+                    place: bir::Place::from_local(iterator_local),
+                    rvalue: bir::Rvalue::Use(bir::Operand::place(
+                        bir::Place::from_local(source_local),
+                        bir::OwnershipFact::Borrow,
+                        false,
+                    )),
+                },
+                span,
+            }),
+        }
+        iterator_local
     }
 
     /// Lower a comprehension/generator clause chain with bindings that are lexical to that expression. The clause

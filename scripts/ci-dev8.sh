@@ -186,5 +186,6 @@ if $install_only; then
 fi
 build_runner
 run_oven_tests
+logged_step rust-facet-tests 'Rust facet unit tests' "$ROOT/scripts/test-rust-facets.sh" "$oven" "$run/rust-tests"
 verify_lsp
 run_contracts

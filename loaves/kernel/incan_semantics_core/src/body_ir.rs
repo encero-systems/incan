@@ -2,7 +2,7 @@
 //!
 //! Body IR v0 is the backend-facing, target-agnostic representation of one function/method body. It sits between
 //! typechecked source (AST + [`crate::SemanticFactStore`] / declaration-level [`crate::HirModule`]) and the
-//! target-specific backend lowering in `loaves/compiler/incan_ir` — it must be consumable by a replacement backend
+//! target-specific native lowering in `loaves/compiler/incan_mir_lowering` — it must be consumable by a backend
 //! without that backend needing to read generated-Rust semantics or private compiler internals.
 //!
 //! Body IR v0 deliberately models a **normalized** statement/control-flow vocabulary rather than a flattened
@@ -3191,8 +3191,7 @@ impl PatternBinding {
 
 /// One part of an [`Rvalue::Format`] f-string, either a literal text chunk carried through verbatim or an
 /// already-lowered embedded expression plus the formatting style its source `{expr}`/`{expr!r}` syntax requested.
-/// Mirrors the existing Rust-emission backend's `FormatPart` (`loaves/compiler/incan_ir/src/expr.rs`), except the
-/// expression side carries an [`Operand`] rather than a full expression tree -- Body IR always lowers embedded
+/// The expression side carries an [`Operand`] rather than a full expression tree: Body IR always lowers embedded
 /// expressions through the same [`Operand`]-producing path as any other read, so ownership facts and last-use tracking
 /// apply to f-string interpolations exactly like any other expression use.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -3222,10 +3221,9 @@ impl FormatPart {
     }
 }
 
-/// Formatting style requested by one f-string interpolation (`{expr}` vs. `{expr!r}`). Mirrors the existing
-/// Rust-emission backend's `FormatStyle` (`loaves/compiler/incan_ir/src/expr.rs`); unlike that backend's version, this
-/// one carries no `emits_rust_debug`-style target-representation logic, since Body IR v0 stays target-agnostic and
-/// leaves the decision of how a given style maps to a concrete formatting call to the consuming backend.
+/// Formatting style requested by one f-string interpolation (`{expr}` vs. `{expr!r}`). This model carries no
+/// target-representation logic, since Body IR v0 stays target-agnostic and leaves the decision of how a given style
+/// maps to a concrete formatting call to the consuming backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FormatStyle {
     /// User-facing display formatting (`{value}`).
@@ -4384,12 +4382,9 @@ impl std::fmt::Display for CallableTarget {
 /// a machine instruction. Represented here as an explicit Body IR operation rather than inferred later from
 /// generated Rust call shapes.
 ///
-/// Most of these mirror a helper the existing Rust-emission backend already generates for string and list operators
-/// (see `loaves/compiler/incan_emit/src/conversions.rs::determine_binop_plan`). The membership helpers do not: that
-/// backend reaches containment through a `contains` method call rather than a binary-operator plan, so every
-/// `*_contains` name here states a runtime requirement Body IR needs and the runtime must satisfy, not a call shape
-/// read back out of emitted Rust. Each variant's [`Self::as_str`] name *is* that requirement's name; it is not a
-/// promise that a Rust function of exactly that signature already exists.
+/// Every membership operation states a runtime requirement Body IR needs and the runtime must satisfy. Each variant's
+/// [`Self::as_str`] name is that requirement's name; it is not a promise that a Rust function of exactly that signature
+/// already exists.
 ///
 /// Membership and concatenation are named per operand type rather than shared across collections. One `Contains`
 /// helper would oblige a consumer to re-derive string-versus-list-versus-set-versus-dict from operand types, which
@@ -4690,20 +4685,7 @@ fn render_statement(out: &mut String, stmt: &Statement, indent: &str, depth: usi
             callee,
             args,
             may_panic,
-        } => {
-            let dest = destination
-                .as_ref()
-                .map(|p| format!("{} = ", p.render_snapshot()))
-                .unwrap_or_default();
-            let args_str: Vec<String> = args.iter().map(ArgumentElement::render_snapshot).collect();
-            let panic_marker = if *may_panic { " may_panic" } else { "" };
-            let _ = writeln!(
-                out,
-                "{indent}{dest}call {}({}){panic_marker}",
-                callee.render_snapshot(),
-                args_str.join(", ")
-            );
-        }
+        } => render_call(out, destination.as_ref(), callee, args, *may_panic, indent),
         StatementKind::Await { destination, awaited } => {
             let dest = destination
                 .as_ref()
@@ -4712,16 +4694,7 @@ fn render_statement(out: &mut String, stmt: &Statement, indent: &str, depth: usi
             let _ = writeln!(out, "{indent}{dest}await {}", awaited.render_snapshot());
         }
         StatementKind::Race { destination, arms } => {
-            let dest = destination
-                .as_ref()
-                .map(|place| format!("{} = ", place.render_snapshot()))
-                .unwrap_or_default();
-            let _ = writeln!(out, "{indent}{dest}race:");
-            for arm in arms {
-                let _ = writeln!(out, "{indent}  {}", arm.render_header());
-                render_block(out, &arm.body, depth + 2);
-                let _ = writeln!(out, "{indent}  -> {}", arm.result.render_snapshot());
-            }
+            render_race(out, destination.as_ref(), arms, indent, depth);
         }
         StatementKind::Drop { local } => {
             let _ = writeln!(out, "{indent}drop _{}", local.0);
@@ -4803,16 +4776,48 @@ fn render_statement(out: &mut String, stmt: &Statement, indent: &str, depth: usi
     }
 }
 
-/// How [`StatementKind::IterNext`] should poll one iteration, mirroring the two paths the existing Rust-emission
-/// backend already branches on for general-iterable `for` (`loaves/compiler/incan_ir/src/lower/stmt.rs`'s
-/// `ast::Statement::For` arm, keyed by `TypeCheckInfo::protocol_iteration`): a builtin collection needs no named method
-/// dispatch at all, while a user-defined iterable resolves concrete `__iter__`/`__next__`-shaped method names through
-/// the typechecker's iteration-protocol resolution.
+/// Render a call's optional destination, ordered arguments and retained panic marker.
+fn render_call(
+    out: &mut String,
+    destination: Option<&Place>,
+    callee: &Callee,
+    args: &[ArgumentElement],
+    may_panic: bool,
+    indent: &str,
+) {
+    let dest = destination
+        .map(|place| format!("{} = ", place.render_snapshot()))
+        .unwrap_or_default();
+    let args_str: Vec<String> = args.iter().map(ArgumentElement::render_snapshot).collect();
+    let panic_marker = if may_panic { " may_panic" } else { "" };
+    let _ = writeln!(
+        out,
+        "{indent}{dest}call {}({}){panic_marker}",
+        callee.render_snapshot(),
+        args_str.join(", ")
+    );
+}
+
+/// Render race arms at their existing nested depth, including each arm's result after its body.
+fn render_race(out: &mut String, destination: Option<&Place>, arms: &[RaceArm], indent: &str, depth: usize) {
+    let dest = destination
+        .map(|place| format!("{} = ", place.render_snapshot()))
+        .unwrap_or_default();
+    let _ = writeln!(out, "{indent}{dest}race:");
+    for arm in arms {
+        let _ = writeln!(out, "{indent}  {}", arm.render_header());
+        render_block(out, &arm.body, depth + 2);
+        let _ = writeln!(out, "{indent}  -> {}", arm.result.render_snapshot());
+    }
+}
+
+/// How [`StatementKind::IterNext`] should poll one iteration, as selected by checked protocol facts: a builtin
+/// collection needs no named method dispatch at all, while a user-defined iterable resolves concrete
+/// `__iter__`/`__next__`-shaped method names through the typechecker's iteration-protocol resolution.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IterProtocol {
     /// Iterate a builtin collection (`List`/`Dict`/`String`) or a range with no explicit method dispatch. How to
-    /// concretely advance such an iterator is left to the consuming backend, matching how a plain `for` doesn't
-    /// manually unroll `IntoIterator` at the existing Rust-emission backend's own IR level either.
+    /// concretely advance such an iterator is left to the consuming backend.
     Builtin,
     /// Iterate through a resolved user-defined iterator-protocol dispatch (`__iter__`/`__next__`-shaped magic
     /// methods).
@@ -4962,15 +4967,10 @@ pub enum StatementKind {
     ///
     /// Only the statement-position form with a value is modeled -- see the module docs and
     /// [`Body::is_generator`]. A bare `yield` (no value) and expression-position `yield` (the two-way send/receive
-    /// protocol, e.g. `x = yield val`) are out of scope for v0: both are stubs even in the existing Rust-emission
-    /// backend today (`ast::Expr::Yield(_) => (IrExprKind::Unit, IrType::Unknown)` in
-    /// `loaves/compiler/incan_ir/src/lower/expr/mod.rs`), so there is no real, delivered behavior for this variant to
-    /// preserve. A generator function's body needs no separate top-level state-machine node: it lowers through this
-    /// same statement vocabulary, while the target runtime owns the concrete suspension mechanism. The existing
-    /// generated-Rust path uses `incan_std_core::iter::Generator`'s channel-backed spawn bridge for `yield`-based
-    /// functions; generator expressions instead carry their own deferred [`Rvalue::Generator`] body and use the
-    /// iterator-adapter runtime path. Neither representation asks a consumer to infer a suspension point from a
-    /// target-language closure shape.
+    /// protocol, e.g. `x = yield val`) are out of scope for v0. A generator function's body needs no separate top-level
+    /// state-machine node: it lowers through this same statement vocabulary, while the target runtime owns the concrete
+    /// suspension mechanism. Generator expressions instead carry their own deferred [`Rvalue::Generator`] body. Neither
+    /// representation asks a consumer to infer a suspension point from a target-language closure shape.
     Yield { value: Operand },
     /// One RFC 018 assertion in any of its three source forms, with the optional failure message and panic marker
     /// every form shares.

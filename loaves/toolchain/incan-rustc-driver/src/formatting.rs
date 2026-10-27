@@ -1,6 +1,8 @@
 //! Native formatting primitives for exact plan carriers; rustc checks their ordinary Debug or Display obligation.
 
-use crate::ast_build::{binding, expression, global_path, ident, path_ty, trait_bound};
+use crate::ast_build::{
+    RUST_FMT_DEBUG_SYMBOL, RUST_FMT_DISPLAY_SYMBOL, binding, expression, global_path, ident, path_ty, trait_bound,
+};
 use crate::plan::{CalleeKind, Plan, TerminatorKind};
 use rustc_ast as ast;
 use rustc_ast::token::{Delimiter, IdentIsRaw, Lit, LitKind, Token, TokenKind};
@@ -129,7 +131,18 @@ fn generics(debug: bool, span: Span) -> ast::Generics {
             ident: ident("T", span),
             attrs: ThinVec::new(),
             bounds: vec![trait_bound(
-                global_path(&["std", "fmt", if debug { "Debug" } else { "Display" }], span),
+                global_path(
+                    &[
+                        "std",
+                        "fmt",
+                        if debug {
+                            RUST_FMT_DEBUG_SYMBOL
+                        } else {
+                            RUST_FMT_DISPLAY_SYMBOL
+                        }
+                    ],
+                    span
+                ),
                 span,
             )],
             is_placeholder: false,

@@ -5,7 +5,7 @@ use super::primitives::{collection_member_types, result_error_type};
 use super::{BodyBuilder, HirSourceSpan, IncanType, SemanticSourceTargetKind, ast, bir};
 use crate::symbols::canonical_builtin_constructor_identity;
 use crate::typechecker::BodyIrProtocolCallInfo;
-use incan_lang::lang::surface::constructors::ConstructorId;
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_lang::lang::types::collections::CollectionTypeId;
 
 impl BodyBuilder<'_, '_> {
@@ -241,7 +241,7 @@ impl BodyBuilder<'_, '_> {
         let some = bir::Pattern::Enum {
             canonical: Some(canonical_builtin_constructor_identity(ConstructorId::Some)),
             name: "Option".into(),
-            variant: "Some".into(),
+            variant: constructors::as_str(ConstructorId::Some).into(),
             fields: vec![bir::Pattern::Var(bir::PatternBinding {
                 local: payload,
                 fact: bir::OwnershipFact::Move,

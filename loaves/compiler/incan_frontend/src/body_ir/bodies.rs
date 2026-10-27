@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::symbols::ResolvedType;
+use crate::typechecker::FunctionBindingInfo;
 use incan_lang::lang::decorators::{self, DecoratorId};
 
 /// Retain a nominal owner's methods and concrete property getters under their independent checked identities.
@@ -305,91 +306,24 @@ pub(super) fn lower_function_body(
         .method_decorator_receiver_slots
         .get(&decl_span)
         .is_some_and(|slot| !slot.mutable);
-    let owner_return_type = binding
-        .map(|binding| {
-            parameter_types::checked_context_type(
-                &binding.return_type,
-                lowering_facts.type_info,
-                &type_parameters,
-                lowering_facts.runtime_type_conflicts,
-            )
-        })
-        .map(|ty| {
-            if shared_method_chain {
-                decorated_bindings::planned_type(ty, lowering_facts.type_info)
-            } else {
-                ty
-            }
-        })
-        .unwrap_or(IncanType::Unknown);
+    let owner_return_type = function_return_type(binding, &type_parameters, shared_method_chain, lowering_facts);
 
     let mut builder = BodyBuilder::new(lowering_facts, owner_return_type.clone());
     builder.shared_method_chain = shared_method_chain;
     builder.type_parameters = type_parameters;
     let root_scope = builder.new_scope(None, hir_span(decl_span));
 
-    let mut param_locals = Vec::with_capacity(function.params.len());
-    for (index, param) in function.params.iter().enumerate() {
-        let mut ty = binding
-            .and_then(|b| b.params.get(index))
-            .map(|p| builder.checked_type(&p.ty))
-            .unwrap_or(IncanType::Unknown);
-        let shared_replacement = lowering_facts
-            .type_info
-            .declarations
-            .method_decorator_receiver_slots
-            .get(&decl_span)
-            .is_some_and(|slot| {
-                !slot.mutable && slot.role == crate::typechecker::MethodDecoratorReceiverRole::Replacement
-            });
-        if index == 0 && shared_replacement {
-            ty = IncanType::Ref(Box::new(ty));
-        }
-        if param.node.kind != ast::ParamKind::Normal {
-            ty = builder.checked_rest_parameter_type(param);
-        }
-        let local = builder.declare_new_local(
-            param.node.name.clone(),
-            ty,
-            root_scope,
-            hir_span(param.span),
-            &function.body,
-        );
-        builder.locals[local.index()].origin = bir::LocalOrigin::Parameter;
-        param_locals.push(local);
-    }
-
+    let param_locals = declare_function_parameters(&mut builder, function, binding, decl_span, root_scope);
     let mut params = Vec::with_capacity(function.params.len());
-    for (index, (param, local)) in function.params.iter().zip(param_locals.iter().copied()).enumerate() {
-        let ty = builder.locals[local.index()].ty.clone();
-        params.push(bir::CallableParam {
-            local,
-            kind: parameter_types::source_parameter_kind(param.node.kind),
-            name: param.node.name.clone(),
-            ty,
-            span: hir_span(param.span),
-            default: builder.lower_callable_default(param.node.default.as_ref(), root_scope),
-            mutable: param.node.is_mut,
-            native_owned: binding
-                .and_then(|binding| binding.params.get(index))
-                .is_some_and(|parameter| {
-                    parameter_types::native_collection_parameter(&parameter.ty, lowering_facts.type_info)
-                }),
-        });
-    }
-
-    builder.borrowed_parameters.extend(
-        params
-            .iter()
-            .filter(|param| param.mutable && !param.native_owned)
-            .map(|param| param.local),
+    lower_callable_parameters(
+        &mut builder,
+        &function.params,
+        &param_locals,
+        binding,
+        root_scope,
+        &mut params,
     );
-    builder.owned_parameters.extend(
-        params
-            .iter()
-            .filter(|param| param.native_owned || param.kind != IncanCallableParamKind::Normal)
-            .map(|param| param.local),
-    );
+    retain_parameter_ownership(&mut builder, &params, false);
     let rebound = lowering_facts
         .type_info
         .declarations
@@ -511,105 +445,22 @@ pub(super) fn lower_method_body(
         .get(&decl_span);
     let mut type_parameters = owner_parameter_names(receiver_ty, owner_name, lowering_facts.type_info);
     type_parameters.extend(method.type_params.iter().map(|parameter| parameter.name.clone()));
-    let owner_return_type = binding
-        .map(|binding| {
-            parameter_types::checked_context_type(
-                &binding.return_type,
-                lowering_facts.type_info,
-                &type_parameters,
-                lowering_facts.runtime_type_conflicts,
-            )
-        })
-        .map(|ty| close_self_type(ty, receiver_ty))
-        .unwrap_or(IncanType::Unknown);
-
-    // Resolve a nominal Self return exactly as a Self parameter; trait defaults keep their open Self receiver.
-    let owner_return_type = if owner_return_type == IncanType::SelfType {
-        receiver_ty.clone()
-    } else {
-        owner_return_type
-    };
+    let owner_return_type = method_return_type(binding, &type_parameters, receiver_ty, lowering_facts);
     let mut builder = BodyBuilder::new(lowering_facts, owner_return_type.clone());
     builder.type_parameters = type_parameters;
     builder.retain_newtype_implementation(owner_name);
     let root_scope = builder.new_scope(None, hir_span(decl_span));
 
-    let mut params = Vec::with_capacity(method.params.len() + 1);
-    let mut param_locals = Vec::with_capacity(method.params.len() + 1);
-    if let Some(receiver) = method.receiver {
-        let mutable = matches!(receiver, ast::Receiver::Mutable);
-        let receiver_span = method
-            .receiver_binding
-            .as_ref()
-            .map_or(decl_span, |binding| binding.span);
-        let self_local =
-            builder.declare_receiver_local(receiver_ty.clone(), mutable, root_scope, hir_span(receiver_span));
-        param_locals.push(self_local);
-        params.push(bir::CallableParam {
-            local: self_local,
-            kind: IncanCallableParamKind::Normal,
-            name: "self".to_string(),
-            ty: receiver_ty.clone(),
-            span: hir_span(decl_span),
-            default: bir::CallableParamDefault::Required,
-            mutable,
-            native_owned: false,
-        });
-    }
-
-    let mut ordinary_param_locals = Vec::with_capacity(method.params.len());
-    for (index, param) in method.params.iter().enumerate() {
-        let ty = binding
-            .and_then(|b| b.params.get(index))
-            .map(|p| builder.checked_type(&p.ty))
-            .unwrap_or(IncanType::Unknown);
-        let ty = if param.node.kind != ast::ParamKind::Normal {
-            builder.checked_rest_parameter_type(param)
-        } else {
-            close_self_type(ty, receiver_ty)
-        };
-        let local = builder.declare_new_local(
-            param.node.name.clone(),
-            ty,
-            root_scope,
-            hir_span(param.span),
-            body_stmts,
-        );
-        builder.locals[local.index()].origin = bir::LocalOrigin::Parameter;
-        param_locals.push(local);
-        ordinary_param_locals.push(local);
-    }
-
-    for (index, (param, local)) in method.params.iter().zip(ordinary_param_locals).enumerate() {
-        let ty = builder.locals[local.index()].ty.clone();
-        params.push(bir::CallableParam {
-            local,
-            kind: parameter_types::source_parameter_kind(param.node.kind),
-            name: param.node.name.clone(),
-            ty,
-            span: hir_span(param.span),
-            default: builder.lower_callable_default(param.node.default.as_ref(), root_scope),
-            mutable: param.node.is_mut,
-            native_owned: binding
-                .and_then(|binding| binding.params.get(index))
-                .is_some_and(|parameter| {
-                    parameter_types::native_collection_parameter(&parameter.ty, lowering_facts.type_info)
-                }),
-        });
-    }
-
-    builder.borrowed_parameters.extend(
-        params
-            .iter()
-            .filter(|param| param.mutable && !param.native_owned && param.name != "self")
-            .map(|param| param.local),
+    let (params, param_locals) = lower_method_parameters(
+        &mut builder,
+        method,
+        binding,
+        receiver_ty,
+        body_stmts,
+        decl_span,
+        root_scope,
     );
-    builder.owned_parameters.extend(
-        params
-            .iter()
-            .filter(|param| param.native_owned || param.kind != IncanCallableParamKind::Normal)
-            .map(|param| param.local),
-    );
+    retain_parameter_ownership(&mut builder, &params, true);
     let rebound = lowering_facts
         .type_info
         .declarations
@@ -686,6 +537,204 @@ pub(super) fn lower_method_body(
         native_attributes: Vec::new(),
     })
 }
+/// Resolve the checked return contract in a free function's binder context, applying a shared method decorator's
+/// planned carrier only when the checker retained a binding. Missing facts keep the existing unknown fallback.
+fn function_return_type(
+    binding: Option<&FunctionBindingInfo>,
+    type_parameters: &[String],
+    shared_method_chain: bool,
+    facts: &BodyIrLoweringFacts<'_, '_>,
+) -> IncanType {
+    binding
+        .map(|binding| {
+            parameter_types::checked_context_type(
+                &binding.return_type,
+                facts.type_info,
+                type_parameters,
+                facts.runtime_type_conflicts,
+            )
+        })
+        .map(|ty| {
+            if shared_method_chain {
+                decorated_bindings::planned_type(ty, facts.type_info)
+            } else {
+                ty
+            }
+        })
+        .unwrap_or(IncanType::Unknown)
+}
+
+/// Resolve a method's checked return in its owner context. Nominal `Self` returns close like `Self` parameters;
+/// trait defaults retain their open receiver and absent checked bindings remain unknown.
+fn method_return_type(
+    binding: Option<&FunctionBindingInfo>,
+    type_parameters: &[String],
+    receiver_ty: &IncanType,
+    facts: &BodyIrLoweringFacts<'_, '_>,
+) -> IncanType {
+    let ty = binding
+        .map(|binding| {
+            parameter_types::checked_context_type(
+                &binding.return_type,
+                facts.type_info,
+                type_parameters,
+                facts.runtime_type_conflicts,
+            )
+        })
+        .map(|ty| close_self_type(ty, receiver_ty))
+        .unwrap_or(IncanType::Unknown);
+    if ty == IncanType::SelfType {
+        receiver_ty.clone()
+    } else {
+        ty
+    }
+}
+
+/// Declare every free-function parameter before lowering defaults, preserving the shared replacement receiver
+/// slot's reference type and the checked representation of rest parameters.
+fn declare_function_parameters(
+    builder: &mut BodyBuilder<'_, '_>,
+    function: &ast::FunctionDecl,
+    binding: Option<&FunctionBindingInfo>,
+    decl_span: ast::Span,
+    scope: bir::ScopeId,
+) -> Vec<bir::LocalId> {
+    let mut locals = Vec::with_capacity(function.params.len());
+    for (index, param) in function.params.iter().enumerate() {
+        let mut ty = binding
+            .and_then(|b| b.params.get(index))
+            .map(|p| builder.checked_type(&p.ty))
+            .unwrap_or(IncanType::Unknown);
+        let shared_replacement = builder
+            .type_info
+            .declarations
+            .method_decorator_receiver_slots
+            .get(&decl_span)
+            .is_some_and(|slot| {
+                !slot.mutable && slot.role == crate::typechecker::MethodDecoratorReceiverRole::Replacement
+            });
+        if index == 0 && shared_replacement {
+            ty = IncanType::Ref(Box::new(ty));
+        }
+        if param.node.kind != ast::ParamKind::Normal {
+            ty = builder.checked_rest_parameter_type(param);
+        }
+        let local = builder.declare_new_local(param.node.name.clone(), ty, scope, hir_span(param.span), &function.body);
+        builder.locals[local.index()].origin = bir::LocalOrigin::Parameter;
+        locals.push(local);
+    }
+    locals
+}
+
+/// Declare the optional receiver first, then every ordinary parameter, before evaluating any defaults. The
+/// checked receiver closes ordinary `Self` parameter types; rest parameters retain their own checked carrier.
+fn lower_method_parameters(
+    builder: &mut BodyBuilder<'_, '_>,
+    method: &ast::MethodDecl,
+    binding: Option<&FunctionBindingInfo>,
+    receiver_ty: &IncanType,
+    body: &[ast::Spanned<ast::Statement>],
+    decl_span: ast::Span,
+    scope: bir::ScopeId,
+) -> (Vec<bir::CallableParam>, Vec<bir::LocalId>) {
+    let mut params = Vec::with_capacity(method.params.len() + 1);
+    let mut param_locals = Vec::with_capacity(method.params.len() + 1);
+    if let Some(receiver) = method.receiver {
+        let mutable = matches!(receiver, ast::Receiver::Mutable);
+        let receiver_span = method
+            .receiver_binding
+            .as_ref()
+            .map_or(decl_span, |binding| binding.span);
+        let self_local = builder.declare_receiver_local(receiver_ty.clone(), mutable, scope, hir_span(receiver_span));
+        param_locals.push(self_local);
+        params.push(bir::CallableParam {
+            local: self_local,
+            kind: IncanCallableParamKind::Normal,
+            name: "self".to_string(),
+            ty: receiver_ty.clone(),
+            span: hir_span(decl_span),
+            default: bir::CallableParamDefault::Required,
+            mutable,
+            native_owned: false,
+        });
+    }
+    let mut ordinary_param_locals = Vec::with_capacity(method.params.len());
+    for (index, param) in method.params.iter().enumerate() {
+        let ty = binding
+            .and_then(|b| b.params.get(index))
+            .map(|p| builder.checked_type(&p.ty))
+            .unwrap_or(IncanType::Unknown);
+        let ty = if param.node.kind != ast::ParamKind::Normal {
+            builder.checked_rest_parameter_type(param)
+        } else {
+            close_self_type(ty, receiver_ty)
+        };
+        let local = builder.declare_new_local(param.node.name.clone(), ty, scope, hir_span(param.span), body);
+        builder.locals[local.index()].origin = bir::LocalOrigin::Parameter;
+        param_locals.push(local);
+        ordinary_param_locals.push(local);
+    }
+    lower_callable_parameters(
+        builder,
+        &method.params,
+        &ordinary_param_locals,
+        binding,
+        scope,
+        &mut params,
+    );
+    (params, param_locals)
+}
+
+/// Attach callable parameter contracts to already declared locals in source order. Default lowering sees the
+/// complete parameter frame, while native ownership comes from the same span-keyed checked binding.
+fn lower_callable_parameters(
+    builder: &mut BodyBuilder<'_, '_>,
+    source: &[ast::Spanned<ast::Param>],
+    locals: &[bir::LocalId],
+    binding: Option<&FunctionBindingInfo>,
+    scope: bir::ScopeId,
+    out: &mut Vec<bir::CallableParam>,
+) {
+    for (index, (param, local)) in source.iter().zip(locals.iter().copied()).enumerate() {
+        let ty = builder.locals[local.index()].ty.clone();
+        out.push(bir::CallableParam {
+            local,
+            kind: parameter_types::source_parameter_kind(param.node.kind),
+            name: param.node.name.clone(),
+            ty,
+            span: hir_span(param.span),
+            default: builder.lower_callable_default(param.node.default.as_ref(), scope),
+            mutable: param.node.is_mut,
+            native_owned: binding
+                .and_then(|binding| binding.params.get(index))
+                .is_some_and(|parameter| {
+                    parameter_types::native_collection_parameter(&parameter.ty, builder.type_info)
+                }),
+        });
+    }
+}
+
+/// Seed parameter ownership from the retained callable contracts. Receiver borrowing is already recorded when a
+/// method receiver is declared, so method callers exclude it from this ordinary mutable-parameter pass.
+fn retain_parameter_ownership(
+    builder: &mut BodyBuilder<'_, '_>,
+    params: &[bir::CallableParam],
+    exclude_receiver: bool,
+) {
+    builder.borrowed_parameters.extend(
+        params
+            .iter()
+            .filter(|param| param.mutable && !param.native_owned && (!exclude_receiver || param.name != "self"))
+            .map(|param| param.local),
+    );
+    builder.owned_parameters.extend(
+        params
+            .iter()
+            .filter(|param| param.native_owned || param.kind != IncanCallableParamKind::Normal)
+            .map(|param| param.local),
+    );
+}
+
 /// Reconstruct the concrete `self` type for a method declared on `owner_name`, mirroring how
 /// `check_method_with_self_ty` (`loaves/compiler/incan_frontend/src/typechecker/check_decl.rs`) derives its own `self`
 /// binding's type: a bare [`IncanType::Named`] for a non-generic owner, or an [`IncanType::Generic`] instantiated with

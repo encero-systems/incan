@@ -1,5 +1,7 @@
 //! Generic call-site inference, monomorph recording, and explicit bound validation.
 
+use std::collections::HashMap;
+
 use super::TypeChecker;
 use crate::ast::{CallArg, DictEntry, Expr, ListEntry, Literal, ParamKind, Span, Spanned, Type, UnaryOp};
 use crate::diagnostics::CompileError;
@@ -15,6 +17,41 @@ use incan_lang::lang::surface::constructors::ConstructorId;
 use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_semantics_core::CanonicalSymbolId;
+
+/// Settled function-call facts consumed by result and monomorph publication. Owned inventories move from the
+/// validator; argument type references still borrow its live substituted parameter inventory.
+struct FunctionCallCompletion<'call> {
+    func_name: &'call str,
+    info: &'call FunctionInfo,
+    explicit_type_args: &'call [Spanned<Type>],
+    args: &'call [CallArg],
+    call_span: Span,
+    errors_before_call: usize,
+    callee_identity: Option<CanonicalSymbolId>,
+    contextual_params: Vec<CallableParam>,
+    type_bindings: HashMap<String, ResolvedType>,
+    instantiation: HashMap<String, ResolvedType>,
+    arguments: Vec<(&'call Spanned<Expr>, &'call ResolvedType)>,
+}
+
+/// Settled method-call facts retained after receiver substitution and argument validation. The method's owned
+/// declaration and result carrier move into completion without adding declaration or type snapshots.
+struct MethodCallCompletion<'call> {
+    method: &'call str,
+    method_info: MethodInfo,
+    explicit_type_args: &'call [Spanned<Type>],
+    args: &'call [CallArg],
+    call_site_span: Span,
+    receiver_ty: &'call ResolvedType,
+    expected_return_ty: Option<&'call ResolvedType>,
+    errors_before_call: usize,
+    explicit_arity_ok: bool,
+    contextual_params: Vec<CallableParam>,
+    type_bindings: HashMap<String, ResolvedType>,
+    instantiation: HashMap<String, ResolvedType>,
+    arguments: Vec<(&'call Spanned<Expr>, &'call ResolvedType)>,
+    return_type: ResolvedType,
+}
 
 impl TypeChecker {
     /// Check one method call after overload/trait resolution proved the selected declaration.
@@ -195,6 +232,37 @@ impl TypeChecker {
             &instantiation,
             call_span,
         );
+        self.finish_checked_function_call(FunctionCallCompletion {
+            func_name,
+            info,
+            explicit_type_args,
+            args,
+            call_span,
+            errors_before_call,
+            callee_identity,
+            contextual_params,
+            type_bindings,
+            instantiation,
+            arguments,
+        })
+    }
+
+    /// Publish a checked function call's parameter, bound, constructor and result facts in their established order.
+    /// Conditional facts use the validator's original diagnostic checkpoint, including explicit arity refusals.
+    fn finish_checked_function_call(&mut self, completion: FunctionCallCompletion<'_>) -> ResolvedType {
+        let FunctionCallCompletion {
+            func_name,
+            info,
+            explicit_type_args,
+            args,
+            call_span,
+            errors_before_call,
+            callee_identity,
+            contextual_params,
+            type_bindings,
+            instantiation,
+            arguments,
+        } = completion;
         let resolved_params = Self::substitute_callable_params(&contextual_params, &type_bindings);
         if self.literal_argument_spells_a_type_param(&info.type_params, &info.params, args)
             && resolved_params
@@ -937,7 +1005,7 @@ impl TypeChecker {
     /// # Parameters
     ///
     /// - `method`: Method name (for diagnostics).
-    /// - `method_info`: Declared [`MethodInfo`] for that method (owned and temporarily mutated for substitution).
+    /// - `method_info`: Owned selected [`MethodInfo`] whose checked receiver and binders determine substitution.
     /// - `explicit_type_args`: AST types inside `[...]` before `(`; empty if the call omitted brackets.
     /// - `args`: Call arguments. The selected method parameters are threaded back into these expressions so inline
     ///   collection literals can adopt contextual element types.
@@ -962,27 +1030,13 @@ impl TypeChecker {
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
         let errors_before_call = self.errors.len();
-        let mut type_bindings = self.receiver_type_param_bindings(receiver_ty);
-        let explicit_arity_ok =
-            explicit_type_args.is_empty() || explicit_type_args.len() == method_info.type_params.len();
-
-        // ---- RFC 054: explicit bracketed type arguments (partial map; `_` → CallSiteInfer omitted) ----
-        if !explicit_type_args.is_empty() {
-            if !explicit_arity_ok {
-                self.errors.push(errors::explicit_type_arg_arity(
-                    method,
-                    &method_info.type_params,
-                    &Self::written_type_args(explicit_type_args),
-                    call_site_span,
-                ));
-            } else {
-                let resolved: Vec<ResolvedType> = explicit_type_args
-                    .iter()
-                    .map(|ty| self.resolve_type_checked(ty))
-                    .collect();
-                type_bindings.extend(type_param_subst_map_call_site(&method_info.type_params, &resolved));
-            }
-        }
+        let (mut type_bindings, explicit_arity_ok) = self.initial_generic_method_call_bindings(
+            method,
+            &method_info,
+            explicit_type_args,
+            call_site_span,
+            receiver_ty,
+        );
 
         // ---- Call-site `Self`, value-arg compatibility ----
         let (params, return_type) = self.method_types_substituting_call_site_self(&method_info, receiver_ty);
@@ -1055,6 +1109,74 @@ impl TypeChecker {
                 call_site_span,
             );
         }
+        self.finish_checked_method_call(MethodCallCompletion {
+            method,
+            method_info,
+            explicit_type_args,
+            args,
+            call_site_span,
+            receiver_ty,
+            expected_return_ty,
+            errors_before_call,
+            explicit_arity_ok,
+            contextual_params,
+            type_bindings,
+            instantiation,
+            arguments,
+            return_type,
+        })
+    }
+
+    /// Seed receiver binders before explicit method arguments, preserving partial-map inference markers and the
+    /// existing arity diagnostic. Invalid explicit arity still leaves receiver-derived bindings available.
+    fn initial_generic_method_call_bindings(
+        &mut self,
+        method: &str,
+        info: &MethodInfo,
+        explicit_type_args: &[Spanned<Type>],
+        span: Span,
+        receiver_ty: &ResolvedType,
+    ) -> (HashMap<String, ResolvedType>, bool) {
+        let mut bindings = self.receiver_type_param_bindings(receiver_ty);
+        let arity_ok = explicit_type_args.is_empty() || explicit_type_args.len() == info.type_params.len();
+        if !explicit_type_args.is_empty() {
+            if !arity_ok {
+                self.errors.push(errors::explicit_type_arg_arity(
+                    method,
+                    &info.type_params,
+                    &Self::written_type_args(explicit_type_args),
+                    span,
+                ));
+            } else {
+                let resolved = explicit_type_args
+                    .iter()
+                    .map(|ty| self.resolve_type_checked(ty))
+                    .collect::<Vec<_>>();
+                bindings.extend(type_param_subst_map_call_site(&info.type_params, &resolved));
+            }
+        }
+        (bindings, arity_ok)
+    }
+
+    /// Retain the checked method's parameter, capturing-callable, bound and result facts after argument validation.
+    /// Method-specific guards and their ordering remain distinct from function-call completion.
+    fn finish_checked_method_call(&mut self, completion: MethodCallCompletion<'_>) -> ResolvedType {
+        let MethodCallCompletion {
+            method,
+            method_info,
+            explicit_type_args,
+            args,
+            call_site_span,
+            receiver_ty,
+            expected_return_ty,
+            errors_before_call,
+            explicit_arity_ok,
+            contextual_params,
+            type_bindings,
+            instantiation,
+            arguments,
+            return_type,
+        } = completion;
         let resolved_params = Self::substitute_callable_params(&contextual_params, &type_bindings);
         self.type_info
             .record_call_site_callable_params_exact(call_site_span, &resolved_params);

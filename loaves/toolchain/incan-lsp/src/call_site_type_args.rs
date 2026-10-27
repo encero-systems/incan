@@ -177,29 +177,7 @@ fn call_site_type_in_expr(expr: &Spanned<Expr>, offset: usize) -> Option<&Spanne
         Expr::Field(a, _) => call_site_type_in_expr(a, offset),
         Expr::Try(a) => call_site_type_in_expr(a, offset),
         Expr::Match(scr, arms) => {
-            if let Some(hit) = call_site_type_in_expr(scr, offset) {
-                return Some(hit);
-            }
-            for arm in arms {
-                if let Some(g) = &arm.node.guard
-                    && let Some(hit) = call_site_type_in_expr(g, offset)
-                {
-                    return Some(hit);
-                }
-                match &arm.node.body {
-                    MatchBody::Expr(e) => {
-                        if let Some(hit) = call_site_type_in_expr(e, offset) {
-                            return Some(hit);
-                        }
-                    }
-                    MatchBody::Block(stmts) => {
-                        if let Some(hit) = call_site_types_in_stmts(stmts, offset) {
-                            return Some(hit);
-                        }
-                    }
-                }
-            }
-            None
+            call_site_type_in_expr(scr, offset).or_else(|| call_site_type_in_match_arms(arms, offset))
         }
         Expr::If(boxed) => {
             if let Some(hit) = call_site_type_in_expr(&boxed.condition, offset) {
@@ -266,27 +244,7 @@ fn call_site_type_in_expr(expr: &Spanned<Expr>, offset: usize) -> Option<&Spanne
         Expr::Range { start, end, .. } => {
             call_site_type_in_expr(start, offset).or_else(|| call_site_type_in_expr(end, offset))
         }
-        Expr::Surface(boxed) => match &boxed.payload {
-            incan_frontend::ast::SurfaceExprPayload::PrefixUnary(inner) => call_site_type_in_expr(inner, offset),
-            incan_frontend::ast::SurfaceExprPayload::RaceFor(race) => race.arms.iter().find_map(|arm| {
-                call_site_type_in_expr(&arm.awaitable, offset).or_else(|| match &arm.body {
-                    incan_frontend::ast::RaceForBody::Expr(expr) => call_site_type_in_expr(expr, offset),
-                    incan_frontend::ast::RaceForBody::Block(stmts) => call_site_types_in_stmts(stmts, offset),
-                })
-            }),
-            incan_frontend::ast::SurfaceExprPayload::LeadingDotPath { .. } => None,
-            incan_frontend::ast::SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
-                call_site_type_in_expr(left, offset).or_else(|| call_site_type_in_expr(right, offset))
-            }
-            incan_frontend::ast::SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
-                args.iter().find_map(|arg| match arg {
-                    incan_frontend::ast::CallArg::Positional(expr)
-                    | incan_frontend::ast::CallArg::Named(_, expr)
-                    | incan_frontend::ast::CallArg::PositionalUnpack(expr)
-                    | incan_frontend::ast::CallArg::KeywordUnpack(expr) => call_site_type_in_expr(expr, offset),
-                })
-            }
-        },
+        Expr::Surface(boxed) => call_site_type_in_surface(&boxed.payload, offset),
         Expr::VocabBlock(block) => block
             .header_args
             .iter()
@@ -302,6 +260,46 @@ fn call_site_type_in_expr(expr: &Spanned<Expr>, offset: usize) -> Option<&Spanne
     }
 }
 
+/// Search each match guard before its expression or statement body, keeping the first parsed type under the cursor.
+fn call_site_type_in_match_arms(
+    arms: &[Spanned<incan_frontend::ast::MatchArm>],
+    offset: usize,
+) -> Option<&Spanned<Type>> {
+    arms.iter().find_map(|arm| {
+        arm.node
+            .guard
+            .as_ref()
+            .and_then(|guard| call_site_type_in_expr(guard, offset))
+            .or_else(|| match &arm.node.body {
+                MatchBody::Expr(expr) => call_site_type_in_expr(expr, offset),
+                MatchBody::Block(statements) => call_site_types_in_stmts(statements, offset),
+            })
+    })
+}
+
+/// Follow ordinary expressions inside authored surface payloads. Awaitables precede race bodies, and scoped call
+/// arguments use the same unpack-aware traversal as ordinary calls.
+fn call_site_type_in_surface(
+    payload: &incan_frontend::ast::SurfaceExprPayload,
+    offset: usize,
+) -> Option<&Spanned<Type>> {
+    match payload {
+        incan_frontend::ast::SurfaceExprPayload::PrefixUnary(inner) => call_site_type_in_expr(inner, offset),
+        incan_frontend::ast::SurfaceExprPayload::RaceFor(race) => race.arms.iter().find_map(|arm| {
+            call_site_type_in_expr(&arm.awaitable, offset).or_else(|| match &arm.body {
+                incan_frontend::ast::RaceForBody::Expr(expr) => call_site_type_in_expr(expr, offset),
+                incan_frontend::ast::RaceForBody::Block(statements) => call_site_types_in_stmts(statements, offset),
+            })
+        }),
+        incan_frontend::ast::SurfaceExprPayload::LeadingDotPath { .. } => None,
+        incan_frontend::ast::SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+            call_site_type_in_expr(left, offset).or_else(|| call_site_type_in_expr(right, offset))
+        }
+        incan_frontend::ast::SurfaceExprPayload::ScopedSymbolCall { args, .. } => scan_call_args(args, offset),
+    }
+}
+
+/// Search optional slice bounds in source order after the caller has searched its base expression.
 fn slice_expr_call_site_types(s: &SliceExpr, offset: usize) -> Option<&Spanned<Type>> {
     s.start
         .as_ref()
@@ -488,6 +486,7 @@ pub(crate) fn call_site_innermost_type_at_offset(program: &Program, offset: usiz
 
 // ---- Completions (type-oriented list) ----
 
+/// Retain the first completion for each label, preserving registry and source declaration insertion order.
 fn push(items: &mut Vec<CompletionItem>, seen: &mut std::collections::HashSet<String>, item: CompletionItem) {
     if seen.insert(item.label.clone()) {
         items.push(item);
@@ -524,84 +523,36 @@ pub(crate) fn call_site_type_argument_completion_items(ast: Option<&Program>) ->
     );
 
     for t in numerics::NUMERIC_TYPES {
-        push(
+        push_registry_type_completions(
             &mut items,
             &mut seen,
-            CompletionItem {
-                label: t.canonical.to_string(),
-                kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                detail: Some(t.description.to_string()),
-                sort_text: Some(format!("1_{}", t.canonical)),
-                ..Default::default()
-            },
+            t.canonical,
+            t.aliases,
+            t.description,
+            CompletionItemKind::TYPE_PARAMETER,
         );
-        for a in t.aliases {
-            push(
-                &mut items,
-                &mut seen,
-                CompletionItem {
-                    label: (*a).to_string(),
-                    kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                    detail: Some(format!("alias of {}", t.canonical)),
-                    sort_text: Some(format!("2_{}", a)),
-                    ..Default::default()
-                },
-            );
-        }
     }
 
     for t in stringlike::STRING_LIKE_TYPES {
-        push(
+        push_registry_type_completions(
             &mut items,
             &mut seen,
-            CompletionItem {
-                label: t.canonical.to_string(),
-                kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                detail: Some(t.description.to_string()),
-                sort_text: Some(format!("1_{}", t.canonical)),
-                ..Default::default()
-            },
+            t.canonical,
+            t.aliases,
+            t.description,
+            CompletionItemKind::TYPE_PARAMETER,
         );
-        for a in t.aliases {
-            push(
-                &mut items,
-                &mut seen,
-                CompletionItem {
-                    label: (*a).to_string(),
-                    kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                    detail: Some(format!("alias of {}", t.canonical)),
-                    sort_text: Some(format!("2_{}", a)),
-                    ..Default::default()
-                },
-            );
-        }
     }
 
     for info in collections::COLLECTION_TYPES {
-        push(
+        push_registry_type_completions(
             &mut items,
             &mut seen,
-            CompletionItem {
-                label: info.canonical.to_string(),
-                kind: Some(CompletionItemKind::CLASS),
-                detail: Some(info.description.to_string()),
-                sort_text: Some(format!("1_{}", info.canonical)),
-                ..Default::default()
-            },
+            info.canonical,
+            info.aliases,
+            info.description,
+            CompletionItemKind::CLASS,
         );
-        for a in info.aliases {
-            push(
-                &mut items,
-                &mut seen,
-                CompletionItem {
-                    label: (*a).to_string(),
-                    kind: Some(CompletionItemKind::CLASS),
-                    detail: Some(format!("alias of {}", info.canonical)),
-                    sort_text: Some(format!("2_{}", a)),
-                    ..Default::default()
-                },
-            );
-        }
     }
 
     for name in [conventions::UNIT_TYPE_NAME, conventions::NONE_TYPE_NAME] {
@@ -619,83 +570,81 @@ pub(crate) fn call_site_type_argument_completion_items(ast: Option<&Program>) ->
     }
 
     if let Some(program) = ast {
-        for decl in &program.declarations {
-            match &decl.node {
-                Declaration::Model(m) => push(
-                    &mut items,
-                    &mut seen,
-                    CompletionItem {
-                        label: m.name.clone(),
-                        kind: Some(CompletionItemKind::STRUCT),
-                        detail: Some(format!("model {}", m.name)),
-                        sort_text: Some(format!("0_{}", m.name)),
-                        ..Default::default()
-                    },
-                ),
-                Declaration::Class(c) => push(
-                    &mut items,
-                    &mut seen,
-                    CompletionItem {
-                        label: c.name.clone(),
-                        kind: Some(CompletionItemKind::CLASS),
-                        detail: Some(format!("class {}", c.name)),
-                        sort_text: Some(format!("0_{}", c.name)),
-                        ..Default::default()
-                    },
-                ),
-                Declaration::Trait(t) => push(
-                    &mut items,
-                    &mut seen,
-                    CompletionItem {
-                        label: t.name.clone(),
-                        kind: Some(CompletionItemKind::INTERFACE),
-                        detail: Some(format!("trait {}", t.name)),
-                        sort_text: Some(format!("0_{}", t.name)),
-                        ..Default::default()
-                    },
-                ),
-                Declaration::Enum(e) => push(
-                    &mut items,
-                    &mut seen,
-                    CompletionItem {
-                        label: e.name.clone(),
-                        kind: Some(CompletionItemKind::ENUM),
-                        detail: Some(format!("enum {}", e.name)),
-                        sort_text: Some(format!("0_{}", e.name)),
-                        ..Default::default()
-                    },
-                ),
-                Declaration::TypeAlias(a) => push(
-                    &mut items,
-                    &mut seen,
-                    CompletionItem {
-                        label: a.name.clone(),
-                        kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                        detail: Some(format!("type alias {}", a.name)),
-                        sort_text: Some(format!("0_{}", a.name)),
-                        ..Default::default()
-                    },
-                ),
-                Declaration::Newtype(n) => {
-                    let kind = if n.is_rusttype { "rusttype" } else { "newtype" };
-                    push(
-                        &mut items,
-                        &mut seen,
-                        CompletionItem {
-                            label: n.name.clone(),
-                            kind: Some(CompletionItemKind::STRUCT),
-                            detail: Some(format!("{kind} {}", n.name)),
-                            sort_text: Some(format!("0_{}", n.name)),
-                            ..Default::default()
-                        },
-                    );
-                }
-                _ => {}
-            }
-        }
+        push_local_type_completions(program, &mut items, &mut seen);
     }
 
     items
+}
+
+/// Publish one registry spelling and its aliases through the shared first-label-wins rule. Canonical and alias sort
+/// prefixes and completion kinds remain those selected by the owning numeric, string or collection registry.
+fn push_registry_type_completions(
+    items: &mut Vec<CompletionItem>,
+    seen: &mut std::collections::HashSet<String>,
+    canonical: &str,
+    aliases: &[&str],
+    description: &str,
+    kind: CompletionItemKind,
+) {
+    push(
+        items,
+        seen,
+        CompletionItem {
+            label: canonical.to_string(),
+            kind: Some(kind),
+            detail: Some(description.to_string()),
+            sort_text: Some(format!("1_{canonical}")),
+            ..Default::default()
+        },
+    );
+    for alias in aliases {
+        push(
+            items,
+            seen,
+            CompletionItem {
+                label: (*alias).to_string(),
+                kind: Some(kind),
+                detail: Some(format!("alias of {canonical}")),
+                sort_text: Some(format!("2_{alias}")),
+                ..Default::default()
+            },
+        );
+    }
+}
+
+/// Add local type declarations in source order after builtins, retaining their existing labels, declaration details
+/// and sorting prefixes. Other declaration kinds contribute no call-site type completion.
+fn push_local_type_completions(
+    program: &Program,
+    items: &mut Vec<CompletionItem>,
+    seen: &mut std::collections::HashSet<String>,
+) {
+    for declaration in &program.declarations {
+        let (name, kind, description) = match &declaration.node {
+            Declaration::Model(value) => (&value.name, CompletionItemKind::STRUCT, "model"),
+            Declaration::Class(value) => (&value.name, CompletionItemKind::CLASS, "class"),
+            Declaration::Trait(value) => (&value.name, CompletionItemKind::INTERFACE, "trait"),
+            Declaration::Enum(value) => (&value.name, CompletionItemKind::ENUM, "enum"),
+            Declaration::TypeAlias(value) => (&value.name, CompletionItemKind::TYPE_PARAMETER, "type alias"),
+            Declaration::Newtype(value) => (
+                &value.name,
+                CompletionItemKind::STRUCT,
+                if value.is_rusttype { "rusttype" } else { "newtype" },
+            ),
+            _ => continue,
+        };
+        push(
+            items,
+            seen,
+            CompletionItem {
+                label: name.clone(),
+                kind: Some(kind),
+                detail: Some(format!("{description} {name}")),
+                sort_text: Some(format!("0_{name}")),
+                ..Default::default()
+            },
+        );
+    }
 }
 
 #[cfg(test)]

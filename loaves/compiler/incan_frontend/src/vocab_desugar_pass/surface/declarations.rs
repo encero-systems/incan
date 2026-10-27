@@ -1,5 +1,6 @@
 //! Decode schema 3 compilation-unit output without exposing the compiler's private declaration model.
 
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use serde::Deserialize;
 
 use crate::ast;
@@ -141,7 +142,7 @@ fn type_expr(value: TypeExpr, anchor: ast::Span) -> Result<ast::Spanned<ast::Typ
         .map(|ty| type_expr(ty, anchor))
         .collect::<Result<Vec<_>, _>>()?;
     let node = match (parts.as_slice(), arguments.is_empty()) {
-        ([name], true) if name == "None" => ast::Type::Unit,
+        ([name], true) if name == constructors::as_str(ConstructorId::None) => ast::Type::Unit,
         ([name], true) => ast::Type::Simple(name.clone()),
         ([name], false) => ast::Type::Generic(name.clone(), arguments),
         (_, true) => ast::Type::Dotted(parts),

@@ -343,7 +343,7 @@ This section is non-normative. The telemetry vocabulary descriptor can parse `sp
 - **Typechecker / Symbol resolution**: telemetry vocabulary activation, option expression types, relative naming metadata, and async-safety checks must be validated.
 - **IR Lowering**: span blocks must lower through the scoped context-manager mechanism while preserving original control flow.
 - **Emission**: generated code must start, enter, exit, and end spans deterministically without relying on manual user cleanup.
-- **Stdlib / Runtime (`incan_stdlib`)**: `std.telemetry` must expose the span manager, no-op behavior, current-span access, attributes, span kinds, links, events, and status policy used by the vocabulary block.
+- **Stdlib / Runtime (`loaves/stdlib/`)**: `std.telemetry` must expose the span manager, no-op behavior, current-span access, attributes, span kinds, links, events, and status policy used by the vocabulary block.
 - **Formatter**: span block headers and suites need stable formatting without losing descriptor-owned syntax; long headers should format into the parenthesized multiline form.
 - **LSP / Tooling**: highlighting must show `span` as vocabulary syntax only when active; hover and diagnostics should explain the desugared telemetry operation and missing-vocabulary imports.
 

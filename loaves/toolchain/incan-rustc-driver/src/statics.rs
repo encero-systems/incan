@@ -9,7 +9,7 @@
 //! planned method call. The storage and accessors keep rustc's own MIR; only initializers and selected methods are
 //! planned bodies.
 
-use crate::ast_build::ident;
+use crate::ast_build::{RUST_CLONE_SYMBOL, ident};
 use crate::plan::{CalleeKind, Function, ListLeaf, PlanType, StaticCell, TerminatorKind, tuple_element_type};
 use crate::{declarations, error::PlanError, plan::Plan};
 use rustc_ast as ast;
@@ -502,7 +502,7 @@ pub fn items(cell: &StaticCell, span: Span) -> Vec<Box<ast::Item>> {
         Vec::new(),
         Some(value_ty()),
         vec![tail(
-            call(&["std", "clone", "Clone", "clone"], vec![current], span),
+            call(&["std", "clone", RUST_CLONE_SYMBOL, "clone"], vec![current], span),
             span,
         )],
         span,

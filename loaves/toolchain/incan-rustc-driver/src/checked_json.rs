@@ -1,15 +1,20 @@
 //! Validate planned Incan string ingress roots; serde's native TryFrom header forwards to its reconstruction root.
 
 use crate::{
-    ast_build::ident,
+    ast_build::{RUST_CONVERT_TRY_FROM_SYMBOL, ident},
     declarations,
     error::PlanError,
     plan::{ModelDeclaration, Plan, PlanType},
 };
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
+use incan_lang::lang::traits::{self, TraitId};
 use incan_semantics_core::{SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin, decode_incan_symbol_identity};
 use rustc_ast as ast;
 use rustc_span::{Span, Symbol};
 use thin_vec::{ThinVec, thin_vec};
+
+/// Associated error type of Rust's TryFrom implementation, independent of Incan's Error trait.
+const RUST_TRY_FROM_ERROR_SYMBOL: &str = "Error";
 
 /// Preserve serde's absolute String decoder selection in both AST attributes and their retained derive tokens.
 pub(crate) fn deserialize_attribute(generator: &ast::attr::AttrIdGenerator, span: Span) -> ast::Attribute {
@@ -127,7 +132,7 @@ fn is_source_conversion_trait(path: &str) -> bool {
     identity.kind == SemanticSourceTargetKind::Trait
         && identity.namespace == SymbolNamespace::OrdinaryLexical
         && identity.scope_discriminant.is_none()
-        && identity.declaration_name == "TryFrom"
+        && identity.declaration_name == traits::as_str(TraitId::TryFrom)
         && matches!(&identity.origin, SymbolOrigin::Package { library, module_path }
             if library == "incan_stdlib_core" && module_path == &["traits", "convert"])
         && incan_semantics_core::body_ir::loaf_item_path(&identity).as_deref() == Some(path)
@@ -171,9 +176,9 @@ fn validate_string_root(
     if result.name != *result_name
         || result.carrier != "Result"
         || result.variants.len() != 2
-        || result.variants[0].name != "Ok"
+        || result.variants[0].name != constructors::as_str(ConstructorId::Ok)
         || result.variants[0].fields != [PlanType::Model(owner, model.name.clone())]
-        || result.variants[1].name != "Err"
+        || result.variants[1].name != constructors::as_str(ConstructorId::Err)
         || result.variants[1].fields != [PlanType::String]
     {
         return Err(invalid());
@@ -183,7 +188,7 @@ fn validate_string_root(
 
 /// Declare std TryFrom<String> with one forwarding call; validation and error rendering remain in the planned root.
 pub(crate) fn forwarding_impl(model: &ModelDeclaration, span: Span) -> Box<ast::Item> {
-    let mut trait_path = global_path(["std", "convert", "TryFrom"], span);
+    let mut trait_path = global_path(["std", "convert", RUST_CONVERT_TRY_FROM_SYMBOL], span);
     if let Some(segment) = trait_path.segments.last_mut() {
         segment.args = Some(Box::new(ast::GenericArgs::AngleBracketed(ast::AngleBracketedArgs {
             span,
@@ -230,7 +235,7 @@ fn error_association(span: Span) -> Box<ast::AssocItem> {
         vis: inherited(span),
         kind: ast::AssocItemKind::Type(Box::new(ast::TyAlias {
             defaultness: ast::Defaultness::Implicit,
-            ident: ident("Error", span),
+            ident: ident(RUST_TRY_FROM_ERROR_SYMBOL, span),
             generics: ast::Generics::default(),
             after_where_clause: ast::WhereClause::default(),
             bounds: Vec::new(),

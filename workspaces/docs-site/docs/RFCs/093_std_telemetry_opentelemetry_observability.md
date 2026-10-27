@@ -495,7 +495,7 @@ This section is non-normative. A pragmatic implementation should preserve the sa
 - **Typechecker / Symbol resolution**: decorator validation, attribute factory signatures, telemetry value compatibility, and semantic-convention helper types need checked behavior.
 - **IR Lowering**: tracing decorators lower to span lifecycle calls around function bodies while preserving return and error behavior.
 - **Emission**: generated Rust needs telemetry provider access, current-context handling, and exporter/runtime hooks without exposing Rust crate names in Incan source.
-- **Stdlib / Runtime (`incan_stdlib`)**: `std.telemetry.core`, provider configuration, exporter plumbing, tracing runtime state, context propagation, and stdlib instrumentation hooks are added.
+- **Stdlib / Runtime (`loaves/stdlib/`)**: `std.telemetry.core`, provider configuration, exporter plumbing, tracing runtime state, context propagation, and stdlib instrumentation hooks are added.
 - **Formatter**: existing decorator formatting should be sufficient for the decorator API; new syntax is not required.
 - **LSP / Tooling**: completions, hovers, and diagnostics should explain semantic-convention helpers, telemetry decorators, baggage/context APIs, and instrumentation policy.
 - **Docs / examples**: docs must distinguish simple `std.logging` from opt-in `std.telemetry`, show controlled ambient setup, and document data-export implications.

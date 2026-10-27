@@ -27,13 +27,15 @@ pub struct RelatedDeclaration {
     pub label: String,
 }
 
-/// Optional structured detail carried only by diagnostics that have extra tooling facts.
+/// Optional prose and structured detail carried only by diagnostics that supply supplementary context.
 ///
 /// Keeping this payload out of the common [`CompileError`] layout matters because parser APIs return `Result<_,
 /// CompileError>` pervasively. The indirection preserves a compact error variant for ordinary syntax and type errors
 /// while still retaining rich facts when a producer supplies them.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct StructuredDiagnosticDetails {
+    notes: Vec<String>,
+    hints: Vec<String>,
     related_spans: Vec<RelatedSpan>,
     related_declarations: Vec<RelatedDeclaration>,
     expected: Option<String>,
@@ -54,11 +56,7 @@ pub struct CompileError {
     pub span: Span,
     /// Severity / category of the diagnostic.
     pub kind: ErrorKind,
-    /// Additional context lines ("= note: …") rendered after the source snippet.
-    pub notes: Vec<String>,
-    /// Actionable suggestions ("= hint: …") rendered after the notes.
-    pub hints: Vec<String>,
-    /// Compiler-owned detail retained for structured tooling projections when present.
+    /// Supplementary prose and structured tooling facts, allocated only when a producer adds them.
     details: Option<Box<StructuredDiagnosticDetails>>,
 }
 
@@ -69,8 +67,6 @@ impl CompileError {
             message,
             span,
             kind: ErrorKind::Error,
-            notes: Vec::new(),
-            hints: Vec::new(),
             details: None,
         }
     }
@@ -81,8 +77,6 @@ impl CompileError {
             message,
             span,
             kind: ErrorKind::Syntax,
-            notes: Vec::new(),
-            hints: Vec::new(),
             details: None,
         }
     }
@@ -93,8 +87,6 @@ impl CompileError {
             message,
             span,
             kind: ErrorKind::Type,
-            notes: Vec::new(),
-            hints: Vec::new(),
             details: None,
         }
     }
@@ -108,8 +100,6 @@ impl CompileError {
             message,
             span,
             kind: ErrorKind::Warning,
-            notes: Vec::new(),
-            hints: Vec::new(),
             details: None,
         }
     }
@@ -120,21 +110,19 @@ impl CompileError {
             message,
             span,
             kind: ErrorKind::Lint,
-            notes: Vec::new(),
-            hints: Vec::new(),
             details: None,
         }
     }
 
     /// Append a contextual note ("= note: …") to this error.
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
-        self.notes.push(note.into());
+        self.structured_details_mut().notes.push(note.into());
         self
     }
 
     /// Append an actionable hint ("= hint: …") to this error.
     pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
-        self.hints.push(hint.into());
+        self.structured_details_mut().hints.push(hint.into());
         self
     }
 
@@ -170,6 +158,16 @@ impl CompileError {
     pub fn with_stable_code(mut self, code: &'static str) -> Self {
         self.structured_details_mut().stable_code = Some(code);
         self
+    }
+
+    /// Return contextual notes in insertion order, borrowing an empty slice when none were supplied.
+    pub fn notes(&self) -> &[String] {
+        self.details.as_deref().map_or(&[], |details| details.notes.as_slice())
+    }
+
+    /// Return actionable hints in insertion order, borrowing an empty slice when none were supplied.
+    pub fn hints(&self) -> &[String] {
+        self.details.as_deref().map_or(&[], |details| details.hints.as_slice())
     }
 
     /// Return compiler-owned secondary locations for structured tooling projections.
@@ -302,7 +300,7 @@ pub fn format_error(file_name: &str, source: &str, error: &CompileError) -> Stri
     ));
 
     // Notes
-    for note in &error.notes {
+    for note in error.notes() {
         out.push_str(&format!("  {cyan}= note:{reset} {}\n", note));
     }
 
@@ -315,7 +313,7 @@ pub fn format_error(file_name: &str, source: &str, error: &CompileError) -> Stri
     }
 
     // Hints
-    for hint in &error.hints {
+    for hint in error.hints() {
         out.push_str(&format!("  {cyan}= hint:{reset} {}\n", hint));
     }
 
@@ -358,18 +356,29 @@ fn get_line_info(source: &str, offset: usize) -> (usize, usize, &str) {
 mod tests {
     use super::*;
 
+    /// Supplementary text and tooling facts preserve diagnostic content without growing the common error carrier.
     #[test]
     fn structured_details_stay_out_of_the_common_error_layout() {
-        let error = CompileError::type_error("type mismatch".to_string(), Span::new(8, 11))
+        let bare = CompileError::type_error("type mismatch".to_string(), Span::new(8, 11));
+        assert!(bare.notes().is_empty());
+        assert!(bare.hints().is_empty());
+        assert!(bare.details.is_none());
+        let error = bare
+            .with_note("the operand is text")
+            .with_hint("convert the operand")
             .with_expected_actual("int", "str")
             .with_related_span(Span::new(0, 3), "value declared here");
 
         assert_eq!(error.expected(), Some("int"));
+        assert_eq!(error.notes(), ["the operand is text"]);
+        assert_eq!(error.hints(), ["convert the operand"]);
         assert_eq!(error.actual(), Some("str"));
         assert_eq!(error.related_spans().len(), 1);
         assert!(
             std::mem::size_of::<CompileError>() <= 128,
-            "CompileError must remain small enough for pervasive Result<_, CompileError> parser APIs"
+            "CompileError must remain small enough for pervasive Result<_, CompileError> parser APIs: error={}, span={}",
+            std::mem::size_of::<CompileError>(),
+            std::mem::size_of::<Span>()
         );
     }
 

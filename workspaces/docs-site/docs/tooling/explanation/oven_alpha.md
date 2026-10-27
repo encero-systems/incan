@@ -29,6 +29,8 @@ Run, check, test and build take explicit paths. Format takes files or trees. Sta
 
 Oven reuses unchanged executables and retains project preparation in resident owners. Test execution remains fresh. `OVEN_TRACE` explains reuse and rebuild decisions.
 
+For Rust procedural-macro tests, the macro library retains its host-domain identity. Test runtime dependencies retain their target-domain identity, allowing the test consumer to use the installed runtime without replacing its support generation.
+
 </section>
 
 <section id="current-alpha-boundary" class="inc-oven-evidence__grid" markdown="1">

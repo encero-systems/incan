@@ -6,6 +6,7 @@ use super::{
 };
 use crate::resolved_type_subst::{map_resolved_type_leaves, substitute_resolved_type, type_param_subst_map};
 use crate::symbols::ResolvedType;
+use incan_lang::lang::derives::{self, DeriveId};
 use incan_semantics_core::IncanCallableParamKind;
 
 /// Preserve the already checked source role independently from its element or packed carrier type.
@@ -454,10 +455,15 @@ impl BodyBuilder<'_, '_> {
                     declaration.canonical.kind,
                     SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class
                 )
-                && declaration.derives.iter().any(|derive| derive == "Clone")
-        }) || self
-            .local_enum_declarations
-            .get(identity)
-            .is_some_and(|declaration| declaration.derives.iter().any(|derive| derive == "Clone"))
+                && declaration
+                    .derives
+                    .iter()
+                    .any(|derive| derives::from_str(derive) == Some(DeriveId::Clone))
+        }) || self.local_enum_declarations.get(identity).is_some_and(|declaration| {
+            declaration
+                .derives
+                .iter()
+                .any(|derive| derives::from_str(derive) == Some(DeriveId::Clone))
+        })
     }
 }

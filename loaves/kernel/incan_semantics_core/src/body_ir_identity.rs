@@ -532,39 +532,11 @@ impl BodyIrModule {
     /// native types rustc verifies. A linked Loaf's item must encode its canonical declaration. A selected native
     /// equality witness must be a member of its model; lowering separately validates that body's executable ABI.
     pub fn is_well_formed_nominal_declaration(&self, declaration: &NominalDeclaration) -> bool {
-        if declaration.trait_adoptions.iter().enumerate().any(|(index, adoption)| {
-            adoption.trait_identity.kind != SemanticSourceTargetKind::Trait
-                || adoption.trait_identity.namespace != SymbolNamespace::OrdinaryLexical
-                || adoption.trait_identity.declaration_name.is_empty()
-                || adoption.trait_identity.scope_discriminant.is_some()
-                || adoption.methods.as_ref().is_some_and(|methods| {
-                    methods.iter().enumerate().any(|(index, method)| {
-                        method.kind != SemanticSourceTargetKind::Method
-                            || method.namespace != SymbolNamespace::Member
-                            || method.scope_discriminant.is_some()
-                            || methods[..index].contains(method)
-                    })
-                })
-                || adoption
-                    .primitive_adapter
-                    .as_ref()
-                    .is_some_and(|adapter| !adapter.is_well_formed_for(declaration, adoption))
-                || declaration.trait_adoptions[..index].contains(adoption)
-        }) {
+        if !Self::nominal_trait_adoptions_are_well_formed(declaration) {
             return false;
         }
-        if let Some(metadata) = &declaration.reflection_metadata {
-            let Some(slots) = &declaration.reflection_fields else {
-                return false;
-            };
-            if slots.len() != metadata.len()
-                || slots
-                    .iter()
-                    .zip(metadata)
-                    .any(|(slot, record)| declaration.fields.get(*slot) != Some(&record.name))
-            {
-                return false;
-            }
+        if !Self::nominal_reflection_metadata_matches_fields(declaration) {
+            return false;
         }
         if !declaration.native_item.is_empty()
             && crate::body_ir::native_nominal_item(&declaration.canonical)
@@ -673,6 +645,44 @@ impl BodyIrModule {
                             || self.inherited_field_matches(declaration, index))
                         && identity.declaration_name == *name
                 })
+    }
+
+    /// Require each retained reflection record to name its selected physical field in the same order.
+    fn nominal_reflection_metadata_matches_fields(declaration: &NominalDeclaration) -> bool {
+        let Some(metadata) = &declaration.reflection_metadata else {
+            return true;
+        };
+        let Some(slots) = &declaration.reflection_fields else {
+            return false;
+        };
+        slots.len() == metadata.len()
+            && slots
+                .iter()
+                .zip(metadata)
+                .all(|(slot, record)| declaration.fields.get(*slot) == Some(&record.name))
+    }
+
+    /// Validate adoption identities, selected methods and primitive adapters without accepting duplicate records.
+    fn nominal_trait_adoptions_are_well_formed(declaration: &NominalDeclaration) -> bool {
+        declaration.trait_adoptions.iter().enumerate().all(|(index, adoption)| {
+            adoption.trait_identity.kind == SemanticSourceTargetKind::Trait
+                && adoption.trait_identity.namespace == SymbolNamespace::OrdinaryLexical
+                && !adoption.trait_identity.declaration_name.is_empty()
+                && adoption.trait_identity.scope_discriminant.is_none()
+                && adoption.methods.as_ref().is_none_or(|methods| {
+                    methods.iter().enumerate().all(|(index, method)| {
+                        method.kind == SemanticSourceTargetKind::Method
+                            && method.namespace == SymbolNamespace::Member
+                            && method.scope_discriminant.is_none()
+                            && !methods[..index].contains(method)
+                    })
+                })
+                && adoption
+                    .primitive_adapter
+                    .as_ref()
+                    .is_none_or(|adapter| adapter.is_well_formed_for(declaration, adoption))
+                && !declaration.trait_adoptions[..index].contains(adoption)
+        })
     }
 
     /// Validate a retained native struct layout, including inaccessible private storage slots. Ordered fields, their

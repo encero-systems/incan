@@ -201,23 +201,9 @@ fn analyze(
     };
 
     // ---- The authored program, inactive feature declarations included: what navigation walks ----
-    let source_ast =
-        match session.parse_source_unprojected(path, source, false) {
-            Ok(ast) => {
-                diagnostics.extend(ast.warnings.iter().map(|warning| {
-                    compile_error_to_diagnostic_with_phase(warning, source, uri, DiagnosticPhase::Parse)
-                }));
-                ast
-            }
-            Err(errors) => {
-                diagnostics.extend(
-                    errors.iter().map(|error| {
-                        compile_error_to_diagnostic_with_phase(error, source, uri, DiagnosticPhase::Parse)
-                    }),
-                );
-                return (diagnostics, None);
-            }
-        };
+    let Some(source_ast) = parse_navigation_source(&session, path, source, uri, &mut diagnostics) else {
+        return (diagnostics, None);
+    };
 
     // ---- One collection and one checking pass, as `incan check` runs them ----
     let segments =
@@ -300,6 +286,35 @@ fn analyze(
         active_features: session.active_features.clone(),
     };
     (diagnostics, Some(state))
+}
+
+/// Parse the authored navigation tree once, including inactive declarations. Preserve parse warnings or failures in
+/// their existing order before the separate collected-module checking pass; failures publish no document state.
+fn parse_navigation_source(
+    session: &CompilationSession,
+    path: &Path,
+    source: &str,
+    uri: &Url,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<Program> {
+    match session.parse_source_unprojected(path, source, false) {
+        Ok(ast) => {
+            diagnostics.extend(
+                ast.warnings.iter().map(|warning| {
+                    compile_error_to_diagnostic_with_phase(warning, source, uri, DiagnosticPhase::Parse)
+                }),
+            );
+            Some(ast)
+        }
+        Err(errors) => {
+            diagnostics.extend(
+                errors
+                    .iter()
+                    .map(|error| compile_error_to_diagnostic_with_phase(error, source, uri, DiagnosticPhase::Parse)),
+            );
+            None
+        }
+    }
 }
 
 /// Trace editor analysis boundaries only when explicitly requested, keeping normal protocol diagnostics quiet.

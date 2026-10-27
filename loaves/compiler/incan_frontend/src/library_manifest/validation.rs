@@ -107,6 +107,15 @@ fn validate_identity_graph(raw: &RawLibraryManifest) -> Result<(), LibraryManife
     if require_members {
         validate_current_identity_graph_coverage(raw)?;
     }
+    validate_nominal_identity_graph_members(raw, require_members)
+}
+
+/// Validate nominal member identities after the graph's export entries and current-schema coverage have passed.
+/// Keep owner-kind order and each enum's variant/method duplicate inventory at this transport trust boundary.
+fn validate_nominal_identity_graph_members(
+    raw: &RawLibraryManifest,
+    require_members: bool,
+) -> Result<(), LibraryManifestError> {
     for model in &raw.exports.models {
         let owner_identity = root_canonical_identity(raw, ExportIdentityKind::Model, &model.name);
         validate_nominal_member_identities(
@@ -335,6 +344,38 @@ fn validate_export_identity_binding(
     entry: &super::ExportIdentity,
     identity: &CanonicalIdentityExport,
 ) -> Result<(), LibraryManifestError> {
+    validate_export_canonical_kind(raw, entry, identity)?;
+    let authoritative_path = validate_export_projection_path(raw, entry, identity)?;
+    if authoritative_path.is_empty() || !canonical_identity_matches_path(siblings, identity, authoritative_path) {
+        // A path can end on an intermediate hop, so report both the path and every public carrier of the identity.
+        let carriers = siblings
+            .iter()
+            .filter(|sibling| sibling.canonical.as_ref() == Some(identity))
+            .map(|sibling| sibling.public_path.join("."))
+            .collect::<Vec<_>>();
+        return Err(LibraryManifestError::Invalid(format!(
+            "identity graph entry `{}` canonical identity disagrees with its authoritative source/projection path: \
+             the path is `{}` while the identity names `{}`, and this package publishes that identity at {}",
+            entry.public_name,
+            authoritative_path.join("."),
+            identity.declaration_name,
+            if carriers.is_empty() {
+                "no other public path".to_string()
+            } else {
+                format!("`{}`", carriers.join("`, `"))
+            }
+        )));
+    }
+    validate_root_export_projection(raw, entry, identity)
+}
+
+/// Require a graph export's canonical kind to match its raw declaration kind. Alias targets retain their own kind;
+/// a newtype's checked raw declaration distinguishes newtype and rusttype identities.
+fn validate_export_canonical_kind(
+    raw: &RawLibraryManifest,
+    entry: &super::ExportIdentity,
+    identity: &CanonicalIdentityExport,
+) -> Result<(), LibraryManifestError> {
     let expected_kind = match entry.kind {
         ExportIdentityKind::Function => Some("function"),
         ExportIdentityKind::Partial => Some("partial"),
@@ -362,6 +403,16 @@ fn validate_export_identity_binding(
         )));
     }
 
+    Ok(())
+}
+
+/// Validate the selected projection's shape and return its authoritative source path without inventing a target.
+/// Direct and partial exports name their own canonical declaration; aliases and reexports retain their target hop.
+fn validate_export_projection_path<'entry>(
+    raw: &RawLibraryManifest,
+    entry: &'entry super::ExportIdentity,
+    identity: &CanonicalIdentityExport,
+) -> Result<&'entry [String], LibraryManifestError> {
     let authoritative_path = match &entry.projection {
         ExportIdentityProjection::Direct => {
             if matches!(entry.kind, ExportIdentityKind::Alias | ExportIdentityKind::Partial) {
@@ -405,14 +456,8 @@ fn validate_export_identity_binding(
             target_path
         }
         ExportIdentityProjection::Reexport { target_path } => {
-            // No kind restriction, deliberately. A re-export is a projection over an already-declared symbol, and
-            // `pub from <module> import <name>` accepts every public declaration kind -- `CheckedExportKind` maps
-            // all of them onto this projection. Restricting it to aliases and functions rejected the shipped
-            // `pub from pricing import LineItem, subtotal`, whose function half passed while its model half did
-            // not. The invariant that *is* a property of re-exports is the path identity checked below: a
-            // re-export republishes its target rather than renaming it. `LibraryReexportResolver` resolves each
-            // `pub from` item to its target's real kind while keeping this projection, which is why any kind can
-            // legitimately arrive here.
+            // Reexports accept every public declaration kind. Their invariant is path identity: the projection
+            // republishes its resolved target rather than renaming it, regardless of the target's declaration kind.
             if entry.source_path != *target_path {
                 return Err(LibraryManifestError::Invalid(format!(
                     "identity graph reexport `{}` has different source and target paths",
@@ -445,40 +490,22 @@ fn validate_export_identity_binding(
             &entry.source_path
         }
     };
-    if authoritative_path.is_empty() || !canonical_identity_matches_path(siblings, identity, authoritative_path) {
-        // Name the two records this compares. The path may legitimately end on a hop rather than the declaration, so
-        // a bare rejection leaves no way to tell a missing hop from a hop published under a different identity.
-        let carriers = siblings
-            .iter()
-            .filter(|sibling| sibling.canonical.as_ref() == Some(identity))
-            .map(|sibling| sibling.public_path.join("."))
-            .collect::<Vec<_>>();
-        return Err(LibraryManifestError::Invalid(format!(
-            "identity graph entry `{}` canonical identity disagrees with its authoritative source/projection path: \
-             the path is `{}` while the identity names `{}`, and this package publishes that identity at {}",
-            entry.public_name,
-            authoritative_path.join("."),
-            identity.declaration_name,
-            if carriers.is_empty() {
-                "no other public path".to_string()
-            } else {
-                format!("`{}`", carriers.join("`, `"))
-            }
-        )));
-    }
+    Ok(authoritative_path)
+}
 
+/// Bind package-root alias and partial projections to their raw exports after the canonical path proof. Nested
+/// projections retain their existing graph-level validation and do not require a package-root raw declaration.
+fn validate_root_export_projection(
+    raw: &RawLibraryManifest,
+    entry: &super::ExportIdentity,
+    identity: &CanonicalIdentityExport,
+) -> Result<(), LibraryManifestError> {
     if entry.public_path.len() == 2 {
         match (&entry.kind, &entry.projection) {
             (ExportIdentityKind::Alias, ExportIdentityProjection::Alias { .. })
             | (ExportIdentityKind::Alias, ExportIdentityProjection::Reexport { .. }) => {
-                // Match the raw export by the public name alone. The two sides record the path of *different hops*
-                // of the same re-export: renaming an export through a facade rewrites its name but leaves the raw
-                // alias pointing at the inner hop it was written on, while the graph entry carries the entrypoint's.
-                // For `items -> pricing -> lib` the raw alias says `["items", "LineItem"]` and the graph entry says
-                // `["pricing", "LineItem"]`. Both are true statements about different hops, so requiring them to be
-                // equal rejected every re-export chain longer than one hop. The public name is unique at the package
-                // root -- the duplicate check above enforces that -- and the identity behind the entry is what
-                // actually binds the two, which `validate_alias_callable_metadata` checks next.
+                // Public names are unique at the package root. A facade's graph and raw export can name different
+                // hops in the same reexport chain, so their canonical target binds them rather than path equality.
                 let raw_alias = raw.exports.aliases.iter().find(|alias| alias.name == entry.public_name);
                 let Some(raw_alias) = raw_alias else {
                     return Err(LibraryManifestError::Invalid(format!(
@@ -1427,6 +1454,11 @@ fn validate_compiled_provider_metadata(metadata: &CompiledProviderMetadata) -> R
         validate_provider_identifier("SDK component", component)?;
     }
 
+    validate_provider_operation_descriptors(metadata)
+}
+
+/// Require distinct function operation identities whose requirements are checked capability identities.
+fn validate_provider_operation_descriptors(metadata: &CompiledProviderMetadata) -> Result<(), LibraryManifestError> {
     let mut operation_ids = HashSet::new();
     for descriptor in &metadata.operation_descriptors {
         if descriptor.operation.kind != SemanticSourceTargetKind::Function {

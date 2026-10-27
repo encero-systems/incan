@@ -1798,8 +1798,7 @@ mod tests {
                                 && owner.declaration == "query"
                     )
         ));
-        let round_trip = public_expression_to_internal(&public)?;
-        assert_eq!(round_trip, scoped);
+        assert_public_expression_round_trip(&public)?;
 
         let scoped_symbol = ast::Expr::Surface(Box::new(ast::SurfaceExpr {
             key: incan_semantics_core::SurfaceFeatureKey::ScopedDslSurface {
@@ -1895,6 +1894,14 @@ mod tests {
                     if race.binding.span.expansion.is_some()
                         && race.arms.iter().all(|arm| arm.awaitable.span.expansion.is_some()))
         ));
+        Ok(())
+    }
+
+    /// Public DTOs omit spans; import assigns deterministic expansion identities rather than restoring empty spans.
+    fn assert_public_expression_round_trip(public: &incan_vocab::IncanExpr) -> Result<(), Box<dyn std::error::Error>> {
+        let restored = public_expression_to_internal(public)?;
+        assert_eq!(&internal_expr_to_public(&restored)?, public);
+        assert_eq!(restored, public_expression_to_internal(public)?);
         Ok(())
     }
 }

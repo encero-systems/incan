@@ -394,15 +394,7 @@ impl Rewrite<'_> {
             }
             ast::Expr::Match(scrutinee, arms) => {
                 self.expr(scrutinee);
-                for arm in arms {
-                    if let Some(guard) = arm.node.guard.as_mut() {
-                        self.expr(guard);
-                    }
-                    match &mut arm.node.body {
-                        ast::MatchBody::Expr(body) => self.expr(body),
-                        ast::MatchBody::Block(body) => self.statement_list(body),
-                    }
-                }
+                self.match_arms(arms);
             }
             ast::Expr::If(if_expr) => {
                 self.expr(&mut if_expr.condition);
@@ -446,17 +438,7 @@ impl Rewrite<'_> {
                     }
                 }
             }
-            ast::Expr::Dict(entries) => {
-                for entry in entries {
-                    match entry {
-                        ast::DictEntry::Pair(key, value) => {
-                            self.expr(key);
-                            self.expr(value);
-                        }
-                        ast::DictEntry::Spread(value) => self.expr(value),
-                    }
-                }
-            }
+            ast::Expr::Dict(entries) => self.dict_entries(entries),
             ast::Expr::Constructor(_, args) => self.call_args(args),
             ast::Expr::FString(parts) => {
                 for part in parts {
@@ -485,6 +467,32 @@ impl Rewrite<'_> {
             | ast::Expr::SelfExpr
             | ast::Expr::Yield(None)
             | ast::Expr::VocabBlock(_) => {}
+        }
+    }
+
+    /// Rewrite each guard before its body, retaining the arm's pattern and source metadata.
+    fn match_arms(&mut self, arms: &mut [ast::Spanned<ast::MatchArm>]) {
+        for arm in arms {
+            if let Some(guard) = arm.node.guard.as_mut() {
+                self.expr(guard);
+            }
+            match &mut arm.node.body {
+                ast::MatchBody::Expr(body) => self.expr(body),
+                ast::MatchBody::Block(body) => self.statement_list(body),
+            }
+        }
+    }
+
+    /// Rewrite dictionary keys before values and spreads in their written order.
+    fn dict_entries(&mut self, entries: &mut [ast::DictEntry]) {
+        for entry in entries {
+            match entry {
+                ast::DictEntry::Pair(key, value) => {
+                    self.expr(key);
+                    self.expr(value);
+                }
+                ast::DictEntry::Spread(value) => self.expr(value),
+            }
         }
     }
 

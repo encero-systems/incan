@@ -439,8 +439,17 @@ impl SymbolTable {
         canonical_builtin_function_identity(builtin)
     }
 
-    /// Populate the root scope with built-in type symbols.
+    /// Populate root types, traits, carrier constructors and global functions in their established registry order.
     fn add_builtins(&mut self) {
+        self.add_builtin_types();
+        self.add_builtin_traits();
+        self.add_builtin_variants();
+        self.add_builtin_functions();
+    }
+
+    /// Define canonical builtin type spellings and aliases once per spelling, retaining the shared registry
+    /// identity for aliases. Package-scoped surface types still require an explicit import.
+    fn add_builtin_types(&mut self) {
         // Builtin types (from the canonical `incan_lang::lang::types` registries).
         //
         // We define both canonical spellings and aliases so name lookup stays robust and we avoid
@@ -484,8 +493,11 @@ impl SymbolTable {
             });
             self.record_builtin_identity(id, canonical);
         }
+    }
 
-        // Builtin traits
+    /// Define builtin trait placeholders with their canonical identities. Awaitable retains its existing single
+    /// output binder; executable trait declarations remain owned by their standard packages.
+    fn add_builtin_traits(&mut self) {
         for info in traits::TRAITS {
             let type_params = match info.id {
                 TraitId::Awaitable => vec!["T".to_string()],
@@ -506,8 +518,11 @@ impl SymbolTable {
             });
             self.record_builtin_identity(id, info.canonical);
         }
+    }
 
-        // Builtin variants for Result and Option
+    /// Define Result and Option constructor symbols before global functions, retaining their canonical constructor
+    /// identities and existing payload binders.
+    fn add_builtin_variants(&mut self) {
         // Ok(T) and Err(E) for Result
         let id = self.define(Symbol {
             name: constructors::as_str(constructors::ConstructorId::Ok).to_string(),
@@ -554,8 +569,11 @@ impl SymbolTable {
             scope: 0,
         });
         self.record_builtin_identity(id, constructors::as_str(constructors::ConstructorId::None));
+    }
 
-        // Builtin functions
+    /// Define the physically registered global callable signatures and aliases with canonical builtin identities.
+    /// Other builtin callables remain selected by the typechecker's existing registry dispatch.
+    fn add_builtin_functions(&mut self) {
         for name in std::iter::once(builtins::as_str(BuiltinFnId::Print))
             .chain(builtins::aliases(BuiltinFnId::Print).iter().copied())
         {
@@ -1610,7 +1628,7 @@ pub struct FunctionOverloadInfo {
 /// RFC 038 requires callable values to retain rest-parameter shape instead of collapsing to a flat list of types. The
 /// optional `name` lets explicit `Callable[...]` types keep unnamed fixed parameters while declarations and methods
 /// preserve names for keyword binding.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CallableParam {
     pub name: Option<String>,
     pub ty: ResolvedType,
@@ -1943,8 +1961,8 @@ pub fn field_is_type_private(field: &crate::ast::FieldDecl, private_fields_are_t
 
 /// Return the user-facing field type name without making presentation metadata a second semantic authority.
 ///
-/// Ordinary Incan types use the resolved type's canonical spelling, which normalizes compatibility aliases such as
-/// `Dict` to `dict`. Rust-backed types retain the authored Incan spelling because their resolved representation carries
+/// Ordinary Incan types use registry-owned source spellings such as `dict`, `str` and `int`.
+/// Rust-backed types retain the authored Incan spelling because their resolved representation carries
 /// a canonical Rust path that must never leak through `FieldInfo.type_name`.
 pub fn field_surface_type_name(source: &Type, resolved: &ResolvedType) -> String {
     if resolved_type_contains_rust_path(resolved) {
@@ -2106,7 +2124,7 @@ pub enum ImplementationTraitBoundOriginInfo {
 }
 
 /// Resolved type (after type checking)
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ResolvedType {
     /// Internal Rust never type (`!`).
     ///
@@ -2539,58 +2557,14 @@ where
             resolve(&base)
         }
         Type::Generic(name, args) => {
-            let mut resolved_args: Vec<_> = args.iter().map(|arg| resolve(&arg.node)).collect();
-            if let Some(id) = symbols.lookup(name)
-                && let Some(symbol) = symbols.get(id)
-                && let SymbolKind::RustItem(info) = &symbol.kind
-                && !matches!(info.binding, RustImportBindingKind::CrateRoot)
-            {
-                if rust_generic_preserves_nominal_ir(info)
-                    || resolved_args.iter().any(|arg| source_nominal_argument(arg, symbols))
-                {
-                    // Source facades keep the registry contract for wrapped fields; ordinary native containers keep
-                    // their canonical path across module boundaries.
-                    let source_surface = surface_types::from_str(name.as_str())
-                        .is_some_and(surface_types::field_access_reads_wrapped_value);
-                    if source_surface {
-                        return ResolvedType::Generic(name.clone(), resolved_args);
-                    }
-                    for arg in &mut resolved_args {
-                        qualify_structured_rust_arg(arg);
-                        if !rust_generic_preserves_nominal_ir(info) {
-                            *arg = crate::resolved_type_subst::map_resolved_type_leaves(arg, &|leaf| {
-                                let ResolvedType::Named(name) = leaf else { return None };
-                                symbols
-                                    .module_type_identity(name)
-                                    .and_then(incan_semantics_core::body_ir::nominal_carrier_key)
-                                    .map(ResolvedType::Named)
-                            });
-                        }
-                    }
-                    let base = if rust_generic_preserves_nominal_ir(info) {
-                        name.clone()
-                    } else {
-                        info.path.clone()
-                    };
-                    return ResolvedType::Generic(base, resolved_args);
-                } else {
-                    let rendered_args = resolved_args.iter().map(render_rust_arg).collect::<Vec<_>>().join(", ");
-                    return ResolvedType::RustPath(format!("{}<{rendered_args}>", info.path));
-                }
-            }
-            if name == "Type" {
-                return ResolvedType::TypeToken(Box::new(
-                    resolved_args.first().cloned().unwrap_or(ResolvedType::Unknown),
-                ));
-            }
-            // A builtin base resolves through the shared mapping, in its canonical spelling.
-            if let Some(id) = collections::from_str(name.as_str()) {
-                return ResolvedType::builtin_generic(id, resolved_args);
-            }
-            if name == UNION_TYPE_NAME {
-                return union_ty(resolved_args);
-            }
-            ResolvedType::Generic(name.clone(), resolved_args)
+            let resolved_args = args.iter().map(|arg| resolve(&arg.node)).collect();
+            resolve_generic_type(
+                name,
+                resolved_args,
+                symbols,
+                render_rust_arg,
+                qualify_structured_rust_arg,
+            )
         }
         Type::DottedGeneric(segments, args) => {
             let resolved_args = args.iter().map(|arg| resolve(&arg.node)).collect();
@@ -2630,6 +2604,71 @@ where
         Type::SelfType => ResolvedType::SelfType,
         Type::Infer => ResolvedType::CallSiteInfer,
     }
+}
+
+/// Apply a simple generic constructor to already resolved arguments, preserving source facade and Rust identities.
+///
+/// Structured native applications retain nominal arguments needed by Body IR. Opaque native applications use the
+/// caller's Rust argument renderer, while builtin collection and union constructors keep their canonical mapping.
+fn resolve_generic_type<F, G>(
+    name: &str,
+    mut resolved_args: Vec<ResolvedType>,
+    symbols: &SymbolTable,
+    render_rust_arg: &F,
+    qualify_structured_rust_arg: &G,
+) -> ResolvedType
+where
+    F: Fn(&ResolvedType) -> String,
+    G: Fn(&mut ResolvedType),
+{
+    if let Some(id) = symbols.lookup(name)
+        && let Some(symbol) = symbols.get(id)
+        && let SymbolKind::RustItem(info) = &symbol.kind
+        && !matches!(info.binding, RustImportBindingKind::CrateRoot)
+    {
+        if rust_generic_preserves_nominal_ir(info)
+            || resolved_args.iter().any(|arg| source_nominal_argument(arg, symbols))
+        {
+            // Source facades keep their wrapped-field contract; other native containers keep their canonical path.
+            let source_surface =
+                surface_types::from_str(name).is_some_and(surface_types::field_access_reads_wrapped_value);
+            if source_surface {
+                return ResolvedType::Generic(name.to_owned(), resolved_args);
+            }
+            for arg in &mut resolved_args {
+                qualify_structured_rust_arg(arg);
+                if !rust_generic_preserves_nominal_ir(info) {
+                    *arg = crate::resolved_type_subst::map_resolved_type_leaves(arg, &|leaf| {
+                        let ResolvedType::Named(name) = leaf else { return None };
+                        symbols
+                            .module_type_identity(name)
+                            .and_then(incan_semantics_core::body_ir::nominal_carrier_key)
+                            .map(ResolvedType::Named)
+                    });
+                }
+            }
+            let base = if rust_generic_preserves_nominal_ir(info) {
+                name.to_owned()
+            } else {
+                info.path.clone()
+            };
+            return ResolvedType::Generic(base, resolved_args);
+        }
+        let rendered_args = resolved_args.iter().map(render_rust_arg).collect::<Vec<_>>().join(", ");
+        return ResolvedType::RustPath(format!("{}<{rendered_args}>", info.path));
+    }
+    if name == "Type" {
+        return ResolvedType::TypeToken(Box::new(
+            resolved_args.first().cloned().unwrap_or(ResolvedType::Unknown),
+        ));
+    }
+    if let Some(id) = collections::from_str(name) {
+        return ResolvedType::builtin_generic(id, resolved_args);
+    }
+    if name == UNION_TYPE_NAME {
+        return union_ty(resolved_args);
+    }
+    ResolvedType::Generic(name.to_owned(), resolved_args)
 }
 
 /// Resolve builtin and native import names before ordinary source nominal or still-open parameter spellings.
@@ -3183,8 +3222,8 @@ mod tests {
         );
     }
 
-    #[test]
     /// Source reflection normalizes aliases recursively while diagnostic descriptors retain their existing spelling.
+    #[test]
     fn field_surface_type_name_uses_canonical_incan_collection_spelling() {
         let source = Type::Generic(
             "Dict".to_string(),

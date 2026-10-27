@@ -154,29 +154,9 @@ impl TypeChecker {
             .as_ref()
             .map(|target| target.type_params.clone())
             .unwrap_or_default();
-        let mut bindings = HashMap::new();
-        if let Some(target) = &generic_target
-            && !partial.type_args.is_empty()
-        {
-            if partial.type_args.len() != target.type_params.len() {
-                self.errors.push(errors::explicit_type_arg_arity(
-                    &target.callee,
-                    &target.type_params,
-                    &Self::written_type_args(&partial.type_args),
-                    span,
-                ));
-                for arg in &partial.args {
-                    self.check_expr(&arg.value);
-                }
-                return ResolvedType::Unknown;
-            }
-            let written = partial
-                .type_args
-                .iter()
-                .map(|type_arg| self.resolve_type_checked(type_arg))
-                .collect::<Vec<_>>();
-            bindings = type_param_subst_map_call_site(&target.type_params, &written);
-        }
+        let Some(mut bindings) = self.seed_partial_type_bindings(partial, generic_target.as_ref(), span) else {
+            return ResolvedType::Unknown;
+        };
 
         // ---- Check each preset against its parameter, binding the type parameters it names ----
         // A written type argument is not revised by a preset: a preset of another type is a mismatch against it.
@@ -200,65 +180,32 @@ impl TypeChecker {
         // ---- Instantiate a generic target ----
         let (projected, ret) = match &generic_target {
             Some(target) => {
-                let unfixed = target
-                    .type_params
-                    .iter()
-                    .filter(|type_param| {
-                        bindings.get(*type_param).is_none_or(|bound| {
-                            matches!(bound, ResolvedType::Unknown | ResolvedType::CallSiteInfer)
-                                || calls::first_open_type_param(bound, &type_params).is_some()
-                        })
-                    })
-                    .cloned()
-                    .collect::<Vec<_>>();
-                if !unfixed.is_empty() {
-                    for type_param in &unfixed {
-                        self.errors.push(errors::local_partial_type_param_unfixed(
-                            &target.callee,
-                            type_param,
-                            span,
-                        ));
-                    }
+                let Some(instantiated) =
+                    self.instantiate_partial_target(partial, target, projected, &ret, &bindings, span)
+                else {
                     return ResolvedType::Unknown;
-                }
-                self.emit_explicit_bound_errors(
-                    &target.callee,
-                    &target.bounds,
-                    &target.bound_details,
-                    &bindings,
-                    Self::type_argument_origin(&partial.type_args),
-                    span,
-                );
-                let instantiated_params = projected
-                    .iter()
-                    .map(|param| CallableParam {
-                        ty: substitute_resolved_type(&param.ty, &bindings),
-                        ..param.clone()
-                    })
-                    .collect::<Vec<_>>();
-                let instantiated_ret = substitute_resolved_type(&ret, &bindings);
-                // Lowering reads the target's parameters from its recorded type, and a generic function's type
-                // arguments for the call the partial makes.
-                if let Some(target_ty) = self.type_info.expr_type(partial.target.span).cloned() {
-                    self.record_expr_type(partial.target.span, substitute_resolved_type(&target_ty, &bindings));
-                }
-                if self.generic_partial_target_names_a_function(&partial.target) {
-                    let type_args = target
-                        .type_params
-                        .iter()
-                        .filter_map(|type_param| bindings.get(type_param).cloned())
-                        .collect();
-                    self.type_info
-                        .calls
-                        .call_site_monomorph_type_args
-                        .insert(span, type_args);
-                }
-                (instantiated_params, instantiated_ret)
+                };
+                instantiated
             }
             None => (projected, *ret),
         };
 
-        for (arg, actual) in partial.args.iter().zip(&preset_types) {
+        self.validate_partial_presets(partial, &projected, &preset_types);
+
+        // A local partial retains its complete callable signature. Presets become defaulted, name-overrideable
+        // slots; `is_partial_preset` preserves the separate positional rule that starts at the residual arguments.
+        ResolvedType::Function(Self::local_partial_params(projected, &partial.args), Box::new(ret))
+    }
+
+    /// Validate previously checked preset values against the final projected parameter types. This runs after
+    /// generic instantiation so a written binder remains authoritative over a conflicting inferred preset.
+    fn validate_partial_presets(
+        &mut self,
+        partial: &PartialExpr,
+        projected: &[CallableParam],
+        preset_types: &[ResolvedType],
+    ) {
+        for (arg, actual) in partial.args.iter().zip(preset_types) {
             if let Some(param) = projected.iter().find(|param| param.name() == Some(arg.name.as_str()))
                 && !self.types_compatible(actual, &param.ty)
             {
@@ -269,10 +216,103 @@ impl TypeChecker {
                 ));
             }
         }
+    }
 
-        // A local partial retains its complete callable signature. Presets become defaulted, name-overrideable
-        // slots; `is_partial_preset` preserves the separate positional rule that starts at the residual arguments.
-        ResolvedType::Function(Self::local_partial_params(projected, &partial.args), Box::new(ret))
+    /// Seed a generic partial from its written arguments before preset inference. Arity errors still check every
+    /// preset for independent diagnostics and stop instantiation; non-generic or inferred targets start empty.
+    fn seed_partial_type_bindings(
+        &mut self,
+        partial: &PartialExpr,
+        target: Option<&GenericPartialTarget>,
+        span: Span,
+    ) -> Option<HashMap<String, ResolvedType>> {
+        let Some(target) = target.filter(|_| !partial.type_args.is_empty()) else {
+            return Some(HashMap::new());
+        };
+        if partial.type_args.len() != target.type_params.len() {
+            self.errors.push(errors::explicit_type_arg_arity(
+                &target.callee,
+                &target.type_params,
+                &Self::written_type_args(&partial.type_args),
+                span,
+            ));
+            for arg in &partial.args {
+                self.check_expr(&arg.value);
+            }
+            return None;
+        }
+        let written = partial
+            .type_args
+            .iter()
+            .map(|type_arg| self.resolve_type_checked(type_arg))
+            .collect::<Vec<_>>();
+        Some(type_param_subst_map_call_site(&target.type_params, &written))
+    }
+
+    /// Close a generic partial after preset inference, retaining its target type and function monomorph facts for
+    /// lowering. Every unfixed binder is diagnosed before bound checks or any target metadata is changed.
+    fn instantiate_partial_target(
+        &mut self,
+        partial: &PartialExpr,
+        target: &GenericPartialTarget,
+        projected: Vec<CallableParam>,
+        ret: &ResolvedType,
+        bindings: &HashMap<String, ResolvedType>,
+        span: Span,
+    ) -> Option<(Vec<CallableParam>, ResolvedType)> {
+        let unfixed = target
+            .type_params
+            .iter()
+            .filter(|type_param| {
+                bindings.get(*type_param).is_none_or(|bound| {
+                    matches!(bound, ResolvedType::Unknown | ResolvedType::CallSiteInfer)
+                        || calls::first_open_type_param(bound, &target.type_params).is_some()
+                })
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if !unfixed.is_empty() {
+            for type_param in &unfixed {
+                self.errors.push(errors::local_partial_type_param_unfixed(
+                    &target.callee,
+                    type_param,
+                    span,
+                ));
+            }
+            return None;
+        }
+        self.emit_explicit_bound_errors(
+            &target.callee,
+            &target.bounds,
+            &target.bound_details,
+            bindings,
+            Self::type_argument_origin(&partial.type_args),
+            span,
+        );
+        let instantiated_params = projected
+            .iter()
+            .map(|param| CallableParam {
+                ty: substitute_resolved_type(&param.ty, bindings),
+                ..param.clone()
+            })
+            .collect::<Vec<_>>();
+        let instantiated_ret = substitute_resolved_type(ret, bindings);
+        // Lowering reads the target's parameters from its recorded type and the function call's type arguments.
+        if let Some(target_ty) = self.type_info.expr_type(partial.target.span).cloned() {
+            self.record_expr_type(partial.target.span, substitute_resolved_type(&target_ty, bindings));
+        }
+        if self.generic_partial_target_names_a_function(&partial.target) {
+            let type_args = target
+                .type_params
+                .iter()
+                .filter_map(|type_param| bindings.get(type_param).cloned())
+                .collect();
+            self.type_info
+                .calls
+                .call_site_monomorph_type_args
+                .insert(span, type_args);
+        }
+        Some((instantiated_params, instantiated_ret))
     }
 
     /// Return the callable type of a local partial's target that is a method of a value (`partial user.label(...)`),
@@ -816,28 +856,8 @@ impl TypeChecker {
     pub fn check_expr_with_expected(&mut self, expr: &Spanned<Expr>, expected: Option<&ResolvedType>) -> ResolvedType {
         let errors_before = self.errors.len();
         self.refuse_mut_params_held_in(expr);
-        // An integer literal at an `Option` or union destination takes the one numeric type that destination holds.
-        let numeric_destination = match (&expr.node, expected) {
-            (Expr::Literal(Literal::Int(_)), Some(expected_ty)) => {
-                self.integer_literal_numeric_destination(expected_ty)
-            }
-            (Expr::Unary(UnaryOp::Neg, inner), Some(expected_ty))
-                if matches!(inner.node, Expr::Literal(Literal::Int(_))) =>
-            {
-                self.integer_literal_numeric_destination(expected_ty)
-            }
-            _ => None,
-        };
-        let frozen_string_destination = match (&expr.node, expected) {
-            (Expr::Literal(Literal::String(_)), Some(expected_ty)) => {
-                self.string_literal_frozen_destination(expected_ty)
-            }
-            _ => None,
-        };
-        let expected = numeric_destination
-            .as_ref()
-            .or(frozen_string_destination.as_ref())
-            .or(expected);
+        let literal_destination = self.contextual_literal_destination(expr, expected);
+        let expected = literal_destination.as_ref().or(expected);
         let ty = match (&expr.node, expected) {
             (_, Some(ResolvedType::TypeVar(_))) => return self.check_expr(expr),
             (Expr::Paren(inner), Some(expected_ty)) => self.check_expr_with_expected(inner, Some(expected_ty)),
@@ -904,12 +924,7 @@ impl TypeChecker {
             }
             (Expr::Try(inner), Some(expected_ty)) => self.check_try_with_expected(inner, expr.span, Some(expected_ty)),
             (Expr::Call(callee, type_args, args), Some(expected_ty)) => {
-                let errors_before = self.errors.len();
-                let ty = self.check_call_with_expected(callee, type_args, args, expr.span, Some(expected_ty));
-                self.retain_body_ir_reexport_call(expr, errors_before, &ty);
-                self.record_mut_arguments(MutArgumentCallee::Function(callee), expr.span, args);
-                self.retain_body_ir_empty_list_use(expr, errors_before);
-                ty
+                self.check_call_with_contextual_facts(expr, callee, type_args, args, expected_ty)
             }
             (Expr::MethodCall(base, method, type_args, args), Some(expected_ty)) => {
                 let errors_before = self.errors.len();
@@ -955,6 +970,47 @@ impl TypeChecker {
         self.retain_body_ir_value_destination(expr, &ty, expected);
         self.refuse_capturing_callables_held_in(expr);
         self.retain_declared_conversion(expr, &ty, expected)
+    }
+
+    /// Check a contextually typed function call and retain its re-export, mutable-argument and empty-list facts
+    /// against the call's own diagnostic checkpoint, before the surrounding expression publishes its result.
+    fn check_call_with_contextual_facts(
+        &mut self,
+        expr: &Spanned<Expr>,
+        callee: &Spanned<Expr>,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        expected: &ResolvedType,
+    ) -> ResolvedType {
+        let errors_before = self.errors.len();
+        let ty = self.check_call_with_expected(callee, type_args, args, expr.span, Some(expected));
+        self.retain_body_ir_reexport_call(expr, errors_before, &ty);
+        self.record_mut_arguments(MutArgumentCallee::Function(callee), expr.span, args);
+        self.retain_body_ir_empty_list_use(expr, errors_before);
+        ty
+    }
+
+    /// Select the one numeric or frozen string member a literal can take from an Option or union destination.
+    /// Other expressions keep the original expected type; this hint does not broaden inference to non-literals.
+    fn contextual_literal_destination(
+        &self,
+        expr: &Spanned<Expr>,
+        expected: Option<&ResolvedType>,
+    ) -> Option<ResolvedType> {
+        match (&expr.node, expected) {
+            (Expr::Literal(Literal::Int(_)), Some(expected_ty)) => {
+                self.integer_literal_numeric_destination(expected_ty)
+            }
+            (Expr::Unary(UnaryOp::Neg, inner), Some(expected_ty))
+                if matches!(inner.node, Expr::Literal(Literal::Int(_))) =>
+            {
+                self.integer_literal_numeric_destination(expected_ty)
+            }
+            (Expr::Literal(Literal::String(_)), Some(expected_ty)) => {
+                self.string_literal_frozen_destination(expected_ty)
+            }
+            _ => None,
+        }
     }
 
     /// Typecheck an explicitly suffixed integer token, preserving its named type and validating its signed value.

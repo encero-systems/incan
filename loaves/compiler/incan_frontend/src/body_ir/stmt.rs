@@ -129,11 +129,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             ast::Statement::Unsafe(region) => self.lower_unsafe_region(region, remaining, scope, span, out),
             ast::Statement::Expr(expr) => {
                 // `yield value` parses as an ordinary expression statement wrapping `ast::Expr::Yield(Some(_))`
-                // (there is no separate `ast::Statement::Yield` AST node) -- mirror the existing Rust-emission
-                // backend's own `lower_statement` (`loaves/compiler/incan_ir/src/lower/stmt.rs`), which special-cases
-                // this exact shape before falling back to generic expression-statement lowering. A bare
-                // `yield` (no value) falls through to the generic `Expr` arm below, same as that
-                // backend, and lowers via the expression-position `yield` stub (see the module docs).
+                // (there is no separate `ast::Statement::Yield` AST node). A bare `yield` falls through to ordinary
+                // expression lowering; only a statement with a value reaches the suspension operation here.
                 if let ast::Expr::Yield(Some(value)) = &expr.node {
                     self.lower_yield(value, scope, span, out);
                 } else {
@@ -247,54 +244,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) {
-        let mut ty = self.assignment_value_type(assignment, span);
-        ty = self.retained_result_binding_type(assignment, ty, out);
+        let mut ty = self.assignment_binding_type(assignment, span, out);
         let materializes_range = self.expr_has_materialized_range_layout(&assignment.value);
         self.settle_open_result_value(&assignment.value, &ty);
         let value = self.lower_assignment_value(assignment, &mut ty, scope, out);
-        let Some(place) = self.assignment_destination(assignment, ty, remaining, scope, span, out) else {
+        let Some(place) = self.assignment_target_place(assignment, ty, remaining, scope, span, out) else {
             return;
         };
         self.finish_assignment(assignment, place, value, materializes_range, span, out);
-    }
-
-    /// Select the checked assignment carrier, retaining closed call results for inferred bindings.
-    fn assignment_value_type(&self, assignment: &ast::AssignmentStmt, assignment_span: HirSourceSpan) -> IncanType {
-        // A closure value already carries the typechecker's callable shape. A partial retains that full callable
-        // type, with captured presets represented as named-overrideable defaults. Positional calls skip those preset
-        // slots, and `LocalCallableTarget::binding` records the resulting declaration mapping. Keeping this type on
-        // the binding makes the local call contract agree with the `Rvalue::Closure` that creates the value.
-        let atomic_storage = self
-            .type_info
-            .assignment_binding_type(assignment_span)
-            .is_some_and(|ty| self.type_info.body_ir_newtypes.controls_type(ty));
-        let mut ty = self
-            .type_info
-            .body_ir_newtypes
-            .assignment_type(assignment_span, self.type_info)
-            .or_else(|| self.type_info.assignment_binding_type(assignment_span))
-            .map(|ty| self.checked_type(ty))
-            .or_else(|| self.callable_value_ty(&assignment.value))
-            .unwrap_or_else(|| self.resolve_ty(assignment.value.span));
-        if assignment.ty.is_none()
-            && !atomic_storage
-            && let Some(returned) = self
-                .type_info
-                .expressions
-                .body_ir_expr_types
-                .get(&assignment.value.span)
-                .or_else(|| {
-                    self.type_info
-                        .calls
-                        .inferred_call_result_types
-                        .get(&assignment.value.span)
-                })
-                .map(|ty| self.checked_type(ty))
-                .or_else(|| self.published_expression_type(&assignment.value))
-        {
-            ty = returned;
-        }
-        ty
     }
 
     /// Evaluate the replacement before writing it, counting only reads of the destination's current value.
@@ -312,14 +269,26 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let reads = replacement.and_then(|local| self.remaining_reads.get(&local).copied());
         let current_reads = count_reads_in_expr(&assignment.name, &assignment.value.node);
         if let Some(local) = replacement {
-            self.remaining_reads.insert(local, current_reads);
+            self.remaining_reads.insert(
+                local,
+                ReadCountdown {
+                    remaining: current_reads,
+                    projected: reads.is_some_and(|countdown| countdown.projected),
+                },
+            );
             self.replacing_local = Some((local, self.loop_scopes.len()));
         }
         let mut value = self.lower_boundary_value(&assignment.value, Some(ty), scope, out);
         self.replacing_local = enclosing_replacement;
         if let Some(local) = replacement {
-            if let Some(reads) = reads {
-                self.remaining_reads.insert(local, reads.saturating_sub(current_reads));
+            if let Some(mut reads) = reads {
+                // Projection history still protects conditional scope-exit drops after the replacement.
+                reads.projected |= self
+                    .remaining_reads
+                    .get(&local)
+                    .is_some_and(|countdown| countdown.projected);
+                reads.remaining = reads.remaining.saturating_sub(current_reads);
+                self.remaining_reads.insert(local, reads);
             } else {
                 self.remaining_reads.remove(&local);
             }
@@ -374,8 +343,99 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
     }
 
-    /// Resolve a checked assignment destination or declare its new binding, refusing unresolved canonical targets.
-    fn assignment_destination(
+    /// Publish the replacement and reestablish its drop obligation and checked binding metadata.
+    fn finish_assignment(
+        &mut self,
+        assignment: &ast::AssignmentStmt,
+        place: bir::Place,
+        value: bir::Operand,
+        materializes_range: bool,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) {
+        if assignment.ty.is_some()
+            && !self.type_info.binds_capturing_callable(span)
+            && let Some(local) = place.local_id()
+            && matches!(self.locals[local.index()].ty, IncanType::Function { .. })
+            && !self.function_pointer_locals.contains(&local)
+        {
+            self.function_pointer_locals.push(local);
+        }
+        if self.type_info.binds_capturing_callable(span)
+            && let Some(local) = place.local_id()
+            && !self.closure_holding_locals.contains(&local)
+        {
+            self.closure_holding_locals.push(local);
+        }
+        if !place.permits_write() {
+            let target = place
+                .global()
+                .map_or_else(|| assignment.name.clone(), |global| global.identity.render_compact());
+            self.push_unsupported_stmt(format!("assignment target `{target}` is not writable"), span, out);
+            return;
+        }
+        self.record_static_alias_assignment(assignment, &place, &value);
+        out.push(bir::Statement {
+            kind: bir::StatementKind::Assign {
+                place: place.clone(),
+                rvalue: bir::Rvalue::Use(value),
+            },
+            span,
+        });
+        if let Some(local) = place.local_id() {
+            self.moved_out.remove(&local);
+            if materializes_range {
+                self.materialized_range_locals.insert(local);
+            } else {
+                self.materialized_range_locals.remove(&local);
+            }
+        }
+    }
+
+    /// Select the checked binding carrier before lowering the assigned value. Explicit annotations and atomic
+    /// newtype storage keep their contract; inferred ordinary bindings may use the retained executable result.
+    fn assignment_binding_type(
+        &mut self,
+        assignment: &ast::AssignmentStmt,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> IncanType {
+        let atomic_storage = self
+            .type_info
+            .assignment_binding_type(span)
+            .is_some_and(|ty| self.type_info.body_ir_newtypes.controls_type(ty));
+        let mut ty = self
+            .type_info
+            .body_ir_newtypes
+            .assignment_type(span, self.type_info)
+            .or_else(|| self.type_info.assignment_binding_type(span))
+            .map(|ty| self.checked_type(ty))
+            .or_else(|| self.callable_value_ty(&assignment.value))
+            .unwrap_or_else(|| self.resolve_ty(assignment.value.span));
+        if assignment.ty.is_none()
+            && !atomic_storage
+            && let Some(returned) = self
+                .type_info
+                .expressions
+                .body_ir_expr_types
+                .get(&assignment.value.span)
+                .or_else(|| {
+                    self.type_info
+                        .calls
+                        .inferred_call_result_types
+                        .get(&assignment.value.span)
+                })
+                .map(|ty| self.checked_type(ty))
+                .or_else(|| self.published_expression_type(&assignment.value))
+        {
+            ty = returned;
+        }
+        self.retained_result_binding_type(assignment, ty, out)
+    }
+
+    /// Resolve a write through its retained identity before using the existing unqualified-local fallback. A new
+    /// local is declared only at its checked binding span; an unrepresentable canonical target emits a refusal.
+    fn assignment_target_place(
         &mut self,
         assignment: &ast::AssignmentStmt,
         ty: IncanType,
@@ -429,55 +489,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             )),
         };
         Some(place)
-    }
-
-    /// Publish the replacement and reestablish its drop obligation and checked binding metadata.
-    fn finish_assignment(
-        &mut self,
-        assignment: &ast::AssignmentStmt,
-        place: bir::Place,
-        value: bir::Operand,
-        materializes_range: bool,
-        span: HirSourceSpan,
-        out: &mut Vec<bir::Statement>,
-    ) {
-        if assignment.ty.is_some()
-            && !self.type_info.binds_capturing_callable(span)
-            && let Some(local) = place.local_id()
-            && matches!(self.locals[local.index()].ty, IncanType::Function { .. })
-            && !self.function_pointer_locals.contains(&local)
-        {
-            self.function_pointer_locals.push(local);
-        }
-        if self.type_info.binds_capturing_callable(span)
-            && let Some(local) = place.local_id()
-            && !self.closure_holding_locals.contains(&local)
-        {
-            self.closure_holding_locals.push(local);
-        }
-        if !place.permits_write() {
-            let target = place
-                .global()
-                .map_or_else(|| assignment.name.clone(), |global| global.identity.render_compact());
-            self.push_unsupported_stmt(format!("assignment target `{target}` is not writable"), span, out);
-            return;
-        }
-        self.record_static_alias_assignment(assignment, &place, &value);
-        out.push(bir::Statement {
-            kind: bir::StatementKind::Assign {
-                place: place.clone(),
-                rvalue: bir::Rvalue::Use(value),
-            },
-            span,
-        });
-        if let Some(local) = place.local_id() {
-            self.moved_out.remove(&local);
-            if materializes_range {
-                self.materialized_range_locals.insert(local);
-            } else {
-                self.materialized_range_locals.remove(&local);
-            }
-        }
     }
 
     /// Lower `obj.field = value` (including the compound `obj.field <op>= value` form). The parser already
@@ -851,10 +862,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// -- used for swaps and other multi-target reassignments. Materializes `value` once, then reads and
     /// materializes each element into its own fresh temporary *before* writing to any target, so aliased targets
     /// and sources (for example `arr[i], arr[j] = arr[j], arr[i]`) read the pre-assignment values rather than one
-    /// another's already-written results. This is genuinely new coverage: the existing Rust-emission backend does
-    /// not implement `TupleAssign` at all (`loaves/compiler/incan_ir/src/lower/stmt.rs` returns a `LoweringError`), so
-    /// there is no existing behavior to mirror here -- the evaluation order above is v0's own design, chosen
-    /// specifically to make `a, b = b, a` swap correctly.
+    /// another's already-written results. This evaluation order makes `a, b = b, a` swap correctly.
     ///
     /// A target written as a bare name (`items[0], fresh = ...`) binds that name as an ordinary assignment would,
     /// declaring it when the checker proved this is its first binding, so later reads find a local.
@@ -1001,9 +1009,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         }
     }
 
-    /// Lower a chained assignment whose value the checker recorded as written per target: each target, left to right,
-    /// gets its own evaluation of the value at that target's type, as a single `target = value` writes it, matching
-    /// the legacy backend's `lower_chained_literal` (`loaves/compiler/incan_ir/src/lower/assignment_targets.rs`).
+    /// Lower a chained assignment with a checked per-target value evaluation. Targets are processed left to right,
+    /// and each value is lowered at its target's type, as a single `target = value` writes it.
     ///
     /// The checker records this only for a value built from literals and builtin empty constructors over bound
     /// targets of different types (`n = f = 1` over an `int` and a `float`), so evaluating it once per target observes

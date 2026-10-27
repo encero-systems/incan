@@ -1,117 +1,33 @@
-//! Mutation generations and memoized declaration identities for one checker. Every mutable access invalidates the
-//! relevant input, including changes through public checker fields and restoration of dependency lookup scopes.
+//! One current nominal publication, governed by the mutation owners' revisions and released after checking.
 
 use std::collections::BTreeMap;
-use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 use incan_semantics_core::CanonicalSymbolId;
 
-use super::TypeChecker;
-use crate::symbols::next_identity_generation;
-
-/// A checker input whose mutable access starts a new nominal-identity generation. Cloning a snapshot preserves its
-/// generation; restoring that snapshot is safe because its contents are the same. Fresh values receive distinct
-/// generations, so replacing an input cannot accidentally reuse a stale cache entry.
-#[derive(Debug, Clone)]
-pub struct IdentityInput<T> {
-    value: T,
-    generation: u64,
-}
-
-impl<T> From<T> for IdentityInput<T> {
-    /// Start tracking an input before it is visible to the checker.
-    fn from(value: T) -> Self {
-        Self {
-            value,
-            generation: next_identity_generation(),
-        }
-    }
-}
-
-impl<T> Deref for IdentityInput<T> {
-    type Target = T;
-
-    /// Read the input without changing its generation.
-    fn deref(&self) -> &T {
-        &self.value
-    }
-}
-
-impl<T: Default> Default for IdentityInput<T> {
-    /// Initialize the default value with a fresh mutation generation, just like an explicitly supplied input.
-    fn default() -> Self {
-        Self::from(T::default())
-    }
-}
-
-impl<T> DerefMut for IdentityInput<T> {
-    /// Invalidate before handing out mutable access; this also covers nested map entries and symbol mutations.
-    fn deref_mut(&mut self) -> &mut T {
-        self.generation = next_identity_generation();
-        &mut self.value
-    }
-}
-
-impl<'a, T> IntoIterator for &'a IdentityInput<T>
-where
-    &'a T: IntoIterator,
-{
-    type Item = <&'a T as IntoIterator>::Item;
-    type IntoIter = <&'a T as IntoIterator>::IntoIter;
-
-    /// Iterate through an immutable input without invalidating the memo.
-    fn into_iter(self) -> Self::IntoIter {
-        (&self.value).into_iter()
-    }
-}
-
-/// The current immutable publication, bounded to one input generation. The declaration store owns its append-only
-/// carrier admission index; this memo retains no historical publication when an input generation changes.
-#[derive(Debug, Default)]
-pub(super) struct NominalIdentityCache {
-    generation: Option<[u64; 4]>,
-    identities: Arc<BTreeMap<String, CanonicalSymbolId>>,
-    #[cfg(test)]
-    recomputations: usize,
-}
+use super::{CheckingNominalScope, TypeChecker};
 
 impl TypeChecker {
-    /// Return the exact current nominal publication, reusing its immutable map until an input changes. Mutable input
-    /// access is conservatively versioned even when it changes only unrelated metadata; no stale binding can survive.
+    /// Share the current nominal map only while its mutation-owned inputs match; release a stale snapshot before
+    /// collecting its replacement so the checker retains no historical publication during allocation.
     pub(super) fn checked_nominal_type_identities(&self) -> Arc<BTreeMap<String, CanonicalSymbolId>> {
-        let generation = [
-            self.symbols.nominal_identity_generation(),
-            self.type_aliases.generation,
-            self.public_library_type_identities.generation,
-            self.declaration_nominal_scopes.generation,
-        ];
-        let mut cache = self.nominal_identity_cache.borrow_mut();
-        if cache.generation == Some(generation) {
-            return Arc::clone(&cache.identities);
+        if let Some(identities) = self.checked_body_nominal_scope() {
+            return identities;
         }
-        // Release the previous generation before allocating its replacement. A caller that still needs its snapshot
-        // owns an Arc, but the checker itself never keeps historical generations alive.
-        cache.identities = Arc::default();
-        let identities = self.compute_nominal_type_identities();
-        cache.identities = Arc::new(identities);
-        cache.generation = Some(generation);
-        #[cfg(test)]
-        {
-            cache.recomputations += 1;
-        }
-        Arc::clone(&cache.identities)
+        self.clear_nominal_identity_cache();
+        let identities = Arc::new(self.collect_checked_nominal_scope());
+        self.checking_nominal_scope.replace(Some(CheckingNominalScope {
+            identities: Arc::clone(&identities),
+            inputs: self.nominal_scope_inputs(),
+        }));
+        identities
     }
 
     /// Transfer the valid body-check snapshot or the current publication into checked facts, releasing checker-only
     /// references before taking ownership. Outstanding declaration readers keep their immutable snapshot; only that
     /// case needs an owned copy for the downstream artifact.
     pub(super) fn take_checked_nominal_type_identities(&mut self) -> BTreeMap<String, CanonicalSymbolId> {
-        let reusable = self.checked_body_nominal_scope().is_some();
-        let identities = match self.checking_nominal_scope.take() {
-            Some(scope) if reusable => scope.identities,
-            _ => self.checked_nominal_type_identities(),
-        };
+        let identities = self.checked_nominal_type_identities();
         self.clear_nominal_identity_cache();
         match Arc::try_unwrap(identities) {
             Ok(identities) => identities,
@@ -122,9 +38,7 @@ impl TypeChecker {
     /// Release checker-only publications on both successful and refused checks before any later stage runs. Checked
     /// declaration facts and declaration-owned scopes are independent and remain available to their consumers.
     pub(super) fn clear_nominal_identity_cache(&self) {
-        let mut cache = self.nominal_identity_cache.borrow_mut();
-        cache.identities = Arc::default();
-        cache.generation = None;
+        self.checking_nominal_scope.replace(None);
     }
 }
 
@@ -172,29 +86,26 @@ mod tests {
         checker.import_module(&right, "right");
         assert_fresh(&checker);
         checker.check_program(&main).map_err(|errors| format!("{errors:?}"))?;
-        assert!(checker.nominal_identity_cache.borrow().identities.is_empty());
+        assert!(checker.checking_nominal_scope.borrow().is_none());
         let published = checker.type_info.declarations.named_type_identities.clone();
         assert_fresh(&checker);
         assert_eq!(checker.take_checked_nominal_type_identities(), published);
-        assert!(checker.nominal_identity_cache.borrow().identities.is_empty());
-        assert!(checker.nominal_identity_cache.borrow().generation.is_none());
+        assert!(checker.checking_nominal_scope.borrow().is_none());
         let refused = program("def wrong() -> int:\n    return \"wrong\"\n")?;
         assert!(checker.check_program(&refused).is_err());
-        assert!(checker.nominal_identity_cache.borrow().identities.is_empty());
+        assert!(checker.checking_nominal_scope.borrow().is_none());
         Ok(())
     }
 
-    /// Each changed input recomputes once; repeated reads share one map, including after mutable entry access,
-    /// dependency views, alias restoration, public identity changes and nested lexical lookup changes.
+    /// Repeated reads share one fresh map across mutable aliases, dependency views, restored owners and lexical
+    /// lookup changes; each nominal revision also releases the checker's earlier snapshot.
     #[test]
     fn nominal_cache_recomputes_once_per_input_generation() -> Result<(), String> {
         let mut checker = TypeChecker::new();
         let assert_generation = |checker: &TypeChecker| {
-            let before = checker.nominal_identity_cache.borrow().recomputations;
             assert_fresh(checker);
             let first = checker.checked_nominal_type_identities();
             assert!(Arc::ptr_eq(&first, &checker.checked_nominal_type_identities()));
-            assert_eq!(checker.nominal_identity_cache.borrow().recomputations, before + 1);
         };
         assert_generation(&checker);
         let previous = Arc::downgrade(&checker.checked_nominal_type_identities());

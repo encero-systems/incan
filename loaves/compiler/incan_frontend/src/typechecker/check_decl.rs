@@ -561,11 +561,11 @@ impl TypeChecker {
     /// 1. Local rusttype-declared methods.
     /// 2. Backing Rust methods from metadata (when available).
     ///
-    /// Returns `(candidates, rust_inspect_available)`. The second flag lets callers distinguish "no match because
+    /// Returns `(candidates, backing_methods_available)`. The second flag lets callers distinguish "no match because
     /// metadata is unavailable" from "no match with authoritative metadata".
     fn interop_adapter_candidates_for_name(&self, nt: &NewtypeDecl, name: &str) -> (Vec<InteropAdapterSig>, bool) {
         let mut candidates: Vec<InteropAdapterSig> = Vec::new();
-        let mut rust_inspect_available = false;
+        let mut backing_methods_available = false;
 
         if let Some(TypeInfo::Newtype(info)) = self.lookup_type_info(&nt.name) {
             if let Some(method) = info.methods.get(name) {
@@ -582,7 +582,7 @@ impl TypeChecker {
                 && let Some(meta) = self.rust_item_metadata_for_method_call(path, name)
                 && let RustItemKind::Type(type_info) = &meta.kind
             {
-                rust_inspect_available = type_info.metadata_completeness.has_methods()
+                backing_methods_available = type_info.metadata_completeness.has_methods()
                     || type_info.methods.iter().any(|method| method.name == name);
                 for method in type_info.methods.iter().filter(|m| m.name == name) {
                     let has_receiver = Self::rust_signature_has_receiver(&method.signature);
@@ -608,15 +608,15 @@ impl TypeChecker {
             }
         }
 
-        (candidates, rust_inspect_available)
+        (candidates, backing_methods_available)
     }
 
     /// Decide whether missing-adapter diagnostics should be deferred until metadata is available.
     ///
     /// For rusttypes backed by a Rust path, missing metadata should not become a hard error in the typechecker;
     /// lowering/rustc will still validate concrete callability later.
-    fn maybe_defer_interop_adapter_missing(&self, nt: &NewtypeDecl, rust_inspect_available: bool) -> bool {
-        if rust_inspect_available {
+    fn maybe_defer_interop_adapter_missing(&self, nt: &NewtypeDecl, backing_methods_available: bool) -> bool {
+        if backing_methods_available {
             return false;
         }
         self.lookup_type_info(&nt.name).is_some_and(|info| {
@@ -642,9 +642,9 @@ impl TypeChecker {
     ) -> Option<InteropAdapterSig> {
         match &edge.node.adapter.node {
             Expr::Ident(name) => {
-                let (mut candidates, rust_inspect_available) = self.interop_adapter_candidates_for_name(nt, name);
+                let (mut candidates, backing_methods_available) = self.interop_adapter_candidates_for_name(nt, name);
                 if candidates.is_empty() {
-                    if self.maybe_defer_interop_adapter_missing(nt, rust_inspect_available) {
+                    if self.maybe_defer_interop_adapter_missing(nt, backing_methods_available) {
                         return None;
                     }
                     self.errors.push(errors::unknown_symbol(name, edge.node.adapter.span));
@@ -676,9 +676,9 @@ impl TypeChecker {
                     ));
                     return None;
                 }
-                let (candidates, rust_inspect_available) = self.interop_adapter_candidates_for_name(nt, method);
+                let (candidates, backing_methods_available) = self.interop_adapter_candidates_for_name(nt, method);
                 if candidates.is_empty() {
-                    if self.maybe_defer_interop_adapter_missing(nt, rust_inspect_available) {
+                    if self.maybe_defer_interop_adapter_missing(nt, backing_methods_available) {
                         return None;
                     }
                     self.errors
@@ -686,7 +686,7 @@ impl TypeChecker {
                     return None;
                 }
                 // Qualified references follow ordinary lookup precedence:
-                // local rusttype methods first, then backing rust-inspect methods.
+                // Local rusttype methods first, then backing Rust metadata methods.
                 candidates.into_iter().next()
             }
             _ => {
@@ -1541,28 +1541,7 @@ impl TypeChecker {
                     info,
                 });
         }
-        // A compiler-owned builtin trait (`TryFrom`) is declared by a standard package: its methods come from that
-        // declaration, not from the root table's builtin entry.
-        let builtin_stub = self
-            .symbols
-            .lookup(&adoption.name)
-            .and_then(|symbol| self.symbols.identity_of(symbol))
-            .is_some_and(|identity| matches!(identity.origin, incan_semantics_core::SymbolOrigin::Builtin));
-        let standard = ((adoption.module_path.is_none() || builtin_stub)
-            && incan_lang::lang::traits::from_str(&adoption.name).is_some())
-        .then(|| self.standard_trait(&adoption.name))
-        .flatten();
-        let root = standard
-            .or_else(|| self.lookup_trait_adoption_info(adoption).cloned())
-            .or_else(|| {
-                let module_path = adoption.module_path.as_ref()?;
-                let source_name = adoption
-                    .source_name
-                    .as_deref()
-                    .or_else(|| adoption.name.rsplit('.').next())?;
-                self.loaf_trait(module_path, source_name)
-            })
-            .or_else(|| self.standard_trait(&adoption.name))?;
+        let root = self.trait_adoption_root_info(adoption)?;
         self.load_builtin_supertrait_sources(&root.supertraits);
         let instantiated = if adoption.type_args.is_empty() {
             root
@@ -1657,6 +1636,31 @@ impl TypeChecker {
                 })
             }
         }
+    }
+
+    /// Select an adopted trait's declaration before instantiation. Compiler-owned builtin stubs defer to their
+    /// standard declaration; otherwise preserve adoption, provider-module and standard fallback precedence.
+    fn trait_adoption_root_info(&mut self, adoption: &TypeBoundInfo) -> Option<TraitInfo> {
+        let builtin_stub = self
+            .symbols
+            .lookup(&adoption.name)
+            .and_then(|symbol| self.symbols.identity_of(symbol))
+            .is_some_and(|identity| matches!(identity.origin, incan_semantics_core::SymbolOrigin::Builtin));
+        let standard = ((adoption.module_path.is_none() || builtin_stub)
+            && incan_lang::lang::traits::from_str(&adoption.name).is_some())
+        .then(|| self.standard_trait(&adoption.name))
+        .flatten();
+        standard
+            .or_else(|| self.lookup_trait_adoption_info(adoption).cloned())
+            .or_else(|| {
+                let module_path = adoption.module_path.as_ref()?;
+                let source_name = adoption
+                    .source_name
+                    .as_deref()
+                    .or_else(|| adoption.name.rsplit('.').next())?;
+                self.loaf_trait(module_path, source_name)
+            })
+            .or_else(|| self.standard_trait(&adoption.name))
     }
 
     /// Resolve a trait property visible through an adopted trait, including transitive supertraits.
@@ -3045,46 +3049,7 @@ impl TypeChecker {
             return;
         }
 
-        let mut key = None;
-        let mut subject = None;
-        let mut descriptor = None;
-        for argument in arguments {
-            let CallArg::Named(name, value) = argument else {
-                self.errors.push(CompileError::type_error(
-                    "registry.entry for checked compilation-unit or package entries requires named key, subject, and descriptor arguments".to_string(),
-                    static_decl.value.span,
-                ));
-                return;
-            };
-            let target = match name.node.as_str() {
-                "key" => &mut key,
-                "subject" => &mut subject,
-                "descriptor" => &mut descriptor,
-                _ => {
-                    self.errors.push(CompileError::type_error(
-                        format!(
-                            "registry.entry does not accept checked registry argument `{}`",
-                            name.node
-                        ),
-                        value.span,
-                    ));
-                    return;
-                }
-            };
-            if target.replace(value).is_some() {
-                self.errors.push(CompileError::type_error(
-                    format!("registry.entry received duplicate `{}` argument", name.node),
-                    value.span,
-                ));
-                return;
-            }
-        }
-        let (Some(key), Some(subject), Some(descriptor)) = (key, subject, descriptor) else {
-            self.errors.push(CompileError::type_error(
-                "registry.entry for checked compilation-unit or package entries requires key, subject, and descriptor"
-                    .to_string(),
-                static_decl.value.span,
-            ));
+        let Some((key, subject, descriptor)) = self.registry_entry_arguments(arguments, static_decl.value.span) else {
             return;
         };
         let (subject_kind, subject_constructor_identity, checked_constructor_identity) =
@@ -3112,37 +3077,10 @@ impl TypeChecker {
             return;
         }
 
-        let key_actual = self.check_expr_with_expected(key, Some(entry_key_type));
-        let descriptor_actual = self.check_expr_with_expected(descriptor, Some(entry_descriptor_type));
-        if !self.types_compatible(&key_actual, entry_key_type) {
-            self.errors.push(errors::type_mismatch(
-                &entry_key_type.to_string(),
-                &key_actual.to_string(),
-                key.span,
-            ));
+        let Some((key_value, descriptor_value)) =
+            self.registry_entry_structural_values(key, descriptor, entry_key_type, entry_descriptor_type)
+        else {
             return;
-        }
-        if !self.types_compatible(&descriptor_actual, entry_descriptor_type) {
-            self.errors.push(errors::type_mismatch(
-                &entry_descriptor_type.to_string(),
-                &descriptor_actual.to_string(),
-                descriptor.span,
-            ));
-            return;
-        }
-        let key_value = match self.registry_structural_value(key) {
-            Ok(value) => value,
-            Err(message) => {
-                self.errors.push(CompileError::type_error(message, key.span));
-                return;
-            }
-        };
-        let descriptor_value = match self.registry_structural_value(descriptor) {
-            Ok(value) => value,
-            Err(message) => {
-                self.errors.push(CompileError::type_error(message, descriptor.span));
-                return;
-            }
         };
         if self.registry_has_key(registry_name, &key_value) {
             self.errors.push(CompileError::type_error(
@@ -3183,6 +3121,90 @@ impl TypeChecker {
                 subject_span: subject.span,
                 descriptor_span: descriptor.span,
             });
+    }
+
+    /// Bind the explicit entry's required named key, subject and descriptor without evaluating expressions. Shape
+    /// errors stop at their first source occurrence, preserving duplicate, unknown-name and missing-value diagnostics.
+    fn registry_entry_arguments<'a>(
+        &mut self,
+        arguments: &'a [CallArg],
+        span: Span,
+    ) -> Option<(&'a Spanned<Expr>, &'a Spanned<Expr>, &'a Spanned<Expr>)> {
+        let mut key = None;
+        let mut subject = None;
+        let mut descriptor = None;
+        for argument in arguments {
+            let CallArg::Named(name, value) = argument else {
+                self.errors.push(CompileError::type_error(
+                    "registry.entry for checked compilation-unit or package entries requires named key, subject, and descriptor arguments".to_string(),
+                    span,
+                ));
+                return None;
+            };
+            let target = match name.node.as_str() {
+                "key" => &mut key,
+                "subject" => &mut subject,
+                "descriptor" => &mut descriptor,
+                _ => {
+                    self.errors.push(CompileError::type_error(
+                        format!(
+                            "registry.entry does not accept checked registry argument `{}`",
+                            name.node
+                        ),
+                        value.span,
+                    ));
+                    return None;
+                }
+            };
+            if target.replace(value).is_some() {
+                self.errors.push(CompileError::type_error(
+                    format!("registry.entry received duplicate `{}` argument", name.node),
+                    value.span,
+                ));
+                return None;
+            }
+        }
+        let (Some(key), Some(subject), Some(descriptor)) = (key, subject, descriptor) else {
+            self.errors.push(CompileError::type_error(
+                "registry.entry for checked compilation-unit or package entries requires key, subject, and descriptor"
+                    .to_string(),
+                span,
+            ));
+            return None;
+        };
+        Some((key, subject, descriptor))
+    }
+
+    /// Check both explicit entry values before reporting the first carrier mismatch, then extract their structural
+    /// facts in key/descriptor order. Description decorators retain their separate sequential checking rule.
+    fn registry_entry_structural_values(
+        &mut self,
+        key: &Spanned<Expr>,
+        descriptor: &Spanned<Expr>,
+        key_type: &ResolvedType,
+        descriptor_type: &ResolvedType,
+    ) -> Option<(SemanticRegistryValue, SemanticRegistryValue)> {
+        let key_actual = self.check_expr_with_expected(key, Some(key_type));
+        let descriptor_actual = self.check_expr_with_expected(descriptor, Some(descriptor_type));
+        if !self.types_compatible(&key_actual, key_type) {
+            self.errors.push(errors::type_mismatch(
+                &key_type.to_string(),
+                &key_actual.to_string(),
+                key.span,
+            ));
+            return None;
+        }
+        if !self.types_compatible(&descriptor_actual, descriptor_type) {
+            self.errors.push(errors::type_mismatch(
+                &descriptor_type.to_string(),
+                &descriptor_actual.to_string(),
+                descriptor.span,
+            ));
+            return None;
+        }
+        let key_value = self.checked_registry_structural_value(key)?;
+        let descriptor_value = self.checked_registry_structural_value(descriptor)?;
+        Some((key_value, descriptor_value))
     }
 
     /// Resolve the bounded explicit registry subject and the exact source artifacts that lowering may substitute.
@@ -3758,46 +3780,7 @@ impl TypeChecker {
 
         // Check traits exist and are satisfied (models can adopt storage-free traits, RFC 000).
         // Note: do this after defining type params so `@requires(field: T)` can resolve `T`.
-        let mut resolved_trait_adoptions = Vec::new();
-        for trait_ref in &model.traits {
-            let trait_name = trait_ref.node.name.as_str();
-            if self.lookup_trait_info(trait_name).is_some() {
-                let Some((trait_info, trait_args)) = self.resolve_adopted_trait_info(&trait_ref.node, trait_ref.span)
-                else {
-                    continue;
-                };
-                resolved_trait_adoptions.push(ResolvedTraitAdoption {
-                    name: trait_name.to_string(),
-                    info: trait_info.clone(),
-                    args: trait_args.clone(),
-                    module_path: None,
-                    span: trait_ref.span,
-                });
-                self.check_trait_conformance_model(
-                    model,
-                    trait_info,
-                    trait_name,
-                    if trait_args.is_empty() {
-                        None
-                    } else {
-                        Some(trait_args.as_slice())
-                    },
-                    trait_ref.span,
-                );
-            } else if self.lookup_symbol(trait_name).is_none() {
-                self.errors.push(errors::unknown_symbol(trait_name, trait_ref.span));
-            }
-        }
-        let derive_adoption_span = Self::first_derive_span(&model.decorators);
-        for adoption in self.collect_derive_trait_adoption_infos(&derives) {
-            let Some(resolved) = self.resolve_collected_trait_adoption(&adoption, derive_adoption_span) else {
-                continue;
-            };
-            self.record_body_ir_derived_methods(&model.name, &resolved);
-            resolved_trait_adoptions.push(resolved);
-        }
-        self.expand_body_ir_model_derives(&model.name, &derives);
-        self.record_body_ir_trait_adoptions(&model.name, &resolved_trait_adoptions);
+        let resolved_trait_adoptions = self.check_model_trait_adoptions(model, &derives);
         let active_model_fields = model
             .fields
             .iter()
@@ -3821,62 +3804,7 @@ impl TypeChecker {
             );
         }
 
-        // Define fields in scope
-        let mut json_members = Vec::new();
-        for field in active_model_fields {
-            let ty = self.resolve_type_checked(&field.node.ty);
-            self.refuse_stored_trait_field("model", &model.name, &field.node, &ty);
-            self.validate_direct_recursive_model_field(&model.name, &ty, field.span);
-            self.refuse_member_without_automatic_derives(
-                "model",
-                &model.name,
-                DerivedMember::Field(&field.node.name),
-                &ty,
-                field.span,
-            );
-            json_members.push((DerivedMember::Field(&field.node.name), ty.clone(), field.span));
-            self.symbols.define(Symbol {
-                name: field.node.name.clone(),
-                kind: SymbolKind::Field(FieldInfo {
-                    identity: Some(self.symbols.member_declaration_identity(
-                        &field.node.name,
-                        SemanticSourceTargetKind::Field,
-                        field.span,
-                    )),
-                    surface_type_name: Some(crate::symbols::field_surface_type_name(&field.node.ty.node, &ty)),
-                    ty,
-                    visibility: field.node.visibility,
-                    is_type_private: crate::symbols::field_is_type_private(
-                        &field.node,
-                        matches!(model.visibility, Visibility::Public),
-                    ),
-                    owner: Some(model.name.clone()),
-                    has_default: field.node.default.is_some(),
-                    alias: field.node.metadata.alias.clone(),
-                    description: field.node.metadata.description.clone(),
-                }),
-                span: field.span,
-                scope: 0,
-            });
-
-            // Check default expression type
-            if let Some(default) = &field.node.default {
-                let field_ty = self.resolve_type_checked(&field.node.ty);
-                let default_ty = self.check_expr_with_expected(default, Some(&field_ty));
-                if !self.types_compatible(&default_ty, &field_ty)
-                    && !self.record_validated_newtype_coercion_if_possible(&default_ty, &field_ty, default.span)
-                {
-                    self.errors.push(errors::type_mismatch(
-                        &field_ty.to_string(),
-                        &default_ty.to_string(),
-                        default.span,
-                    ));
-                }
-            }
-        }
-        let adoptions = self.nominal_trait_adoptions(&model.name);
-        self.refuse_members_without_json_form("model", &model.name, &adoptions, &json_members);
-        self.record_adopted_json_derives(&model.name, &adoptions);
+        self.check_model_fields(model, active_model_fields);
 
         // Check methods
         let active_model_methods = model
@@ -3914,6 +3842,110 @@ impl TypeChecker {
         );
 
         self.symbols.exit_scope();
+    }
+
+    /// Check explicit model trait conformance after its binders exist, then retain implied derive methods and
+    /// adoption facts. Awaitable and multi-instantiation surface checks remain in the model coordinator.
+    fn check_model_trait_adoptions(&mut self, model: &ModelDecl, derives: &[String]) -> Vec<ResolvedTraitAdoption> {
+        let mut resolved_trait_adoptions = Vec::new();
+        for trait_ref in &model.traits {
+            let trait_name = trait_ref.node.name.as_str();
+            if self.lookup_trait_info(trait_name).is_some() {
+                let Some((trait_info, trait_args)) = self.resolve_adopted_trait_info(&trait_ref.node, trait_ref.span)
+                else {
+                    continue;
+                };
+                resolved_trait_adoptions.push(ResolvedTraitAdoption {
+                    name: trait_name.to_string(),
+                    info: trait_info.clone(),
+                    args: trait_args.clone(),
+                    module_path: None,
+                    span: trait_ref.span,
+                });
+                self.check_trait_conformance_model(
+                    model,
+                    trait_info,
+                    trait_name,
+                    if trait_args.is_empty() {
+                        None
+                    } else {
+                        Some(trait_args.as_slice())
+                    },
+                    trait_ref.span,
+                );
+            } else if self.lookup_symbol(trait_name).is_none() {
+                self.errors.push(errors::unknown_symbol(trait_name, trait_ref.span));
+            }
+        }
+        let derive_adoption_span = Self::first_derive_span(&model.decorators);
+        for adoption in self.collect_derive_trait_adoption_infos(derives) {
+            let Some(resolved) = self.resolve_collected_trait_adoption(&adoption, derive_adoption_span) else {
+                continue;
+            };
+            self.record_body_ir_derived_methods(&model.name, &resolved);
+            resolved_trait_adoptions.push(resolved);
+        }
+        self.expand_body_ir_model_derives(&model.name, derives);
+        self.record_body_ir_trait_adoptions(&model.name, &resolved_trait_adoptions);
+        resolved_trait_adoptions
+    }
+
+    /// Consume the active field inventory in source order, publishing each field before checking its default.
+    /// Stored trait, recursion, automatic derive and JSON-form checks retain the existing checked field contracts.
+    fn check_model_fields(&mut self, model: &ModelDecl, fields: Vec<&Spanned<FieldDecl>>) {
+        let mut json_members = Vec::new();
+        for field in fields {
+            let ty = self.resolve_type_checked(&field.node.ty);
+            self.refuse_stored_trait_field("model", &model.name, &field.node, &ty);
+            self.validate_direct_recursive_model_field(&model.name, &ty, field.span);
+            self.refuse_member_without_automatic_derives(
+                "model",
+                &model.name,
+                DerivedMember::Field(&field.node.name),
+                &ty,
+                field.span,
+            );
+            json_members.push((DerivedMember::Field(&field.node.name), ty.clone(), field.span));
+            self.symbols.define(Symbol {
+                name: field.node.name.clone(),
+                kind: SymbolKind::Field(FieldInfo {
+                    identity: Some(self.symbols.member_declaration_identity(
+                        &field.node.name,
+                        SemanticSourceTargetKind::Field,
+                        field.span,
+                    )),
+                    surface_type_name: Some(crate::symbols::field_surface_type_name(&field.node.ty.node, &ty)),
+                    ty,
+                    visibility: field.node.visibility,
+                    is_type_private: crate::symbols::field_is_type_private(
+                        &field.node,
+                        matches!(model.visibility, Visibility::Public),
+                    ),
+                    owner: Some(model.name.clone()),
+                    has_default: field.node.default.is_some(),
+                    alias: field.node.metadata.alias.clone(),
+                    description: field.node.metadata.description.clone(),
+                }),
+                span: field.span,
+                scope: 0,
+            });
+            if let Some(default) = &field.node.default {
+                let field_ty = self.resolve_type_checked(&field.node.ty);
+                let default_ty = self.check_expr_with_expected(default, Some(&field_ty));
+                if !self.types_compatible(&default_ty, &field_ty)
+                    && !self.record_validated_newtype_coercion_if_possible(&default_ty, &field_ty, default.span)
+                {
+                    self.errors.push(errors::type_mismatch(
+                        &field_ty.to_string(),
+                        &default_ty.to_string(),
+                        default.span,
+                    ));
+                }
+            }
+        }
+        let adoptions = self.nominal_trait_adoptions(&model.name);
+        self.refuse_members_without_json_form("model", &model.name, &adoptions, &json_members);
+        self.record_adopted_json_derives(&model.name, &adoptions);
     }
 
     /// Reject model fields whose resolved type contains the model itself without an indirection boundary.
@@ -4203,33 +4235,7 @@ impl TypeChecker {
             },
         );
 
-        self.validate_decorators_rejecting_user_defined(&class.decorators, "class");
-        self.validate_c_binding_class(class);
-        self.reject_registry_description_decorators(&class.decorators, "class");
-        // Validate @derive decorators
-        self.validate_derives(&class.decorators);
-        self.validate_descriptor_derive_attachment(&class.decorators, "class");
-        self.validate_rust_derives(&class.decorators, "class", false, &class.traits);
-        let derives = self.extract_derive_names(&class.decorators);
-        // A class's adoption-implied serde derives are recorded separately, in `class_adoption_derives`.
-        let mut declared = Vec::new();
-        if self.append_native_rust_derives(&class.name, &mut declared) {
-            self.type_info
-                .declarations
-                .rust_native_derive_types
-                .insert(class.name.clone());
-        }
-        let native_derives = self.native_derive_selection(&derives, declared);
-        let mut native_derives = self.body_ir_native_derive_selection(&native_derives);
-        if let Some(TypeInfo::Class(info)) = self.lookup_semantic_type_info(&class.name)
-            && self.class_omits_automatic_debug(&class.name, info)
-        {
-            native_derives.retain(|derive| derive != derives::as_str(incan_lang::lang::derives::DeriveId::Debug));
-        }
-        self.type_info
-            .declarations
-            .class_derives
-            .insert(class.name.clone(), native_derives);
+        let derives = self.check_class_derives(class);
 
         // Check base class exists
         if let Some(base) = &class.extends
@@ -4238,52 +4244,7 @@ impl TypeChecker {
             self.errors.push(errors::unknown_symbol(base, Span::default()));
         }
 
-        // Check traits exist and are satisfied
-        let mut resolved_trait_adoptions = Vec::new();
-        for trait_ref in &class.traits {
-            let trait_name = trait_ref.node.name.as_str();
-            if self.lookup_trait_info(trait_name).is_some() {
-                let Some((trait_info, trait_args)) = self.resolve_adopted_trait_info(&trait_ref.node, trait_ref.span)
-                else {
-                    continue;
-                };
-                resolved_trait_adoptions.push(ResolvedTraitAdoption {
-                    name: trait_name.to_string(),
-                    info: trait_info.clone(),
-                    args: trait_args.clone(),
-                    module_path: None,
-                    span: trait_ref.span,
-                });
-                self.check_trait_conformance(
-                    class,
-                    trait_info,
-                    trait_name,
-                    if trait_args.is_empty() {
-                        None
-                    } else {
-                        Some(trait_args.as_slice())
-                    },
-                    trait_ref.span,
-                );
-            } else if self.lookup_symbol(trait_name).is_none() {
-                self.errors.push(errors::unknown_symbol(trait_name, trait_ref.span));
-            }
-        }
-        let derive_adoption_span = Self::first_derive_span(&class.decorators);
-        for adoption in self.collect_derive_trait_adoption_infos(&derives) {
-            let Some(resolved) = self.resolve_collected_trait_adoption(&adoption, derive_adoption_span) else {
-                continue;
-            };
-            resolved_trait_adoptions.push(resolved);
-        }
-        let adoption_derives = self.adopted_serde_derives(&class.traits);
-        self.record_body_ir_trait_adoptions(&class.name, &resolved_trait_adoptions);
-        if !adoption_derives.is_empty() {
-            self.type_info
-                .declarations
-                .class_adoption_derives
-                .insert(class.name.clone(), adoption_derives);
-        }
+        let resolved_trait_adoptions = self.check_class_trait_adoptions(class, &derives);
         let active_class_fields = class
             .fields
             .iter()
@@ -4310,56 +4271,7 @@ impl TypeChecker {
             }
         }
 
-        // Define fields
-        let mut json_members = Vec::new();
-        for field in active_class_fields {
-            let ty = self.resolve_type_checked(&field.node.ty);
-            self.refuse_stored_trait_field("class", &class.name, &field.node, &ty);
-            self.refuse_member_without_automatic_derives(
-                "class",
-                &class.name,
-                DerivedMember::Field(&field.node.name),
-                &ty,
-                field.span,
-            );
-            json_members.push((DerivedMember::Field(&field.node.name), ty.clone(), field.span));
-            self.symbols.define(Symbol {
-                name: field.node.name.clone(),
-                kind: SymbolKind::Field(FieldInfo {
-                    identity: Some(self.symbols.member_declaration_identity(
-                        &field.node.name,
-                        SemanticSourceTargetKind::Field,
-                        field.span,
-                    )),
-                    surface_type_name: Some(crate::symbols::field_surface_type_name(&field.node.ty.node, &ty)),
-                    ty,
-                    visibility: field.node.visibility,
-                    is_type_private: crate::symbols::field_is_type_private(&field.node, true),
-                    owner: Some(class.name.clone()),
-                    has_default: field.node.default.is_some(),
-                    alias: field.node.metadata.alias.clone(),
-                    description: field.node.metadata.description.clone(),
-                }),
-                span: field.span,
-                scope: 0,
-            });
-
-            if let Some(default) = &field.node.default {
-                let field_ty = self.resolve_type_checked(&field.node.ty);
-                let default_ty = self.check_expr_with_expected(default, Some(&field_ty));
-                if !self.types_compatible(&default_ty, &field_ty)
-                    && !self.record_validated_newtype_coercion_if_possible(&default_ty, &field_ty, default.span)
-                {
-                    self.errors.push(errors::type_mismatch(
-                        &field_ty.to_string(),
-                        &default_ty.to_string(),
-                        default.span,
-                    ));
-                }
-            }
-        }
-        let adoptions = self.nominal_trait_adoptions(&class.name);
-        self.refuse_members_without_json_form("class", &class.name, &adoptions, &json_members);
+        self.check_class_fields(class, active_class_fields);
 
         // Check methods
         let active_class_methods = class
@@ -4402,6 +4314,141 @@ impl TypeChecker {
         );
 
         self.symbols.exit_scope();
+    }
+
+    /// Validate class decorators and retain explicit/native derive selection, excluding automatic Debug where its
+    /// checked class shape requires it. Adoption-implied serde derives remain a separate later selection.
+    fn check_class_derives(&mut self, class: &ClassDecl) -> Vec<String> {
+        self.validate_decorators_rejecting_user_defined(&class.decorators, "class");
+        self.validate_c_binding_class(class);
+        self.reject_registry_description_decorators(&class.decorators, "class");
+        self.validate_derives(&class.decorators);
+        self.validate_descriptor_derive_attachment(&class.decorators, "class");
+        self.validate_rust_derives(&class.decorators, "class", false, &class.traits);
+        let derives = self.extract_derive_names(&class.decorators);
+        let mut declared = Vec::new();
+        if self.append_native_rust_derives(&class.name, &mut declared) {
+            self.type_info
+                .declarations
+                .rust_native_derive_types
+                .insert(class.name.clone());
+        }
+        let native_derives = self.native_derive_selection(&derives, declared);
+        let mut native_derives = self.body_ir_native_derive_selection(&native_derives);
+        if let Some(TypeInfo::Class(info)) = self.lookup_semantic_type_info(&class.name)
+            && self.class_omits_automatic_debug(&class.name, info)
+        {
+            native_derives.retain(|derive| derive != derives::as_str(incan_lang::lang::derives::DeriveId::Debug));
+        }
+        self.type_info
+            .declarations
+            .class_derives
+            .insert(class.name.clone(), native_derives);
+        derives
+    }
+
+    /// Check explicit class trait conformance before implied derives and retain adoption-implied serde selection
+    /// separately from explicit class derives. Later member-surface checks reuse the same resolved inventory.
+    fn check_class_trait_adoptions(&mut self, class: &ClassDecl, derives: &[String]) -> Vec<ResolvedTraitAdoption> {
+        let mut resolved_trait_adoptions = Vec::new();
+        for trait_ref in &class.traits {
+            let trait_name = trait_ref.node.name.as_str();
+            if self.lookup_trait_info(trait_name).is_some() {
+                let Some((trait_info, trait_args)) = self.resolve_adopted_trait_info(&trait_ref.node, trait_ref.span)
+                else {
+                    continue;
+                };
+                resolved_trait_adoptions.push(ResolvedTraitAdoption {
+                    name: trait_name.to_string(),
+                    info: trait_info.clone(),
+                    args: trait_args.clone(),
+                    module_path: None,
+                    span: trait_ref.span,
+                });
+                self.check_trait_conformance(
+                    class,
+                    trait_info,
+                    trait_name,
+                    if trait_args.is_empty() {
+                        None
+                    } else {
+                        Some(trait_args.as_slice())
+                    },
+                    trait_ref.span,
+                );
+            } else if self.lookup_symbol(trait_name).is_none() {
+                self.errors.push(errors::unknown_symbol(trait_name, trait_ref.span));
+            }
+        }
+        let derive_adoption_span = Self::first_derive_span(&class.decorators);
+        for adoption in self.collect_derive_trait_adoption_infos(derives) {
+            let Some(resolved) = self.resolve_collected_trait_adoption(&adoption, derive_adoption_span) else {
+                continue;
+            };
+            resolved_trait_adoptions.push(resolved);
+        }
+        let adoption_derives = self.adopted_serde_derives(&class.traits);
+        self.record_body_ir_trait_adoptions(&class.name, &resolved_trait_adoptions);
+        if !adoption_derives.is_empty() {
+            self.type_info
+                .declarations
+                .class_adoption_derives
+                .insert(class.name.clone(), adoption_derives);
+        }
+        resolved_trait_adoptions
+    }
+
+    /// Consume active class fields in source order, retaining checked types and defaults before JSON-form checks.
+    /// Class field metadata refusals run first in the coordinator and do not suppress these independent checks.
+    fn check_class_fields(&mut self, class: &ClassDecl, fields: Vec<&Spanned<FieldDecl>>) {
+        let mut json_members = Vec::new();
+        for field in fields {
+            let ty = self.resolve_type_checked(&field.node.ty);
+            self.refuse_stored_trait_field("class", &class.name, &field.node, &ty);
+            self.refuse_member_without_automatic_derives(
+                "class",
+                &class.name,
+                DerivedMember::Field(&field.node.name),
+                &ty,
+                field.span,
+            );
+            json_members.push((DerivedMember::Field(&field.node.name), ty.clone(), field.span));
+            self.symbols.define(Symbol {
+                name: field.node.name.clone(),
+                kind: SymbolKind::Field(FieldInfo {
+                    identity: Some(self.symbols.member_declaration_identity(
+                        &field.node.name,
+                        SemanticSourceTargetKind::Field,
+                        field.span,
+                    )),
+                    surface_type_name: Some(crate::symbols::field_surface_type_name(&field.node.ty.node, &ty)),
+                    ty,
+                    visibility: field.node.visibility,
+                    is_type_private: crate::symbols::field_is_type_private(&field.node, true),
+                    owner: Some(class.name.clone()),
+                    has_default: field.node.default.is_some(),
+                    alias: field.node.metadata.alias.clone(),
+                    description: field.node.metadata.description.clone(),
+                }),
+                span: field.span,
+                scope: 0,
+            });
+            if let Some(default) = &field.node.default {
+                let field_ty = self.resolve_type_checked(&field.node.ty);
+                let default_ty = self.check_expr_with_expected(default, Some(&field_ty));
+                if !self.types_compatible(&default_ty, &field_ty)
+                    && !self.record_validated_newtype_coercion_if_possible(&default_ty, &field_ty, default.span)
+                {
+                    self.errors.push(errors::type_mismatch(
+                        &field_ty.to_string(),
+                        &default_ty.to_string(),
+                        default.span,
+                    ));
+                }
+            }
+        }
+        let adoptions = self.nominal_trait_adoptions(&class.name);
+        self.refuse_members_without_json_form("class", &class.name, &adoptions, &json_members);
     }
 
     /// Validate that a class satisfies required fields and methods for one instantiated trait adoption.
@@ -4676,7 +4723,7 @@ impl TypeChecker {
     ///
     /// A `rusttype` lowers to a Rust type alias. That means custom `impl ForeignTrait for Alias` output would still be
     /// an impl for the foreign backing type and can violate Rust coherence. Body-less adoption is therefore accepted
-    /// only when rust-inspect proves the backing type already implements the trait; lowering then skips the impl.
+    /// only when Rust metadata proves the backing type already implements the trait; lowering then skips the impl.
     fn validate_imported_rust_trait_newtype_adoption(
         &mut self,
         nt: &NewtypeDecl,
@@ -4802,35 +4849,7 @@ impl TypeChecker {
             },
         );
 
-        self.validate_decorators_rejecting_user_defined(&nt.decorators, "newtype");
-        self.reject_registry_description_decorators(&nt.decorators, "newtype");
-        self.validate_derives(&nt.decorators);
-        self.validate_descriptor_derive_attachment(&nt.decorators, "newtype");
-        self.validate_rust_derives(&nt.decorators, "newtype", nt.is_rusttype, &nt.traits);
-        let derives = self.extract_derive_names(&nt.decorators);
-        let mut selected = self.json_derive_selections(&derives);
-        Self::append_implied_derives(&mut selected);
-        if self.append_native_rust_derives(&nt.name, &mut selected) {
-            self.type_info
-                .declarations
-                .rust_native_derive_types
-                .insert(nt.name.clone());
-        }
-        // A std.serde.json protocol the newtype adopts with `with` selects serde's derive after the explicit ones.
-        let adoptions = match self.lookup_semantic_type_info(&nt.name) {
-            Some(TypeInfo::Newtype(info)) => info.trait_adoptions.clone(),
-            _ => Vec::new(),
-        };
-        for derive in self.adopted_json_derives(&adoptions) {
-            if !selected.iter().any(|existing| existing == derive) {
-                selected.push(derive.to_owned());
-            }
-        }
-        let selected = self.body_ir_native_derive_selection(&selected);
-        self.type_info
-            .declarations
-            .body_ir_newtype_derives
-            .insert(nt.name.clone(), selected);
+        let derives = self.check_newtype_derives(nt);
 
         // Check underlying type exists
         let underlying = self.resolve_type_checked(&nt.underlying);
@@ -4879,126 +4898,11 @@ impl TypeChecker {
             );
         }
 
-        let mut resolved_trait_adoptions = Vec::new();
-        for trait_ref in &nt.traits {
-            let trait_name = trait_ref.node.name.as_str();
-            if nt.is_rusttype && Self::is_awaitable_trait_name(trait_name) {
-                self.errors
-                    .push(errors::awaitable_future_bridge_blocked(&nt.name, trait_ref.span));
-                continue;
-            }
-            if let Some((trait_path, trait_metadata)) = self.imported_rust_trait_candidate(trait_name) {
-                self.validate_imported_rust_trait_newtype_adoption(
-                    nt,
-                    &trait_ref.node,
-                    trait_ref.span,
-                    trait_path.as_str(),
-                    trait_metadata.as_deref(),
-                    rusttype_path.as_deref(),
-                );
-            } else if self.lookup_trait_info(trait_name).is_some() {
-                let Some((trait_info, trait_args)) = self.resolve_adopted_trait_info(&trait_ref.node, trait_ref.span)
-                else {
-                    continue;
-                };
-                resolved_trait_adoptions.push(ResolvedTraitAdoption {
-                    name: trait_name.to_string(),
-                    info: trait_info.clone(),
-                    args: trait_args.clone(),
-                    module_path: None,
-                    span: trait_ref.span,
-                });
-                self.check_trait_conformance_newtype(
-                    nt,
-                    trait_info,
-                    trait_name,
-                    if trait_args.is_empty() {
-                        None
-                    } else {
-                        Some(trait_args.as_slice())
-                    },
-                    trait_ref.span,
-                );
-            } else if self.lookup_symbol(trait_name).is_none() {
-                self.errors.push(errors::unknown_symbol(trait_name, trait_ref.span));
-            }
-        }
-        let derive_adoption_span = Self::first_derive_span(&nt.decorators);
-        for adoption in self.collect_derive_trait_adoption_infos(&derives) {
-            let Some(resolved) = self.resolve_collected_trait_adoption(&adoption, derive_adoption_span) else {
-                continue;
-            };
-            resolved_trait_adoptions.push(resolved);
-        }
-        self.record_body_ir_trait_adoptions(&nt.name, &resolved_trait_adoptions);
-        // A rusttype's `Awaitable` adoption was refused above and never reached the list; a newtype's is refused here
-        // like a model's, since it would lower to the same impossible trait impl (#1711).
-        self.refuse_awaitable_adoptions(&nt.name, &resolved_trait_adoptions);
+        let resolved_trait_adoptions = self.check_newtype_trait_adoptions(nt, &derives, rusttype_path.as_deref());
 
-        for associated_type in &nt.associated_types {
-            let trait_name = associated_type.node.trait_target.node.name.as_str();
-            if self.lookup_trait_info(trait_name).is_some() {
-                let _ = self.resolve_adopted_trait_info(
-                    &associated_type.node.trait_target.node,
-                    associated_type.node.trait_target.span,
-                );
-            } else if self.lookup_symbol(trait_name).is_none() {
-                self.errors.push(errors::unknown_symbol(
-                    trait_name,
-                    associated_type.node.trait_target.span,
-                ));
-            }
-            let _ = self.resolve_type_checked(&associated_type.node.ty);
-        }
+        self.check_newtype_member_references(nt);
 
-        for rebinding in &nt.rebindings {
-            // Short-form rebinding targets (`alias = method`) should be interpreted as method names,
-            // not as local variable reads.
-            if !matches!(rebinding.node.target.node, Expr::Ident(_)) {
-                let _ = self.check_expr(&rebinding.node.target);
-            }
-        }
-
-        let rusttype_ty = self.rusttype_decl_resolved_type(nt);
-        let mut seen_edges: HashMap<(bool, String), (InteropAdapterKind, String, Span)> = HashMap::new();
-        for edge in &nt.interop_edges {
-            let boundary_ty = self.resolve_type_checked(&edge.node.ty);
-            let key_ty = boundary_ty.to_string();
-            if !matches!(boundary_ty, ResolvedType::Unknown) {
-                let key = (matches!(edge.node.direction, InteropDirection::Into), key_ty.clone());
-                let adapter_ref = Self::interop_adapter_ref_display(&edge.node.adapter);
-                if let Some((prev_kind, prev_adapter, prev_span)) = seen_edges.get(&key) {
-                    if *prev_kind == edge.node.adapter_kind && prev_adapter == &adapter_ref {
-                        self.errors.push(errors::duplicate_interop_edge(
-                            &nt.name,
-                            if key.0 { "into" } else { "from" },
-                            key_ty.as_str(),
-                            *prev_span,
-                            edge.span,
-                        ));
-                    } else {
-                        self.errors.push(errors::conflicting_interop_edge(
-                            &nt.name,
-                            if key.0 { "into" } else { "from" },
-                            key_ty.as_str(),
-                            prev_adapter.as_str(),
-                            adapter_ref.as_str(),
-                            edge.span,
-                        ));
-                    }
-                } else {
-                    seen_edges.insert(key, (edge.node.adapter_kind, adapter_ref, edge.span));
-                }
-            }
-
-            if let Some(adapter_sig) = self.resolve_interop_adapter_signature(nt, edge) {
-                let errors_before = self.errors.len();
-                self.validate_interop_adapter_signature(nt, edge, &boundary_ty, &rusttype_ty, &adapter_sig);
-                if self.errors.len() == errors_before {
-                    self.retain_declared_rusttype_edge(nt, edge, &boundary_ty, &rusttype_ty);
-                }
-            }
-        }
+        self.check_newtype_interop_edges(nt);
 
         // Check methods (reuse the standard method-checking logic so parameters are in scope).
         let active_newtype_methods = nt
@@ -5034,6 +4938,178 @@ impl TypeChecker {
         }
 
         self.symbols.exit_scope();
+    }
+
+    /// Validate and retain a newtype's explicit, implied, native and adopted JSON derives in their existing order.
+    /// Return the source derive names for subsequent trait adoption; native selections stay in checked metadata.
+    fn check_newtype_derives(&mut self, nt: &NewtypeDecl) -> Vec<String> {
+        self.validate_decorators_rejecting_user_defined(&nt.decorators, "newtype");
+        self.reject_registry_description_decorators(&nt.decorators, "newtype");
+        self.validate_derives(&nt.decorators);
+        self.validate_descriptor_derive_attachment(&nt.decorators, "newtype");
+        self.validate_rust_derives(&nt.decorators, "newtype", nt.is_rusttype, &nt.traits);
+        let derives = self.extract_derive_names(&nt.decorators);
+        let mut selected = self.json_derive_selections(&derives);
+        Self::append_implied_derives(&mut selected);
+        if self.append_native_rust_derives(&nt.name, &mut selected) {
+            self.type_info
+                .declarations
+                .rust_native_derive_types
+                .insert(nt.name.clone());
+        }
+        // Adopted JSON protocols select serde derives after explicit selections.
+        let adoptions = match self.lookup_semantic_type_info(&nt.name) {
+            Some(TypeInfo::Newtype(info)) => info.trait_adoptions.clone(),
+            _ => Vec::new(),
+        };
+        for derive in self.adopted_json_derives(&adoptions) {
+            if !selected.iter().any(|existing| existing == derive) {
+                selected.push(derive.to_owned());
+            }
+        }
+        let selected = self.body_ir_native_derive_selection(&selected);
+        self.type_info
+            .declarations
+            .body_ir_newtype_derives
+            .insert(nt.name.clone(), selected);
+        derives
+    }
+
+    /// Check explicit Rust/source trait adoptions before implied derives and publish the accepted source facts.
+    /// Rusttype Awaitable bridges are refused before collection; ordinary newtypes keep the nominal refusal afterward.
+    fn check_newtype_trait_adoptions(
+        &mut self,
+        nt: &NewtypeDecl,
+        derives: &[String],
+        rusttype_path: Option<&str>,
+    ) -> Vec<ResolvedTraitAdoption> {
+        let mut resolved_trait_adoptions = Vec::new();
+        for trait_ref in &nt.traits {
+            let trait_name = trait_ref.node.name.as_str();
+            if nt.is_rusttype && Self::is_awaitable_trait_name(trait_name) {
+                self.errors
+                    .push(errors::awaitable_future_bridge_blocked(&nt.name, trait_ref.span));
+                continue;
+            }
+            if let Some((trait_path, trait_metadata)) = self.imported_rust_trait_candidate(trait_name) {
+                self.validate_imported_rust_trait_newtype_adoption(
+                    nt,
+                    &trait_ref.node,
+                    trait_ref.span,
+                    trait_path.as_str(),
+                    trait_metadata.as_deref(),
+                    rusttype_path,
+                );
+            } else if self.lookup_trait_info(trait_name).is_some() {
+                let Some((trait_info, trait_args)) = self.resolve_adopted_trait_info(&trait_ref.node, trait_ref.span)
+                else {
+                    continue;
+                };
+                resolved_trait_adoptions.push(ResolvedTraitAdoption {
+                    name: trait_name.to_string(),
+                    info: trait_info.clone(),
+                    args: trait_args.clone(),
+                    module_path: None,
+                    span: trait_ref.span,
+                });
+                self.check_trait_conformance_newtype(
+                    nt,
+                    trait_info,
+                    trait_name,
+                    if trait_args.is_empty() {
+                        None
+                    } else {
+                        Some(trait_args.as_slice())
+                    },
+                    trait_ref.span,
+                );
+            } else if self.lookup_symbol(trait_name).is_none() {
+                self.errors.push(errors::unknown_symbol(trait_name, trait_ref.span));
+            }
+        }
+        let derive_adoption_span = Self::first_derive_span(&nt.decorators);
+        for adoption in self.collect_derive_trait_adoption_infos(derives) {
+            let Some(resolved) = self.resolve_collected_trait_adoption(&adoption, derive_adoption_span) else {
+                continue;
+            };
+            resolved_trait_adoptions.push(resolved);
+        }
+        self.record_body_ir_trait_adoptions(&nt.name, &resolved_trait_adoptions);
+        self.refuse_awaitable_adoptions(&nt.name, &resolved_trait_adoptions);
+        resolved_trait_adoptions
+    }
+
+    /// Resolve associated type declarations before rebinding expressions. A short-form method rebinding is a
+    /// member name rather than a local variable read; only expression-shaped rebinding targets are checked here.
+    fn check_newtype_member_references(&mut self, nt: &NewtypeDecl) {
+        for associated_type in &nt.associated_types {
+            let trait_name = associated_type.node.trait_target.node.name.as_str();
+            if self.lookup_trait_info(trait_name).is_some() {
+                let _ = self.resolve_adopted_trait_info(
+                    &associated_type.node.trait_target.node,
+                    associated_type.node.trait_target.span,
+                );
+            } else if self.lookup_symbol(trait_name).is_none() {
+                self.errors.push(errors::unknown_symbol(
+                    trait_name,
+                    associated_type.node.trait_target.span,
+                ));
+            }
+            let _ = self.resolve_type_checked(&associated_type.node.ty);
+        }
+        for rebinding in &nt.rebindings {
+            if !matches!(rebinding.node.target.node, Expr::Ident(_)) {
+                let _ = self.check_expr(&rebinding.node.target);
+            }
+        }
+    }
+
+    /// Validate interop edges in declaration order, diagnosing duplicates before checking adapter signatures.
+    /// Retain an edge only when its adapter introduces no new errors; earlier independent edge errors remain visible.
+    /// Boundary equality uses resolved type structure; user-facing type text is only a diagnostic rendering.
+    fn check_newtype_interop_edges(&mut self, nt: &NewtypeDecl) {
+        let rusttype_ty = self.rusttype_decl_resolved_type(nt);
+        let mut seen_edges: HashMap<(bool, ResolvedType), (InteropAdapterKind, String, Span)> = HashMap::new();
+        for edge in &nt.interop_edges {
+            let boundary_ty = self.resolve_type_checked(&edge.node.ty);
+            if !matches!(boundary_ty, ResolvedType::Unknown) {
+                let key = (
+                    matches!(edge.node.direction, InteropDirection::Into),
+                    boundary_ty.clone(),
+                );
+                let adapter_ref = Self::interop_adapter_ref_display(&edge.node.adapter);
+                if let Some((prev_kind, prev_adapter, prev_span)) = seen_edges.get(&key) {
+                    let key_ty = boundary_ty.to_string();
+                    if *prev_kind == edge.node.adapter_kind && prev_adapter == &adapter_ref {
+                        self.errors.push(errors::duplicate_interop_edge(
+                            &nt.name,
+                            if key.0 { "into" } else { "from" },
+                            key_ty.as_str(),
+                            *prev_span,
+                            edge.span,
+                        ));
+                    } else {
+                        self.errors.push(errors::conflicting_interop_edge(
+                            &nt.name,
+                            if key.0 { "into" } else { "from" },
+                            key_ty.as_str(),
+                            prev_adapter.as_str(),
+                            adapter_ref.as_str(),
+                            edge.span,
+                        ));
+                    }
+                } else {
+                    seen_edges.insert(key, (edge.node.adapter_kind, adapter_ref, edge.span));
+                }
+            }
+            if let Some(adapter_sig) = self.resolve_interop_adapter_signature(nt, edge) {
+                let errors_before = self.errors.len();
+                self.validate_interop_adapter_signature(nt, edge, &boundary_ty, &rusttype_ty, &adapter_sig);
+                if self.errors.len() == errors_before {
+                    self.retain_declared_rusttype_edge(nt, edge, &boundary_ty, &rusttype_ty);
+                }
+            }
+        }
     }
 
     /// Validate explicit newtype/rusttype trait adoption using the same method contract as other nominal types.
@@ -5216,6 +5292,68 @@ impl TypeChecker {
             );
         }
 
+        let resolved_trait_adoptions = self.check_enum_trait_adoptions(en, &derives);
+
+        self.check_value_enum_decl(en);
+        self.check_enum_variant_aliases(en);
+        self.check_enum_payloads(en);
+
+        let active_methods = en
+            .methods
+            .iter()
+            .filter(|method| self.member_binding_is_active(method.span))
+            .collect::<Vec<_>>();
+        for method in active_methods {
+            self.check_method_with_owner_type_params(&method.node, method.span, &en.name, &en.type_params);
+        }
+        if let Some(TypeInfo::Enum(info)) = self.lookup_type_info(&en.name).cloned() {
+            let mut native_derives = self.json_derive_selections(&derives);
+            if self.append_native_rust_derives(&en.name, &mut native_derives) {
+                self.type_info
+                    .declarations
+                    .rust_native_derive_types
+                    .insert(en.name.clone());
+            }
+            // A derive brings the derives it implies, as a model's does: a derived `Ord` needs `PartialOrd` natively.
+            Self::append_implied_derives(&mut native_derives);
+            for automatic in [DeriveId::Debug, DeriveId::Clone].map(derives::as_str) {
+                if !native_derives.iter().any(|name| name == automatic) {
+                    native_derives.push(automatic.to_owned());
+                }
+            }
+            if Self::enum_has_automatic_partial_eq(&info)
+                && !native_derives
+                    .iter()
+                    .any(|name| derives::from_str(name) == Some(DeriveId::PartialEq))
+            {
+                native_derives.push(derives::as_str(DeriveId::PartialEq).to_owned());
+            }
+            let native_derives = self.body_ir_native_derive_selection(&native_derives);
+            self.type_info
+                .declarations
+                .enum_derives
+                .insert(en.name.clone(), native_derives);
+            let method_spans = Self::method_decl_spans_by_name(&en.methods);
+            self.validate_multi_instantiation_trait_surface(
+                &en.name,
+                &resolved_trait_adoptions,
+                &info.method_overloads,
+                &method_spans,
+            );
+        }
+        let member_spans = en
+            .variants
+            .iter()
+            .map(|variant| (variant.node.name.as_str(), variant.span))
+            .collect();
+        self.check_derive_contract(DerivedKind::Enum, &en.name, &en.decorators, &member_spans, &en.methods);
+
+        self.symbols.exit_scope();
+    }
+
+    /// Check explicit enum trait conformance before implied derive adoptions and the nominal Awaitable refusal.
+    /// The returned inventory retains each resolved adoption for the later multi-instantiation surface check.
+    fn check_enum_trait_adoptions(&mut self, en: &EnumDecl, derives: &[String]) -> Vec<ResolvedTraitAdoption> {
         let mut resolved_trait_adoptions = Vec::new();
         for trait_ref in &en.traits {
             let trait_name = trait_ref.node.name.as_str();
@@ -5247,17 +5385,19 @@ impl TypeChecker {
             }
         }
         let derive_adoption_span = Self::first_derive_span(&en.decorators);
-        for adoption in self.collect_derive_trait_adoption_infos(&derives) {
+        for adoption in self.collect_derive_trait_adoption_infos(derives) {
             let Some(resolved) = self.resolve_collected_trait_adoption(&adoption, derive_adoption_span) else {
                 continue;
             };
             resolved_trait_adoptions.push(resolved);
         }
         self.refuse_awaitable_adoptions(&en.name, &resolved_trait_adoptions);
+        resolved_trait_adoptions
+    }
 
-        self.check_value_enum_decl(en);
-        self.check_enum_variant_aliases(en);
-        // Check variant field types exist
+    /// Check active variant payloads in source order and retain their span-keyed types before automatic-derive and
+    /// JSON-form validation. Inactive variants contribute neither diagnostics nor payload facts.
+    fn check_enum_payloads(&mut self, en: &EnumDecl) {
         let active_variants = en
             .variants
             .iter()
@@ -5291,54 +5431,6 @@ impl TypeChecker {
         }
         let adoptions = self.nominal_trait_adoptions(&en.name);
         self.refuse_members_without_json_form("enum", &en.name, &adoptions, &json_members);
-
-        let active_methods = en
-            .methods
-            .iter()
-            .filter(|method| self.member_binding_is_active(method.span))
-            .collect::<Vec<_>>();
-        for method in active_methods {
-            self.check_method_with_owner_type_params(&method.node, method.span, &en.name, &en.type_params);
-        }
-        if let Some(TypeInfo::Enum(info)) = self.lookup_type_info(&en.name).cloned() {
-            let mut native_derives = self.json_derive_selections(&derives);
-            if self.append_native_rust_derives(&en.name, &mut native_derives) {
-                self.type_info
-                    .declarations
-                    .rust_native_derive_types
-                    .insert(en.name.clone());
-            }
-            // A derive brings the derives it implies, as a model's does: a derived `Ord` needs `PartialOrd` natively.
-            Self::append_implied_derives(&mut native_derives);
-            for automatic in ["Debug", "Clone"] {
-                if !native_derives.iter().any(|name| name == automatic) {
-                    native_derives.push(automatic.to_owned());
-                }
-            }
-            if Self::enum_has_automatic_partial_eq(&info) && !native_derives.iter().any(|name| name == "PartialEq") {
-                native_derives.push("PartialEq".to_owned());
-            }
-            let native_derives = self.body_ir_native_derive_selection(&native_derives);
-            self.type_info
-                .declarations
-                .enum_derives
-                .insert(en.name.clone(), native_derives);
-            let method_spans = Self::method_decl_spans_by_name(&en.methods);
-            self.validate_multi_instantiation_trait_surface(
-                &en.name,
-                &resolved_trait_adoptions,
-                &info.method_overloads,
-                &method_spans,
-            );
-        }
-        let member_spans = en
-            .variants
-            .iter()
-            .map(|variant| (variant.node.name.as_str(), variant.span))
-            .collect();
-        self.check_derive_contract(DerivedKind::Enum, &en.name, &en.decorators, &member_spans, &en.methods);
-
-        self.symbols.exit_scope();
     }
 
     /// Validate enum variant aliases against the variant namespace.
@@ -6012,30 +6104,9 @@ impl TypeChecker {
                 ));
                 continue;
             };
-            let (definition, canonical_registry) = if let Some(definition) =
-                self.type_info.registry.definitions.get(registry_name).cloned()
-            {
-                (
-                    definition,
-                    RegistryDescriptionRegistry::Local {
-                        binding: registry_name.clone(),
-                    },
-                )
-            } else if let Some(imported) = self.type_info.registry.imported_definitions.get(registry_name).cloned() {
-                let public = imported.definition.is_public;
-                (
-                    imported.definition,
-                    RegistryDescriptionRegistry::Imported {
-                        module_path: imported.owner_module_path,
-                        binding: imported.owner_binding,
-                        public,
-                    },
-                )
-            } else {
-                self.errors.push(CompileError::type_error(
-                    format!("@describe registry `{registry_name}` must be initialized by Registry.define(...) before it is described"),
-                    registry.span,
-                ));
+            let Some((definition, canonical_registry)) =
+                self.registry_definition_for_description(registry_name, registry.span)
+            else {
                 continue;
             };
             if definition.key_type != *key_type || definition.descriptor_type != *descriptor_type {
@@ -6078,19 +6149,11 @@ impl TypeChecker {
                 ));
                 continue;
             }
-            let key_value = match self.registry_structural_value(key) {
-                Ok(value) => value,
-                Err(message) => {
-                    self.errors.push(CompileError::type_error(message, key.span));
-                    continue;
-                }
+            let Some(key_value) = self.checked_registry_structural_value(key) else {
+                continue;
             };
-            let descriptor_value = match self.registry_structural_value(descriptor) {
-                Ok(value) => value,
-                Err(message) => {
-                    self.errors.push(CompileError::type_error(message, descriptor.span));
-                    continue;
-                }
+            let Some(descriptor_value) = self.checked_registry_structural_value(descriptor) else {
+                continue;
             };
             if self.registry_description_has_key(&canonical_registry, &key_value) {
                 self.errors.push(CompileError::type_error(
@@ -6111,6 +6174,51 @@ impl TypeChecker {
                 key_span: key.span,
                 descriptor_span: descriptor.span,
             });
+        }
+    }
+
+    /// Resolve a description's initialized registry while retaining whether its owner is local or imported.
+    /// Local definitions keep precedence; imported definitions retain their provider module, binding and visibility.
+    fn registry_definition_for_description(
+        &mut self,
+        name: &str,
+        span: Span,
+    ) -> Option<(RegistryDefinitionInfo, RegistryDescriptionRegistry)> {
+        if let Some(definition) = self.type_info.registry.definitions.get(name).cloned() {
+            return Some((
+                definition,
+                RegistryDescriptionRegistry::Local {
+                    binding: name.to_string(),
+                },
+            ));
+        }
+        if let Some(imported) = self.type_info.registry.imported_definitions.get(name).cloned() {
+            let public = imported.definition.is_public;
+            return Some((
+                imported.definition,
+                RegistryDescriptionRegistry::Imported {
+                    module_path: imported.owner_module_path,
+                    binding: imported.owner_binding,
+                    public,
+                },
+            ));
+        }
+        self.errors.push(CompileError::type_error(
+            format!("@describe registry `{name}` must be initialized by Registry.define(...) before it is described"),
+            span,
+        ));
+        None
+    }
+
+    /// Read a checked structural registry value, reporting its existing refusal at the expression's source span.
+    /// Callers retain control over whether another value is checked after failure.
+    fn checked_registry_structural_value(&mut self, value: &Spanned<Expr>) -> Option<SemanticRegistryValue> {
+        match self.registry_structural_value(value) {
+            Ok(value) => Some(value),
+            Err(message) => {
+                self.errors.push(CompileError::type_error(message, value.span));
+                None
+            }
         }
     }
 
@@ -6446,33 +6554,7 @@ impl TypeChecker {
         );
         self.check_provider_operation_decorators(func, decl_span);
         self.validate_callable_rest_params(&func.params);
-        let fixture_span = fixture_function_span(func);
-        let fixture_args = self.testing_fixture_marker_args(&func.decorators, fixture_span);
-        if let Some(args) = &fixture_args {
-            if let Some(span) = args.unsupported_timeout_span {
-                self.errors
-                    .push(errors::fixture_timeout_config_not_supported(&func.name, span));
-            }
-
-            // An async fixture yields exactly one value at its top level; test discovery reads the rest of its shape.
-            if func.is_async() {
-                match validate_async_fixture_yield_shape(&func.body) {
-                    AsyncFixtureYieldShape::Valid { .. } => {}
-                    AsyncFixtureYieldShape::Missing => {
-                        self.errors
-                            .push(errors::async_fixture_requires_yield(&func.name, fixture_span));
-                    }
-                    AsyncFixtureYieldShape::Invalid(span) => {
-                        self.errors
-                            .push(errors::async_fixture_invalid_yield_shape(&func.name, span));
-                    }
-                    AsyncFixtureYieldShape::MissingValue(span) => {
-                        self.errors
-                            .push(errors::async_fixture_yield_requires_value(&func.name, span));
-                    }
-                }
-            }
-        }
+        let fixture_args = self.check_function_fixture_marker(func);
         self.validate_surface_modifier_typecheck_actions(&func.surface_modifiers, &func.return_type);
 
         // Define type parameters so explicit generic bounds are visible in function-level type resolution.
@@ -6494,10 +6576,7 @@ impl TypeChecker {
         let previous_annotation_owner = self.enter_annotation_owner(&func.name, &func.type_params);
 
         let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(&func.params);
-        let return_type = self.resolve_type_checked(&func.return_type);
-        self.refuse_unbounded_nominal_type_arguments(&return_type, func.return_type.span);
-        self.refuse_trait_type_nested_in_annotation(&return_type, func.return_type.span);
-        self.refuse_lifetime_bearing_rust_type(&return_type, func.return_type.span);
+        let return_type = self.resolve_callable_return_annotation(&func.return_type);
         self.check_route_handler_signature(func, &return_type, &resolved_param_types);
 
         // Define parameters after checking defaults so a declaration-owned default cannot resolve a callable-frame
@@ -6512,25 +6591,7 @@ impl TypeChecker {
             &resolved_param_types,
         );
         for (param, resolved_ty) in func.params.iter().zip(resolved_param_types) {
-            self.record_mut_param_marker(&param.node, param.span, &resolved_ty);
-            let ty = local_type_for_param(param.node.kind, resolved_ty);
-            self.validate_protected_builtin_binding(&param.node.name, param.span);
-            self.bind_mut_param_as_mutable(&param.node);
-            self.symbols.define_with_target_kind(
-                Symbol {
-                    name: param.node.name.clone(),
-                    kind: SymbolKind::Variable(VariableInfo {
-                        ty,
-                        is_mutable: param.node.is_mut,
-                        is_used: false,
-                    }),
-                    span: param.span,
-                    scope: 0,
-                },
-                SemanticSourceTargetKind::Parameter,
-            );
-            self.record_read_only_binding(param.node.is_mut, param.span);
-            self.record_write_target_identity(param.span, &param.node.name);
+            self.bind_checked_callable_parameter(param, resolved_ty);
         }
 
         let has_yield = any_expr_in_body(&func.body, |expr| matches!(expr, Expr::Yield(_)));
@@ -6597,6 +6658,71 @@ impl TypeChecker {
         self.mutable_bindings = previous_mutable_bindings;
         self.symbols.exit_scope();
         self.apply_user_defined_function_decorators(func, decl_span);
+    }
+
+    /// Validate a function's fixture marker before checking its signature. Async fixture yield errors retain the
+    /// marker's source span and distinguish missing yields, invalid placement and missing yielded values.
+    fn check_function_fixture_marker(&mut self, func: &FunctionDecl) -> Option<TestingFixtureMarkerArgs> {
+        let fixture_span = fixture_function_span(func);
+        let fixture_args = self.testing_fixture_marker_args(&func.decorators, fixture_span);
+        if let Some(args) = &fixture_args {
+            if let Some(span) = args.unsupported_timeout_span {
+                self.errors
+                    .push(errors::fixture_timeout_config_not_supported(&func.name, span));
+            }
+            if func.is_async() {
+                match validate_async_fixture_yield_shape(&func.body) {
+                    AsyncFixtureYieldShape::Valid { .. } => {}
+                    AsyncFixtureYieldShape::Missing => {
+                        self.errors
+                            .push(errors::async_fixture_requires_yield(&func.name, fixture_span));
+                    }
+                    AsyncFixtureYieldShape::Invalid(span) => {
+                        self.errors
+                            .push(errors::async_fixture_invalid_yield_shape(&func.name, span));
+                    }
+                    AsyncFixtureYieldShape::MissingValue(span) => {
+                        self.errors
+                            .push(errors::async_fixture_yield_requires_value(&func.name, span));
+                    }
+                }
+            }
+        }
+        fixture_args
+    }
+
+    /// Publish one execution-frame parameter after all declaration-owned defaults have checked. Retain its checked
+    /// mutability marker before converting rest carriers, then record the same read/write binding facts for bodies.
+    fn bind_checked_callable_parameter(&mut self, param: &Spanned<Param>, resolved_ty: ResolvedType) {
+        self.record_mut_param_marker(&param.node, param.span, &resolved_ty);
+        let ty = local_type_for_param(param.node.kind, resolved_ty);
+        self.validate_protected_builtin_binding(&param.node.name, param.span);
+        self.bind_mut_param_as_mutable(&param.node);
+        self.symbols.define_with_target_kind(
+            Symbol {
+                name: param.node.name.clone(),
+                kind: SymbolKind::Variable(VariableInfo {
+                    ty,
+                    is_mutable: param.node.is_mut,
+                    is_used: false,
+                }),
+                span: param.span,
+                scope: 0,
+            },
+            SemanticSourceTargetKind::Parameter,
+        );
+        self.record_read_only_binding(param.node.is_mut, param.span);
+        self.record_write_target_identity(param.span, &param.node.name);
+    }
+
+    /// Resolve a callable return annotation and apply its nominal, nested-trait and Rust lifetime restrictions in
+    /// order. Signature owners retain responsibility for route-specific checks and recording their final binding.
+    fn resolve_callable_return_annotation(&mut self, annotation: &Spanned<Type>) -> ResolvedType {
+        let ty = self.resolve_type_checked(annotation);
+        self.refuse_unbounded_nominal_type_arguments(&ty, annotation.span);
+        self.refuse_trait_type_nested_in_annotation(&ty, annotation.span);
+        self.refuse_lifetime_bearing_rust_type(&ty, annotation.span);
+        ty
     }
 
     /// Resolve callable parameter annotations and validate source defaults before their execution-frame bindings exist.
@@ -6927,37 +7053,7 @@ impl TypeChecker {
         self.validate_callable_rest_params(&method.params);
         self.validate_surface_modifier_typecheck_actions(&method.surface_modifiers, &method.return_type);
 
-        // Define owner type parameters so generic wrappers can use them in bodies and annotations.
-        for type_param in owner_params {
-            self.symbols.define_refined_binding(Symbol {
-                name: type_param.name.clone(),
-                kind: SymbolKind::Type(TypeInfo::Builtin), // Type-var placeholder
-                span: type_param.span,
-                scope: 0,
-            });
-        }
-
-        // Define method type parameters so generic methods can use them in signatures and bodies.
-        for type_param in &method.type_params {
-            self.symbols.define_with_target_kind(
-                Symbol {
-                    name: type_param.name.clone(),
-                    kind: SymbolKind::Type(TypeInfo::Builtin), // Type-var placeholder
-                    span: type_param.span,
-                    scope: 0,
-                },
-                SemanticSourceTargetKind::GenericBinder,
-            );
-        }
-        self.refuse_unsupported_callable_markers(&method.type_params, CallableMarkerOwner::Callable);
-        if let Some(target) = &method.trait_target {
-            let trait_name = target.node.name.as_str();
-            if self.lookup_trait_info(trait_name).is_some() {
-                let _ = self.resolve_adopted_trait_info(&target.node, target.span);
-            } else if self.lookup_symbol(trait_name).is_none() {
-                self.errors.push(errors::unknown_symbol(trait_name, target.span));
-            }
-        }
+        self.define_method_type_parameters(method, owner_params);
         let mut active_bounds = self.type_param_bound_details_from_type_params(owner_params);
         active_bounds.extend(self.type_param_bound_details_from_type_params(&method.type_params));
         self.current_type_param_bound_details.push(active_bounds);
@@ -6979,6 +7075,126 @@ impl TypeChecker {
         // The method's `mut` bindings, its receiver included, are its own: the set starts empty and the enclosing set
         // is restored afterwards.
         let previous_mutable_bindings = std::mem::take(&mut self.mutable_bindings);
+        let is_classmethod = self.define_method_receiver_bindings(method, method_span, &self_ty, binds_self_receiver);
+        let previous_classmethod_self_ty = self.current_classmethod_self_ty.take();
+        if is_classmethod {
+            self.current_classmethod_self_ty = Some(self_ty.clone());
+        }
+
+        // Define parameters, capturing each checked callable-parameter fact once so it can be recorded for Body IR
+        // lowering below without re-resolving the annotation (and re-emitting any of its diagnostics) a second time.
+        let mut checked_params = Vec::with_capacity(method.params.len());
+        let mut_param_body = self.enter_mut_param_body(
+            &method.name,
+            SemanticSourceTargetKind::Method,
+            method_span,
+            &method.params,
+            &resolved_param_types,
+        );
+        for (param, resolved_ty) in method.params.iter().zip(resolved_param_types) {
+            checked_params.push(CallableParam::named_with_default(
+                param.node.name.clone(),
+                resolved_ty.clone(),
+                param.node.kind,
+                param.node.default.is_some(),
+            ));
+            self.bind_checked_callable_parameter(param, resolved_ty);
+        }
+
+        let return_type = self.resolve_callable_return_annotation(&method.return_type);
+        self.type_info.declarations.method_bindings_by_span.insert(
+            method_span,
+            FunctionBindingInfo {
+                is_async: method.is_async(),
+                params: checked_params,
+                return_type: return_type.clone(),
+                identity: Some(self.symbols.member_declaration_identity(
+                    &method.name,
+                    SemanticSourceTargetKind::Method,
+                    method_span,
+                )),
+            },
+        );
+        let yield_context = self.set_method_return_context(method, &return_type, &self_ty);
+
+        // Set error type for ? checking
+        self.current_return_error_type = return_type.result_err_type().cloned();
+
+        // Check body
+        if let Some(body) = &method.body {
+            let prev_in_async_body = self.in_async_body;
+            let prev_yield_context = std::mem::replace(&mut self.current_yield_context, yield_context);
+            self.in_async_body = method.is_async();
+            let previous_consumed_iterator_bindings = std::mem::take(&mut self.consumed_iterator_bindings);
+            let previous_transferred_c_resource_bindings = std::mem::take(&mut self.transferred_c_resource_bindings);
+            let previous_for_item_taking = self.enter_for_item_taking_scope();
+            let previous_unbound_c_abi_span_constructors = std::mem::take(&mut self.unbound_c_abi_span_constructors);
+            let previous_c_abi_span_bindings = std::mem::take(&mut self.c_abi_span_bindings);
+            let previous_consumed_c_abi_span_bindings = std::mem::take(&mut self.consumed_c_abi_span_bindings);
+            self.check_statement_block(body);
+            self.finalize_comprehension_collection_sources();
+            self.consumed_iterator_bindings = previous_consumed_iterator_bindings;
+            self.transferred_c_resource_bindings = previous_transferred_c_resource_bindings;
+            self.exit_for_item_taking_scope(previous_for_item_taking);
+            self.unbound_c_abi_span_constructors = previous_unbound_c_abi_span_constructors;
+            self.c_abi_span_bindings = previous_c_abi_span_bindings;
+            self.consumed_c_abi_span_bindings = previous_consumed_c_abi_span_bindings;
+            self.in_async_body = prev_in_async_body;
+            self.current_yield_context = prev_yield_context;
+        }
+
+        self.current_return_error_type = None;
+        self.current_classmethod_self_ty = previous_classmethod_self_ty;
+        self.current_type_param_bound_details.pop();
+        self.annotation_owner = previous_annotation_owner;
+        self.current_immutable_self_method = previous_immutable_self_method;
+        self.mutable_bindings = previous_mutable_bindings;
+        self.exit_mut_param_body(mut_param_body);
+        self.symbols.exit_scope();
+    }
+
+    /// Refine owner binders before declaring the method's own generic binders and resolving an explicit trait
+    /// target. Bound-stack and annotation-owner setup remains with the enclosing method frame.
+    fn define_method_type_parameters(&mut self, method: &MethodDecl, owner_params: &[TypeParam]) {
+        for type_param in owner_params {
+            self.symbols.define_refined_binding(Symbol {
+                name: type_param.name.clone(),
+                kind: SymbolKind::Type(TypeInfo::Builtin),
+                span: type_param.span,
+                scope: 0,
+            });
+        }
+        for type_param in &method.type_params {
+            self.symbols.define_with_target_kind(
+                Symbol {
+                    name: type_param.name.clone(),
+                    kind: SymbolKind::Type(TypeInfo::Builtin),
+                    span: type_param.span,
+                    scope: 0,
+                },
+                SemanticSourceTargetKind::GenericBinder,
+            );
+        }
+        self.refuse_unsupported_callable_markers(&method.type_params, CallableMarkerOwner::Callable);
+        if let Some(target) = &method.trait_target {
+            let trait_name = target.node.name.as_str();
+            if self.lookup_trait_info(trait_name).is_some() {
+                let _ = self.resolve_adopted_trait_info(&target.node, target.span);
+            } else if self.lookup_symbol(trait_name).is_none() {
+                self.errors.push(errors::unknown_symbol(trait_name, target.span));
+            }
+        }
+    }
+
+    /// Bind the exact source receiver token after defaults have checked. A self receiver retains its mutability;
+    /// a classmethod's cls token retains the owner's type token. Return whether classmethod context is required.
+    fn define_method_receiver_bindings(
+        &mut self,
+        method: &MethodDecl,
+        method_span: Span,
+        self_ty: &ResolvedType,
+        binds_self_receiver: bool,
+    ) -> bool {
         if let Some(receiver) = method.receiver
             && binds_self_receiver
         {
@@ -7030,72 +7246,23 @@ impl TypeChecker {
             );
             self.record_write_target_identity(receiver_binding.span, "cls");
         }
-        let previous_classmethod_self_ty = self.current_classmethod_self_ty.take();
-        if is_classmethod {
-            self.current_classmethod_self_ty = Some(self_ty.clone());
-        }
+        is_classmethod
+    }
 
-        // Define parameters, capturing each checked callable-parameter fact once so it can be recorded for Body IR
-        // lowering below without re-resolving the annotation (and re-emitting any of its diagnostics) a second time.
-        let mut checked_params = Vec::with_capacity(method.params.len());
-        let mut_param_body = self.enter_mut_param_body(
-            &method.name,
-            SemanticSourceTargetKind::Method,
-            method_span,
-            &method.params,
-            &resolved_param_types,
-        );
-        for (param, resolved_ty) in method.params.iter().zip(resolved_param_types) {
-            checked_params.push(CallableParam::named_with_default(
-                param.node.name.clone(),
-                resolved_ty.clone(),
-                param.node.kind,
-                param.node.default.is_some(),
-            ));
-            self.record_mut_param_marker(&param.node, param.span, &resolved_ty);
-            let ty = local_type_for_param(param.node.kind, resolved_ty);
-            self.validate_protected_builtin_binding(&param.node.name, param.span);
-            self.bind_mut_param_as_mutable(&param.node);
-            self.symbols.define_with_target_kind(
-                Symbol {
-                    name: param.node.name.clone(),
-                    kind: SymbolKind::Variable(VariableInfo {
-                        ty,
-                        is_mutable: param.node.is_mut,
-                        is_used: false,
-                    }),
-                    span: param.span,
-                    scope: 0,
-                },
-                SemanticSourceTargetKind::Parameter,
-            );
-            self.record_read_only_binding(param.node.is_mut, param.span);
-            self.record_write_target_identity(param.span, &param.node.name);
-        }
-
-        let return_type = self.resolve_type_checked(&method.return_type);
-        self.refuse_unbounded_nominal_type_arguments(&return_type, method.return_type.span);
-        self.refuse_trait_type_nested_in_annotation(&return_type, method.return_type.span);
-        self.refuse_lifetime_bearing_rust_type(&return_type, method.return_type.span);
-        self.type_info.declarations.method_bindings_by_span.insert(
-            method_span,
-            FunctionBindingInfo {
-                is_async: method.is_async(),
-                params: checked_params,
-                return_type: return_type.clone(),
-                identity: Some(self.symbols.member_declaration_identity(
-                    &method.name,
-                    SemanticSourceTargetKind::Method,
-                    method_span,
-                )),
-            },
-        );
-        let effective_return_type = Self::concretize_self_type_in_annotation(&return_type, &self_ty);
+    /// Set the checked method return after substituting its receiver for Self and determine the yield context.
+    /// Generator contracts require a reachable yield unless the body already returns a value; abstract methods
+    /// retain their existing no-body behavior.
+    fn set_method_return_context(
+        &mut self,
+        method: &MethodDecl,
+        return_type: &ResolvedType,
+        self_ty: &ResolvedType,
+    ) -> YieldContext {
+        let effective_return_type = Self::concretize_self_type_in_annotation(return_type, self_ty);
         let body_has_yield = method
             .body
             .as_ref()
             .is_some_and(|body| any_expr_in_body(body, |expr| matches!(expr, Expr::Yield(_))));
-        // RFC 006 requires a reachable `yield`: one after an unconditional `return` in its block never runs.
         let body_has_reachable_yield = body_has_yield
             && method
                 .body
@@ -7119,40 +7286,6 @@ impl TypeChecker {
             YieldContext::Disallowed
         };
         self.symbols.set_return_type(effective_return_type);
-
-        // Set error type for ? checking
-        self.current_return_error_type = return_type.result_err_type().cloned();
-
-        // Check body
-        if let Some(body) = &method.body {
-            let prev_in_async_body = self.in_async_body;
-            let prev_yield_context = std::mem::replace(&mut self.current_yield_context, yield_context);
-            self.in_async_body = method.is_async();
-            let previous_consumed_iterator_bindings = std::mem::take(&mut self.consumed_iterator_bindings);
-            let previous_transferred_c_resource_bindings = std::mem::take(&mut self.transferred_c_resource_bindings);
-            let previous_for_item_taking = self.enter_for_item_taking_scope();
-            let previous_unbound_c_abi_span_constructors = std::mem::take(&mut self.unbound_c_abi_span_constructors);
-            let previous_c_abi_span_bindings = std::mem::take(&mut self.c_abi_span_bindings);
-            let previous_consumed_c_abi_span_bindings = std::mem::take(&mut self.consumed_c_abi_span_bindings);
-            self.check_statement_block(body);
-            self.finalize_comprehension_collection_sources();
-            self.consumed_iterator_bindings = previous_consumed_iterator_bindings;
-            self.transferred_c_resource_bindings = previous_transferred_c_resource_bindings;
-            self.exit_for_item_taking_scope(previous_for_item_taking);
-            self.unbound_c_abi_span_constructors = previous_unbound_c_abi_span_constructors;
-            self.c_abi_span_bindings = previous_c_abi_span_bindings;
-            self.consumed_c_abi_span_bindings = previous_consumed_c_abi_span_bindings;
-            self.in_async_body = prev_in_async_body;
-            self.current_yield_context = prev_yield_context;
-        }
-
-        self.current_return_error_type = None;
-        self.current_classmethod_self_ty = previous_classmethod_self_ty;
-        self.current_type_param_bound_details.pop();
-        self.annotation_owner = previous_annotation_owner;
-        self.current_immutable_self_method = previous_immutable_self_method;
-        self.mutable_bindings = previous_mutable_bindings;
-        self.exit_mut_param_body(mut_param_body);
-        self.symbols.exit_scope();
+        yield_context
     }
 }

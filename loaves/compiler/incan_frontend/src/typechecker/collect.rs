@@ -1779,7 +1779,25 @@ impl TypeChecker {
             info.method_overloads = method_overloads;
         }
 
-        // Also define each variant as a symbol
+        self.define_enum_variant_symbols(
+            en,
+            &active_variants,
+            &active_variant_aliases,
+            &variant_fields,
+            &variant_identities,
+        );
+    }
+
+    /// Publish active enum variants before their aliases, preserving existing bindings and each target's canonical
+    /// identity. Alias payload types retain their existing checked resolution after method registration.
+    fn define_enum_variant_symbols(
+        &mut self,
+        en: &EnumDecl,
+        active_variants: &[&Spanned<VariantDecl>],
+        active_variant_aliases: &[&Spanned<EnumVariantAliasDecl>],
+        variant_fields: &HashMap<String, Vec<ResolvedType>>,
+        variant_identities: &HashMap<String, CanonicalSymbolId>,
+    ) {
         for variant in active_variants {
             let fields = variant_fields.get(&variant.node.name).cloned().unwrap_or_default();
             let variant_id = self.symbols.define_preserving_existing_binding(Symbol {
@@ -1835,43 +1853,7 @@ impl TypeChecker {
     fn collect_function(&mut self, func: &FunctionDecl, span: Span) {
         let existing_module_function_id = self.current_module_function_symbols.get(&func.name).copied();
         let type_params: Vec<String> = func.type_params.iter().map(|tp| tp.name.clone()).collect();
-        let type_param_bounds: HashMap<String, Vec<String>> = func
-            .type_params
-            .iter()
-            .map(|tp| {
-                (
-                    tp.name.clone(),
-                    tp.bounds
-                        .iter()
-                        .map(|bound| self.resolve_generic_bound_name(&bound.name, Span::default()))
-                        .collect(),
-                )
-            })
-            .collect();
-        let type_param_bound_details: HashMap<String, Vec<TypeBoundInfo>> = func
-            .type_params
-            .iter()
-            .map(|tp| {
-                (
-                    tp.name.clone(),
-                    tp.bounds
-                        .iter()
-                        .map(|bound| TypeBoundInfo {
-                            name: self.resolve_generic_bound_name(&bound.name, Span::default()),
-                            source_name: self.trait_bound_source_name(&bound.name),
-                            type_args: bound
-                                .type_args
-                                .iter()
-                                .map(|type_arg| self.resolve_type_checked(type_arg))
-                                .collect(),
-                            module_path: self.trait_bound_module_path(&bound.name),
-                            implementation_type_params: Vec::new(),
-                            inferred: false,
-                        })
-                        .collect(),
-                )
-            })
-            .collect();
+        let (type_param_bounds, type_param_bound_details) = self.collect_function_type_param_bounds(&func.type_params);
 
         let params: Vec<_> = func
             .params
@@ -1939,8 +1921,8 @@ impl TypeChecker {
                     self.type_info
                         .record_function_overloads(func.name.clone(), overloads.clone());
                     existing_symbol.kind = SymbolKind::FunctionOverloads(overloads);
-                    // The symbol no longer names one declaration, so its minted identity must go: each overload
-                    // keeps its own span-keyed identity on `function_bindings_by_span`.
+                    // Each overload keeps its own span-keyed identity; the combined binding names no single
+                    // declaration.
                     self.symbols.clear_identity(existing_id);
                     return;
                 }
@@ -1980,6 +1962,51 @@ impl TypeChecker {
             .insert(span, binding);
         self.current_module_function_symbols
             .insert(func.name.clone(), symbol_id);
+    }
+
+    /// Collect the name and structured views of a function's declared bounds in their existing two-pass order.
+    /// The structured view retains source/module provenance and checked type arguments for later call validation.
+    fn collect_function_type_param_bounds(
+        &mut self,
+        params: &[TypeParam],
+    ) -> (HashMap<String, Vec<String>>, HashMap<String, Vec<TypeBoundInfo>>) {
+        let type_param_bounds = params
+            .iter()
+            .map(|tp| {
+                (
+                    tp.name.clone(),
+                    tp.bounds
+                        .iter()
+                        .map(|bound| self.resolve_generic_bound_name(&bound.name, Span::default()))
+                        .collect(),
+                )
+            })
+            .collect();
+        let type_param_bound_details = params
+            .iter()
+            .map(|tp| {
+                (
+                    tp.name.clone(),
+                    tp.bounds
+                        .iter()
+                        .map(|bound| TypeBoundInfo {
+                            name: self.resolve_generic_bound_name(&bound.name, Span::default()),
+                            source_name: self.trait_bound_source_name(&bound.name),
+                            type_args: bound
+                                .type_args
+                                .iter()
+                                .map(|type_arg| self.resolve_type_checked(type_arg))
+                                .collect(),
+                            module_path: self.trait_bound_module_path(&bound.name),
+                            implementation_type_params: Vec::new(),
+                            inferred: false,
+                        })
+                        .collect(),
+                )
+            })
+            .collect();
+
+        (type_param_bounds, type_param_bound_details)
     }
 }
 

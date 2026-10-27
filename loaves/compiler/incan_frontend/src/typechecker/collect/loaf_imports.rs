@@ -2262,68 +2262,10 @@ impl TypeChecker {
             ManifestExportRef::Class(class) => class.type_params.clone(),
             _ => Vec::new(),
         };
-        let mut type_alias_target = None;
-        let mut kind = match export {
-            ManifestExportRef::Model(export) => {
-                SymbolKind::Type(TypeInfo::Model(self.model_info_from_manifest(export)))
-            }
-            ManifestExportRef::Class(export) => {
-                SymbolKind::Type(TypeInfo::Class(self.class_info_from_manifest(export)))
-            }
-            ManifestExportRef::Function(export) => SymbolKind::Function(self.function_info_from_manifest(export)),
-            ManifestExportRef::Partial(export) => {
-                SymbolKind::Function(self.partial_info_from_manifest(manifest, export))
-            }
-            ManifestExportRef::Trait(export) => SymbolKind::Trait(self.trait_info_from_manifest(export)),
-            ManifestExportRef::Enum(export) => SymbolKind::Type(TypeInfo::Enum(self.enum_info_from_manifest(export))),
-            ManifestExportRef::EnumVariant {
-                enum_name,
-                fields,
-                canonical,
-            } => SymbolKind::Variant(VariantInfo {
-                identity: canonical.and_then(|identity| identity.hydrate()),
-                enum_name: enum_name.to_string(),
-                fields: fields.iter().map(resolved_type_from_manifest_type_ref).collect(),
-            }),
-            ManifestExportRef::TypeAlias(export) => {
-                let mut target = resolved_type_from_manifest_type_ref(&export.target);
-                Self::remap_resolved_type_with_import_aliases(&mut target, imported_type_aliases);
-                type_alias_target = Some(crate::typechecker::TypeAliasTarget {
-                    type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
-                    target,
-                    nominal_identities: Default::default(),
-                });
-                SymbolKind::Type(TypeInfo::TypeAlias)
-            }
-            ManifestExportRef::Newtype(export) => {
-                SymbolKind::Type(TypeInfo::Newtype(self.newtype_info_from_manifest(export)))
-            }
-            ManifestExportRef::Const(export) => SymbolKind::Variable(VariableInfo {
-                ty: resolved_type_from_manifest_type_ref(&export.ty),
-                is_mutable: false,
-                is_used: false,
-            }),
-            ManifestExportRef::Static(export) => SymbolKind::Static(StaticInfo {
-                ty: resolved_type_from_manifest_type_ref(&export.ty),
-                is_public: true,
-                is_imported: true,
-                is_used: false,
-            }),
-            ManifestExportRef::Alias(export) => {
-                if let Some(projected) = export.projected_type.as_ref().filter(|ty| ty.has_native_union()) {
-                    let mut target = resolved_type_from_manifest_type_ref(projected);
-                    Self::remap_resolved_type_with_import_aliases(&mut target, imported_type_aliases);
-                    type_alias_target = Some(crate::typechecker::TypeAliasTarget {
-                        type_params: Vec::new(),
-                        target,
-                        nominal_identities: Default::default(),
-                    });
-                }
-                let Some(kind) = self.symbol_kind_from_manifest_alias(manifest, export, &mut HashSet::new()) else {
-                    return;
-                };
-                kind
-            }
+        let Some((mut kind, type_alias_target)) =
+            self.symbol_kind_for_manifest_export(manifest, export, imported_type_aliases)
+        else {
+            return;
         };
         let canonical = manifest
             .contract_metadata
@@ -2380,6 +2322,77 @@ impl TypeChecker {
         }
     }
 
+    /// Reconstruct an imported symbol from its checked manifest export before publishing a local binding. Alias
+    /// targets retain their projected native union or type binders; an unresolved alias does not create a symbol.
+    fn symbol_kind_for_manifest_export(
+        &mut self,
+        manifest: &LibraryManifest,
+        export: ManifestExportRef<'_>,
+        imported_type_aliases: &HashMap<String, String>,
+    ) -> Option<(SymbolKind, Option<crate::typechecker::TypeAliasTarget>)> {
+        let mut type_alias_target = None;
+        let kind = match export {
+            ManifestExportRef::Model(export) => {
+                SymbolKind::Type(TypeInfo::Model(self.model_info_from_manifest(export)))
+            }
+            ManifestExportRef::Class(export) => {
+                SymbolKind::Type(TypeInfo::Class(self.class_info_from_manifest(export)))
+            }
+            ManifestExportRef::Function(export) => SymbolKind::Function(self.function_info_from_manifest(export)),
+            ManifestExportRef::Partial(export) => {
+                SymbolKind::Function(self.partial_info_from_manifest(manifest, export))
+            }
+            ManifestExportRef::Trait(export) => SymbolKind::Trait(self.trait_info_from_manifest(export)),
+            ManifestExportRef::Enum(export) => SymbolKind::Type(TypeInfo::Enum(self.enum_info_from_manifest(export))),
+            ManifestExportRef::EnumVariant {
+                enum_name,
+                fields,
+                canonical,
+            } => SymbolKind::Variant(VariantInfo {
+                identity: canonical.and_then(|identity| identity.hydrate()),
+                enum_name: enum_name.to_string(),
+                fields: fields.iter().map(resolved_type_from_manifest_type_ref).collect(),
+            }),
+            ManifestExportRef::TypeAlias(export) => {
+                let mut target = resolved_type_from_manifest_type_ref(&export.target);
+                Self::remap_resolved_type_with_import_aliases(&mut target, imported_type_aliases);
+                type_alias_target = Some(crate::typechecker::TypeAliasTarget {
+                    type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
+                    target,
+                    nominal_identities: Default::default(),
+                });
+                SymbolKind::Type(TypeInfo::TypeAlias)
+            }
+            ManifestExportRef::Newtype(export) => {
+                SymbolKind::Type(TypeInfo::Newtype(self.newtype_info_from_manifest(export)))
+            }
+            ManifestExportRef::Const(export) => SymbolKind::Variable(VariableInfo {
+                ty: resolved_type_from_manifest_type_ref(&export.ty),
+                is_mutable: false,
+                is_used: false,
+            }),
+            ManifestExportRef::Static(export) => SymbolKind::Static(StaticInfo {
+                ty: resolved_type_from_manifest_type_ref(&export.ty),
+                is_public: true,
+                is_imported: true,
+                is_used: false,
+            }),
+            ManifestExportRef::Alias(export) => {
+                if let Some(projected) = export.projected_type.as_ref().filter(|ty| ty.has_native_union()) {
+                    let mut target = resolved_type_from_manifest_type_ref(projected);
+                    Self::remap_resolved_type_with_import_aliases(&mut target, imported_type_aliases);
+                    type_alias_target = Some(crate::typechecker::TypeAliasTarget {
+                        type_params: Vec::new(),
+                        target,
+                        nominal_identities: Default::default(),
+                    });
+                }
+                self.symbol_kind_from_manifest_alias(manifest, export, &mut HashSet::new())?
+            }
+        };
+        Some((kind, type_alias_target))
+    }
+
     /// Attach the importing dependency key to every field reconstructed from one compiled class manifest.
     pub(super) fn mark_compiled_class_field_provider(kind: &mut SymbolKind, library: &str) {
         let SymbolKind::Type(TypeInfo::Class(info)) = kind else {
@@ -2422,26 +2435,7 @@ impl TypeChecker {
             }
             SymbolKind::Type(ty_info) => match ty_info {
                 TypeInfo::Class(info) => {
-                    if let Some(extends) = &mut info.extends
-                        && let Some(alias) = imported_type_aliases.get(extends)
-                    {
-                        *extends = alias.clone();
-                    }
-                    Self::remap_type_bounds_with_import_aliases(&mut info.trait_adoptions, imported_type_aliases);
-                    for field in info.fields.values_mut() {
-                        Self::remap_resolved_type_with_import_aliases(&mut field.ty, imported_type_aliases);
-                    }
-                    for property in info.properties.values_mut() {
-                        Self::remap_resolved_type_with_import_aliases(&mut property.return_type, imported_type_aliases);
-                    }
-                    for method in info.methods.values_mut() {
-                        Self::remap_method_info_with_import_aliases(method, imported_type_aliases);
-                    }
-                    for overloads in info.method_overloads.values_mut() {
-                        for method in overloads {
-                            Self::remap_method_info_with_import_aliases(method, imported_type_aliases);
-                        }
-                    }
+                    Self::remap_class_info_with_import_aliases(info, imported_type_aliases);
                 }
                 TypeInfo::Model(info) => {
                     Self::remap_type_bounds_with_import_aliases(&mut info.trait_adoptions, imported_type_aliases);
@@ -2521,6 +2515,31 @@ impl TypeChecker {
                 Self::remap_resolved_type_with_import_aliases(&mut info.return_type, imported_type_aliases);
             }
             SymbolKind::Module(_) | SymbolKind::RustItem(_) => {}
+        }
+    }
+
+    /// Remap a compiled class's inheritance and member contracts into the import namespace. Method overloads keep
+    /// their checked order; field, property and trait-bound types use the same recursive alias remapping rule.
+    fn remap_class_info_with_import_aliases(info: &mut ClassInfo, imported_type_aliases: &HashMap<String, String>) {
+        if let Some(extends) = &mut info.extends
+            && let Some(alias) = imported_type_aliases.get(extends)
+        {
+            *extends = alias.clone();
+        }
+        Self::remap_type_bounds_with_import_aliases(&mut info.trait_adoptions, imported_type_aliases);
+        for field in info.fields.values_mut() {
+            Self::remap_resolved_type_with_import_aliases(&mut field.ty, imported_type_aliases);
+        }
+        for property in info.properties.values_mut() {
+            Self::remap_resolved_type_with_import_aliases(&mut property.return_type, imported_type_aliases);
+        }
+        for method in info.methods.values_mut() {
+            Self::remap_method_info_with_import_aliases(method, imported_type_aliases);
+        }
+        for overloads in info.method_overloads.values_mut() {
+            for method in overloads {
+                Self::remap_method_info_with_import_aliases(method, imported_type_aliases);
+            }
         }
     }
 

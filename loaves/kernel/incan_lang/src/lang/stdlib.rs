@@ -418,7 +418,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         extra_crate_deps: &[
             StdlibExtraCrateDep {
                 crate_name: STDLIB_WEB_MACROS_CRATE,
-                source: StdlibExtraCrateSource::Path("crates/incan_web_macros"),
+                source: StdlibExtraCrateSource::Path("loaves/stdlib/derive/incan_web_macros"),
             },
             StdlibExtraCrateDep {
                 crate_name: "inventory",
@@ -950,7 +950,10 @@ pub fn is_typechecker_only_stdlib(path: &[String]) -> bool {
     find_namespace(&path[1]).is_some_and(|ns| ns.typechecker_only)
 }
 
-/// Resolve the relative stub `.incn` file path for a stdlib module path.
+/// Resolve a stdlib module's historical monolithic stub-layout path.
+///
+/// These are logical compatibility paths, not current repository locations. Source packages now live under
+/// `loaves/stdlib/`; their manifests and namespace policy select the source files.
 ///
 /// Uses convention-based resolution:
 /// - `std.X` (leaf, no submodules) → `stdlib/X.incn`
@@ -1333,7 +1336,7 @@ mod tests {
         let macros = find_extra_crate_dep("incan_web_macros");
         assert_eq!(
             macros.map(|dep| dep.source),
-            Some(StdlibExtraCrateSource::Path("crates/incan_web_macros"))
+            Some(StdlibExtraCrateSource::Path("loaves/stdlib/derive/incan_web_macros"))
         );
         assert!(is_path_extra_crate_dep("incan_web_macros"));
         assert!(!is_path_extra_crate_dep("axum"));

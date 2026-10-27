@@ -676,13 +676,14 @@ mod carrier_identity_tests {
         checker
             .check_program(&program)
             .map_err(|errors| format!("{errors:?}"))?;
+        let providers = crate::body_ir::ProviderOperationCatalog::new();
         let module = crate::body_ir::build_body_ir_module(
             &program,
             &path,
             checker.type_info(),
             &crate::body_ir::BodyIrContext {
                 modules: &[],
-                provider_operations: &crate::body_ir::ProviderOperationCatalog::new(),
+                provider_operations: &providers,
                 registry_package: None,
                 library_package: None,
             },

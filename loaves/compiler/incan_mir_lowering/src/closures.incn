@@ -355,8 +355,7 @@ pub def owned_capture(ty: PlanType) -> bool:
     """
     Select owned text, collection, callable, model, enum and zip snapshots for construction, validation and invocation.
 
-    Reusable calls clone these snapshots. The descriptor stays by value until stage zero supports borrowed
-    local-enum matching (#2256).
+    Reusable calls clone these snapshots.
     """
     match ty:
         PlanType.String => return true

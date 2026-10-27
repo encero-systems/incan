@@ -24,6 +24,7 @@ options:
 
 model ChangedFile:
     """A repository-relative file and its changed current-file line numbers."""
+
     path: str
     lines: list[int] = []
 
@@ -96,11 +97,11 @@ def changed_files(root: Path, base: str) -> Result[list[ChangedFile], str]:
         return diff_files(root, ["diff", "--unified=0", base, "--", "*.rs"])
     mut files = diff_files(root, ["diff", "--unified=0", "--", "*.rs"])?
     for staged in diff_files(root, ["diff", "--cached", "--unified=0", "--", "*.rs"])?:
-        mut found = False
+        mut found = false
         for index in range(len(files)):
             if files[index].path == staged.path:
                 files[index].lines.extend(staged.lines)
-                found = True
+                found = true
                 break
         if not found:
             files.append(staged)
@@ -109,8 +110,7 @@ def changed_files(root: Path, base: str) -> Result[list[ChangedFile], str]:
 
 def diff_files(root: Path, arguments: list[str]) -> Result[list[ChangedFile], str]:
     """Read current-file hunk lines, retaining only existing production Rust sources."""
-    hunk = Regex("^@@ -\\d+(?:,\\d+)? \\+(?P<start>\\d+)(?:,(?P<count>\\d+))? @@")
-        .map_err((error) => error.message())?
+    hunk = Regex("^@@ -\\d+(?:,\\d+)? \\+(?P<start>\\d+)(?:,(?P<count>\\d+))? @@").map_err((error) => error.message())?
     mut files: list[ChangedFile] = []
     mut current = -1
     for text in source_lines(git(root, arguments)?)?:
@@ -133,18 +133,20 @@ def diff_files(root: Path, arguments: list[str]) -> Result[list[ChangedFile], st
 
 
 def production_source(path: str) -> bool:
-    """Exclude tests, examples and vendored Rust from the production documentation contract."""
+    """Exclude tests and examples from the production documentation contract."""
     return not (
-        "/tests/" in path or path.startswith("tests/") or path.endswith("/tests.rs")
-        or "/examples/" in path or path.startswith("examples/") or path.startswith("loaves/third_party/")
+        "/tests/" in path
+        or path.startswith("tests/")
+        or path.endswith("/tests.rs")
+        or "/examples/" in path
+        or path.startswith("examples/")
     )
 
 
 pub def missing_docs(lines: list[str], changed: list[int]) -> Result[list[str], str]:
     """Return line and function-name findings for changed undocumented production functions."""
     functions = Regex(
-        "^\\s*(?:(?:pub(?:\\([^)]*\\))?\\s+)?(?:async\\s+)?(?:const\\s+)?"
-        + "(?:unsafe\\s+)?(?:extern\\s+\"[^\"]+\"\\s+)?)fn\\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\\b"
+        "^\\s*(?:(?:pub(?:\\([^)]*\\))?\\s+)?(?:async\\s+)?(?:const\\s+)?" + "(?:unsafe\\s+)?(?:extern\\s+\"[^\"]+\"\\s+)?)fn\\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\\b",
     ).map_err((error) => error.message())?
     excluded = excluded_lines(lines)
     mut findings: list[str] = []
@@ -171,11 +173,11 @@ pub def has_doc_comment(lines: list[str], function: int) -> bool:
             while index >= 0 and not attribute(lines[index].strip()):
                 index -= 1
             if index < 0:
-                return False
+                return false
             index -= 1
             continue
         return doc_comment(line)
-    return False
+    return false
 
 
 def attribute(line: str) -> bool:
@@ -195,27 +197,27 @@ def excluded_lines(lines: list[str]) -> list[int]:
     mut test_depth = -1
     mut impl_depth = -1
     mut quote_depth = 0
-    mut quoted = False
-    mut test_cfg = False
+    mut quoted = false
+    mut test_cfg = false
     for index in range(len(lines)):
         line = lines[index]
         stripped = line.strip()
         opened = occurrences(line, "{")
         closed = occurrences(line, "}")
         if stripped == "#[cfg(test)]":
-            test_cfg = True
+            test_cfg = true
         elif test_cfg and stripped.startswith("mod ") and stripped.endswith("{"):
             test_depth = depth + opened
-            test_cfg = False
+            test_cfg = false
         elif stripped != "" and not stripped.startswith("#["):
-            test_cfg = False
+            test_cfg = false
         if impl_depth < 0 and stripped.startswith("impl ") and " for " in stripped and "{" in stripped:
             impl_depth = depth + opened
         mut in_quote = quoted
         if not quoted and "quote!" in line and "{" in line:
             tail = "quote!".join(line.split("quote!")[1:])
             quote_depth = occurrences(tail, "{") - occurrences(tail, "}")
-            in_quote = True
+            in_quote = true
             quoted = quote_depth > 0
         elif quoted:
             quote_depth += opened - closed
@@ -238,12 +240,12 @@ def occurrences(text: str, token: str) -> int:
 def function_end_line(lines: list[str], function: int) -> int:
     """Find the inclusive end of a function by braces or its bodyless declaration terminator."""
     mut depth = 0
-    mut body = False
+    mut body = false
     for index in range(function, len(lines)):
         line = lines[index]
         depth += occurrences(line, "{") - occurrences(line, "}")
         if "{" in line:
-            body = True
+            body = true
         if (body and depth <= 0) or (not body and line.strip().endswith(";")):
             return index + 1
     return len(lines)
@@ -253,5 +255,5 @@ def intersects(changed: list[int], start: int, end: int) -> bool:
     """Decide whether a function contains a changed current-file line."""
     for line in changed:
         if start <= line and line <= end:
-            return True
-    return False
+            return true
+    return false
