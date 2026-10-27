@@ -467,8 +467,6 @@ Experimental peer-baseline analysis is a later consumer of the same fact and que
 
 ## Unresolved questions
 
-Baseline storage and the questions below remain open.
-
 - What is the default profile for `incan architect .`: architecture-only, architecture plus safety, or all stable rules?
 - Should baselines live in a typed `loaf.toml` table, a separate versioned baseline artifact, or generated project-tooling state? They must not be folded into `oven.lock` merely because a project uses Oven.
 - Where should peer-group metadata live, and which membership or boundary declarations belong in source, package metadata, or local tooling state?

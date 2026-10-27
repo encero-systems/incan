@@ -36,7 +36,7 @@ This RFC defines an Incan-owned agent context graph: a deterministic, compiler-b
 6. **Risk is evidence, not vibes:** process signals such as churn, ownership concentration, co-change, coverage gaps, stale decisions, and recent volatility may influence agent context and architecture advice, but they must be deterministic records with cited evidence and visible limitations.
 7. **Task context is a product surface:** the primary agent workflow is not raw graph browsing; it is task-ranked, budgeted context packing that returns the most useful symbols, relationships, diagnostics, risk signals, architecture signals, and source anchors for a concrete change.
 8. **LSP and CLI share one fact model:** live editor features, command-line graph export, MCP context tools, and architecture-advice tools should reuse the same source-analysis substrate instead of building parallel extractors with different semantics.
-9. **Identity is durable:** nodes, edges, modules, files, and context packs should have stable content-addressed identities so stale data, cache keys, feedback expiry, graph diffs, and audit output are mechanically checkable.
+9. **Identity and content are distinct:** graph objects have durable logical identities; separate semantic or content digests expose changes. Content-addressed snapshots and context packs are follow-up consumers of those facts, not replacements for declaration identity.
 10. **Compact output matters:** graph output intended for agents must be token-aware and deterministic, with a compact textual format in addition to JSON/JSONL.
 11. **Evaluation is part of the feature:** Incan should define a small benchmark harness for agent-context quality so claims are measured on Incan packages and workspaces rather than inherited from generic tool marketing.
 
@@ -66,7 +66,7 @@ Repowise adds a useful adjacent lesson for architecture tooling: structural sour
 - Define CLI and MCP surfaces for raw graph exploration and task-ranked context packing.
 - Make the same graph facts available to LSP/editor features and architecture-advice tooling without requiring separate extraction logic.
 - Define a compact, deterministic agent context format alongside JSON and JSONL.
-- Define content-addressed identities for graph objects and graph snapshots.
+- Define durable graph-object identities and separate semantic/content digests, with content-addressed graph snapshots as follow-up work.
 - Allow optional feedback and task-memory signals while requiring automatic staleness/expiry when the underlying graph changes.
 - Support stdlib, package, workspace, and generated-artifact exploration.
 - Keep external storage, embeddings, hosted services, visualization, and product-specific agent integrations outside the compiler boundary.
