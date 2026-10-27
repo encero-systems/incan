@@ -1,6 +1,6 @@
 # RFC 143: Cloning with field overrides
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-11
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -14,7 +14,7 @@
     - RFC 128 (callable signatures and binding)
     - RFC 129 (shared bindings and explicit cloning)
     - RFC 132 (frozen classes)
-- **Issue:** —
+- **Issue:** https://github.com/encero-systems/incan/issues/2459
 - **RFC PR:** —
 - **Written against:** v0.6
 - **Shipped in:** —
@@ -186,7 +186,7 @@ The generated reconstruction can retain private stored fields internally without
 8. Computed properties and type-owned constants must not be copied as stored instance fields. Supported inherited stored fields must retain their declaring identities and access restrictions.
 9. The default keyword overload must use the type's checked construction and finalization contract. It must not select ordinary factory methods by name, infer mandatory factory use from their existence, replay the factory that originally produced the receiver, or add factory-only parameters to its override surface. Authors may implement the keyword overload explicitly to use such a factory. If the default reconstruction cannot satisfy the checked contract, the compiler must diagnose the unsupported path, explain the unmet requirement, and identify an authored keyword overload as the customization point. A handwritten zero-argument clone or an ordinary factory alone must not cause that rejection.
 
-RFC 087 and RFC 122's explicit single-field normalize pipelines follow the same supplied-input rule. For an Account whose name pipeline trims and then lowercases, `account.clone(minimum=2)` retains its stored normalized name without replaying either step. `account.clone(name=" BOB ")` runs the selected name pipeline once on the new input, then validates the complete resulting model. The pipeline's internal order is the explicit normalize list, while its activation belongs to the field-backed construction slot. Retained validation obligations remain mandatory in either case. RFC 122 additionally selects named-input binding for computed entries and resulting-target-value binding for following field-backed entries in explicit pipelines. Clone integration must preserve those bindings without replaying original inputs. Competing newly supplied inputs to the same composed pipeline step must receive the same diagnostic as direct construction. Retained baseline values are not newly supplied inputs, so an existing minutes field must not conflict with a newly supplied total_minutes input merely because the computed operation replaces it. Activation with an omitted virtual input and coordination of overlapping pipelines remain under review in RFC 122.
+RFC 087 and RFC 122's explicit single-field normalize pipelines follow the same supplied-input rule. For an Account whose name pipeline trims and then lowercases, `account.clone(minimum=2)` retains its stored normalized name without replaying either step. `account.clone(name=" BOB ")` runs the selected name pipeline once on the new input, then validates the complete resulting model. The pipeline's internal order is the explicit normalize list, while its activation belongs to the field-backed construction slot. Retained validation obligations remain mandatory in either case. RFC 122 additionally selects named-input binding for computed entries and resulting-target-value binding for following field-backed entries in explicit pipelines. Clone integration must preserve those bindings without replaying original inputs. Competing newly supplied inputs to the same composed pipeline step must receive the same diagnostic as direct construction. Retained baseline values are not newly supplied inputs, so an existing minutes field must not conflict with a newly supplied total_minutes input merely because the computed operation replaces it. RFC 122 governs omitted virtual inputs and overlapping pipelines: retained baseline state does not activate hooks, shared canonical operations run once, and ambiguous inputs or schedules require diagnostics.
 
 ### Frozen classes and models
 

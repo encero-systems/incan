@@ -778,7 +778,7 @@ Check eligibility follows availability of the required final typed inputs, not w
 
 For RFC 087's Account, incoming JSON `{"name": "", "minimum": 10, "maximum": "oops"}` permits the name checks to run, but the failed conversion of maximum blocks limits_ordered. Reporting ReversedLimits would invent a check outcome. With maximum instead supplied as 1, the whole-model check is eligible despite EmptyName, and CollectAll retains both original failures. These are boundary inputs, not legal typed constructor arguments; RFC 146 owns conversion diagnostics. Neither attempt returns an Account.
 
-Model composition uses RFC 087 from headers to retain complete declared contracts. Source normalization must affect the actual stored target values, and retained checks must inspect the final normalized values. Executing a source constructor on a temporary and discarding its normalized result cannot satisfy this contract. Arbitrary source utility methods are not imported, and source-owned helpers must not be rebound through accidental target-method lookup. Source ownership and check scheduling follow the rules above. Composed-pipeline activation and overlapping-pipeline coordination remain deferred design work below; the syntax and migration decisions do not establish that the current compiler supports these paths. Legacy effects and value replacement must be migrated explicitly rather than retained through an automatic adapter.
+Model composition uses RFC 087 from headers to retain complete declared contracts. Source normalization must affect the actual stored target values, and retained checks must inspect the final normalized values. Executing a source constructor on a temporary and discarding its normalized result cannot satisfy this contract. Arbitrary source utility methods are not imported, and source-owned helpers must not be rebound through accidental target-method lookup. Source ownership and check scheduling follow the rules above. Composed-pipeline activation and overlapping-pipeline coordination follow the checked rules below. These are proposed language contracts, not a claim that the current compiler supports these paths. Legacy effects and value replacement must be migrated explicitly rather than retained through an automatic adapter.
 
 Distinct retained normalizers with overlapping declared write targets must require explicit target-owned resolution. The compiler must diagnose unresolved overlaps using normalizer identities, source contracts, canonical target fields, and available source locations. From-header order must not implicitly define the normalization pipeline. The same originating operation with the same target binding must coalesce rather than run again merely because several composition paths reach it. An explicit resolution must retain all applicable validation obligations on the actual final state; schema := metadata overrides do not resolve construction overlap.
 
@@ -829,7 +829,7 @@ For `Duration(total_minutes=119)`, the computed operation receives its captured 
 
 Computed entries receive their own effective named construction inputs under their declared input types; those types need not match the field carrying normalize metadata. Their exact checked write sets must include that field and retain every additional target, so the example must not lose the hours write merely because the list is attached to minutes. A following field-backed entry receives the resulting value of its canonical target field under the existing exact-field-type rule. It must not receive an invented tuple of outputs or an implicitly reused original virtual input. All operations remain source-owned checked identities, construction-safe, and subject to retained final validation.
 
-The explicit list orders these operations, including placing the selected field-backed step after the computed step. The default field-backed-before-computed schedule must not override that declared pipeline or independently replay its operations. This decision selects the demonstrated computed-input-to-field-value binding, not automatic normalization after arbitrary field assignments. Activation when a virtual input is omitted and coordination of overlapping pipelines remain questions below.
+The explicit list orders these operations, including placing the selected field-backed step after the computed step. The default field-backed-before-computed schedule must not override that declared pipeline or independently replay its operations. This decision selects the demonstrated computed-input-to-field-value binding, not automatic normalization after arbitrary field assignments. Activation when a virtual input is omitted and coordination of overlapping pipelines follow the rules below.
 
 A composed pipeline must diagnose competing effective inputs to the same normalization step rather than silently select a value by argument order or implicit precedence. For the Duration above, this call is a conflict:
 
@@ -840,6 +840,129 @@ Duration(total_minutes=119, minutes=7)
 The computed step supplies minutes 59 to the following field-backed step, while the caller explicitly supplies minutes 7. The compiler must identify both construction inputs, their available source locations, the affected canonical minutes field, and the composed pipeline step. It must explain that the caller must choose one input route or use an authored construction operation that explicitly defines how the inputs combine. Neither the computed value nor the explicitly supplied value may silently disappear, and the step must not run twice to consume both.
 
 This rule applies after ordinary same-identity preset replacement and concerns competing input producers within a composed pipeline. It must not infer mutual exclusion merely because independently authored fieldmethods have overlapping write targets: deliberately additive hours and minutes inputs retain their declared behavior. Stored defaults and retained clone baseline fields are initialization state, not competing newly supplied inputs. Thus `duration.clone(total_minutes=119)` is not a conflict merely because its baseline already stores minutes, while supplying both new inputs to that clone must receive the same conflict diagnostic as direct construction. The same checked input-conflict rule applies to type and instance constructor aliases, constructor partial finalization, and fluent finalization.
+
+### Activation and coordination of composed pipelines
+
+A computed operation must activate only when its own effective named input is supplied. A field-backed operation must activate from its explicitly supplied field input or an unambiguous produced value routed by its selected pipeline. Inactive computed operations must be skipped. Stored defaults and retained clone state must not activate operations or manufacture virtual inputs. If neither a new input nor a routed produced value activates a step, its field retains its initialized state. Required stored fields must still satisfy ordinary completeness checks.
+
+Shared paths to the same canonical operation with the same target binding must coalesce into one invocation. The invocation must preserve its complete declared write set, source ownership, every applicable final validation obligation, and the distinct produced field values routed to followers. Shared paths requiring incompatible effective inputs must receive a diagnostic rather than replay the operation. The compiler must diagnose competing producers for one step even if a guessed precedence could produce a value.
+
+Active explicit pipeline edges and the existing canonical model schedule must admit a compatible execution order. The compiler must reject cycles and unordered interfering reads or writes, identifying the involved operations, input routes, target fields, and source locations where available. It must not invent precedence from the from header, silently choose a producer, or let a read observe a guessed stale field version. Disjoint operations retain ordinary model-defined scheduling slots. These coordination requirements apply to explicitly resolved composed pipelines; they must not turn independently authored additive fieldmethods into mutually exclusive alternatives merely because those methods intentionally share targets.
+
+The following independent modules illustrate the proposed contract, rather than executed compiler behavior.
+
+```incan
+model TimeParts:
+    hours: int = 0
+    minutes: int = 0
+
+    @fieldmethod(hours, minutes)
+    def total_minutes(mod, value: int):
+        mod.hours = value // 60
+        mod.minutes = value % 60
+
+model FiveMinuteParts:
+    minutes: int = 0
+
+    @fieldmethod
+    def minutes(mod, value: int):
+        mod.minutes = value - value % 5
+
+@derive(Clone)
+model Duration from TimeParts, FiveMinuteParts:
+    field minutes [
+        normalize=[TimeParts.total_minutes, FiveMinuteParts.minutes],
+    ]: int = 0
+
+def main() -> None:
+    combined = Duration(total_minutes=119)
+    assert combined.hours == 1
+    assert combined.minutes == 55
+    # Existing selected path: virtual 119 -> stored minutes 59 -> 55.
+
+    direct = Duration(minutes=59)
+    assert direct.hours == 0
+    assert direct.minutes == 55
+    # Omitted virtual input: no total_minutes input, so that operation
+    # is inactive. The explicit minutes value feeds FiveMinuteParts.minutes.
+    # We never invent total_minutes=59 or reconstruct it from stored fields.
+
+    untouched = Duration()
+    assert untouched.hours == 0 and untouched.minutes == 0
+    # Defaults establish state; they do not activate these normalizers.
+
+    retained = combined.clone(hours=2)
+    assert retained.hours == 2 and retained.minutes == 55
+    # Retained clone baseline does not count as a new minutes input.
+
+    changed = combined.clone(minutes=59)
+    assert changed.hours == 1 and changed.minutes == 55
+    # New explicit minutes activates only its applicable field normalization.
+
+# Rejected, as already settled: two producers for the minutes step.
+# Duration(total_minutes=119, minutes=7)
+# Same rejection for a partial/fluent/keyword-clone finalization with both.
+```
+
+Only effective supplied logical inputs activate operations. A produced value can feed a following field normalizer. Omitted computed inputs are skipped; missing required stored values still fail completeness checks. Defaults and clone baselines are not invented inputs.
+
+```incan
+model ExtentParts:
+    width: int = 0
+    height: int = 0
+
+    @fieldmethod(width, height)
+    def extent(mod, value: int):
+        mod.width = value
+        mod.height = value * 2
+
+model WidthRule:
+    width: int = 0
+
+    @fieldmethod
+    def width(mod, value: int):
+        if value < 0:
+            mod.width = 0
+        else:
+            mod.width = value
+
+model HeightRule:
+    height: int = 0
+
+    @fieldmethod
+    def height(mod, value: int):
+        mod.height = value - value % 2
+
+model Canvas from ExtentParts, WidthRule, HeightRule:
+    field width [normalize=[ExtentParts.extent, WidthRule.width]]: int = 0
+    field height [normalize=[ExtentParts.extent, HeightRule.height]]: int = 0
+
+def main() -> None:
+    sized = Canvas(extent=7)
+    assert sized.width == 7 and sized.height == 14
+    # One ExtentParts.extent invocation produces BOTH fields.
+    # WidthRule.width consumes produced width; HeightRule.height consumes
+    # produced height. They cannot make extent execute a second time.
+
+    direct = Canvas(width=7, height=15)
+    assert direct.width == 7 and direct.height == 14
+    # No extent supplied. Each explicit field feeds its own field normalizer.
+
+    width_only = Canvas(width=7)
+    assert width_only.width == 7 and width_only.height == 0
+    # Width rule runs. Extent and height rule are inactive; default retained.
+
+    empty = Canvas()
+    assert empty.width == 0 and empty.height == 0
+    # No explicit inputs: no selected source operation is activated.
+
+# Canvas(extent=7, width=9) is rejected: produced width and explicit width
+# compete for WidthRule.width. Header/argument order cannot choose a winner.
+# A supplied extent still owns both declared writes; attaching it to width
+# cannot suppress its height write. Final retained checks see final fields.
+```
+
+Canonical operation identity plus target binding coalesces shared paths. An operation never executes twice to satisfy two lists. Distinct operations sharing data need an explicit compatible order; source-list order cannot invent one.
 
 ### Construction-safe callables
 
@@ -867,7 +990,7 @@ A computed fieldmethod uses its declared method visibility and may deliberately 
 
 Public constructor partials must not expose private fieldmethod surfaces or capture private preset values in ways RFC 084 forbids. A public partial may use a public computed fieldmethod that encapsulates private targets because its checked API records the public input and canonical private effects without exporting direct field access.
 
-Fields introduced by RFC 087 from composition participate in the target constructor together with their retained normalization and validation obligations. A synthesized target fieldmethod must not replace source-owned normalization merely because the field was composed. This is contract composition rather than arbitrary method inheritance. Source operations must retain canonical target bindings and ownership. Activation and coordination when several explicit pipelines overlap remain deferred design work below; unsupported combinations must not silently fall back to raw binding or field-only copying.
+Fields introduced by RFC 087 from composition participate in the target constructor together with their retained normalization and validation obligations. A synthesized target fieldmethod must not replace source-owned normalization merely because the field was composed. This is contract composition rather than arbitrary method inheritance. Source operations must retain canonical target bindings and ownership. Activation and coordination when several explicit pipelines overlap follow the checked rules above; unsupported combinations must not silently fall back to raw binding or field-only copying.
 
 Aliases must continue to preserve canonical field identity, wire identity, diagnostics provenance, and privacy. Fluent aliases are code spellings only; they do not introduce additional pending fields.
 
@@ -1100,8 +1223,4 @@ RFC 094 owns validation_policy scope lifetime, guaranteed restoration, and suspe
 - Provided model `.new` constructor aliases must expose separate class and instance methods with the same canonical construction behavior and result type. Receiver kind selects the method; classmethods remain inaccessible through instances. The instance method uses the receiver's model type and generic arguments, not its stored field values. Keyword cloning retains its separate baseline-preserving contract.
 - Fieldmethods, RFC 017 `from_underlying` hooks, and new registered validation checks use the same construction-safety verifier. A safety change to an exported callable is API-visible and must be reported by compatibility tooling.
 
-## Unresolved questions
-
-- **Composed-pipeline activation and coordination:** activation when a computed input is absent, as in `Duration(minutes=59)` without total_minutes, and coordination of several overlapping explicit pipelines still need precise specification. Ordered normalize lists, computed entries receiving their named inputs, and following field-backed entries receiving resulting target values are settled. Any solution must preserve every obligation and full write set, avoid operation replay, diagnose competing effective inputs, and not infer normalization order from the from header. This remains deferred design work rather than another decision in the current review.
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- Composed pipelines activate computed operations only from their supplied effective named inputs and field-backed operations from an explicit field input or an unambiguous routed produced value. Defaults and retained clone state do not activate hooks. Shared canonical operations with the same target bindings run once with full write sets; incompatible shared inputs, competing producers, cycles and unordered interfering reads or writes require explicit reconciliation and diagnostics. Existing model scheduling and deliberate additive fieldmethods remain intact.
