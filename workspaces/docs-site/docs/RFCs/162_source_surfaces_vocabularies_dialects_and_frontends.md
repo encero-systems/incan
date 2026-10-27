@@ -1,6 +1,6 @@
 # RFC 162: File syntax: vocabularies, dialects and frontends
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-24
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -11,7 +11,7 @@
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 160 (vocabulary in Incan and native desugarers)
     - RFC 161 (the semantic core, SCIR)
-- **Issue:** —
+- **Issue:** [#2463](https://github.com/encero-systems/incan/issues/2463)
 - **RFC PR:** —
 - **Written against:** v0.6 (in development)
 - **Shipped in:** —

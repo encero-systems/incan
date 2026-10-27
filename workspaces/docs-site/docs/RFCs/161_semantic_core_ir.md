@@ -1,6 +1,6 @@
 # RFC 161: The semantic core (SCIR)
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-24
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -13,7 +13,7 @@
     - RFC 129 (shared or copied bindings and the `mut` parameter contract)
     - RFC 160 (vocabulary in Incan and native desugarers)
     - RFC 162 (source surfaces: vocabularies, dialects and frontends)
-- **Issue:** —
+- **Issue:** [#2462](https://github.com/encero-systems/incan/issues/2462)
 - **RFC PR:** —
 - **Written against:** v0.6 (in development)
 - **Shipped in:** —
