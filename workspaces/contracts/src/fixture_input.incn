@@ -1,0 +1,100 @@
+"""One fixture's source snapshots, shared by admission, batching and materialization within a runner process."""
+
+from rust::std::cell import RefCell
+from rust::std::fs import metadata
+from rust::std::ops import DerefMut
+from rust::std::os::unix::fs import MetadataExt
+from rust::std::rc import Rc
+from std.fs import Path
+from std.fs.file import _decode_text
+from files import read_bytes
+from header import Header, parse_header
+from timing import work, work_clock
+
+
+pub model ProgramInput:
+    """Strict UTF-8 source and its parsed header, before family-specific admission."""
+
+    pub source: str
+    pub header: Header
+
+
+model Reading:
+    """Exact file bytes and an optional program view from the same filesystem generation."""
+
+    pub stamp: str
+    pub content: bytes
+    pub program: Option[ProgramInput] = None
+
+
+model Readings:
+    """Mutable readings owned by a discovered fixture, never a process-global snapshot table."""
+
+    pub files: Dict[str, Reading] = {}
+
+
+pub model FixtureInput:
+    """A shared handle whose clones retain source readings without copying the complete table."""
+
+    pub state: Rc[RefCell[Readings]] = Rc.new(RefCell.new(Readings()))
+
+    def bytes(self, path: Path) -> Result[bytes, str]:
+        """Read authored bytes once per unchanged generation; never use this for scratch outputs."""
+        mut held = self.state.as_ref().borrow_mut()
+        return Ok(reading(path, held.deref_mut())?.content)
+
+    def text(self, path: Path) -> Result[str, str]:
+        """Decode authored bytes with Path.read_text's strict UTF-8 and newline semantics."""
+        return _decode_text(path, self.bytes(path)?, "utf-8", "strict").map_err((error) => error.message())
+
+    def program(self, path: Path) -> Result[ProgramInput, str]:
+        """
+        Read the same bytes as materialization and parse their header once.
+
+        1. Reconcile the file generation before recalling a reading.
+        2. Decode with the filesystem text contract and parse only a new generation.
+        3. Retain the program view only when the file still has the generation read.
+        """
+        mut held = self.state.as_ref().borrow_mut()
+        return program_in(path, held.deref_mut())
+
+
+def reading(path: Path, mut store: &mut Readings) -> Result[Reading, str]:
+    """Recall only unchanged bytes; a failed or interrupted read never authorizes stale data."""
+    observed = stamp(path)?
+    if path.0 in store.files:
+        previous = store.files[path.0]
+        if previous.stamp == observed:
+            return Ok(previous)
+    content = read_bytes(path)?
+    result = Reading(stamp=observed, content=content)
+    if stamp(path)? == observed:
+        store.files[path.0] = result
+    return Ok(result)
+
+
+def program_in(path: Path, mut store: &mut Readings) -> Result[ProgramInput, str]:
+    """Keep decoding and header parsing tied to the exact byte snapshot they describe."""
+    # 1. File metadata, including replacement identity and nanosecond change time, guards reuse.
+    mut input = reading(path, store)?
+    match input.program:
+        Some(known) => return Ok(known)
+        None => pass
+    # 2. Reuse Path.read_text's decoding, BOM and newline semantics rather than another UTF-8 policy.
+    source = _decode_text(path, input.content, "utf-8", "strict").map_err((error) => error.message())?
+    clock = work_clock()
+    parsed = parse_header(source)
+    work("fixture_header_parse", path.0, clock)
+    result = ProgramInput(source=source, header=parsed?)
+    # 3. A source modified during the read or parse must be read again on the next request.
+    if stamp(path)? == input.stamp:
+        input.program = Some(result)
+        store.files[path.0] = input
+    return Ok(result)
+
+
+def stamp(path: Path) -> Result[str, str]:
+    """Identify a file generation by device, inode, size, mode and nanosecond modification/change times."""
+    info = metadata(path.0).map_err((error) => str(error))?
+    identity = f"{info.dev()}:{info.ino()}:{info.size()}:{info.mode()}"
+    return Ok(f"{identity}:{info.mtime()}.{info.mtime_nsec()}:{info.ctime()}.{info.ctime_nsec()}")

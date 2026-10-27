@@ -10,11 +10,12 @@ nothing is what the families exist to prevent.
 
 from std.fs import Path
 from std.io import IoError
-
+from timing import work, work_clock
+from files import read_bytes
+from fixture_input import FixtureInput
 
 # The manifest every single-file and module fixture runs under.
-pub const MINIMAL_MANIFEST: str ="[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
-
+pub const MINIMAL_MANIFEST: str = "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n"
 # The manifest a testing fixture runs under: a project with no program.
 const PROJECT_ONLY_MANIFEST: str = "[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n"
 
@@ -31,6 +32,8 @@ pub model Fixture:
     pub entry: Path
     # The program that carries the header.
     pub program: Path
+    # Admission and materialization share only authored inputs, never mutable scratch outputs.
+    pub input: FixtureInput = FixtureInput()
 
     def case_name(self) -> str:
         """The case's name in reports and selectors: `<family>/<area>/<name>`."""
@@ -68,7 +71,9 @@ def discover_area(area: Path, family: str, area_name: str) -> Result[list[Fixtur
         file_name = entry.name()
         if entry.is_file():
             if not file_name.endswith(".incn"):
-                return Err(f"{entry.0}: an area holds `<name>.incn`, `<name>/main.incn` or `<name>/loaf.toml` fixtures; this file is none of them")
+                return Err(
+                    f"{entry.0}: an area holds `<name>.incn`, `<name>/main.incn` or `<name>/loaf.toml` fixtures; this file is none of them",
+                )
             name = file_name[0:len(file_name) - 5]
             check_name(entry, name)?
             fixtures.append(Fixture(family=family, area=area_name, name=name, shape="file", entry=entry, program=entry))
@@ -78,12 +83,18 @@ def discover_area(area: Path, family: str, area_name: str) -> Result[list[Fixtur
             program = entry.joinpath("src").joinpath("main.incn")
             if not program.is_file():
                 return Err(f"{entry.0}: a project fixture's program is `src/main.incn`, which it does not have")
-            fixtures.append(Fixture(family=family, area=area_name, name=file_name, shape="project", entry=entry, program=program))
+            fixtures.append(
+                Fixture(family=family, area=area_name, name=file_name, shape="project", entry=entry, program=program),
+            )
             continue
         program = entry.joinpath("main.incn")
         if not program.is_file():
-            return Err(f"{entry.0}: a fixture directory holds `main.incn` (a module fixture) or `loaf.toml` (a project fixture)")
-        fixtures.append(Fixture(family=family, area=area_name, name=file_name, shape="module", entry=entry, program=program))
+            return Err(
+                f"{entry.0}: a fixture directory holds `main.incn` (a module fixture) or `loaf.toml` (a project fixture)",
+            )
+        fixtures.append(
+            Fixture(family=family, area=area_name, name=file_name, shape="module", entry=entry, program=program),
+        )
     return Ok(fixtures)
 
 
@@ -106,7 +117,9 @@ def check_name(entry: Path, name: str) -> Result[None, str]:
     for index in range(len(name)):
         character = name[index]
         if character not in "abcdefghijklmnopqrstuvwxyz0123456789_":
-            return Err(f"{entry.0}: name a fixture with lowercase letters, digits and `_`; `{character}` is none of them")
+            return Err(
+                f"{entry.0}: name a fixture with lowercase letters, digits and `_`; `{character}` is none of them",
+            )
     if name[0] in "0123456789":
         return Err(f"{entry.0}: a fixture name starts with a letter or `_`")
     return Ok(None)
@@ -114,7 +127,10 @@ def check_name(entry: Path, name: str) -> Result[None, str]:
 
 pub def materialize(fixture: Fixture, scratch: Path) -> Result[Path, str]:
     """Synchronize a case's files while retaining the stable project and Oven's prepared outputs."""
-    return materialize_files(fixture.project_path(scratch), fixture_files(fixture)?)
+    clock = work_clock()
+    result = materialize_files(fixture.project_path(scratch), fixture_files(fixture)?)
+    work("fixture_materialize", fixture.case_name(), clock)
+    return result
 
 
 pub def materialize_files(project: Path, desired: Dict[str, bytes]) -> Result[Path, str]:
@@ -137,32 +153,32 @@ pub def fixture_files(fixture: Fixture) -> Result[Dict[str, bytes], str]:
     """The fixture's complete source and data projection, including its project manifest."""
     mut files: Dict[str, bytes] = {}
     if fixture.shape == "project":
-        collect(fixture.entry, "", files)?
+        collect(fixture.entry, "", files, fixture.input)?
         return Ok(files)
     mut manifest = MINIMAL_MANIFEST.replace("{name}", fixture.name)
     if fixture.family == "testing":
         # A test file runs from the project's `tests/` directory; the project has no program of its own.
-        collect(fixture.entry, f"tests/{fixture.name}.incn", files)?
+        collect(fixture.entry, f"tests/{fixture.name}.incn", files, fixture.input)?
         manifest = PROJECT_ONLY_MANIFEST.replace("{name}", fixture.name)
     elif fixture.shape == "module":
-        collect(fixture.entry, "src", files)?
+        collect(fixture.entry, "src", files, fixture.input)?
     else:
-        collect(fixture.entry, "src/main.incn", files)?
+        collect(fixture.entry, "src/main.incn", files, fixture.input)?
     files["loaf.toml"] = manifest.encode("utf-8")
     return Ok(files)
 
 
-def collect(source: Path, relative: str, mut files: Dict[str, bytes]) -> Result[None, str]:
+def collect(source: Path, relative: str, mut files: Dict[str, bytes], input: FixtureInput) -> Result[None, str]:
     """Add a file or directory tree under its project-relative path."""
     if source.is_file():
-        files[relative] = contents(source)?
+        files[relative] = input.bytes(source).map_err((error) => f"{source.0}: {error}")?
         return Ok(None)
     for entry in listed(source)?:
         name = entry.name()
         if relative == "":
-            collect(entry, name, files)?
+            collect(entry, name, files, input)?
         else:
-            collect(entry, f"{relative}/{name}", files)?
+            collect(entry, f"{relative}/{name}", files, input)?
     return Ok(None)
 
 
@@ -202,7 +218,7 @@ def listed(directory: Path) -> Result[list[Path], str]:
 
 def contents(path: Path) -> Result[bytes, str]:
     """The bytes of a file, a failure named after it."""
-    return path.read_bytes().map_err((error) => f"{path.0}: {error.message()}")
+    return read_bytes(path).map_err((error) => f"{path.0}: {error}")
 
 
 def io(result: Result[None, IoError], path: Path) -> Result[None, str]:

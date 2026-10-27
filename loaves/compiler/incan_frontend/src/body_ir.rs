@@ -1023,6 +1023,23 @@ const fn hir_span(span: ast::Span) -> HirSourceSpan {
     span
 }
 
+/// Source reads still available for one local, including whether projections shortened the legacy countdown.
+#[derive(Clone, Copy)]
+struct ReadCountdown {
+    remaining: usize,
+    projected: bool,
+}
+
+impl ReadCountdown {
+    /// Seed an ordinary local or a synthetic chained-assignment value before any source read is consumed.
+    fn new(remaining: usize) -> Self {
+        Self {
+            remaining,
+            projected: false,
+        }
+    }
+}
+
 /// Per-function lowering state: fresh local/scope allocation, current name bindings, and accumulated body-level
 /// facts (runtime requirements, panic facts, which locals have been moved out of their declaring scope).
 struct BodyBuilder<'type_info, 'source> {
@@ -1100,14 +1117,18 @@ struct BodyBuilder<'type_info, 'source> {
     external_locals: HashMap<String, bir::LocalId>,
     /// Remaining textual reads for each tracked (non-temporary) local, seeded at declaration time by counting
     /// `Ident` occurrences of its name in the declaring scope's statement suffix (see [`count_reads_in_stmts`]).
-    /// Decremented on every read; a decrement that reaches zero selects [`bir::OwnershipFact::Move`].
-    remaining_reads: HashMap<bir::LocalId, usize>,
+    /// Source operands consume their root's occurrence; generated projections do not. A final whole-owner read
+    /// selects [`bir::OwnershipFact::Move`] only when its control-flow and pending-operand guards also permit it.
+    remaining_reads: HashMap<bir::LocalId, ReadCountdown>,
     /// Local owners whose earlier operands remain unread until a call, dictionary write, or comprehension insertion.
     /// Nested evaluation cannot move one of these owners out from under the pending outer operand.
     pending_argument_reads: Vec<bir::LocalId>,
     /// Active normalized loop scopes. Reads of enclosing owners must survive the next iteration even at their last
     /// textual use.
     loop_scopes: Vec<bir::ScopeId>,
+    /// Active conditional bodies. An enclosing owner cannot be marked unconditionally moved by just one path;
+    /// locals created within that body retain ordinary final transfers.
+    conditional_scopes: Vec<bir::ScopeId>,
     /// Source-annotated function locals whose Rust representation is a function pointer rather than an inferred item.
     function_pointer_locals: Vec<bir::LocalId>,
     /// Local bindings the checker proved hold capturing callable values rather than function pointers.
@@ -1203,6 +1224,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             remaining_reads: HashMap::new(),
             pending_argument_reads: Vec::new(),
             loop_scopes: Vec::new(),
+            conditional_scopes: Vec::new(),
             function_pointer_locals: Vec::new(),
             closure_holding_locals: Vec::new(),
             moved_out: HashSet::new(),
@@ -1556,7 +1578,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if let Some(identity) = identity {
             self.identity_bindings.insert(identity, id);
         }
-        self.remaining_reads.insert(id, total_reads);
+        self.remaining_reads.insert(id, ReadCountdown::new(total_reads));
         id
     }
 
@@ -1756,6 +1778,28 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
 
     // ---- Ownership facts ----
 
+    /// Read a checked source place, consuming its root's textual occurrence exactly once even for nested projections.
+    ///
+    /// Place construction does not read the base separately. Generated pattern/range projections instead use
+    /// [`Self::ownership_fact_for_place`] directly: several generated reads may implement one source occurrence,
+    /// so they must not consume the source countdown. Canonical local identity selects the owner, not field spelling.
+    fn source_place_operand(&mut self, place: bir::Place, ty: &IncanType) -> bir::Operand {
+        if !place.projection.is_empty() {
+            let _ = self.consume_place_read(&place);
+        }
+        let (fact, last_use) = self.ownership_fact_for_place(&place, ty);
+        bir::Operand::place(place, fact, last_use)
+    }
+
+    /// Consume one seeded read through its canonical owner, returning the remaining source occurrences.
+    /// Source projections and shared comparisons count once; generated projections must not consume this budget.
+    fn consume_place_read(&mut self, place: &bir::Place) -> Option<usize> {
+        let remaining = self.remaining_reads.get_mut(&place.local_id()?)?;
+        remaining.remaining = remaining.remaining.saturating_sub(1);
+        remaining.projected |= !place.projection.is_empty();
+        Some(remaining.remaining)
+    }
+
     /// Select the Duckborrower fact and last-use marker for reading `place`.
     ///
     /// Explicit shared-reference values copy their pointer, including projected references; exclusive references
@@ -1776,13 +1820,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// that operand. An owner declared outside the active loop also clones at its last textual read, because that
     /// source read executes again on the next iteration. Loop-local owners can still transfer at their last use. A
     /// local with no tracked countdown (an [`bir::LocalOrigin::External`] reference) gets the explicit
-    /// [`bir::OwnershipFact::Unknown`].
-    ///
-    /// Note that [`count_reads_in_stmts`] counts a `.field`/`[index]` occurrence of a name toward that local's
-    /// total the same as a bare occurrence, but only bare reads ever decrement the countdown here. A local read
-    /// only through projections therefore never reaches zero and always reads `Clone` on its final bare use rather
-    /// than `Move` — an over-seeded, never-decremented countdown biases toward `Clone`, not toward an unsound
-    /// `Move`, consistent with this module's documented last-use approximation.
+    /// [`bir::OwnershipFact::Unknown`]. Source projections consume their counted occurrence through
+    /// [`Self::source_place_operand`]; synthetic projections do not. A newly eligible final read in a conditional body
+    /// retains an enclosing owner for the other paths' scope-exit drops. Bare-only native transfers retain their
+    /// existing contract, including owners without Clone. After the join, a final whole-owner read may transfer
+    /// normally. This remains conservative across shadowed names and unvisited source-read forms.
     fn ownership_fact_for_place(&mut self, place: &bir::Place, ty: &IncanType) -> (bir::OwnershipFact, bool) {
         let is_copy = matches!(ty, IncanType::Ref(_)) || ty.abi_v0_facts().ownership.is_trivially_copy();
         if !place.projection.is_empty() {
@@ -1814,17 +1856,20 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return (fact, false);
         }
         if is_copy {
-            if let Some(remaining) = self.remaining_reads.get_mut(&local) {
-                *remaining = remaining.saturating_sub(1);
-            }
+            let _ = self.consume_place_read(place);
             return (bir::OwnershipFact::Copy, false);
         }
         let reused_by_loop = self.loop_reuses_local(local);
-        let Some(remaining) = self.remaining_reads.get_mut(&local) else {
+        let shortened_by_projection = self.remaining_reads.get(&local).is_some_and(|reads| reads.projected);
+        let conditional_owner = shortened_by_projection
+            && self
+                .conditional_scopes
+                .last()
+                .is_some_and(|scope| self.local_is_outside_scope(local, *scope));
+        let Some(remaining) = self.consume_place_read(place) else {
             return (bir::OwnershipFact::Unknown, false);
         };
-        *remaining = remaining.saturating_sub(1);
-        if *remaining == 0 && !self.pending_argument_reads.contains(&local) && !reused_by_loop {
+        if remaining == 0 && !self.pending_argument_reads.contains(&local) && !reused_by_loop && !conditional_owner {
             self.moved_out.insert(local);
             (bir::OwnershipFact::Move, true)
         } else {
@@ -1838,12 +1883,17 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let Some(loop_scope) = self.loop_scopes.last() else {
             return false;
         };
+        self.local_is_outside_scope(local, *loop_scope)
+    }
+
+    /// Identify storage that predates a control-flow body; only descendants are initialized on that body's path.
+    fn local_is_outside_scope(&self, local: bir::LocalId, boundary: bir::ScopeId) -> bool {
         let Some(declaration) = self.locals.get(local.index()) else {
             return false;
         };
         let mut scope = Some(declaration.scope);
         while let Some(current) = scope {
-            if current == *loop_scope {
+            if current == boundary {
                 return false;
             }
             scope = self

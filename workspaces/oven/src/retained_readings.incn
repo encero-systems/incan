@@ -17,6 +17,7 @@ from home import home
 from json_fields import required_text
 from observation import SETTLE_SECONDS, Observation, now_seconds, observe
 from publication import publish
+from jec import begin, record, text_size
 
 const SCHEMA: str = "incan.oven.retained-reading/2"
 
@@ -42,9 +43,15 @@ pub def retained_reading(source: Path, selected: list[str]) -> Result[Reading, s
     if let Some(value) = recall(source, selection, observed.stamp):
         return Ok(Reading(fields=nested(value, "fields"), digest=text(value, "digest")))
     # 2. The digest covers the exact bytes the JSON reading parsed.
+    mut clock = begin()
     content = source.read_text("utf-8", "strict").map_err((error) => f"{source.0}: {error.message()}")?
+    record("file_read", source.0, clock, text_size(content, clock))
+    clock = begin()
     document = parse(content).map_err((error) => f"{source.0}: {error.message()}")?
+    record("json_decode", source.0, clock, text_size(content, clock))
+    clock = begin()
     digest = hexlify(sha256.digest(content.encode("utf-8")))
+    record("file_hash", source.0, clock, text_size(content, clock))
     reading = Reading(fields=selected_fields(document, selected), digest=digest)
     # 3. The fields and the digest are retained together.
     mut value: Dict[str, JsonValue] = {}

@@ -18,9 +18,10 @@ from compiler_worker import generation_for
 from files import discard_file
 from home import owners_dir, standard_packages, unit_ledger
 from incan_units import compile_executable, program_binary
-from intake import intake
+from intake import intake, ManifestReader
 from loaf_local_graph import unique
 from observation import SETTLE_SECONDS, Ledger, load_ledger, now_seconds, trace_boundary
+from jec import begin, record
 from owner_protocol import Reply, Request, prepares_executable
 from rust_units import registry_record_path, rust_facet
 from testing import tests_binary
@@ -128,6 +129,7 @@ pub model Owner:
 
     def prepare(mut self, request: Request) -> Reply:
         """Make the executable a run, build or test request needs, and say how that went."""
+        clock = begin()
         reset_trace()
         trace_boundary("owner_received")
         mut reply = self.respond("refused")
@@ -135,6 +137,7 @@ pub model Owner:
             Ok(found) => reply = found
             Err(reason) => reply.reason = reason
         reply.trace = taken_trace()
+        record("owner_request", f"{request.command}|{request.path}|{request.profile}", clock)
         return reply
 
     def try_prepare(mut self, request: Request) -> Result[Reply, str]:
@@ -207,7 +210,13 @@ pub model Owner:
         if id in self.unsupported and unchanged(self.unsupported[id]):
             return Ok(None)
         # 2. The unit is prepared exactly as the command line prepares it, and the files it depends on are watched.
-        described = describe(Path(request.path), request.profile, requested_features(request))?
+        described = describe(
+            Path(request.path),
+            request.profile,
+            requested_features(request),
+            ManifestReader(),
+            Some(toolchain),
+        )?
         # 3. The owner's verdict that it does not serve this entry is itself retained, so it is not worked out again.
         if not supported(described)?:
             self.unsupported[id] = watch(guard_paths(described)?)
@@ -289,17 +298,17 @@ def guard_paths(unit: UnitDescription) -> Result[list[str], str]:
     mut paths: list[str] = []
     # 1. An edit to any manifest of the project graph ends the retained preparation.
     if root.joinpath("loaf.toml").is_file():
-        graph = intake(root).map_err((error) => error.message())?
+        graph = intake(root, unit.manifests).map_err((error) => error.message())?
         for project in graph.projects:
             paths.append(Path(project.root).joinpath("loaf.toml").0)
     # 2. So does a change of the lock or its explicit producer selection.
     paths.append(root.joinpath("oven.lock").0)
-    registry_lock = registry_record_path(root.0)?
+    registry_lock = registry_record_path(root.0, unit.manifests)?
     if registry_lock != "":
         paths.append(registry_lock)
     # 3. So does a change to the set of standard packages, or to the manifest of any of them.
     paths.append(get_or("INCAN_STDLIB", ""))
-    for package in standard_packages()?:
+    for package in standard_packages(unit.manifests)?:
         paths.append(Path(package.root).joinpath("loaf.toml").0)
     # 4. So does a rebuilt standard provider or compiler facade the unit links.
     for loaf in unit.loaves:

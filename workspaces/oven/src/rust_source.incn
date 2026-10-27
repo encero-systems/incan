@@ -8,10 +8,10 @@ for the later unit/configuration producer; a dependency catalog alone cannot pro
 
 # Explicit payload import until foreign None type qualification is fixed (#2010).
 from std.toml import TomlLocation
-
 from std import toml
 from std.toml import TomlValue, TomlKind
 from manifest_errors import IntakeError, IntakeErrorKind
+from jec import begin, record, text_size
 
 
 @derive(Eq)
@@ -249,7 +249,22 @@ def read_dependency(
         values = table(value, manifest, field)?
         allowed(
             values,
-            ["version", "package", "features", "default-features", "default_features", "optional", "path", "git", "branch", "tag", "rev", "registry", "registry-index", "workspace"],
+            [
+                "version",
+                "package",
+                "features",
+                "default-features",
+                "default_features",
+                "optional",
+                "path",
+                "git",
+                "branch",
+                "tag",
+                "rev",
+                "registry",
+                "registry-index",
+                "workspace",
+            ],
             manifest,
             field,
         )?
@@ -300,7 +315,13 @@ def read_groups(
         return Err(refusal(manifest, prefix, IntakeErrorKind.Invalid, "duplicate build-dependencies spellings"))
     if "dev-dependencies" in values and "dev_dependencies" in values:
         return Err(refusal(manifest, prefix, IntakeErrorKind.Invalid, "duplicate dev-dependencies spellings"))
-    for name, role in [("dependencies", RustDependencyRole.Normal), ("build-dependencies", RustDependencyRole.Build), ("build_dependencies", RustDependencyRole.Build), ("dev-dependencies", RustDependencyRole.Dev), ("dev_dependencies", RustDependencyRole.Dev)]:
+    for name, role in [
+        ("dependencies", RustDependencyRole.Normal),
+        ("build-dependencies", RustDependencyRole.Build),
+        ("build_dependencies", RustDependencyRole.Build),
+        ("dev-dependencies", RustDependencyRole.Dev),
+        ("dev_dependencies", RustDependencyRole.Dev),
+    ]:
         if name in values:
             declarations = table(values[name], manifest, prefix + [name])?
             for alias in sorted([key for key in declarations.keys()]):
@@ -320,7 +341,9 @@ def read_groups(
 
 def read_catalog(source: str, manifest: str) -> Result[RustDependencyCatalog, IntakeError]:
     """Read all dependency/feature tables and retain the rest for the later checked facet producer."""
+    clock = begin()
     document = toml.parse(source).map_err((error) => refusal(manifest, [], IntakeErrorKind.Invalid, error.message()))?
+    record("manifest_parse", manifest, clock, text_size(source, clock))
     root = table(document, manifest, [])?
     mut dependencies = read_groups(root, None, manifest, [], 0)?
     if "target" in root:
@@ -351,12 +374,7 @@ def read_catalog(source: str, manifest: str) -> Result[RustDependencyCatalog, In
         if "name" in library:
             library_name = Some(text(library["name"], manifest, ["lib", "name"])?)
     return Ok(
-        RustDependencyCatalog(
-            document=document,
-            dependencies=dependencies,
-            features=features,
-            library_name=library_name,
-        ),
+        RustDependencyCatalog(document=document, dependencies=dependencies, features=features, library_name=library_name),
     )
 
 

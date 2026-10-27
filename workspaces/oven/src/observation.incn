@@ -25,7 +25,7 @@ from std.hash import sha256
 from std.json import JsonValue, parse
 from json_fields import array, strings, text_field
 from publication import publish
-
+from jec import begin, record
 
 # How old a file's last change must be before its metadata can vouch for its bytes.
 pub const SETTLE_SECONDS: int = 2
@@ -192,12 +192,9 @@ pub model Ledger:
             if Path(path).is_dir():
                 directories.append(directory_row(path, self.directories[path]))
         return JsonValue.object(
-            {
-                "schema": JsonValue.string(LEDGER_SCHEMA),
-                "files": JsonValue.array(files),
-                "directories": JsonValue.array(directories),
-                "extension": JsonValue.string(self.extension),
-            },
+            {"schema": JsonValue.string(LEDGER_SCHEMA), "files": JsonValue.array(files), "directories": JsonValue.array(
+                directories,
+            ), "extension": JsonValue.string(self.extension)},
         )
 
 
@@ -209,23 +206,16 @@ pub def skipped_directory(name: str) -> bool:
 def file_row(path: str, entry: FileEntry) -> JsonValue:
     """One file of the saved document."""
     return JsonValue.object(
-        {
-            "path": JsonValue.string(path),
-            "stamp": JsonValue.string(entry.stamp),
-            "digest": JsonValue.string(entry.digest),
-        },
+        {"path": JsonValue.string(path), "stamp": JsonValue.string(entry.stamp), "digest": JsonValue.string(entry.digest)},
     )
 
 
 def directory_row(path: str, entry: DirectoryEntry) -> JsonValue:
     """One directory of the saved document."""
     return JsonValue.object(
-        {
-            "path": JsonValue.string(path),
-            "stamp": JsonValue.string(entry.stamp),
-            "files": texts(entry.files),
-            "directories": texts(entry.directories),
-        },
+        {"path": JsonValue.string(path), "stamp": JsonValue.string(entry.stamp), "files": texts(entry.files), "directories": texts(
+            entry.directories,
+        )},
     )
 
 
@@ -237,7 +227,10 @@ def texts(items: list[str]) -> JsonValue:
 pub def file_digest(path: Path) -> Result[str, str]:
     """Hash exact bytes, preserving read failures rather than treating them as unchanged inputs."""
     content = path.read_bytes().map_err((error) => f"{path.0}: {error.message()}")?
-    return Ok(hexlify(sha256.digest(content)))
+    clock = begin()
+    result = hexlify(sha256.digest(content))
+    record("file_hash", path.0, clock, len(content))
+    return Ok(result)
 
 
 pub def observe(path: Path) -> Result[Observation, str]:
@@ -318,7 +311,8 @@ pub def trace_launch(program: str) -> None:
 
 
 pub def trace(message: str) -> None:
-    """Record a line of the build's reasoning where `OVEN_TRACE` says: stderr for `-`, else the file it names.
+    """
+    Record a line of the build's reasoning where `OVEN_TRACE` says: stderr for `-`, else the file it names.
 
     A file is appended to, so a caller can read what one command did without touching the command's own output.
     Silent when unset.

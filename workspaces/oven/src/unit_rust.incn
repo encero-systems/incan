@@ -4,7 +4,6 @@ from std.fs import Path
 from std.json import JsonValue
 from std.toml import TomlValue
 from features import FeatureRequest
-from files import read_json
 from json_fields import array, strings
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets, unique
 from rust_activation import DependencyDomain
@@ -28,6 +27,8 @@ from standalone_rust import published_bindings, standalone_crates
 from registry_metadata import bound_entries
 from unit import UnitDescription, UnitLoaf, describe
 from observation import trace
+from intake import ManifestReader
+from native_closure_input import NativeClosureInput
 from unit_compiler import compile_prepared_unit
 from unit_freshness import artifact_files, record, staleness, unit_key
 from vocabulary import prepare_vocabulary, stage_vocabulary
@@ -35,7 +36,15 @@ from vocabulary import prepare_vocabulary, stage_vocabulary
 
 pub def describe_native(source: Path, profile: str, request: FeatureRequest) -> Result[UnitDescription, str]:
     """Describe the source and prepare the exact native inputs checking and compilation share."""
-    return prepare_native(describe(source, profile, request)?, load_toolchain()?)
+    unit = describe(source, profile, request)?
+    return prepare_native(unit, toolchain_for(unit)?)
+
+
+pub def toolchain_for(unit: UnitDescription) -> Result[Toolchain, str]:
+    """Reuse the graph's validated generation; projectless units select one only after source validation."""
+    match unit.selected_toolchain:
+        Some(known) => return Ok(known)
+        None => return load_toolchain()
 
 
 pub def compile_incan_library(
@@ -48,6 +57,7 @@ pub def compile_incan_library(
     search: list[str],
     toolchain: Toolchain,
     compiler: str,
+    reader: ManifestReader,
 ) -> Result[i32, str]:
     """
     Prepare one activated Incan provider after the shared graph prepared all its dependencies.
@@ -58,7 +68,7 @@ pub def compile_incan_library(
     """
     # 1. Defaults have already contributed to the local graph's closure.
     selected = FeatureRequest(features=features, default_features=false)
-    mut unit = describe(Path(source), profile, selected)?
+    mut unit = describe(Path(source), profile, selected, reader, Some(toolchain))?
     unit.kind = "library"
     # 2. A provider sees the same selected artifacts as every other consumer in this graph.
     unit.loaves = rebase_loaves(unit.loaves, loaves)
@@ -182,7 +192,7 @@ pub def prepare_linked(
         # Checking-only exports supply a manifest, never a claim to an executable native artifact.
         if loaf.name in checking_interfaces and not loaf_library(loaf).is_file():
             continue
-        linked, searched = link_loaf(unit, loaf, toolchain_crates)?
+        linked, searched = link_loaf(unit, loaf, toolchain_crates, toolchain.native_closures)?
         unit = linked
         for directory in searched:
             if directory not in indexed:
@@ -233,6 +243,7 @@ def link_loaf(
     described: UnitDescription,
     loaf: UnitLoaf,
     toolchain_crates: list[str],
+    readings: NativeClosureInput,
 ) -> Result[tuple[UnitDescription, list[str]], str]:
     """
     The unit linking one of its Loaves, with its library and macro crates bound, and the directories to search for it:
@@ -248,7 +259,7 @@ def link_loaf(
     closure = Path(loaf.dir).joinpath(f"{loaf.name}.native.json")
     if not closure.is_file():
         return Ok((unit, [loaf.dir]))
-    document = read_json(closure)?
+    document = readings.read(closure)?
     exposed = expose_macro_crates(unit, closure, document, toolchain_crates)?
     return Ok((exposed, [loaf.dir] + closure_search(closure, document)?))
 
@@ -263,7 +274,7 @@ def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[
     4. Bind the project's own crate, then the aliases of its local and registry edges.
     """
     # 1. A project with no local source or Rust inputs needs no dependency preparation.
-    declared = rust_facet(unit.project_root, false)?
+    declared = rust_facet(unit.project_root, false, unit.manifests)?
     if not needs_local_preparation(unit, declared.kind):
         return Ok(unit)
     # 2. The edges are activated for the features the unit already has, against the toolchain's compiled registry.
@@ -277,7 +288,7 @@ def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[
     )
     mut facets = unit.facets
     if len(facets) == 0:
-        facets = local_facets(demand, configuration)?
+        facets = local_facets(demand, configuration, {}, unit.manifests)?
     registry = registry_for_unit(unit, facets, toolchain)?
     # 3. The local units the edges reach are compiled, each once, before the unit that links them.
     request = RustBuild(
@@ -290,6 +301,7 @@ def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[
         incan_compiler=Some(compile_incan_library),
         toolchain_search=toolchain.search,
         toolchain=Some(toolchain),
+        manifests=unit.manifests,
     )
     built = build_dependencies(request, facets)?
     # 4. The unit searches what was built, names its own crate, and binds each edge under the alias it is written by.
@@ -314,7 +326,7 @@ def registry_for_unit(
     toolchain: Toolchain,
 ) -> Result[RegistryUnits, str]:
     """Bind the unit's authored Rust roots to Loaf-offered artifacts without importing private ambient dependencies."""
-    mut registry = linked_registry(facets, toolchain, unit.project_root)?
+    mut registry = linked_registry(facets, toolchain, unit.manifests, unit.project_root)?
     mut roots: list[str] = []
     for facet in facets:
         if facet.project != unit.project_root or facet.domain != DependencyDomain.Target:
@@ -332,6 +344,7 @@ def registry_for_unit(
 def linked_registry(
     facets: list[LocalFacet],
     toolchain: Toolchain,
+    reader: ManifestReader,
     project: str,
 ) -> Result[RegistryUnits, str]:
     """
@@ -340,8 +353,8 @@ def linked_registry(
     directories its native closures need are in the toolchain's search index.
     """
     for facet in facets:
-        if len(facet.registry) > 0 or rust_facet(facet.project, false)?.kind != "":
-            return read_registry_units(Path(toolchain.registry_units), project)
+        if len(facet.registry) > 0 or rust_facet(facet.project, false, reader)?.kind != "":
+            return read_registry_units(Path(toolchain.registry_units), project, reader)
     return Ok(RegistryUnits(units=[], search=[]))
 
 

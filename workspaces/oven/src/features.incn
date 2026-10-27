@@ -1,10 +1,10 @@
 """Project requests and the Incan dependency view of the shared local facet graph (RFC 114)."""
 
-from intake import DependencyEdge, LocalIntake
+from intake import DependencyEdge, LocalIntake, ManifestReader
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
 from rust_activation import DependencyDomain
 from rust_target import target_configuration
-from toolchain import load_toolchain, rust_compiler
+from toolchain import Toolchain, load_toolchain, rust_compiler
 
 
 pub model FeatureRequest:
@@ -22,9 +22,17 @@ pub model ActiveGraph:
     pub active: Dict[str, list[str]]
     pub edges: list[DependencyEdge]
     pub facets: list[LocalFacet]
+    # The generation selected for this graph, reused by description and compilation.
+    pub toolchain: Option[Toolchain] = None
 
 
-pub def resolve_features(intake: LocalIntake, root: str, request: FeatureRequest) -> Result[ActiveGraph, str]:
+pub def resolve_features(
+    intake: LocalIntake,
+    root: str,
+    request: FeatureRequest,
+    reader: ManifestReader = ManifestReader(),
+    selected_toolchain: Option[Toolchain] = None,
+) -> Result[ActiveGraph, str]:
     """
     Project the build engine's selection onto the Incan dependency declarations.
 
@@ -32,7 +40,10 @@ pub def resolve_features(intake: LocalIntake, root: str, request: FeatureRequest
     2. Retain Incan projects and edges from the validated intake, preserving direct aliases.
     """
     # 1. Descriptions and compilation use the same engine and the same target configuration.
-    toolchain = load_toolchain()?
+    toolchain = match selected_toolchain:
+        Some(known) => known
+        None => load_toolchain()?
+
     demand = LocalDemand(
         project=root,
         domain=DependencyDomain.Target,
@@ -40,7 +51,7 @@ pub def resolve_features(intake: LocalIntake, root: str, request: FeatureRequest
         defaults=request.default_features,
         all_features=request.all_features,
     )
-    facets = local_facets(demand, target_configuration(rust_compiler(toolchain))?)?
+    facets = local_facets(demand, target_configuration(rust_compiler(toolchain))?, {}, reader)?
     # 2. Rust facets participate in activation but are not published as Incan Loaves.
     known = [project.root for project in intake.projects]
     mut reached: list[str] = []
@@ -57,4 +68,4 @@ pub def resolve_features(intake: LocalIntake, root: str, request: FeatureRequest
             for selected in facet.local:
                 if selected.alias == edge.alias and selected.project == edge.dependency_root:
                     edges.append(edge)
-    return Ok(ActiveGraph(reached=reached, active=active, edges=edges, facets=facets))
+    return Ok(ActiveGraph(reached=reached, active=active, edges=edges, facets=facets, toolchain=Some(toolchain)))

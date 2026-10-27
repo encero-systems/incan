@@ -7,9 +7,9 @@ from rust::std::string import String as RustString
 from std.fs import Path
 from features import FeatureRequest
 from home import TOOLCHAIN, dependency_artifact_dir
-from intake import read_project, source_root_of
+from intake import read_project, source_root_of, ManifestReader
 from unit import describe, project_root_of
-from unit_rust import compile_incan_library, describe_native
+from unit_rust import compile_incan_library, describe_native, toolchain_for
 from incan_units import check_unit, compile_unit, program_binary, run_program
 from unit_compiler import crate_name
 from rust_units import RustBuild, build_rust, read_registry_units
@@ -38,6 +38,8 @@ pub model Options:
     pub program_entries: list[str] = []
     pub argv0: Option[str] = None
     pub feature_options: bool = false
+    # One CLI preparation owns its source readings, including its provider callbacks.
+    pub manifests: ManifestReader = ManifestReader()
 
 
 def main() -> None:
@@ -265,9 +267,9 @@ def ran(options: Options, passed: list[str]) -> Result[i32, str]:
             return run_program(Path(reply.binary), passed, options.argv0)
         None => pass
     # 2. Otherwise this process describes and compiles the unit, keeping the stored executable while its inputs hold.
-    mut unit = describe(Path(options.path), options.profile, options.request)?
+    mut unit = describe(Path(options.path), options.profile, options.request, options.manifests)?
     unit.program_entries = options.program_entries
-    toolchain = load_toolchain()?
+    toolchain = toolchain_for(unit)?
     binary = program_binary(unit)
     compiled = compile_unit(unit, toolchain, binary, true)?
     if compiled != 0:
@@ -299,9 +301,9 @@ def tested(options: Options) -> Result[i32, str]:
                 return Ok(status_code(reply.exit))
             return run_collected(Path(reply.binary), Path(options.path).name())
         None => pass
-    mut unit = describe(Path(options.path), options.profile, options.request)?
+    mut unit = describe(Path(options.path), options.profile, options.request, options.manifests)?
     unit.kind = "test"
-    return run_tests(unit, load_toolchain()?)
+    return run_tests(unit, toolchain_for(unit)?)
 
 
 def check(arguments: list[str]) -> None:
@@ -325,8 +327,8 @@ def check(arguments: list[str]) -> None:
 
 def checked(options: Options, format: str) -> Result[i32, str]:
     """Describe an ordinary unit, then let checking prepare its dependencies and exact native inputs once."""
-    unit = describe(Path(options.path), options.profile, options.request)?
-    return check_unit(unit, load_toolchain()?, format)
+    unit = describe(Path(options.path), options.profile, options.request, options.manifests)?
+    return check_unit(unit, toolchain_for(unit)?, format)
 
 
 def finish(command: str, result: Result[i32, str]) -> None:
@@ -359,7 +361,7 @@ def require_command_options(command: str, options: Options) -> Result[None, str]
     if options.feature_options and project is None:
         return Err("feature selection requires a project")
     if command == "build" and (len(options.substitutes) > 0 or len(options.program_entries) > 0):
-        selected = build_source(source)?
+        selected = build_source(source, options.manifests)?
         if len(options.substitutes) > 0 and selected != None:
             return Err("--substitute requires a Rust-project build")
         if len(options.program_entries) > 0:
@@ -406,7 +408,7 @@ def build(arguments: list[str]) -> None:
 
 def build_selected(options: Options) -> None:
     """Build an Incan source if the path names one, else the Rust project it names, printing its binaries."""
-    match build_source(Path(options.path)):
+    match build_source(Path(options.path), options.manifests):
         Err(reason) => fail(f"incan build: {reason}", 1)
         Ok(Some(source)) =>
             finish("build", built(options, source))
@@ -435,17 +437,18 @@ def build_project(options: Options) -> Result[list[str], str]:
         incan_compiler=Some(compile_incan_library),
         toolchain_search=toolchain.search,
         toolchain=Some(toolchain),
+        manifests=options.manifests,
     )
     return build_rust(request)
 
 
-def build_source(path: Path) -> Result[Option[Path], str]:
+def build_source(path: Path, reader: ManifestReader) -> Result[Option[Path], str]:
     """Select an explicit source or a directory's conventional Incan entry; other directories name Rust projects."""
     if path.is_file():
         return Ok(Some(path))
     if not path.joinpath("loaf.toml").is_file():
         return Ok(None)
-    project = read_project(path).map_err((error) => error.message())?
+    project = read_project(path, reader).map_err((error) => error.message())?
     root = Path(source_root_of(project))
     for name in ["lib.incn", "main.incn"]:
         source = root.joinpath(name)
@@ -472,14 +475,14 @@ def built(options: Options, source: Path) -> Result[i32, str]:
             Some(reply) => return Ok(status_code(reply.exit))
             None => pass
     # 3. Anything else is described and built here: a library into its artifact directory, a program into `bin`.
-    mut unit = describe(source, options.profile, options.request)?
+    mut unit = describe(source, options.profile, options.request, options.manifests)?
     unit.program_entries = options.program_entries
     mut output = program_binary(unit)
     if library:
         unit.kind = "library"
         directory = dependency_artifact_dir(unit.project_root, unit.package, unit.profile)
         output = directory.joinpath(f"lib{crate_name(unit)}.rlib")
-    return compile_unit(unit, load_toolchain()?, output)
+    return compile_unit(unit, toolchain_for(unit)?, output)
 
 
 def owner(arguments: list[str]) -> None:

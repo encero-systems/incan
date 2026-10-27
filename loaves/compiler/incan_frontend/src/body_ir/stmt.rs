@@ -901,7 +901,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         });
         // The synthetic value is read once per destination; the last read moves its owner and earlier reads clone it.
         self.remaining_reads
-            .insert(value_local, chained_assignment.targets.len());
+            .insert(value_local, ReadCountdown::new(chained_assignment.targets.len()));
         for (name, target_span) in chained_assignment.targets.iter().zip(&chained_assignment.target_spans) {
             let (fact, last_use) = self.ownership_fact_for_place(&value_place, &value_ty);
             let operand = bir::Operand::place(value_place.clone(), fact, last_use);

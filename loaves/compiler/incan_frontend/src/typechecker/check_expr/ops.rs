@@ -1794,7 +1794,7 @@ impl TypeChecker {
     fn type_has_operator_method(&mut self, ty: &ResolvedType, method: &str, span: Span) -> bool {
         match ty {
             ResolvedType::Generic(type_name, _) | ResolvedType::Named(type_name) => {
-                let Some(type_info) = self.lookup_semantic_type_info(type_name).cloned() else {
+                let Some(type_info) = self.lookup_semantic_type_info(type_name) else {
                     return false;
                 };
                 match type_info {
@@ -1835,8 +1835,10 @@ impl TypeChecker {
                         if newtype.methods.contains_key(resolved) || newtype.method_overloads.contains_key(resolved) {
                             return true;
                         }
-                        newtype.trait_adoptions.iter().any(|adoption| {
-                            self.trait_method_info_resolved_for_adoption(adoption, resolved, span)
+                        let trait_adoptions = newtype.trait_adoptions.clone();
+                        let resolved = resolved.to_owned();
+                        trait_adoptions.iter().any(|adoption| {
+                            self.trait_method_info_resolved_for_adoption(adoption, &resolved, span)
                                 .is_some()
                         })
                     }

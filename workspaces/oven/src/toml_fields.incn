@@ -1,15 +1,14 @@
 """Reading a project's manifest and typed values from it, reporting every failure as the TOML library's message."""
 
-from std import toml
 from std.fs import Path
 from std.toml import TomlValue
-from files import read
+from intake import ManifestReader, read_manifest_snapshot
 
 
-pub def read_manifest(project: Path) -> Result[TomlValue, str]:
+pub def read_manifest(project: Path, reader: ManifestReader = ManifestReader()) -> Result[TomlValue, str]:
     """The parsed `loaf.toml` of the project at `project`."""
-    source = read(project.joinpath("loaf.toml"))?
-    return toml.parse(source).map_err((error) => error.message())
+    snapshot = read_manifest_snapshot(project, reader).map_err((error) => error.message())?
+    return Ok(snapshot.parsed)
 
 
 pub def required_string(table: TomlValue, key: str) -> Result[str, str]:

@@ -23,7 +23,7 @@ from std.json import JsonValue
 from files import read_json
 from home import TOOLCHAIN, home
 from json_fields import array, field, strings, text_field
-
+from native_closure_input import NativeClosureInput
 
 pub const TOOLCHAIN_SCHEMA: str = "incan.toolchain/1"
 
@@ -54,6 +54,8 @@ pub model Toolchain:
     # A resident owner's worker selection, held only while it watches the compiler inputs and its inherited
     # environment stays unchanged. Ordinary toolchain loading leaves this empty and derives the selection afresh.
     pub worker_generation: str = ""
+    # Published linking fields are read once within this selection, never retained across owner requests blindly.
+    pub native_closures: NativeClosureInput = NativeClosureInput()
     pub registry_lock: str = ""
 
 
@@ -84,11 +86,12 @@ pub def read_toolchain(directory: Path) -> Result[Toolchain, str]:
     document = read_json(path)?
     match toolchain_of(document, directory):
         Ok(toolchain) => return Ok(toolchain)
-        Err(failed) => return Err(f"{path.0}: `{'.'.join(failed)}` is missing or malformed")
+        Err(failed) => return Err(f"{path.0}: `{".".join(failed)}` is missing or malformed")
 
 
 pub def located(directory: Path, path: str) -> str:
-    """A manifest path as a usable one: relative to the toolchain `directory`, or as written when absolute.
+    """
+    A manifest path as a usable one: relative to the toolchain `directory`, or as written when absolute.
 
     A relative path is joined lexically with `.` and `..` collapsed, so one artifact named from different documents has
     one spelling and equal artifacts compare equal.
@@ -140,6 +143,7 @@ def toolchain_of(document: JsonValue, directory: Path) -> Result[Toolchain, list
             registry_units=located(directory, text_field(document, "registry_units", [])?),
             console="",
             worker_generation="",
+            native_closures=NativeClosureInput(),
             registry_lock=optional_path(document, "registry_lock", directory)?,
         ),
     )

@@ -432,8 +432,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 if let Some(value) = self.model_constant_operand(&place, scope, span, out) {
                     return value;
                 }
-                let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
-                bir::Operand::place(place, fact, last_use)
+                self.source_place_operand(place, &ty)
             }
             ast::Expr::SelfExpr => {
                 // Resolved exactly like `Ident("self")` — see `BodyBuilder::declare_receiver_local`, which binds
@@ -449,8 +448,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                         out,
                     );
                 };
-                let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
-                bir::Operand::place(place, fact, last_use)
+                self.source_place_operand(place, &ty)
             }
             ast::Expr::Literal(lit) => bir::Operand::Constant(lower_checked_literal(lit, &self.resolve_ty(expr.span))),
             ast::Expr::Paren(inner) => self.lower_expr_to_operand(inner, scope, out),
@@ -525,24 +523,21 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     if let Some(constant) = self.checked_constant(&place, &ty) {
                         return self.checked_constant_operand(constant, ty, scope, span, out);
                     }
-                    let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
-                    return bir::Operand::place(place, fact, last_use);
+                    return self.source_place_operand(place, &ty);
                 }
                 let mut place = self.lower_checked_field_base(base, expr.span, scope, out);
                 place
                     .projection
                     .extend(self.lower_checked_field_projections(base, name, expr.span));
                 let ty = self.resolve_ty(expr.span);
-                let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
-                bir::Operand::place(place, fact, last_use)
+                self.source_place_operand(place, &ty)
             }
             ast::Expr::Index(base, index) => {
                 let index_operand = self.lower_checked_index_operand(base, index, scope, out);
                 let mut place = self.lower_expr_to_place(base, scope, out);
                 place.projection.push(bir::PlaceElem::Index(Box::new(index_operand)));
                 let ty = self.resolve_ty(expr.span);
-                let (fact, last_use) = self.ownership_fact_for_place(&place, &ty);
-                bir::Operand::place(place, fact, last_use)
+                self.source_place_operand(place, &ty)
             }
             ast::Expr::Slice(base, slice) => self.lower_slice(base, slice, expr.span, scope, out),
             ast::Expr::Unary(ast::UnaryOp::Neg, inner) => {

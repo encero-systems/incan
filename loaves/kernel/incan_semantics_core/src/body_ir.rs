@@ -5174,27 +5174,54 @@ pub fn nominal_carrier_key(identity: &CanonicalSymbolId) -> Option<String> {
         _ => return None,
     }
     let module = crate::canonical_module_identity(identity)?;
-    let encoded_module: String = module.as_bytes().iter().map(|byte| format!("{byte:02x}")).collect();
-    let encoded_name: String = identity
-        .declaration_name
-        .as_bytes()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    Some(format!(
-        "{NOMINAL_CARRIER_KEY_PREFIX}{kind}_{}_{}_{}_{}_{}_{}{}",
-        module.len(),
-        encoded_module,
-        identity.declaration_name.len(),
-        encoded_name,
-        identity.declaration_span.start,
-        identity.declaration_span.end,
-        identity
-            .declaration_span
-            .expansion
-            .map(|value| format!("_expansion_{}", hex::encode(value)))
-            .unwrap_or_default()
-    ))
+    // Carrier keys are retained in checked scopes and native plans. Reserve their exact spelling rather than a
+    // worst-case suffix for every ordinary declaration; spare capacity otherwise survives in every owned key.
+    let mut capacity = NOMINAL_CARRIER_KEY_PREFIX.len()
+        + kind.len()
+        + 6
+        + 2 * (module.len() + identity.declaration_name.len())
+        + carrier_decimal_digits(module.len())
+        + carrier_decimal_digits(identity.declaration_name.len())
+        + carrier_decimal_digits(identity.declaration_span.start)
+        + carrier_decimal_digits(identity.declaration_span.end);
+    if identity.declaration_span.expansion.is_some() {
+        capacity += "_expansion_".len() + 64;
+    }
+    let mut key = String::with_capacity(capacity);
+    write!(key, "{NOMINAL_CARRIER_KEY_PREFIX}{kind}_{}_", module.len()).ok()?;
+    append_carrier_hex(&mut key, module.as_bytes());
+    write!(key, "_{}_", identity.declaration_name.len()).ok()?;
+    append_carrier_hex(&mut key, identity.declaration_name.as_bytes());
+    write!(
+        key,
+        "_{}_{}",
+        identity.declaration_span.start, identity.declaration_span.end
+    )
+    .ok()?;
+    if let Some(expansion) = identity.declaration_span.expansion {
+        key.push_str("_expansion_");
+        append_carrier_hex(&mut key, &expansion);
+    }
+    Some(key)
+}
+
+/// Count the decimal digits of an unsigned carrier component without allocating a temporary string.
+fn carrier_decimal_digits(mut value: usize) -> usize {
+    let mut digits = 1;
+    while value >= 10 {
+        value /= 10;
+        digits += 1;
+    }
+    digits
+}
+
+/// Append identifier-safe lowercase hex without allocating a formatting buffer for each UTF-8 byte.
+fn append_carrier_hex(output: &mut String, bytes: &[u8]) {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    for byte in bytes {
+        output.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        output.push(char::from(DIGITS[usize::from(byte & 15)]));
+    }
 }
 
 impl NominalDeclaration {
@@ -5271,6 +5298,56 @@ impl EnumDeclaration {
 
 #[cfg(test)]
 mod tests {
+    /// Carrier bytes remain identical to the original formatting, including UTF-8 owners and expanded declarations.
+    #[test]
+    fn nominal_carrier_encoding_preserves_identity_bytes() -> Result<(), String> {
+        for (module, name) in [("types", "Pair"), ("módulo.类型", "Élément"), ("", "_")] {
+            for (kind, spelling) in [
+                (crate::SemanticSourceTargetKind::Model, "model"),
+                (crate::SemanticSourceTargetKind::Class, "class"),
+                (crate::SemanticSourceTargetKind::Newtype, "newtype"),
+                (crate::SemanticSourceTargetKind::Enum, "enum"),
+            ] {
+                let mut identity = crate::CanonicalSymbolId::module_declaration(
+                    vec![module.into()],
+                    name,
+                    kind,
+                    crate::HirSourceSpan::new(17, 103),
+                );
+                for (start, end, expansion) in [
+                    (0, 0, None),
+                    (17, 103, None),
+                    (17, 103, Some([0xab; 32])),
+                    (usize::MAX, usize::MAX, Some([0xab; 32])),
+                ] {
+                    identity.declaration_span.start = start;
+                    identity.declaration_span.end = end;
+                    identity.declaration_span.expansion = expansion;
+                    let owner = crate::canonical_module_identity(&identity).ok_or("missing owner")?;
+                    let encode = |value: &str| value.bytes().map(|byte| format!("{byte:02x}")).collect::<String>();
+                    let suffix = expansion
+                        .map(|value| format!("_expansion_{}", hex::encode(value)))
+                        .unwrap_or_default();
+                    let expected = format!(
+                        "__incan_carrier_{spelling}_{}_{}_{}_{}_{start}_{end}{suffix}",
+                        owner.len(),
+                        encode(&owner),
+                        name.len(),
+                        encode(name)
+                    );
+                    let actual = super::nominal_carrier_key(&identity).ok_or("missing carrier")?;
+                    assert_eq!(actual, expected);
+                    assert_eq!(
+                        actual.capacity(),
+                        actual.len(),
+                        "carrier keys must not retain spare capacity"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Named leaves keep structural identity paths while aliases remain diagnostic spelling.
     #[test]
     fn result_type_identity_paths_are_complete_and_reject_extra_or_missing_leaves() {

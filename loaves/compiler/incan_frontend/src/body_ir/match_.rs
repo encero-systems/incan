@@ -42,7 +42,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// arm's pattern contains a byte-string literal (a pattern form outside Body IR's current closed matching
     /// vocabulary -- see [`match_pattern_is_supported`]), mirroring [`Self::lower_binary`]'s "check before
     /// partially lowering" precedent so an unrepresentable pattern never produces a partially-lowered
-    /// `Rvalue::Match`.
+    /// `Rvalue::Match`. Source reads in an arm preserve enclosing owners across alternative paths; arm-local
+    /// payload transfers remain governed by their checked pattern facts.
     pub(super) fn lower_match(
         &mut self,
         subject: &ast::Spanned<ast::Expr>,
@@ -110,6 +111,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             // ---- Guard and body see this arm's own pattern bindings, shadowing any outer binding of the same name
             // ----
             let mut guard_stmts = Vec::new();
+            self.conditional_scopes.push(arm_scope);
             let guard = arm
                 .node
                 .guard
@@ -129,6 +131,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     (stmts, bir::Operand::Constant(bir::Constant::Unit))
                 }
             };
+            self.conditional_scopes.pop();
 
             // ---- Restore the enclosing scope's bindings before moving on to the next (mutually exclusive) arm ----
             for (name, previous) in saved_bindings {
@@ -195,7 +198,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             && !self.is_borrowed_parameter(id)
             && !self.loop_reuses_local(id)
             && !self.pending_argument_reads.contains(&id)
-            && self.remaining_reads.get(&id).is_some_and(|remaining| *remaining == 1);
+            && self
+                .remaining_reads
+                .get(&id)
+                .is_some_and(|remaining| remaining.remaining == 1);
         if local.origin != bir::LocalOrigin::Temporary && !owned_last_read {
             return;
         }
@@ -274,6 +280,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// construct's scrutinee; it applies to the pattern only, never to patterns nested in the body.
     /// Unguarded statement arms use the same checked native payload transfer as expression matches; a fresh owned
     /// Option/Result temporary must not require cloning its payload merely because the source spells `if let`.
+    /// Source reads in the conditional body retain enclosing owners for the other path and its scope-exit drops.
     #[allow(clippy::too_many_arguments)] // The scrutinee's type, place and in-place fact travel together into one arm.
     pub(super) fn lower_statement_pattern_arm(
         &mut self,
@@ -302,7 +309,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.retain_owned_carrier_payload_move(scrutinee_place, &mut lowered_pattern);
 
         let mut body_stmts = Vec::new();
+        self.conditional_scopes.push(arm_scope);
         self.lower_block_into(body, arm_scope, &mut body_stmts);
+        self.conditional_scopes.pop();
         self.insert_scope_drops(&mut body_stmts, arm_scope);
 
         for (name, previous) in saved_bindings {

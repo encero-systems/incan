@@ -597,12 +597,12 @@ impl TypeChecker {
         match ty {
             ResolvedType::Function(params, ret) => Some((params.clone(), ret.as_ref().clone())),
             ResolvedType::Generic(name, _) | ResolvedType::Named(name) => {
-                let type_info = self.lookup_semantic_type_info(name).cloned()?;
+                let type_info = self.lookup_semantic_type_info(name)?;
                 let methods = match type_info {
-                    TypeInfo::Model(model) => model.methods,
-                    TypeInfo::Class(class) => class.methods,
-                    TypeInfo::Enum(en) => en.methods,
-                    TypeInfo::Newtype(newtype) => newtype.methods,
+                    TypeInfo::Model(model) => &model.methods,
+                    TypeInfo::Class(class) => &class.methods,
+                    TypeInfo::Enum(en) => &en.methods,
+                    TypeInfo::Newtype(newtype) => &newtype.methods,
                     _ => return None,
                 };
                 let Some(call) = methods.get("__call__") else {
@@ -2889,7 +2889,7 @@ impl TypeChecker {
         if let Some(surface_ty) = self.resolve_surface_type_field_type(type_name, field, span) {
             return Some(surface_ty);
         }
-        let type_info = self.lookup_semantic_type_info(type_name)?.clone();
+        let type_info = self.lookup_semantic_type_info(type_name)?;
 
         let field_info = match type_info {
             TypeInfo::Model(model) => {
@@ -2904,6 +2904,7 @@ impl TypeChecker {
                 }
                 let (_, info) = self.resolve_field_info(&model.fields, field, true, false)?;
                 let info = info.clone();
+                let subst = type_param_subst_map(&model.type_params, type_args.unwrap_or_default());
                 if let Some(identity) = info.identity.clone() {
                     self.type_info.record_resolved_identity(span, identity);
                 }
@@ -2911,7 +2912,6 @@ impl TypeChecker {
                     self.errors.push(errors::private_field(type_name, field, span));
                     return Some(ResolvedType::Unknown);
                 }
-                let subst = type_param_subst_map(&model.type_params, type_args.unwrap_or_default());
                 self.retain_declared_nominal_field(span, &info.ty, &subst, info.identity.as_ref());
                 substitute_resolved_type(&info.ty, &subst)
             }
@@ -2919,6 +2919,7 @@ impl TypeChecker {
                 // RFC 021: No alias-aware resolution for classes (models only)
                 let (_, info) = self.resolve_field_info(&class.fields, field, false, true)?;
                 let info = info.clone();
+                let subst = type_param_subst_map(&class.type_params, type_args.unwrap_or_default());
                 if let Some(identity) = info.identity.clone() {
                     self.type_info.record_resolved_identity(span, identity);
                 }
@@ -2926,7 +2927,6 @@ impl TypeChecker {
                     self.errors.push(errors::private_field(type_name, field, span));
                     return Some(ResolvedType::Unknown);
                 }
-                let subst = type_param_subst_map(&class.type_params, type_args.unwrap_or_default());
                 self.retain_declared_nominal_field(span, &info.ty, &subst, info.identity.as_ref());
                 substitute_resolved_type(&info.ty, &subst)
             }
@@ -2937,9 +2937,7 @@ impl TypeChecker {
                     .map(String::as_str)
                     .unwrap_or(field);
                 if enum_info.variants.iter().any(|variant| variant == canonical_variant) {
-                    if let Some(identity) = enum_info.variant_identities.get(field).cloned() {
-                        self.type_info.record_resolved_identity(span, identity);
-                    }
+                    let identity = enum_info.variant_identities.get(field).cloned();
                     let enum_ty = if let Some(args) = type_args {
                         ResolvedType::Generic(type_name.to_string(), args.to_vec())
                     } else {
@@ -2956,6 +2954,9 @@ impl TypeChecker {
                             .into_iter()
                             .map(|field_ty| substitute_resolved_type(&field_ty, &substitutions))
                             .collect();
+                    }
+                    if let Some(identity) = identity {
+                        self.type_info.record_resolved_identity(span, identity);
                     }
                     if fields.is_empty() {
                         return Some(enum_ty);
@@ -2977,14 +2978,16 @@ impl TypeChecker {
             }
             TypeInfo::Newtype(nt) if nt.is_rusttype => {
                 if let ResolvedType::RustPath(path) = &nt.underlying {
-                    if let Some(sig) = self.rust_associated_function_signature(path, field) {
-                        return Some(self.resolved_function_type_from_rust_sig_for_path(&sig, false, path));
+                    let path = path.clone();
+                    if let Some(sig) = self.rust_associated_function_signature(&path, field) {
+                        return Some(self.resolved_function_type_from_rust_sig_for_path(&sig, false, &path));
                     }
-                    return self.rust_path_field_type(path, field, span);
+                    return self.rust_path_field_type(&path, field, span);
                 }
                 return None;
             }
             TypeInfo::Newtype(nt) if field == conventions::NEWTYPE_TUPLE_FIELD => {
+                let underlying = nt.underlying.clone();
                 // The wrapped slot belongs to the newtype's declaration, including one a library returned without
                 // the consumer importing it.
                 let owner = self
@@ -2996,7 +2999,7 @@ impl TypeChecker {
                 if let Some(owner) = owner {
                     self.type_info.record_resolved_identity(span, owner);
                 }
-                return Some(nt.underlying.clone());
+                return Some(underlying);
             }
             _ => return None,
         };
@@ -3012,46 +3015,33 @@ impl TypeChecker {
         property: &str,
         span: Span,
     ) -> Option<ResolvedType> {
-        let type_info = self.lookup_semantic_type_info(type_name)?.clone();
-        match type_info {
-            TypeInfo::Model(model) => {
-                let info = model.properties.get(property)?.clone();
-                if let Some(identity) = info.identity.clone() {
-                    self.type_info.record_resolved_identity(span, identity);
-                }
-                let return_type = if let Some(args) = type_args {
-                    let subst = type_param_subst_map(&model.type_params, args);
-                    substitute_resolved_type(&info.return_type, &subst)
-                } else {
-                    info.return_type.clone()
-                };
-                self.type_info
-                    .record_computed_property_access(span, type_name, property);
-                Some(return_type)
-            }
-            TypeInfo::Class(class) => {
-                let info = class.properties.get(property)?.clone();
-                if let Some(identity) = info.identity.clone() {
-                    self.type_info.record_resolved_identity(span, identity);
-                }
-                let owner = info.owner.as_deref().unwrap_or(type_name);
-                if matches!(info.visibility, Visibility::Private) && self.current_method_owner.as_deref() != Some(owner)
-                {
-                    self.errors.push(errors::private_property(type_name, property, span));
-                    return Some(ResolvedType::Unknown);
-                }
-                let return_type = if let Some(args) = type_args {
-                    let subst = type_param_subst_map(&class.type_params, args);
-                    substitute_resolved_type(&info.return_type, &subst)
-                } else {
-                    info.return_type.clone()
-                };
-                self.type_info
-                    .record_computed_property_access(span, type_name, property);
-                Some(return_type)
-            }
-            _ => None,
+        let (properties, type_params, class_visibility) = match self.lookup_semantic_type_info(type_name)? {
+            TypeInfo::Model(model) => (&model.properties, &model.type_params, false),
+            TypeInfo::Class(class) => (&class.properties, &class.type_params, true),
+            _ => return None,
+        };
+        let info = properties.get(property)?;
+        let identity = info.identity.clone();
+        let owner = info.owner.as_deref().unwrap_or(type_name);
+        let inaccessible = class_visibility
+            && matches!(info.visibility, Visibility::Private)
+            && self.current_method_owner.as_deref() != Some(owner);
+        let return_type = if let Some(args) = type_args {
+            let subst = type_param_subst_map(type_params, args);
+            substitute_resolved_type(&info.return_type, &subst)
+        } else {
+            info.return_type.clone()
+        };
+        if let Some(identity) = identity {
+            self.type_info.record_resolved_identity(span, identity);
         }
+        if inaccessible {
+            self.errors.push(errors::private_property(type_name, property, span));
+            return Some(ResolvedType::Unknown);
+        }
+        self.type_info
+            .record_computed_property_access(span, type_name, property);
+        Some(return_type)
     }
 
     /// Return whether the receiver has a computed property with this name.

@@ -98,6 +98,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// then fold the already lowered `elif` branches into nested `else { if ... }` wrappers from the last branch
     /// inward. Reversing the ownership visit would move an owner in an earlier condition before a later condition
     /// reads it. Pattern conditions use the dedicated `if let` boundary.
+    /// An elif condition is itself conditional, so its enclosing owners remain live when an earlier arm wins.
+    /// Its temporary owners drop at the wrapper's exit, before an earlier enclosing owner is released.
     pub(super) fn lower_if(
         &mut self,
         if_stmt: &ast::IfStmt,
@@ -122,9 +124,12 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         for (elif_cond, elif_body) in &if_stmt.elif_branches {
             self.materialized_range_locals = range_layouts_before.clone();
             let mut wrapper = Vec::new();
-            let cond_operand = self.lower_expr_to_operand(elif_cond, scope, &mut wrapper);
-            let then_block = self.lower_branch_block(elif_body, scope, span);
-            lowered_branches.push((wrapper, cond_operand, then_block));
+            let wrapper_scope = self.new_scope(Some(scope), span);
+            self.conditional_scopes.push(wrapper_scope);
+            let cond_operand = self.lower_expr_to_operand(elif_cond, wrapper_scope, &mut wrapper);
+            self.conditional_scopes.pop();
+            let then_block = self.lower_branch_block(elif_body, wrapper_scope, span);
+            lowered_branches.push((wrapper_scope, wrapper, cond_operand, then_block));
             range_layouts_after_branches.push(self.materialized_range_locals.clone());
         }
 
@@ -136,7 +141,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         range_layouts_after_branches.push(self.materialized_range_locals.clone());
 
         // Only assembly runs backward; every read's ownership fact is already fixed in written order.
-        for (mut wrapper, cond_operand, then_block) in lowered_branches.into_iter().rev() {
+        for (wrapper_scope, mut wrapper, cond_operand, then_block) in lowered_branches.into_iter().rev() {
             wrapper.push(bir::Statement {
                 kind: bir::StatementKind::If {
                     cond: cond_operand,
@@ -145,7 +150,11 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 },
                 span,
             });
-            else_block = Some(bir::Block { scope, stmts: wrapper });
+            self.insert_scope_drops(&mut wrapper, wrapper_scope);
+            else_block = Some(bir::Block {
+                scope: wrapper_scope,
+                stmts: wrapper,
+            });
         }
 
         self.materialized_range_locals = intersect_range_layouts(range_layouts_after_branches);
@@ -163,6 +172,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower one `if`/`elif`/`else` branch body into its own scoped [`bir::Block`]: allocate a child scope, lower
     /// the statements into it, then insert scope-exit drops. Shared by [`Self::lower_if`]'s then/else/elif bodies
     /// and [`Self::lower_if_expr`]'s then/else bodies, since both need exactly this shape.
+    /// Enclosing owners stay live across the conditional path; branch-local owners can still transfer.
     pub(super) fn lower_branch_block(
         &mut self,
         body: &[ast::Spanned<ast::Statement>],
@@ -175,7 +185,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let enclosing_bindings = self.bindings.clone();
         let branch_scope = self.new_scope(Some(parent_scope), span);
         let mut stmts = Vec::new();
+        self.conditional_scopes.push(branch_scope);
         self.lower_block_into(body, branch_scope, &mut stmts);
+        self.conditional_scopes.pop();
         self.insert_scope_drops(&mut stmts, branch_scope);
         self.bindings = enclosing_bindings;
         bir::Block {

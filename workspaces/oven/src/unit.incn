@@ -7,9 +7,10 @@ from std.fs import Path
 from std.json import JsonValue
 from features import ActiveGraph, FeatureRequest, resolve_features
 from home import StandardPackage, dependency_artifact_dir, standard_artifact_dir, standard_packages
-from intake import LocalIntake, LocalProject, intake, source_root_of
+from intake import LocalIntake, LocalProject, ManifestReader, intake, source_root_of
 from loaf_local_graph import LocalFacet
-from toolchain import NativeCrate
+from toolchain import NativeCrate, Toolchain
+from jec import begin, record
 
 pub const UNIT_DESCRIPTION_SCHEMA: str = "incan.unit/1"
 
@@ -75,6 +76,10 @@ pub model UnitDescription:
     pub vocab_desugarer: bool = false
     # Oven retains the selected graph in memory; it is not part of the compiler's unit description.
     pub facets: list[LocalFacet] = []
+    # Source readings belong to this preparation and are not part of the compiler's public description.
+    pub manifests: ManifestReader = ManifestReader()
+    # Preparation retains the selected compiler generation; it is never serialized as a compiler input field.
+    pub selected_toolchain: Option[Toolchain] = None
 
     def to_json(self) -> JsonValue:
         """The description as the compiler reads it."""
@@ -124,32 +129,53 @@ pub def project_root_of(source: Path) -> Option[Path]:
     return None
 
 
-def standard_loaves(package: str, profile: str) -> Result[list[UnitLoaf], str]:
+def standard_loaves(package: str, profile: str, reader: ManifestReader) -> Result[list[UnitLoaf], str]:
     """
     The standard packages a unit of `package` reaches. They are ambient: every one is available, the unit's own
     package excepted, and the unit links the ones it uses.
     """
     mut loaves: list[UnitLoaf] = []
-    for found in standard_packages()?:
+    for found in standard_packages(reader)?:
         if found.name != package:
             directory = standard_artifact_dir(found.name, profile)?
             loaves.append(UnitLoaf(key=found.name, name=found.name, dir=directory.0, standard=true))
     return Ok(loaves)
 
 
-pub def describe(source: Path, profile: str, request: FeatureRequest) -> Result[UnitDescription, str]:
+pub def describe(
+    source: Path,
+    profile: str,
+    request: FeatureRequest,
+    reader: ManifestReader = ManifestReader(),
+    selected_toolchain: Option[Toolchain] = None,
+) -> Result[UnitDescription, str]:
     """Describe the unit whose entry source is `source`, for `profile` and the features `request` asks for."""
+    clock = begin()
+    result = described(source, profile, request, reader, selected_toolchain)
+    key = f"{source.0}|{profile}|{",".join(sorted(request.features))}|{request.default_features}|{request.all_features}"
+    record("unit_description", key, clock)
+    return result
+
+
+def described(
+    source: Path,
+    profile: str,
+    request: FeatureRequest,
+    reader: ManifestReader,
+    selected_toolchain: Option[Toolchain],
+) -> Result[UnitDescription, str]:
+    """Resolve the source's canonical project and use its selected graph for one description."""
     entry = source.absolute().map_err((error) => f"{source.0}: {error.message()}")?
     if not entry.is_file():
         return Err(f"{entry.0}: no such source file")
     match project_root_of(entry):
-        None => return Ok(single_file_unit(entry, profile, standard_loaves("", profile)?))
+        None => return Ok(single_file_unit(entry, profile, standard_loaves("", profile, reader)?))
         Some(found) =>
-            graph = intake(found).map_err((error) => error.message())?
+            graph = intake(found, reader).map_err((error) => error.message())?
             root = found.resolve().map_err((error) => f"{found.0}: {error.message()}")?
-            active = resolve_features(graph, root.0, request)?
+            active = resolve_features(graph, root.0, request, reader, selected_toolchain)?
             projects = projects_by_root(graph.projects)
-            return project_unit(entry, projects[root.0], profile, root.0, active, projects)
+            return project_unit(entry, projects[root.0], profile, root.0, active, projects, reader)
 
 
 def projects_by_root(found: list[LocalProject]) -> Dict[str, LocalProject]:
@@ -167,6 +193,7 @@ def project_unit(
     artifact_root: str,
     active: ActiveGraph,
     projects: Dict[str, LocalProject],
+    reader: ManifestReader,
 ) -> Result[UnitDescription, str]:
     """Describe one project in the root's selected graph; dependency builds share its artifact layout."""
     return Ok(
@@ -179,12 +206,14 @@ def project_unit(
             profile=profile,
             declared_features=sorted([name for name in own.intent.features.keys()]),
             active_features=active.active[own.root],
-            loaves=project_loaves(own, profile, artifact_root, active, projects)?,
+            loaves=project_loaves(own, profile, artifact_root, active, projects, reader)?,
             rust_crates=rust_crates_of(own),
             contract_models=own.intent.contract_models,
             c_headers=own.intent.c_headers,
             vocab_entry=own.intent.vocab_entry,
             facets=active.facets,
+            manifests=reader,
+            selected_toolchain=active.toolchain,
         ),
     )
 
@@ -195,6 +224,7 @@ def project_loaves(
     artifact_root: str,
     active: ActiveGraph,
     projects: Dict[str, LocalProject],
+    reader: ManifestReader,
 ) -> Result[list[UnitLoaf], str]:
     """
     List a project's reachable Loaves, preserving direct aliases before transitive package names.
@@ -240,7 +270,7 @@ def project_loaves(
             ),
         )
     # 4. Every standard package is available, except the one the unit is.
-    return Ok(loaves + standard_loaves(own.intent.name, profile)?)
+    return Ok(loaves + standard_loaves(own.intent.name, profile, reader)?)
 
 
 def reachable_roots(start: str, active: ActiveGraph) -> list[str]:

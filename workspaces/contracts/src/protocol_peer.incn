@@ -14,6 +14,11 @@ from std.io import BytesIO
 from std.json import JsonValue, parse
 from files import optional_text as string
 
+# Bound unrelated notifications and untrusted LSP frames independently.
+const MAX_RESPONSE_MESSAGES: int = 128
+const MAX_LSP_HEADER_BYTES: int = 8192
+const MAX_LSP_PAYLOAD_BYTES: int = 16_777_216
+
 
 pub def start(binary: str, project: Path, arguments: list[str] = [], framing: str = "lsp") -> Result[Peer, str]:
     """Start the real stdio server: 1. Configure streams. 2. Record ownership. 3. Retain shared handles."""
@@ -77,7 +82,7 @@ pub class Peer:
         if not params.is_null():
             envelope["params"] = params
         self.send(JsonValue.object(envelope))?
-        for attempt in range(128):
+        for attempt in range(MAX_RESPONSE_MESSAGES):
             reply = self.receive()?
             match reply.get("id"):
                 Some(value) =>
@@ -85,11 +90,11 @@ pub class Peer:
                         reason = f"protocol request failed: {reply.to_json().unwrap_or("")}"
                         return reply.require("result").map_err((_) => reason)
                 None => pass
-        return Err("protocol response did not arrive within 128 messages")
+        return Err(f"protocol response did not arrive within {MAX_RESPONSE_MESSAGES} messages")
 
     def diagnostics(mut self, uri: str, version: int) -> Result[None, str]:
         """Wait for the LSP's completed checking pass before asking navigation questions."""
-        for attempt in range(128):
+        for attempt in range(MAX_RESPONSE_MESSAGES):
             reply = self.receive()?
             if string(reply, "method") != "textDocument/publishDiagnostics":
                 continue
@@ -111,8 +116,8 @@ pub class Peer:
         mut header = ""
         mut byte = b" "
         while not header.endswith("\r\n\r\n"):
-            if len(header) > 8192:
-                return Err("LSP header exceeds 8192 bytes")
+            if len(header) > MAX_LSP_HEADER_BYTES:
+                return Err(f"LSP header exceeds {MAX_LSP_HEADER_BYTES} bytes")
             match self.output.borrow_mut().read_exact(byte):
                 Ok(_) => pass
                 Err(error) => return Err(f"cannot read LSP header: {error}")
@@ -122,7 +127,7 @@ pub class Peer:
             if line.startswith("Content-Length:"):
                 value = parse(line[len("Content-Length:"):].strip()).map_err((error) => error.message())?
                 size = value.expect_int().map_err((error) => error.message())?
-        if size <= 0 or size > 16777216:
+        if size <= 0 or size > MAX_LSP_PAYLOAD_BYTES:
             return Err("LSP frame has an invalid Content-Length")
         mut payload = zeroes(size)
         match self.output.borrow_mut().read_exact(payload):

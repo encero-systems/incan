@@ -5,6 +5,7 @@
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::ast::{ParamKind, Receiver, Span, Type, TypeConstraintKey};
 use incan_lang::interop::RustItemMetadata;
@@ -27,6 +28,13 @@ use incan_semantics_core::{
 
 /// Unique identifier for symbols
 pub type SymbolId = usize;
+
+/// Allocate a process-local mutation generation shared by checker identity inputs. Snapshot generations follow their
+/// contents, so replacing an input with a different value cannot reuse another value's memoized publication.
+pub(crate) fn next_identity_generation() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
 
 /// Result of registering one binding key in RFC 120's shared collision mechanism.
 ///
@@ -295,6 +303,8 @@ fn stable_fnv1a(bytes: &[u8]) -> u64 {
 /// Symbol table managing all named entities
 #[derive(Debug, Default)]
 pub struct SymbolTable {
+    /// Changes whenever nominal symbols, identities or the active lookup view may change.
+    nominal_generation: u64,
     symbols: Vec<Symbol>,
     scopes: Vec<Scope>,
     current_scope: usize,
@@ -354,6 +364,7 @@ impl SymbolTable {
     /// Create a root module scope populated with the language's builtin symbols.
     pub fn new() -> Self {
         let mut table = Self {
+            nominal_generation: next_identity_generation(),
             symbols: Vec::new(),
             scopes: vec![Scope::new(None, ScopeKind::Module)],
             current_scope: 0,
@@ -382,11 +393,13 @@ impl SymbolTable {
     /// Called by the typechecker as soon as it knows its module identity, before user declarations are collected.
     /// Builtins are already defined by then and keep their [`SymbolOrigin::Builtin`] identities.
     pub fn set_module_path(&mut self, module_path: Vec<String>) {
+        self.nominal_generation = next_identity_generation();
         self.module_path = module_path;
     }
 
     /// Record that subsequently checked declarations are owned by one compiled package.
     pub fn set_package_identity(&mut self, package_identity: Option<String>) {
+        self.nominal_generation = next_identity_generation();
         self.package_identity = package_identity;
     }
 
@@ -600,6 +613,7 @@ impl SymbolTable {
 
     /// Enter a new scope
     pub fn enter_scope(&mut self, kind: ScopeKind) {
+        self.nominal_generation = next_identity_generation();
         let new_scope = Scope::new(Some(self.current_scope), kind);
         self.scopes.push(new_scope);
         self.current_scope = self.scopes.len() - 1;
@@ -607,6 +621,7 @@ impl SymbolTable {
 
     /// Exit the current scope
     pub fn exit_scope(&mut self) {
+        self.nominal_generation = next_identity_generation();
         if let Some(parent) = self.scopes[self.current_scope].parent {
             self.current_scope = parent;
         }
@@ -757,6 +772,7 @@ impl SymbolTable {
     /// for the first declaration would otherwise keep naming an arbitrary member of the set. Overload declarations
     /// keep their own span-keyed identities on `FunctionBindingInfo`.
     pub fn clear_identity(&mut self, id: SymbolId) {
+        self.nominal_generation = next_identity_generation();
         self.identities.remove(&id);
     }
 
@@ -772,6 +788,7 @@ impl SymbolTable {
             return;
         };
         if self.import_bindings.contains(&id) && !self.identities.contains_key(&id) {
+            self.nominal_generation = next_identity_generation();
             self.identities.insert(id, identity.clone());
         }
     }
@@ -860,6 +877,7 @@ impl SymbolTable {
         is_import: bool,
         mode: BindingDefinitionMode,
     ) -> SymbolId {
+        self.nominal_generation = next_identity_generation();
         self.record_current_scope_binding_before_change(&symbol.name);
         symbol.scope = self.current_scope;
         let id = self.symbols.len();
@@ -1170,6 +1188,7 @@ impl SymbolTable {
     /// builtin fallback tier has one canonical entry per builtin — so every alias records the canonical registry
     /// spelling as its declaration name and all spellings compare equal.
     fn record_builtin_identity(&mut self, id: SymbolId, canonical_name: &str) {
+        self.nominal_generation = next_identity_generation();
         self.identities.insert(id, canonical_builtin_identity(canonical_name));
     }
 
@@ -1233,12 +1252,14 @@ impl SymbolTable {
 
     /// Open a fresh temporary lookup view for one dependency interface.
     pub fn begin_dependency_interface_bindings(&mut self) {
+        self.nominal_generation = next_identity_generation();
         debug_assert!(self.dependency_interface_bindings.is_none());
         self.dependency_interface_bindings = Some(HashMap::new());
     }
 
     /// Drop the active dependency-interface view before another module or consumer source is checked.
     pub fn finish_dependency_interface_bindings(&mut self) {
+        self.nominal_generation = next_identity_generation();
         debug_assert!(self.dependency_interface_bindings.is_some());
         self.dependency_interface_bindings = None;
     }
@@ -1280,6 +1301,7 @@ impl SymbolTable {
 
     /// Restore or remove one name binding in the current scope without deleting historical symbol metadata.
     pub fn restore_current_scope_binding(&mut self, name: &str, binding: Option<SymbolId>) {
+        self.nominal_generation = next_identity_generation();
         if self.current_scope == 0
             && let Some(bindings) = &mut self.dependency_interface_bindings
         {
@@ -1317,7 +1339,13 @@ impl SymbolTable {
 
     /// Get a mutable symbol by ID
     pub fn get_mut(&mut self, id: SymbolId) -> Option<&mut Symbol> {
+        self.nominal_generation = next_identity_generation();
         self.symbols.get_mut(id)
+    }
+
+    /// Identify the complete nominal-binding view, including temporary imports and lexical lookup changes.
+    pub(crate) fn nominal_identity_generation(&self) -> u64 {
+        self.nominal_generation
     }
 
     /// All symbols in definition order (builtins first, then user declarations).

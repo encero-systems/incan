@@ -1,0 +1,287 @@
+# behavior: projected reads permit final owner transfers; reuse and conditional paths retain owners (#2256)
+# expect-stdout:
+#   ["x", "x"]
+#   taken 4 kept 4
+#   ownership controls hold
+#   last-use memory bounded
+
+"""Check owner reuse and compare a final consuming call with its allocation-only memory baseline."""
+
+from rust::std::env import current_exe, var
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from rust::std::mem import drop as discard
+from rust::std::sync import Mutex
+from rust::memory_probe import peak_resident_bytes
+
+
+model Client:
+    """Collect generic inputs without losing a caller's later use."""
+
+    def send[T](self, value: T) -> list[T]:
+        """Return the supplied value in a list."""
+        return [value]
+
+
+model Wrapper[T]:
+    """Keep a generic field readable across owned calls."""
+
+    cursor: T
+
+
+model LargeOwner:
+    """Own a list alongside an independently readable scalar."""
+
+    marker: int
+    payload: list[int]
+
+
+def main() -> Result[None, str]:
+    """1. Serve a memory child. 2. Check observable reuse. 3. Bound final-transfer memory."""
+    # 1. Measure allocation and consumption in independent fresh processes.
+    match var("INCAN_LAST_USE_MEMORY_CHILD"):
+        Ok(mode) =>
+            memory_child(mode)
+            println(peak_resident_bytes().map_err((error) => str(error))?)
+            return Ok(None)
+        Err(_) => pass
+
+    # 2. Retain the generic and ownership controls in the original area case.
+    sent = send_twice(Client(), "x")
+    println(f"{sent:?}")
+    println(read_cursor(Wrapper(cursor=4)))
+    assert projected_last_use() == 10
+    assert projected_index_last_use() == 10
+    assert projected_comparison_last_use() == 10
+    assert owner_read_later() == 20
+    assert loop_owner() == 20
+    assert closure_owner() == 30
+    assert branch_owner(true) == 7
+    assert branch_owner(false) == 10
+    assert elif_owner(true) == 7
+    assert elif_owner(false) == 10
+    assert branch_join_owner(true) == 10
+    assert branch_join_owner(false) == 10
+    assert matched_owner(true) == 10
+    assert matched_owner(false) == 7
+    assert short_circuit_owner(true)
+    assert not short_circuit_owner(false)
+    assertion_owner()
+    assert filtered_owners() == 1
+    assert field_after_consume() == 11
+    assert pending_owner() == 20
+    assert conditional_native_owner(true) == 1
+    assert conditional_native_owner(false) == 0
+    conditional_guard_owner()
+    println("ownership controls hold")
+
+    # 3. Exclude a full second list while allowing allocator variation.
+    baseline = measure("baseline")?
+    consumed = measure("consume")?
+    assert consumed <= baseline + baseline // 4 + 16 * 1024 * 1024, f"{consumed} bytes for {baseline} bytes"
+    println("last-use memory bounded")
+    return Ok(None)
+
+
+def memory_child(mode: str) -> None:
+    """Select independent straight-line allocation and consumption measurements."""
+    if mode == "consume":
+        consumed_memory_child()
+    else:
+        baseline_memory_child()
+
+
+def baseline_memory_child() -> None:
+    """Allocate one large owner and read its scalar and list length."""
+    owner = LargeOwner(marker=7, payload=[index for index in range(8388608)])
+    assert owner.marker == 7
+    assert len(owner.payload) == 8388608
+
+
+def consumed_memory_child() -> None:
+    """Allocate the same owner and consume it after its scalar projection."""
+    owner = LargeOwner(marker=7, payload=[index for index in range(8388608)])
+    assert owner.marker == 7
+    assert consume_owner(owner) == 8388615
+
+
+def measure(mode: str) -> Result[int, str]:
+    """Return peak resident bytes from one successful child of this executable."""
+    executable = current_exe().map_err((error) => str(error))?
+    report = Command.new(executable).env("INCAN_LAST_USE_MEMORY_CHILD", mode).output()
+    output = report.map_err((error) => str(error))?
+    if not output.status.success():
+        return Err(f"memory measurement failed for {mode}")
+    text = RustString.from_utf8(output.stdout).map_err((error) => str(error))?
+    return Ok(int(text.strip()))
+
+
+def send_twice[T](client: Client, value: T) -> list[T]:
+    """Send a generic input twice and retain both returned values."""
+    first = client.send(value)
+    second = client.send(value)
+    return first + second
+
+
+def take[T with Display](value: T) -> str:
+    """Format an owned generic value."""
+    return f"taken {value}"
+
+
+def read_cursor[T with Display](other: Wrapper[T]) -> str:
+    """Read the same generic field before and after an owned call."""
+    return take(other.cursor) + f" kept {other.cursor}"
+
+
+def consume_owner(owner: LargeOwner) -> int:
+    """Consume an owned model and observe its scalar and list length."""
+    return owner.marker + len(owner.payload)
+
+
+def projected_last_use() -> int:
+    """A scalar projection does not prevent the final whole-owner transfer."""
+    owner = LargeOwner(marker=7, payload=[1, 2, 3])
+    assert owner.marker == 7
+    return consume_owner(owner)
+
+
+def owner_read_later() -> int:
+    """An earlier owned call retains the owner for a later whole-value read."""
+    owner = LargeOwner(marker=7, payload=[1, 2, 3])
+    assert owner.marker == 7
+    first = consume_owner(owner)
+    return first + consume_owner(owner)
+
+
+def projected_index_last_use() -> int:
+    """A nested field/index projection consumes one source read, preserving a final whole-owner transfer."""
+    owner = LargeOwner(marker=7, payload=[1, 2, 3])
+    assert owner.payload[0] == 1
+    return consume_owner(owner)
+
+
+def projected_comparison_last_use() -> int:
+    """A shared comparison of a projected collection still counts its source read."""
+    owner = LargeOwner(marker=7, payload=[1, 2, 3])
+    assert owner.payload == [1, 2, 3]
+    return consume_owner(owner)
+
+
+def loop_owner() -> int:
+    """An enclosing owner survives repeated executions of its last textual read."""
+    owner = LargeOwner(marker=7, payload=[1, 2, 3])
+    assert owner.marker == 7
+    mut total = 0
+    for index in range(2):
+        total += consume_owner(owner)
+    return total
+
+
+def closure_owner() -> int:
+    """Capturing an owner retains the outer value and repeated callable observations."""
+    owner = LargeOwner(marker=7, payload=[1, 2, 3])
+    assert owner.marker == 7
+    read = () => consume_owner(owner)
+    first = consume_owner(owner)
+    return first + read() + read()
+
+
+def branch_owner(flag: bool) -> int:
+    """A consumer in only one arm preserves the enclosing owner's conditional lifetime."""
+    owner = LargeOwner(marker=7, payload=[1, 2, 3])
+    mut result = 0
+    if flag:
+        result = owner.marker
+    else:
+        result = consume_owner(owner)
+    return result
+
+
+def field_after_consume() -> int:
+    """A later projected read keeps the earlier consuming call from moving its owner."""
+    owner = LargeOwner(marker=7, payload=[1, 2, 3])
+    assert owner.marker == 7
+    first = consume_owner(owner)
+    return first + owner.payload[0]
+
+
+def branch_join_owner(flag: bool) -> int:
+    """Mutually exclusive projected observations permit a final transfer after their join."""
+    owner = LargeOwner(marker=7, payload=[1, 2, 3])
+    if flag:
+        assert owner.marker == 7
+    else:
+        assert owner.payload[0] == 1
+    return consume_owner(owner)
+
+
+def matched_owner(flag: bool) -> int:
+    """An owner consumed in one match arm retains its lifetime on the other arm."""
+    owner = LargeOwner(marker=7, payload=[1, 2, 3])
+    mut result = 0
+    match flag:
+        false => result = owner.marker
+        true => result = consume_owner(owner)
+    return result
+
+
+def short_circuit_owner(flag: bool) -> bool:
+    """A skipped right operand preserves the enclosing owner's conditional lifetime."""
+    owner = LargeOwner(marker=7, payload=[1, 2, 3])
+    assert owner.marker == 7
+    return flag and consume_owner(owner) == 10
+
+
+def assertion_owner() -> None:
+    """A skipped assertion message leaves its enclosing owner available for scope exit."""
+    owner = LargeOwner(marker=7, payload=[1, 2, 3])
+    assert owner.marker == 7
+    assert true, str(consume_owner(owner))
+
+
+def elif_owner(flag: bool) -> int:
+    """A skipped elif condition preserves the owner's enclosing lifetime."""
+    owner = LargeOwner(marker=7, payload=[1, 2, 3])
+    assert owner.marker == 7
+    mut result = 0
+    if flag:
+        result = 7
+    elif consume_owner(owner) == 10:
+        result = 10
+    return result
+
+
+def filtered_owners() -> int:
+    """A filtered-out loop binding retains its drop when the element consumer is skipped."""
+    owners = [LargeOwner(marker=7, payload=[1, 2, 3]), LargeOwner(marker=8, payload=[4])]
+    return len([consume_owner(owner) for owner in owners if owner.marker == 7])
+
+
+def pending_owner() -> int:
+    """A pending outer operand stays alive while a nested argument reads the same owner."""
+    owner = LargeOwner(marker=7, payload=[1, 2, 3])
+    assert owner.marker == 7
+    return consume_pair(owner, consume_owner(owner))
+
+
+def consume_pair(owner: LargeOwner, other: int) -> int:
+    """Read the first argument after the second has finished evaluation."""
+    return consume_owner(owner) + other
+
+
+def conditional_native_owner(flag: bool) -> int:
+    """A native owner without Clone keeps its existing conditional transfer when no projection shortened its reads."""
+    owner = Mutex.new(7)
+    if flag:
+        discard(owner)
+        return 1
+    return 0
+
+
+def conditional_guard_owner() -> None:
+    """Drop an elif condition's temporary guard before the lock that it borrows, including a constant first arm."""
+    owner = Mutex.new(7)
+    if false:
+        pass
+    elif owner.try_lock().is_ok():
+        pass

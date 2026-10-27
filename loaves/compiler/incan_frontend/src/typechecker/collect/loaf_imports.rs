@@ -1057,10 +1057,8 @@ impl TypeChecker {
                 .resolved_import_identities
                 .get(&local_name)
                 .cloned();
-            self.public_library_type_identities.insert(
-                local_name,
-                self.admitted_public_type_identity(library, &source_path, declaration_identity),
-            );
+            let identity = self.admitted_public_type_identity(library, &source_path, declaration_identity);
+            self.public_library_type_identities.insert(local_name, identity);
         }
     }
 

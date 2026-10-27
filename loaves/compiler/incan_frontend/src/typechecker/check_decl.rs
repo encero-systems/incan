@@ -3527,7 +3527,7 @@ impl TypeChecker {
         name: &str,
         visiting: &mut HashSet<String>,
     ) -> Result<(), String> {
-        let Some(type_info) = self.lookup_type_info(name).cloned() else {
+        let Some(type_info) = self.lookup_type_info(name) else {
             return Err(format!("unknown nominal type `{name}`"));
         };
         match type_info {

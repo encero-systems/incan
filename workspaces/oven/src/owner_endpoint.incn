@@ -42,7 +42,6 @@ from owner_protocol import (
 from toolchain import toolchain_file
 from unit_freshness import artifact_identity, fingerprint
 
-
 # How long a started owner has to say it is listening, in 2 ms polls.
 const READINESS_POLLS: int = 7500
 # The seconds an owner may be idle before it retires, unless OVEN_OWNER_IDLE says otherwise.
@@ -90,8 +89,10 @@ pub def endpoint_for(root: str) -> Result[Endpoint, str]:
 
 
 def generation_of(root: str) -> Result[str, str]:
-    """The first sixteen digits of the digest of the protocol, this executable, the project, the home, the standard
-    library, toolchain description, selected SDK configuration and requested compiler diagnostics."""
+    """
+    The first sixteen digits of the digest of the protocol, this executable, the project, the home, the standard
+    library, toolchain description, selected SDK configuration and requested compiler diagnostics.
+    """
     exe = executable()?
     configuration = [
         PROTOCOL,
@@ -106,6 +107,7 @@ def generation_of(root: str) -> Result[str, str]:
         inherited_setting("SDKROOT"),
         inherited_setting("INCAN_NATIVE_TIMING"),
         inherited_setting("INCAN_TRACE_DIR"),
+        inherited_setting("INCAN_JEC_TRACE"),
     ]
     return Ok(fingerprint(configuration)?[0:16])
 
@@ -144,8 +146,10 @@ def identity_of(path: Path) -> str:
 
 
 pub def idle_seconds() -> int:
-    """How long an owner started by this command may stay idle: `OVEN_OWNER_IDLE` seconds when it is a whole number,
-    at least `MINIMUM_IDLE`, else the default."""
+    """
+    How long an owner started by this command may stay idle: `OVEN_OWNER_IDLE` seconds when it is a whole number,
+    at least `MINIMUM_IDLE`, else the default.
+    """
     configured = get_or("OVEN_OWNER_IDLE", "")
     if configured == "" or not digits_only(configured):
         return DEFAULT_IDLE
@@ -156,8 +160,10 @@ pub def idle_seconds() -> int:
 
 
 pub def timeout_for(command: str) -> u64:
-    """How long a client waits for a reply: lifecycle requests are bounded, preparing an executable is not, because a
-    build takes as long as it takes."""
+    """
+    How long a client waits for a reply: lifecycle requests are bounded, preparing an executable is not, because a
+    build takes as long as it takes.
+    """
     if prepares_executable(command):
         return 0
     return LIFECYCLE_SECONDS
@@ -277,8 +283,10 @@ def launch(endpoint: Endpoint) -> Result[None, str]:
 
 
 def owner_command(exe: str, endpoint: Endpoint) -> Command:
-    """The command line that runs this Oven as the owner of `endpoint`, with no terminal and a process group of its
-    own, tracing into the endpoint's mailbox."""
+    """
+    The command line that runs this Oven as the owner of `endpoint`, with no terminal and a process group of its
+    own, tracing into the endpoint's mailbox.
+    """
     mut command = Command.new(exe)
     command.arg("--internal-owner")
     command.arg(f"{endpoint.socket}")

@@ -13,8 +13,7 @@ standard packages come from.
 
 from std.environ import get_or
 from std.fs import Path
-from intake import load_project
-
+from intake import load_project, ManifestReader
 
 # The toolchain this Oven belongs to; it names the home's toolchain directory.
 pub const TOOLCHAIN: str = "0.6.0-dev.8"
@@ -47,7 +46,12 @@ pub def standard_artifact_dir(package: str, profile: str) -> Result[Path, str]:
 
 pub def dependency_artifact_dir(root_project: str, package: str, profile: str) -> Path:
     """The artifact directory of a path dependency `package`, reached from the project at `root_project`."""
-    return Path(root_project).joinpath("target").joinpath("incan").joinpath("loaves").joinpath(package).joinpath(profile)
+    return Path(root_project)
+        .joinpath("target")
+        .joinpath("incan")
+        .joinpath("loaves")
+        .joinpath(package)
+        .joinpath(profile)
 
 
 pub def unit_ledger(project_root: str, name: str) -> Path:
@@ -55,7 +59,7 @@ pub def unit_ledger(project_root: str, name: str) -> Path:
     return Path(project_root).joinpath("target").joinpath("incan").joinpath("observations").joinpath(f"{name}.json")
 
 
-pub def standard_packages() -> Result[list[StandardPackage], str]:
+pub def standard_packages(reader: ManifestReader = ManifestReader()) -> Result[list[StandardPackage], str]:
     """The toolchain's standard packages, in name order."""
     root = get_or("INCAN_STDLIB", "")
     if root == "":
@@ -67,7 +71,7 @@ pub def standard_packages() -> Result[list[StandardPackage], str]:
         Ok(entries) =>
             for entry in entries:
                 if entry.joinpath("loaf.toml").is_file():
-                    match load_project(entry):
+                    match load_project(entry, reader):
                         Err(error) => return Err(error.message())
                         Ok(project) => packages.append(StandardPackage(name=project.intent.name, root=project.root))
     mut by_name: Dict[str, StandardPackage] = {}

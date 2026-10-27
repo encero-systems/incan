@@ -22,6 +22,7 @@ from publication import publish_binary
 from toolchain import Toolchain
 from unit import UnitDescription
 from unit_freshness import Key, artifact_files, fingerprint, unit_key
+from jec import begin, record, invocation_key
 
 const RECORD_SCHEMA: str = "incan.oven.outcome/1"
 const REFUSAL_RECEIPT: str = "incan.compiler-refusal/1\n"
@@ -148,7 +149,9 @@ def cold_completion(toolchain: Toolchain, arguments: list[str]) -> Result[Comple
     command.stdin(Stdio.inherit())
     for argument in arguments:
         command.arg(argument)
+    clock = begin()
     result = command.output().map_err((error) => f"cannot run {toolchain.driver}: {error}")?
+    record("driver_spawn", invocation_key(arguments), clock)
     mut code: i32 = 1
     mut exited = false
     if let Some(status) = result.status.code():

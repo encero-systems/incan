@@ -1,4 +1,4 @@
-# behavior: Regex constructor flags, named and absent capture groups, and invalid pattern errors preserve their values
+# behavior: Regex flags, indexed and named optional capture iteration, and invalid pattern errors preserve their values
 # expect-stdout:
 #   true false
 #   refused
@@ -16,7 +16,21 @@ def build() -> Result[None, RegexError]:
             assert captures.group("word") == Some("ab")
             assert captures.group(2) == None
             assert len(captures.groupdict()) == 1
-        None => assert false
+        None =>
+            assert false
+    mut matches: list[Option[str]] = []
+    mut optional: list[Option[str]] = []
+    for captures in named.captures_iter("ab abc"):
+        matches.append(captures.group("word"))
+        optional.append(captures.group(2))
+        match captures.full_match():
+            Some(found) =>
+                assert captures.group(0) == Some(found.as_str())
+            None =>
+                assert false
+        assert len(captures.groupdict()) == 1
+    assert matches == [Some("ab"), Some("ab")]
+    assert optional == [None, Some("c")]
     return Ok(None)
 
 

@@ -103,6 +103,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// awaitable is evaluated before selection" observable in the statement sequence rather than a claim in prose.
     /// Each arm then gets its own scope and type-refined local. Those locals retain the one canonical identity and
     /// exact token span of the shared header binding, so different arm types do not invent different source objects.
+    /// Reads in a winning arm retain enclosing owners for the other selectable paths and their scope-exit drops.
     ///
     /// An arm body containing an unsupported construct keeps its own `Unsupported` node *inside* the represented
     /// race rather than collapsing the whole expression, so a consumer loses only the construct it cannot handle.
@@ -161,12 +162,14 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             );
 
             let mut arm_stmts = Vec::new();
+            self.conditional_scopes.push(arm_scope);
             let result = match &arm.body {
                 ast::RaceForBody::Expr(expr) => self.lower_expr_to_operand(expr, arm_scope, &mut arm_stmts),
                 ast::RaceForBody::Block(stmts) => {
                     self.lower_race_arm_block(stmts, arm.awaitable.span, arm_scope, &mut arm_stmts)
                 }
             };
+            self.conditional_scopes.pop();
             self.insert_scope_drops(&mut arm_stmts, arm_scope);
 
             // Every name an arm bound -- its winner binding and any local its block body declared -- is scoped to

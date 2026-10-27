@@ -62,6 +62,9 @@ mod mut_arguments;
 mod mut_marker;
 mod native_newtype_facts;
 mod native_storage;
+mod nominal_identities;
+pub use nominal_identities::IdentityInput;
+use nominal_identities::NominalIdentityCache;
 mod nominal_type_param_bounds;
 mod reachability;
 mod receiver_change;
@@ -481,7 +484,7 @@ struct DeclarationCallableTypes {
 /// Module identities used during body checking, guarded by the declaration inventory and lexical alias bindings.
 struct CheckingNominalScope {
     /// Private bindings; only successful checking can transfer this still-valid snapshot into published facts.
-    identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
+    identities: Arc<std::collections::BTreeMap<String, CanonicalSymbolId>>,
     /// Exact alias lookup bindings; local shadows must not reuse the module's alias contributions.
     alias_bindings: Vec<(String, Option<usize>)>,
     /// Declaration and public-type inventory generations, which grow when checking admits another dependency.
@@ -638,7 +641,7 @@ pub struct TypeChecker {
     /// module-local; this map avoids global current-scope identity checks.
     pub current_module_function_symbols: HashMap<String, SymbolId>,
     /// Transparent source type aliases, keyed by their local type name.
-    pub type_aliases: HashMap<String, TypeAliasTarget>,
+    pub type_aliases: IdentityInput<HashMap<String, TypeAliasTarget>>,
     /// Member declarations rejected by the source-ordered shared member registry.
     ///
     /// Collection and semantic checking both consult this set so a later colliding declaration cannot overwrite the
@@ -719,10 +722,14 @@ pub struct TypeChecker {
     /// answer across the dependency boundary.
     pub dependency_direct_member_identities: HashMap<String, HashMap<String, CanonicalSymbolId>>,
     /// Nominal bindings captured in a source declaration's own scope before its signature enters a consumer.
-    /// Contextual empty values use these bindings rather than the caller's same-spelled declarations.
-    declaration_nominal_scopes: HashMap<CanonicalSymbolId, Arc<std::collections::BTreeMap<String, CanonicalSymbolId>>>,
+    /// Contextual empty values use these bindings rather than the caller's same-spelled declarations. A declaration
+    /// and its members share one immutable snapshot instead of retaining a full map for every member.
+    declaration_nominal_scopes:
+        IdentityInput<HashMap<CanonicalSymbolId, Arc<std::collections::BTreeMap<String, CanonicalSymbolId>>>>,
     /// Private value-composition snapshot after declaration collection; lexical alias shadows invalidate it.
     checking_nominal_scope: Option<CheckingNominalScope>,
+    /// Immutable nominal publications, invalidated by the generations of their checked inputs.
+    nominal_identity_cache: RefCell<NominalIdentityCache>,
     /// Original callable signatures before receiver or trait arguments replace their declaration-owned binders.
     declaration_callables: HashMap<CanonicalSymbolId, DeclarationCallableTypes>,
     /// Re-export links a dependency module publishes, keyed by module cache key then exported name.
@@ -790,7 +797,7 @@ pub struct TypeChecker {
     ///
     /// Identity is deliberately separate from [`ResolvedType`]: source diagnostics retain local spellings while
     /// compatibility can still distinguish identical short names owned by separate dependencies.
-    pub public_library_type_identities: HashMap<String, PublicLibraryTypeIdentity>,
+    pub public_library_type_identities: IdentityInput<HashMap<String, PublicLibraryTypeIdentity>>,
     /// Internal semantic trait cache for dependency exports referenced transitively by imported signatures.
     ///
     /// This keeps trait/supertrait compatibility available for imported function signatures without making those trait
@@ -968,7 +975,7 @@ impl TypeChecker {
             receiver_plan_inputs: Default::default(),
             body_ir_decorator_factory_span: None,
             current_module_function_symbols: HashMap::new(),
-            type_aliases: HashMap::new(),
+            type_aliases: HashMap::new().into(),
             rejected_member_bindings: HashSet::new(),
             dependency_import_type_alias_transaction: None,
             validate_source_type_names: false,
@@ -989,8 +996,9 @@ impl TypeChecker {
             dependency_direct_member_symbols: HashMap::new(),
             dependency_direct_member_type_aliases: HashMap::new(),
             dependency_direct_member_identities: HashMap::new(),
-            declaration_nominal_scopes: HashMap::new(),
+            declaration_nominal_scopes: HashMap::new().into(),
             checking_nominal_scope: None,
+            nominal_identity_cache: RefCell::new(NominalIdentityCache::default()),
             declaration_callables: HashMap::new(),
             dependency_member_reexports: HashMap::new(),
             body_ir_dependency_pub_reexports: HashMap::new(),
@@ -1008,7 +1016,7 @@ impl TypeChecker {
             loaves: Arc::new(LoafIndex::default()),
             standard_traits: HashMap::new(),
             transitive_pub_types: HashMap::new(),
-            public_library_type_identities: HashMap::new(),
+            public_library_type_identities: HashMap::new().into(),
             transitive_pub_traits: HashMap::new(),
             cached_pub_libraries: HashSet::new(),
             foreign_pub_type_remappings: HashMap::new(),
@@ -6827,13 +6835,17 @@ impl TypeChecker {
     /// or use [`check_with_imports`](Self::check_with_imports) to import dependencies first.
     pub fn check_program(&mut self, program: &Program) -> Result<(), Vec<CompileError>> {
         let preserve_dependency_semantics = std::mem::take(&mut self.dependency_semantics_pending);
-        self.check_program_internal(program, preserve_dependency_semantics)
+        let result = self.check_program_internal(program, preserve_dependency_semantics);
+        self.clear_nominal_identity_cache();
+        result
     }
 
     /// Check one program while retaining semantic-only type metadata collected from its dependency imports.
     fn check_program_with_dependency_semantics(&mut self, program: &Program) -> Result<(), Vec<CompileError>> {
         self.dependency_semantics_pending = false;
-        self.check_program_internal(program, true)
+        let result = self.check_program_internal(program, true);
+        self.clear_nominal_identity_cache();
+        result
     }
 
     /// Shared program checker with explicit control over dependency-only semantic caches.
@@ -6937,7 +6949,7 @@ impl TypeChecker {
         self.type_info.declarations.named_type_identities = nominal_scope
             .iter()
             .filter(|(name, identity)| {
-                incan_semantics_core::body_ir::nominal_carrier_key(identity).as_ref() == Some(*name)
+                incan_semantics_core::body_ir::nominal_carrier_key(identity).as_deref() == Some(name.as_str())
             })
             .map(|(name, identity)| (name.clone(), identity.clone()))
             .collect();
@@ -7036,11 +7048,7 @@ impl TypeChecker {
 
     /// Publish the checked module-scope nominal and native identity tables Body IR reads, once the module is checked.
     fn publish_checked_nominal_scope(&mut self) {
-        let reusable = self.checked_body_nominal_scope().is_some();
-        self.type_info.declarations.named_type_identities = match self.checking_nominal_scope.take() {
-            Some(scope) if reusable => scope.identities,
-            _ => self.checked_nominal_type_identities(),
-        };
+        self.type_info.declarations.named_type_identities = self.take_checked_nominal_type_identities();
         self.type_info.declarations.body_ir_native_type_identities = self.checked_native_nominal_type_identities();
         self.type_info.body_ir_runtime_types = self.checked_body_ir_runtime_types();
         self.type_info.rust.item_public_paths = self.checked_rust_item_public_paths();
@@ -7245,7 +7253,10 @@ impl TypeChecker {
     ///
     /// Imported source types already carry their declaring identity in the symbol table. Body IR must retain that
     /// fact before publication; recovering it from a spelling in lowering would lose aliases and module ownership.
-    fn checked_nominal_type_identities(&self) -> std::collections::BTreeMap<String, CanonicalSymbolId> {
+    fn compute_nominal_type_identities(
+        &self,
+        mut carrier_key: impl FnMut(&CanonicalSymbolId) -> Option<String>,
+    ) -> std::collections::BTreeMap<String, CanonicalSymbolId> {
         let mut identities = self
             .public_library_type_identities
             .iter()
@@ -7289,6 +7300,7 @@ impl TypeChecker {
         }
         // Declarations from one module share a scope; visit that inventory once, not once per field or method.
         let mut scopes = HashSet::new();
+        let mut seen = HashSet::new();
         let carriers = identities
             .values()
             .chain(
@@ -7297,9 +7309,10 @@ impl TypeChecker {
                     .filter(|scope| scopes.insert(Arc::as_ptr(scope)))
                     .flat_map(|scope| scope.values()),
             )
-            .filter_map(|identity| {
-                incan_semantics_core::body_ir::nominal_carrier_key(identity).map(|key| (key, identity.clone()))
-            })
+            // Declarations and their members share lexical scopes. Visit each snapshot and encode each distinct owner
+            // only once; pointer identity is used only to skip an immutable map already visited in this computation.
+            .filter(|identity| seen.insert(*identity))
+            .filter_map(|identity| carrier_key(identity).map(|key| (key, identity.clone())))
             .collect::<Vec<_>>();
         for (key, identity) in carriers {
             identities.entry(key).or_insert(identity);
@@ -7736,7 +7749,7 @@ impl TypeChecker {
                 direct_projections.insert(name, projection.clone());
             }
         }
-        let scope = Arc::new(self.checked_nominal_type_identities());
+        let scope = self.checked_nominal_type_identities();
         let remapping = scope
             .iter()
             .filter_map(|(name, identity)| {

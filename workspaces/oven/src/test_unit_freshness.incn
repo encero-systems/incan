@@ -4,10 +4,11 @@ from rust::std::fs import OpenOptions, metadata
 from rust::std::process import Command
 from std.fs import Path
 from std.json import JsonValue
-from files import make_directory, read, remove, write as write_file
+from files import json_text, make_directory, read, remove, write as write_file
 from compiler_refusals import check_or_replay, compile_or_replay
 from incan_units import executable_outputs, install_executable, test_report
 from observation import load_ledger
+from native_closure_input import NativeClosureInput, native_bindings
 from standalone_rust import published_bindings
 from scratch import scratch_directory
 from rust_freshness import compilation_observations, inputs_unchanged, library_key
@@ -319,6 +320,7 @@ pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
     scratch = scratch_directory()?
     setup = fixture(scratch.path())?
     first = reconcile(scratch.path(), setup)?
+    verify_closure_readings(scratch.path().joinpath("closure.json"))?
     dependency = artifact_files(Path(setup.unit.loaves[0].dir), "dep")?
     write(dependency[0], "dependency rebuilt with different code")?
     rebuilt = reconcile(scratch.path(), setup)?
@@ -423,6 +425,9 @@ pub def test_toolchain_change_rekeys_every_unit() -> Result[None, str]:
     scratch = scratch_directory()?
     setup = fixture(scratch.path())?
     first = compiler_fingerprint(setup.toolchain)?
+    mut pinned = setup.unit
+    pinned.selected_toolchain = Some(setup.toolchain)
+    assert json_text(pinned.to_json())? == json_text(setup.unit.to_json())?
     assert compiler_fingerprint(setup.toolchain)? == first
     write(Path(setup.toolchain.driver), "driver two, a longer compiler")?
     driver = compiler_fingerprint(setup.toolchain)?
@@ -622,3 +627,40 @@ def rust_pass(setup: RustCrate, compiler: str, feature: str) -> Result[Pass, str
     key = rust_key(compiler, described, manifest, sources, [setup.dependency.0], crates)?
     crates.save()?
     return Ok(Pass(key=key.digest, hashed=crates.hashed, listed=crates.listed))
+
+
+def verify_closure_readings(path: Path) -> Result[None, str]:
+    """Reuse exact linking fields, refresh rewrites, and never let deleted or malformed input serve old fields."""
+    readings = NativeClosureInput()
+    write(path, "{\"search\":[\"first\"],\"externs\":[[\"serde\",\"libserde.rlib\"]],\"unused_receipt\":true}")?
+    first = readings.read(path)?
+    match first.get("unused_receipt"):
+        Some(_) =>
+            assert false, "linking fields must exclude unrelated receipt payloads"
+        None => pass
+    assert json_text(readings.read(path)?)? == json_text(first)?
+    assert first.get("externs") != None
+    assert native_bindings(path, readings)? == [("serde", "libserde.rlib")]
+    write(path, "{\"externs\":[[\"missing_artifact\"]]}")?
+    match native_bindings(path, readings):
+        Ok(_) =>
+            assert false, "a native binding without its artifact was accepted"
+        Err(reason) =>
+            assert "native extern must contain a name and artifact" in reason
+    write(path, "{\"search\":[\"other\"],\"macro_externs\":[]}")?
+    assert json_text(readings.read(path)?)? != json_text(first)?
+    selected = first.require("search").map_err((error) => error.message())?
+    assert json_text(selected)? == "[\"first\"]"
+    write(path, "malformed")?
+    match readings.read(path):
+        Ok(_) =>
+            assert false, "malformed native closure cannot reuse earlier linking fields"
+        Err(_) => pass
+    remove(path)?
+    match readings.read(path):
+        Ok(_) =>
+            assert false, "a deleted native closure cannot reuse earlier linking fields"
+        Err(_) => pass
+    write(path, "{\"search\":[\"first\"],\"externs\":[[\"serde\",\"libserde.rlib\"]],\"unused_receipt\":true}")?
+    assert json_text(readings.read(path)?)? == json_text(first)?
+    return Ok(None)

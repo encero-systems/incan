@@ -19,8 +19,9 @@ from rust_activation import (
     activate_unit,
     version_matches,
 )
-from intake import FeatureDeclaration, feature_declaration
+from intake import FeatureDeclaration, feature_declaration, ManifestReader
 from toml_fields import optional_flag, optional_string, optional_strings, read_manifest, required_string
+from jec import begin, record
 
 
 @derive(Eq)
@@ -225,6 +226,7 @@ def child(
     features: list[str],
     defaults: bool,
     substitutes: Dict[str, str] = {},
+    reader: ManifestReader = ManifestReader(),
 ) -> Result[LocalDemand, str]:
     """
     Resolve an explicitly declared local path, checking its version and procedural-macro domain before selection.
@@ -245,9 +247,9 @@ def child(
     path = located
         .resolve()
         .map_err((error) => f"{parent.project}: dependency `{declaration.alias}` at {located.0}: {error.message()}")?
-    document = read_manifest(path)?
+    document = read_manifest(path, reader)?
     # 2. The Loaf found is the package the edge asked for, so a path that now holds another Loaf is refused.
-    named = names_package(parent, declaration)?
+    named = names_package(parent, declaration, reader)?
     if named and required_string(document, "project.name")? != declaration.package:
         return Err(f"local dependency {declaration.alias} has a different Loaf identity")
     # 3. An edge that states a version accepts only a Loaf of that version.
@@ -262,7 +264,11 @@ def child(
     return Ok(LocalDemand(project=path.0, domain=domain, features=features, defaults=defaults))
 
 
-def names_package(parent: LocalDemand, declaration: RustDependencyDeclaration) -> Result[bool, str]:
+def names_package(
+    parent: LocalDemand,
+    declaration: RustDependencyDeclaration,
+    reader: ManifestReader,
+) -> Result[bool, str]:
     """
     Whether the edge's package name must match the Loaf it reaches.
 
@@ -270,7 +276,7 @@ def names_package(parent: LocalDemand, declaration: RustDependencyDeclaration) -
     """
     if declaration.field[0] != "dependencies":
         return Ok(true)
-    parent_manifest = read_manifest(Path(parent.project))?
+    parent_manifest = read_manifest(Path(parent.project), reader)?
     return Ok(optional_string(parent_manifest, f"dependencies.{declaration.alias}.loaf")? is not None)
 
 
@@ -346,8 +352,10 @@ pub def local_facets(
     root: LocalDemand,
     configuration: TargetConfiguration,
     substitutes: Dict[str, str] = {},
+    reader: ManifestReader = ManifestReader(),
 ) -> Result[list[LocalFacet], str]:
     """Select both languages' edges with one feature engine; substitutes replace packages wherever reached."""
+    clock = begin()
     mut demands: Dict[str, LocalDemand] = {}
     demands = add(demands, root)
     mut previous: Dict[str, LocalDemand] = {}
@@ -359,18 +367,24 @@ pub def local_facets(
         for identity in sorted([name for name in previous.keys()]):
             demand = previous[identity]
             if identity not in selected or selected[identity].demand != demand:
-                facet, children = facet_of(demand, configuration, substitutes)?
+                facet, children = facet_of(demand, configuration, substitutes, reader)?
                 selected[identity] = FacetSelection(demand=demand, facet=facet, children=children)
             choice = selected[identity]
             facets.append(choice.facet)
             for child_demand in choice.children:
                 demands = add(demands, child_demand)
+    mut domain = "target"
+    if root.domain == DependencyDomain.Host:
+        domain = "host"
+    key = (f"{root.project}|{domain}|{configuration.triple}|{",".join(sorted(root.features))}|" + f"{root.defaults}|{root.all_features}")
+    record("graph_resolution", key, clock)
     return Ok(facets)
 
 
 def activated(
     demand: LocalDemand,
     configuration: TargetConfiguration,
+    reader: ManifestReader,
 ) -> Result[Tuple[TomlValue, list[str], list[ActiveEdge]], str]:
     """
     One facet's manifest, catalog, effective features and active edges with the features each requests.
@@ -380,7 +394,7 @@ def activated(
     3. Each active slot becomes an edge with the features and defaults it selects.
     """
     # 1. The authored manifest is the only feature and dependency authority.
-    document = read_manifest(Path(demand.project))?
+    document = read_manifest(Path(demand.project), reader)?
     inputs = catalog(document)?
     requested = requested_features(demand, inputs)
     # 2. The slots are activated for the features demanded and for the domain the demand is built in.
@@ -417,6 +431,7 @@ def facet_of(
     demand: LocalDemand,
     configuration: TargetConfiguration,
     substitutes: Dict[str, str],
+    reader: ManifestReader,
 ) -> Result[Tuple[LocalFacet, list[LocalDemand]], str]:
     """
     One demand's facet, with its effective features and active edges, and the local demands its path edges make.
@@ -426,7 +441,7 @@ def facet_of(
     3. A registry edge becomes a request of the resolver's grammar.
     """
     # 1. Only the edges the demanded features activate take part in the facet.
-    document, features, active = activated(demand, configuration)?
+    document, features, active = activated(demand, configuration, reader)?
     mut local: list[LocalEdge] = []
     mut children: list[LocalDemand] = []
     mut registry: list[JsonValue] = []
@@ -438,7 +453,7 @@ def facet_of(
         # 2 and 3. A path edge reaches a local facet that becomes a demand; a registry edge becomes a resolver request.
         match edge.source:
             RustDependencySource.Path(_, _) =>
-                selected = child(demand, edge, edge_features, defaults, substitutes)?
+                selected = child(demand, edge, edge_features, defaults, substitutes, reader)?
                 local.append(LocalEdge(alias=edge.alias, project=selected.project, domain=selected.domain))
                 children.append(selected)
             RustDependencySource.Registry(_) =>

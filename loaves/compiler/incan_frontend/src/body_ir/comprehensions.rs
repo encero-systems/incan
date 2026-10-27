@@ -390,6 +390,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// iteration primitive [`Self::lower_for`] uses), so comprehensions never duplicate that split. A non-binding
     /// `For` clause pattern lowers to `Unsupported`, matching [`Self::lower_for`]'s own restriction (destructuring
     /// patterns need `match`-shaped compilation, out of scope here).
+    /// A filtered continuation retains owners declared by preceding clauses when the filter skips that continuation.
     pub(super) fn lower_comprehension_clauses(
         &mut self,
         clauses: &[ast::ComprehensionClause],
@@ -407,7 +408,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 let cond_operand = self.lower_expr_to_operand(cond, scope, out);
                 let then_scope = self.new_scope(Some(scope), span);
                 let mut then_stmts = Vec::new();
+                self.conditional_scopes.push(then_scope);
                 self.lower_comprehension_clauses(tail, terminal, then_scope, span, &mut then_stmts);
+                self.conditional_scopes.pop();
                 out.push(bir::Statement {
                     kind: bir::StatementKind::If {
                         cond: cond_operand,

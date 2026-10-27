@@ -2,11 +2,18 @@
 
 from std.fs import Path
 from std.json import JsonValue, parse
+from timing import work_clock, work
 
 
 pub def read(path: Path) -> Result[str, str]:
     """A case file as strict UTF-8."""
-    return path.read_text("utf-8", "strict").map_err((error) => error.message())
+    clock = work_clock()
+    result = path.read_text("utf-8", "strict").map_err((error) => error.message())
+    if clock is not None:
+        match result:
+            Ok(content) => work("runner_file_read", path.0, clock, len(content.encode("utf-8")))
+            Err(_) => work("runner_file_read", path.0, clock)
+    return result
 
 
 pub def write(path: Path, text: str) -> Result[None, str]:
@@ -16,7 +23,13 @@ pub def write(path: Path, text: str) -> Result[None, str]:
 
 pub def read_bytes(path: Path) -> Result[bytes, str]:
     """A case file's bytes."""
-    return path.read_bytes().map_err((error) => error.message())
+    clock = work_clock()
+    result = path.read_bytes().map_err((error) => error.message())
+    if clock is not None:
+        match result:
+            Ok(content) => work("runner_file_read", path.0, clock, len(content))
+            Err(_) => work("runner_file_read", path.0, clock)
+    return result
 
 
 pub def write_bytes(path: Path, content: bytes) -> Result[None, str]:

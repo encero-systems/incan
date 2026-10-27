@@ -113,7 +113,10 @@ def isolated_fixtures(fixtures: list[Fixture], groups: list[list[Entry]]) -> lis
         if len(group) > 1:
             for candidate in group:
                 shared.add(candidate.fixture.case_name())
-    return [fixture for fixture in fixtures if fixture.case_name() not in shared and fixture.family not in ["format", "graph"]]
+    return [fixture for fixture in fixtures if fixture.case_name() not in shared and fixture.family not in [
+        "format",
+        "graph",
+    ]]
 
 
 def load_groups(plan: Path, hint: Option[Path], entries: list[Entry]) -> tuple[list[list[Entry]], bool]:
@@ -198,7 +201,8 @@ def entry(fixture: Fixture) -> Result[Entry, str]:
     if fixture.shape == "module":
         for relative in fixture_files(fixture)?.keys():
             if relative.startswith("src/") and relative.endswith(".incn"):
-                admit_source(read(fixture.entry.joinpath(relative[4:]))?)?
+                module = fixture.entry.joinpath(relative[4:])
+                admit_source(fixture.input.text(module)?)?
     return Ok(Entry(fixture=fixture, source=program.source))
 
 
@@ -245,7 +249,12 @@ pub def run_separate(
         outcomes[names[index]] = results[index]
 
 
-def isolated_request(incan: str, scratch: Path, fixture: Fixture, duration_hint: int = 0) -> Result[Option[Invocation], str]:
+def isolated_request(
+    incan: str,
+    scratch: Path,
+    fixture: Fixture,
+    duration_hint: int = 0,
+) -> Result[Option[Invocation], str]:
     """Prepare an original command; CLI command lists instead execute each invocation during comparison."""
     program = read_program(fixture)?
     if program.header.declares("cli-commands"):
@@ -253,13 +262,15 @@ def isolated_request(incan: str, scratch: Path, fixture: Fixture, duration_hint:
     project = materialize(fixture, scratch)?
     clear_trace(project)?
     return Ok(
-        Some(Invocation(
-            program=incan,
-            arguments=command(fixture, program.header),
-            project=project,
-            selector=None,
-            duration_hint=duration_hint,
-        )),
+        Some(
+            Invocation(
+                program=incan,
+                arguments=command(fixture, program.header),
+                project=project,
+                selector=None,
+                duration_hint=duration_hint,
+            ),
+        ),
     )
 
 

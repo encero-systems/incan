@@ -1,0 +1,158 @@
+# behavior: TOML imports preserve derived round trips, located errors and independent snapshots while typed lookups avoid intermediate snapshots (#1434, #2256)
+# expect-stdout:
+#   demo
+#   name = "demo"
+#   name = "other"
+
+from std import toml
+from std import toml as manifest
+from std.toml import TomlErrorKind, TomlValue
+from rust::std::env import current_exe, var
+from rust::std::process import Command
+from rust::std::string import String as RustString
+from rust::memory_probe import peak_resident_bytes
+
+
+@derive(toml)
+model Project:
+    name: str
+
+
+@derive(manifest)
+model Other:
+    name: str
+
+
+@derive(toml)
+model Timed:
+    """Round-trip a provider-owned newtype through a source model's serde fields."""
+
+    stamp: toml.TomlDatetime
+
+
+@derive(toml)
+model Samples:
+    """Round-trip a typed list through the same imported codec contract."""
+
+    values: list[int]
+
+
+def show(encoded: Result[str, toml.TomlError]) -> str:
+    match encoded:
+        Ok(text) => return text.strip()
+        Err(error) => return error.message()
+
+
+def main() -> Result[None, str]:
+    """1. Measure a fresh child. 2. Preserve codec output. 3. Check lookup ownership and memory."""
+    # 1. Compare document allocation with typed lookup in independent processes.
+    if let Ok(mode) = var("INCAN_TOML_MEMORY_CHILD"):
+        memory_child(mode)?
+        println(peak_resident_bytes().map_err((error) => str(error))?)
+        return Ok(None)
+
+    # 2. Preserve the original codec and table snapshot assertions.
+    project = Project(name="demo")
+    println(project.name)
+    println(show(toml.serialize(project)))
+    println(show(manifest.serialize(Other(name="other"))))
+    match toml.deserialize[Project]("name = \"demo\""):
+        Ok(decoded) =>
+            assert decoded.name == "demo"
+        Err(_error) =>
+            assert false
+
+    match toml.deserialize[Timed]("stamp = 1979-05-27T07:32:00Z"):
+        Ok(decoded) =>
+            assert decoded.stamp.as_str() == "1979-05-27T07:32:00Z"
+            assert show(toml.serialize(decoded)) == "stamp = 1979-05-27T07:32:00Z"
+        Err(_error) =>
+            assert false
+    match toml.deserialize[Samples]("values = [1, 2]"):
+        Ok(decoded) =>
+            assert len(decoded.values) == 2
+            assert decoded.values[0] == 1
+            assert decoded.values[1] == 2
+            match toml.deserialize[Samples](show(toml.serialize(decoded))):
+                Ok(again) =>
+                    assert len(again.values) == 2
+                Err(_error) =>
+                    assert false
+        Err(_error) =>
+            assert false
+    match manifest.parse("name = \"demo\""):
+        Ok(document) =>
+            match document.as_table():
+                Ok(table) =>
+                    assert len(table) == 1
+                Err(_error) =>
+                    assert false
+        Err(_error) =>
+            assert false
+
+    # 3. Keep owned results independent and bound repeated typed reads.
+    lookup_controls()?
+    baseline = measure("baseline")?
+    looked_up = measure("lookup")?
+    assert looked_up <= baseline + baseline // 4 + 16 * 1024 * 1024, f"{looked_up} bytes for {baseline} bytes"
+    return Ok(None)
+
+
+def lookup_controls() -> Result[None, str]:
+    """Retain source locations and owned snapshots after replacing the document."""
+    mut document = toml.parse("[project]\nname = \"demo\"\nvalues = [1, 2]\n").map_err((error) => error.message())?
+    selected = document.get_value("project").map_err((error) => error.message())?
+    typed = document.get[list[int]]("project.values").map_err((error) => error.message())?
+    assert document.get_optional[str]("missing.name").map_err((error) => error.message())? == None
+    for path in ["", "missing..name", "project."]:
+        match document.get_optional[str](path):
+            Err(error) =>
+                assert error.kind == TomlErrorKind.InvalidPath
+            Ok(_) =>
+                assert false, "invalid TOML path succeeded"
+    match document.get[int]("project.name"):
+        Err(error) =>
+            assert error.kind == TomlErrorKind.Type
+            assert error.path == Some("project.name")
+            assert error.line == Some(2)
+        Ok(_) =>
+            assert false, "TOML kind coercion succeeded"
+    document = toml.parse("[project]\nname = \"changed\"\nvalues = [9]\n").map_err((error) => error.message())?
+    assert document.get[str]("project.name").map_err((error) => error.message())? == "changed"
+    assert selected.get_key[str]("name").map_err((error) => error.message())? == "demo"
+    assert typed == [1, 2]
+    return Ok(None)
+
+
+def memory_child(mode: str) -> Result[None, str]:
+    """Keep a large string document observable during repeated typed selections."""
+    owner = large_document()?
+    if mode == "lookup":
+        for _ in range(8):
+            selected = owner.get[str]("project.payload").map_err((error) => error.message())?
+            assert len(selected) == 33554432
+    assert owner.get[int]("project.marker").map_err((error) => error.message())? == 7
+    return Ok(None)
+
+
+def large_document() -> Result[TomlValue, str]:
+    """Build one large source without intermediate growing-string snapshots."""
+    mut source = RustString.with_capacity(33555000)
+    source.push_str("[project]\nmarker = 7\npayload = \"")
+    mut block = "x"
+    for _ in range(10):
+        block += block
+    for _ in range(32768):
+        source.push_str(block)
+    source.push_str("\"\n")
+    return toml.parse(str(source)).map_err((error) => error.message())
+
+
+def measure(mode: str) -> Result[int, str]:
+    """Return the resident high-water mark from one successful fresh child."""
+    executable = current_exe().map_err((error) => str(error))?
+    output = Command.new(executable).env("INCAN_TOML_MEMORY_CHILD", mode).output().map_err((error) => str(error))?
+    if not output.status.success():
+        return Err(f"TOML memory child failed: {mode}")
+    text = RustString.from_utf8(output.stdout).map_err((error) => str(error))?
+    return Ok(int(text.strip()))

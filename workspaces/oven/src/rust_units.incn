@@ -10,7 +10,7 @@ uses those bindings instead of inferring a dependency's identity from an artifac
 """
 
 from rust::std::process import Command, id
-from std.toml import TomlValue, parse as parse_toml
+from std.toml import TomlValue
 from std.fs import Path
 from std.json import JsonValue
 from std.hash import sha256
@@ -20,9 +20,11 @@ from driver_command import driver_command
 from files import json_text, parse_json, read, read_json
 from home import dependency_artifact_dir, unit_ledger
 from json_fields import field, required_items, required_text, strings
-from intake import library_source, read_project
+from intake import library_source, read_project, ManifestReader
+from native_closure_input import NativeClosureInput
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
 from observation import SETTLE_SECONDS, load_ledger, observe, trace
+from jec import begin, record as record_work
 from publication import place, publish
 from rust_activation import DependencyDomain
 from registry_units import RegistryUnit, RegistrySelection, RegistryDemand, RegistryUnits, is_dynamic_library
@@ -86,6 +88,7 @@ pub model BuiltUnit:
 pub def read_registry_units(
     path: Path,
     project: str = "",
+    reader: ManifestReader = ManifestReader(),
 ) -> Result[RegistryUnits, str]:
     """
     Registry units from a closure result (`incan.oven.closure/1`): every compiled unit and its store directory.
@@ -95,6 +98,7 @@ pub def read_registry_units(
     3. Each unit is read with its store directory, and those directories are the search path.
     """
     # 1. Only a closure of this version describes units the way the rest of Oven reads them.
+    clock = begin()
     document = read_json(path)?
     schema = required_text(document, "schema")?
     if schema != CLOSURE_SCHEMA:
@@ -109,6 +113,7 @@ pub def read_registry_units(
         units.append(unit)
         if unit.directory not in search:
             search.append(unit.directory)
+    record_work("registry_index", path.0, clock)
     completed = complete_legacy(units)?
     registry = RegistryUnits(
         units=completed,
@@ -116,12 +121,12 @@ pub def read_registry_units(
         anchors=[],
         recorded_bindings=recorded_registry_bindings(completed, path)?,
     )
-    return project_registry(registry, project)
+    return project_registry(registry, project, reader)
 
 
-def project_registry(registry: RegistryUnits, project: str) -> Result[RegistryUnits, str]:
+def project_registry(registry: RegistryUnits, project: str, reader: ManifestReader) -> Result[RegistryUnits, str]:
     """A project's explicit build.registry-lock supersedes the installation's standard-producer root selection."""
-    path = registry_record_path(project)?
+    path = registry_record_path(project, reader)?
     if path == "":
         return Ok(registry)
     mut selected = registry
@@ -129,11 +134,11 @@ def project_registry(registry: RegistryUnits, project: str) -> Result[RegistryUn
     return Ok(selected)
 
 
-pub def registry_record_path(project: str) -> Result[str, str]:
+pub def registry_record_path(project: str, reader: ManifestReader) -> Result[str, str]:
     """Locate a project's explicit producer record for ordinary preparation and resident input observation."""
     if project == "" or not Path(project).joinpath("loaf.toml").is_file():
         return Ok("")
-    manifest = read_manifest(Path(project))?
+    manifest = read_manifest(Path(project), reader)?
     match optional_string(manifest, "build.registry-lock")?:
         None => return Ok("")
         Some(path) =>
@@ -254,7 +259,11 @@ model RustBinaries:
     sysroot: bool
 
 
-pub def rust_facet(project: str, required: bool = true) -> Result[RustFacet, str]:
+pub def rust_facet(
+    project: str,
+    required: bool = true,
+    reader: ManifestReader = ManifestReader(),
+) -> Result[RustFacet, str]:
     """
     The Rust crate a local Loaf's manifest declares; an Incan consumer may have no Rust facet of its own.
 
@@ -265,8 +274,8 @@ pub def rust_facet(project: str, required: bool = true) -> Result[RustFacet, str
     """
     root = Path(project)
     # 1. The package, its crate name and its edition come from the manifest, with the documented fallbacks.
-    project_intent = read_project(root).map_err((error) => error.message())?
-    document = parse_toml(project_intent.evidence.source).map_err((error) => error.message())?
+    project_intent = read_project(root, reader).map_err((error) => error.message())?
+    document = project_intent.parsed
     package = required_string(document, "project.name")?
     crate_name = crate_name_of(document, package)?
     edition = project_intent.intent.rust_edition
@@ -277,7 +286,7 @@ pub def rust_facet(project: str, required: bool = true) -> Result[RustFacet, str
     binaries = read_binaries(document, root)?
     # 4. An Incan library supplies its compiled Rust crate; a project with neither language's crate is refused.
     if required and kind == "":
-        source = library_source(root)?
+        source = library_source(root, reader)?
         if source.is_file():
             kind = "incan"
             library = source
@@ -391,13 +400,15 @@ pub model RustBuild:
     # Loaves to use in place of the Loaf of a package name, wherever the graph reaches it.
     pub substitutes: Dict[str, str] = {}
     # The Incan unit orchestrator supplies its compiler without a reverse module dependency.
-    pub incan_compiler: Option[(str, str, list[str], str, list[Tuple[str, str]], list[Tuple[str, str]], list[str], Toolchain, str) -> Result[i32, str]] = None
+    pub incan_compiler: Option[(str, str, list[str], str, list[Tuple[str, str]], list[Tuple[str, str]], list[str], Toolchain, str, ManifestReader) -> Result[i32, str]] = None
     # The toolchain's own search directories. An Incan provider's native closure leaves them to the search index, so a
     # Rust facet, which rustc links directly, searches them beside the registry's.
     pub toolchain_search: list[str] = []
     # One installed generation is selected for the whole build, including Incan providers.
     pub toolchain: Option[Toolchain] = None
     pub compiler: str = ""
+    # All provider callbacks share the preparation's exact source readings.
+    pub manifests: ManifestReader = ManifestReader()
 
 
 pub def rust_output(project: Path, profile: str) -> Path:
@@ -456,10 +467,10 @@ def build_prepared_rust(request: RustBuild) -> Result[list[str], str]:
         defaults=request.default_features,
         all_features=request.all_features,
     )
-    facets = ordered(local_facets(demand, configuration, request.substitutes)?)?
+    facets = ordered(local_facets(demand, configuration, request.substitutes, request.manifests)?)?
     mut request = request
     request.registry = selected_registry(request.registry, facets, request.profile)?
-    validate_incan_packages(facets, root.0)?
+    validate_incan_packages(facets, root.0, request.manifests)?
     output = rust_output(root, request.profile)
     # 2. A unit that fails blocks only the units that link it, so every other unit is still attempted.
     mut built: Dict[str, BuiltUnit] = {}
@@ -570,7 +581,7 @@ def build_prepared_dependencies(
     Analysis may leave out the project's own library (`include_root` false) when no binary links it.
     """
     root = Path(request.project).resolve().map_err((error) => error.message())?
-    validate_incan_packages(facets, root.0)?
+    validate_incan_packages(facets, root.0, request.manifests)?
     output = rust_output(root, request.profile)
     mut built: Dict[str, BuiltUnit] = {}
     # The libraries built for the graph; `linking` adds the registry's and the toolchain's directories.
@@ -579,7 +590,7 @@ def build_prepared_dependencies(
         own = facet.project == request.project and facet.domain == DependencyDomain.Target
         if own and not include_root:
             continue
-        declared = rust_facet(facet.project, not own)?
+        declared = rust_facet(facet.project, not own, request.manifests)?
         if declared.kind == "":
             if own:
                 continue
@@ -590,13 +601,13 @@ def build_prepared_dependencies(
     return Ok(built)
 
 
-def validate_incan_packages(facets: list[LocalFacet], root: str) -> Result[None, str]:
+def validate_incan_packages(facets: list[LocalFacet], root: str, reader: ManifestReader) -> Result[None, str]:
     """Preserve the path-library identity rule before two different providers could overwrite one package artifact."""
     mut names: Dict[str, str] = {}
     for facet in facets:
-        if facet.project == root or not library_source(Path(facet.project))?.is_file():
+        if facet.project == root or not library_source(Path(facet.project), reader)?.is_file():
             continue
-        package = required_string(read_manifest(Path(facet.project))?, "project.name")?
+        package = required_string(read_manifest(Path(facet.project), reader)?, "project.name")?
         if package in names and names[package] != facet.project:
             return Err(f"path dependencies {names[package]} and {facet.project} share package name `{package}`")
         names[package] = facet.project
@@ -612,7 +623,7 @@ def unit_outputs(
     search: list[str],
 ) -> Result[Tuple[Option[BuiltUnit], list[str]], str]:
     """Compile one facet's library, and the root facet's binaries."""
-    declared = rust_facet(facet.project)?
+    declared = rust_facet(facet.project, true, request.manifests)?
     mut library: Option[BuiltUnit] = None
     mut local_built = built
     if declared.kind != "":
@@ -770,7 +781,7 @@ pub def compile_library(
     search: list[str],
 ) -> Result[BuiltUnit, str]:
     """Prepare a foreign Incan provider's complete facade, or the Rust facet of the root or a Rust-only dependency."""
-    source = library_source(Path(facet.project))?
+    source = library_source(Path(facet.project), request.manifests)?
     if source.is_file():
         root = Path(request.project).resolve().map_err((error) => error.message())?
         if facet.project != root.0:
@@ -920,10 +931,13 @@ def compile_incan_library(
     loaves = incan_artifacts(built)
     # 2. The graph already prepared every dependency; the source compiler only binds these selected artifacts.
     mut code: i32 = 1
+    mut readings = NativeClosureInput()
     match request.incan_compiler:
         Some(compile) =>
-            source = library_source(Path(facet.project))?
+            source = library_source(Path(facet.project), request.manifests)?
             selected = [(binding.name, binding.path) for binding in bindings]
+            toolchain = selected_toolchain(request)?
+            readings = toolchain.native_closures
             code = compile(
                 source.0,
                 request.profile,
@@ -932,8 +946,9 @@ def compile_incan_library(
                 selected,
                 loaves,
                 dependency_search,
-                selected_toolchain(request)?,
+                toolchain,
                 request.compiler,
+                request.manifests,
             )?
         None => return Err(f"no Incan unit compiler was supplied for {declared.package}")
     if code != 0:
@@ -944,17 +959,17 @@ def compile_incan_library(
             crate_name=compiled_name,
             artifact=artifact.0,
             directory=directory.0,
-            search=native_search(directory.joinpath(f"{declared.package}.native.json"))?,
+            search=native_search(directory.joinpath(f"{declared.package}.native.json"), readings)?,
             loaf=declared.package,
         ),
     )
 
 
-pub def native_search(closure: Path) -> Result[list[str], str]:
+pub def native_search(closure: Path, readings: NativeClosureInput = NativeClosureInput()) -> Result[list[str], str]:
     """Read a Loaf's transitive search directories, resolving packed paths relative to its artifact directory."""
     if not closure.is_file():
         return Ok([])
-    return closure_search(closure, read_json(closure)?)
+    return closure_search(closure, readings.read(closure)?)
 
 
 pub def closure_search(closure: Path, document: JsonValue) -> Result[list[str], str]:

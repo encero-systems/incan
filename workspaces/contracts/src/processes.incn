@@ -1,13 +1,11 @@
-"""
-One `incan` invocation: the command line a family's case runs, in the case's project, with what it showed.
-"""
+"""One `incan` invocation: the command line a family's case runs, in the case's project, with what it showed."""
 
 from rust::std::fs import File
 from rust::std::os::unix::process import CommandExt
 from rust::std::process import Child, Command, Stdio
 from rust::std::time import Instant
 from std.fs import Path
-
+from timing import work, work_clock
 
 # A deadline is explicit; zero means an invocation may run for as long as it takes.
 static timeout_seconds: int = 0
@@ -91,7 +89,10 @@ pub def launch(
     for argument in arguments:
         command.arg(argument)
     command.current_dir(project.0)
-    match command.spawn():
+    clock = work_clock()
+    started = command.spawn()
+    work("runner_spawn", f"{project.0}|{incan}|{" ".join(arguments)}", clock)
+    match started:
         Err(error) => return Err(f"cannot start `{incan}`: {error}")
         Ok(child) => return Ok(child)
 
@@ -105,7 +106,8 @@ def environment_setting(setting: str) -> Result[tuple[str, str], str]:
 
 
 pub def expired(clock: Instant, deadline_seconds: int = 0) -> bool:
-    """Whether the user deadline or a speculative attempt's shorter deadline has elapsed.
+    """
+    Whether the user deadline or a speculative attempt's shorter deadline has elapsed.
 
     1. Select the earliest enabled deadline.
     2. Compare it with this child's elapsed time.
@@ -134,7 +136,8 @@ pub def terminate_group(pid: int) -> Result[None, str]:
 
 
 pub def finish(project: Path, code: Option[int], timed_out: bool, deadline_seconds: int = 0) -> Result[Outcome, str]:
-    """Collect strict UTF-8 streams after reaping, preserving signals and a deadline's partial output.
+    """
+    Collect strict UTF-8 streams after reaping, preserving signals and a deadline's partial output.
 
     1. Read and remove this invocation's captured streams.
     2. Include the effective deadline when it expired.

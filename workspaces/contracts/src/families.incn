@@ -11,9 +11,8 @@ The contract families: what each one runs and which expectations it admits.
   active features, or a refusal; explicit CLI invocation lists instead compare each command's output and status.
 """
 
-from files import read
 from fixture import Fixture
-from header import Header, parse_header
+from header import Header
 
 pub const FAMILIES: FrozenList[str] = [
     "behavior",
@@ -59,12 +58,12 @@ pub def read_program(fixture: Fixture) -> Result[AdmittedProgram, str]:
     """
     program = fixture.program
     # 1. The program is read whole, and a refusal names the path it came from.
-    source = read(program).map_err((reason) => f"{program.0}: {reason}")?
+    input = fixture.input.program(program).map_err((reason) => f"{program.0}: {reason}")?
     # 2. The header the program begins with is parsed from that source.
-    header = parse_header(source).map_err((reason) => f"{program.0}: {reason}")?
+    header = input.header
     # 3. The header and the fixture's shape are admitted for the fixture's family before anything is run.
     admit(fixture, header).map_err((reason) => f"{program.0}: {reason}")?
-    return Ok(AdmittedProgram(source=source, header=header))
+    return Ok(AdmittedProgram(source=input.source, header=header))
 
 
 def admitted(family: str, cli: bool = false) -> list[str]:

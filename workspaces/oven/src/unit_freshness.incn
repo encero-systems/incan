@@ -24,6 +24,7 @@ from home import unit_ledger
 from loaf_local_graph import unique
 from manifest_vocabulary import manifest_vocabulary
 from observation import Ledger, SETTLE_SECONDS, load_ledger, observe, trace
+from jec import begin, record as record_work
 from publication import place, publish
 from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription
@@ -57,7 +58,10 @@ pub def artifact_identity(path: Path) -> Result[str, str]:
     change: replacing the file changes the inode, and rewriting it in place changes the status change time even when
     the modification time is put back.
     """
-    return Ok(observe(path)?.stamp)
+    clock = begin()
+    result = observe(path)
+    record_work("artifact_identity", path.0, clock)
+    return Ok(result?.stamp)
 
 
 pub model Key:

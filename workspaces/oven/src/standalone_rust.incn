@@ -2,7 +2,7 @@
 
 from std.fs import Path
 from std.json import JsonValue
-from files import make_directory, parse_json, read_json, write
+from files import make_directory, parse_json, write
 from driver_command import driver_command
 from home import standard_packages
 from json_fields import array, field, required_text, strings
@@ -10,9 +10,11 @@ from loaf_local_graph import unique
 from rust_units import RegistrySelection, decoded, read_registry_units
 from registry_units import RegistryDemand
 from registry_metadata import bound_entries
+from native_closure_input import native_bindings
 from toml_fields import optional_string, optional_strings, read_manifest
 from toolchain import NativeCrate, Toolchain, located
 from unit import UnitDescription
+from jec import begin, record
 
 
 pub def standalone_crates(described: UnitDescription, toolchain: Toolchain) -> Result[list[NativeCrate], str]:
@@ -31,7 +33,7 @@ pub def standalone_crates(described: UnitDescription, toolchain: Toolchain) -> R
     if len(selections) == 0:
         return Ok([])
     # 3. The ordinary registry resolver selects exact artifacts and refuses missing or ambiguous units.
-    mut available = read_registry_units(Path(toolchain.registry_units), described.project_root)?
+    mut available = read_registry_units(Path(toolchain.registry_units), described.project_root, described.manifests)?
     for entry in bound_entries(
         available.units,
         published_bindings(described, toolchain, [name for name in selections.keys()])?,
@@ -58,19 +60,9 @@ pub def published_bindings(unit: UnitDescription, toolchain: Toolchain, roots: l
         closure = Path(loaf.dir).joinpath(f"{loaf.name}.native.json")
         if not closure.is_file():
             continue
-        document = read_json(closure)?
-        match document.get("externs"):
-            None => continue
-            Some(value) =>
-                for item in value.expect_array().map_err((error) => error.message())?:
-                    binding = item.expect_array().map_err((error) => error.message())?
-                    if len(binding) != 2:
-                        return Err(f"{closure.0}: native extern must contain a name and artifact")
-                    name = binding[0].expect_str().map_err((error) => error.message())?
-                    if name not in roots:
-                        continue
-                    artifact = binding[1].expect_str().map_err((error) => error.message())?
-                    paths.append(located(closure.parent(), artifact))
+        for name, artifact in native_bindings(closure, toolchain.native_closures)?:
+            if name in roots:
+                paths.append(located(closure.parent(), artifact))
     return Ok(unique(paths))
 
 
@@ -83,7 +75,9 @@ def source_requests(unit: UnitDescription, toolchain: Toolchain) -> Result[list[
     mut command = driver_command(toolchain)?
     command.arg("--rust-imports")
     command.arg(path.0)
+    clock = begin()
     output = command.output().map_err((error) => error.to_string())?
+    record("driver_spawn", f"--rust-imports {path.0}", clock)
     if not output.status.success():
         return Err(decoded(output.stderr))
     return array(parse_json(decoded(output.stdout))?, []).map_err((_) => "invalid Rust import records")

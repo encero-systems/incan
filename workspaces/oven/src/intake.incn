@@ -9,6 +9,11 @@ from std.hash import sha256
 from std.graph import Dag, NodeId
 from rust::std::str import from_utf8
 from manifest_errors import IntakeError, IntakeErrorKind
+from jec import begin, record, text_size
+from observation import observe
+from rust::std::rc import Rc
+from rust::std::cell import RefCell
+from rust::std::ops import DerefMut
 
 # The manifest's tables.
 const ROOT_TABLES: FrozenList[str] = [
@@ -118,6 +123,8 @@ pub model LocalProject:
     pub root: str
     pub evidence: ManifestEvidence
     pub intent: ProjectIntent
+    # The same parse used for intent, retained for dependency and Rust-facet views.
+    pub parsed: TomlValue
 
 
 pub model DependencyEdge:
@@ -133,6 +140,33 @@ pub model LocalIntake:
 
     pub projects: list[LocalProject]
     pub edges: list[DependencyEdge]
+
+
+pub model ManifestSnapshot:
+    """One exact source generation and its parsed document, before any view imposes its own validation policy."""
+
+    pub evidence: ManifestEvidence
+    pub parsed: TomlValue
+
+
+model ManifestReading:
+    """A parsed snapshot bound to the unchanged filesystem generation it was read from."""
+
+    stamp: str
+    snapshot: ManifestSnapshot
+
+
+model ManifestStore:
+    """Mutable memo state owned by one preparation context, never by process-global collection storage."""
+
+    pub manifests: Dict[str, ManifestReading] = {}
+    pub projects: Dict[str, LocalProject] = {}
+
+
+pub model ManifestReader:
+    """One preparation's shared source readings; cloning its handle never snapshots the memo's document trees."""
+
+    pub state: Rc[RefCell[ManifestStore]] = Rc.new(RefCell.new(ManifestStore()))
 
 
 def refusal(manifest: str, field: list[str], kind: IntakeErrorKind, detail: str) -> IntakeError:
@@ -177,7 +211,10 @@ def required(values: Dict[str, TomlValue], key: str, manifest: str, field: list[
 
 pub def parse_intent(source: str, manifest: str) -> Result[ProjectIntent, IntakeError]:
     """Parse effective intent and retain source spans for literal diagnostic key paths."""
-    return parse_raw_intent(source, manifest).map_err((error) => error.with_source(source))
+    clock = begin()
+    result = parse_raw_intent(source, manifest).map_err((error) => error.with_source(source))
+    record("manifest_parse", manifest, clock, text_size(source, clock))
+    return result
 
 
 pub model ManifestDocument:
@@ -208,18 +245,40 @@ pub def parse_document(raw: bytes, manifest: str) -> Result[ManifestDocument, In
     ", "loaf.toml")?
             assert document.intent.name == "catalog"
     """
+    snapshot = decoded_manifest(raw, manifest)?
+    intent = intent_from_snapshot(snapshot)?
+    return Ok(ManifestDocument(intent=intent, evidence=snapshot.evidence))
+
+
+def decoded_manifest(raw: bytes, manifest: str) -> Result[ManifestSnapshot, IntakeError]:
+    """Parse and hash one immutable byte snapshot once, retaining provenance for every later view."""
     source = str(from_utf8(raw).map_err((error) => refusal(manifest, [], IntakeErrorKind.Invalid, str(error)))?)
-    # TODO: inline this binding once #1462 is fixed. Named constructor arguments reorder evaluation and can
-    # move a value before an earlier argument reads it, so the parse is sequenced explicitly.
-    intent = parse_intent(source, manifest)?
+    mut clock = begin()
+    parsed = toml.parse(source)
+    record("manifest_parse", manifest, clock, len(raw))
+    document = parsed.map_err((error) => refusal(manifest, [], IntakeErrorKind.Invalid, error.message()))?
+    clock = begin()
     digest = sha256.digest(raw)
+    record("file_hash", manifest, clock, len(raw))
     evidence = ManifestEvidence(path=manifest, raw_bytes=raw, source=source, sha256_digest=digest)
-    return Ok(ManifestDocument(intent=intent, evidence=evidence))
+    return Ok(ManifestSnapshot(evidence=evidence, parsed=document))
+
+
+def intent_from_snapshot(snapshot: ManifestSnapshot) -> Result[ProjectIntent, IntakeError]:
+    """Validate an already parsed source generation, attaching errors to the exact bytes that produced it."""
+    return intent_from_document(snapshot.parsed, snapshot.evidence.path).map_err(
+        (error) => error.with_source(snapshot.evidence.source),
+    )
 
 
 def parse_raw_intent(source: str, manifest: str) -> Result[ProjectIntent, IntakeError]:
     """Validate every supported table before projecting effective local intent."""
     parsed = toml.parse(source).map_err((error) => refusal(manifest, [], IntakeErrorKind.Invalid, error.message()))?
+    return intent_from_document(parsed, manifest)
+
+
+def intent_from_document(parsed: TomlValue, manifest: str) -> Result[ProjectIntent, IntakeError]:
+    """Project effective intent from an existing parse without rereading or reinterpreting source bytes."""
     root = table(parsed, manifest, [])?
     if "sdk" in root:
         return Err(
@@ -397,8 +456,7 @@ def feature_cycle(features: Dict[str, FeatureDeclaration]) -> str:
         mut chain: list[str] = [start]
         mut frontier: list[list[str]] = [chain]
         while len(frontier) > 0:
-            path = frontier[len(frontier) - 1]
-            frontier = frontier[0:len(frontier) - 1]
+            path = frontier.pop()
             last = path[len(path) - 1]
             if last not in features:
                 continue
@@ -798,12 +856,59 @@ def request_flag(value: TomlValue, manifest: str, field: list[str]) -> Result[bo
     return value.as_bool().map_err((error) => refusal(manifest, field, IntakeErrorKind.Invalid, error.message()))
 
 
-pub def read_project(root: Path) -> Result[LocalProject, IntakeError]:
-    """Read one manifest snapshot and its authored intent without imposing an executable entry policy."""
+pub def read_manifest_snapshot(
+    root: Path,
+    reader: ManifestReader = ManifestReader(),
+) -> Result[ManifestSnapshot, IntakeError]:
+    """
+    Read and parse one file generation for the current command, without imposing project-intent policy.
+
+    Reuse requires the same filesystem identity. A rewrite or replacement is read again, a missing file refuses,
+    and a generation changed during the read never enters the snapshot table. The caller owns the context's lifetime.
+    """
+    mut held = reader.state.as_ref().borrow_mut()
+    return snapshot_in(root, held.deref_mut())
+
+
+def snapshot_in(root: Path, mut store: &mut ManifestStore) -> Result[ManifestSnapshot, IntakeError]:
+    """Read or recall a snapshot while holding the preparation's one mutable memo view."""
     manifest = root.joinpath("loaf.toml")
+    observed = observe(manifest).map_err((error) => refusal(manifest.0, [], IntakeErrorKind.Missing, error))?
+    if manifest.0 in store.manifests:
+        previous = store.manifests[manifest.0]
+        if previous.stamp == observed.stamp:
+            return Ok(previous.snapshot)
+    clock = begin()
     raw = manifest.read_bytes().map_err((error) => refusal(manifest.0, [], IntakeErrorKind.Missing, error.message()))?
-    document = parse_document(raw, manifest.0)?
-    return Ok(LocalProject(root=root.0, intent=document.intent, evidence=document.evidence))
+    record("file_read", manifest.0, clock, len(raw))
+    snapshot = decoded_manifest(raw, manifest.0)?
+    current = observe(manifest).map_err((error) => refusal(manifest.0, [], IntakeErrorKind.Missing, error))?
+    if current.stamp == observed.stamp:
+        store.manifests[manifest.0] = ManifestReading(stamp=observed.stamp, snapshot=snapshot)
+    return Ok(snapshot)
+
+
+pub def read_project(root: Path, reader: ManifestReader = ManifestReader()) -> Result[LocalProject, IntakeError]:
+    """Normalize one parsed generation once, preserving its raw evidence and the independent parsed view."""
+    snapshot = read_manifest_snapshot(root, reader)?
+    mut held = reader.state.as_ref().borrow_mut()
+    return project_in(root, snapshot, held.deref_mut())
+
+
+def project_in(
+    root: Path,
+    snapshot: ManifestSnapshot,
+    mut store: &mut ManifestStore,
+) -> Result[LocalProject, IntakeError]:
+    """Normalize an exact snapshot once within the caller-owned preparation context."""
+    if root.0 in store.projects:
+        previous = store.projects[root.0]
+        if previous.evidence.sha256_digest == snapshot.evidence.sha256_digest:
+            return Ok(previous)
+    intent = intent_from_snapshot(snapshot)?
+    project = LocalProject(root=root.0, intent=intent, evidence=snapshot.evidence, parsed=snapshot.parsed)
+    store.projects[root.0] = project
+    return Ok(project)
 
 
 pub def source_root_of(project: LocalProject) -> str:
@@ -820,15 +925,15 @@ def source_root_for(root: Path, intent: ProjectIntent) -> str:
     return root.0
 
 
-pub def library_source(root: Path) -> Result[Path, str]:
+pub def library_source(root: Path, reader: ManifestReader = ManifestReader()) -> Result[Path, str]:
     """Locate an Incan library through the same source-root policy as its compiler unit."""
-    project = read_project(root).map_err((error) => error.message())?
+    project = read_project(root, reader).map_err((error) => error.message())?
     return Ok(Path(source_root_of(project)).joinpath("lib.incn"))
 
 
-pub def load_project(root: Path) -> Result[LocalProject, IntakeError]:
+pub def load_project(root: Path, reader: ManifestReader = ManifestReader()) -> Result[LocalProject, IntakeError]:
     """Validate script paths against one snapshot; conventional libraries and test-only packages need no script."""
-    project = read_project(root)?
+    project = read_project(root, reader)?
     intent = project.intent
     source = project.evidence.source
     manifest = root.joinpath("loaf.toml")
@@ -886,7 +991,7 @@ def declares_no_entry(root: Path, intent: ProjectIntent) -> bool:
     return len(intent.scripts) == 0 and not has_library and not root.joinpath("tests").is_dir()
 
 
-pub def intake(root: Path) -> Result[LocalIntake, IntakeError]:
+pub def intake(root: Path, reader: ManifestReader = ManifestReader()) -> Result[LocalIntake, IntakeError]:
     """
     Read reachable local package requests and return their dependency-first topology.
 
@@ -910,7 +1015,7 @@ pub def intake(root: Path) -> Result[LocalIntake, IntakeError]:
     mut edges: list[DependencyEdge] = []
     mut index = 0
     while index < len(roots):
-        project = load_project(Path(roots[index]))?
+        project = load_project(Path(roots[index]), reader)?
         for dependency in project.intent.dependencies:
             if dependency.rust_facet:
                 continue

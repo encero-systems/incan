@@ -3,6 +3,44 @@
 from rust::std::time import Instant
 from std.fs import Path
 from std.environ import get_or
+from rust::std::process import id
+from std.json import JsonValue
+
+
+pub def work_clock() -> Option[Instant]:
+    """Read an audit clock only when INCAN_JEC_TRACE requests work observations."""
+    if get_or("INCAN_JEC_TRACE", "") == "":
+        return None
+    return Some(Instant.now())
+
+
+pub def work(category: str, input: str, clock: Option[Instant], bytes: int = 0) -> None:
+    """Record measured runner work separately from outcomes; unavailable observation storage changes no result."""
+    match clock:
+        None => return
+        Some(started) =>
+            fields = JsonValue.object(
+                {"schema": JsonValue.string("incan.jec/1"), "process": JsonValue.int(int(id())), "category": JsonValue.string(
+                    category,
+                ), "input": JsonValue.string(input), "nanoseconds": JsonValue.int(int(started.elapsed().as_nanos())), "bytes": JsonValue.int(
+                    bytes,
+                ), "allocations": JsonValue.null()},
+            )
+            match fields.to_json():
+                Err(_) => return
+                Ok(text) => append_work(text)
+
+
+def append_work(text: str) -> None:
+    """Append one runner's rows without mixing them into its program streams or another process's trace."""
+    directory = get_or("INCAN_JEC_TRACE", "")
+    if directory == "":
+        return
+    match Path(directory).joinpath(f"contracts-{id()}.jsonl").open("a"):
+        Err(_) => pass
+        Ok(opened) =>
+            mut sink = opened
+            _ = sink.write(text + "\n")
 
 
 pub def elapsed_hint(project: Path) -> int:

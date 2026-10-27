@@ -13,6 +13,7 @@ from semver_req import parse_version, parse_requirement, requirement_matches
 from std.collections import Deque, OrderedSet
 from rust_source import RustDependencyCatalog, RustDependencyDeclaration, RustDependencyRole, RustDependencySource
 from manifest_errors import IntakeError, IntakeErrorKind
+from jec import begin, record
 
 
 @derive(Eq)
@@ -340,7 +341,7 @@ def expand_features(
     for symbol in forwarding:
         match symbol:
             FeatureSymbol.DependencyFeature(alias, _, false) =>
-                if alias in context.explicit_optional_aliases and alias not in activated.to_list():
+                if alias in context.explicit_optional_aliases and alias not in activated:
                     return Err(
                         refusal(
                             manifest,
@@ -399,6 +400,7 @@ pub def activate_unit(
     selected dependency graph: Active slots require exact child
     source bindings before registration with the semantic projection. Inactive slots retain their original index.
     """
+    clock = begin()
     if context.host.triple == "" or context.target.triple == "":
         return Err(refusal(manifest, [], IntakeErrorKind.Missing, "original host and target identities"))
     restrictions = slot_restrictions(catalog, context, manifest)?
@@ -412,6 +414,12 @@ pub def activate_unit(
     mut slots: list[SlotDemand] = []
     for declaration in catalog.dependencies:
         slots.append(slot_demand(declaration, restrictions[declaration.index], closure, context.domain))
+    key = (
+        f"{manifest}|{context.domain.value()}|{context.purpose.value()}|{context.host.triple}|{context.target.triple}|" + f"{",".join(
+            sorted(context.requested_features),
+        )}|{context.default_features}"
+    )
+    record("feature_resolution", key, clock)
     return Ok(RustActivation(effective_features=closure.names, slots=slots))
 
 

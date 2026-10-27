@@ -3,11 +3,18 @@
 from rust::std::fs import File, OpenOptions
 from std.fs import Path
 from std.json import JsonValue, parse
+from jec import begin, record, text_size
 
 
 pub def read(path: Path) -> Result[str, str]:
     """A file as strict UTF-8 text."""
-    return path.read_text("utf-8", "strict").map_err((error) => error.message())
+    clock = begin()
+    result = path.read_text("utf-8", "strict").map_err((error) => error.message())
+    if clock is not None:
+        match result:
+            Ok(content) => record("file_read", path.0, clock, text_size(content, clock))
+            Err(_) => record("file_read", path.0, clock)
+    return result
 
 
 pub def write(path: Path, text: str) -> Result[None, str]:
@@ -40,8 +47,11 @@ pub def make_directory(path: Path) -> Result[None, str]:
 
 pub def read_json(path: Path) -> Result[JsonValue, str]:
     """A JSON document from a file; a failure names the file."""
-    text = path.read_text("utf-8", "strict").map_err((error) => f"{path.0}: {error.message()}")?
-    return parse(text).map_err((error) => f"{path.0}: {error.message()}")
+    text = read(path).map_err((error) => f"{path.0}: {error}")?
+    clock = begin()
+    result = parse(text).map_err((error) => f"{path.0}: {error.message()}")
+    record("json_decode", path.0, clock, text_size(text, clock))
+    return result
 
 
 pub def parse_json(text: str) -> Result[JsonValue, str]:

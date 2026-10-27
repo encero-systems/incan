@@ -1,12 +1,15 @@
 """Local intake contracts; these do not establish a selected Rust compilation plan."""
 
-from intake import parse_intent, parse_document, intake
+from intake import parse_intent, parse_document, intake, read_project, ManifestReader
 from manifest_errors import IntakeError, IntakeErrorKind
 from std.fs import Path
 from std.testing import fail
+from scratch import scratch_directory
+from toml_fields import read_manifest
+from files import write
 
 
-pub def test_formatting_changes_evidence_not_effective_requests() -> None:
+pub def test_formatting_changes_evidence_not_effective_requests() -> Result[None, str]:
     """Compare complete normalized intent while proving distinct source bytes have distinct evidence digests."""
     first = b"[project]\x0aname = 'app'\x0aversion = '0.1.0'\x0a[rust-dependencies]\x0aregex = '1'\x0a"
     second = b"# source provenance changed\x0a[project]\x0aversion='0.1.0'\x0aname='app'\x0a[rust-dependencies]\x0aregex='1'\x0a"
@@ -19,6 +22,54 @@ pub def test_formatting_changes_evidence_not_effective_requests() -> None:
                     assert left.intent == right.intent
                     assert left.evidence.raw_bytes != right.evidence.raw_bytes
                     assert left.evidence.sha256_digest != right.evidence.sha256_digest
+    snapshot_controls()?
+    return Ok(None)
+
+
+def snapshot_controls() -> Result[None, str]:
+    """Keep repeated views independent, refresh changed source, and never reuse a deleted or malformed manifest."""
+    scratch = scratch_directory()?
+    root = scratch.path()
+    reader = ManifestReader()
+    manifest = root.joinpath("loaf.toml")
+    source = "[project]\nname='snapshot'\nversion='1.0.0'\n"
+    repeated = root.joinpath("repeated")
+    repeated.mkdir(false, false).map_err((error) => error.message())?
+    write(repeated.joinpath("loaf.toml"), source)?
+    read_project(repeated, reader).map_err((error) => error.message())?
+    read_project(repeated, reader).map_err((error) => error.message())?
+    read_manifest(repeated, reader)?
+    read_manifest(repeated, reader)?
+    write(manifest, source)?
+    first = read_project(root, reader).map_err((error) => error.message())?
+    second = read_project(root, reader).map_err((error) => error.message())?
+    assert first.evidence.raw_bytes == second.evidence.raw_bytes
+    assert first.evidence.sha256_digest == second.evidence.sha256_digest
+    left = read_manifest(root, reader)?
+    right = read_manifest(root, reader)?
+    assert left.get[str]("project.name").map_err((error) => error.message())? == "snapshot"
+    assert right.get[str]("project.name").map_err((error) => error.message())? == "snapshot"
+    write(manifest, "# revised\n" + source)?
+    revised = read_project(root, reader).map_err((error) => error.message())?
+    assert revised.intent == first.intent
+    assert revised.evidence.sha256_digest != first.evidence.sha256_digest
+    assert first.evidence.source == source
+    write(manifest, "[project\n")?
+    assert refused(read_project(root, reader))
+    assert refused(read_manifest(root, reader))
+    manifest.unlink().map_err((error) => error.message())?
+    assert refused(read_project(root, reader))
+    write(manifest, source)?
+    restored = read_project(root, reader).map_err((error) => error.message())?
+    assert restored.evidence.sha256_digest == first.evidence.sha256_digest
+    return Ok(None)
+
+
+def refused[T, E](result: Result[T, E]) -> bool:
+    """Test a refusal without changing or inspecting its error representation."""
+    match result:
+        Err(_) => return true
+        Ok(_) => return false
 
 
 pub def test_rust_requirements_preserve_features_and_package_alias() -> None:

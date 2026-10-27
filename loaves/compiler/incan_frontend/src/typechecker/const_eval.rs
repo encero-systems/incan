@@ -863,10 +863,11 @@ impl TypeChecker {
                     self.errors.push(errors::const_expression_not_allowed(expr.span));
                     return None;
                 };
-                let Some(TypeInfo::Newtype(newtype)) = self.lookup_type_info(callee_name).cloned() else {
+                let Some(TypeInfo::Newtype(newtype)) = self.lookup_type_info(callee_name) else {
                     self.errors.push(errors::const_expression_not_allowed(expr.span));
                     return None;
                 };
+                let underlying = newtype.underlying.clone();
                 if callee_name != expected_name {
                     self.errors.push(errors::const_expression_not_allowed(expr.span));
                     return None;
@@ -875,7 +876,7 @@ impl TypeChecker {
                     self.errors.push(errors::const_expression_not_allowed(expr.span));
                     return None;
                 };
-                let Some(target) = super::numeric_type_id_for_compat(&newtype.underlying) else {
+                let Some(target) = super::numeric_type_id_for_compat(&underlying) else {
                     self.errors.push(errors::const_expression_not_allowed(expr.span));
                     return None;
                 };
@@ -885,13 +886,13 @@ impl TypeChecker {
                 };
                 if !unsigned_int_literal_fits_numeric_target(lit, target) {
                     self.errors.push(CompileError::type_error(
-                        format!("Integer literal {} does not fit in {}", lit.repr, newtype.underlying),
+                        format!("Integer literal {} does not fit in {}", lit.repr, underlying),
                         arg.span,
                     ));
                     return None;
                 }
                 if lit.suffix.is_none() {
-                    self.retain_body_ir_const_newtype(callee_name, &newtype.underlying, lit.magnitude, expr.span);
+                    self.retain_body_ir_const_newtype(callee_name, &underlying, lit.magnitude, expr.span);
                 }
                 Some(ConstEvalResult {
                     ty: ResolvedType::Named(expected_name.clone()),
