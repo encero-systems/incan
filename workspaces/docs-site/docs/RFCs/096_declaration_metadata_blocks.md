@@ -1,6 +1,6 @@
 # RFC 096: Declaration metadata blocks
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-05-12
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -12,7 +12,7 @@
     - RFC 085 (field metadata and type-shaped constraints)
     - RFC 086 (schema descriptors and adapters)
     - RFC 091 (constrained integer newtype storage carriers)
-- **Issue:** <https://github.com/encero-systems/incan/issues/667>
+- **Issue:** [#667](https://github.com/encero-systems/incan/issues/667)
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —

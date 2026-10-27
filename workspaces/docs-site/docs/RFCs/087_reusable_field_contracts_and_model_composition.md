@@ -12,7 +12,7 @@
     - RFC 103 (secret types and non-disclosure)
     - RFC 122 (model construction hooks and finalization)
     - RFC 131 (typed validation errors and umbrellas)
-- **Issue:** #474
+- **Issue:** [#474](https://github.com/encero-systems/incan/issues/474)
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —

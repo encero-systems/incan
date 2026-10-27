@@ -1,6 +1,6 @@
 # RFC 133: Literal types and compile-time value sets
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-09
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -13,7 +13,7 @@
     - RFC 131 (typed errors and validation umbrellas)
     - RFC 146 (typed JSON decoding and validation integration)
     - RFC 132 (frozen class fields)
-- **Issue:** —
+- **Issue:** [#2457](https://github.com/encero-systems/incan/issues/2457)
 - **RFC PR:** —
 - **Written against:** v0.6
 - **Shipped in:** —

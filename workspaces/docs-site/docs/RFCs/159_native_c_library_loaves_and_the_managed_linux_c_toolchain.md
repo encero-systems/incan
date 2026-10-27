@@ -1,6 +1,6 @@
 # RFC 159: Cloves (C-library Loaves) and the managed C toolchain
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-18
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -12,7 +12,7 @@
     - RFC 119 (Oven-native Rust build facets and Cargo interoperation)
     - RFC 124 (Oven store unit identity and cross-plan artifact sharing)
     - RFC 125 (`incan.pub` Loaf registry and baked asset distribution)
-- **Issue:** —
+- **Issue:** [#2458](https://github.com/encero-systems/incan/issues/2458)
 - **RFC PR:** —
 - **Written against:** v0.6 (in development)
 - **Shipped in:** —

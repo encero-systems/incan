@@ -11,6 +11,7 @@
     - RFC 082 (checked API documentation generation)
     - RFC 086 (schema projections and adapter interpretation)
     - RFC 087 (reusable field contracts and named validation checks)
+    - RFC 096 (equivalent declaration-local braced metadata spelling)
     - RFC 103 (secret values and non-disclosure)
     - RFC 122 (canonical model construction and fieldmethods)
     - RFC 128 (checked callable signatures)
@@ -78,6 +79,32 @@ The model object sits at the center of checked metadata, docs, adapters, compati
 - Making field metadata an unrestricted object language.
 
 ## Guide-level explanation
+
+### Relationship to RFC 096: one contract, two spellings
+
+RFC 085 defines what field metadata means: the checked keys, accepted values, callable references, defaulting and validation obligations, and the distinction between field facts and type constraints. RFC 096 adds a braced spelling for that same declaration-local metadata. It does not define another metadata system or another construction pipeline.
+
+These independent model declarations carry equivalent field contracts under the proposed combined syntax. The factory is application-defined:
+
+```incan
+def empty_labels() -> list[str]:
+    return []
+
+model InlineSettings:
+    labels [default_factory=empty_labels, description="Search labels"]: list[str]
+
+model BlockSettings:
+    labels: list[str] {
+        default_factory = empty_labels
+        description = "Search labels"
+    }
+```
+
+Both declarations store the same checked factory reference and description. Each constructor calls the factory only when labels are omitted; extracting metadata calls neither factory. Reflection, generated documentation and schema adapters consume the same normalized field facts, retaining the source locations needed for diagnostics rather than interpreting the spelling.
+
+Bracket metadata, RFC 021 alias sugar and RFC 096 blocks may contribute disjoint keys to one declaration. Repeating a declaration-local key across these forms is an error, even if its values are equal; a later block does not override a bracket entry. RFC 086 schema projections and RFC 087 composition retain their own merge and reconciliation contracts.
+
+RFC 096 also permits braced options on constrained newtype underlyings, such as int comparison bounds and RFC 091 storage selection. Those remain type options rather than field metadata: changing the layout does not move gt, pattern or storage into the field's metadata lane. Namespaced metadata remains inert until an explicit consumer interprets it, and either field spelling retains the same secrecy and validation obligations. RFC 096 owns formatting and the opt-in policy for equivalent layout normalization; this RFC owns the underlying field contract.
 
 Use inline metadata for high-signal facts:
 
@@ -160,6 +187,8 @@ For large adapter mappings, use the schema block surface from RFC 086 rather tha
 ## Reference-level explanation
 
 ### Field metadata syntax
+
+RFC 096 declaration-local braced blocks must normalize to the same checked keys, safe values and callable identities specified here. They must preserve these semantics and source provenance rather than run metadata callables or change schema/composition precedence. Declaration-local duplicate keys across brackets, alias sugar and blocks must be diagnosed under RFC 096, without selecting a winner by spelling or order.
 
 RFC 021 field metadata remains valid:
 

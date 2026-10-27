@@ -1,13 +1,13 @@
 # RFC 130: Implicit `None` return annotations
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-08
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
     - RFC 000 (explicit function signature types)
     - RFC 044 (body-less abstract method declarations)
     - RFC 128 (shared callable signature model)
-- **Issue:** —
+- **Issue:** [#2456](https://github.com/encero-systems/incan/issues/2456)
 - **RFC PR:** —
 - **Written against:** v0.6
 - **Shipped in:** —
