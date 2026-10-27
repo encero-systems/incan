@@ -12,6 +12,7 @@ from rust::incan_semantics_core::body_ir import BodyIrModule, Body
 from pub::incan_mir_plan import IteratorMethods, EnumDeclaration, PlanType
 from classes import frame_type, function_name, parameter_local_index
 from layout_types import native_source_type
+from native_type_identity import ConstructorIndex
 from unions import collect_unions
 from trait_links import contains
 from native_arguments import uses_native_argument
@@ -19,6 +20,7 @@ from decls import library_item
 
 
 pub def iterator_methods(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     owner: int,
     mut intrinsics: list[EnumDeclaration],
@@ -78,13 +80,14 @@ pub def iterator_methods(
                 for body in module.bodies:
                     if body.canonical == Some(identity.clone()):
                         bodies.append(body.clone())
-                if len(bodies) != 1 or not poll_abi(module, bodies[0], owner, arguments[0], intrinsics)?:
+                if len(bodies) != 1 or not poll_abi(constructors, module, bodies[0], owner, arguments[0], intrinsics)?:
                     return Err("unsupported Body IR unavailable or invalid native iterator poll body")
                 if selected != None:
                     return Err("unsupported Body IR ambiguous native iterator declaration")
                 selected = Some(
                     IteratorMethods(
                         item=native_source_type(
+                            constructors,
                             list(module.nominal_declarations),
                             list(module.enum_declarations),
                             collect_unions(module),
@@ -113,6 +116,7 @@ pub def standard_protocol(identity: &CanonicalSymbolId) -> bool:
 
 
 def poll_abi(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     body: &Body,
     owner: int,
@@ -127,6 +131,6 @@ def poll_abi(
         None => pass
     reference = PlanType.ModelMutRef(owner, str(module.nominal_declarations[owner].name))
     local = body.locals[parameter_local_index(body, 0)]
-    if frame_type(list(module.nominal_declarations), list(module.enum_declarations), local, intrinsics)? != reference:
+    if frame_type(constructors, module.nominal_declarations, module.enum_declarations, local, intrinsics)? != reference:
         return Ok(false)
     return Ok(body.return_type == generic("Option", [item.clone()]))

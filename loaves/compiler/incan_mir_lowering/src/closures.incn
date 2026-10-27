@@ -2,6 +2,7 @@
 
 from rust::incan_semantics_core import IncanType as RustType, IncanCallableParam, IncanCallableParamKind
 from body_index import BodyIndex
+from native_type_identity import constructor_index
 from rust::incan_semantics_core::body_ir import (
     Body as RustBody,
     BodyIrModule as RustModule,
@@ -54,6 +55,7 @@ pub def function_pointer_type(parameters: &list[IncanCallableParam], result: &Ru
     # 1. Retain checked input order and loans.
     mut signature: list[PlanType] = []
     nominals: list[NominalDeclaration] = []
+    constructors = constructor_index(nominals)
     enums: list[RustEnumDeclaration] = []
     unions: list[RustType] = []
     intrinsics: list[EnumDeclaration] = []
@@ -62,7 +64,7 @@ pub def function_pointer_type(parameters: &list[IncanCallableParam], result: &Ru
         if parameter.kind == IncanCallableParamKind.Normal:
             input = callable_input(parameter.ty)?
         else:
-            input = callable_parameter_type(nominals, enums, unions, parameter, intrinsics)?
+            input = callable_parameter_type(constructors, nominals, enums, unions, parameter, intrinsics)?
         signature.append(packed_input(input, parameter.kind, parameter.is_mut, parameter.native_owned)?)
     # 2. Append the owned return contract.
     signature.append(callable_result(result)?)
@@ -574,16 +576,37 @@ def item_component(mut builder: Builder, ty: &RustType) -> Result[PlanType, str]
     Its inputs and result use the same nominal, scalar, borrowed and collection storage as its own frame. A second
     signature whitelist would reject admitted borrowed scalar inputs before the native callable can be verified.
     """
-    return native_source_type(builder.nominals, builder.enums, builder.unions, ty, builder.intrinsics)
+    return native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        ty,
+        builder.intrinsics,
+    )
 
 
 def item_input(mut builder: Builder, ty: &RustType) -> Result[PlanType, str]:
     """Retain an item's explicit input loan against its full nominal context; other inputs use owned components."""
     match ty:
         RustType.Ref(_inner) =>
-            return native_source_type(builder.nominals, builder.enums, builder.unions, ty, builder.intrinsics)
+            return native_source_type(
+                builder.constructors,
+                builder.nominals,
+                builder.enums,
+                builder.unions,
+                ty,
+                builder.intrinsics,
+            )
         RustType.RefMut(_inner) =>
-            return native_source_type(builder.nominals, builder.enums, builder.unions, ty, builder.intrinsics)
+            return native_source_type(
+                builder.constructors,
+                builder.nominals,
+                builder.enums,
+                builder.unions,
+                ty,
+                builder.intrinsics,
+            )
         _ => return item_component(builder, ty)
 
 

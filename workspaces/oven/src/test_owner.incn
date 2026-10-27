@@ -3,7 +3,7 @@
 from std.fs import Path
 from std.json import JsonValue
 from files import read, remove, write
-from owner_endpoint import Endpoint, attach, endpoint_for, greeted, timeout_for
+from owner_endpoint import Endpoint, attach, deployment_configuration, endpoint_for, greeted, timeout_for
 from owner_protocol import Connection, Reply, Request, listen
 from owner_state import Owner, unchanged, watch
 from scratch import scratch_directory
@@ -65,9 +65,22 @@ pub def test_startup_is_arbitrated_and_stale_state_recovers() -> Result[None, st
     check_foreign_file_is_kept(endpoint)?
     check_one_starter_holds_the_lock(endpoint)?
     check_greetings_are_validated()
+    check_deployment_configuration()
     assert timeout_for("run") == 0
     assert timeout_for("stop") == 5
     return Ok(None)
+
+
+def check_deployment_configuration() -> None:
+    """A deployment selection cannot share an owner with another value, absence or another Apple platform's input."""
+    absent = deployment_configuration([("OVEN_TRACE", "-")])
+    empty = deployment_configuration([("MACOSX_DEPLOYMENT_TARGET", "")])
+    first = deployment_configuration([("MACOSX_DEPLOYMENT_TARGET", "11.0")])
+    second = deployment_configuration([("MACOSX_DEPLOYMENT_TARGET", "14.0")])
+    platform = deployment_configuration([("IPHONEOS_DEPLOYMENT_TARGET", "14.0")])
+    assert absent == []
+    assert empty != absent and first != empty and first != second and second != platform
+    assert deployment_configuration([("OVEN_TRACE", "changed"), ("MACOSX_DEPLOYMENT_TARGET", "11.0")]) == first
 
 
 def check_stale_socket_is_removed(endpoint: Endpoint) -> Result[None, str]:
@@ -95,12 +108,14 @@ def check_one_starter_holds_the_lock(endpoint: Endpoint) -> Result[None, str]:
     """Of two starters, the first gets the lock and the second does not."""
     first = Path(endpoint.lock).try_lock_exclusive().map_err((error) => error.message())?
     match first:
-        None => assert false, "the first starter did not get the lock"
+        None =>
+            assert false, "the first starter did not get the lock"
         Some(held) =>
             # `held` is the first starter's lock, kept while the second starter tries.
             second = Path(endpoint.lock).try_lock_exclusive().map_err((error) => error.message())?
             match second:
-                Some(_) => assert false, "two starters held the lock at once"
+                Some(_) =>
+                    assert false, "two starters held the lock at once"
                 None => pass
     return Ok(None)
 

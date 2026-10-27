@@ -19,6 +19,7 @@ from pub::incan_mir_plan import (
 )
 from unions import collect_unions
 from layout_types import stored_field_type
+from native_type_identity import ConstructorIndex
 from checked_json_contracts import checked_deserialize_name
 from comparison_methods import comparison_functions
 from fallible_methods import fallible_methods
@@ -79,14 +80,17 @@ pub def publish_local_layouts(mut models: list[ModelDeclaration], mut enums: lis
 
 
 pub def lower_model_declarations(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     file: str,
-    mut intrinsics: list[EnumDeclaration] = [],
-    nominal_instances: list[NominalInstance] = [],
+    mut intrinsics: list[EnumDeclaration],
+    nominal_instances: &list[NominalInstance],
     publish_generics: bool = false,
 ) -> Result[list[ModelDeclaration], str]:
     """
     Retain checked field layout and derives for admitted plain model, class, and newtype declarations.
+
+    Instance selection borrows the retained inventory; only the resulting native declaration plan is owned here.
 
     A derived Default is built at each `default()` call from the declared field defaults, so the native struct never
     derives Default: a Rust derive would give every field its zero value instead.
@@ -94,7 +98,7 @@ pub def lower_model_declarations(
     mut unions = collect_unions(module)
     reached = serde_propagation(module)?
     mut models: list[ModelDeclaration] = []
-    comparisons = comparison_functions(module, intrinsics)?
+    comparisons = comparison_functions(constructors, module, intrinsics)?
     for owner in range(len(module.nominal_declarations)):
         declaration = module.nominal_declarations[owner]
         mut item = library_item(declaration)
@@ -120,8 +124,15 @@ pub def lower_model_declarations(
         mut field_public = declaration.field_public
         mut serde_names: list[str] = []
         if item != "":
-            library_arguments = library_model_arguments(module, declaration, nominal_instances, unions, intrinsics)?
-            fields = library_fields(module, declaration, file, unions, intrinsics)
+            library_arguments = library_model_arguments(
+                constructors,
+                module,
+                declaration,
+                nominal_instances,
+                unions,
+                intrinsics,
+            )?
+            fields = library_fields(constructors, module, declaration, file, unions, intrinsics)
             if len(fields) != len(declaration.fields):
                 field_public = []
             # Native Copy is a checked capability, verified again against rustc rather than derived on this alias.
@@ -136,6 +147,7 @@ pub def lower_model_declarations(
             for slot in range(len(declaration.fields)):
                 mut ty = PlanType.Unit
                 match stored_field_type(
+                    constructors,
                     list(module.nominal_declarations),
                     list(module.enum_declarations),
                     unions,
@@ -148,7 +160,7 @@ pub def lower_model_declarations(
                 fields.append(
                     Parameter(name=str(declaration.fields[slot]), ty=ty, span=plan_span(file=file, line=1, column=1)),
                 )
-        callable_name, callable_signature = callable_methods(module, owner, intrinsics)?
+        callable_name, callable_signature = callable_methods(constructors, module, owner, intrinsics)?
         if item == "":
             validate_marker_traits(declaration)?
         models.append(
@@ -166,8 +178,8 @@ pub def lower_model_declarations(
                 checked_deserialize=checked_deserialize,
                 reflection_metadata=planned_field_metadata(declaration),
                 comparison_methods=comparisons[owner],
-                fallible_iterator=fallible_methods(module, owner, intrinsics)?,
-                iterator=iterator_methods(module, owner, intrinsics)?,
+                fallible_iterator=fallible_methods(constructors, module, owner, intrinsics)?,
+                iterator=iterator_methods(constructors, module, owner, intrinsics)?,
                 callable_method=callable_name,
                 callable_signature=callable_signature,
                 string_conversion_root=string_conversion_root,
@@ -284,6 +296,7 @@ pub def with_serde_derives(derives: list[str], name: str, reached: tuple[list[st
 
 
 def library_fields(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     declaration: &NominalDeclaration,
     file: str,
@@ -302,6 +315,7 @@ def library_fields(
     mut fields: list[Parameter] = []
     for slot in range(len(declaration.fields)):
         match stored_field_type(
+            constructors,
             list(module.nominal_declarations),
             list(module.enum_declarations),
             unions,

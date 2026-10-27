@@ -23,12 +23,14 @@ from pub::incan_mir_plan import (
 from nominal_instances import NominalInstance
 from decls import library_item
 from layout_types import native_source_type
+from native_type_identity import ConstructorIndex
 from closures import callable_component, packed_input
 from table_views import borrowed_table
 from pub::incan_mir_plan import source_span as plan_span
 
 
 pub def generic_models(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     instances: list[NominalInstance],
     file: str,
@@ -61,7 +63,12 @@ pub def generic_models(
         mut fields: list[GenericLayoutField] = []
         for index in range(len(declaration.fields)):
             mut field_type = GenericLayoutType.Parameter("")
-            match generic_field_type(module, declaration.field_types[index], declaration.type_parameters.clone()):
+            match generic_field_type(
+                constructors,
+                module,
+                declaration.field_types[index],
+                declaration.type_parameters.clone(),
+            ):
                 Ok(ty) => field_type = ty
                 Err(error) => return Err(f"{declaration.name}.{declaration.fields[index]}: {error}")
             fields.append(
@@ -79,6 +86,7 @@ pub def generic_models(
             if derive not in [
                 "Clone",
                 "Debug",
+                "Display",
                 "PartialEq",
                 "Eq",
                 "PartialOrd",
@@ -157,7 +165,12 @@ def retain_type_templates(ty: &RustType, mut referenced: list[str]) -> None:
         _ => pass
 
 
-def generic_field_type(module: &BodyIrModule, ty: &RustType, parameters: list[str]) -> Result[GenericLayoutType, str]:
+def generic_field_type(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    ty: &RustType,
+    parameters: list[str],
+) -> Result[GenericLayoutType, str]:
     """Translate a checked field structurally, preserving binders and exact nominal owners before native instantiation."""
     match ty:
         RustType.TypeVar(name) =>
@@ -168,28 +181,31 @@ def generic_field_type(module: &BodyIrModule, ty: &RustType, parameters: list[st
             path = generic_layout_path(module, str(base))?
             mut args: list[GenericLayoutType] = []
             for argument in arguments:
-                args.append(generic_field_type(module, argument, parameters)?)
+                args.append(generic_field_type(constructors, module, argument, parameters)?)
             return Ok(GenericLayoutType.Applied(path, args))
         RustType.Tuple(elements) =>
             mut fields: list[GenericLayoutType] = []
             for element in elements:
-                fields.append(generic_field_type(module, element, parameters)?)
+                fields.append(generic_field_type(constructors, module, element, parameters)?)
             return Ok(GenericLayoutType.Tuple(fields))
         RustType.Function(params=inputs, return_type=output) =>
             mut signature: list[GenericLayoutType] = []
             for parameter in inputs:
-                signature.append(generic_callable_input(module, parameter, parameters)?)
-            signature.append(generic_field_type(module, output, parameters)?)
+                signature.append(generic_callable_input(constructors, module, parameter, parameters)?)
+            signature.append(generic_field_type(constructors, module, output, parameters)?)
             return Ok(GenericLayoutType.FunctionPointer(signature))
         _ =>
             unions: list[RustType] = []
             intrinsics: list[EnumDeclaration] = []
             nominals: &list[NominalDeclaration] = borrowed_table(module.nominal_declarations)
             enums: &list[RustEnumDeclaration] = borrowed_table(module.enum_declarations)
-            return Ok(GenericLayoutType.Concrete(native_source_type(nominals, enums, unions, ty, intrinsics)?))
+            return Ok(
+                GenericLayoutType.Concrete(native_source_type(constructors, nominals, enums, unions, ty, intrinsics)?),
+            )
 
 
 def generic_callable_input(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     parameter: &IncanCallableParam,
     parameters: list[str],
@@ -203,7 +219,7 @@ def generic_callable_input(
         RustType.TypeVar(_name) =>
             if parameter.kind != IncanCallableParamKind.Normal or parameter.is_mut:
                 return Err("unsupported Body IR generic callable field input ownership")
-            return generic_field_type(module, parameter.ty, parameters)
+            return generic_field_type(constructors, module, parameter.ty, parameters)
         _ => pass
     component = callable_component(parameter.ty)?
     storage = packed_input(component, parameter.kind, parameter.is_mut, parameter.native_owned)?

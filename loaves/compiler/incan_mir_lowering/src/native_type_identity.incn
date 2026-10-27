@@ -1,0 +1,130 @@
+"""Native nominal representation identities retain physical callable inputs without source binding metadata."""
+
+from rust::incan_semantics_core import (
+    IncanType as RustType,
+    IncanCallableParam as RustCallableParam,
+    SymbolOrigin,
+    function_type,
+    generic,
+    native_array_type,
+)
+from rust::incan_semantics_core::body_ir import NominalDeclaration
+from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
+from table_views import borrowed_at
+
+# A representation wrapper retained through generic substitution; it is not a source type constructor.
+pub const OWNED_CALLABLE_STORAGE: str = "<owned-callable>"
+
+
+pub model ConstructorIndex:
+    """First matching declaration positions for one immutable nominal inventory, without copied declaration facts."""
+
+    pub owners: dict[str, int]
+    pub generic_owners: dict[str, int]
+
+
+pub def constructor_index(declarations: &list[NominalDeclaration]) -> ConstructorIndex:
+    """Index each retained constructor once, preserving independent all-row and generic-row first-match order."""
+    mut constructors = ConstructorIndex(owners={}, generic_owners={})
+    for position in range(len(declarations)):
+        declaration = borrowed_at(declarations, position)
+        base = declaration.template_carrier_name()
+        if constructors.owners.get(base) == None:
+            constructors.owners[base] = position
+        if declaration.type_parameter_count != 0 and constructors.generic_owners.get(base) == None:
+            constructors.generic_owners[base] = position
+    return constructors
+
+
+pub def native_owner(declaration: &NominalDeclaration) -> bool:
+    """Authenticate Rust-owned layouts independently of source Loaf artifacts that also have a native item."""
+    match declaration.canonical.origin:
+        SymbolOrigin.RustCrate(_path) => return true
+        _ => return false
+
+
+pub def representation_arguments(
+    declarations: &list[NominalDeclaration],
+    constructors: &ConstructorIndex,
+    arguments: &list[RustType],
+) -> list[RustType]:
+    """
+    Close authenticated native arguments by erasing metadata absent from native callable storage.
+
+    Source instance symbols and checked callable types retain parameter names, defaults and partial presets. A Rust
+    function pointer or erased owned callable has none of those fields. Passing modes and nested source nominal
+    identities remain intact, so this representation boundary grants no semantic type compatibility or coercion.
+
+    The caller authenticates the outer native owner before this boundary. Source owners use their original borrowed
+    arguments for lookup. Nested source owners retain their exact checked arguments here.
+    """
+    return representation_types(declarations, constructors, arguments)
+
+
+def representation_types(
+    declarations: &list[NominalDeclaration],
+    constructors: &ConstructorIndex,
+    types: &list[RustType],
+) -> list[RustType]:
+    """Normalize an ordered native argument sequence without changing its arity or ownership markers."""
+    mut retained: list[RustType] = []
+    for ty in types:
+        retained.append(representation_type(declarations, constructors, ty))
+    return retained
+
+
+def representation_type(
+    declarations: &list[NominalDeclaration],
+    constructors: &ConstructorIndex,
+    ty: &RustType,
+) -> RustType:
+    """Erase callable binding metadata recursively while retaining distinct authored nominal instantiations."""
+    match ty:
+        RustType.Function(params=parameters, return_type=result) =>
+            mut retained: list[RustCallableParam] = []
+            for index in range(len(parameters)):
+                parameter = borrowed_at(parameters, index)
+                retained.append(
+                    RustCallableParam(
+                        name=None,
+                        ty=representation_type(declarations, constructors, parameter.ty),
+                        kind=parameter.kind,
+                        has_default=false,
+                        is_partial_preset=false,
+                        is_mut=parameter.is_mut,
+                        native_owned=parameter.native_owned,
+                    ),
+                )
+            return function_type(retained, representation_type(declarations, constructors, result))
+        RustType.Generic(base=base, args=arguments) =>
+            if retains_source_arguments(declarations, constructors, str(base)):
+                return ty.clone()
+            return generic(str(base), representation_types(declarations, constructors, arguments))
+        RustType.Tuple(elements) => return RustType.Tuple(representation_types(declarations, constructors, elements))
+        RustType.Ref(inner) => return RustType.Ref(representation_type(declarations, constructors, inner))
+        RustType.RefMut(inner) => return RustType.RefMut(representation_type(declarations, constructors, inner))
+        RustType.TypeToken(inner) => return RustType.TypeToken(representation_type(declarations, constructors, inner))
+        RustType.NativeArray(element=element, length=length) =>
+            return native_array_type(representation_type(declarations, constructors, element), length.clone())
+        RustType.NativePointer(mutable=mutable, pointee=pointee) =>
+            return RustType.NativePointer(
+                mutable=mutable,
+                pointee=representation_type(declarations, constructors, pointee),
+            )
+        _ => return ty.clone()
+
+
+def retains_source_arguments(
+    declarations: &list[NominalDeclaration],
+    constructors: &ConstructorIndex,
+    base: str,
+) -> bool:
+    """Normalize only authenticated native or registry constructors; unknown source enum carriers stay exact."""
+    match constructors.owners.get(base):
+        Some(position) => return not native_owner(borrowed_at(declarations, position.clone()))
+        None => pass
+    if base == OWNED_CALLABLE_STORAGE:
+        return false
+    # Bind the enum's definition rather than the Rust re-export chosen by older facts (#2256).
+    selected: Option[CollectionTypeId] = collection_type(base)
+    return selected == None

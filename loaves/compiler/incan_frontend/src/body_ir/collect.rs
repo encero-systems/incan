@@ -135,11 +135,21 @@ fn checked_newtype_constant(
 }
 
 /// Evaluate only literal signed integer addition, subtraction, multiplication and negation. Each intermediate must fit
-/// i64, matching legacy's const arithmetic; names, calls, sized literals and every other operation stay unretained.
+/// i64; names, calls, sized literals and every other operation stay unretained. A unary-negative literal is admitted
+/// from its full magnitude before narrowing, so the minimum does not require an unrepresentable positive intermediate.
 fn literal_integer_constant(value: &ast::Expr) -> Option<i64> {
     match value {
-        ast::Expr::Literal(ast::Literal::Int(value)) if value.suffix.is_none() && value.fits_i64() => Some(value.value),
-        ast::Expr::Unary(ast::UnaryOp::Neg, inner) => literal_integer_constant(&inner.node)?.checked_neg(),
+        ast::Expr::Literal(ast::Literal::Int(value)) if value.suffix.is_none() => {
+            i64::try_from(value.signed_value(false)?).ok()
+        }
+        ast::Expr::Unary(ast::UnaryOp::Neg, inner) => {
+            if let ast::Expr::Literal(ast::Literal::Int(value)) = &inner.node
+                && value.suffix.is_none()
+            {
+                return i64::try_from(value.signed_value(true)?).ok();
+            }
+            literal_integer_constant(&inner.node)?.checked_neg()
+        }
         ast::Expr::Binary(left, op, right) => {
             let left = literal_integer_constant(&left.node)?;
             let right = literal_integer_constant(&right.node)?;
@@ -159,6 +169,11 @@ fn literal_integer_constant(value: &ast::Expr) -> Option<i64> {
 pub(super) fn frozen_literal_constant(value: &ast::Expr, ty: &IncanType) -> Option<bir::Constant> {
     if let ast::Expr::Literal(literal) = value {
         return Some(primitives::lower_checked_literal(literal, ty));
+    }
+    if let ast::Expr::Unary(ast::UnaryOp::Neg, inner) = value
+        && let ast::Expr::Literal(literal) = &inner.node
+    {
+        return primitives::lower_checked_negative_literal(literal, ty);
     }
     if let (ast::Expr::Tuple(values), IncanType::Tuple(types)) = (value, ty) {
         if values.len() != types.len() || values.len() == 1 {

@@ -29,6 +29,7 @@ from trait_links import contains
 from nominal_instances import instance_arguments
 from decls import library_item
 from layout_types import native_source_type
+from native_type_identity import ConstructorIndex
 from unions import collect_unions
 
 
@@ -40,6 +41,7 @@ pub model NativeFactory:
 
 
 pub def fallible_factory(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     target: &MethodTarget,
     result: PlanType,
@@ -66,8 +68,9 @@ pub def fallible_factory(
                     if not concrete_return(module, slot, declaration):
                         return Ok(None)
                     mut arguments: list[PlanType] = []
-                    for argument in instance_arguments(module, declaration)?:
+                    for argument in instance_arguments(declaration)?:
                         match native_source_type(
+                            constructors,
                             list(module.nominal_declarations),
                             list(module.enum_declarations),
                             collect_unions(module),

@@ -1,12 +1,14 @@
-# behavior: Rust values that cannot be copied keep a single owner: return and break transfer an enclosing non-Clone value on terminal loop paths, a Rust standard-output handle is handed to an Incan function that declares its parameter mut and the function runs with it, and a Rust standard-input handle assigned to a second name is used through that name and the program continues
+# behavior: non-Clone Rust owners transfer through terminal loop paths and reassignment, including a consumed MutexGuard replaced before the loop backedge (#2256)
 # expect-stdout:
 #   false
 #   false
 #   used
 #   handle taken over
+#   1
 
 from rust::std::io import Stdout, stdin, stdout
-from rust::std::sync import Mutex
+from rust::std::collections import HashMap
+from rust::std::sync import Condvar, Mutex
 
 
 def make() -> Mutex[int]:
@@ -47,7 +49,32 @@ def show_reassigned_handle() -> None:
     println("handle taken over")
 
 
+def show_replaced_guard(wait: bool) -> None:
+    """Replace a consumed guard twice with a false wait predicate and compile the unconditional spelling too."""
+    condition = Condvar.new()
+    mut values = HashMap.new[str, int]()
+    _ = values.insert("entry", 7)
+    mutex = Mutex.new(values)
+    mut guard = match mutex.lock():
+        Ok(value) => value
+        Err(error) => error.into_inner()
+
+    while wait:
+        guard = match condition.wait(guard):
+            Ok(value) => value
+            Err(error) => error.into_inner()
+
+    for _ in range(2):
+        guard = match condition.wait_while(guard, (entries) => entries.is_empty()):
+            Ok(value) => value
+            Err(error) => error.into_inner()
+
+    println(guard.len())
+
+
 def main() -> None:
+    """Observe each native ownership transfer, including repeated replacement of a consumed guard."""
     show_loop_returns()
     show_mut_parameter()
     show_reassigned_handle()
+    show_replaced_guard(false)

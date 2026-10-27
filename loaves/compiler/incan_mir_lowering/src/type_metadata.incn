@@ -30,7 +30,7 @@ pub def lower_type_metadata(
     ):
         return Err("unsupported Body IR type metadata owner")
     closed = substitute(target.receiver_type, builder.type_parameters, builder.type_arguments)?
-    ty = model_type(builder.nominals, closed)?
+    ty = model_type(builder.constructors, builder.nominals, closed)?
     mut owner = -1
     match ty:
         PlanType.Model(index, _name) => owner = index

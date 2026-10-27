@@ -1,4 +1,4 @@
-# behavior: native receivers retain indexed Copy, defaults, owners, projections, loans, Clone, CommandExt, facade re-exported traits, shared-read loans inside closure expressions and primitive inherent calls (#2256)
+# behavior: native receivers retain loans, projections, trait calls, primitive methods and specialized public alias constructors, including AtomicUsize and AtomicBool (#2256)
 # expect-stdout:
 #   allocated
 #   1
@@ -10,6 +10,8 @@
 #   hello
 #   true
 #   11 24
+#   3
+#   7
 
 """Observe native receivers through associated functions, inherent methods, blanket traits and iterators."""
 
@@ -28,6 +30,7 @@ from rust::std::primitive import usize, i64 as NativeInt, u32 as NativeUnsigned,
 from rust::std::process import Command, Output
 from rust::std::rc import Rc
 from rust::std::string import String as RustString
+from rust::std::sync::atomic import AtomicUsize, AtomicBool, Ordering as AtomicOrdering
 from rust::std import time as native_time
 from rust::std::time import Duration
 from std.io import BytesIO
@@ -267,6 +270,7 @@ def main() -> None:
     show_primitive_methods()
     show_entry_defaults()
     show_indexed_flags()
+    show_atomic_aliases()
     match reverse_ordering(Ordering.Less):
         Ordering.Greater => pass
         _ =>
@@ -287,8 +291,21 @@ def show_primitive_methods() -> None:
     unsigned: NativeUnsigned = 8
     flag: NativeBool = true
     assert NativeInt.count_ones(signed) == 3
+    assert NativeInt.abs(-signed) + 1 == 8
     assert NativeUnsigned.count_ones(unsigned) == 1
     assert NativeBool.then_some(flag, 42) == Some(42)
     assert signed.count_ones() == 3
     assert unsigned.count_ones() == 1
     assert flag.then_some(42) == Some(42)
+
+
+def show_atomic_aliases() -> None:
+    """Construct different specializations of one native alias target and observe their own methods."""
+    counter: AtomicUsize = AtomicUsize.new(3usize)
+    println(counter.fetch_add(4usize, AtomicOrdering.SeqCst))
+    println(counter.load(AtomicOrdering.SeqCst))
+    flag: AtomicBool = AtomicBool.new(false)
+    assert not flag.swap(true, AtomicOrdering.SeqCst)
+    assert flag.load(AtomicOrdering.SeqCst)
+    inferred = AtomicUsize.new(9usize)
+    assert inferred.load(AtomicOrdering.SeqCst) == 9usize

@@ -26,9 +26,23 @@ pub def lower_foreign_call(
     mut parameters: list[PlanType] = []
     for parameter in target.parameters:
         parameters.append(
-            native_source_type(builder.nominals, builder.enums, builder.unions, parameter, builder.intrinsics)?,
+            native_source_type(
+                builder.constructors,
+                builder.nominals,
+                builder.enums,
+                builder.unions,
+                parameter,
+                builder.intrinsics,
+            )?,
         )
-    output = native_source_type(builder.nominals, builder.enums, builder.unions, target.return_type, builder.intrinsics)?
+    output = native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        target.return_type,
+        builder.intrinsics,
+    )?
     declared = ForeignFunction(
         name=encode_incan_symbol_identity(target.binding) + "__c_" + str(target.member),
         symbol=str(target.symbol),

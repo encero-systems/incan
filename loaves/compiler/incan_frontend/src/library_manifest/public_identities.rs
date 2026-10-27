@@ -184,48 +184,51 @@ fn add_public_fields(fields: &[FieldExport], identities: &mut BTreeSet<Canonical
 
 #[cfg(test)]
 mod tests {
-    use super::executable_surface_path;
-    use crate::library_manifest::{ExecutableRepresentationExport, LibraryManifest};
-    use std::path::Path;
+    use super::public_executable_identities;
+    use crate::library_manifest::{
+        CanonicalIdentityExport, ExportIdentity, ExportIdentityKind, ExportIdentityProjection, LibraryManifest,
+    };
+    use incan_semantics_core::{
+        CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
+    };
 
-    /// Linking-only packages never invent a semantic artifact path.
+    /// Linking-only packages never invent executable members from their package name.
     #[test]
-    fn no_representation_is_a_valid_absence() {
-        assert!(executable_surface_path(Path::new("/pkg/lib.incnlib"), &LibraryManifest::new("pkg", "1.0")).is_none());
+    fn no_exports_is_a_valid_empty_surface() {
+        assert!(public_executable_identities(&LibraryManifest::new("pkg", "1.0")).is_empty());
     }
 
-    /// Only the declared content identity selects the sidecar; arbitrary manifest paths cannot escape the root.
+    /// Published canonical identity admits an export; public and source spellings cannot manufacture one.
     #[test]
-    fn a_manifest_selects_a_safe_immutable_sidecar() -> Result<(), Box<dyn std::error::Error>> {
+    fn a_manifest_selects_only_authenticated_export_identities() -> Result<(), Box<dyn std::error::Error>> {
         let mut manifest = LibraryManifest::new("pkg", "1.0");
-        manifest.contract_metadata.executable_representation = Some(ExecutableRepresentationExport {
-            representation_version: 2,
-            content_digest: "a".repeat(64),
-        });
+        let mut export = ExportIdentity {
+            public_name: "alias".into(),
+            public_path: vec!["pkg".into(), "alias".into()],
+            source_path: vec!["different".into(), "spelling".into()],
+            kind: ExportIdentityKind::Function,
+            projection: ExportIdentityProjection::Direct,
+            canonical: None,
+        };
+        manifest.contract_metadata.identity_graph.exports.push(export.clone());
+        assert!(public_executable_identities(&manifest).is_empty());
+        let canonical = CanonicalSymbolId {
+            namespace: SymbolNamespace::OrdinaryLexical,
+            origin: SymbolOrigin::Package {
+                library: "pkg".into(),
+                module_path: vec!["implementation".into()],
+            },
+            declaration_name: "function".into(),
+            kind: SemanticSourceTargetKind::Function,
+            scope_discriminant: None,
+            declaration_span: HirSourceSpan::new(1, 2),
+        };
+        export.canonical = Some(CanonicalIdentityExport::from_canonical("pkg", &canonical).ok_or("identity missing")?);
+        manifest.contract_metadata.identity_graph.exports.push(export);
         assert_eq!(
-            executable_surface_path(Path::new("/pkg/lib.incnlib"), &manifest).ok_or("path missing")?,
-            Path::new("/pkg/semantic").join(format!("{}.incnsem", "a".repeat(64)))
+            public_executable_identities(&manifest),
+            [canonical].into_iter().collect()
         );
-        // A short value is rejected by the length check before the charset guard ever runs, so it proves only
-        // half the contract. Both halves need a case: a wrong-length digest, and a right-length one whose bytes
-        // are not hex -- including a separator, which is the shape that would actually escape the root.
-        manifest.contract_metadata.executable_representation = Some(ExecutableRepresentationExport {
-            representation_version: 2,
-            content_digest: "../escape".into(),
-        });
-        assert!(executable_surface_path(Path::new("/pkg/lib.incnlib"), &manifest).is_none());
-        manifest.contract_metadata.executable_representation = Some(ExecutableRepresentationExport {
-            representation_version: 2,
-            content_digest: "g".repeat(64),
-        });
-        assert!(executable_surface_path(Path::new("/pkg/lib.incnlib"), &manifest).is_none());
-        let mut traversal = "a".repeat(61);
-        traversal.push_str("/..");
-        manifest.contract_metadata.executable_representation = Some(ExecutableRepresentationExport {
-            representation_version: 2,
-            content_digest: traversal,
-        });
-        assert!(executable_surface_path(Path::new("/pkg/lib.incnlib"), &manifest).is_none());
         Ok(())
     }
 }

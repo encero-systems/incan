@@ -538,6 +538,19 @@ impl PartialEq for IntLiteral {
 }
 
 impl IntLiteral {
+    /// Interpret the full magnitude with its synthetic sign and an optional source unary minus. Return `None` if
+    /// the signed value exceeds `i128`; the minimum is admitted before converting its otherwise unrepresentable
+    /// positive magnitude. Consumers narrow this exact value to their checked carrier rather than using `value`,
+    /// whose compatibility representation cannot retain a wide positive magnitude.
+    pub fn signed_value(&self, negative: bool) -> Option<i128> {
+        let negative = negative != self.value.is_negative();
+        if negative && self.magnitude == (1_u128 << 127) {
+            return Some(i128::MIN);
+        }
+        let value = i128::try_from(self.magnitude).ok()?;
+        Some(if negative { -value } else { value })
+    }
+
     /// Canonical decimal spelling — for AST nodes built without source text (tests, vocab bridge).
     pub fn synthetic(value: i64) -> Self {
         Self {

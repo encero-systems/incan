@@ -13,8 +13,13 @@ use crate::frozen::FrozenDict;
 use incan_lang::errors::{IncanError, key_not_found_in_dict};
 use incan_lang::indexing::normalize_slice_bounds;
 
+/// Normalize a signed sequence index, raising the canonical list IndexError when it is out of bounds.
+///
+/// Native cursor adapters reuse this internal boundary to retain list-like negative indices and diagnostics without
+/// materializing an intermediate list. The caller must retain the same collection length until the indexed read.
+#[doc(hidden)]
 #[inline]
-fn normalize_list_index(len: usize, index: i64) -> usize {
+pub fn normalize_list_index(len: usize, index: i64) -> usize {
     let len_i = len as i64;
     let mut i = index;
     if i < 0 {

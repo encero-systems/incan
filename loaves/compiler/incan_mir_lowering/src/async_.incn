@@ -27,6 +27,7 @@ from pub::incan_mir_plan import (
 from pub::incan_mir_plan import place as plan_place, block as plan_block
 from classes import function_name, frame_type, is_program_entry
 from layout_types import native_source_type
+from native_type_identity import ConstructorIndex
 from unions import collect_unions
 from frame import (
     Builder,
@@ -48,6 +49,7 @@ pub def is_future(ty: PlanType) -> bool:
 
 
 pub def future_type(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     ty: &RustType,
     mut intrinsics: list[EnumDeclaration],
@@ -62,6 +64,7 @@ pub def future_type(
             return Ok(
                 Some(
                     native_source_type(
+                        constructors,
                         list(module.nominal_declarations),
                         list(module.enum_declarations),
                         collect_unions(module),
@@ -83,14 +86,19 @@ pub def evaluator_name(module: &BodyIrModule, body: &Body) -> str:
     return name
 
 
-def capture_types(module: &BodyIrModule, body: &Body, mut intrinsics: list[EnumDeclaration]) -> Result[list[PlanType], str]:
+def capture_types(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    body: &Body,
+    mut intrinsics: list[EnumDeclaration],
+) -> Result[list[PlanType], str]:
     """Retain owned captures, including declaration-owned rest packs, and at most one nominal loan."""
     mut fields: list[PlanType] = []
     mut loans = 0
     mut nominals = module.nominal_declarations
     mut enums = module.enum_declarations
     for parameter in body.params:
-        ty = frame_type(nominals, enums, body.locals[int(parameter.local.index())], intrinsics)?
+        ty = frame_type(constructors, nominals, enums, body.locals[int(parameter.local.index())], intrinsics)?
         validate_collection_capture(parameter.kind, ty)?
         match ty:
             PlanType.ModelRef(_owner, _name) => loans += 1
@@ -118,18 +126,25 @@ def validate_collection_capture(kind: IncanCallableParamKind, ty: PlanType) -> R
     return Ok(None)
 
 
-pub def validate_futures(module: &BodyIrModule, mut intrinsics: list[EnumDeclaration]) -> Result[None, str]:
+pub def validate_futures(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    mut intrinsics: list[EnumDeclaration],
+) -> Result[None, str]:
     """Validate source coroutine identities and captures before native storage is selected by rustc."""
     for body in module.bodies:
         if not body.is_async:
             continue
         match body.canonical:
             Some(identity) =>
-                if identity.kind != SemanticSourceTargetKind.Function and identity.kind != SemanticSourceTargetKind.Method:
+                if (
+                    identity.kind != SemanticSourceTargetKind.Function
+                    and identity.kind != SemanticSourceTargetKind.Method
+                ):
                     return Err("unsupported Body IR async callable identity")
             None => return Err("unsupported Body IR async body without canonical identity")
         if len(body.type_parameters) == 0:
-            _ = capture_types(module, body, intrinsics)?
+            _ = capture_types(constructors, module, body, intrinsics)?
     return Ok(None)
 
 
@@ -187,8 +202,9 @@ pub def construct_future(
     """Capture evaluated arguments by value and return a native coroutine without polling its body."""
     if is_program_entry(module, body):
         return Err("unsupported Body IR calling async main")
-    fields = capture_types(module, body, builder.intrinsics)?
+    fields = capture_types(builder.program.constructors.as_ref(), module, body, builder.intrinsics)?
     output = native_source_type(
+        builder.constructors,
         list(module.nominal_declarations),
         list(module.enum_declarations),
         collect_unions(module),
@@ -249,17 +265,20 @@ pub def integer_entry(body: Function, entry_name: str) -> Function:
         parameters=[],
         return_type=PlanType.Unit,
         locals=[Local(ty=PlanType.Unit, span=span), Local(ty=body.return_type, span=span)],
-        blocks=[plan_block(
-            [],
-            TerminatorKind.Call(
-                Callee(kind=CalleeKind.Planned(body.name), span=span),
+        blocks=[
+            plan_block(
                 [],
-                plan_place(1, span),
-                1,
-                Unwind.Continue,
+                TerminatorKind.Call(
+                    Callee(kind=CalleeKind.Planned(body.name), span=span),
+                    [],
+                    plan_place(1, span),
+                    1,
+                    Unwind.Continue,
+                ),
+                span,
             ),
-            span,
-        ), plan_block([], TerminatorKind.Return, span)],
+            plan_block([], TerminatorKind.Return, span),
+        ],
         span=span,
     )
 
@@ -310,27 +329,31 @@ pub def async_entry(
         parameters=[],
         return_type=body.return_type,
         locals=[Local(ty=body.return_type, span=span), Local(ty=future, span=span)],
-        blocks=[plan_block(
-            [],
-            TerminatorKind.Call(
-                Callee(kind=CalleeKind.Planned(constructor.name), span=span),
+        blocks=[
+            plan_block(
                 [],
-                plan_place(1, span),
-                1,
-                Unwind.Continue,
+                TerminatorKind.Call(
+                    Callee(kind=CalleeKind.Planned(constructor.name), span=span),
+                    [],
+                    plan_place(1, span),
+                    1,
+                    Unwind.Continue,
+                ),
+                span,
             ),
-            span,
-        ), plan_block(
-            [],
-            TerminatorKind.Call(
-                Callee(kind=CalleeKind.Instantiated(path, arguments), span=span),
-                [read_place(plan_place(1, span), true, span)],
-                plan_place(0, span),
-                2,
-                Unwind.Continue,
+            plan_block(
+                [],
+                TerminatorKind.Call(
+                    Callee(kind=CalleeKind.Instantiated(path, arguments), span=span),
+                    [read_place(plan_place(1, span), true, span)],
+                    plan_place(0, span),
+                    2,
+                    Unwind.Continue,
+                ),
+                span,
             ),
-            span,
-        ), plan_block([], TerminatorKind.Return, span)],
+            plan_block([], TerminatorKind.Return, span),
+        ],
         span=span,
     )
     external = ExternalFunction(

@@ -36,6 +36,7 @@ from decls import library_item, library_enum_item
 from type_parameters import substitute
 from element_places import is_element_place, element_place_type
 from lowering import computed_static_type
+from native_type_identity import ConstructorIndex
 
 
 pub def specialize_project_traits(module: &BodyIrModule, modules: &list[BodyIrModule]) -> Result[BodyIrModule, str]:
@@ -604,7 +605,8 @@ pub def owner_method_index(
         body = body_at(bodies.as_ref(), index)
         if body.canonical != canonical or len(body.params) == 0:
             continue
-        receiver = frame_type(builder.nominals, builder.enums, body.locals[0], builder.intrinsics)?
+        first = borrowed_at(body.locals, 0)
+        receiver = frame_type(builder.constructors, builder.nominals, builder.enums, first, builder.intrinsics)?
         if not receiver_matches(receiver, owner):
             continue
         match receiver_mode(body.locals[0].origin):
@@ -631,7 +633,7 @@ pub def owner_method_index(
         if len(body.locals) == 0:
             candidates += f"{body.name}(params={len(body.params)}, receiver=<no locals>); "
             continue
-        match frame_type(builder.nominals, builder.enums, body.locals[0], builder.intrinsics):
+        match frame_type(builder.constructors, builder.nominals, builder.enums, body.locals[0], builder.intrinsics):
             Ok(receiver) =>
                 candidates += f"{body.name}(params={len(body.params)}, raw_receiver={body.locals[0].ty}, frame={receiver:?}); "
             Err(error) =>
@@ -725,7 +727,16 @@ def receiver_place_type(mut builder: Builder, place: &RustPlace, span: SourceSpa
         return element_place_type(builder, place)
     # Deferred defaults read only the local-offset view of the frame's locals.
     mut frame_locals = builder.locals[builder.local_offset:]
-    path = model_place(builder.nominals, frame_locals, place, span, builder.enums, builder.unions, builder.intrinsics)?
+    path = model_place(
+        builder.constructors,
+        builder.nominals,
+        frame_locals,
+        place,
+        span,
+        builder.enums,
+        builder.unions,
+        builder.intrinsics,
+    )?
     return Ok(place_type(frame_locals, path))
 
 
@@ -741,6 +752,7 @@ def nominal_owner(module: &BodyIrModule, actual: PlanType) -> Option[PlanType]:
 
 
 pub def validate_static_receiver(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     target: &NamedCallableTarget,
     names: list[str],
@@ -756,7 +768,7 @@ pub def validate_static_receiver(
             match enum_type(list(module.enum_declarations), closed):
                 Some(_owner) => return Ok(None)
                 None => pass
-            match model_type(list(module.nominal_declarations), closed)?:
+            match model_type(constructors, module.nominal_declarations, closed)?:
                 PlanType.Model(_owner, _name) => return Ok(None)
                 _ => return Err("unsupported Body IR nonnominal static receiver")
         None => return Ok(None)

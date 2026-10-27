@@ -1,6 +1,7 @@
 """Native comparison bridge symbols selected exclusively from checked standard trait implementations."""
 
-from table_views import borrowed_at
+from table_views import borrowed_at, borrowed_table
+from native_type_identity import ConstructorIndex
 from rust::incan_semantics_core import (
     CanonicalSymbolId,
     SymbolOrigin,
@@ -32,6 +33,7 @@ pub def standard_comparison_slot(identity: &CanonicalSymbolId, name: str) -> boo
 
 
 pub def comparison_functions(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[list[str]], str]:
@@ -44,10 +46,10 @@ pub def comparison_functions(
         mut symbols: list[str] = []
         match module.nominal_declarations[owner].comparison_equality:
             Some(_identity) =>
-                symbols.append(comparison_body(module, owner, "__eq__", true, intrinsics)?)
+                symbols.append(comparison_body(constructors, module, owner, "__eq__", true, intrinsics)?)
                 if source_slot(module, owner, "__lt__"):
                     for name in ["__lt__", "__le__", "__gt__", "__ge__"]:
-                        symbols.append(comparison_body(module, owner, name, false, intrinsics)?)
+                        symbols.append(comparison_body(constructors, module, owner, name, false, intrinsics)?)
             None => pass
         owners.append(symbols)
     return Ok(owners)
@@ -64,6 +66,7 @@ def source_slot(module: &BodyIrModule, owner: int, name: str) -> bool:
 
 
 def comparison_body(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     owner: int,
     name: str,
@@ -71,6 +74,8 @@ def comparison_body(
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[str, str]:
     """Resolve a selected non-generic implementation with its exact shared receiver and legacy other-operand ABI."""
+    nominals = borrowed_table(module.nominal_declarations)
+    enums = borrowed_table(module.enum_declarations)
     declaration = module.nominal_declarations[owner]
     mut selected: Option[CanonicalSymbolId] = None
     for implementation_position in range(len(module.trait_implementations)):
@@ -92,16 +97,17 @@ def comparison_body(
                 if body.canonical != Some(identity.clone()) or len(body.params) != 2:
                     continue
                 first = body.locals[parameter_local_index(body, 0)]
-                match frame_type(module.nominal_declarations, module.enum_declarations, first, intrinsics):
+                match frame_type(constructors, nominals, enums, first, intrinsics):
                     Ok(receiver) =>
                         if receiver == PlanType.ModelRef(owner, str(declaration.name)):
-                            validate_comparison_body(module, body, owner, borrowed, intrinsics)?
+                            validate_comparison_body(constructors, module, body, owner, borrowed, intrinsics)?
                             return Ok(function_name(module, body))
                     Err(_reason) => pass
     return Err(f"unsupported Body IR unavailable published native comparison body {name}")
 
 
 def validate_comparison_body(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     body: &Body,
     owner: int,
@@ -109,6 +115,8 @@ def validate_comparison_body(
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[None, str]:
     """Admit only concrete bool functions with the validated source owner's two native input carriers."""
+    nominals = borrowed_table(module.nominal_declarations)
+    enums = borrowed_table(module.enum_declarations)
     if len(body.type_parameters) != 0 or len(body.params) != 2:
         return Err("unsupported Body IR generic or nonbinary native comparison body")
     name = str(module.nominal_declarations[owner].name)
@@ -122,8 +130,8 @@ def validate_comparison_body(
             CallableParamDefault.Required => pass
             _ => return Err("unsupported Body IR native equality with a defaulted other operand")
     if (
-        frame_type(module.nominal_declarations, module.enum_declarations, first, intrinsics)? != reference
-        or frame_type(module.nominal_declarations, module.enum_declarations, second, intrinsics)? != expected
+        frame_type(constructors, nominals, enums, first, intrinsics)? != reference
+        or frame_type(constructors, nominals, enums, second, intrinsics)? != expected
     ):
         return Err("unsupported Body IR native comparison input ABI")
     if body.return_type != RustType.Primitive(IncanPrimitiveType.Bool):
@@ -157,6 +165,7 @@ pub def source_equality_value(module: &BodyIrModule, target: &MethodTarget, body
 
 
 pub def enum_comparison_functions(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[list[str]], str]:
@@ -175,7 +184,7 @@ pub def enum_comparison_functions(
                     continue
                 if implementation.implementation == implementation.method:
                     continue
-                symbols.append(enum_comparison_body(module, owner, "__eq__", true, intrinsics)?)
+                symbols.append(enum_comparison_body(constructors, module, owner, "__eq__", true, intrinsics)?)
                 for slot_position in range(len(module.trait_implementations)):
                     slot = borrowed_at(module.trait_implementations, slot_position)
                     if (
@@ -184,7 +193,7 @@ pub def enum_comparison_functions(
                         and slot.implementation != slot.method
                     ):
                         for name in ["__lt__", "__le__", "__gt__", "__ge__"]:
-                            symbols.append(enum_comparison_body(module, owner, name, false, intrinsics)?)
+                            symbols.append(enum_comparison_body(constructors, module, owner, name, false, intrinsics)?)
                         break
                 break
         owners.append(symbols)
@@ -192,12 +201,13 @@ pub def enum_comparison_functions(
 
 
 pub def attach_enum_comparisons(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     mut declarations: list[EnumDeclaration],
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[None, str]:
     """Attach checked source bridges and remove only native comparison derives replaced by those exact bodies."""
-    selected = enum_comparison_functions(module, intrinsics)?
+    selected = enum_comparison_functions(constructors, module, intrinsics)?
     for owner in range(len(module.enum_declarations)):
         declarations[owner].comparison_methods = selected[owner]
         if len(selected[owner]) != 0:
@@ -210,6 +220,7 @@ pub def attach_enum_comparisons(
 
 
 def enum_comparison_body(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     owner: int,
     name: str,
@@ -217,6 +228,8 @@ def enum_comparison_body(
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[str, str]:
     """Require the unique checked enum slot body and its exact two-input bool ABI before planning a native bridge."""
+    nominals = borrowed_table(module.nominal_declarations)
+    enums = borrowed_table(module.enum_declarations)
     declaration = module.enum_declarations[owner]
     mut selected: Option[CanonicalSymbolId] = None
     for implementation_position in range(len(module.trait_implementations)):
@@ -244,8 +257,8 @@ def enum_comparison_body(
                 first = body.locals[parameter_local_index(body, 0)]
                 second = body.locals[parameter_local_index(body, 1)]
                 if (
-                    frame_type(module.nominal_declarations, module.enum_declarations, first, intrinsics)? != reference
-                    or frame_type(module.nominal_declarations, module.enum_declarations, second, intrinsics)? != other
+                    frame_type(constructors, nominals, enums, first, intrinsics)? != reference
+                    or frame_type(constructors, nominals, enums, second, intrinsics)? != other
                 ):
                     continue
                 match body.params[1].default:

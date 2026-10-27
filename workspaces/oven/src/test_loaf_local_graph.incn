@@ -3,9 +3,10 @@
 from std import toml
 from std.fs import Path
 from std.testing import fail
-from loaf_local_graph import LocalDemand, LocalFacet, catalog, local_facets
+from loaf_local_graph import LocalDemand, LocalFacet, catalog, local_facets, local_facet_session
 from rust_activation import CfgSnapshot, DependencyDomain, TargetConfiguration
 from registry_units import RegistryDemand, RegistrySelection, RegistryUnit, RegistryUnits
+from toolchain_native import retain_support_facet
 
 
 def root(defaults: bool) -> Result[LocalDemand, str]:
@@ -140,12 +141,30 @@ def registry_fixture(name: str, entry: str, dependencies: list[str], features: l
 
 
 pub def test_local_graph_normal_selection_excludes_test_environment() -> Result[None, str]:
-    """Disabling defaults leaves optional and development dependencies out of the production graph."""
-    facets = local_facets(root(false)?, configuration())?
+    """Shared activations preserve independent roots, default selection and the refusal of divergent support features."""
+    mut session = local_facet_session(configuration())
+    enabled = session.facets(root(true)?)?
+    facets = session.facets(root(false)?)?
+    repeated = session.facets(root(false)?)?
     assert len(facets) == 3
+    assert len(repeated) == 3
     for facet in facets:
         assert not facet.project.endswith("/leaf")
         assert not facet.project.endswith("/support")
+    mut admitted: Dict[str, LocalFacet] = {}
+    for facet in enabled:
+        if facet.project.endswith("/root"):
+            retain_support_facet(admitted, facet)?
+    mut divergent = false
+    for facet in repeated:
+        if not facet.project.endswith("/root"):
+            continue
+        match retain_support_facet(admitted, facet):
+            Ok(_) => pass
+            Err(reason) =>
+                assert "requires unified features" in reason
+                divergent = true
+    assert divergent
     return Ok(None)
 
 

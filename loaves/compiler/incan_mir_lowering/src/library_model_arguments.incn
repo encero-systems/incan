@@ -4,10 +4,11 @@ from rust::incan_semantics_core::body_ir import BodyIrModule, NominalDeclaration
 from pub::incan_mir_plan import PlanType, EnumDeclaration
 from nominal_instances import NominalInstance, nominal_symbol
 from layout_types import native_source_type
+from native_type_identity import ConstructorIndex
 from rust::incan_semantics_core import IncanType as RustType
 
 
-pub def local_generic_item(declaration: &NominalDeclaration, instances: list[NominalInstance]) -> Result[str, str]:
+pub def local_generic_item(declaration: &NominalDeclaration, instances: &list[NominalInstance]) -> Result[str, str]:
     """Select the retained template of a local closed carrier, so its storage aliases the ADT published by this Loaf."""
     for instance in instances:
         if (
@@ -19,16 +20,17 @@ pub def local_generic_item(declaration: &NominalDeclaration, instances: list[Nom
 
 
 pub def library_model_arguments(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     declaration: &NominalDeclaration,
-    instances: list[NominalInstance],
-    mut unions: list[RustType],
-    mut intrinsics: list[EnumDeclaration],
+    instances: &list[NominalInstance],
+    unions: &list[RustType],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[list[PlanType], str]:
     """Transport retained instance arguments against the enclosing layout pass's ordered union inventory."""
     native_item: str = str(declaration.native_item)
     if len(declaration.type_parameters) == 0:
-        return native_arguments(module, declaration, unions, intrinsics).map_err(
+        return native_arguments(constructors, module, declaration, unions, intrinsics).map_err(
             (reason) => f"{reason} in native arguments of {native_item}",
         )
     mut selected: Option[NominalInstance] = None
@@ -47,24 +49,26 @@ pub def library_model_arguments(
     match selected:
         None => return Err(f"standard library model {declaration.name} has no checked instance type arguments")
         Some(instance) =>
-            return instance_native_arguments(module, declaration, instance, unions, intrinsics).map_err(
+            return instance_native_arguments(constructors, module, declaration, instance, unions, intrinsics).map_err(
                 (reason) => f"{reason} in native instance arguments of {native_item}",
             )
 
 
 def native_arguments(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     declaration: &NominalDeclaration,
-    mut unions: list[RustType],
-    mut intrinsics: list[EnumDeclaration],
+    unions: &list[RustType],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[list[PlanType], str]:
     """Preserve fixed native arguments using the caller's already collected union inventory."""
     mut arguments: list[PlanType] = []
     for argument in declaration.native_type_arguments:
         arguments.append(
             native_source_type(
-                list(module.nominal_declarations),
-                list(module.enum_declarations),
+                constructors,
+                module.nominal_declarations,
+                module.enum_declarations,
                 unions,
                 argument,
                 intrinsics,
@@ -74,11 +78,12 @@ def native_arguments(
 
 
 def instance_native_arguments(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     declaration: &NominalDeclaration,
-    instance: NominalInstance,
-    mut unions: list[RustType],
-    mut intrinsics: list[EnumDeclaration],
+    instance: &NominalInstance,
+    unions: &list[RustType],
+    intrinsics: &list[EnumDeclaration],
 ) -> Result[list[PlanType], str]:
     """Close native templates using the caller's union inventory and preserve each argument's field storage."""
     mut templates: list[RustType] = []
@@ -98,8 +103,9 @@ def instance_native_arguments(
     mut arguments: list[PlanType] = []
     for index in range(len(closed)):
         ty = native_source_type(
-            list(module.nominal_declarations),
-            list(module.enum_declarations),
+            constructors,
+            module.nominal_declarations,
+            module.enum_declarations,
             unions,
             closed[index],
             intrinsics,

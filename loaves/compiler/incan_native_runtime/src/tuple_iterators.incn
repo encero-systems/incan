@@ -3,6 +3,7 @@
 from std.derives.copying import Clone
 from std.rust import Static
 from rust::std::vec import Vec
+from rust::std::mem import take
 from rust::std::iter import IntoIterator, Iterator as NativeIterator
 from rust::incan_std_core::iter import Generator as NativeGenerator, nonnegative_count
 from rust::incan_std_core::collections import list_get
@@ -52,10 +53,11 @@ pub def poll_zip[T with Clone, U with Clone](mut values: ZipLists[T, U], mut out
 pub def zip_lists_generator[T with (Clone, Static), U with (Clone, Static)](
     values: ZipLists[T, U],
 ) -> Generator[tuple[T, U]]:
-    """Defer remaining pairs: 1. Snapshot both cursors. 2. Wrap native left-before-right zip polling."""
-    # 1. Snapshot each cursor and its unconsumed source.
-    left = IntoIterator.into_iter(clone_native(values.left)).skip(nonnegative_count(values.left_index))
-    right = IntoIterator.into_iter(clone_native(values.right)).skip(nonnegative_count(values.right_index))
+    """Defer remaining pairs: 1. Transfer the owned snapshots at their cursors. 2. Wrap left-before-right polling."""
+    # 1. Move each owned vector out of the local cursor without cloning its elements or consuming the caller's value.
+    mut cursor = values
+    left = IntoIterator.into_iter(take(cursor.left)).skip(nonnegative_count(cursor.left_index))
+    right = IntoIterator.into_iter(take(cursor.right)).skip(nonnegative_count(cursor.right_index))
     # 2. Wrap native zip polling without drawing an item now.
     return NativeGenerator.new(left.zip(right))
 

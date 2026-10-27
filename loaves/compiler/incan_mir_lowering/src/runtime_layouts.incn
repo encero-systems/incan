@@ -5,13 +5,16 @@ from rust::incan_semantics_core::body_ir import BodyIrModule, Body
 from pub::incan_mir_plan import PlanType, ZipCarrier, EnumDeclaration
 from runtime_calls import runtime_body
 from layout_types import native_source_type
+from native_type_identity import ConstructorIndex
 from unions import collect_unions
 from tuples import tuple_element
 from symbols import model_symbol
 
 
 pub def runtime_zip_carriers(
-    module: &BodyIrModule, mut intrinsics: list[EnumDeclaration],
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[ZipCarrier], str]:
     """Select zip storage: 1. Read its published result identity. 2. Retain that declaration's closed carriers."""
     # 1. Read the published result identity rather than choosing a same-named nominal.
@@ -20,7 +23,7 @@ pub def runtime_zip_carriers(
         Some(body) =>
             owner = zip_result_identity(body.return_type, body)?
             # 2. Retain each actual closed instance of that exact declaration.
-            return closed_zip_carriers(module, owner, intrinsics)
+            return closed_zip_carriers(constructors, module, owner, intrinsics)
 
 
 def zip_result_identity(result: &RustType, body: &Body) -> Result[CanonicalSymbolId, str]:
@@ -36,7 +39,10 @@ def zip_result_identity(result: &RustType, body: &Body) -> Result[CanonicalSymbo
 
 
 def closed_zip_carriers(
-    module: &BodyIrModule, owner: &CanonicalSymbolId, mut intrinsics: list[EnumDeclaration],
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    owner: &CanonicalSymbolId,
+    mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[ZipCarrier], str]:
     """Associate builtin element layouts only with closed instances of the source result's canonical declaration."""
     mut carriers: list[ZipCarrier] = []
@@ -50,10 +56,13 @@ def closed_zip_carriers(
             continue
         left = declaration.native_type_arguments[0]
         right = declaration.native_type_arguments[1]
-        first = native_source_type(nominals, enums, unions, left, intrinsics)?
-        second = native_source_type(nominals, enums, unions, right, intrinsics)?
-        carriers.append(ZipCarrier(
-            left=tuple_element(first, left)?, right=tuple_element(second, right)?,
-            target=PlanType.Model(index, model_symbol(str(declaration.name))),
-        ))
+        first = native_source_type(constructors, nominals, enums, unions, left, intrinsics)?
+        second = native_source_type(constructors, nominals, enums, unions, right, intrinsics)?
+        carriers.append(
+            ZipCarrier(
+                left=tuple_element(first, left)?,
+                right=tuple_element(second, right)?,
+                target=PlanType.Model(index, model_symbol(str(declaration.name))),
+            ),
+        )
     return Ok(carriers)

@@ -1758,7 +1758,8 @@ impl TypeChecker {
         Some(ResolvedType::Unknown)
     }
 
-    /// Bind ordinary local output handles to exact checked C output parameters.
+    /// Bind ordinary local output handles to exact checked C output parameters. Retain the closed constructor type
+    /// for inferred Body IR bindings too: the assignment was checked before this raw call supplied its slot contract.
     fn validate_c_raw_output_slots(
         &mut self,
         binding: &str,
@@ -1881,6 +1882,10 @@ impl TypeChecker {
                 slot.constructor_span.end,
             );
             self.record_expr_type(slot.constructor_span, ResolvedType::Named(slot_identity.clone()));
+            self.type_info
+                .expressions
+                .body_ir_expr_types
+                .insert(slot.constructor_span, ResolvedType::Named(slot_identity.clone()));
             self.record_expr_type(expr.span, ResolvedType::Named(slot_identity.clone()));
             if let Some(symbol_id) = self.symbols.lookup(local_name)
                 && let Some(symbol) = self.symbols.get_mut(symbol_id)

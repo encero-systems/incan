@@ -1,0 +1,32 @@
+"""Publish source models nested inside native owners and source collections."""
+
+from rust::std::sync import Arc
+
+
+pub model Index:
+    """Keep a public mapping in the producer's declaration scope."""
+
+    pub owners: dict[str, int]
+
+    def value(self) -> int:
+        """Return the first recorded owner."""
+        return self.owners["first"]
+
+    def __str__(self) -> str:
+        """Render the producer's public view of its first owner."""
+        return "index:" + str(self.owners["first"])
+
+
+pub def make_index() -> Result[tuple[Arc[Index], list[int]], str]:
+    """Return a native owner without requiring consumers to import Index."""
+    return Ok((Arc.new(Index(owners={"first": 7})), [9]))
+
+
+pub def optional_index() -> Option[Arc[Index]]:
+    """Return a source declaration through an optional native owner."""
+    return Some(Arc.new(Index(owners={"first": 11})))
+
+
+pub def listed_index() -> list[Arc[Index]]:
+    """Return source declarations through a list of native owners."""
+    return [Arc.new(Index(owners={"first": 13}))]

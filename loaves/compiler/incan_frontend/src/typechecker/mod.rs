@@ -62,9 +62,6 @@ mod mut_arguments;
 mod mut_marker;
 mod native_newtype_facts;
 mod native_storage;
-mod nominal_identities;
-pub use nominal_identities::IdentityInput;
-use nominal_identities::NominalIdentityCache;
 mod nominal_type_param_bounds;
 mod reachability;
 mod receiver_change;
@@ -108,6 +105,7 @@ use crate::module::{
     ExportedSymbol, canonicalize_library_declaration_module_path, canonicalize_source_module_segments,
     exported_symbols, logical_source_import_candidates,
 };
+use crate::nominal_inventory::{InventoryRevision, NominalInventory};
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::surface_semantics::SurfaceContext;
 use crate::symbols::*;
@@ -366,9 +364,10 @@ pub fn split_canonical_public_library_type_name(name: &str) -> Option<(&str, &st
 }
 
 /// Declaration context that determines how `yield` expressions are interpreted.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub enum YieldContext {
     /// `yield` is not valid in the current body.
+    #[default]
     Disallowed,
     /// `yield` belongs to `std.testing.fixture` lifecycle semantics.
     Fixture,
@@ -481,19 +480,31 @@ struct DeclarationCallableTypes {
     return_type: ResolvedType,
 }
 
-/// Module identities used during body checking, guarded by the declaration inventory and lexical alias bindings.
+/// Exact mutation witnesses for every input to the nominal scope, without query-time inventory scans.
+#[derive(PartialEq, Eq)]
+struct NominalScopeInputs {
+    /// Active module types and lexical shadows, versioned by their symbol-table owner.
+    symbols: InventoryRevision,
+    /// Alias targets, including mutations that retain the same lookup binding ID.
+    aliases: InventoryRevision,
+    /// Public nominal owners, including equal-size canonical replacements.
+    public: InventoryRevision,
+    /// Immutable declaration scopes and carrier spellings are append-only until the program reset clears this cache.
+    declarations: usize,
+    /// Number of admitted canonical carrier spellings.
+    carriers: usize,
+}
+
+/// One current nominal scope, shared with immutable declaration snapshots only when their inputs are identical.
 struct CheckingNominalScope {
     /// Private bindings; only successful checking can transfer this still-valid snapshot into published facts.
     identities: Arc<std::collections::BTreeMap<String, CanonicalSymbolId>>,
-    /// Exact alias lookup bindings; local shadows must not reuse the module's alias contributions.
-    alias_bindings: Vec<(String, Option<usize>)>,
-    /// Declaration and public-type inventory generations, which grow when checking admits another dependency.
-    declaration_scopes: usize,
-    /// Number of admitted public nominal bindings at snapshot creation.
-    public_types: usize,
+    /// Mutation-owned inputs that admitted these identities.
+    inputs: NominalScopeInputs,
 }
 
 /// Collect and check a program while retaining accepted semantic facts for Body IR and analysis consumers.
+#[derive(Default)]
 pub struct TypeChecker {
     /// Symbol table populated during the first pass.
     pub symbols: SymbolTable,
@@ -641,7 +652,7 @@ pub struct TypeChecker {
     /// module-local; this map avoids global current-scope identity checks.
     pub current_module_function_symbols: HashMap<String, SymbolId>,
     /// Transparent source type aliases, keyed by their local type name.
-    pub type_aliases: IdentityInput<HashMap<String, TypeAliasTarget>>,
+    pub type_aliases: NominalInventory<TypeAliasTarget>,
     /// Member declarations rejected by the source-ordered shared member registry.
     ///
     /// Collection and semantic checking both consult this set so a later colliding declaration cannot overwrite the
@@ -722,14 +733,14 @@ pub struct TypeChecker {
     /// answer across the dependency boundary.
     pub dependency_direct_member_identities: HashMap<String, HashMap<String, CanonicalSymbolId>>,
     /// Nominal bindings captured in a source declaration's own scope before its signature enters a consumer.
-    /// Contextual empty values use these bindings rather than the caller's same-spelled declarations. A declaration
-    /// and its members share one immutable snapshot instead of retaining a full map for every member.
-    declaration_nominal_scopes:
-        IdentityInput<HashMap<CanonicalSymbolId, Arc<std::collections::BTreeMap<String, CanonicalSymbolId>>>>,
+    /// Contextual empty values use these bindings rather than the caller's same-spelled declarations.
+    declaration_nominal_scopes: HashMap<CanonicalSymbolId, Arc<std::collections::BTreeMap<String, CanonicalSymbolId>>>,
+    /// Carrier contributions of retained declaration scopes, indexed once per immutable scope admission. The owning
+    /// scopes are append-only, so this inventory contains one spelling per retained canonical nominal, not
+    /// generations.
+    retained_nominal_carriers: std::collections::BTreeMap<CanonicalSymbolId, String>,
     /// Private value-composition snapshot after declaration collection; lexical alias shadows invalidate it.
-    checking_nominal_scope: Option<CheckingNominalScope>,
-    /// Immutable nominal publications, invalidated by the generations of their checked inputs.
-    nominal_identity_cache: RefCell<NominalIdentityCache>,
+    checking_nominal_scope: RefCell<Option<CheckingNominalScope>>,
     /// Original callable signatures before receiver or trait arguments replace their declaration-owned binders.
     declaration_callables: HashMap<CanonicalSymbolId, DeclarationCallableTypes>,
     /// Re-export links a dependency module publishes, keyed by module cache key then exported name.
@@ -797,7 +808,7 @@ pub struct TypeChecker {
     ///
     /// Identity is deliberately separate from [`ResolvedType`]: source diagnostics retain local spellings while
     /// compatibility can still distinguish identical short names owned by separate dependencies.
-    pub public_library_type_identities: IdentityInput<HashMap<String, PublicLibraryTypeIdentity>>,
+    pub public_library_type_identities: NominalInventory<PublicLibraryTypeIdentity>,
     /// Internal semantic trait cache for dependency exports referenced transitively by imported signatures.
     ///
     /// This keeps trait/supertrait compatibility available for imported function signatures without making those trait
@@ -912,136 +923,9 @@ pub struct DependencyRegistryDefinitions {
 }
 
 impl TypeChecker {
-    /// Create an empty typechecker with fresh symbol, diagnostic, import, and lowering-metadata state.
+    /// Create fresh checking state with an initialized builtin root scope and no active yield context.
     pub fn new() -> Self {
-        Self {
-            symbols: SymbolTable::new(),
-            errors: Vec::new(),
-            warnings: Vec::new(),
-            mutable_bindings: HashSet::new(),
-            mut_params: mut_arguments::MutParamFacts::default(),
-            current_immutable_self_method: None,
-            consumed_iterator_bindings: HashMap::new(),
-            pending_uncopyable_dict_lookups: Vec::new(),
-            static_alias_bindings: HashMap::new(),
-            read_only_binding_spans: HashSet::new(),
-            closure_depth: 0,
-            scoped_c_string_view_receivers: HashSet::new(),
-            c_abi_raw_argument_spans: HashSet::new(),
-            unbound_scoped_c_string_views: HashSet::new(),
-            scoped_c_string_view_bindings: HashMap::new(),
-            transferred_c_resource_bindings: HashMap::new(),
-            for_item_taking: for_item_taking::ForItemTaking::default(),
-            capturing_callables: capturing_callables::CapturingCallables::default(),
-            own_standard_package: None,
-            unbound_c_abi_span_constructors: HashMap::new(),
-            c_abi_span_bindings: HashMap::new(),
-            consumed_c_abi_span_bindings: HashMap::new(),
-            pending_c_abi_output_slots: HashMap::new(),
-            unbound_c_abi_output_slot_constructors: HashMap::new(),
-            unbound_c_abi_raw_call_results: HashMap::new(),
-            open_rust_generic_calls: HashMap::new(),
-            open_rust_generic_bindings: Vec::new(),
-            current_statement_block: 0,
-            statement_block_serial: 0,
-            c_abi_raw_call_results: Vec::new(),
-            available_c_abi_output_slots: HashSet::new(),
-            consumed_c_abi_output_slots: HashMap::new(),
-            current_return_error_type: None,
-            current_yield_context: YieldContext::Disallowed,
-            in_async_body: false,
-            await_operand_span: None,
-            call_argument_depth: 0,
-            unsafe_depth: 0,
-            type_receiver_spans: Vec::new(),
-            type_token_value_spans: Vec::new(),
-            generic_partial_target_span: None,
-            generic_partial_target: None,
-            loop_stack: Vec::new(),
-            current_trait_requires: None,
-            current_trait_properties: None,
-            current_trait_name: None,
-            current_method_owner: None,
-            current_classmethod_self_ty: None,
-            current_c_abi_raw_call_owner: None,
-            warned_public_c_abi_raw_call_owners: HashSet::new(),
-            current_type_param_bound_details: Vec::new(),
-            nominal_type_param_bounds: HashMap::new(),
-            current_trait_missing_requires_emitted: None,
-            const_decls: HashMap::new(),
-            static_decls: Vec::new(),
-            local_function_decls: HashMap::new(),
-            current_module_public_declarations: HashSet::new(),
-            receiver_plan_inputs: Default::default(),
-            body_ir_decorator_factory_span: None,
-            current_module_function_symbols: HashMap::new(),
-            type_aliases: HashMap::new().into(),
-            rejected_member_bindings: HashSet::new(),
-            dependency_import_type_alias_transaction: None,
-            validate_source_type_names: false,
-            unknown_source_type_names_emitted: HashSet::new(),
-            source_type_declaration_names: HashSet::new(),
-            annotation_owner: None,
-            static_decl_positions: HashMap::new(),
-            checking_registry_entry_static_initializer: false,
-            checking_callable_default: false,
-            const_eval_state: HashMap::new(),
-            const_eval_cache: HashMap::new(),
-            type_info: TypeCheckInfo::default(),
-            dependency_exports: HashMap::new(),
-            dependency_member_symbols: HashMap::new(),
-            dependency_member_type_aliases: HashMap::new(),
-            dependency_registry_definitions: HashMap::new(),
-            dependency_member_partial_projections: HashMap::new(),
-            dependency_direct_member_symbols: HashMap::new(),
-            dependency_direct_member_type_aliases: HashMap::new(),
-            dependency_direct_member_identities: HashMap::new(),
-            declaration_nominal_scopes: HashMap::new().into(),
-            checking_nominal_scope: None,
-            nominal_identity_cache: RefCell::new(NominalIdentityCache::default()),
-            declaration_callables: HashMap::new(),
-            dependency_member_reexports: HashMap::new(),
-            body_ir_dependency_pub_reexports: HashMap::new(),
-            dependency_module_path_segments: HashMap::new(),
-            nominal_declarations: union_member_identity::NominalDeclarationContext::default(),
-            dependency_direct_member_partial_projections: HashMap::new(),
-            dependency_derivable_modules: HashMap::new(),
-            dependency_module_traits: HashMap::new(),
-            dependency_trait_rust_derive_paths: HashMap::new(),
-            local_rust_derive_paths: HashMap::new(),
-            local_derive_facts: HashMap::new(),
-            hash_key_type_params: HashMap::new(),
-            local_hash_key_requirements: Vec::new(),
-            inferred_function_bounds: HashMap::new(),
-            loaves: Arc::new(LoafIndex::default()),
-            standard_traits: HashMap::new(),
-            transitive_pub_types: HashMap::new(),
-            public_library_type_identities: HashMap::new().into(),
-            transitive_pub_traits: HashMap::new(),
-            cached_pub_libraries: HashSet::new(),
-            foreign_pub_type_remappings: HashMap::new(),
-            pub_library_declaration_scopes: HashMap::new(),
-            dependency_semantics_pending: false,
-            current_module_path: None,
-            source_import_targets: HashMap::new(),
-            declared_crate_names: None,
-            testing_marker_import_bindings: HashSet::new(),
-            surface_function_import_bindings: HashMap::new(),
-            surface_type_import_bindings: HashMap::new(),
-            module_declared_type_names: HashSet::new(),
-            testing_fixture_names: HashSet::new(),
-            testing_marker_semantics: None,
-            surface_context: SurfaceContext::default(),
-            supertrait_closure: HashMap::new(),
-            pending_trait_supertraits: Vec::new(),
-            type_compatibility_depth: Cell::new(0),
-            nested_type_compatibility_depth: Cell::new(0),
-            rust_metadata_queries: RefCell::new(BTreeSet::new()),
-            native_signature_types: RefCell::new(HashMap::new()),
-            native_iteration_calls: RefCell::new(HashMap::new()),
-            #[cfg(test)]
-            rust_complete_type_lookup_requests: Cell::new(0),
-        }
+        Self::default()
     }
 
     /// Reject a source binding that would replace a protected builtin spelling.
@@ -1446,7 +1330,7 @@ impl TypeChecker {
     /// This must stay metadata-light. `types_compatible(...)` calls it frequently, so it may only use symbol-local
     /// metadata already attached during import collection plus cache-only Rust ABI/rust-inspect reads. Fresh
     /// rust-inspect extraction from this path would leak a heavy workspace/indexing concern into ordinary semantic
-    /// checks. Transparent rusttypes use the checked native template's binders before identity comparison.
+    /// checks. Transparent rusttypes and Rust aliases use their retained native targets before identity comparison.
     fn rust_identity_for_type(&self, ty: &ResolvedType) -> Option<RustTypeIdentity> {
         if let Some(target) = self.rusttype_native_target(ty) {
             return self.rust_identity_for_type(&target);
@@ -1455,6 +1339,17 @@ impl TypeChecker {
             ResolvedType::RustPath(path) => {
                 let (base, args) = self.rust_path_base_and_args(path);
                 let metadata = self.known_rust_metadata_for_path(base.as_str());
+                if metadata.as_ref().is_some_and(
+                    |metadata| matches!(&metadata.kind, RustItemKind::Type(info) if info.alias_target.is_some()),
+                ) {
+                    let displays = args.iter().map(render_resolved_type_as_rust_arg).collect::<Vec<_>>();
+                    let arguments = displays.iter().map(String::as_str).collect::<Vec<_>>();
+                    if let Some(target) = self.rust_alias_expansion(&base, &arguments)
+                        && target != *path
+                    {
+                        return self.rust_identity_for_type(&ResolvedType::RustPath(target));
+                    }
+                }
                 let definition = metadata.as_ref().and_then(|metadata| metadata.definition_path.clone());
                 let defaults = self.rust_type_param_defaults(metadata.as_deref());
                 Some((base, definition, args, defaults))
@@ -2149,48 +2044,58 @@ impl TypeChecker {
     {
         let (base, arg_displays) = Self::rust_generic_base_and_args(normalized)?;
         let collection_id = Self::rust_collection_id_from_display_base(base)?;
-        let mut args = arg_displays
+        let args = arg_displays
             .into_iter()
             .map(|arg| resolve_arg(self, arg))
             .collect::<Vec<_>>();
+        Self::resolved_structural_rust_arguments(collection_id, args).ok()
+    }
+
+    /// Construct the source view of a canonical native collection from already resolved arguments. A rejected arity
+    /// returns the original arguments so native inference can retain its nominal owner without copying or rendering
+    /// checked source identities back through Rust display text.
+    fn resolved_structural_rust_arguments(
+        collection_id: CollectionTypeId,
+        mut args: Vec<ResolvedType>,
+    ) -> Result<ResolvedType, Vec<ResolvedType>> {
         match collection_id {
-            CollectionTypeId::List if args.len() == 1 => Some(ResolvedType::Generic(
+            CollectionTypeId::List if args.len() == 1 => Ok(ResolvedType::Generic(
                 collection_name(CollectionTypeId::List).to_string(),
                 args,
             )),
-            CollectionTypeId::Dict if args.len() == 2 => Some(ResolvedType::Generic(
+            CollectionTypeId::Dict if args.len() == 2 => Ok(ResolvedType::Generic(
                 collection_name(CollectionTypeId::Dict).to_string(),
                 args,
             )),
-            CollectionTypeId::Set if args.len() == 1 => Some(ResolvedType::Generic(
+            CollectionTypeId::Set if args.len() == 1 => Ok(ResolvedType::Generic(
                 collection_name(CollectionTypeId::Set).to_string(),
                 args,
             )),
-            CollectionTypeId::Option if args.len() == 1 => Some(ResolvedType::Generic(
+            CollectionTypeId::Option if args.len() == 1 => Ok(ResolvedType::Generic(
                 collection_name(CollectionTypeId::Option).to_string(),
                 args,
             )),
             CollectionTypeId::Result if args.len() <= 2 => {
                 let ok = args.first().cloned().unwrap_or(ResolvedType::Unknown);
                 let err = args.get(1).cloned().unwrap_or(ResolvedType::Unknown);
-                Some(ResolvedType::Generic(
+                Ok(ResolvedType::Generic(
                     collection_name(CollectionTypeId::Result).to_string(),
                     vec![ok, err],
                 ))
             }
-            CollectionTypeId::Tuple => Some(ResolvedType::Tuple(args)),
-            CollectionTypeId::FrozenList if args.len() == 1 => Some(ResolvedType::FrozenList(Box::new(args.remove(0)))),
-            CollectionTypeId::FrozenSet if args.len() == 1 => Some(ResolvedType::FrozenSet(Box::new(args.remove(0)))),
+            CollectionTypeId::Tuple => Ok(ResolvedType::Tuple(args)),
+            CollectionTypeId::FrozenList if args.len() == 1 => Ok(ResolvedType::FrozenList(Box::new(args.remove(0)))),
+            CollectionTypeId::FrozenSet if args.len() == 1 => Ok(ResolvedType::FrozenSet(Box::new(args.remove(0)))),
             CollectionTypeId::FrozenDict if args.len() == 2 => {
                 let value = args.pop().unwrap_or(ResolvedType::Unknown);
                 let key = args.pop().unwrap_or(ResolvedType::Unknown);
-                Some(ResolvedType::FrozenDict(Box::new(key), Box::new(value)))
+                Ok(ResolvedType::FrozenDict(Box::new(key), Box::new(value)))
             }
-            CollectionTypeId::Generator if args.len() == 1 => Some(ResolvedType::Generic(
+            CollectionTypeId::Generator if args.len() == 1 => Ok(ResolvedType::Generic(
                 collection_name(CollectionTypeId::Generator).to_string(),
                 args,
             )),
-            _ => None,
+            _ => Err(args),
         }
     }
 
@@ -2325,26 +2230,8 @@ impl TypeChecker {
         if normalized == RUST_NEVER_TYPE_DISPLAY {
             return ResolvedType::Never;
         }
-        // Only a carrier key can equal a nominal's carrier key; skip both scans for every other display.
-        let carrier_key = normalized.starts_with(incan_semantics_core::body_ir::NOMINAL_CARRIER_KEY_PREFIX);
-        if carrier_key
-            && let Some((_, name, _)) = self.symbols.active_module_source_bindings().find(|(_, name, _)| {
-                self.symbols
-                    .module_type_identity(name)
-                    .and_then(incan_semantics_core::body_ir::nominal_carrier_key)
-                    .as_deref()
-                    == Some(normalized.as_str())
-            })
-        {
-            return ResolvedType::Named(name.to_owned());
-        }
-        if carrier_key
-            && self.transitive_pub_types.contains_key(&normalized)
-            && self.declaration_nominal_scopes.keys().any(|identity| {
-                incan_semantics_core::body_ir::nominal_carrier_key(identity).as_deref() == Some(normalized.as_str())
-            })
-        {
-            return ResolvedType::Named(normalized);
+        if let Some(source) = self.resolved_source_from_rust_carrier(&normalized) {
+            return source;
         }
         // Native scalar names are metadata vocabulary, independent of same-spelled source imports.
         if let Some(id) = numerics::from_str(&normalized)
@@ -2377,6 +2264,32 @@ impl TypeChecker {
         {
             return ResolvedType::RustPath(info.path.clone());
         }
+        self.resolved_nested_type_from_rust_display(display, normalized)
+    }
+
+    /// Recover an admitted source declaration when Rust returns its native carrier. Published layouts are indexed
+    /// by canonical identity even when the consumer imports only a function; no lexical type binding is introduced.
+    fn resolved_source_from_rust_carrier(&self, normalized: &str) -> Option<ResolvedType> {
+        if !normalized.starts_with(incan_semantics_core::body_ir::NOMINAL_CARRIER_KEY_PREFIX) {
+            return None;
+        }
+        if let Some((_, name, _)) = self.symbols.active_module_source_bindings().find(|(_, name, _)| {
+            self.symbols
+                .module_type_identity(name)
+                .and_then(incan_semantics_core::body_ir::nominal_carrier_key)
+                .as_deref()
+                == Some(normalized)
+        }) {
+            return Some(ResolvedType::Named(name.to_owned()));
+        }
+        self.transitive_pub_types
+            .contains_key(normalized)
+            .then(|| ResolvedType::Named(normalized.to_owned()))
+    }
+
+    /// Resolve borrowed, structural and nominal Rust spellings after scalar and callable forms have been admitted.
+    /// Nested arguments reenter the same conversion so retained source carriers keep their identity.
+    fn resolved_nested_type_from_rust_display(&self, display: String, normalized: String) -> ResolvedType {
         match normalized.as_str() {
             "&str" => return ResolvedType::Str,
             "&[u8]" => return ResolvedType::Bytes,
@@ -2667,10 +2580,12 @@ impl TypeChecker {
         self.symbols.import_binding_path(local_name)
     }
 
-    /// Record the resolved type for one expression span in the lowering-facing expression artifact map.
+    /// Record an expression's resolved type and the identities of its completed native storage. Native defaults
+    /// must contribute payload identities at the same structural positions that storage publication retains.
     pub fn record_expr_type(&mut self, span: Span, ty: ResolvedType) {
         let mut identities = std::collections::BTreeMap::new();
-        self.collect_expression_type_identities(&ty, &mut Vec::new(), &mut identities);
+        let storage = self.rust_storage_resolved(&ty, &self.native_call_type_parameters());
+        self.collect_expression_type_identities(&storage, &mut Vec::new(), &mut identities);
         if identities.is_empty() {
             self.type_info.expressions.expression_type_identities.remove(&span);
         } else {
@@ -2717,6 +2632,8 @@ impl TypeChecker {
                 };
                 if let Some(identity) = identity {
                     identities.insert(path.clone(), identity);
+                } else if incan_semantics_core::body_ir::rust_item_identity(name).is_some() {
+                    self.collect_native_expression_leaf_identity(name, path, identities);
                 }
             }
             ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => {
@@ -2778,6 +2695,17 @@ impl TypeChecker {
             }
             return;
         }
+        self.collect_native_expression_leaf_identity(display, path, identities);
+    }
+
+    /// Retain a completed native leaf only through its registered runtime owner or inspected Rust declaration.
+    /// Both structural default arguments and diagnostic native paths use this single identity admission rule.
+    fn collect_native_expression_leaf_identity(
+        &self,
+        display: &str,
+        path: &[usize],
+        identities: &mut std::collections::BTreeMap<Vec<usize>, CanonicalSymbolId>,
+    ) {
         if let Some(builtin) = incan_semantics_core::RuntimeBuiltinType::from_carrier_path(display) {
             let identity = self
                 .type_info
@@ -2789,7 +2717,7 @@ impl TypeChecker {
                 .cloned()
                 .or_else(|| incan_semantics_core::body_ir::rust_item_identity(display));
             if let Some(identity) = identity {
-                identities.insert(path.clone(), identity);
+                identities.insert(path.to_vec(), identity);
             }
             return;
         }
@@ -2799,7 +2727,7 @@ impl TypeChecker {
         if matches!(metadata.kind, RustItemKind::Type(_))
             && let Some(identity) = incan_semantics_core::body_ir::rust_item_identity(&metadata.canonical_path)
         {
-            identities.insert(path.clone(), identity);
+            identities.insert(path.to_vec(), identity);
         }
     }
 
@@ -6835,27 +6763,35 @@ impl TypeChecker {
     /// or use [`check_with_imports`](Self::check_with_imports) to import dependencies first.
     pub fn check_program(&mut self, program: &Program) -> Result<(), Vec<CompileError>> {
         let preserve_dependency_semantics = std::mem::take(&mut self.dependency_semantics_pending);
-        let result = self.check_program_internal(program, preserve_dependency_semantics);
-        self.clear_nominal_identity_cache();
-        result
+        self.check_program_internal(program, preserve_dependency_semantics)
     }
 
     /// Check one program while retaining semantic-only type metadata collected from its dependency imports.
     fn check_program_with_dependency_semantics(&mut self, program: &Program) -> Result<(), Vec<CompileError>> {
         self.dependency_semantics_pending = false;
-        let result = self.check_program_internal(program, true);
-        self.clear_nominal_identity_cache();
-        result
+        self.check_program_internal(program, true)
     }
 
-    /// Shared program checker with explicit control over dependency-only semantic caches.
+    /// Check one program in declaration, body and publication order, preserving dependency-only semantic caches
+    /// only when the caller has collected them for this program. Accumulated fatal diagnostics prevent nominal
+    /// snapshot publication.
     fn check_program_internal(
         &mut self,
         program: &Program,
         preserve_dependency_semantics: bool,
     ) -> Result<(), Vec<CompileError>> {
-        // Reset per-run caches.
-        self.checking_nominal_scope = None;
+        self.reset_program_check(program, preserve_dependency_semantics);
+        self.collect_program_check_declarations(program);
+        self.prepare_program_body_facts();
+        self.check_program_declaration_bodies(program);
+        self.record_program_lowering_facts(program);
+        self.finish_program_check(program)
+    }
+
+    /// Clear per-program observations before collecting declarations. Dependency semantic inventories survive only
+    /// for an explicitly prepared imported program; symbol registration and alias validation keep their prior order.
+    fn reset_program_check(&mut self, program: &Program, preserve_dependency_semantics: bool) {
+        self.checking_nominal_scope.get_mut().take();
         self.validate_source_type_names = false;
         self.unknown_source_type_names_emitted.clear();
         self.source_type_declaration_names = Self::collect_source_type_declaration_names(&program.declarations);
@@ -6913,7 +6849,11 @@ impl TypeChecker {
             .filter_map(declaration_name)
             .map(str::to_string)
             .collect();
+    }
 
+    /// Collect signatures and settle inherited trait requirements before checking any body or call. Dependency
+    /// supertraits resolve first, and callable capture planning uses the complete current declaration inventory.
+    fn collect_program_check_declarations(&mut self, program: &Program) {
         // `check_with_imports` / `import_module` can queue supertrait bounds while collecting dependency ASTs.
         // Resolve those queued bounds into trait symbols before we collect and resolve the current program.
         if !self.pending_trait_supertraits.is_empty() {
@@ -6937,7 +6877,11 @@ impl TypeChecker {
         // Every signature is collected, so the function-typed parameters and returns that hold capturing closures
         // can be decided before any call or body is checked (#1561).
         self.plan_closure_holding_callables(program);
+    }
 
+    /// Retain private declaration-time native and nominal facts for body checking, reusing only matching mutation
+    /// revisions. Finalization publishes the current inventory only after accumulated fatal diagnostics are absent.
+    fn prepare_program_body_facts(&mut self) {
         // Direct-route call and pattern facts need the already collected native owners and their public paths while
         // checking arguments and results. Keep this snapshot private; ordinary nominal tables retain their final
         // successful-check timing.
@@ -6949,21 +6893,15 @@ impl TypeChecker {
         self.type_info.declarations.named_type_identities = nominal_scope
             .iter()
             .filter(|(name, identity)| {
-                incan_semantics_core::body_ir::nominal_carrier_key(identity).as_deref() == Some(name.as_str())
+                incan_semantics_core::body_ir::nominal_carrier_key(identity).as_ref() == Some(*name)
             })
             .map(|(name, identity)| (name.clone(), identity.clone()))
             .collect();
-        self.checking_nominal_scope = Some(CheckingNominalScope {
-            identities: nominal_scope,
-            alias_bindings: self
-                .type_aliases
-                .keys()
-                .map(|name| (name.clone(), self.symbols.lookup(name)))
-                .collect(),
-            declaration_scopes: self.declaration_nominal_scopes.len(),
-            public_types: self.public_library_type_identities.len(),
-        });
+    }
 
+    /// Check constants before other declarations, then settle argument ownership and deferred dictionary refusals.
+    /// Source-name validation is active across both passes and remains active until native declarations are checked.
+    fn check_program_declaration_bodies(&mut self, program: &Program) {
         // Second pass: check consts first so their resolved types are available to later checks.
         self.validate_source_type_names = true;
         for decl in &program.declarations {
@@ -6978,7 +6916,11 @@ impl TypeChecker {
         }
         self.resolve_mut_arguments();
         self.refuse_copying_dict_lookups_of_uncopyable_values();
+    }
 
+    /// Record checked layout, trait and import facts for later stages without publishing a nominal snapshot yet.
+    /// Native module validation precedes exporting inferred bounds and declaration identities.
+    fn record_program_lowering_facts(&mut self, program: &Program) {
         self.type_info
             .c_abi
             .resolve_checked_facades(self.current_module_path.as_deref());
@@ -7003,7 +6945,11 @@ impl TypeChecker {
         self.export_checked_import_bindings();
         self.export_type_alias_targets();
         self.record_binding_collision_diagnostics();
+    }
 
+    /// Resolve final destination and artifact demands, retain warnings, and publish only after fatal diagnostics are
+    /// absent. Publication's own demands are validated again before the checked result is accepted.
+    fn finish_program_check(&mut self, program: &Program) -> Result<(), Vec<CompileError>> {
         if self.loaves.keys().next().is_some() {
             for (name, identity) in &self.public_library_type_identities {
                 if identity.selected_provider.is_none()
@@ -7036,19 +6982,23 @@ impl TypeChecker {
             self.publish_rust_storage_types(program);
             self.type_info.body_ir_newtypes = native_newtype_facts::project(program, &self.type_info);
             self.publish_body_ir_empty_lists();
+            self.checking_nominal_scope.get_mut().take();
             if let Err(error) = self.loaves.validate_demands() {
                 return Err(vec![CompileError::type_error(error.to_string(), Span::default())]);
             }
             Ok(())
         } else {
-            self.checking_nominal_scope = None;
+            self.checking_nominal_scope.get_mut().take();
             Err(fatal)
         }
     }
 
     /// Publish the checked module-scope nominal and native identity tables Body IR reads, once the module is checked.
     fn publish_checked_nominal_scope(&mut self) {
-        self.type_info.declarations.named_type_identities = self.take_checked_nominal_type_identities();
+        let identities = self.checked_nominal_type_identities();
+        self.checking_nominal_scope.get_mut().take();
+        self.type_info.declarations.named_type_identities =
+            Arc::try_unwrap(identities).unwrap_or_else(|shared| (*shared).clone());
         self.type_info.declarations.body_ir_native_type_identities = self.checked_native_nominal_type_identities();
         self.type_info.body_ir_runtime_types = self.checked_body_ir_runtime_types();
         self.type_info.rust.item_public_paths = self.checked_rust_item_public_paths();
@@ -7090,13 +7040,24 @@ impl TypeChecker {
         owners
     }
 
-    /// Map imported Rust spellings to one public carrier per admitted type definition and bound extern namespace.
-    /// Choosing the smallest public path makes the carrier independent of symbol iteration order while keeping
-    /// private defining paths out of executable identities. A canonical defining path has no separate definition
-    /// alias in rustc metadata. All facts come from the collected import metadata.
+    /// Select the metadata producer's public owner when it belongs to the selected extern namespace. A private
+    /// definition or a definition reached through another crate still needs the admitted public import projection.
+    /// Source imports cannot choose a different carrier merely by naming another reexport of the same definition.
+    fn rust_public_definition_path<'a>(&self, path: &str, metadata: &'a RustItemMetadata) -> Option<&'a str> {
+        let definition = metadata.definition_path.as_deref().unwrap_or(&metadata.canonical_path);
+        if definition.split("::").next() != path.split("::").next() {
+            return None;
+        }
+        let owner = self.rust_item_metadata_for_path(definition)?;
+        (owner.visibility == incan_lang::interop::RustVisibility::Public).then_some(definition)
+    }
+
+    /// Map imported Rust spellings to the producer-selected public carrier per native definition and bound extern.
+    /// The producer's DefId-backed path is independent of the importing module. Only inaccessible or cross-extern
+    /// definitions use the smallest admitted public projection; private paths never become executable identities.
     fn checked_rust_item_public_paths(&self) -> HashMap<String, String> {
         // ---- Public representatives of native definitions ----
-        let mut type_paths: HashMap<(String, String), String> = HashMap::new();
+        let mut type_paths: HashMap<(String, String), (String, bool)> = HashMap::new();
         for symbol in self.symbols.all_symbols() {
             let SymbolKind::RustItem(info) = &symbol.kind else {
                 continue;
@@ -7112,16 +7073,20 @@ impl TypeChecker {
                 continue;
             }
             let definition = metadata.definition_path.as_ref().unwrap_or(&metadata.canonical_path);
-            let public = Self::normalize_rust_namespace_path(&info.path).to_owned();
-            let domain = public.split("::").next().unwrap_or("").to_owned();
-            type_paths
-                .entry((domain, definition.clone()))
-                .and_modify(|selected| {
-                    if public < *selected {
-                        *selected = public.clone();
+            let imported = Self::normalize_rust_namespace_path(&info.path);
+            let domain = imported.split("::").next().unwrap_or("").to_owned();
+            match type_paths.entry((domain, definition.clone())) {
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    let producer = self.rust_public_definition_path(imported, &metadata);
+                    entry.insert((producer.unwrap_or(imported).to_owned(), producer.is_some()));
+                }
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    let (selected, producer_selected) = entry.get_mut();
+                    if !*producer_selected && imported < selected.as_str() {
+                        *selected = imported.to_owned();
                     }
-                })
-                .or_insert(public);
+                }
+            }
         }
 
         // ---- Source spellings and defining paths ----
@@ -7141,7 +7106,7 @@ impl TypeChecker {
                 .filter(|metadata| matches!(metadata.kind, RustItemKind::Type(_)))
                 .map(|metadata| metadata.definition_path.as_ref().unwrap_or(&metadata.canonical_path))
                 .and_then(|definition| type_paths.get(&(domain, definition.clone())))
-                .cloned()
+                .map(|(public, _)| public.clone())
                 .unwrap_or_else(|| public.clone());
             if let Some(definition) = metadata.and_then(|metadata| metadata.definition_path.clone()) {
                 paths.entry(definition).or_insert_with(|| canonical.clone());
@@ -7197,13 +7162,8 @@ impl TypeChecker {
     fn checked_native_nominal_type_identities(&mut self) -> std::collections::BTreeMap<String, CanonicalSymbolId> {
         let mut identities = self
             .symbols
-            .all_symbols()
-            .iter()
-            .enumerate()
+            .active_module_symbols()
             .filter_map(|(id, symbol)| {
-                if symbol.scope != 0 || !self.symbols.is_active_lookup_binding(id) {
-                    return None;
-                }
                 let identity = self.symbols.identity_of(id)?;
                 if identity.kind == SemanticSourceTargetKind::Rusttype {
                     return Some((symbol.name.clone(), identity.clone()));
@@ -7237,10 +7197,7 @@ impl TypeChecker {
     /// unchanged.
     fn checked_body_ir_runtime_types(&self) -> std::collections::BTreeMap<String, CanonicalSymbolId> {
         self.symbols
-            .all_symbols()
-            .iter()
-            .enumerate()
-            .filter(|(id, symbol)| symbol.scope == 0 && self.symbols.is_active_lookup_binding(*id))
+            .active_module_symbols()
             .filter_map(|(id, symbol)| {
                 let identity = self.symbols.identity_of(id)?;
                 incan_semantics_core::RuntimeBuiltinType::from_identity(identity)?;
@@ -7253,19 +7210,51 @@ impl TypeChecker {
     ///
     /// Imported source types already carry their declaring identity in the symbol table. Body IR must retain that
     /// fact before publication; recovering it from a spelling in lowering would lose aliases and module ownership.
-    fn compute_nominal_type_identities(
-        &self,
-        mut carrier_key: impl FnMut(&CanonicalSymbolId) -> Option<String>,
-    ) -> std::collections::BTreeMap<String, CanonicalSymbolId> {
+    fn checked_nominal_type_identities(&self) -> Arc<std::collections::BTreeMap<String, CanonicalSymbolId>> {
+        if let Some(identities) = self.checked_body_nominal_scope() {
+            return identities;
+        }
+        let identities = Arc::new(self.collect_checked_nominal_scope());
+        self.checking_nominal_scope.replace(Some(CheckingNominalScope {
+            identities: Arc::clone(&identities),
+            inputs: self.nominal_scope_inputs(),
+        }));
+        identities
+    }
+
+    /// Collect each input inventory once after its owning revision changes, retaining first-binding precedence.
+    fn collect_checked_nominal_scope(&self) -> std::collections::BTreeMap<String, CanonicalSymbolId> {
+        let mut identities = self.checked_nominal_bindings();
+        // Immutable declaration scopes contribute through their admission index, not a scan of every prior snapshot.
+        let carriers = identities
+            .values()
+            .filter_map(|identity| {
+                self.retained_nominal_carriers
+                    .get(identity)
+                    .cloned()
+                    .or_else(|| incan_semantics_core::body_ir::nominal_carrier_key(identity))
+                    .map(|key| (key, identity.clone()))
+            })
+            .collect::<Vec<_>>();
+        for (key, identity) in carriers.into_iter().chain(
+            self.retained_nominal_carriers
+                .iter()
+                .map(|(identity, key)| (key.clone(), identity.clone())),
+        ) {
+            identities.entry(key).or_insert(identity);
+        }
+        identities
+    }
+
+    /// Collect current lexical and public nominal owners, preserving public precedence and ambiguous alias removal.
+    /// The symbol owner already indexes active bindings; historical rejected and dependency rows are never scanned.
+    fn checked_nominal_bindings(&self) -> std::collections::BTreeMap<String, CanonicalSymbolId> {
         let mut identities = self
             .public_library_type_identities
             .iter()
             .filter_map(|(name, identity)| Some((name.clone(), identity.canonical.clone()?)))
             .collect::<std::collections::BTreeMap<_, _>>();
-        for (id, symbol) in self.symbols.all_symbols().iter().enumerate() {
-            if symbol.scope != 0 || !self.symbols.is_active_lookup_binding(id) {
-                continue;
-            }
+        for (id, symbol) in self.symbols.active_module_symbols() {
             let Some(identity) = self.symbols.identity_of(id) else {
                 continue;
             };
@@ -7298,53 +7287,25 @@ impl TypeChecker {
         for name in ambiguous {
             identities.remove(&name);
         }
-        // Declarations from one module share a scope; visit that inventory once, not once per field or method.
-        let mut scopes = HashSet::new();
-        let mut seen = HashSet::new();
-        let carriers = identities
-            .values()
-            .chain(
-                self.declaration_nominal_scopes
-                    .values()
-                    .filter(|scope| scopes.insert(Arc::as_ptr(scope)))
-                    .flat_map(|scope| scope.values()),
-            )
-            // Declarations and their members share lexical scopes. Visit each snapshot and encode each distinct owner
-            // only once; pointer identity is used only to skip an immutable map already visited in this computation.
-            .filter(|identity| seen.insert(*identity))
-            .filter_map(|identity| carrier_key(identity).map(|key| (key, identity.clone())))
-            .collect::<Vec<_>>();
-        for (key, identity) in carriers {
-            identities.entry(key).or_insert(identity);
-        }
-        if std::env::var_os("INCAN_TRACE_WORK").is_some() {
-            let mut fingerprint = std::collections::hash_map::DefaultHasher::new();
-            std::hash::Hash::hash(&identities, &mut fingerprint);
-            eprintln!(
-                "compile-work\tchecked_nominal_inventory\t{:016x}\t{}",
-                std::hash::Hasher::finish(&fingerprint),
-                scopes.len(),
-            );
-        }
         identities
     }
 
-    /// Borrow the declaration snapshot only while its inputs and lexical alias bindings still match. Newly admitted
-    /// declarations or a local binding shadowing an alias fall back to the authoritative collector; the private
-    /// snapshot never publishes unchecked aliases; successful checking may transfer it into the published facts.
-    fn checked_body_nominal_scope(&self) -> Option<&std::collections::BTreeMap<String, CanonicalSymbolId>> {
-        let scope = self.checking_nominal_scope.as_ref()?;
-        if scope.declaration_scopes != self.declaration_nominal_scopes.len()
-            || scope.public_types != self.public_library_type_identities.len()
-            || scope.alias_bindings.len() != self.type_aliases.len()
-            || scope
-                .alias_bindings
-                .iter()
-                .any(|(name, binding)| self.symbols.lookup(name) != *binding)
-        {
-            return None;
+    /// Reuse the current scope only while all owning revisions match, including in-place alias target mutations.
+    fn checked_body_nominal_scope(&self) -> Option<Arc<std::collections::BTreeMap<String, CanonicalSymbolId>>> {
+        let scope = self.checking_nominal_scope.borrow();
+        let scope = scope.as_ref()?;
+        (scope.inputs == self.nominal_scope_inputs()).then(|| Arc::clone(&scope.identities))
+    }
+
+    /// Read constant-size mutation witnesses instead of checking each public owner and alias binding at every use.
+    fn nominal_scope_inputs(&self) -> NominalScopeInputs {
+        NominalScopeInputs {
+            symbols: self.symbols.nominal_revision(),
+            aliases: self.type_aliases.revision(),
+            public: self.public_library_type_identities.revision(),
+            declarations: self.declaration_nominal_scopes.len(),
+            carriers: self.retained_nominal_carriers.len(),
         }
-        Some(&scope.identities)
     }
 
     /// Turn collisions from the shared symbol-registration mechanism into source diagnostics.
@@ -7756,14 +7717,18 @@ impl TypeChecker {
                 incan_semantics_core::body_ir::nominal_carrier_key(identity).map(|key| (name.clone(), key))
             })
             .collect();
+        let mut retained_scope = false;
         for (name, kind) in &mut direct_symbols {
             if let Some(identity) = direct_identities.get(name) {
-                self.retain_declaration_nominal_scope(identity, kind, &scope);
+                retained_scope |= self.retain_declaration_nominal_scope(identity, kind, &scope);
                 self.remap_symbol_kind_with_import_aliases(kind, &remapping);
                 if let SymbolKind::Type(info) = kind {
                     self.cache_retained_nominal_layout(Some(identity), info);
                 }
             }
+        }
+        if retained_scope {
+            self.retain_nominal_scope_carriers(&scope);
         }
         for declaration in &module_ast.declarations {
             let Declaration::TypeAlias(alias) = &declaration.node else {
@@ -7810,14 +7775,15 @@ impl TypeChecker {
             .insert(module_name.to_string(), direct_projections);
     }
 
-    /// Share a module's immutable lexical scope across its declarations, fields and methods. A facade cannot replace
-    /// the original scope, and inherited members keep their declaring module's scope without another table copy.
+    /// Share a module's immutable lexical scope across its declarations, fields and methods, returning whether this
+    /// admission retained the supplied scope. A facade cannot replace an original or inherited member's scope.
     fn retain_declaration_nominal_scope(
         &mut self,
         identity: &CanonicalSymbolId,
         kind: &SymbolKind,
         scope: &Arc<std::collections::BTreeMap<String, CanonicalSymbolId>>,
-    ) {
+    ) -> bool {
+        let newly_retained = !self.declaration_nominal_scopes.contains_key(identity);
         let scope = self
             .declaration_nominal_scopes
             .entry(identity.clone())
@@ -7851,7 +7817,7 @@ impl TypeChecker {
             SymbolKind::Type(TypeInfo::Newtype(info)) => &info.methods,
             SymbolKind::Type(TypeInfo::Enum(info)) => &info.methods,
             SymbolKind::Trait(info) => &info.methods,
-            _ => return,
+            _ => return newly_retained,
         };
         for method in methods.values() {
             let Some(member) = &method.identity else { continue };
@@ -7865,6 +7831,20 @@ impl TypeChecker {
                         params: method.params.clone(),
                         return_type: method.return_type.clone(),
                     });
+            }
+        }
+        newly_retained
+    }
+
+    /// Index a newly retained immutable scope once, retaining one spelling per canonical nominal. The scope registry
+    /// never removes entries, so no discarded generation or source-scope snapshot is retained by this index.
+    fn retain_nominal_scope_carriers(&mut self, scope: &std::collections::BTreeMap<String, CanonicalSymbolId>) {
+        for identity in scope.values() {
+            if self.retained_nominal_carriers.contains_key(identity) {
+                continue;
+            }
+            if let Some(key) = incan_semantics_core::body_ir::nominal_carrier_key(identity) {
+                self.retained_nominal_carriers.insert(identity.clone(), key);
             }
         }
     }
@@ -9520,12 +9500,6 @@ impl TypeChecker {
     }
 }
 
-impl Default for TypeChecker {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Return whether a declaration participates in public module import collection.
 pub(crate) fn is_public_decl(decl: &Spanned<Declaration>) -> bool {
     match &decl.node {
@@ -9653,4 +9627,174 @@ pub fn numeric_type_id_for_compat(ty: &ResolvedType) -> Option<NumericTypeId> {
 #[tracing::instrument(skip_all, fields(decl_count = program.declarations.len()))]
 pub fn check(program: &Program) -> Result<(), Vec<CompileError>> {
     TypeChecker::new().check_program(program)
+}
+
+#[cfg(test)]
+mod nominal_scope_tests {
+    use super::{PublicLibraryTypeIdentity, TypeChecker};
+    use crate::ast::{Program, Span};
+    use crate::symbols::{ResolvedType, ScopeKind, Symbol, SymbolKind, VariableInfo};
+    use incan_semantics_core::{CanonicalSymbolId, body_ir::nominal_carrier_key};
+    use std::collections::{BTreeMap, HashSet};
+    use std::sync::Arc;
+
+    /// Parse a source module without changing its declarations or depending on a published standard library.
+    fn program(source: &str) -> Result<Program, Box<dyn std::error::Error>> {
+        let tokens = crate::lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+        Ok(crate::parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?)
+    }
+
+    /// Reproduce the uncached carrier collection from immutable declaration scopes, independently of the new index.
+    fn fresh_scope(checker: &TypeChecker) -> BTreeMap<String, CanonicalSymbolId> {
+        let mut identities = checker.checked_nominal_bindings();
+        let mut visited = HashSet::new();
+        let carriers = identities
+            .values()
+            .chain(
+                checker
+                    .declaration_nominal_scopes
+                    .values()
+                    .filter(|scope| visited.insert(Arc::as_ptr(scope)))
+                    .flat_map(|scope| scope.values()),
+            )
+            .filter_map(|identity| nominal_carrier_key(identity).map(|key| (key, identity.clone())))
+            .collect::<Vec<_>>();
+        for (key, identity) in carriers {
+            identities.entry(key).or_insert(identity);
+        }
+        identities
+    }
+
+    /// Compare mutation-owned lookup indexes with arena lookup, and prove unchanged requests share one computation.
+    fn assert_current_inventory(checker: &TypeChecker) {
+        let expected = checker
+            .symbols
+            .all_symbols()
+            .iter()
+            .enumerate()
+            .filter(|(id, symbol)| symbol.scope == 0 && checker.symbols.is_active_lookup_binding(*id))
+            .map(|(id, _)| id)
+            .collect::<std::collections::BTreeSet<_>>();
+        let actual = checker
+            .symbols
+            .active_module_symbols()
+            .map(|(id, _)| id)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(actual, expected);
+        let scope = checker.checked_nominal_type_identities();
+        assert_eq!(scope.as_ref(), &fresh_scope(checker));
+        assert!(Arc::ptr_eq(&scope, &checker.checked_nominal_type_identities()));
+    }
+
+    /// Changing an alias target invalidates facts even when its source lookup binding and inventory length stay fixed.
+    fn assert_alias_target_revision(checker: &mut TypeChecker) -> Result<(), Box<dyn std::error::Error>> {
+        let previous = checker.type_aliases.get("Alias").cloned().ok_or("missing alias")?;
+        let binding = checker.symbols.lookup("Alias");
+        let before = checker.checked_nominal_type_identities();
+        let alias = checker.type_aliases.get_mut("Alias").ok_or("missing alias")?;
+        let identity = alias
+            .nominal_identities
+            .values_mut()
+            .next()
+            .ok_or("missing alias owner")?;
+        identity.declaration_name = "Changed".to_string();
+        assert_eq!(checker.symbols.lookup("Alias"), binding);
+        assert!(checker.checked_body_nominal_scope().is_none());
+        let after = checker.checked_nominal_type_identities();
+        assert!(!Arc::ptr_eq(&before, &after));
+        assert_current_inventory(checker);
+        checker.type_aliases.insert("Alias".to_string(), previous);
+        assert_current_inventory(checker);
+        Ok(())
+    }
+
+    /// Check admission, repeated imports, lexical shadow/restore and same-size canonical replacements against fresh
+    /// facts.
+    #[test]
+    fn nominal_scope_inventory_matches_fresh_inputs() -> Result<(), Box<dyn std::error::Error>> {
+        // ---- Both constructors initialize the same semantic context ----
+        for checker in [TypeChecker::new(), TypeChecker::default()] {
+            assert_eq!(checker.current_yield_context, super::YieldContext::Disallowed);
+            assert!(checker.errors.is_empty());
+            assert!(checker.warnings.is_empty());
+            assert!(checker.loop_stack.is_empty());
+            assert_eq!(checker.symbols.current_scope_index(), 0);
+            assert!(checker.symbols.lookup("int").is_some());
+            assert!(checker.symbols.lookup("len").is_some());
+        }
+
+        // ---- Imported declarations and repeated admission ----
+        let first = program("pub model First:\n    value: int\n")?;
+        let second = program("pub model Second:\n    value: int\n")?;
+        let mut checker = TypeChecker::default();
+        for (name, dependency) in [("first", &first), ("second", &second), ("first", &first)] {
+            checker.import_module_all(dependency, name);
+            assert_current_inventory(&checker);
+        }
+        assert_eq!(checker.retained_nominal_carriers.len(), 2);
+        let module = program("model Local:\n    value: int\ntype Alias = Local\n")?;
+        checker.set_current_module_path(Some(vec!["consumer".to_string()]));
+        checker.reset_program_check(&module, true);
+        checker.collect_program_check_declarations(&module);
+        checker.prepare_program_body_facts();
+        assert!(checker.errors.is_empty(), "{:?}", checker.errors);
+        assert_eq!(
+            checker.checked_body_nominal_scope().as_deref(),
+            Some(&fresh_scope(&checker))
+        );
+        assert_alias_target_revision(&mut checker)?;
+
+        // ---- Lexical alias shadowing and restoration ----
+        checker.symbols.enter_scope(ScopeKind::Block);
+        checker.symbols.define(Symbol {
+            name: "Alias".to_string(),
+            kind: SymbolKind::Variable(VariableInfo {
+                ty: ResolvedType::Int,
+                is_mutable: false,
+                is_used: false,
+            }),
+            span: Span::new(100, 110),
+            scope: 0,
+        });
+        assert!(checker.checked_body_nominal_scope().is_none());
+        assert_current_inventory(&checker);
+        checker.symbols.exit_scope();
+        assert_current_inventory(&checker);
+        assert_eq!(
+            checker.checked_body_nominal_scope().as_deref(),
+            Some(&fresh_scope(&checker))
+        );
+
+        // ---- Equal-size public owner replacement and removal ----
+        let local = checker
+            .symbols
+            .lookup("Local")
+            .and_then(|id| checker.symbols.identity_of(id))
+            .cloned()
+            .ok_or("missing Local identity")?;
+        checker.public_library_type_identities.insert(
+            "foreign".to_string(),
+            PublicLibraryTypeIdentity::new("demo", &["Local".to_string()]).with_canonical(Some(local.clone())),
+        );
+        checker.prepare_program_body_facts();
+        let mut replacement = local;
+        replacement.declaration_name = "Different".to_string();
+        checker
+            .public_library_type_identities
+            .get_mut("foreign")
+            .ok_or("missing public binding")?
+            .canonical = Some(replacement);
+        assert!(checker.checked_body_nominal_scope().is_none());
+        assert_current_inventory(&checker);
+
+        checker.prepare_program_body_facts();
+        checker.public_library_type_identities.remove("foreign");
+        checker.public_library_type_identities.insert(
+            "unproven".to_string(),
+            PublicLibraryTypeIdentity::new("demo", &["Unproven".to_string()]),
+        );
+        assert!(checker.checked_body_nominal_scope().is_none());
+        assert_current_inventory(&checker);
+        Ok(())
+    }
 }

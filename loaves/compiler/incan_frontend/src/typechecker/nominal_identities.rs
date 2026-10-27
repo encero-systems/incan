@@ -38,6 +38,13 @@ impl<T> Deref for IdentityInput<T> {
     }
 }
 
+impl<T: Default> Default for IdentityInput<T> {
+    /// Initialize the default value with a fresh mutation generation, just like an explicitly supplied input.
+    fn default() -> Self {
+        Self::from(T::default())
+    }
+}
+
 impl<T> DerefMut for IdentityInput<T> {
     /// Invalidate before handing out mutable access; this also covers nested map entries and symbol mutations.
     fn deref_mut(&mut self) -> &mut T {
@@ -59,8 +66,8 @@ where
     }
 }
 
-/// The current immutable publication, bounded to one input generation. Carrier spellings are encoded on demand;
-/// neither snapshot restoration nor a later generation retains a second map or an identity-to-spelling table.
+/// The current immutable publication, bounded to one input generation. The declaration store owns its append-only
+/// carrier admission index; this memo retains no historical publication when an input generation changes.
 #[derive(Debug, Default)]
 pub(super) struct NominalIdentityCache {
     generation: Option<[u64; 4]>,
@@ -86,7 +93,7 @@ impl TypeChecker {
         // Release the previous generation before allocating its replacement. A caller that still needs its snapshot
         // owns an Arc, but the checker itself never keeps historical generations alive.
         cache.identities = Arc::default();
-        let identities = self.compute_nominal_type_identities(incan_semantics_core::body_ir::nominal_carrier_key);
+        let identities = self.compute_nominal_type_identities();
         cache.identities = Arc::new(identities);
         cache.generation = Some(generation);
         #[cfg(test)]
@@ -123,8 +130,6 @@ impl TypeChecker {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use super::*;
     use crate::ast::{Program, Span};
     use crate::symbols::{ResolvedType, ScopeKind, Symbol, SymbolKind, TypeInfo};
@@ -139,7 +144,7 @@ mod tests {
 
     /// Compare the memo with a computation that neither reads nor populates either cache.
     fn assert_fresh(checker: &TypeChecker) {
-        let fresh = checker.compute_nominal_type_identities(incan_semantics_core::body_ir::nominal_carrier_key);
+        let fresh = crate::typechecker::nominal_scope_tests::fresh_scope(checker);
         assert_eq!(checker.checked_nominal_type_identities().as_ref(), &fresh);
     }
 
@@ -236,9 +241,9 @@ mod tests {
             },
         );
         assert_generation(&checker);
-        checker
-            .declaration_nominal_scopes
-            .insert(identity.clone(), Arc::new(BTreeMap::from([("Item".into(), identity)])));
+        let scope = Arc::new(BTreeMap::from([("Item".into(), identity.clone())]));
+        checker.declaration_nominal_scopes.insert(identity, Arc::clone(&scope));
+        checker.retain_nominal_scope_carriers(&scope);
         assert_generation(&checker);
         checker.symbols.get_mut(id).ok_or("missing symbol")?.kind = SymbolKind::Type(TypeInfo::TypeAlias);
         assert_generation(&checker);

@@ -2352,18 +2352,22 @@ fn model(plan: &Plan, index: i64) -> Option<&crate::plan::ModelDeclaration> {
     usize::try_from(index).ok().and_then(|index| plan.models.get(index))
 }
 
-/// Whether the planned model retains Hash and either a derived Eq or a fully validated native equality bridge.
+/// Require local Hash and Eq witnesses, or defer a linked type's implementations to native callee-bound checks.
+/// A library alias never synthesizes implementations; its owning rlib is the authority, as for native comparison.
 fn hashable_model(plan: &Plan, index: i64) -> bool {
     model(plan, index).is_some_and(|declaration| {
-        declaration.derives.iter().any(|derive| derive == "Hash")
-            && (declaration.derives.iter().any(|derive| derive == "Eq")
-                || crate::comparison_bridges::has_equality(plan, index))
+        !declaration.library_item.is_empty()
+            || (declaration.derives.iter().any(|derive| derive == "Hash")
+                && (declaration.derives.iter().any(|derive| derive == "Eq")
+                    || crate::comparison_bridges::has_equality(plan, index)))
     })
 }
 
-/// Admit physical model storage without inventing an equality implementation; native callee bounds remain required.
+/// Admit a local Hash layout or a linked layout without inventing traits; native callee bounds remain required.
 fn hashed_model_layout(plan: &Plan, index: i64) -> bool {
-    model(plan, index).is_some_and(|declaration| declaration.derives.iter().any(|derive| derive == "Hash"))
+    model(plan, index).is_some_and(|declaration| {
+        !declaration.library_item.is_empty() || declaration.derives.iter().any(|derive| derive == "Hash")
+    })
 }
 
 /// Whether the planned enum at `index` hashes, the authority a hashed collection element needs.
@@ -2805,7 +2809,7 @@ fn validate_generic_models(plan: &Plan) -> Result<(), PlanError> {
             || model.derives.iter().any(|name| {
                 !matches!(
                     name.as_str(),
-                    "Clone" | "Debug" | "PartialEq" | "Eq" | "PartialOrd" | "Ord" | "Hash"
+                    "Clone" | "Debug" | "Display" | "PartialEq" | "Eq" | "PartialOrd" | "Ord" | "Hash"
                 ) && !(name.contains("::") && valid_library_item(name))
             })
             || model.fields.iter().any(|field| {
@@ -3039,7 +3043,7 @@ fn validate_enums(plan: &Plan) -> Result<(), PlanError> {
                 }
                 _ => false,
             };
-            if !valid || declaration.source_type.is_empty() || !declaration.name.starts_with("__IncanCarrier") {
+            if !valid || declaration.semantic_key.is_none() || !declaration.name.starts_with("__IncanCarrier") {
                 return Err(error());
             }
         }

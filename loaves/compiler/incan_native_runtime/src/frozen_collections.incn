@@ -9,6 +9,8 @@ from rust::std::clone import Clone as RuntimeClone
 from rust::std::fmt import Display
 from rust::std::cmp import PartialEq
 from rust::std::convert import Into as RustInto
+from rust::std::borrow import Borrow
+from rust::std::primitive import str as RustStr
 from rust::incan_std_core::errors import raise_key_error
 from std.rust import Static
 from rust::std::vec import Vec
@@ -137,21 +139,13 @@ pub def frozen_dict_text_keys[K with (Display, Static), V with Static](value: Ru
         index += 1
 
 
-pub def frozen_dict_text_get[K with (Display, Static), V with (RuntimeClone, Static)](
+pub def frozen_dict_text_get[K with (Borrow[RustStr], Static), V with (RuntimeClone, Static)](
     value: RuntimeFrozenDict[K, V],
     key: &str,
 ) -> V:
-    """Copy one matching value: 1. Find the first key without copying values. 2. Clone only its selected value."""
-    # 1. Find the first key without copying values.
-    match frozen_text_key_index[K, V](value, key):
-        Some(index) =>
-            # 2. Clone only its selected value from the immutable entries.
-            entries: RuntimeFrozenList[tuple[K, V]] = frozen_dict_entries[K, V](value)
-            match entries.get(nonnegative_count(index)):
-                Some(entry) =>
-                    item: &V = entry[1]
-                    return clone_native[V](item)
-                None => pass
+    """Use borrowed text identity to find a value, cloning only the selected owned result."""
+    match value.get[RustStr](key):
+        Some(item) => return clone_native[V](item)
         None => pass
     return raise_key_error(f"'{key}' not found in dict")
 
@@ -178,15 +172,12 @@ pub def frozen_dict_get[K with (PartialEq[K], Display, Static), V with (RuntimeC
     return raise_key_error(f"'{key}' not found in dict")
 
 
-pub def frozen_dict_text_contains[K with (Display, Static), V with Static](
+pub def frozen_dict_text_contains[K with (Borrow[RustStr], Static), V with Static](
     value: RuntimeFrozenDict[K, V],
     key: &str,
 ) -> bool:
-    """Check text keys without cloning values: 1. Report whether the indexed key search finds a match."""
-    # 1. Report whether the indexed key search finds a match.
-    match frozen_text_key_index[K, V](value, key):
-        Some(_index) => return true
-        None => return false
+    """Check borrowed text identity through the frozen dictionary's canonical lookup."""
+    return value.contains_key[RustStr](key)
 
 
 pub def frozen_dict_contains[K with (PartialEq[K], Static), V with Static](
@@ -214,25 +205,6 @@ def frozen_text_item[T with (Display, Static)](value: RuntimeFrozenList[T], inde
     match value.get(nonnegative_count(index)):
         Some(item) => return Some(f"{item}")
         None => return None
-
-
-def frozen_text_key_index[K with (Display, Static), V with Static](
-    value: RuntimeFrozenDict[K, V],
-    key: &str,
-) -> Option[int]:
-    """Find the first displayed key in baked order without cloning or displaying any stored value."""
-    entries: RuntimeFrozenList[tuple[K, V]] = frozen_dict_entries[K, V](value)
-    # The sought key's text is the same for every entry, so it is formatted once.
-    sought = f"{key}"
-    mut index = 0
-    while true:
-        match entries.get(nonnegative_count(index)):
-            Some(entry) =>
-                stored: &K = entry[0]
-                if f"{stored}" == sought:
-                    return Some(index)
-            None => return None
-        index += 1
 
 
 def frozen_dict_entries[K with Static, V with Static](value: RuntimeFrozenDict[K, V]) -> RuntimeFrozenList[tuple[K, V]]:

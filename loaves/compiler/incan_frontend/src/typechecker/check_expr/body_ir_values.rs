@@ -486,13 +486,9 @@ impl TypeChecker {
         if contextual == actual {
             return Some(actual.to_owned());
         }
-        let collected;
         let identities = match self.checked_body_nominal_scope() {
             Some(scope) => scope,
-            None => {
-                collected = self.checked_nominal_type_identities();
-                &collected
-            }
+            None => self.checked_nominal_type_identities(),
         };
         let owner = identities.get(actual)?;
         if nominal_carrier_key(owner).as_deref() != Some(actual) {

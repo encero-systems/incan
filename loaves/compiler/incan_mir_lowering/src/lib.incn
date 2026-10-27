@@ -23,6 +23,7 @@ pub from pub::incan_mir_plan import (
     IteratorMethods,
     Constant,
     Function,
+    GenericLoan,
     ListLeaf,
     list_leaf_type,
     EnumDeclaration,
@@ -96,9 +97,19 @@ pub def program_refusals(
     entry: int,
     progress: bool,
     selection: str,
+    kind: str,
 ) -> list[str]:
     """Consume source inputs for complete or exact-body refusal collection, optionally reporting its current body."""
-    return checked_program_refusals(modules, inputs.sources, inputs.files, entry, progress, selection)
+    return checked_program_refusals(
+        modules,
+        inputs.sources,
+        inputs.files,
+        entry,
+        progress,
+        selection,
+        kind,
+        inputs.overflow_checks,
+    )
 
 
 pub def numeric_carrier(ty: PlanType) -> bool:

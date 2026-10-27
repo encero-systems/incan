@@ -1,0 +1,44 @@
+# behavior: compiled models publish derived Display, Debug, equality, ordering and Hash through values and loans (#2256)
+# expect-stdout:
+#   Record { value: 7 }
+#   Record { value: 7 }
+#   Record { value: 9 }
+#   Record { value: 9 }
+#   true
+#   false
+#   true
+#   true
+#   true
+#   false
+#   true
+#   2
+#   Box { value: 11 }
+#   Box { value: 11 }
+#   Box { value: Opaque { value: 13 } }
+
+"""Observe a compiled model's native traits without importing its declaration."""
+
+from rust::std::convert import AsRef
+from pub::records import boxed, boxed_opaque, owned_record, record
+from hashing import check_hashing
+
+
+def main() -> None:
+    """Print exact derived values and compare equal values, ordered values and their hashes."""
+    value = record(7)
+    println(value)
+    println(f"{value:?}")
+    owner = owned_record(9)
+    println(owner.as_ref())
+    println(f"{owner.as_ref():?}")
+    equal = record(7)
+    larger = record(9)
+    println(value == equal)
+    println(value == larger)
+    println(value < larger)
+    println(value <= equal)
+    check_hashing()
+    generic = boxed(11)
+    println(generic)
+    println(f"{generic:?}")
+    println(boxed_opaque())

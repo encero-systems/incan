@@ -110,7 +110,14 @@ pub def sdk_callable_type(
                     return Ok(storage)
         _ => pass
     concrete: RustType = substitute(original, names, closed)?
-    return native_source_type(builder.nominals, builder.enums, builder.unions, concrete, builder.intrinsics)
+    return native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        concrete,
+        builder.intrinsics,
+    )
 
 
 pub def sdk_callable_type_arguments(
@@ -127,7 +134,14 @@ pub def sdk_callable_type_arguments(
             result.append(sdk_callable_type(builder, argument, names, closed, owned)?)
         return Ok(result)
     for index in range(len(closed)):
-        mut ty = native_source_type(builder.nominals, builder.enums, builder.unions, closed[index], builder.intrinsics)?
+        mut ty = native_source_type(
+            builder.constructors,
+            builder.nominals,
+            builder.enums,
+            builder.unions,
+            closed[index],
+            builder.intrinsics,
+        )?
         for binder, storage in owned:
             if binder == names[index]:
                 ty = storage

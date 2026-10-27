@@ -3405,10 +3405,13 @@ impl TypeChecker {
     /// Retain an inherent Rust callee using the impl's declared native binders, rather than the owner's arity.
     /// Receiver references are explicit checked parameter types; no downstream consumer guesses a borrow from a name.
     /// Metadata-defaulted receiver arguments use the same storage arity as constructors and retained dereferences.
+    /// The impl's instantiated Self owns the receiver slot; source collection and text projections never replace it.
+    /// The selecting caller supplies written method binders; associated owner arguments never occupy those slots.
     #[allow(clippy::too_many_arguments)]
     fn retain_checked_rust_method(
         &mut self,
         method: &incan_lang::interop::RustMethodSig,
+        written_method_parameters: &[String],
         owner: &incan_lang::interop::RustTypeInfo,
         path: &str,
         args: &[CallArg],
@@ -3426,39 +3429,18 @@ impl TypeChecker {
             .chain(&method.signature.type_params)
             .cloned()
             .collect::<Vec<_>>();
-        let refreshed_types = args
-            .iter()
-            .zip(arg_types)
-            .map(|(arg, original)| {
-                self.type_info
-                    .expr_type(Self::call_arg_expr(arg).span)
-                    .cloned()
-                    .unwrap_or_else(|| original.clone())
-            })
-            .collect::<Vec<_>>();
-        let arg_types = refreshed_types.as_slice();
-        let mut bindings = self.infer_rust_signature_bindings(
-            &method.signature,
+        let mut bindings = self.rust_method_bindings(
+            method,
+            written_method_parameters,
+            owner,
             path,
             &native_parameters,
             args,
             arg_types,
-            Some(result),
+            receiver,
+            result,
+            span,
         );
-        // An open result contributes no binding. Keep it from masking the exact owner's concrete argument below.
-        bindings.retain(|_, value| !matches!(value, ResolvedType::Unknown | ResolvedType::CallSiteInfer));
-        if let (Some(receiver), Some(template)) = (receiver, method.impl_self_type.as_deref()) {
-            let receiver = match receiver {
-                ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref(),
-                other => other,
-            };
-            let template = self.native_rust_signature_type(template, path);
-            self.infer_type_param_bindings(
-                &self.rust_inference_type(&template, &native_parameters),
-                &self.rust_inference_type(&self.rust_closed_owner(receiver, owner, path), &[]),
-                &mut bindings,
-            );
-        }
         let Some(type_arguments) = self.rust_method_type_arguments(&native_parameters, owner, &bindings) else {
             if crate::trace_flags::trace_rust_facts() {
                 eprintln!(
@@ -3488,11 +3470,14 @@ impl TypeChecker {
             parameter.ty = self.instantiate_rust_signature_type(&template, &native_parameters, &bindings);
         }
         if let Some(receiver) = receiver {
-            let receiver = match receiver {
-                ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref(),
-                other => other,
+            let storage = match method.impl_self_type.as_deref() {
+                Some(template) => self.instantiate_rust_signature_type(
+                    &self.native_rust_signature_type(template, path),
+                    &native_parameters,
+                    &bindings,
+                ),
+                None => self.rust_storage_owner(receiver, owner, path),
             };
-            let storage = self.rust_storage_owner(receiver, owner, path);
             let Some(parameter) = self.checked_rust_receiver_parameter(&method.signature, &storage) else {
                 return;
             };
@@ -3503,28 +3488,7 @@ impl TypeChecker {
         if method.signature.is_async {
             native_result = ResolvedType::Generic("Awaitable".into(), vec![native_result]);
         }
-        let nominal_receiver = receiver.is_some_and(|receiver| match receiver {
-            ResolvedType::RustPath(path) => path != "char" && path != "str",
-            ResolvedType::Named(_) | ResolvedType::Generic(_, _) => true,
-            _ => false,
-        });
-        if nominal_receiver
-            && owner.type_params.is_empty()
-            && parameters
-                .first()
-                .is_some_and(|parameter| !matches!(parameter.ty, ResolvedType::Ref(_) | ResolvedType::RefMut(_)))
-            && self.derive_support(&ResolvedType::RustPath(path.into()), DeriveId::Copy) == DeriveSupport::Supported
-        {
-            if owner.variants.is_empty() {
-                self.retain_rust_copy_owner(path, owner);
-            } else if let Some(layout) = self.checked_rust_enum_layout(path, owner) {
-                self.type_info
-                    .rust
-                    .checked_enums
-                    .insert(self.rust_public_type_path(path), layout);
-            }
-            self.type_info.rust.copy_receivers.insert(span, path.into());
-        }
+        self.retain_native_copy_receiver(path, owner, receiver, &parameters, span);
         let result_item_path = self
             .rust_result_item_path(&render_resolved_type_as_rust_arg(&native_result), path)
             .or_else(|| self.rust_result_item_path(&method.signature.return_type, path));
@@ -3553,6 +3517,190 @@ impl TypeChecker {
                 has_receiver: receiver.is_some(),
             },
         );
+    }
+
+    /// Infer impl and open method binders, then preserve validated written method selections over source projections.
+    /// The selecting caller owns binder roles; `_` and unknown arguments leave inference unchanged. Rechecking an
+    /// original signature must not replace explicit unsized Rust text with the owned source string passed by borrow.
+    #[allow(clippy::too_many_arguments)]
+    fn rust_method_bindings(
+        &self,
+        method: &incan_lang::interop::RustMethodSig,
+        written_method_parameters: &[String],
+        owner: &incan_lang::interop::RustTypeInfo,
+        path: &str,
+        native_parameters: &[String],
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        receiver: Option<&ResolvedType>,
+        result: &ResolvedType,
+        span: Span,
+    ) -> HashMap<String, ResolvedType> {
+        let refreshed_types = args
+            .iter()
+            .zip(arg_types)
+            .map(|(arg, original)| {
+                self.type_info
+                    .expr_type(Self::call_arg_expr(arg).span)
+                    .cloned()
+                    .unwrap_or_else(|| original.clone())
+            })
+            .collect::<Vec<_>>();
+        let mut bindings = self.infer_rust_signature_bindings(
+            &method.signature,
+            path,
+            native_parameters,
+            args,
+            &refreshed_types,
+            Some(result),
+        );
+        // An open result contributes no binding. Keep it from masking the exact owner's concrete argument below.
+        bindings.retain(|_, value| !matches!(value, ResolvedType::Unknown | ResolvedType::CallSiteInfer));
+        if let (Some(receiver), Some(template)) = (receiver, method.impl_self_type.as_deref()) {
+            let receiver = match receiver {
+                ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref(),
+                other => other,
+            };
+            let template = self.native_rust_signature_type(template, path);
+            self.infer_type_param_bindings(
+                &self.rust_inference_type(&template, native_parameters),
+                &self.rust_inference_type(&self.rust_closed_owner(receiver, owner, path), &[]),
+                &mut bindings,
+            );
+        }
+        if let Some(written) = self.type_info.calls.call_site_monomorph_type_args.get(&span)
+            && !written_method_parameters.is_empty()
+            && written.len() == written_method_parameters.len()
+        {
+            for (parameter, argument) in written_method_parameters.iter().zip(written) {
+                if !matches!(argument, ResolvedType::Unknown | ResolvedType::CallSiteInfer) {
+                    bindings.insert(parameter.clone(), self.rust_inference_type(argument, native_parameters));
+                }
+            }
+        }
+        bindings
+    }
+
+    /// Retain an admitted non-generic Copy receiver's layout when a native method consumes it by value. References
+    /// and primitive text are already represented by their checked carriers and cannot supply nominal Copy evidence.
+    fn retain_native_copy_receiver(
+        &mut self,
+        path: &str,
+        owner: &RustTypeInfo,
+        receiver: Option<&ResolvedType>,
+        parameters: &[CallableParam],
+        span: Span,
+    ) {
+        let nominal_receiver = receiver.is_some_and(|receiver| match receiver {
+            ResolvedType::RustPath(path) => path != "char" && path != "str",
+            ResolvedType::Named(_) | ResolvedType::Generic(_, _) => true,
+            _ => false,
+        });
+        if !nominal_receiver
+            || !owner.type_params.is_empty()
+            || !parameters
+                .first()
+                .is_some_and(|parameter| !matches!(parameter.ty, ResolvedType::Ref(_) | ResolvedType::RefMut(_)))
+            || self.derive_support(&ResolvedType::RustPath(path.into()), DeriveId::Copy) != DeriveSupport::Supported
+        {
+            return;
+        }
+        if owner.variants.is_empty() {
+            self.retain_rust_copy_owner(path, owner);
+        } else if let Some(layout) = self.checked_rust_enum_layout(path, owner) {
+            self.type_info
+                .rust
+                .checked_enums
+                .insert(self.rust_public_type_path(path), layout);
+        }
+        self.type_info.rust.copy_receivers.insert(span, path.into());
+    }
+
+    /// Exercise the retained generic method contract from the existing lookup unit: written native arguments win,
+    /// placeholders still infer from borrowed source text, and impl binders retain their native declaration order.
+    #[cfg(test)]
+    pub(in crate::typechecker::check_expr) fn verify_written_native_method_arguments() {
+        let mut checker = Self::new();
+        let path = "native::Map";
+        let key = ResolvedType::Numeric(numerics::NumericTypeId::U8);
+        let value = ResolvedType::RustPath("std::string::String".into());
+        let receiver = ResolvedType::Generic(path.into(), vec![key.clone(), value.clone()]);
+        let owner = RustTypeInfo {
+            type_params: vec!["K".into(), "V".into()],
+            ..RustTypeInfo::default()
+        };
+        let method = incan_lang::interop::RustMethodSig {
+            name: "get".into(),
+            impl_type_params: vec!["K".into(), "V".into()],
+            impl_self_type: Some("native::Map<K, V>".into()),
+            signature: RustFunctionSig {
+                receiver_contract: None,
+                bounds: Vec::new(),
+                type_params: vec!["Q".into()],
+                params: vec![
+                    incan_lang::interop::RustParam {
+                        name: Some("self".into()),
+                        type_display: "&Self".into(),
+                    },
+                    incan_lang::interop::RustParam {
+                        name: Some("key".into()),
+                        type_display: "&Q".into(),
+                    },
+                ],
+                return_type: "()".into(),
+                is_async: false,
+                is_unsafe: false,
+            },
+        };
+        for (written, expected) in [
+            (
+                ResolvedType::RustPath("str".into()),
+                ResolvedType::RustPath("str".into()),
+            ),
+            (ResolvedType::CallSiteInfer, ResolvedType::Str),
+            (value.clone(), value.clone()),
+        ] {
+            let span = Span::new(10, 20);
+            let args = [CallArg::Positional(Spanned::new(
+                Expr::Ident("probe".into()),
+                Span::new(14, 19),
+            ))];
+            let argument_types = [ResolvedType::Str];
+            let written = vec![written];
+            let specialized = checker.specialize_rust_method_signature(&method.signature, path, &written);
+            let result = checker.validate_rust_method_call(path, &specialized, &args, &argument_types, true, span);
+            assert!(
+                checker.errors.is_empty(),
+                "written arguments must validate: {:?}",
+                checker.errors
+            );
+            checker
+                .type_info
+                .calls
+                .call_site_monomorph_type_args
+                .insert(span, written);
+            checker.retain_checked_rust_method(
+                &method,
+                &method.signature.type_params,
+                &owner,
+                path,
+                &args,
+                &argument_types,
+                Some(&receiver),
+                &result,
+                span,
+            );
+            // Closing the receiver projects its owned String to source Str; unsized native Q must stay distinct.
+            assert_eq!(
+                checker
+                    .type_info
+                    .rust
+                    .checked_calls
+                    .get(&span)
+                    .map(|call| &call.type_arguments),
+                Some(&vec![key.clone(), ResolvedType::Str, expected]),
+            );
+        }
     }
 
     /// Select native arguments in declaration order after the receiver and written arguments constrain them.
@@ -5749,7 +5897,7 @@ impl TypeChecker {
             return None;
         };
         self.record_rust_call_site_params(span, &method.signature.params, path);
-        self.retain_checked_rust_method(method, owner, path, &[], &[], None, result, span);
+        self.retain_checked_rust_method(method, &[], owner, path, &[], &[], None, result, span);
         self.publish_rust_function_value(span)
     }
 

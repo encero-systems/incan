@@ -6,9 +6,12 @@ from rust::incan_semantics_core import IncanType as RustType
 from pub::incan_mir_plan import BasicBlock, Local, PlanType, EnumDeclaration, ExternalFunction, Function, SourceSpan
 from frame import Builder
 from program_context import synthetic_program_context
+from native_type_identity import ConstructorIndex
+from rust::std::sync import Arc
 
 
 pub def owned_string_frame(
+    constructors: Arc[ConstructorIndex],
     module: &BodyIrModule,
     name: str,
     result: PlanType,
@@ -19,7 +22,7 @@ pub def owned_string_frame(
     empty_unions: list[RustType] = []
     empty_type_arguments: list[RustType] = []
     mut builder = Builder(
-        program=synthetic_program_context(module),
+        program=synthetic_program_context(module, constructors),
         locals=[Local(ty=result, span=span), Local(ty=PlanType.String, span=span)],
         parameter_count=1,
         blocks=[],

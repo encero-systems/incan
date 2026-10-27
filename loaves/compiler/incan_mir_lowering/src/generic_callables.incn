@@ -58,6 +58,7 @@ def owned_slots_for_bindings(
                     if original.params[slot].mutable:
                         return Err("unsupported Body IR mutable generic callable storage")
                     expected = native_source_type(
+                        builder.constructors,
                         builder.nominals,
                         builder.enums,
                         builder.unions,

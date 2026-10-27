@@ -60,6 +60,49 @@ pub def library_key(
     )
 
 
+pub def producer_arguments(arguments: list[str]) -> list[str]:
+    """
+    Keep the native producer command independent of unrelated installed search directories.
+
+    Exact extern artifacts, their identities, source dependencies, environment and code generation flags remain in
+    the producer key. Search directories locate those artifacts; they do not select another provider identity.
+    """
+    mut retained: list[str] = []
+    mut directory = false
+    for argument in arguments:
+        if directory:
+            directory = false
+        elif argument == "-L":
+            directory = true
+        else:
+            retained.append(argument)
+    return retained
+
+
+pub def dependency_arguments(arguments: list[str], dependencies: Path) -> list[str]:
+    """Discover rustc's full dependency set without generating a library before its inputs can be observed."""
+    return without_emission(arguments) + ["--emit", f"dep-info={dependencies.0}"]
+
+
+pub def graph_arguments(arguments: list[str]) -> list[str]:
+    """Analyze the native inputs without writing a library or replacing its retained dependency evidence."""
+    return without_emission(arguments) + ["--emit", "metadata"]
+
+
+def without_emission(arguments: list[str]) -> list[str]:
+    """Remove the caller-owned emission pair before selecting one native compiler observation mode."""
+    mut retained: list[str] = []
+    mut emission = false
+    for argument in arguments:
+        if emission:
+            emission = false
+        elif argument == "--emit":
+            emission = true
+        else:
+            retained.append(argument)
+    return retained
+
+
 pub def compilation_observations(
     project: Path,
     dependencies: Path,

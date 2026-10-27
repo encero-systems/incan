@@ -239,9 +239,6 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Inferred SDK task bindings likewise keep the checked call's executable output; explicitly annotated bindings
     /// keep their declared contract. A shared-reference binding retains a borrow fact and keeps its source owner
     /// initialized rather than transferring it into the new binding.
-    ///
-    /// A Result constructor rebind whose legacy payload is missing retains a named refusal even when Body IR keeps
-    /// the local's closed carrier.
     pub(super) fn lower_assignment(
         &mut self,
         assignment: &ast::AssignmentStmt,
@@ -250,11 +247,23 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         span: HirSourceSpan,
         out: &mut Vec<bir::Statement>,
     ) {
+        let mut ty = self.assignment_value_type(assignment, span);
+        ty = self.retained_result_binding_type(assignment, ty, out);
+        let materializes_range = self.expr_has_materialized_range_layout(&assignment.value);
+        self.settle_open_result_value(&assignment.value, &ty);
+        let value = self.lower_assignment_value(assignment, &mut ty, scope, out);
+        let Some(place) = self.assignment_destination(assignment, ty, remaining, scope, span, out) else {
+            return;
+        };
+        self.finish_assignment(assignment, place, value, materializes_range, span, out);
+    }
+
+    /// Select the checked assignment carrier, retaining closed call results for inferred bindings.
+    fn assignment_value_type(&self, assignment: &ast::AssignmentStmt, assignment_span: HirSourceSpan) -> IncanType {
         // A closure value already carries the typechecker's callable shape. A partial retains that full callable
         // type, with captured presets represented as named-overrideable defaults. Positional calls skip those preset
         // slots, and `LocalCallableTarget::binding` records the resulting declaration mapping. Keeping this type on
         // the binding makes the local call contract agree with the `Rvalue::Closure` that creates the value.
-        let assignment_span = span;
         let atomic_storage = self
             .type_info
             .assignment_binding_type(assignment_span)
@@ -285,10 +294,36 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         {
             ty = returned;
         }
-        ty = self.retained_result_binding_type(assignment, ty, out);
-        let materializes_range = self.expr_has_materialized_range_layout(&assignment.value);
-        self.settle_open_result_value(&assignment.value, &ty);
-        let mut value = self.lower_boundary_value(&assignment.value, Some(&ty), scope, out);
+        ty
+    }
+
+    /// Evaluate the replacement before writing it, counting only reads of the destination's current value.
+    /// Later statements and loop backedges observe the replacement, while nested loops still protect repeated reads.
+    /// Pending call operands and borrowed parameter storage retain their ordinary ownership restrictions.
+    fn lower_assignment_value(
+        &mut self,
+        assignment: &ast::AssignmentStmt,
+        ty: &mut IncanType,
+        scope: bir::ScopeId,
+        out: &mut Vec<bir::Statement>,
+    ) -> bir::Operand {
+        let replacement = self.reassigned_local(assignment);
+        let enclosing_replacement = self.replacing_local;
+        let reads = replacement.and_then(|local| self.remaining_reads.get(&local).copied());
+        let current_reads = count_reads_in_expr(&assignment.name, &assignment.value.node);
+        if let Some(local) = replacement {
+            self.remaining_reads.insert(local, current_reads);
+            self.replacing_local = Some((local, self.loop_scopes.len()));
+        }
+        let mut value = self.lower_boundary_value(&assignment.value, Some(ty), scope, out);
+        self.replacing_local = enclosing_replacement;
+        if let Some(local) = replacement {
+            if let Some(reads) = reads {
+                self.remaining_reads.insert(local, reads.saturating_sub(current_reads));
+            } else {
+                self.remaining_reads.remove(&local);
+            }
+        }
         if matches!(ty, IncanType::Ref(_))
             && let bir::Operand::Place(read) = &mut value
         {
@@ -299,17 +334,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         if assignment.ty.is_none()
             && let Some(settled) = self.settled_types.get(&assignment.value.span)
         {
-            ty = self.fill_open_type_parts(&ty, settled);
+            *ty = self.fill_open_type_parts(ty, settled);
         }
         if let Some(actual) = self.result_operand_type(&value) {
-            ty = self.refine_result_channels(&ty, &actual);
-        }
-        // An awaited method can retain its closed output only after its future has been constructed. Preserve that
-        // checked native constraint through an inferred binding without changing an explicit annotation.
-        if assignment.ty.is_none()
-            && let Some(settled) = self.settled_types.get(&assignment.value.span)
-        {
-            ty = self.fill_open_type_parts(&ty, settled);
+            *ty = self.refine_result_channels(ty, &actual);
         }
         // Future construction is a distinct Body IR value even when the surface checker exposes its output type.
         // Preserve that carrier through a binding or alias instead of silently turning it into a scalar copy.
@@ -323,9 +351,39 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             let inferred_task =
                 assignment.ty.is_none() && super::runtime_nominals::retains_task_storage(self.type_info, storage);
             if future || inferred_task {
-                ty = storage.clone();
+                *ty = storage.clone();
             }
         }
+        value
+    }
+
+    /// Identify an existing canonical assignment destination; declarations introduce a new owner instead.
+    fn reassigned_local(&self, assignment: &ast::AssignmentStmt) -> Option<bir::LocalId> {
+        if !matches!(
+            assignment.binding,
+            ast::BindingKind::Inferred | ast::BindingKind::Reassign
+        ) {
+            return None;
+        }
+        match self
+            .type_info
+            .resolved_write_identity(assignment.name_span, &assignment.name)
+        {
+            Some(identity) => self.identity_bindings.get(identity).copied(),
+            None => self.bindings.get(&assignment.name).copied(),
+        }
+    }
+
+    /// Resolve a checked assignment destination or declare its new binding, refusing unresolved canonical targets.
+    fn assignment_destination(
+        &mut self,
+        assignment: &ast::AssignmentStmt,
+        ty: IncanType,
+        remaining: &[ast::Spanned<ast::Statement>],
+        scope: bir::ScopeId,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) -> Option<bir::Place> {
         let binding_span = hir_span(assignment.name_span);
         let target_identity = self
             .type_info
@@ -353,7 +411,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                             span,
                             out,
                         );
-                        return;
+                        return None;
                     }
                 } else {
                     let local = self.bindings.get(&assignment.name).copied().unwrap_or_else(|| {
@@ -370,15 +428,28 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 remaining,
             )),
         };
+        Some(place)
+    }
+
+    /// Publish the replacement and reestablish its drop obligation and checked binding metadata.
+    fn finish_assignment(
+        &mut self,
+        assignment: &ast::AssignmentStmt,
+        place: bir::Place,
+        value: bir::Operand,
+        materializes_range: bool,
+        span: HirSourceSpan,
+        out: &mut Vec<bir::Statement>,
+    ) {
         if assignment.ty.is_some()
-            && !self.type_info.binds_capturing_callable(assignment_span)
+            && !self.type_info.binds_capturing_callable(span)
             && let Some(local) = place.local_id()
             && matches!(self.locals[local.index()].ty, IncanType::Function { .. })
             && !self.function_pointer_locals.contains(&local)
         {
             self.function_pointer_locals.push(local);
         }
-        if self.type_info.binds_capturing_callable(assignment_span)
+        if self.type_info.binds_capturing_callable(span)
             && let Some(local) = place.local_id()
             && !self.closure_holding_locals.contains(&local)
         {
@@ -400,6 +471,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             span,
         });
         if let Some(local) = place.local_id() {
+            self.moved_out.remove(&local);
             if materializes_range {
                 self.materialized_range_locals.insert(local);
             } else {

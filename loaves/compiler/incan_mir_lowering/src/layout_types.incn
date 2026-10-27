@@ -9,7 +9,7 @@ from rust::incan_semantics_core import (
 )
 from rust::incan_semantics_core::body_ir import NominalDeclaration, EnumDeclaration as RustEnumDeclaration
 from rust::incan_lang::lang::types::collections import from_str as collection_type, CollectionTypeId
-from pub::incan_mir_plan import PlanType, ListLeaf, EnumDeclaration, TupleElement
+from pub::incan_mir_plan import PlanType, ListLeaf, EnumDeclaration, TupleElement, semantic_type_matches
 from models import model_type, hashed_element
 from tuples import tuple_element
 from enums import enum_type
@@ -17,6 +17,7 @@ from closures import semantic_input
 from decls import library_enum_item, library_item
 from lists import exclusive_reference, list_parameter_type
 from table_views import borrowed_at
+from native_type_identity import OWNED_CALLABLE_STORAGE, ConstructorIndex, constructor_index
 
 
 pub def native_alias_boundary(nominals: &list[NominalDeclaration], source: PlanType, target: PlanType) -> bool:
@@ -76,10 +77,12 @@ pub def context_free_type(ty: &RustType) -> Result[PlanType, str]:
     enums: list[RustEnumDeclaration] = []
     unions: list[RustType] = []
     intrinsics: list[EnumDeclaration] = []
-    return native_source_type(nominals, enums, unions, ty, intrinsics)
+    constructors = constructor_index(nominals)
+    return native_source_type(constructors, nominals, enums, unions, ty, intrinsics)
 
 
 pub def native_source_type(
+    constructors: &ConstructorIndex,
     nominals: &list[NominalDeclaration],
     enums: &list[RustEnumDeclaration],
     unions: &list[RustType],
@@ -87,10 +90,9 @@ pub def native_source_type(
     intrinsics: &list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Use retained carrier identity before recursively resolving collection elements; never reopen source syntax."""
-    source_type = str(ty)
     mut index = 0
     for declaration in intrinsics:
-        if declaration.source_type == source_type:
+        if semantic_type_matches(declaration, ty):
             return Ok(PlanType.Enum(len(enums) + index, declaration.name))
         index += 1
     match enum_type(enums, ty):
@@ -99,7 +101,12 @@ pub def native_source_type(
     match ty:
         RustType.NativeCChar => return Ok(PlanType.CChar)
         RustType.NativePointer(mutable=mutable, pointee=pointee) =>
-            return Ok(PlanType.RawPointer(mutable, [native_source_type(nominals, enums, unions, pointee, intrinsics)?]))
+            return Ok(
+                PlanType.RawPointer(
+                    mutable,
+                    [native_source_type(constructors, nominals, enums, unions, pointee, intrinsics)?],
+                ),
+            )
         RustType.NativeTraitObject(path=path, send=send, sync=sync) =>
             return Ok(PlanType.NativeTraitObject(str(path), send, sync))
         RustType.NativeArray(element=element, length=length) =>
@@ -108,7 +115,10 @@ pub def native_source_type(
             if count > 9223372036854775807u64:
                 return Err("unsupported Body IR native array length exceeds the plan integer range")
             return Ok(
-                PlanType.NativeArray([native_source_type(nominals, enums, unions, element, intrinsics)?], int(count)),
+                PlanType.NativeArray(
+                    [native_source_type(constructors, nominals, enums, unions, element, intrinsics)?],
+                    int(count),
+                ),
             )
         RustType.RustInteropPath(path) =>
             if str(path) == "str":
@@ -116,61 +126,58 @@ pub def native_source_type(
         RustType.Ref(inner) =>
             if is_native_str(inner):
                 return Ok(PlanType.StrRef)
-            return shared_receiver_type(native_source_type(nominals, enums, unions, inner, intrinsics)?)
+            return shared_receiver_type(native_source_type(constructors, nominals, enums, unions, inner, intrinsics)?)
         RustType.RefMut(inner) =>
-            return mutable_receiver_type(native_source_type(nominals, enums, unions, inner, intrinsics)?)
+            return mutable_receiver_type(native_source_type(constructors, nominals, enums, unions, inner, intrinsics)?)
         RustType.Unsupported(description) => return Err(f"unsupported Body IR type {description}")
         RustType.NativeBuiltin(RuntimeBuiltinType.ValidationError) => return Ok(PlanType.ValidationError)
         RustType.Function(params=parameters, return_type=result) =>
             mut signature: list[PlanType] = []
             for parameter in parameters:
-                input = native_source_type(nominals, enums, unions, parameter.ty, intrinsics)?
+                input = native_source_type(constructors, nominals, enums, unions, parameter.ty, intrinsics)?
                 signature.append(semantic_input(input, parameter.kind, parameter.is_mut, parameter.native_owned)?)
-            signature.append(native_source_type(nominals, enums, unions, result, intrinsics)?)
+            signature.append(native_source_type(constructors, nominals, enums, unions, result, intrinsics)?)
             return Ok(PlanType.FunctionPointer(signature))
         RustType.Generic(base=base, args=arguments) =>
             constructor: str = str(base)
-            if constructor == "<owned-callable>" and len(arguments) == 1:
-                match native_source_type(nominals, enums, unions, arguments[0], intrinsics)?:
+            if constructor == OWNED_CALLABLE_STORAGE and len(arguments) == 1:
+                match native_source_type(constructors, nominals, enums, unions, arguments[0], intrinsics)?:
                     PlanType.FunctionPointer(signature) => return Ok(PlanType.Closure(signature))
                     _ => return Err("invalid owned callable storage signature")
             if base == "[]" and len(arguments) == 1:
-                return Ok(PlanType.NativeSlice([native_source_type(nominals, enums, unions, arguments[0], intrinsics)?]))
+                return Ok(
+                    PlanType.NativeSlice(
+                        [native_source_type(constructors, nominals, enums, unions, arguments[0], intrinsics)?],
+                    ),
+                )
             if base == "Awaitable" and len(arguments) == 1:
-                return Ok(PlanType.Future([native_source_type(nominals, enums, unions, arguments[0], intrinsics)?]))
+                return Ok(
+                    PlanType.Future(
+                        [native_source_type(constructors, nominals, enums, unions, arguments[0], intrinsics)?],
+                    ),
+                )
             if base == "List" and len(arguments) == 1:
-                element = native_source_type(nominals, enums, unions, arguments[0], intrinsics)?
+                element = native_source_type(constructors, nominals, enums, unions, arguments[0], intrinsics)?
                 match element:
                     PlanType.List(leaf, depth) => return Ok(PlanType.List(leaf, depth + 1))
                     _ => return Ok(PlanType.List(collection_leaf(element)?, 1))
             if constructor in ["FrozenList", "FrozenSet", "FrozenDict", "$FrozenList", "$FrozenSet", "$FrozenDict"]:
-                native = constructor.startswith("$")
-                mut elements: list[PlanType] = []
-                for argument in arguments:
-                    mut element = native_source_type(nominals, enums, unions, argument, intrinsics)?
-                    if not native and element == PlanType.String:
-                        element = PlanType.StaticText
-                    elif not native and element == PlanType.List(ListLeaf.U8, 1):
-                        element = PlanType.StaticBytes
-                    elements.append(element)
-                if native:
-                    return Ok(PlanType.FrozenCollection(constructor[1:], elements))
-                return Ok(PlanType.FrozenCollection(constructor, elements))
+                return frozen_collection_type(constructors, nominals, enums, unions, constructor, arguments, intrinsics)
             if base == "Set" and len(arguments) == 1:
-                return Ok(PlanType.Set(hashed_leaf(nominals, enums, arguments[0], intrinsics)?))
+                return Ok(PlanType.Set(hashed_leaf(constructors, nominals, enums, arguments[0], intrinsics)?))
             if base == "Dict" and len(arguments) == 2:
-                key = hashed_leaf(nominals, enums, arguments[0], intrinsics)?
-                value = native_source_type(nominals, enums, unions, arguments[1], intrinsics)?
+                key = hashed_leaf(constructors, nominals, enums, arguments[0], intrinsics)?
+                value = native_source_type(constructors, nominals, enums, unions, arguments[1], intrinsics)?
                 return Ok(PlanType.Dict(key, collection_leaf(value)?))
             if base == "Iterator" and len(arguments) == 1:
-                match zip_pair_type(nominals, enums, unions, arguments[0], intrinsics):
+                match zip_pair_type(constructors, nominals, enums, unions, arguments[0], intrinsics):
                     Some(pair) => return Ok(pair)
                     None => pass
             if (base == "Iterator" or base == "Generator") and len(arguments) == 1:
-                match numeric_newtype_iterator(nominals, arguments[0]):
+                match numeric_newtype_iterator(constructors, nominals, arguments[0]):
                     Some(iterator) => return Ok(iterator)
                     None => pass
-                element = native_source_type(nominals, enums, unions, arguments[0], intrinsics)?
+                element = native_source_type(constructors, nominals, enums, unions, arguments[0], intrinsics)?
                 match element:
                     PlanType.Model(owner, name) => return Ok(PlanType.Generator(ListLeaf.Model(owner, name), 0))
                     PlanType.Tuple(elements) => return Ok(PlanType.Generator(ListLeaf.Tuple(elements), 0))
@@ -178,14 +185,41 @@ pub def native_source_type(
                     PlanType.List(leaf, depth) => return Ok(PlanType.Generator(leaf, depth))
                     _ => pass
             match collection_type(str(base)):
-                Some(CollectionTypeId.Tuple) => return layout_tuple_type(nominals, enums, unions, arguments, intrinsics)
+                Some(CollectionTypeId.Tuple) =>
+                    return layout_tuple_type(constructors, nominals, enums, unions, arguments, intrinsics)
                 _ => pass
-        RustType.Tuple(elements) => return layout_tuple_type(nominals, enums, unions, elements, intrinsics)
+        RustType.Tuple(elements) =>
+            return layout_tuple_type(constructors, nominals, enums, unions, elements, intrinsics)
         _ => pass
-    return model_type(nominals, ty)
+    return model_type(constructors, nominals, ty)
+
+
+def frozen_collection_type(
+    constructors: &ConstructorIndex,
+    nominals: &list[NominalDeclaration],
+    enums: &list[RustEnumDeclaration],
+    unions: &list[RustType],
+    constructor: str,
+    arguments: &list[RustType],
+    intrinsics: &list[EnumDeclaration],
+) -> Result[PlanType, str]:
+    """Retain native frozen payloads directly and source frozen text or bytes through their static storage ABI."""
+    native = constructor.startswith("$")
+    mut elements: list[PlanType] = []
+    for argument in arguments:
+        mut element = native_source_type(constructors, nominals, enums, unions, argument, intrinsics)?
+        if not native and element == PlanType.String:
+            element = PlanType.StaticText
+        elif not native and element == PlanType.List(ListLeaf.U8, 1):
+            element = PlanType.StaticBytes
+        elements.append(element)
+    if native:
+        return Ok(PlanType.FrozenCollection(constructor[1:], elements))
+    return Ok(PlanType.FrozenCollection(constructor, elements))
 
 
 pub def stored_field_type(
+    constructors: &ConstructorIndex,
     nominals: &list[NominalDeclaration],
     enums: &list[RustEnumDeclaration],
     unions: &list[RustType],
@@ -194,7 +228,7 @@ pub def stored_field_type(
     intrinsics: &list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Use the Body IR field's owning callable fact at every construction and projection of its closed owner."""
-    ty = native_source_type(nominals, enums, unions, declaration.field_types[slot], intrinsics)?
+    ty = native_source_type(constructors, nominals, enums, unions, declaration.field_types[slot], intrinsics)?
     owned: bool = declaration.owns_callable_field(slot)
     if owned:
         match ty:
@@ -284,6 +318,7 @@ pub def mutable_receiver_type(ty: PlanType) -> Result[PlanType, str]:
 
 
 pub def callable_parameter_type(
+    constructors: &ConstructorIndex,
     nominals: &list[NominalDeclaration],
     enums: &list[RustEnumDeclaration],
     unions: &list[RustType],
@@ -291,7 +326,7 @@ pub def callable_parameter_type(
     intrinsics: &list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Translate checked callable parameter kinds into the same native collection storage their Body IR frames retain."""
-    element = native_source_type(nominals, enums, unions, parameter.ty, intrinsics)?
+    element = native_source_type(constructors, nominals, enums, unions, parameter.ty, intrinsics)?
     match parameter.kind:
         IncanCallableParamKind.Normal => return Ok(element)
         IncanCallableParamKind.RestPositional =>
@@ -301,7 +336,11 @@ pub def callable_parameter_type(
         IncanCallableParamKind.RestKeyword => return Ok(PlanType.Dict(ListLeaf.Str, collection_leaf(element)?))
 
 
-def numeric_newtype_iterator(nominals: &list[NominalDeclaration], element: &RustType) -> Option[PlanType]:
+def numeric_newtype_iterator(
+    constructors: &ConstructorIndex,
+    nominals: &list[NominalDeclaration],
+    element: &RustType,
+) -> Option[PlanType]:
     """Retain an integer newtype's exact owned generator leaf through the same canonical layout as its list items."""
     match element:
         RustType.Named(name) =>
@@ -317,7 +356,7 @@ def numeric_newtype_iterator(nominals: &list[NominalDeclaration], element: &Rust
                     return None
                 if declaration.field_identities != [declaration.canonical]:
                     return None
-                match model_type(nominals, declaration.field_types[0]):
+                match model_type(constructors, nominals, declaration.field_types[0]):
                     Ok(PlanType.Int) => return Some(PlanType.Generator(ListLeaf.Model(index, str(name)), 0))
                     _ => return None
         _ => pass
@@ -325,6 +364,7 @@ def numeric_newtype_iterator(nominals: &list[NominalDeclaration], element: &Rust
 
 
 def hashed_leaf(
+    constructors: &ConstructorIndex,
     nominals: &list[NominalDeclaration],
     enums: &list[RustEnumDeclaration],
     ty: &RustType,
@@ -353,11 +393,10 @@ def hashed_leaf(
         RustType.Generic(base=base, args=arguments) =>
             if base == "Option" or base == "Result":
                 for argument in arguments:
-                    hashed_leaf(nominals, enums, argument, intrinsics)?
-                source_type = str(ty)
+                    hashed_leaf(constructors, nominals, enums, argument, intrinsics)?
                 mut index = 0
                 for carrier in intrinsics:
-                    if carrier.carrier == str(base) and carrier.source_type == source_type:
+                    if carrier.carrier == str(base) and semantic_type_matches(carrier, ty):
                         return Ok(ListLeaf.Enum(len(enums) + index, carrier.name))
                     index += 1
                 return Err(f"unsupported Body IR unretained carrier hashed key {ty}")
@@ -366,6 +405,7 @@ def hashed_leaf(
 
 
 def layout_tuple_type(
+    constructors: &ConstructorIndex,
     nominals: &list[NominalDeclaration],
     enums: &list[RustEnumDeclaration],
     unions: &list[RustType],
@@ -378,12 +418,13 @@ def layout_tuple_type(
         return Err("a one-element tuple cannot be represented as a scalar")
     mut types: list[TupleElement] = []
     for element in elements:
-        resolved = native_source_type(nominals, enums, unions, element, intrinsics)?
+        resolved = native_source_type(constructors, nominals, enums, unions, element, intrinsics)?
         types.append(tuple_element(resolved, element)?)
     return Ok(PlanType.Tuple(types))
 
 
 def zip_pair_type(
+    constructors: &ConstructorIndex,
     nominals: &list[NominalDeclaration],
     enums: &list[RustEnumDeclaration],
     unions: &list[RustType],
@@ -392,15 +433,17 @@ def zip_pair_type(
 ) -> Option[PlanType]:
     """Admit a checked pair iterator, such as `zip`'s, through its element tuple's retained layout."""
     match element:
-        RustType.Tuple(elements) => return pair_layout(nominals, enums, unions, elements, intrinsics)
+        RustType.Tuple(elements) => return pair_layout(constructors, nominals, enums, unions, elements, intrinsics)
         RustType.Generic(base=base, args=arguments) =>
             match collection_type(str(base)):
-                Some(CollectionTypeId.Tuple) => return pair_layout(nominals, enums, unions, arguments, intrinsics)
+                Some(CollectionTypeId.Tuple) =>
+                    return pair_layout(constructors, nominals, enums, unions, arguments, intrinsics)
                 _ => return None
         _ => return None
 
 
 def pair_layout(
+    constructors: &ConstructorIndex,
     nominals: &list[NominalDeclaration],
     enums: &list[RustEnumDeclaration],
     unions: &list[RustType],
@@ -410,7 +453,7 @@ def pair_layout(
     """Lay out both pair components in the retained context; any other arity or element keeps its refusal."""
     if len(elements) != 2:
         return None
-    match layout_tuple_type(nominals, enums, unions, elements, intrinsics):
+    match layout_tuple_type(constructors, nominals, enums, unions, elements, intrinsics):
         Ok(PlanType.Tuple(pair)) => return Some(PlanType.ZipIterator(pair[0], pair[1]))
         _ => return None
 

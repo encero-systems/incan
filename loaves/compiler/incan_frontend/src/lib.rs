@@ -30,6 +30,7 @@ pub mod library_exports;
 pub mod library_manifest;
 pub mod loaf_index;
 pub mod module;
+mod nominal_inventory;
 pub mod numeric_adapters;
 pub mod parsed_module;
 pub mod partial_projection;

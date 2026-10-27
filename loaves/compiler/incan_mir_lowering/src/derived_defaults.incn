@@ -103,7 +103,14 @@ def receiver_type(
                                 _ => pass
                         None => pass
                 _ => pass
-            return native_source_type(builder.nominals, builder.enums, builder.unions, closed, builder.intrinsics)
+            return native_source_type(
+                builder.constructors,
+                builder.nominals,
+                builder.enums,
+                builder.unions,
+                closed,
+                builder.intrinsics,
+            )
         None => return Err("unsupported Body IR derived Default without a receiver type")
 
 
@@ -134,6 +141,7 @@ def default_fields(
     mut operands: list[Operand] = []
     for slot in range(len(declaration.fields)):
         ty = native_source_type(
+            builder.constructors,
             builder.nominals,
             builder.enums,
             builder.unions,

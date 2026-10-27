@@ -327,12 +327,17 @@ impl TypeChecker {
                 })
             }
             Expr::Unary(op, inner) => {
+                if *op == UnaryOp::Neg
+                    && let Expr::Literal(Literal::Int(literal)) = &inner.node
+                {
+                    return Some(Self::eval_const_integer_literal(literal, true, expected));
+                }
                 let r = self.eval_const_expr(inner, None, stack, decl_span)?;
                 match op {
                     UnaryOp::Neg => {
                         if matches!(r.ty, ResolvedType::Int | ResolvedType::Float) {
                             let value = match r.value.as_ref() {
-                                Some(ConstValue::Int(n)) => Some(ConstValue::Int(-n)),
+                                Some(ConstValue::Int(n)) => n.checked_neg().map(ConstValue::Int),
                                 Some(ConstValue::Float(f)) => Some(ConstValue::Float(-f)),
                                 _ => None,
                             };
@@ -1133,6 +1138,38 @@ impl TypeChecker {
             })
     }
 
+    /// Retain an integer literal only when its exact signed magnitude fits the default constant carrier. An
+    /// unretained value keeps its declared numeric carrier and proceeds through ordinary expected-type checking,
+    /// which validates the full magnitude instead of publishing a saturated integer to Body IR.
+    fn eval_const_integer_literal(
+        literal: &IntLiteral,
+        negative: bool,
+        expected: Option<&ResolvedType>,
+    ) -> ConstEvalResult {
+        let value = literal
+            .signed_value(negative)
+            .and_then(|value| i64::try_from(value).ok())
+            .map(ConstValue::Int);
+        let ty = if value.is_some() {
+            ResolvedType::Int
+        } else {
+            literal
+                .suffix
+                .map(ResolvedType::from_numeric_id)
+                .or_else(|| {
+                    expected
+                        .filter(|ty| super::numeric_type_id_for_compat(ty).is_some())
+                        .cloned()
+                })
+                .unwrap_or(ResolvedType::Int)
+        };
+        ConstEvalResult {
+            ty,
+            kind: ConstKind::RustNative,
+            value,
+        }
+    }
+
     /// Evaluate a literal in a const context, optionally checking it against an expected type.
     fn eval_const_literal(
         &mut self,
@@ -1142,11 +1179,7 @@ impl TypeChecker {
         _decl_span: Span,
     ) -> ConstEvalResult {
         match lit {
-            Literal::Int(il) => ConstEvalResult {
-                ty: ResolvedType::Int,
-                kind: ConstKind::RustNative,
-                value: Some(ConstValue::Int(il.value)),
-            },
+            Literal::Int(il) => Self::eval_const_integer_literal(il, false, expected),
             Literal::Float(f) => ConstEvalResult {
                 ty: ResolvedType::Float,
                 kind: ConstKind::RustNative,

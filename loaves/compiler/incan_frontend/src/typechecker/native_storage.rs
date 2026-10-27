@@ -367,7 +367,8 @@ impl TypeChecker {
 
     /// Complete native owner defaults from the admitted item before retaining each structural argument. Standard
     /// collections use the existing carrier only after metadata proves every hidden argument equals its default;
-    /// other crates and nondefault allocators or hashers retain exact native storage.
+    /// other crates and nondefault allocators or hashers retain exact native storage. Rust aliases recursively freeze
+    /// their retained targets so value storage and method parameters cannot invent separate native owners.
     fn rust_storage_constructor(
         &self,
         base: &str,
@@ -408,6 +409,17 @@ impl TypeChecker {
             }) = self.lookup_rust_item_metadata_for_path(&base).as_deref()
         {
             self.complete_rust_owner_arguments(info, &mut arguments);
+            if info.alias_target.is_some() {
+                let displays = arguments
+                    .iter()
+                    .map(super::helpers::render_resolved_type_as_rust_arg)
+                    .collect::<Vec<_>>();
+                let arguments = displays.iter().map(String::as_str).collect::<Vec<_>>();
+                if let Some(target) = self.rust_alias_expansion(&base, &arguments) {
+                    let resolved = self.native_rust_signature_type(&target, "");
+                    return self.rust_storage_resolved(&resolved, parameters);
+                }
+            }
             if base.starts_with("std::") || base.starts_with("alloc::") {
                 let projected = self.rust_inference_constructor(&base, &arguments, parameters);
                 if matches!(&projected, ResolvedType::Generic(name, _)

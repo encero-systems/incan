@@ -7,7 +7,8 @@ lane=${DEV8_LANE:?set DEV8_LANE to the lane directory}
 repo=$lane/incan
 home_dir=${SELFBUILD_HOME:?set SELFBUILD_HOME to a fresh toolchain home}
 toolchain=$home_dir/toolchains/0.6.0-dev.8
-builder=${SELFBUILD_OVEN:-$lane/oven-bin/incan}
+builder=${SELFBUILD_NATIVE_BUILDER:-$lane/out/native-builds/toolchain-native}
+[[ -x $builder ]] || { print -u2 'build the native description helper first: scripts/build-native-support.sh --tool-only'; exit 1; }
 export INCAN_HOME=$home_dir INCAN_STDLIB=${SELFBUILD_STDLIB:-$repo/loaves/stdlib}
 driver=$(jq -er '.driver' "$toolchain/toolchain.json")
 [[ $driver == /* ]] || driver=$toolchain/$driver
@@ -22,7 +23,8 @@ for package in core async; do
     name=$(sed -nE 's/^name = "([^"]+)"/\1/p' "$project/loaf.toml" | head -1)
     directory=$(mktemp -d "$interfaces/$package.XXXXXX")
     unit=$directory/unit.json
-    "$builder" describe-unit "$project/src/lib.incn" --profile release > "$unit.prepared"
+    # Bind the installed support generation before injecting checking-only source interfaces.
+    SELFBUILD_LIBRARY_OUTPUT= "$builder" "$repo" "$package" release > "$unit.prepared"
     jq --slurpfile interfaces "$interfaces/loaves.json" \
         '.kind = "library" | .loaves += $interfaces[0]' "$unit.prepared" > "$unit"
     if ! "$driver" --source-interface "$unit" "$sysroot" "$directory" > "$directory/build.log" 2>&1; then

@@ -129,7 +129,13 @@ pub def element_method_receiver(
     span: SourceSpan,
 ) -> Result[Place, str]:
     """Borrow a list or dictionary element as the selected method's receiver: in place when `mut self` changes it."""
-    receiver_type = frame_type(builder.nominals, builder.enums, module.bodies[index].locals[0], builder.intrinsics)?
+    receiver_type = frame_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        module.bodies[index].locals[0],
+        builder.intrinsics,
+    )?
     match argument.as_one():
         Some(RustOperand.Place(read)) =>
             # Body IR borrows every source receiver; the selected body's `mut self` decides the borrow's exclusivity.
@@ -204,6 +210,7 @@ def projected_field(mut builder: Builder, place: Place, projection: &PlaceElem, 
     """Project a checked model or constant tuple field through its retained element reference."""
     owner = dereferenced(builder, place)
     field = field_projection(
+        builder.constructors,
         builder.nominals,
         place_type(builder.locals, owner),
         projection,

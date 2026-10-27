@@ -11,6 +11,7 @@ from rust::incan_semantics_core::body_ir import BodyIrModule
 from pub::incan_mir_plan import PlanType, EnumDeclaration
 from classes import frame_type, function_name, parameter_local_index
 from layout_types import native_source_type
+from native_type_identity import ConstructorIndex
 from unions import collect_unions
 from native_arguments import uses_native_argument
 from decls import library_item
@@ -18,6 +19,7 @@ from trait_links import contains
 
 
 pub def callable_methods(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     owner: int,
     mut intrinsics: list[EnumDeclaration],
@@ -59,6 +61,7 @@ pub def callable_methods(
             for argument in arguments:
                 signature.append(
                     native_source_type(
+                        constructors,
                         list(module.nominal_declarations),
                         list(module.enum_declarations),
                         collect_unions(module),
@@ -84,19 +87,23 @@ pub def callable_methods(
                     value = body.locals[parameter_local_index(body, 1)]
                     mut nominals = module.nominal_declarations
                     mut enums = module.enum_declarations
-                    if frame_type(nominals, enums, receiver, intrinsics)? != PlanType.ModelRef(
+                    if frame_type(constructors, nominals, enums, receiver, intrinsics)? != PlanType.ModelRef(
                         owner,
                         str(declaration.name),
                     ):
                         continue
                     result = native_source_type(
+                        constructors,
                         list(module.nominal_declarations),
                         list(module.enum_declarations),
                         collect_unions(module),
                         body.return_type,
                         intrinsics,
                     )?
-                    if frame_type(nominals, enums, value, intrinsics)? != signature[0] or result != signature[1]:
+                    if (
+                        frame_type(constructors, nominals, enums, value, intrinsics)? != signature[0]
+                        or result != signature[1]
+                    ):
                         return Err("unsupported Body IR native Callable1 source signature")
                     return Ok((function_name(module, body), signature))
     return Err("unsupported Body IR unavailable native Callable1 source body")

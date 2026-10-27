@@ -12,6 +12,7 @@ from rust::incan_semantics_core::body_ir import BodyIrModule, Body
 from pub::incan_mir_plan import FallibleIteratorMethods, EnumDeclaration, PlanType
 from classes import frame_type, function_name, parameter_local_index
 from layout_types import native_source_type
+from native_type_identity import ConstructorIndex
 from unions import collect_unions
 from trait_links import contains
 from native_arguments import uses_native_argument
@@ -19,6 +20,7 @@ from decls import library_item
 
 
 pub def fallible_methods(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     owner: int,
     mut intrinsics: list[EnumDeclaration],
@@ -64,7 +66,19 @@ pub def fallible_methods(
                 return Err("unsupported Body IR inconsistent native fallible iterator arguments")
         if len(slots) == 0:
             continue
-        for name in ["__iter__", "__next__", "map", "filter", "flat_map", "take", "inspect", "map_err", "inspect_err", "collect", "fold"]:
+        for name in [
+            "__iter__",
+            "__next__",
+            "map",
+            "filter",
+            "flat_map",
+            "take",
+            "inspect",
+            "map_err",
+            "inspect_err",
+            "collect",
+            "fold",
+        ]:
             if name not in slots:
                 return Err(f"unsupported Body IR incomplete native fallible iterator slot {name}")
         if len(slots) != 11 or len(arguments) != 2:
@@ -75,12 +89,13 @@ pub def fallible_methods(
                 for body in module.bodies:
                     if (
                         body.canonical == Some(identity.clone())
-                        and poll_abi(module, body, owner, arguments, intrinsics)?
+                        and poll_abi(constructors, module, body, owner, arguments, intrinsics)?
                     ):
                         return Ok(
                             Some(
                                 FallibleIteratorMethods(
                                     item=native_source_type(
+                                        constructors,
                                         list(module.nominal_declarations),
                                         list(module.enum_declarations),
                                         collect_unions(module),
@@ -88,6 +103,7 @@ pub def fallible_methods(
                                         intrinsics,
                                     )?,
                                     error=native_source_type(
+                                        constructors,
                                         list(module.nominal_declarations),
                                         list(module.enum_declarations),
                                         collect_unions(module),
@@ -129,6 +145,7 @@ pub def standard_protocol(identity: &CanonicalSymbolId) -> bool:
 
 
 def poll_abi(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     body: &Body,
     owner: int,
@@ -140,7 +157,7 @@ def poll_abi(
         return Ok(false)
     reference = PlanType.ModelMutRef(owner, str(module.nominal_declarations[owner].name))
     local = body.locals[parameter_local_index(body, 0)]
-    if frame_type(list(module.nominal_declarations), list(module.enum_declarations), local, intrinsics)? != reference:
+    if frame_type(constructors, module.nominal_declarations, module.enum_declarations, local, intrinsics)? != reference:
         return Ok(false)
     expected = generic("Result", [generic("Option", [arguments[0].clone()]), arguments[1].clone()])
     return Ok(body.return_type == expected)

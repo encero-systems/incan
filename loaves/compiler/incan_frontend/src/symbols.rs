@@ -5,9 +5,9 @@
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::ast::{ParamKind, Receiver, Span, Type, TypeConstraintKey};
+use crate::nominal_inventory::InventoryRevision;
 use incan_lang::interop::RustItemMetadata;
 use incan_lang::lang::builtins::{self, BuiltinFnId};
 use incan_lang::lang::conventions;
@@ -28,13 +28,6 @@ use incan_semantics_core::{
 
 /// Unique identifier for symbols
 pub type SymbolId = usize;
-
-/// Allocate a process-local mutation generation shared by checker identity inputs. Snapshot generations follow their
-/// contents, so replacing an input with a different value cannot reuse another value's memoized publication.
-pub(crate) fn next_identity_generation() -> u64 {
-    static NEXT: AtomicU64 = AtomicU64::new(1);
-    NEXT.fetch_add(1, Ordering::Relaxed)
-}
 
 /// Result of registering one binding key in RFC 120's shared collision mechanism.
 ///
@@ -259,11 +252,10 @@ fn write_nominal_name(f: &mut std::fmt::Formatter<'_>, name: &str) -> std::fmt::
     }
 }
 
-/// Write a type name as type descriptors show it: a builtin collection base in its `incan_lang` descriptor spelling
-/// (`tuple` reads `Tuple`), any other nominal with its module path.
-fn write_type_name(f: &mut std::fmt::Formatter<'_>, name: &str) -> std::fmt::Result {
+/// Write a builtin collection base in the selected presentation style, preserving other nominal names and paths.
+fn write_type_name(f: &mut std::fmt::Formatter<'_>, name: &str, style: TypeNameStyle) -> std::fmt::Result {
     match collections::from_str(name) {
-        Some(id) => f.write_str(collections::descriptor(id)),
+        Some(id) => f.write_str(style.collection_name(id)),
         None => write_nominal_name(f, name),
     }
 }
@@ -301,10 +293,12 @@ fn stable_fnv1a(bytes: &[u8]) -> u64 {
 }
 
 /// Symbol table managing all named entities
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct SymbolTable {
-    /// Changes whenever nominal symbols, identities or the active lookup view may change.
-    nominal_generation: u64,
+    /// Mutation witness for module types and their lexical shadows, independent of ordinary local values.
+    nominal_revision: InventoryRevision,
+    /// Module type spellings whose shadowing can change a nominal or alias contribution.
+    nominal_binding_names: HashSet<String>,
     symbols: Vec<Symbol>,
     scopes: Vec<Scope>,
     current_scope: usize,
@@ -360,11 +354,20 @@ pub struct SymbolTable {
     binding_collisions: Vec<SymbolBindingCollision>,
 }
 
+impl Default for SymbolTable {
+    /// Construct a usable root scope with builtin symbols, matching [`SymbolTable::new`]. An empty scope vector is
+    /// not a valid table: lexical lookup and registration require the current root scope to exist.
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SymbolTable {
     /// Create a root module scope populated with the language's builtin symbols.
     pub fn new() -> Self {
         let mut table = Self {
-            nominal_generation: next_identity_generation(),
+            nominal_revision: InventoryRevision::default(),
+            nominal_binding_names: HashSet::new(),
             symbols: Vec::new(),
             scopes: vec![Scope::new(None, ScopeKind::Module)],
             current_scope: 0,
@@ -393,13 +396,11 @@ impl SymbolTable {
     /// Called by the typechecker as soon as it knows its module identity, before user declarations are collected.
     /// Builtins are already defined by then and keep their [`SymbolOrigin::Builtin`] identities.
     pub fn set_module_path(&mut self, module_path: Vec<String>) {
-        self.nominal_generation = next_identity_generation();
         self.module_path = module_path;
     }
 
     /// Record that subsequently checked declarations are owned by one compiled package.
     pub fn set_package_identity(&mut self, package_identity: Option<String>) {
-        self.nominal_generation = next_identity_generation();
         self.package_identity = package_identity;
     }
 
@@ -613,16 +614,21 @@ impl SymbolTable {
 
     /// Enter a new scope
     pub fn enter_scope(&mut self, kind: ScopeKind) {
-        self.nominal_generation = next_identity_generation();
         let new_scope = Scope::new(Some(self.current_scope), kind);
         self.scopes.push(new_scope);
         self.current_scope = self.scopes.len() - 1;
     }
 
-    /// Exit the current scope
+    /// Exit the current scope, invalidating nominal facts when a module type's lexical shadow disappears.
     pub fn exit_scope(&mut self) {
-        self.nominal_generation = next_identity_generation();
         if let Some(parent) = self.scopes[self.current_scope].parent {
+            if self.scopes[self.current_scope]
+                .symbols
+                .keys()
+                .any(|name| self.nominal_binding_names.contains(name))
+            {
+                self.nominal_revision = InventoryRevision::default();
+            }
             self.current_scope = parent;
         }
     }
@@ -772,7 +778,7 @@ impl SymbolTable {
     /// for the first declaration would otherwise keep naming an arbitrary member of the set. Overload declarations
     /// keep their own span-keyed identities on `FunctionBindingInfo`.
     pub fn clear_identity(&mut self, id: SymbolId) {
-        self.nominal_generation = next_identity_generation();
+        self.invalidate_nominal_symbol(id);
         self.identities.remove(&id);
     }
 
@@ -788,7 +794,7 @@ impl SymbolTable {
             return;
         };
         if self.import_bindings.contains(&id) && !self.identities.contains_key(&id) {
-            self.nominal_generation = next_identity_generation();
+            self.invalidate_nominal_symbol(id);
             self.identities.insert(id, identity.clone());
         }
     }
@@ -877,9 +883,11 @@ impl SymbolTable {
         is_import: bool,
         mode: BindingDefinitionMode,
     ) -> SymbolId {
-        self.nominal_generation = next_identity_generation();
         self.record_current_scope_binding_before_change(&symbol.name);
         symbol.scope = self.current_scope;
+        if symbol.scope == 0 && matches!(symbol.kind, SymbolKind::Type(_)) {
+            self.nominal_binding_names.insert(symbol.name.clone());
+        }
         let id = self.symbols.len();
         let identity = match identity {
             BindingIdentity::Declaration => self.mint_identity(&symbol),
@@ -1188,7 +1196,7 @@ impl SymbolTable {
     /// builtin fallback tier has one canonical entry per builtin — so every alias records the canonical registry
     /// spelling as its declaration name and all spellings compare equal.
     fn record_builtin_identity(&mut self, id: SymbolId, canonical_name: &str) {
-        self.nominal_generation = next_identity_generation();
+        self.invalidate_nominal_symbol(id);
         self.identities.insert(id, canonical_builtin_identity(canonical_name));
     }
 
@@ -1252,14 +1260,14 @@ impl SymbolTable {
 
     /// Open a fresh temporary lookup view for one dependency interface.
     pub fn begin_dependency_interface_bindings(&mut self) {
-        self.nominal_generation = next_identity_generation();
+        self.nominal_revision = InventoryRevision::default();
         debug_assert!(self.dependency_interface_bindings.is_none());
         self.dependency_interface_bindings = Some(HashMap::new());
     }
 
     /// Drop the active dependency-interface view before another module or consumer source is checked.
     pub fn finish_dependency_interface_bindings(&mut self) {
-        self.nominal_generation = next_identity_generation();
+        self.nominal_revision = InventoryRevision::default();
         debug_assert!(self.dependency_interface_bindings.is_some());
         self.dependency_interface_bindings = None;
     }
@@ -1286,6 +1294,7 @@ impl SymbolTable {
 
     /// Record one binding before its first change in the active transaction.
     fn record_current_scope_binding_before_change(&mut self, name: &str) {
+        self.invalidate_nominal_binding(name);
         let previous = if self.current_scope == 0 {
             self.dependency_interface_bindings
                 .as_ref()
@@ -1301,7 +1310,7 @@ impl SymbolTable {
 
     /// Restore or remove one name binding in the current scope without deleting historical symbol metadata.
     pub fn restore_current_scope_binding(&mut self, name: &str, binding: Option<SymbolId>) {
-        self.nominal_generation = next_identity_generation();
+        self.invalidate_nominal_binding(name);
         if self.current_scope == 0
             && let Some(bindings) = &mut self.dependency_interface_bindings
         {
@@ -1337,15 +1346,46 @@ impl SymbolTable {
         self.symbols.get(id)
     }
 
-    /// Get a mutable symbol by ID
+    /// Get a mutable symbol by ID, invalidating nominal facts before root metadata can change.
     pub fn get_mut(&mut self, id: SymbolId) -> Option<&mut Symbol> {
-        self.nominal_generation = next_identity_generation();
+        self.invalidate_nominal_symbol(id);
         self.symbols.get_mut(id)
     }
 
-    /// Identify the complete nominal-binding view, including temporary imports and lexical lookup changes.
-    pub(crate) fn nominal_identity_generation(&self) -> u64 {
-        self.nominal_generation
+    /// Invalidate before mutable root-symbol access can alter its identity, kind or spelling.
+    fn invalidate_nominal_symbol(&mut self, id: SymbolId) {
+        if let Some(symbol) = self.symbols.get(id)
+            && symbol.scope == 0
+        {
+            self.nominal_binding_names.insert(symbol.name.clone());
+            self.nominal_revision = InventoryRevision::default();
+        }
+    }
+
+    /// Invalidate a changed root binding or a lexical shadow of a module type without recording another transaction.
+    fn invalidate_nominal_binding(&mut self, name: &str) {
+        if self.current_scope == 0 || self.nominal_binding_names.contains(name) {
+            self.nominal_revision = InventoryRevision::default();
+        }
+    }
+
+    /// Borrow the mutation owner's witness without rescanning historical symbols or active alias targets.
+    pub(crate) fn nominal_revision(&self) -> InventoryRevision {
+        self.nominal_revision.clone()
+    }
+
+    /// Read the root lookup indexes once, omitting rejected definitions and bindings shadowed in the current scope.
+    pub(crate) fn active_module_symbols(&self) -> impl Iterator<Item = (SymbolId, &Symbol)> {
+        let imported = self.dependency_interface_bindings.as_ref();
+        self.scopes[0]
+            .symbols
+            .iter()
+            .filter(move |(name, _)| !imported.is_some_and(|bindings| bindings.contains_key(*name)))
+            .chain(imported.into_iter().flat_map(|bindings| bindings.iter()))
+            .filter_map(|(name, id)| {
+                let symbol = self.symbols.get(*id)?;
+                (symbol.scope == 0 && self.lookup(name) == Some(*id)).then_some((*id, symbol))
+            })
     }
 
     /// All symbols in definition order (builtins first, then user declarations).
@@ -1914,72 +1954,65 @@ pub fn field_surface_type_name(source: &Type, resolved: &ResolvedType) -> String
     }
 }
 
-/// Render one resolved type with canonical Incan collection spellings while preserving its semantic shape.
+/// Render canonical Incan source spellings directly from the borrowed semantic shape, without descriptor conversion.
 fn canonical_incan_type_name(ty: &ResolvedType) -> String {
-    let mut canonical = ty.clone();
-    canonicalize_collection_type_names(&mut canonical);
-    canonical.to_string()
+    DisplayType {
+        ty,
+        style: TypeNameStyle::Source,
+    }
+    .to_string()
 }
 
-/// Normalize compatibility aliases such as `List` recursively without changing nominal or Rust type identity.
-fn canonicalize_collection_type_names(ty: &mut ResolvedType) {
-    match ty {
-        ResolvedType::Generic(name, args) => {
-            if let Some(collection) = collections::from_str(name) {
-                *name = match collection {
-                    CollectionTypeId::List => "list",
-                    CollectionTypeId::Dict => "dict",
-                    CollectionTypeId::Set => "set",
-                    CollectionTypeId::Tuple
-                    | CollectionTypeId::Option
-                    | CollectionTypeId::Result
-                    | CollectionTypeId::FrozenList
-                    | CollectionTypeId::FrozenDict
-                    | CollectionTypeId::FrozenSet
-                    | CollectionTypeId::Generator => collections::as_str(collection),
-                }
-                .to_string();
-            }
-            for arg in args {
-                canonicalize_collection_type_names(arg);
-            }
+/// The source spelling retained by reflection differs from diagnostic type-descriptor spelling.
+#[derive(Clone, Copy)]
+enum TypeNameStyle {
+    Source,
+    Descriptor,
+}
+
+impl TypeNameStyle {
+    /// Keep the source collection policy in the presentation boundary; registry identity remains authoritative.
+    fn collection_name(self, id: CollectionTypeId) -> &'static str {
+        match self {
+            Self::Descriptor => collections::descriptor(id),
+            Self::Source => match id {
+                CollectionTypeId::List => "list",
+                CollectionTypeId::Dict => "dict",
+                CollectionTypeId::Set => "set",
+                _ => collections::as_str(id),
+            },
         }
-        ResolvedType::FrozenList(inner)
-        | ResolvedType::FrozenSet(inner)
-        | ResolvedType::TypeToken(inner)
-        | ResolvedType::Ref(inner)
-        | ResolvedType::RefMut(inner) => canonicalize_collection_type_names(inner),
-        ResolvedType::FrozenDict(key, value) => {
-            canonicalize_collection_type_names(key);
-            canonicalize_collection_type_names(value);
+    }
+
+    /// Use source scalar names while retaining exact numeric widths and existing diagnostic descriptors.
+    fn numeric_name(self, id: NumericTypeId) -> &'static str {
+        match (self, id) {
+            (Self::Source, NumericTypeId::I64) => "int",
+            (Self::Source, NumericTypeId::F64) => "float",
+            (Self::Source, _) => numerics::as_str(id),
+            (Self::Descriptor, _) => numerics::descriptor(id),
         }
-        ResolvedType::Function(params, result) => {
-            for param in params {
-                canonicalize_collection_type_names(&mut param.ty);
-            }
-            canonicalize_collection_type_names(result);
+    }
+
+    /// Select the registry's source or descriptor spelling without changing string-like type identity.
+    fn string_name(self, id: StringLikeId) -> &'static str {
+        match self {
+            Self::Source => stringlike::as_str(id),
+            Self::Descriptor => stringlike::descriptor(id),
         }
-        ResolvedType::Tuple(args) => {
-            for arg in args {
-                canonicalize_collection_type_names(arg);
-            }
-        }
-        ResolvedType::Never
-        | ResolvedType::Int
-        | ResolvedType::Float
-        | ResolvedType::Numeric(_)
-        | ResolvedType::Bool
-        | ResolvedType::Str
-        | ResolvedType::Bytes
-        | ResolvedType::FrozenStr
-        | ResolvedType::FrozenBytes
-        | ResolvedType::Unit
-        | ResolvedType::Named(_)
-        | ResolvedType::TypeVar(_)
-        | ResolvedType::SelfType
-        | ResolvedType::RustPath(_)
-        | ResolvedType::CallSiteInfer
-        | ResolvedType::Unknown => {}
+    }
+}
+
+/// Borrow a resolved type for recursive formatting with one consistent spelling policy.
+struct DisplayType<'a> {
+    ty: &'a ResolvedType,
+    style: TypeNameStyle,
+}
+
+impl<'a> DisplayType<'a> {
+    /// Preserve the selected style when rendering a child type, avoiding intermediate strings or type clones.
+    fn nested(&self, ty: &'a ResolvedType) -> Self {
+        Self { ty, style: self.style }
     }
 }
 
@@ -2300,43 +2333,66 @@ impl ResolvedType {
 }
 
 impl std::fmt::Display for ResolvedType {
-    /// Format a resolved type using user-facing Incan type syntax.
+    /// Format a resolved type using diagnostic type descriptors; reflection selects source spelling separately.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
+        std::fmt::Display::fmt(
+            &DisplayType {
+                ty: self,
+                style: TypeNameStyle::Descriptor,
+            },
+            f,
+        )
+    }
+}
+
+impl std::fmt::Display for DisplayType<'_> {
+    /// Format the borrowed semantic tree recursively, keeping shape and parameter markers independent of spelling.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.ty {
             ResolvedType::Never => write!(f, "!"),
-            ResolvedType::Int => f.write_str(numerics::descriptor(NumericTypeId::I64)),
-            ResolvedType::Float => f.write_str(numerics::descriptor(NumericTypeId::F64)),
-            ResolvedType::Numeric(id) => f.write_str(numerics::descriptor(*id)),
-            ResolvedType::Bool => f.write_str(numerics::descriptor(NumericTypeId::Bool)),
-            ResolvedType::Str => f.write_str(stringlike::descriptor(StringLikeId::Str)),
-            ResolvedType::Bytes => f.write_str(stringlike::descriptor(StringLikeId::Bytes)),
-            ResolvedType::FrozenStr => f.write_str(stringlike::descriptor(StringLikeId::FrozenStr)),
-            ResolvedType::FrozenBytes => f.write_str(stringlike::descriptor(StringLikeId::FrozenBytes)),
+            ResolvedType::Int => f.write_str(self.style.numeric_name(NumericTypeId::I64)),
+            ResolvedType::Float => f.write_str(self.style.numeric_name(NumericTypeId::F64)),
+            ResolvedType::Numeric(id) => f.write_str(self.style.numeric_name(*id)),
+            ResolvedType::Bool => f.write_str(self.style.numeric_name(NumericTypeId::Bool)),
+            ResolvedType::Str => f.write_str(self.style.string_name(StringLikeId::Str)),
+            ResolvedType::Bytes => f.write_str(self.style.string_name(StringLikeId::Bytes)),
+            ResolvedType::FrozenStr => f.write_str(self.style.string_name(StringLikeId::FrozenStr)),
+            ResolvedType::FrozenBytes => f.write_str(self.style.string_name(StringLikeId::FrozenBytes)),
             ResolvedType::FrozenList(elem) => {
-                write!(f, "{}[{}]", collections::descriptor(CollectionTypeId::FrozenList), elem)
+                write!(
+                    f,
+                    "{}[{}]",
+                    self.style.collection_name(CollectionTypeId::FrozenList),
+                    self.nested(elem)
+                )
             }
             ResolvedType::FrozenDict(k, v) => {
                 write!(
                     f,
                     "{}[{}, {}]",
-                    collections::descriptor(CollectionTypeId::FrozenDict),
-                    k,
-                    v
+                    self.style.collection_name(CollectionTypeId::FrozenDict),
+                    self.nested(k),
+                    self.nested(v)
                 )
             }
             ResolvedType::FrozenSet(elem) => {
-                write!(f, "{}[{}]", collections::descriptor(CollectionTypeId::FrozenSet), elem)
+                write!(
+                    f,
+                    "{}[{}]",
+                    self.style.collection_name(CollectionTypeId::FrozenSet),
+                    self.nested(elem)
+                )
             }
             ResolvedType::Unit => write!(f, "Unit"),
-            ResolvedType::Named(name) => write_type_name(f, name),
+            ResolvedType::Named(name) => write_type_name(f, name, self.style),
             ResolvedType::Generic(name, args) => {
-                write_type_name(f, name)?;
+                write_type_name(f, name, self.style)?;
                 write!(f, "[")?;
                 for (i, arg) in args.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", arg)?;
+                    write!(f, "{}", self.nested(arg))?;
                 }
                 write!(f, "]")
             }
@@ -2347,29 +2403,29 @@ impl std::fmt::Display for ResolvedType {
                         write!(f, ", ")?;
                     }
                     match p.kind {
-                        ParamKind::Normal if p.is_mut => write!(f, "mut {}", p.ty)?,
-                        ParamKind::Normal => write!(f, "{}", p.ty)?,
-                        ParamKind::RestPositional => write!(f, "*{}", p.ty)?,
-                        ParamKind::RestKeyword => write!(f, "**{}", p.ty)?,
+                        ParamKind::Normal if p.is_mut => write!(f, "mut {}", self.nested(&p.ty))?,
+                        ParamKind::Normal => write!(f, "{}", self.nested(&p.ty))?,
+                        ParamKind::RestPositional => write!(f, "*{}", self.nested(&p.ty))?,
+                        ParamKind::RestKeyword => write!(f, "**{}", self.nested(&p.ty))?,
                     }
                 }
-                write!(f, ") -> {}", ret)
+                write!(f, ") -> {}", self.nested(ret))
             }
-            ResolvedType::TypeToken(inner) => write!(f, "Type[{}]", inner),
+            ResolvedType::TypeToken(inner) => write!(f, "Type[{}]", self.nested(inner)),
             ResolvedType::Tuple(elems) => {
                 write!(f, "(")?;
                 for (i, e) in elems.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", e)?;
+                    write!(f, "{}", self.nested(e))?;
                 }
                 write!(f, ")")
             }
             ResolvedType::TypeVar(name) => write!(f, "{}", name),
             ResolvedType::SelfType => write!(f, "Self"),
-            ResolvedType::Ref(inner) => write!(f, "&{}", inner),
-            ResolvedType::RefMut(inner) => write!(f, "&mut {}", inner),
+            ResolvedType::Ref(inner) => write!(f, "&{}", self.nested(inner)),
+            ResolvedType::RefMut(inner) => write!(f, "&mut {}", self.nested(inner)),
             ResolvedType::RustPath(path) => write!(f, "rust::{}", path),
             ResolvedType::CallSiteInfer => write!(f, "_"),
             ResolvedType::Unknown => write!(f, "?"),
@@ -2870,48 +2926,46 @@ mod tests {
         Ok(())
     }
 
+    /// Both construction APIs retain builtin lookup and ordinary root/child lexical scope behavior.
     #[test]
     fn test_scope_lookup() {
-        let mut table = SymbolTable::new();
+        for mut table in [SymbolTable::new(), SymbolTable::default()] {
+            assert_eq!(table.current_scope_index(), 0);
+            assert!(table.lookup("int").is_some());
+            assert!(table.lookup("len").is_some());
 
-        // Define in global scope
-        table.define(Symbol {
-            name: "x".to_string(),
-            kind: SymbolKind::Variable(VariableInfo {
-                ty: ResolvedType::Int,
-                is_mutable: false,
-                is_used: false,
-            }),
-            span: Span::default(),
-            scope: 0,
-        });
+            // Define in global scope.
+            table.define(Symbol {
+                name: "x".to_string(),
+                kind: SymbolKind::Variable(VariableInfo {
+                    ty: ResolvedType::Int,
+                    is_mutable: false,
+                    is_used: false,
+                }),
+                span: Span::default(),
+                scope: 0,
+            });
 
-        // Enter a new scope
-        table.enter_scope(ScopeKind::Function);
+            // A child scope can still read the root binding.
+            table.enter_scope(ScopeKind::Function);
+            assert!(table.lookup("x").is_some());
+            table.define(Symbol {
+                name: "y".to_string(),
+                kind: SymbolKind::Variable(VariableInfo {
+                    ty: ResolvedType::Int,
+                    is_mutable: false,
+                    is_used: false,
+                }),
+                span: Span::default(),
+                scope: 0,
+            });
+            assert!(table.lookup("y").is_some());
 
-        // Should still find x
-        assert!(table.lookup("x").is_some());
-
-        // Define y in inner scope
-        table.define(Symbol {
-            name: "y".to_string(),
-            kind: SymbolKind::Variable(VariableInfo {
-                ty: ResolvedType::Int,
-                is_mutable: false,
-                is_used: false,
-            }),
-            span: Span::default(),
-            scope: 0,
-        });
-
-        assert!(table.lookup("y").is_some());
-
-        // Exit scope
-        table.exit_scope();
-
-        // x still visible, y not
-        assert!(table.lookup("x").is_some());
-        assert!(table.lookup("y").is_none());
+            // Leaving the child retains the root and hides its local binding.
+            table.exit_scope();
+            assert!(table.lookup("x").is_some());
+            assert!(table.lookup("y").is_none());
+        }
     }
 
     #[test]
@@ -3130,6 +3184,7 @@ mod tests {
     }
 
     #[test]
+    /// Source reflection normalizes aliases recursively while diagnostic descriptors retain their existing spelling.
     fn field_surface_type_name_uses_canonical_incan_collection_spelling() {
         let source = Type::Generic(
             "Dict".to_string(),
@@ -3152,6 +3207,56 @@ mod tests {
         let resolved = ResolvedType::Generic("List".to_string(), vec![ResolvedType::Int]);
 
         assert_eq!(field_surface_type_name(&source, &resolved), "list[int]");
+
+        let controls = [
+            (
+                ResolvedType::Generic(
+                    "Option".to_string(),
+                    vec![ResolvedType::Generic(
+                        "Dict".to_string(),
+                        vec![
+                            ResolvedType::Str,
+                            ResolvedType::Generic("List".to_string(), vec![ResolvedType::Float]),
+                        ],
+                    )],
+                ),
+                "Option[dict[str, list[float]]]",
+                "Option[Dict[Str, List[Float]]]",
+            ),
+            (
+                ResolvedType::Function(
+                    vec![
+                        CallableParam::positional(ResolvedType::Generic("List".to_string(), vec![ResolvedType::Int]))
+                            .with_mut(true),
+                        CallableParam::positional(ResolvedType::Ref(Box::new(ResolvedType::Str))),
+                        CallableParam::named("items", ResolvedType::Bytes, ParamKind::RestPositional),
+                        CallableParam::named("named", ResolvedType::Bool, ParamKind::RestKeyword),
+                    ],
+                    Box::new(ResolvedType::RefMut(Box::new(ResolvedType::Generic(
+                        "Set".to_string(),
+                        vec![ResolvedType::TypeVar("T".to_string())],
+                    )))),
+                ),
+                "(mut list[int], &str, *bytes, **bool) -> &mut set[T]",
+                "(mut List[Int], &Str, *Bytes, **Bool) -> &mut Set[T]",
+            ),
+            (
+                ResolvedType::FrozenDict(
+                    Box::new(ResolvedType::FrozenStr),
+                    Box::new(ResolvedType::Tuple(vec![
+                        ResolvedType::FrozenList(Box::new(ResolvedType::Numeric(NumericTypeId::U8))),
+                        ResolvedType::FrozenSet(Box::new(ResolvedType::FrozenBytes)),
+                        ResolvedType::TypeToken(Box::new(ResolvedType::Named("ListItem".to_string()))),
+                    ])),
+                ),
+                "FrozenDict[frozenstr, (FrozenList[u8], FrozenSet[frozenbytes], Type[ListItem])]",
+                "FrozenDict[FrozenStr, (FrozenList[u8], FrozenSet[FrozenBytes], Type[ListItem])]",
+            ),
+        ];
+        for (resolved, source_name, descriptor) in controls {
+            assert_eq!(field_surface_type_name(&Type::Infer, &resolved), source_name);
+            assert_eq!(resolved.to_string(), descriptor);
+        }
     }
 
     #[test]

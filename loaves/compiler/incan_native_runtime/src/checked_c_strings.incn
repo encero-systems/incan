@@ -2,7 +2,7 @@
 
 from rust::std::string import String as RustString
 from rust::std::vec import Vec as RustVec
-from rust::incan_std_core::strings import utf8_error_message
+from rust::std::str import from_utf8
 
 
 pub def checked_c_string(value: &RustString) -> Result[list[u8], str]:
@@ -31,9 +31,7 @@ pub def checked_c_utf8(value: &RustVec[u8]) -> Result[str, str]:
     1. Validate UTF-8 without reading outside the owned byte vector.
     2. Return a new owned string only after that validation succeeds.
     """
-    # 1. Reuse the existing strict UTF-8 validator's error behavior.
-    match utf8_error_message(value.as_slice()):
-        Some(error) => return Err(error)
-        None => pass
-    # 2. The validated input is copied into ordinary Incan-owned string storage.
-    return Ok(RustString.from_utf8_lossy(value.as_slice()).into_owned())
+    # 1. Validate once; 2. copy only the successfully validated borrowed text.
+    match from_utf8(value.as_slice()):
+        Ok(text) => return Ok(RustString.from(text))
+        Err(error) => return Err(str(error))

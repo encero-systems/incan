@@ -54,7 +54,14 @@ pub def lower_checked_bridge(
     2. Allocate or read only the slot authorized by the checker.
     """
     # 1. Every storage choice was retained by frontend projection.
-    ty = native_source_type(builder.nominals, builder.enums, builder.unions, target.return_type, builder.intrinsics)?
+    ty = native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        target.return_type,
+        builder.intrinsics,
+    )?
     mut output = temporary(builder, ty, span)
     match destination:
         Some(place) => output = scalar_place(builder, place, span)?

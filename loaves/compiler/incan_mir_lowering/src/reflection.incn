@@ -163,6 +163,7 @@ pub def lower_static_field_metadata(
                 None => return Ok(false)
                 Some(receiver) =>
                     match native_source_type(
+                        builder.constructors,
                         builder.nominals,
                         builder.enums,
                         builder.unions,
@@ -214,7 +215,14 @@ def reflected_field(mut builder: Builder, owner: int, source: Place, slot: int, 
     if slot < 0 or slot >= len(builder.nominals[owner].fields):
         return Err("unsupported Body IR reflection field slot")
     field_type = builder.nominals[owner].field_types[slot]
-    ty = native_source_type(builder.nominals, builder.enums, builder.unions, field_type, builder.intrinsics)?
+    ty = native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        field_type,
+        builder.intrinsics,
+    )?
     return appended_field(source, FieldProjection(slot=slot, ty=ty), span)
 
 

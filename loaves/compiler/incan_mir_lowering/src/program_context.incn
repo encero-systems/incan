@@ -15,7 +15,7 @@ from rust::incan_semantics_core::body_ir import (
 from rust::incan_semantics_core import IncanType as RustType
 from rust::std::collections import BTreeSet
 from table_views import borrowed_at
-from compilation_work import enabled as work_enabled, record as record_work
+from native_type_identity import ConstructorIndex, constructor_index
 
 
 pub model DisplayFunction:
@@ -37,6 +37,8 @@ pub model ProgramContext:
     pub union_types: Arc[BTreeSet[RustType]]
     # Layouts are immutable after specialization; frames retain shared owners rather than copying checked tables.
     pub nominals: Arc[list[NominalDeclaration]]
+    # Positions borrow exactly the nominal inventory published beside them.
+    pub constructors: Arc[ConstructorIndex]
     pub enums: Arc[list[EnumDeclaration]]
     pub value_enums: Arc[list[ValueEnumDeclaration]]
     pub decorated_bindings: Arc[list[DecoratedBinding]]
@@ -44,7 +46,7 @@ pub model ProgramContext:
     pub overflow_checks: bool = true
 
 
-pub def synthetic_program_context(module: &BodyIrModule) -> ProgramContext:
+pub def synthetic_program_context(module: &BodyIrModule, constructors: Arc[ConstructorIndex]) -> ProgramContext:
     """Keep module storage but no dispatch mappings for external-only synthetic frames."""
     functions: list[DisplayFunction] = []
     bodies: list[RustBody] = []
@@ -59,6 +61,7 @@ pub def synthetic_program_context(module: &BodyIrModule) -> ProgramContext:
         comparison_functions=Arc.new(comparisons),
         union_types=Arc.new(unions),
         nominals=Arc.new(list(module.nominal_declarations)),
+        constructors=constructors,
         enums=Arc.new(list(module.enum_declarations)),
         value_enums=Arc.new(list(module.value_enum_declarations)),
         decorated_bindings=Arc.new(bindings),
@@ -79,7 +82,6 @@ pub def retain_nominal_tables(mut program: ProgramContext, module: &BodyIrModule
     """Publish each appended nominal-table generation once before its closed frames borrow the new layouts."""
     retained: &list[NominalDeclaration] = program.nominals.as_ref()
     if len(retained) != len(module.nominal_declarations):
-        if work_enabled():
-            generation = f"{module.module_id.path()}:{len(module.nominal_declarations)}"
-            record_work("nominal_inventory", generation, len(module.nominal_declarations))
+        constructors = constructor_index(module.nominal_declarations)
         program.nominals = Arc.new(list(module.nominal_declarations))
+        program.constructors = Arc.new(constructors)

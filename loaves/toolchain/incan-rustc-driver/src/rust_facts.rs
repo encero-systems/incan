@@ -867,6 +867,7 @@ fn alias_info(tcx: TyCtxt<'_>, def: DefId, named: &mut HashSet<DefId>) -> RustTy
         type_params,
         type_param_defaults,
         alias_target: Some(display(target)),
+        methods: inherent_methods(tcx, &crate::callees::type_inherent_impls(tcx, target), named),
         implemented_traits: trait_impls(tcx, target, named),
         ..RustTypeInfo::default()
     }

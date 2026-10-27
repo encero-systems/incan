@@ -140,25 +140,44 @@ pub(super) fn project_compiled_frame(
 /// Recover checker-authenticated native selections for executable bodies and declaration defaults. Open argument
 /// spellings can belong to different generic frames, so preserve every checked signature sharing that selection;
 /// the closed consumer selects against its own checked result rather than losing a frame to first-match ordering.
+/// Borrowed structured keys index the inventory once; duplicate records and repeated selections retain their first
+/// publication position without cloning identities or type arguments for lookup.
 fn selected_native_calls(
     selections: &[(CanonicalSymbolId, Vec<IncanType>)],
     native_callables: &[&crate::body_ir::LoafCallable],
 ) -> Result<Vec<crate::body_ir::LoafCallable>, CoverageReason> {
-    let mut callables = Vec::new();
-    for (identity, arguments) in selections {
-        let mut found = false;
-        for callable in native_callables
-            .iter()
-            .copied()
-            .filter(|callable| &callable.canonical == identity && &callable.native_type_arguments == arguments)
-        {
-            found = true;
-            if !callables.contains(callable) {
-                callables.push(callable.clone());
-            }
+    if selections.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // ---- Inventory: retain all distinct signatures under their checked selection ----
+    let requested = selections
+        .iter()
+        .map(|(identity, arguments)| (identity, arguments.as_slice()))
+        .collect::<BTreeSet<_>>();
+    let mut indexed: BTreeMap<_, Vec<(usize, &crate::body_ir::LoafCallable)>> = BTreeMap::new();
+    for (position, callable) in native_callables.iter().copied().enumerate() {
+        let selection = (&callable.canonical, callable.native_type_arguments.as_slice());
+        if !requested.contains(&selection) {
+            continue;
         }
-        if !found {
-            return Err(CoverageReason::UnresolvedReference);
+        let candidates = indexed.entry(selection).or_default();
+        if !candidates.iter().any(|(_, retained)| *retained == callable) {
+            candidates.push((position, callable));
+        }
+    }
+
+    // ---- Selection: preserve request order and the inventory order of each matching frame ----
+    let mut callables = Vec::new();
+    let mut emitted = BTreeSet::new();
+    for (identity, arguments) in selections {
+        let candidates = indexed
+            .get(&(identity, arguments.as_slice()))
+            .ok_or(CoverageReason::UnresolvedReference)?;
+        for (position, callable) in candidates {
+            if emitted.insert(*position) {
+                callables.push((*callable).clone());
+            }
         }
     }
     Ok(callables)

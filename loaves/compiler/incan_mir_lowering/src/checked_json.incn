@@ -28,17 +28,21 @@ from checked_json_contracts import checked_deserialize_name, checked_owner_argum
 from nominal_instances import NominalInstance
 from options import retain_body_carriers, retain_carrier, result_layout
 from layout_types import native_source_type
+from native_type_identity import ConstructorIndex
+from rust::std::sync import Arc
 from unions import collect_unions
 from decls import library_item
 
 
 pub def lower_checked_deserialize(
+    constructor_owner: Arc[ConstructorIndex],
     module: &BodyIrModule,
-    instances: list[NominalInstance],
+    instances: &list[NominalInstance],
     file: str,
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[tuple[list[Function], list[ExternalFunction], list[Instance]], str]:
-    """Close every selected checked ingress before tuple Deserialize can be admitted for a concrete source owner."""
+    """Borrow the instance registry to close each checked ingress before admitting its concrete tuple Deserialize."""
+    constructors = constructor_owner.as_ref()
     mut functions: list[Function] = []
     mut externals: list[ExternalFunction] = []
     mut pending: list[Instance] = []
@@ -51,12 +55,13 @@ pub def lower_checked_deserialize(
             continue
         arguments = checked_owner_arguments(declaration, instances)?
         hook, selected = selected_deserialize_hook(module, declaration, arguments)?
-        retain_body_carriers(module, intrinsics, selected, file)?
+        retain_body_carriers(constructors, module, intrinsics, selected, file)?
         owner = PlanType.Model(owner_index, str(declaration.name))
         success: RustType = checked_success(selected)?
         output: RustType = generic("Result", [success, RustType.Primitive(Primitive.Str)])
-        retain_carrier(module, intrinsics, output, file)?
+        retain_carrier(constructors, module, intrinsics, output, file)?
         hook_result = native_source_type(
+            constructors,
             list(module.nominal_declarations),
             list(module.enum_declarations),
             collect_unions(module),
@@ -64,6 +69,7 @@ pub def lower_checked_deserialize(
             intrinsics,
         )?
         result = native_source_type(
+            constructors,
             list(module.nominal_declarations),
             list(module.enum_declarations),
             collect_unions(module),
@@ -72,6 +78,7 @@ pub def lower_checked_deserialize(
         )?
         span = plan_span(file=file, line=1, column=1)
         function, runtime, scheduled = checked_json_function(
+            constructor_owner,
             module,
             hook,
             selected,
@@ -100,6 +107,7 @@ def checked_success(hook: &Body) -> Result[RustType, str]:
 
 
 def checked_json_function(
+    constructors: Arc[ConstructorIndex],
     module: &BodyIrModule,
     hook: &Body,
     selected: &Body,
@@ -112,7 +120,7 @@ def checked_json_function(
     span: SourceSpan,
 ) -> Result[tuple[Function, list[ExternalFunction], list[Instance]], str]:
     """Invoke the previously validated source hook once, then return its actual displayed error through owned Result."""
-    mut builder = owned_string_frame(module, name, result, intrinsics, span)
+    mut builder = owned_string_frame(constructors, module, name, result, intrinsics, span)
     checked_layout = checked_result_layout(builder, hook_result)?
     result_layout_value = checked_result_layout(builder, result)?
     if (

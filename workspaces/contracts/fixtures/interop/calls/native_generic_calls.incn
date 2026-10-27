@@ -1,4 +1,4 @@
-# behavior: Native generic calls preserve loans, source binders, owned callbacks and independent owners (#2256)
+# behavior: Native generic calls preserve explicit and opaque loans, binders, callbacks and independent owners (#2256)
 # expect-stdout:
 #   7
 #   leaf
@@ -23,6 +23,7 @@ from rust::incan_std_core::strings import str_slice_byte_range
 from rust::std::convert import identity
 from rust::std::collections import HashMap
 from rust::std::hash import DefaultHasher, Hash, Hasher
+from rust::std::iter import Iterator as NativeIterator
 from rust::std::mem import size_of_val, swap
 from rust::std::path import Path
 from rust::std::process import exit
@@ -181,6 +182,23 @@ def check_foreign_values() -> None:
     assert native_mapping().len() == 0usize
 
 
+def check_native_cursor_forwarding() -> None:
+    """Keep an opaque returned loan tied to its source, independently of another parameter of the same native type."""
+    mut left: RustString = "abc"
+    mut right: RustString = "de"
+    cursor = retained_first(left.chars(), right.chars())
+    right.push_str("f")
+    assert cursor.count() == 3usize
+    left.push_str("g")
+    assert left.as_str() == "abcg"
+    assert right.as_str() == "def"
+
+
+def retained_first[T, U](left: T, right: U) -> T:
+    """Transfer only the first parameter's value and loans into the result."""
+    return left
+
+
 def show_nonreturning_call() -> None:
     """Print the result of the selected Rust function, then end the program through a nonreturning one."""
     println(panicking())
@@ -197,7 +215,7 @@ def main() -> None:
 
     1. Exercise generic instantiations and scalar references.
     2. Exercise text references and typed native factories.
-    3. Check owned captures, joined Rust callbacks, tuple loans, trait returns, and independent native frames.
+    3. Check owned captures, joined Rust callbacks, tuple loans, trait returns, native frames and retained cursors.
     4. Observe a native nonreturning call, which ends the program.
     """
     # 1. Exercise generic instantiations and scalar references.
@@ -206,8 +224,9 @@ def main() -> None:
     # 2. Exercise text references and typed native factories.
     show_text_references()
     show_typed_factory()
-    # 3. Check owned captures, joined Rust callbacks, tuple loans, trait returns, and independent native frames.
+    # 3. Check owned captures, joined Rust callbacks, tuple loans, trait returns, native frames and retained cursors.
     check_foreign_values()
     show_thread_capture()
+    check_native_cursor_forwarding()
     # 4. Observe a native nonreturning call, which ends the program.
     show_nonreturning_call()

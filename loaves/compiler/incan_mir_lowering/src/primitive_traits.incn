@@ -114,6 +114,7 @@ def normalized_primitive_receiver(
     # 2. Construct the source model through its checked single-field layout.
     declaration = module.nominal_declarations[owner]
     owner_type = native_source_type(
+        builder.constructors,
         builder.nominals,
         builder.enums,
         builder.unions,
@@ -210,7 +211,14 @@ def normalized_primitive_static(
     match target.receiver_type:
         None => return Ok(None)
         Some(ty) => receiver = substitute(ty, builder.type_parameters, builder.type_arguments)?
-    concrete = native_source_type(builder.nominals, builder.enums, builder.unions, receiver, builder.intrinsics)?
+    concrete = native_source_type(
+        builder.constructors,
+        builder.nominals,
+        builder.enums,
+        builder.unions,
+        receiver,
+        builder.intrinsics,
+    )?
     mut owner = -1
     match identity:
         Some(selected) => owner = adapter_owner(module, builder, selected, concrete)?
@@ -300,6 +308,7 @@ def adapter_owner(
                     if not matches_slot:
                         continue
                     expected = native_source_type(
+                        builder.constructors,
                         builder.nominals,
                         builder.enums,
                         builder.unions,

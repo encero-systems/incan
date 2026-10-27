@@ -11,7 +11,9 @@ from rust::std::collections::hash_map import Keys as RuntimeKeys, Values as Runt
 from rust::std::iter import Iterator
 from rust::incan_std_core::iter import nonnegative_count
 from rust::incan_std_core::errors import raise_index_error
-from rust::incan_std_core::collections import set_contains, dict_contains_key, dict_get, dict_get_mut
+from rust::incan_std_core::collections import (
+    set_contains, dict_contains_key, dict_get, dict_get_mut, normalize_list_index,
+)
 from native_equality import equal_native
 from native_copying import clone_native
 
@@ -110,10 +112,10 @@ pub def borrow_mut_dict[K with (Eq, Hash, Display), V](values: &mut Dict[K, V], 
 pub def optional_dict[K with (Eq, Hash, Display), V with RuntimeClone](values: &Dict[K, V], key: K) -> Option[V]:
     """Copy a present value or report its absence, as the legacy one-argument lookup does."""
     reference: &K = key
-    if dict_contains_key(values, reference):
-        value: &V = dict_get(values, reference)
-        return Some(clone_native(value))
-    return None
+    mapping: &RuntimeDict[K, V] = values
+    match mapping.get[K](reference):
+        Some(value) => return Some(clone_native(value))
+        None => return None
 
 
 pub def keys_dict[K with Clone, V](values: &Dict[K, V]) -> list[K]:
@@ -149,10 +151,10 @@ pub def values_dict[K with (Eq, Hash, Clone, Display), V with Clone](values: &Di
 pub def default_dict[K with (Eq, Hash, Display), V with Clone](values: &Dict[K, V], key: K, default: V) -> V:
     """Copy the stored value or return the eagerly evaluated default, as legacy does."""
     reference: &K = key
-    if dict_contains_key(values, reference):
-        value: &V = dict_get(values, reference)
-        return clone_native(value)
-    return default
+    mapping: &RuntimeDict[K, V] = values
+    match mapping.get[K](reference):
+        Some(value) => return clone_native(value)
+        None => return default
 
 
 pub def nth_set[T with Clone](values: &Set[T], index: int) -> T:
@@ -167,8 +169,13 @@ pub def nth_set[T with Clone](values: &Set[T], index: int) -> T:
 
 
 pub def nth_dict[K with Clone, V](values: &Dict[K, V], index: int) -> K:
-    """Copy one key in the live HashMap order without sorting the container."""
-    return keys_dict(values)[index]
+    """Clone only the selected key in native order, retaining canonical signed list-index bounds and errors."""
+    mapping: &RuntimeDict[K, V] = values
+    position = normalize_list_index(mapping.len(), index)
+    mut keys: RuntimeKeys[K, V] = mapping.keys()
+    match keys.nth(position):
+        Some(key) => return clone_native(key)
+        None => return raise_index_error("dictionary cursor outside its checked collection bounds")
 
 
 pub def extend_list_set[T with (Eq, Hash, Clone)](mut values: Set[T], source: &list[T]) -> None:

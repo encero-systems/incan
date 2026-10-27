@@ -676,7 +676,17 @@ mod carrier_identity_tests {
         checker
             .check_program(&program)
             .map_err(|errors| format!("{errors:?}"))?;
-        let module = crate::body_ir::build_body_ir_module_v0(&program, &path, checker.type_info());
+        let module = crate::body_ir::build_body_ir_module(
+            &program,
+            &path,
+            checker.type_info(),
+            &crate::body_ir::BodyIrContext {
+                modules: &[],
+                provider_operations: &crate::body_ir::ProviderOperationCatalog::new(),
+                registry_package: None,
+                library_package: None,
+            },
+        );
         let owner = module.nominal_declarations.first().ok_or("missing source owner")?;
         let nominals = module.nominal_declarations.iter().collect::<Vec<_>>();
         let key = bir::nominal_carrier_key(&owner.canonical).ok_or("missing carrier key")?;

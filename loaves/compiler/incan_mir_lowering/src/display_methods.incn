@@ -6,10 +6,12 @@ from pub::incan_mir_plan import PlanType, EnumDeclaration, CalleeKind
 from program_context import DisplayFunction
 from classes import frame_type, function_name
 from layout_types import native_source_type
+from native_type_identity import ConstructorIndex
 from table_views import borrowed_table
 
 
 pub def display_functions(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[list[DisplayFunction], str]:
@@ -30,7 +32,7 @@ pub def display_functions(
                         continue
                     if not string_result(body.return_type):
                         continue
-                    if frame_type(nominals, enums, body.locals[0], intrinsics)? != PlanType.ModelRef(
+                    if frame_type(constructors, nominals, enums, body.locals[0], intrinsics)? != PlanType.ModelRef(
                         owner,
                         str(declaration.name),
                     ):
@@ -49,7 +51,14 @@ pub def display_functions(
                         continue
                     if len(delegation.parameters) != 1 or not string_result(delegation.return_type):
                         continue
-                    receiver = native_source_type(nominals, enums, unions, delegation.parameters[0], intrinsics)?
+                    receiver = native_source_type(
+                        constructors,
+                        nominals,
+                        enums,
+                        unions,
+                        delegation.parameters[0],
+                        intrinsics,
+                    )?
                     if receiver != PlanType.ModelRef(owner, str(declaration.name)):
                         continue
                     match delegation.rust_path():

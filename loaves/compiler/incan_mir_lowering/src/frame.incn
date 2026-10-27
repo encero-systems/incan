@@ -26,13 +26,13 @@ from pub::incan_mir_plan import assign as plan_assign, block as plan_block, plac
 from pub::incan_mir_plan import tuple_element_type
 from type_parameters import Instance
 from program_context import ProgramContext
+from native_type_identity import ConstructorIndex
 from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId as RustCanonicalSymbolId
 from rust::incan_semantics_core::body_ir import (
     NominalDeclaration as RustNominalDeclaration,
     EnumDeclaration as RustEnumDeclaration,
     ValueEnumDeclaration as RustValueEnumDeclaration,
     DecoratedBinding as RustDecoratedBinding,
-    Body as RustBody,
     TraitDefaultInstantiation,
 )
 
@@ -89,8 +89,6 @@ pub model Builder:
     pub unions: list[RustType]
     # Deferred defaults reserve a declaration-local frame within the caller.
     pub local_offset: int
-    # Semantic primary async storage supplies only omitted free SDK call binders; nested frames never inherit it.
-    pub async_source_body: Option[RustBody] = None
     # Only a closure with a retained consuming contract may transfer its zip into a capture-free generator step.
     pub consuming_closure_frame: bool
     pub intrinsics: list[EnumDeclaration]
@@ -142,6 +140,14 @@ pub model Builder:
     property enums -> &list[RustEnumDeclaration]:
         """Borrow the same ordered enum declarations used to assign this module's layout identities."""
         return self.program.enums.as_ref()
+
+    property constructors -> &ConstructorIndex:
+        """
+        Borrow first-match constructor positions from the nominal table's program owner.
+
+        Calls mutating another Builder field borrow program.constructors directly to preserve field disjointness.
+        """
+        return self.program.constructors.as_ref()
 
     property value_enums -> &list[RustValueEnumDeclaration]:
         """Borrow checked value-enum metadata shared by ordinary and lifted frames."""

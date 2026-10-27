@@ -22,12 +22,15 @@ fn native_alias<'tcx>(
     target: &PlanType,
     destination: &PlanType,
 ) -> Result<mir::Rvalue<'tcx>, PlanError> {
-    if native_type(tcx, source)? != native_type(tcx, target)?
-        || native_type(tcx, target)? != native_type(tcx, destination)?
-    {
+    let source_type = native_type(tcx, source)?;
+    let target_type = native_type(tcx, target)?;
+    let destination_type = native_type(tcx, destination)?;
+    if source_type != target_type || target_type != destination_type {
         return Err(PlanError::Invalid {
             function: "native alias".into(),
-            reason: "retained aliases name different native types".into(),
+            reason: format!(
+                "retained aliases name different native types: source {source:?} resolves to {source_type}; target {target:?} resolves to {target_type}; destination {destination:?} resolves to {destination_type}"
+            ),
         });
     }
     Ok(mir::Rvalue::Use(operand(tcx, sources, value)?, mir::WithRetag::Yes))

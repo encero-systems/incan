@@ -179,7 +179,10 @@ pub fn build_body_ir_module(
         .chain(constant_declarations.iter().filter(|declaration| {
             matches!(
                 declaration.value,
-                bir::Constant::Int(_) | bir::Constant::FrozenAggregate(..) | bir::Constant::NumericNewtype(_)
+                bir::Constant::Int(_)
+                    | bir::Constant::TypedNumeric(_)
+                    | bir::Constant::FrozenAggregate(..)
+                    | bir::Constant::NumericNewtype(_)
             )
         }))
         .map(|declaration| (declaration.canonical.clone(), declaration.value.clone()))
@@ -1129,6 +1132,9 @@ struct BodyBuilder<'type_info, 'source> {
     /// Active conditional bodies. An enclosing owner cannot be marked unconditionally moved by just one path;
     /// locals created within that body retain ordinary final transfers.
     conditional_scopes: Vec<bir::ScopeId>,
+    /// Assignment destination whose current value ends when its right-hand side completes, with the enclosing loop
+    /// depth. A loop nested inside that expression still repeats reads of the current value.
+    replacing_local: Option<(bir::LocalId, usize)>,
     /// Source-annotated function locals whose Rust representation is a function pointer rather than an inferred item.
     function_pointer_locals: Vec<bir::LocalId>,
     /// Local bindings the checker proved hold capturing callable values rather than function pointers.
@@ -1225,6 +1231,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             pending_argument_reads: Vec::new(),
             loop_scopes: Vec::new(),
             conditional_scopes: Vec::new(),
+            replacing_local: None,
             function_pointer_locals: Vec::new(),
             closure_holding_locals: Vec::new(),
             moved_out: HashSet::new(),
@@ -1817,8 +1824,8 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// remaining-reads countdown; reaching zero selects `Move` (and records the local as moved for
     /// [`Self::insert_scope_drops`]), otherwise `Clone`. A pending earlier call argument keeps its owner alive
     /// across later nested argument evaluation, so even its final textual read clones until the outer call consumes
-    /// that operand. An owner declared outside the active loop also clones at its last textual read, because that
-    /// source read executes again on the next iteration. Loop-local owners can still transfer at their last use. A
+    /// that operand. An owner declared outside the active loop also clones at its last textual read, unless the read
+    /// consumes the value replaced by its enclosing assignment. Loop-local owners can transfer at their last use. A
     /// local with no tracked countdown (an [`bir::LocalOrigin::External`] reference) gets the explicit
     /// [`bir::OwnershipFact::Unknown`]. Source projections consume their counted occurrence through
     /// [`Self::source_place_operand`]; synthetic projections do not. A newly eligible final read in a conditional body
@@ -1880,6 +1887,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Identify storage declared outside the innermost loop, whose textual final read can execute repeatedly.
     /// Descendants of the loop scope are initialized per iteration and retain ordinary last-use transfers.
     fn loop_reuses_local(&self, local: bir::LocalId) -> bool {
+        if self.replacing_local == Some((local, self.loop_scopes.len())) {
+            return false;
+        }
         let Some(loop_scope) = self.loop_scopes.last() else {
             return false;
         };

@@ -7,6 +7,7 @@ location, including operands and places, so native diagnostics retain provenance
 """
 
 from rust::std::sync import Arc
+from rust::incan_semantics_core import IncanType as SemanticType
 
 
 @derive(Clone, PartialEq)
@@ -696,6 +697,16 @@ pub model NativeAttribute:
 
 
 @derive(Clone, PartialEq)
+pub model GenericLoan:
+    """One source type parameter's occurrence in a concrete signature, preserving its nested native loans."""
+
+    pub slot: int
+    pub path: list[int]
+    pub parameter: int
+    pub ty: PlanType
+
+
+@derive(Clone, PartialEq)
 pub model Function:
     """A declaration and its body, with locals zero through parameter count reserved."""
 
@@ -714,6 +725,8 @@ pub model Function:
     # Reference preorder for each parameter and the result; equal nonempty names retain one source generic loan.
     # Empty names keep ordinary elision, including the independent outer borrow of a mutable collection.
     pub signature_lifetimes: list[list[str]] = []
+    # Type-parameter provenance retains hidden native lifetime arguments independently of explicit references.
+    pub generic_loans: list[GenericLoan] = []
 
 
 @derive(Clone, PartialEq)
@@ -903,6 +916,13 @@ pub def source_span(file: str, line: int, column: int) -> SourceSpan:
     return SourceSpan(file=Arc.new(file), line=line, column=column)
 
 
+pub def semantic_type_matches(declaration: &EnumDeclaration, ty: &SemanticType) -> bool:
+    """Compare a retained carrier's exact checked type without reconstructing identity from diagnostic text."""
+    match declaration.semantic_key:
+        Some(retained) => return retained == ty
+        None => return false
+
+
 pub def place(local: int, span: SourceSpan) -> Place:
     """Name a whole local without exposing projection bookkeeping to builders."""
     return Place(local=local, projection=Projection.Whole, span=span)
@@ -939,6 +959,8 @@ pub model EnumDeclaration:
     pub span: SourceSpan
     # Standard carriers use their concrete type arguments from the variant fields.
     pub carrier: str = ""
+    # The exact checked carrier witness is used for identity; source_type remains diagnostic presentation only.
+    pub semantic_key: Option[SemanticType] = None
     pub source_type: str = ""
     # A union's Debug prints the member it holds, as legacy's hand-written impl does; it is never derived.
     pub member_debug: bool = false

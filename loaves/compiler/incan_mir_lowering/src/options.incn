@@ -12,8 +12,6 @@ from rust::incan_semantics_core::body_ir import (
     Callee as RustCallee,
     CallableTarget as RustCallableTarget,
     NamedCallableTarget,
-    ArgumentElement as RustArgumentElement,
-    Place as RustPlace,
     Operand as RustOperand,
     StaticInitializer,
     Rvalue as RustRvalue,
@@ -21,8 +19,8 @@ from rust::incan_semantics_core::body_ir import (
 )
 from lists import taking_iterator_locals
 from table_views import borrowed_at
-from sdk_async_types import async_call_type_arguments
 from pub::incan_mir_plan import (
+    semantic_type_matches,
     BinaryOp,
     CalleeKind,
     ExternalFunction,
@@ -64,6 +62,7 @@ from unions import lower_union_declaration
 from type_parameters import substitute
 from nominal_frames import closed_arguments, closed_type, declaration_storage
 from program_context import body_at
+from native_type_identity import ConstructorIndex
 
 
 pub def variant_condition(mut builder: Builder, source: Place, slot: int, span: SourceSpan) -> Operand:
@@ -166,60 +165,66 @@ pub def intrinsic_pattern(declaration: EnumDeclaration, pattern: &RustPattern) -
     return Err("unsupported Body IR intrinsic carrier pattern")
 
 
-pub def intrinsic_declarations(module: &BodyIrModule, file: str) -> Result[list[EnumDeclaration], str]:
+pub def intrinsic_declarations(
+    constructors: &ConstructorIndex,
+    module: &BodyIrModule,
+    file: str,
+) -> Result[list[EnumDeclaration], str]:
     """Collect concrete declaration, frame and computed-static carriers; function instances add closed layouts when scheduled."""
     mut declarations: list[EnumDeclaration] = []
     for ty in declaration_storage(module):
         if closed_type(ty):
-            retain_carrier(module, declarations, ty, file)?
+            retain_carrier(constructors, module, declarations, ty, file)?
     for callable_position in range(len(module.loaf_callables)):
         delegation = borrowed_at(module.loaf_callables, callable_position)
         if len(delegation.type_parameters) != 0 or not closed_arguments(delegation.native_type_arguments):
             continue
         for parameter in delegation.parameters:
             if closed_type(parameter):
-                retain_carrier(module, declarations, parameter, file)?
+                retain_carrier(constructors, module, declarations, parameter, file)?
         # A checked native instantiation may still contain its enclosing source function's binders. Its closed
         # function frame schedules those carriers; the declaration template does not authorize an open layout.
         if closed_type(delegation.return_type):
-            retain_carrier(module, declarations, delegation.return_type, file)?
+            retain_carrier(constructors, module, declarations, delegation.return_type, file)?
     for nominal_position in range(len(module.nominal_declarations)):
         declaration = borrowed_at(module.nominal_declarations, nominal_position)
         for ty in declaration.field_types:
-            retain_carrier(module, declarations, ty, file)?
+            retain_carrier(constructors, module, declarations, ty, file)?
     for enum_position in range(len(module.enum_declarations)):
         declaration = borrowed_at(module.enum_declarations, enum_position)
         for variant in declaration.variants:
             for ty in variant.fields:
-                retain_carrier(module, declarations, ty, file)?
+                retain_carrier(constructors, module, declarations, ty, file)?
     for body_position in range(len(module.bodies)):
         body = borrowed_at(module.bodies, body_position)
         if len(body.type_parameters) != 0:
             continue
-        retain_body_carriers(module, declarations, body, file)?
+        retain_body_carriers(constructors, module, declarations, body, file)?
     for declaration in module.static_declarations:
-        retain_carrier(module, declarations, declaration.ty, file)?
+        retain_carrier(constructors, module, declarations, declaration.ty, file)?
         match declaration.initial:
-            StaticInitializer.Computed(body) => retain_body_carriers(module, declarations, body, file)?
+            StaticInitializer.Computed(body) => retain_body_carriers(constructors, module, declarations, body, file)?
             _ => pass
     return Ok(declarations)
 
 
 pub def retain_body_carriers(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     mut declarations: list[EnumDeclaration],
     body: &Body,
     file: str,
 ) -> Result[None, str]:
     """Append closed frame and poll carriers without renumbering layouts; refusal names its declaring frame position."""
-    match retain_carrier(module, declarations, body.return_type, file):
+    match retain_carrier(constructors, module, declarations, body.return_type, file):
         Ok(_value) => pass
         Err(reason) => return Err(f"{reason} in {body.name} return carrier")
     for index in range(len(body.locals)):
-        match retain_carrier(module, declarations, body.locals[index].ty, file):
+        match retain_carrier(constructors, module, declarations, body.locals[index].ty, file):
             Ok(_value) => pass
             Err(reason) => return Err(f"{reason} in {body.name} local {index} carrier")
     match retain_iteration_poll_carriers(
+        constructors,
         module,
         declarations,
         body,
@@ -233,6 +238,7 @@ pub def retain_body_carriers(
 
 
 def retain_iteration_poll_carriers(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     mut declarations: list[EnumDeclaration],
     body: &Body,
@@ -242,11 +248,12 @@ def retain_iteration_poll_carriers(
 ) -> Result[None, str]:
     """Retain Iterator::next's Option output from a checked consuming loop's concrete item type before frame lowering."""
     for statement in block.stmts:
-        retain_iteration_poll_statement(module, declarations, body, statement.kind, taking, file)?
+        retain_iteration_poll_statement(constructors, module, declarations, body, statement.kind, taking, file)?
     return Ok(None)
 
 
 def retain_iteration_poll_statement(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     mut declarations: list[EnumDeclaration],
     body: &Body,
@@ -256,17 +263,15 @@ def retain_iteration_poll_statement(
 ) -> Result[None, str]:
     """Read one canonical statement through its explicit borrowed enum type, including nested consuming loops."""
     match kind:
-        RustStatementKind.Call(destination=destination, callee=callee, args=arguments, may_panic=_panic) =>
+        RustStatementKind.Call(destination=_destination, callee=callee, args=_arguments, may_panic=_panic) =>
             match callee:
                 RustCallee.Function(callable) =>
                     match callable:
                         RustCallableTarget.Named(target) => retain_call_carriers(
+                            constructors,
                             module,
                             declarations,
-                            body,
                             target,
-                            arguments,
-                            destination,
                             file,
                         )?
                         _ => pass
@@ -282,16 +287,17 @@ def retain_iteration_poll_statement(
                                     Some(item) =>
                                         ty = body.locals[int(item.index())].ty
                                         output = generic("Option", [ty])
-                                        retain_carrier(module, declarations, output, file)?
+                                        retain_carrier(constructors, module, declarations, output, file)?
                                     None => return Err("unsupported Body IR consuming iteration global item")
                         None => pass
                 _ => pass
         RustStatementKind.Assign(place=_destination, rvalue=value) =>
-            retain_poll_value(module, declarations, body, value, taking, file)?
+            retain_poll_value(constructors, module, declarations, body, value, taking, file)?
         RustStatementKind.Race(destination=_destination, arms=arms) =>
             for arm in arms:
-                retain_iteration_poll_carriers(module, declarations, body, arm.body, taking, file)?
+                retain_iteration_poll_carriers(constructors, module, declarations, body, arm.body, taking, file)?
         RustStatementKind.Loop(body=child) => retain_iteration_poll_carriers(
+            constructors,
             module,
             declarations,
             body,
@@ -300,6 +306,7 @@ def retain_iteration_poll_statement(
             file,
         )?
         RustStatementKind.UnsafeRegion(acknowledgment=_receipt, body=child) => retain_iteration_poll_carriers(
+            constructors,
             module,
             declarations,
             body,
@@ -308,15 +315,24 @@ def retain_iteration_poll_statement(
             file,
         )?
         RustStatementKind.If(cond=_condition, then_block=then_body, else_block=else_body) =>
-            retain_iteration_poll_carriers(module, declarations, body, then_body, taking, file)?
+            retain_iteration_poll_carriers(constructors, module, declarations, body, then_body, taking, file)?
             match else_body:
-                Some(child) => retain_iteration_poll_carriers(module, declarations, body, child, taking, file)?
+                Some(child) => retain_iteration_poll_carriers(
+                    constructors,
+                    module,
+                    declarations,
+                    body,
+                    child,
+                    taking,
+                    file,
+                )?
                 None => pass
         _ => pass
     return Ok(None)
 
 
 def retain_poll_value(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     mut declarations: list[EnumDeclaration],
     body: &Body,
@@ -328,12 +344,13 @@ def retain_poll_value(
     match value:
         RustRvalue.Match(scrutinee=_scrutinee, arms=arms) =>
             for arm in arms:
-                retain_poll_arm(module, declarations, body, arm, taking, file)?
+                retain_poll_arm(constructors, module, declarations, body, arm, taking, file)?
         _ => pass
     return Ok(None)
 
 
 def retain_poll_arm(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     mut declarations: list[EnumDeclaration],
     body: &Body,
@@ -343,19 +360,17 @@ def retain_poll_arm(
 ) -> Result[None, str]:
     """Retain calls and polls in a match guard and selected body using the enclosing frame's taking identities."""
     for statement in arm.guard_stmts:
-        retain_iteration_poll_statement(module, declarations, body, statement.kind, taking, file)?
+        retain_iteration_poll_statement(constructors, module, declarations, body, statement.kind, taking, file)?
     for statement in arm.body_stmts:
-        retain_iteration_poll_statement(module, declarations, body, statement.kind, taking, file)?
+        retain_iteration_poll_statement(constructors, module, declarations, body, statement.kind, taking, file)?
     return Ok(None)
 
 
 def retain_call_carriers(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     mut declarations: list[EnumDeclaration],
-    body: &Body,
     target: &NamedCallableTarget,
-    arguments: &list[RustArgumentElement],
-    destination: &Option[RustPlace],
     file: str,
 ) -> Result[None, str]:
     """Retain closed source and published free-function signatures, including carriers absent from locals such as Option[Unit] for a None argument."""
@@ -375,6 +390,7 @@ def retain_call_carriers(
         for parameter in candidate.params:
             parameters.append(parameter.ty.clone())
         retain_closed_signature(
+            constructors,
             module,
             declarations,
             parameters,
@@ -390,16 +406,10 @@ def retain_call_carriers(
         mut closed: list[RustType] = []
         for argument in target.type_args:
             closed.append(argument.clone())
-        if len(closed) != len(delegation.type_parameters) and len(closed) == 0 and body.is_async:
-            match target.receiver_type:
-                None =>
-                    match async_call_type_arguments(body, delegation, arguments, destination)?:
-                        Some(inferred) => closed = inferred
-                        None => pass
-                Some(_receiver) => pass
         if len(closed) != len(delegation.type_parameters):
             return Err("the standard library carrier type argument count is unsupported")
         retain_closed_signature(
+            constructors,
             module,
             declarations,
             delegation.parameters,
@@ -412,6 +422,7 @@ def retain_call_carriers(
 
 
 def retain_closed_signature(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     mut declarations: list[EnumDeclaration],
     parameters: list[RustType],
@@ -423,13 +434,14 @@ def retain_closed_signature(
     """Close a retained callable's signature from checked type arguments before any operand needs its carrier."""
     for parameter in parameters:
         instantiated: RustType = substitute(parameter, names, arguments)?
-        retain_carrier(module, declarations, instantiated, file)?
+        retain_carrier(constructors, module, declarations, instantiated, file)?
     closed_result: RustType = substitute(result, names, arguments)?
-    retain_carrier(module, declarations, closed_result, file)?
+    retain_carrier(constructors, module, declarations, closed_result, file)?
     return Ok(None)
 
 
 pub def retain_carrier(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     mut declarations: list[EnumDeclaration],
     ty: &RustType,
@@ -440,20 +452,18 @@ pub def retain_carrier(
         RustType.Tuple(elements) =>
             # A carrier held only as a tuple element still needs its own layout.
             for element in elements:
-                retain_carrier(module, declarations, element, file)?
+                retain_carrier(constructors, module, declarations, element, file)?
             return Ok(None)
         RustType.Generic(base=base, args=arguments) =>
             for argument in arguments:
-                retain_carrier(module, declarations, argument, file)?
+                retain_carrier(constructors, module, declarations, argument, file)?
             if base != "Option" and base != "Result" and base != "Union":
                 return Ok(None)
-            # The sought spelling is the same for every retained carrier, so it is formatted once.
-            spelling = str(ty)
             for retained in declarations:
-                if retained.source_type == spelling:
+                if semantic_type_matches(retained, ty):
                     return Ok(None)
             if base == "Union":
-                declaration = lower_union_declaration(module, ty, file, declarations)?
+                declaration = lower_union_declaration(constructors, module, ty, file, declarations)?
                 declarations.append(declaration)
                 return Ok(None)
             if (base == "Option" and len(arguments) != 1) or (base == "Result" and len(arguments) != 2):
@@ -462,6 +472,7 @@ pub def retain_carrier(
             unions: list[RustType] = []
             for index in range(len(arguments)):
                 match native_source_type(
+                    constructors,
                     module.nominal_declarations,
                     module.enum_declarations,
                     unions,
@@ -481,16 +492,17 @@ pub def retain_carrier(
                     derives=["Clone"],
                     span=plan_span(file=file, line=1, column=1),
                     carrier=str(base),
-                    source_type=spelling,
+                    semantic_key=Some(ty.clone()),
+                    source_type=str(ty),
                     comparison_methods=[],
                 ),
             )
         RustType.Function(params=parameters, return_type=result) =>
             for parameter in parameters:
-                retain_carrier(module, declarations, parameter.ty, file)?
-            retain_carrier(module, declarations, result, file)?
-        RustType.Ref(inner) => retain_carrier(module, declarations, inner, file)?
-        RustType.RefMut(inner) => retain_carrier(module, declarations, inner, file)?
+                retain_carrier(constructors, module, declarations, parameter.ty, file)?
+            retain_carrier(constructors, module, declarations, result, file)?
+        RustType.Ref(inner) => retain_carrier(constructors, module, declarations, inner, file)?
+        RustType.RefMut(inner) => retain_carrier(constructors, module, declarations, inner, file)?
         _ => pass
     return Ok(None)
 

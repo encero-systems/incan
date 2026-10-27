@@ -48,6 +48,7 @@ fn declaration(plan: &Plan, signature: Vec<PlanType>, span: Span) -> Result<Box<
         is_async: false,
         future_callee: None,
         signature_lifetimes: Vec::new(),
+        generic_loans: Vec::new(),
         attributes: Vec::new(),
     };
     let mut item = crate::declarations::function(&function, span)?;

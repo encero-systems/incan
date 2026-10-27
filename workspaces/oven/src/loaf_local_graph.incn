@@ -3,6 +3,9 @@
 from std.toml import TomlValue, TomlKind
 from std.fs import Path
 from std.json import JsonValue
+from rust::std::ops import Index
+from rust::std::primitive import usize
+from observation import trace
 from rust_source import (
     RustDependencyCatalog,
     RustDependencyDeclaration,
@@ -206,7 +209,7 @@ def add(demands: Dict[str, LocalDemand], demand: LocalDemand) -> Dict[str, Local
     """Merge incoming local features and defaults monotonically; the caller observes whether another round is needed."""
     mut result = demands
     identity = key(demand)
-    mut selected = demand
+    mut selected = canonical_demand(demand)
     if identity in result:
         previous = result[identity]
         selected = LocalDemand(
@@ -341,11 +344,79 @@ pub model LocalFacet:
 
 
 model FacetSelection:
-    """One demand's activated facet and child requests, retained only during graph selection."""
+    """One exact incoming demand's immutable activation and its preceding request for the same owner."""
 
     demand: LocalDemand
     facet: LocalFacet
     children: list[LocalDemand]
+    previous: Option[int] = None
+
+
+pub class LocalFacetSession:
+    """
+    Reuse exact incoming demands within one reconciled source, target and substitution context.
+
+    Configuration and substitutions are owned by this session and never changed. Start a new session when source
+    reconciliation changes its manifests. Each root retains its own feature closure; cached activations never union
+    feature requests from different roots. Historical rows are required cache entries, linked only within one owner.
+    """
+
+    configuration: TargetConfiguration
+    substitutes: Dict[str, str]
+    reader: ManifestReader
+    selections: list[FacetSelection] = []
+    by_owner: Dict[str, int] = {}
+
+    def facets(mut self, root: LocalDemand) -> Result[list[LocalFacet], str]:
+        """
+        Select one root without inheriting another root's feature demands.
+
+        1. Start an independent monotonic demand inventory.
+        2. Activate each changed demand once and retain its children in this root's closure.
+        3. Return the final facets in canonical owner order.
+        """
+        # 1. The cache shares activation facts, never another root's demand inventory.
+        mut demands: Dict[str, LocalDemand] = {}
+        demands = add(demands, root)
+        mut previous: Dict[str, LocalDemand] = {}
+        mut selected: Dict[str, int] = {}
+        # 2. An unchanged choice has already contributed all its children to this monotonic closure.
+        while demands != previous:
+            previous = demands
+            for identity in sorted([name for name in previous.keys()]):
+                demand = previous[identity]
+                if let Some(position) = selected.get(identity):
+                    known = borrowed_selection(self.selections, position)
+                    if known.demand == demand:
+                        continue
+                position = self.selected_index(demand)?
+                selected[identity] = position
+                choice = borrowed_selection(self.selections, position)
+                for child_demand in choice.children:
+                    demands = add(demands, child_demand)
+        # 3. Assemble the output only after every incoming feature demand has settled.
+        mut facets: list[LocalFacet] = []
+        for identity in sorted([name for name in selected.keys()]):
+            choice = borrowed_selection(self.selections, selected[identity])
+            facets.append(choice.facet)
+        return Ok(facets)
+
+    def selected_index(mut self, demand: LocalDemand) -> Result[int, str]:
+        """Reuse only a structurally equal canonical demand, retaining each distinct feature/default choice once."""
+        owner = key(demand)
+        first = self.by_owner.get(owner)
+        mut current = first
+        while let Some(position) = current:
+            known = borrowed_selection(self.selections, position)
+            if known.demand == demand:
+                return Ok(position)
+            current = known.previous
+        facet, children = facet_of(demand, self.configuration, self.substitutes, self.reader)?
+        trace(f"local facet activation {owner} features={demand.features} defaults={demand.defaults}")
+        position = len(self.selections)
+        self.selections.append(FacetSelection(demand=demand, facet=facet, children=children, previous=first))
+        self.by_owner[owner] = position
+        return Ok(position)
 
 
 pub def local_facets(
@@ -354,31 +425,35 @@ pub def local_facets(
     substitutes: Dict[str, str] = {},
     reader: ManifestReader = ManifestReader(),
 ) -> Result[list[LocalFacet], str]:
-    """Select both languages' edges with one feature engine; substitutes replace packages wherever reached."""
-    clock = begin()
-    mut demands: Dict[str, LocalDemand] = {}
-    demands = add(demands, root)
-    mut previous: Dict[str, LocalDemand] = {}
-    mut facets: list[LocalFacet] = []
-    mut selected: Dict[str, FacetSelection] = {}
-    while demands != previous:
-        previous = demands
-        facets = []
-        for identity in sorted([name for name in previous.keys()]):
-            demand = previous[identity]
-            if identity not in selected or selected[identity].demand != demand:
-                facet, children = facet_of(demand, configuration, substitutes, reader)?
-                selected[identity] = FacetSelection(demand=demand, facet=facet, children=children)
-            choice = selected[identity]
-            facets.append(choice.facet)
-            for child_demand in choice.children:
-                demands = add(demands, child_demand)
-    mut domain = "target"
-    if root.domain == DependencyDomain.Host:
-        domain = "host"
-    key = (f"{root.project}|{domain}|{configuration.triple}|{",".join(sorted(root.features))}|" + f"{root.defaults}|{root.all_features}")
-    record("graph_resolution", key, clock)
-    return Ok(facets)
+    """Select both languages' edges in a fresh source/configuration session; substitutes replace packages throughout."""
+    mut session = local_facet_session(configuration, substitutes, reader)
+    return session.facets(root)
+
+
+pub def local_facet_session(
+    configuration: TargetConfiguration,
+    substitutes: Dict[str, str] = {},
+    reader: ManifestReader = ManifestReader(),
+) -> LocalFacetSession:
+    """Own a fixed reconciled context whose exact activations may be shared across independent root closures."""
+    return LocalFacetSession(configuration=configuration, substitutes=substitutes, reader=reader)
+
+
+def canonical_demand(demand: LocalDemand) -> LocalDemand:
+    """Normalize incoming feature sets at their admission owner so exact structural equality proves reuse."""
+    return LocalDemand(
+        project=demand.project,
+        domain=demand.domain,
+        features=unique(demand.features),
+        defaults=demand.defaults,
+        all_features=demand.all_features,
+    )
+
+
+def borrowed_selection(selections: &list[FacetSelection], position: int) -> &FacetSelection:
+    """Borrow a row whose nonnegative index was issued by this session's append-only activation registry."""
+    slot: usize = position.wrapping_resize()
+    return Index.index(selections, slot)
 
 
 def activated(

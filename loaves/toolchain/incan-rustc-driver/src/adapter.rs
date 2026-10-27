@@ -163,15 +163,39 @@ fn native_alias_type<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> rustc_middle::
     )
 }
 
-/// Give opaque native input lifetimes a fresh call-scoped binder before rustc computes implied outlives bounds.
-/// Only injected source functions and their native callback bridges use this provider; external metadata stays with
-/// rustc's separate external provider. Body-local native storage remains region-erased.
+/// Retain source type-parameter loan relationships and independently bind other opaque native inputs before rustc
+/// computes implied outlives bounds. Only injected source functions and native callback bridges use this provider;
+/// external metadata stays with rustc's separate provider, and body-local native storage remains region-erased.
 fn native_function_signature<'tcx>(
     tcx: TyCtxt<'tcx>,
     def: LocalDefId,
 ) -> rustc_middle::ty::EarlyBinder<'tcx, rustc_middle::ty::PolyFnSig<'tcx>> {
-    (rustc_interface::DEFAULT_QUERY_PROVIDERS.queries.fn_sig)(tcx, def)
-        .map_bound(|signature| crate::native_loans::signature(tcx, signature))
+    let plan = match active_plan() {
+        Ok(plan) => plan,
+        Err(error) => tcx.dcx().fatal(error.to_string()),
+    };
+    (rustc_interface::DEFAULT_QUERY_PROVIDERS.queries.fn_sig)(tcx, def).map_bound(|signature| {
+        let sites = planned_function(tcx, def, &plan).map_or(&[][..], |function| function.generic_loans.as_slice());
+        let retained = match crate::generic_loans::signature(tcx, signature, sites) {
+            Ok(signature) => signature,
+            Err(error) => refuse(tcx, error),
+        };
+        crate::native_loans::signature(tcx, retained)
+    })
+}
+
+/// Select only the plan's source-named root functions; synthesized closures retain their separate contracts.
+fn planned_function<'plan>(
+    tcx: TyCtxt<'_>,
+    def: LocalDefId,
+    plan: &'plan Plan,
+) -> Option<&'plan crate::plan::Function> {
+    let name = tcx.opt_item_name(def.to_def_id());
+    plan.functions.iter().find(|function| {
+        tcx.def_kind(def) == rustc_hir::def::DefKind::Fn
+            && tcx.parent(def.to_def_id()).is_crate_root()
+            && name.is_some_and(|name| name.as_str() == function.name)
+    })
 }
 
 /// Override only source-named planned functions; all compiler-generated items retain rustc's provider.
@@ -180,15 +204,7 @@ fn mir_built<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> &'tcx Steal<Body<'tcx>
         Ok(plan) => plan,
         Err(error) => tcx.dcx().fatal(error.to_string()),
     };
-    let name = tcx.opt_item_name(def.to_def_id());
-    let function = plan.functions.iter().find(|function| {
-        tcx.def_kind(def) == rustc_hir::def::DefKind::Fn
-            && tcx.parent(def.to_def_id()).is_crate_root()
-            && name.is_some_and(|name| name.as_str() == function.name)
-    });
-    if let Some(function) = function {
-        crate::native_timing::work("mir_built", &function.name, 1);
-    }
+    let function = planned_function(tcx, def, &plan);
     match function {
         // A closure constructor keeps rustc's own body, built from its injected boxing expression.
         Some(function)
@@ -262,45 +278,15 @@ struct Callbacks<'manifest> {
     timing: crate::native_timing::Timing,
 }
 
-impl rustc_driver::Callbacks for Callbacks<'_> {
-    /// Install the source-free root and the MIR query override. `INCAN_NATIVE_TIMING` opts into rustc's phase timings
-    /// on stderr without enabling unstable command-line options or changing compilation policy.
-    /// The source map owns one filename copied from the plan's shared file handle.
-    fn config(&mut self, config: &mut interface::Config) {
-        self.timing.mark("rustc_options");
-        let mut search = std::mem::take(&mut self.search);
-        config
-            .opts
-            .search_paths
-            .retain(|path| !search.iter().any(|held| held.kind == path.kind && held.dir == path.dir));
-        search.append(&mut config.opts.search_paths);
-        config.opts.search_paths = search;
-        self.timing.configure(config);
-        config.input = Input::Str {
-            name: FileName::Custom(self.plan.span.file.as_str().to_owned()),
-            input: String::new(),
-        };
-        config.override_queries = Some(|_session, providers| {
-            providers.queries.mir_built = mir_built;
-            providers.queries.type_of = native_alias_type;
-            providers.queries.fn_sig = native_function_signature;
-        });
-    }
-
-    /// Add function signatures and load the declared external crates, without parsing generated source.
-    /// Structural slice owners use the implicit standard core crate rather than introducing another extern.
-    fn after_crate_root_parsing(
-        &mut self,
+impl Callbacks<'_> {
+    /// Declare layouts in their dependency order using the callback's single source-span cache.
+    fn declare_source_layouts(
+        &self,
         compiler: &interface::Compiler,
         krate: &mut ast::Crate,
-    ) -> rustc_driver::Compilation {
-        self.timing.mark("rustc_session");
-        // ---- Source-backed native declarations ----
-        let sources = Sources::new(compiler.sess.source_map());
-        let span = match sources.span(&self.plan.span) {
-            Ok(span) => span,
-            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
-        };
+        sources: &Sources<'_>,
+        span: rustc_span::Span,
+    ) {
         match crate::cloneable_closures::items(&self.plan, span) {
             Ok(items) => krate.items.extend(items),
             Err(error) => compiler.sess.dcx().fatal(error.to_string()),
@@ -358,8 +344,11 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
             Ok(items) => krate.items.extend(items),
             Err(error) => compiler.sess.dcx().fatal(error.to_string()),
         }
+    }
 
-        // ---- Callable declarations and canonical entries ----
+    /// Declare checked callables before their program entries, retaining typed function-span failures across fatal
+    /// errors.
+    fn declare_callables(&self, compiler: &interface::Compiler, krate: &mut ast::Crate, sources: &Sources<'_>) {
         for function in &self.plan.functions {
             let span = match sources.span(&function.span) {
                 Ok(span) => span,
@@ -399,7 +388,10 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
                 },
             );
         }
-        // ---- Compiler-owned bridges and public library names ----
+    }
+
+    /// Declare compiler-owned bridges before publishing the library's public root names.
+    fn declare_bridges_and_exports(&self, compiler: &interface::Compiler, krate: &mut ast::Crate) {
         match native_bridge_items(&self.plan, krate.spans.inner_span) {
             Ok(items) => krate.items.extend(items),
             Err(error) => compiler.sess.dcx().fatal(error.to_string()),
@@ -409,8 +401,16 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
             Ok(items) => krate.items.extend(items),
             Err(error) => compiler.sess.dcx().fatal(error.to_string()),
         }
-        // ---- Computed storage and exact native crate roots ----
-        match native_static_items(&self.plan, &sources) {
+    }
+
+    /// Declare static storage before gathering the native roots required by every declaration already emitted.
+    fn declare_storage_and_externs(
+        &self,
+        compiler: &interface::Compiler,
+        krate: &mut ast::Crate,
+        sources: &Sources<'_>,
+    ) {
+        match native_static_items(&self.plan, sources) {
             Ok(items) => krate.items.extend(items),
             Err(error) => compiler.sess.dcx().fatal(error.to_string()),
         }
@@ -426,6 +426,59 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
                 .items
                 .push(declarations::external_crate(root, krate.spans.inner_span));
         }
+    }
+}
+
+impl rustc_driver::Callbacks for Callbacks<'_> {
+    /// Install the source-free root and the MIR query override. `INCAN_NATIVE_TIMING` opts into rustc's phase timings
+    /// on stderr without enabling unstable command-line options or changing compilation policy.
+    /// The source map owns one filename copied from the plan's shared file handle.
+    fn config(&mut self, config: &mut interface::Config) {
+        self.timing.mark("rustc_options");
+        let mut search = std::mem::take(&mut self.search);
+        config
+            .opts
+            .search_paths
+            .retain(|path| !search.iter().any(|held| held.kind == path.kind && held.dir == path.dir));
+        search.append(&mut config.opts.search_paths);
+        config.opts.search_paths = search;
+        self.timing.configure(config);
+        config.input = Input::Str {
+            name: FileName::Custom(self.plan.span.file.as_str().to_owned()),
+            input: String::new(),
+        };
+        config.override_queries = Some(|_session, providers| {
+            providers.queries.mir_built = mir_built;
+            providers.queries.type_of = native_alias_type;
+            providers.queries.fn_sig = native_function_signature;
+        });
+    }
+
+    /// Add source-backed layouts, callable signatures, public bridges, and external crates in dependency order.
+    /// Structural slice owners use the implicit standard core crate rather than introducing another extern.
+    fn after_crate_root_parsing(
+        &mut self,
+        compiler: &interface::Compiler,
+        krate: &mut ast::Crate,
+    ) -> rustc_driver::Compilation {
+        self.timing.mark("rustc_session");
+        let sources = Sources::new(compiler.sess.source_map());
+        let span = match sources.span(&self.plan.span) {
+            Ok(span) => span,
+            Err(error) => compiler.sess.dcx().fatal(error.to_string()),
+        };
+
+        // ---- Source-backed native declarations ----
+        self.declare_source_layouts(compiler, krate, &sources, span);
+
+        // ---- Callable declarations and canonical entries ----
+        self.declare_callables(compiler, krate, &sources);
+
+        // ---- Compiler-owned bridges and public library names ----
+        self.declare_bridges_and_exports(compiler, krate);
+
+        // ---- Computed storage and exact native crate roots ----
+        self.declare_storage_and_externs(compiler, krate, &sources);
         self.timing.mark("incan_declarations");
         rustc_driver::Compilation::Continue
     }
@@ -782,9 +835,8 @@ fn instantiate_generic_externals(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Option<
 /// explicit rlib paths; their metadata resolves canonical callees. No generated Rust source or ambient unstable grant
 /// is used.
 /// `INCAN_DIRECT_VALIDATION_REPORT` optionally records each function's first preflight refusal before normal
-/// validation. `INCAN_DIRECT_PLAN_REPORT` optionally records the complete plan for native ownership diagnostics.
-/// A library manifest lends its already checked public facade names for aliases of the canonical native items.
-/// Executables leave debug information in their object files instead of packing a macOS bundle during each edit.
+/// validation. A library manifest lends its already checked public facade names for aliases of the canonical native
+/// items. Executables leave debug information in their object files instead of packing a macOS bundle during each edit.
 /// A development store derives shared carriers from those same native identities and records loader witnesses;
 /// ordinary builds and release compilation do not select that policy.
 /// `overflow_checks` is the unit profile's integer overflow policy, the one the lowering already applied to the plan;
@@ -806,10 +858,6 @@ pub fn compile(
     let mut timing = crate::native_timing::Timing::requested();
 
     // ---- Validated source plan ----
-    if let Some(path) = std::env::var_os("INCAN_DIRECT_PLAN_REPORT") {
-        std::fs::write(path, format!("{plan:#?}"))
-            .map_err(|error| DriverError::Invocation(format!("cannot write native plan report: {error}")))?;
-    }
     if let Some(path) = std::env::var_os("INCAN_DIRECT_VALIDATION_REPORT") {
         let mut report = String::new();
         for refusal in validation::refusals(&plan, kind != UnitKind::Program) {
@@ -824,7 +872,6 @@ pub fn compile(
         return Err(DriverError::Invocation("crate name must be a Rust identifier".into()));
     }
     timing.mark("validated_plan");
-    crate::native_timing::plan_work(&plan);
 
     // ---- Optional shared native dependencies ----
     let _compilation = COMPILATION.lock().map_err(|_| DriverError::State)?;

@@ -16,7 +16,7 @@ use incan_frontend::library_manifest::LibraryManifest;
 use incan_frontend::loaf_index::{LoafIndex, LoafNativeClosure};
 use incan_frontend::parsed_module::ParsedModule;
 use incan_mir_lowering::{SourceInputs, program_refusals, unit_plan};
-use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable, NominalDeclaration};
+use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable, NativeUnionDeclaration, NominalDeclaration};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 
 /// Environment variable naming the file where the census receives every refusal of one compilation, one per line.
@@ -1124,9 +1124,8 @@ pub(crate) fn compile_resident(arguments: &[String]) -> Result<(), Box<dyn std::
 
 /// Compile one unit with the invocation's immutable-input retention policy; source checking and native execution
 /// remain fresh for both short-lived and resident callers. A leading `--certify PATH` option names where a refusal
-/// that unchanged inputs reproduce writes its receipt. `INCAN_DIRECT_BODY_IR_REPORT` optionally writes the checked
-/// modules before lowering and artifact publication, including bodies whose portable coverage later refuses.
-/// `INCAN_DIRECT_PLAN_REPORT` optionally writes the lowered plan before native artifact validation.
+/// that unchanged inputs reproduce writes its receipt. Checking, lowering and native compilation retain their
+/// separate refusal boundaries; only successful compilation publishes library artifacts.
 fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std::error::Error>> {
     if arguments.len() < 4 {
         return Err(
@@ -1160,59 +1159,19 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     let loaf_links: std::collections::BTreeSet<String> =
         unit.loaves.iter().map(|loaf| loaf.name.replace('-', "_")).collect();
     let rust = dependencies.rust_facts(&unit, Path::new(&arguments[3]));
-    let parent = tracing::Span::current();
-    let checking = receipt.clone();
-    let checked = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
-        let _parent = parent.enter();
-        checked_modules(&unit, &rust, resident, &checking)
-    });
-    let program = match checked {
-        Ok(program) => program,
-        Err(error) => {
-            write_refusal_report(std::slice::from_ref(&error))?;
-            return Err(error.into());
-        }
-    };
-    // Keep the checked representation inspectable before lowering or publication can refuse its retained facts.
-    if std::env::var_os("INCAN_TRACE_WORK").is_some() {
-        for module in &program.modules {
-            crate::native_timing::work("checked_module", module.module_id.path(), module.bodies.len());
-        }
-    }
-    if let Some(path) = std::env::var_os("INCAN_DIRECT_BODY_IR_REPORT") {
-        std::fs::write(path, format!("{:#?}", program.modules))?;
-    }
-    if census_complete(&program)? {
+    let mut program = check_compilation_source(unit, rust, resident, receipt.clone())?;
+    if census_complete(&program, kind, overflow_checks)? {
         return Ok(());
     }
     let mut published_unions = Vec::new();
-    let plan = {
-        tracing::debug!(target: "incan::invocation", modules = ?program.modules, "checked direct-route Body IR");
-        let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::lower_program", modules = program.modules.len()).entered();
-        let entry = program.entry.try_into()?;
-        let inputs = SourceInputs {
-            sources: program.sources,
-            files: program.files,
-            tests: program.tests.iter().map(|test| test.name.clone()).collect(),
-            overflow_checks,
-        };
-        unit_plan(
-            &program.modules,
-            inputs,
-            entry,
-            kind.as_str().to_owned(),
-            &mut published_unions,
-        )
-        .inspect_err(|_| receipt.deterministic())?
-    };
-    let Some(plan) = plan else {
-        report_missing_entrypoint(&source_path)?;
-        receipt.deterministic();
-        return Err(SourceFailure::MissingEntrypoint.into());
-    };
-    if let Some(path) = std::env::var_os("INCAN_DIRECT_PLAN_REPORT") {
-        std::fs::write(path, format!("{plan:#?}"))?;
-    }
+    let plan = lower_compilation_plan(
+        &mut program,
+        kind,
+        overflow_checks,
+        &source_path,
+        &receipt,
+        &mut published_unions,
+    )?;
     let tests = crate::test_unit::report(&program.tests, &plan.tests)?;
 
     // ---- Exact native dependencies, including checked Loaf implementation layouts ----
@@ -1261,6 +1220,65 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     Ok(())
 }
 
+/// Check owned invocation inputs on the compiler stack and preserve the source refusal report on failure. The
+/// returned program owns checked facts; no invocation descriptor is copied to bridge the stack boundary.
+fn check_compilation_source(
+    unit: UnitDescription,
+    rust: RustFactsSetup,
+    resident: bool,
+    receipt: RefusalReceipt,
+) -> Result<CheckedProgram, Box<dyn std::error::Error>> {
+    let parent = tracing::Span::current();
+    let checked = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
+        let _parent = parent.enter();
+        checked_modules(&unit, &rust, resident, &receipt)
+    });
+    match checked {
+        Ok(program) => Ok(program),
+        Err(error) => {
+            write_refusal_report(std::slice::from_ref(&error))?;
+            Err(error.into())
+        }
+    }
+}
+
+/// Move source provenance into lowering while retaining the checked modules and publication facts. A lowering
+/// refusal or missing program entry receives the same deterministic certificate as ordinary unit compilation.
+fn lower_compilation_plan(
+    program: &mut CheckedProgram,
+    kind: UnitKind,
+    overflow_checks: bool,
+    source: &Path,
+    receipt: &RefusalReceipt,
+    published_unions: &mut Vec<NativeUnionDeclaration>,
+) -> Result<crate::plan::Plan, Box<dyn std::error::Error>> {
+    tracing::debug!(target: "incan::invocation", modules = ?program.modules, "checked direct-route Body IR");
+    let plan = {
+        let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::lower_program", modules = program.modules.len()).entered();
+        let entry = program.entry.try_into()?;
+        let inputs = SourceInputs {
+            sources: std::mem::take(&mut program.sources),
+            files: std::mem::take(&mut program.files),
+            tests: program.tests.iter().map(|test| test.name.clone()).collect(),
+            overflow_checks,
+        };
+        unit_plan(
+            &program.modules,
+            inputs,
+            entry,
+            kind.as_str().to_owned(),
+            published_unions,
+        )
+        .inspect_err(|_| receipt.deterministic())?
+    };
+    if let Some(plan) = plan {
+        return Ok(plan);
+    }
+    report_missing_entrypoint(source)?;
+    receipt.deterministic();
+    Err(SourceFailure::MissingEntrypoint.into())
+}
+
 /// Lower authored modules from their checked facts and the canonical provider catalog. Dependency bodies already
 /// present in `bodies` supply context; every source body is built anew and remains outside immutable worker caches.
 fn lower_authored_modules(
@@ -1285,7 +1303,11 @@ fn lower_authored_modules(
 
 /// Report an optional exact-body census and decide whether it completed the invocation without native compilation.
 /// Ordinary invocations retain their current checked program and proceed through the single lowering path.
-fn census_complete(program: &CheckedProgram) -> Result<bool, Box<dyn std::error::Error>> {
+fn census_complete(
+    program: &CheckedProgram,
+    kind: UnitKind,
+    overflow_checks: bool,
+) -> Result<bool, Box<dyn std::error::Error>> {
     if std::env::var_os(REFUSAL_REPORT).is_none() {
         return Ok(false);
     }
@@ -1297,11 +1319,12 @@ fn census_complete(program: &CheckedProgram) -> Result<bool, Box<dyn std::error:
             sources: program.sources.clone(),
             files: program.files.clone(),
             tests: Vec::new(),
-            overflow_checks: true,
+            overflow_checks,
         },
         program.entry.try_into()?,
         std::env::var_os("INCAN_DIRECT_CENSUS_PROGRESS").is_some(),
         selection,
+        kind.as_str().to_owned(),
     );
     write_refusal_report(&refusals)?;
     if selected && let Some(refusal) = refusals.first() {

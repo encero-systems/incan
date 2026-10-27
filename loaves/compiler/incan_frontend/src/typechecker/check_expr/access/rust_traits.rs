@@ -203,9 +203,9 @@ impl TypeChecker {
         Some(result)
     }
 
-    /// Select a declared native trait method for an admitted dynamic receiver or bounded source parameter. Neither
-    /// receiver needs a nominal impl template; the caller establishes its trait authority, and native compilation
-    /// verifies the exact instantiated signature and obligations before constructing MIR.
+    /// Select a declared native trait method for a dynamic receiver, canonical source owner or bounded parameter.
+    /// These receivers need no inspected nominal impl template; the caller establishes the declaration or bound,
+    /// and native compilation verifies the exact instantiated signature and obligations before constructing MIR.
     pub(super) fn resolve_rust_declared_trait_method(
         &mut self,
         call: RustPathMethodCall<'_>,
@@ -227,7 +227,7 @@ impl TypeChecker {
         };
         let owner = match self.active_type_param_name(&owner) {
             Some(name) => ResolvedType::TypeVar(name.to_owned()),
-            None => self.native_rust_signature_type(&render_resolved_type_as_rust_arg(&owner), ""),
+            None => owner,
         };
         let arguments = self.rust_owner_type_args(&owner, call.rust_path).unwrap_or_default();
         let associated_count = info
@@ -299,10 +299,10 @@ impl TypeChecker {
         Some(result)
     }
 
-    /// Admit an explicit native trait call on a source parameter only from its innermost declared bound. Trait
-    /// identities come from native metadata, so a same-named source trait and an outer shadowed parameter grant no
-    /// callable authority. Generic trait arguments require their own retained substitution and remain refused here.
-    pub(super) fn retain_rust_parameter_trait_call(
+    /// Retain an explicit native trait call on a concrete source declaration or a parameter with an innermost native
+    /// bound. Concrete implementations are verified by rustc; a parameter still requires its declared authority.
+    /// Both use the existing declared-trait selector, preserving source identities in Self and its result.
+    pub(super) fn retain_rust_source_trait_call(
         &mut self,
         call: &RustTraitQualifiedCall<'_>,
         receiver: &Spanned<Expr>,
@@ -312,28 +312,31 @@ impl TypeChecker {
             ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref(),
             other => other,
         };
-        let name = self.active_type_param_name(owner)?;
-        let bounds = self.innermost_type_param_bounds(name)?;
-        let identity = self.rust_trait_identity(call.rust_path);
-        let admitted = bounds.iter().any(|bound| {
-            if !bound.type_args.is_empty() {
-                return false;
-            }
-            let path = if let Some(path) = bound.name.strip_prefix("::") {
-                path
-            } else {
-                let Some(symbol) = self.lookup_symbol(&bound.name) else {
+        let admitted = if let Some(name) = self.active_type_param_name(owner) {
+            let identity = self.rust_trait_identity(call.rust_path);
+            self.innermost_type_param_bounds(name)?.iter().any(|bound| {
+                if !bound.type_args.is_empty() {
                     return false;
+                }
+                let path = if let Some(path) = bound.name.strip_prefix("::") {
+                    path
+                } else {
+                    let Some(symbol) = self.lookup_symbol(&bound.name) else {
+                        return false;
+                    };
+                    let crate::symbols::SymbolKind::RustItem(item) = &symbol.kind else {
+                        return false;
+                    };
+                    &item.path
                 };
-                let crate::symbols::SymbolKind::RustItem(item) = &symbol.kind else {
-                    return false;
-                };
-                &item.path
-            };
-            self.rust_item_metadata_for_path(path).is_some_and(|metadata| {
-                matches!(metadata.kind, RustItemKind::Trait(_)) && self.rust_trait_identity(path) == identity
+                self.rust_item_metadata_for_path(path).is_some_and(|metadata| {
+                    matches!(metadata.kind, RustItemKind::Trait(_)) && self.rust_trait_identity(path) == identity
+                })
             })
-        });
+        } else {
+            matches!(owner, ResolvedType::Named(name) | ResolvedType::Generic(name, _)
+                if self.source_nominal_carrier_key(name).is_some())
+        };
         if !admitted {
             return None;
         }
@@ -786,14 +789,22 @@ impl TypeChecker {
         })
     }
 
-    /// Normalize an own-source nominal through its checked identity. Package aliases keep their existing native
-    /// defining-path comparison.
+    /// Normalize source nominals owned by this compilation through their checked identity, including library
+    /// declarations whose origin already names the publishing package. Foreign package aliases keep their native
+    /// defining-path comparison and selected artifact identity.
     fn source_trait_carrier_key(&self, name: &str) -> Option<String> {
         let identity = self.symbols.module_type_identity(name)?;
-        if !matches!(identity.origin, incan_semantics_core::SymbolOrigin::Module(_)) {
+        let owned = match &identity.origin {
+            incan_semantics_core::SymbolOrigin::Module(_) => true,
+            incan_semantics_core::SymbolOrigin::Package { library, .. } => {
+                self.symbols.package_identity() == Some(library.as_str())
+            }
+            _ => false,
+        };
+        if !owned {
             return None;
         }
-        incan_semantics_core::body_ir::nominal_carrier_key(identity)
+        self.source_nominal_carrier_key(name)
     }
 
     /// Compare public type reexports through their retained defining path within the same bound crate. Distinct

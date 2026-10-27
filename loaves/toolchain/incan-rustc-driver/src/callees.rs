@@ -4,8 +4,8 @@ use crate::error::PlanError;
 use crate::plan::{Callee, CalleeKind};
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::TyCtxt;
 use rustc_middle::ty::fast_reject::SimplifiedType;
+use rustc_middle::ty::{self, Ty, TyCtxt};
 
 /// Resolve a retained public module constant, inherent associated constant or unit-variant constructor. Inherent
 /// constants use the same metadata lookup as checking; statics and trait constants still require their own
@@ -297,6 +297,11 @@ pub fn external(tcx: TyCtxt<'_>, path: &str) -> Result<DefId, PlanError> {
             DefKind::Struct | DefKind::Enum => inherent_function(tcx, current, segment)
                 .or_else(|| enum_constructor(tcx, current, segment))
                 .ok_or_else(|| PlanError::UnknownCallee(path.into()))?,
+            DefKind::TyAlias => {
+                let target = tcx.type_of(current).instantiate_identity().skip_normalization();
+                inherent_function_in(tcx, &type_inherent_impls(tcx, target), segment)
+                    .ok_or_else(|| PlanError::UnknownCallee(path.into()))?
+            }
             DefKind::Trait => trait_function(tcx, current, segment).ok_or_else(|| PlanError::Unsupported {
                 function: path.into(),
                 reason: "the SDK trait publishes no method with this name".into(),
@@ -363,7 +368,10 @@ fn callee_path_step(kind: DefKind, last: bool) -> bool {
     if last {
         kind == DefKind::Fn
     } else {
-        matches!(kind, DefKind::Mod | DefKind::Struct | DefKind::Enum | DefKind::Trait)
+        matches!(
+            kind,
+            DefKind::Mod | DefKind::Struct | DefKind::Enum | DefKind::Trait | DefKind::TyAlias
+        )
     }
 }
 
@@ -392,6 +400,45 @@ pub fn owner_inherent_impls(tcx: TyCtxt<'_>, owner: DefId) -> Vec<DefId> {
     let mut implementations = tcx.inherent_impls(owner).to_vec();
     implementations.extend_from_slice(tcx.incoherent_impls(SimplifiedType::Adt(owner)));
     implementations
+}
+
+/// Select inherent impls for an alias's actual target, shared by fact extraction and executable callee lookup.
+/// Specialized owners can have same-named methods in distinct impls; rustc unification excludes impls for other
+/// instantiations before the ordinary unique-callee and signature/predicate checks apply.
+pub(crate) fn type_inherent_impls<'tcx>(tcx: TyCtxt<'tcx>, owner: Ty<'tcx>) -> Vec<DefId> {
+    let implementations = match owner.kind() {
+        rustc_middle::ty::Adt(adt, _) => owner_inherent_impls(tcx, adt.did()),
+        _ => primitive_inherent_impls(tcx, owner).to_vec(),
+    };
+    implementations
+        .into_iter()
+        .filter(|implementation| inherent_impl_matches_type(tcx, *implementation, owner))
+        .collect()
+}
+
+/// Test an inherent impl's structural Self type against an alias target without inventing native type arguments.
+/// Open impl parameters remain inference variables; the selected call still proves its declaration's predicates.
+fn inherent_impl_matches_type<'tcx>(tcx: TyCtxt<'tcx>, implementation: DefId, owner: Ty<'tcx>) -> bool {
+    use rustc_infer::infer::TyCtxtInferExt;
+    use rustc_trait_selection::traits::ObligationCtxt;
+
+    let (infcx, environment) = tcx
+        .infer_ctxt()
+        .build_with_typing_env(ty::TypingEnv::fully_monomorphized());
+    let arguments = infcx.fresh_args_for_item(rustc_span::DUMMY_SP, implementation);
+    let declared = tcx
+        .type_of(implementation)
+        .instantiate(tcx, arguments)
+        .skip_normalization();
+    let obligations = ObligationCtxt::new(&infcx);
+    obligations
+        .eq(
+            &rustc_middle::traits::ObligationCause::dummy(),
+            environment,
+            declared,
+            owner,
+        )
+        .is_ok()
 }
 
 /// Read the exact inherent impl bucket for a primitive carrier, shared by metadata extraction and executable callee

@@ -1711,6 +1711,7 @@ mod tests {
         Ok(())
     }
 
+    /// Operators retain public structure while generated operands receive stable, distinct provenance.
     #[test]
     fn bridges_rfc028_operator_enums_round_trip() -> Result<(), Box<dyn std::error::Error>> {
         let left = ast::Spanned::new(ast::Expr::Ident("left".to_string()), ast::Span::default());
@@ -1736,7 +1737,15 @@ mod tests {
                 matches!(&public, incan_vocab::IncanExpr::Binary(_, op, _) if *op == public_op),
                 "expected public operator {public_op:?}, got {public:?}"
             );
-            assert_eq!(public_expression_to_internal(&public)?, internal);
+            let round_trip = public_expression_to_internal(&public)?;
+            assert_eq!(internal_expr_to_public(&round_trip)?, public);
+            assert_eq!(round_trip, public_expression_to_internal(&public)?);
+            assert!(matches!(
+                &round_trip,
+                ast::Expr::Binary(left, _, right)
+                    if left.span.expansion.is_some() && right.span.expansion.is_some()
+                        && left.span.expansion != right.span.expansion
+            ));
         }
 
         let internal = ast::Expr::Unary(
@@ -1751,10 +1760,13 @@ mod tests {
             &public,
             incan_vocab::IncanExpr::Unary(incan_vocab::IncanUnaryOp::Invert, _)
         ));
-        assert_eq!(public_expression_to_internal(&public)?, internal);
+        let round_trip = public_expression_to_internal(&public)?;
+        assert_eq!(internal_expr_to_public(&round_trip)?, public);
+        assert!(matches!(&round_trip, ast::Expr::Unary(_, value) if value.span.expansion.is_some()));
         Ok(())
     }
 
+    /// Scoped expressions retain their public structure and generated call arguments gain stable provenance.
     #[test]
     fn bridges_scoped_surface_expression_artifacts_round_trip() -> Result<(), Box<dyn std::error::Error>> {
         let scoped = ast::Expr::Surface(Box::new(ast::SurfaceExpr {
@@ -1820,10 +1832,19 @@ mod tests {
                     && call.owner.clause.as_deref() == Some("SELECT")
         ));
         let round_trip = public_expression_to_internal(&public)?;
-        assert_eq!(round_trip, scoped_symbol);
+        assert_eq!(internal_expr_to_public(&round_trip)?, public);
+        assert_eq!(round_trip, public_expression_to_internal(&public)?);
+        assert!(matches!(
+            &round_trip,
+            ast::Expr::Surface(surface)
+                if matches!(&surface.payload, ast::SurfaceExprPayload::ScopedSymbolCall { args, .. }
+                    if args.iter().all(|argument| matches!(argument,
+                        ast::CallArg::Positional(value) if value.span.expansion.is_some())))
+        ));
         Ok(())
     }
 
+    /// Async surface structure survives bridging and each generated binding retains expansion provenance.
     #[test]
     fn bridges_race_for_expression_artifacts_round_trip() -> Result<(), Box<dyn std::error::Error>> {
         let race = ast::Expr::Surface(Box::new(ast::SurfaceExpr {
@@ -1864,7 +1885,16 @@ mod tests {
                     && matches!(&race.arms[0].body, incan_vocab::IncanRaceForBody::Expr(_))
                     && matches!(&race.arms[1].body, incan_vocab::IncanRaceForBody::Block(_))
         ));
-        assert_eq!(public_expression_to_internal(&public)?, race);
+        let round_trip = public_expression_to_internal(&public)?;
+        assert_eq!(internal_expr_to_public(&round_trip)?, public);
+        assert_eq!(round_trip, public_expression_to_internal(&public)?);
+        assert!(matches!(
+            &round_trip,
+            ast::Expr::Surface(surface)
+                if matches!(&surface.payload, ast::SurfaceExprPayload::RaceFor(race)
+                    if race.binding.span.expansion.is_some()
+                        && race.arms.iter().all(|arm| arm.awaitable.span.expansion.is_some()))
+        ));
         Ok(())
     }
 }

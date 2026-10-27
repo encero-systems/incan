@@ -85,52 +85,12 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
             let alias = crate::callees::native_type_item(tcx, "core::ffi::c_char")?;
             tcx.type_of(alias).instantiate_identity().skip_normalization()
         }
-        PlanType::RawPointer(mutable, elements) => {
-            let [pointee] = elements.as_slice() else {
-                return Err(PlanError::UnknownCallee("invalid raw pointer carrier".into()));
-            };
-            Ty::new_ptr(
-                tcx,
-                native_type(tcx, pointee)?,
-                if *mutable {
-                    rustc_hir::Mutability::Mut
-                } else {
-                    rustc_hir::Mutability::Not
-                },
-            )
-        }
-        PlanType::NativeTraitObject(path, send, sync) => {
-            let principal = crate::callees::library_item(tcx, path, rustc_hir::def::DefKind::Trait)?;
-            let object = native_trait_object(tcx, principal, &[])?;
-            let rustc_middle::ty::Dynamic(predicates, region) = object.kind() else {
-                return Err(PlanError::UnknownCallee(path.clone()));
-            };
-            let mut predicates: Vec<_> = predicates.iter().collect();
-            for (required, name) in [(*send, rustc_span::sym::Send), (*sync, rustc_span::sym::Sync)] {
-                if required {
-                    let marker = tcx
-                        .get_diagnostic_item(name)
-                        .ok_or_else(|| PlanError::UnknownCallee(name.to_string()))?;
-                    predicates.push(rustc_middle::ty::Binder::dummy(
-                        rustc_middle::ty::ExistentialPredicate::AutoTrait(marker),
-                    ));
-                }
-            }
-            predicates.sort_by(|left, right| left.skip_binder().stable_cmp(tcx, &right.skip_binder()));
-            Ty::new_dynamic(tcx, tcx.mk_poly_existential_predicates(&predicates), *region)
-        }
+        PlanType::RawPointer(mutable, elements) => raw_pointer_type(tcx, *mutable, elements)?,
+        PlanType::NativeTraitObject(path, send, sync) => marked_trait_object_type(tcx, path, *send, *sync)?,
         PlanType::TypeToken(elements) => type_token_type(tcx, elements)?,
         PlanType::ScalarRef(elements) => scalar_reference_type(tcx, elements, false)?,
         PlanType::ScalarMutRef(elements) => scalar_reference_type(tcx, elements, true)?,
-        PlanType::Future(arguments) => {
-            let [output] = arguments.as_slice() else {
-                return Err(PlanError::Unsupported {
-                    function: "future".into(),
-                    reason: "future output arity".into(),
-                });
-            };
-            enum_type(tcx, &crate::futures::alias_name(output))?
-        }
+        PlanType::Future(arguments) => future_alias_type(tcx, arguments)?,
         PlanType::ZipIterator(left, right) => zip_type(tcx, left, right)?,
         PlanType::ZipIteratorRef(left, right) => {
             Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, zip_type(tcx, left, right)?)
@@ -140,52 +100,20 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         }
         PlanType::EnumTag => tcx.types.isize,
         PlanType::Generator(leaf, depth) => generator_type(tcx, "Generator", leaf, *depth)?,
-        PlanType::GeneratorMutRef(leaf, depth) => Ty::new_mut_ref(
-            tcx,
-            tcx.lifetimes.re_erased,
-            generator_type(tcx, "Generator", leaf, *depth)?,
-        ),
+        PlanType::GeneratorMutRef(leaf, depth) => generator_reference_type(tcx, "Generator", leaf, *depth, true)?,
         PlanType::GeneratorYield(leaf, depth) => generator_type(tcx, "GeneratorYield", leaf, *depth)?,
-        PlanType::GeneratorYieldRef(leaf, depth) => Ty::new_imm_ref(
-            tcx,
-            tcx.lifetimes.re_erased,
-            generator_type(tcx, "GeneratorYield", leaf, *depth)?,
-        ),
+        PlanType::GeneratorYieldRef(leaf, depth) => {
+            generator_reference_type(tcx, "GeneratorYield", leaf, *depth, false)?
+        }
         PlanType::Enum(_, name) => enum_type(tcx, name)?,
         PlanType::EnumRef(_, name) => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, enum_type(tcx, name)?),
         PlanType::EnumMutRef(_, name) => Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, enum_type(tcx, name)?),
         PlanType::Model(_, name) => model_type(tcx, name)?,
-        PlanType::CallableArguments(inputs) => Ty::new_tup(
-            tcx,
-            &inputs
-                .iter()
-                .map(|input| native_type(tcx, input))
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
-        PlanType::Tuple(elements) => Ty::new_tup(
-            tcx,
-            &elements
-                .iter()
-                .map(|element| native_type(tcx, &tuple_element_type(element.clone())))
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
-        PlanType::TupleRef(elements) => Ty::new_imm_ref(
-            tcx,
-            tcx.lifetimes.re_erased,
-            native_type(tcx, &PlanType::Tuple(elements.clone()))?,
-        ),
-        PlanType::TupleMutRef(elements) => Ty::new_mut_ref(
-            tcx,
-            tcx.lifetimes.re_erased,
-            native_type(tcx, &PlanType::Tuple(elements.clone()))?,
-        ),
-        PlanType::RangeValue => Ty::new_tup(
-            tcx,
-            &range_field_types()
-                .iter()
-                .map(|field| native_type(tcx, field))
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
+        PlanType::CallableArguments(inputs) => native_tuple_type(tcx, inputs)?,
+        PlanType::Tuple(elements) => tuple_value_type(tcx, elements)?,
+        PlanType::TupleRef(elements) => native_reference(tcx, tuple_value_type(tcx, elements)?, false),
+        PlanType::TupleMutRef(elements) => native_reference(tcx, tuple_value_type(tcx, elements)?, true),
+        PlanType::RangeValue => native_tuple_type(tcx, &range_field_types())?,
         PlanType::ModelMutRef(_, name) => Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, model_type(tcx, name)?),
         PlanType::ModelRef(_, name) => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, model_type(tcx, name)?),
         PlanType::List(leaf, depth) => list_type(tcx, leaf, *depth)?,
@@ -198,27 +126,11 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
             Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, list_type(tcx, leaf, *depth)?)
         }
         PlanType::Set(leaf) => hash_collection_type(tcx, "HashSet", &[leaf])?,
-        PlanType::SetRef(leaf) => Ty::new_imm_ref(
-            tcx,
-            tcx.lifetimes.re_erased,
-            hash_collection_type(tcx, "HashSet", &[leaf])?,
-        ),
-        PlanType::SetMutRef(leaf) => Ty::new_mut_ref(
-            tcx,
-            tcx.lifetimes.re_erased,
-            hash_collection_type(tcx, "HashSet", &[leaf])?,
-        ),
+        PlanType::SetRef(leaf) => hash_reference_type(tcx, "HashSet", &[leaf], false)?,
+        PlanType::SetMutRef(leaf) => hash_reference_type(tcx, "HashSet", &[leaf], true)?,
         PlanType::Dict(key, value) => hash_collection_type(tcx, "HashMap", &[key, value])?,
-        PlanType::DictRef(key, value) => Ty::new_imm_ref(
-            tcx,
-            tcx.lifetimes.re_erased,
-            hash_collection_type(tcx, "HashMap", &[key, value])?,
-        ),
-        PlanType::DictMutRef(key, value) => Ty::new_mut_ref(
-            tcx,
-            tcx.lifetimes.re_erased,
-            hash_collection_type(tcx, "HashMap", &[key, value])?,
-        ),
+        PlanType::DictRef(key, value) => hash_reference_type(tcx, "HashMap", &[key, value], false)?,
+        PlanType::DictMutRef(key, value) => hash_reference_type(tcx, "HashMap", &[key, value], true)?,
         PlanType::Int => tcx.types.i64,
         PlanType::Float => tcx.types.f64,
         PlanType::I8 => tcx.types.i8,
@@ -246,14 +158,7 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::ClosureRef(signature) => {
             Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, callable_object_type(tcx, signature)?)
         }
-        PlanType::FunctionItem(name, _) => {
-            let definition = if name.contains("::") {
-                crate::callees::external(tcx, name)?
-            } else {
-                crate::callees::planned(tcx, name)?
-            };
-            Ty::new_fn_def(tcx, definition, tcx.mk_args(&[]))
-        }
+        PlanType::FunctionItem(name, _) => function_item_type(tcx, name)?,
         PlanType::Unit => tcx.types.unit,
         PlanType::Never => tcx.types.never,
         PlanType::UnitFunction => Ty::new_fn_ptr(
@@ -263,27 +168,12 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::CheckedInt => Ty::new_tup(tcx, &[tcx.types.i64, tcx.types.bool]),
         PlanType::String => string_type(tcx)?,
         PlanType::NativeStr => tcx.types.str_,
-        PlanType::NativeSlice(elements) | PlanType::SliceRef(elements) | PlanType::SliceMutRef(elements) => {
-            let [element] = elements.as_slice() else {
-                return Err(PlanError::Unsupported {
-                    function: "native slice".into(),
-                    reason: "slice requires one element".into(),
-                });
-            };
-            let slice = Ty::new_slice(tcx, native_type(tcx, element)?);
-            match ty {
-                PlanType::SliceRef(_) => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, slice),
-                PlanType::SliceMutRef(_) => Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, slice),
-                _ => slice,
-            }
-        }
+        PlanType::NativeSlice(elements) => native_slice_type(tcx, elements)?,
+        PlanType::SliceRef(elements) => native_reference(tcx, native_slice_type(tcx, elements)?, false),
+        PlanType::SliceMutRef(elements) => native_reference(tcx, native_slice_type(tcx, elements)?, true),
         PlanType::Decimal => runtime_carrier_type(tcx, RuntimeCarrier::Decimal)?,
         PlanType::ValidationError => runtime_carrier_type(tcx, RuntimeCarrier::ValidationError)?,
-        PlanType::ValidationErrorRef => Ty::new_imm_ref(
-            tcx,
-            tcx.lifetimes.re_erased,
-            runtime_carrier_type(tcx, RuntimeCarrier::ValidationError)?,
-        ),
+        PlanType::ValidationErrorRef => runtime_reference_type(tcx, RuntimeCarrier::ValidationError)?,
         PlanType::FrozenStr => runtime_carrier_type(tcx, RuntimeCarrier::FrozenStr)?,
         PlanType::FrozenBytes => runtime_carrier_type(tcx, RuntimeCarrier::FrozenBytes)?,
         PlanType::FrozenCollection(name, elements) => frozen_collection_type(tcx, name, elements)?,
@@ -299,30 +189,161 @@ pub fn native_type<'tcx>(tcx: TyCtxt<'tcx>, ty: &PlanType) -> Result<Ty<'tcx>, P
         PlanType::StrRef => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, tcx.types.str_),
         PlanType::StringArray(count) => array_type(tcx, string_type(tcx)?, *count)?,
         PlanType::NativeArray(elements, count) => native_array_type(tcx, elements, *count)?,
-        PlanType::NativeArrayRef(elements, count) => {
-            Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, native_array_type(tcx, elements, *count)?)
-        }
-        PlanType::NativeArrayMutRef(elements, count) => {
-            Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, native_array_type(tcx, elements, *count)?)
-        }
+        PlanType::NativeArrayRef(elements, count) => array_reference_type(tcx, elements, *count, false)?,
+        PlanType::NativeArrayMutRef(elements, count) => array_reference_type(tcx, elements, *count, true)?,
         PlanType::StrArray(count) => array_type(tcx, native_type(tcx, &PlanType::StrRef)?, *count)?,
-        PlanType::StringArrayRef(count) => Ty::new_imm_ref(
-            tcx,
-            tcx.lifetimes.re_erased,
-            array_type(tcx, string_type(tcx)?, *count)?,
-        ),
-        PlanType::StrArrayRef(count) => Ty::new_imm_ref(
-            tcx,
-            tcx.lifetimes.re_erased,
-            array_type(tcx, native_type(tcx, &PlanType::StrRef)?, *count)?,
-        ),
+        PlanType::StringArrayRef(count) => text_array_reference_type(tcx, string_type(tcx)?, *count)?,
+        PlanType::StrArrayRef(count) => text_array_reference_type(tcx, native_type(tcx, &PlanType::StrRef)?, *count)?,
         PlanType::StringSlice => Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, Ty::new_slice(tcx, string_type(tcx)?)),
-        PlanType::StrSlice => Ty::new_imm_ref(
-            tcx,
-            tcx.lifetimes.re_erased,
-            Ty::new_slice(tcx, native_type(tcx, &PlanType::StrRef)?),
-        ),
+        PlanType::StrSlice => native_reference(tcx, Ty::new_slice(tcx, native_type(tcx, &PlanType::StrRef)?), false),
     })
+}
+
+/// Require one pointee and preserve its checked pointer mutability without introducing a reference lifetime.
+fn raw_pointer_type<'tcx>(tcx: TyCtxt<'tcx>, mutable: bool, elements: &[PlanType]) -> Result<Ty<'tcx>, PlanError> {
+    let [pointee] = elements else {
+        return Err(PlanError::UnknownCallee("invalid raw pointer carrier".into()));
+    };
+    Ok(Ty::new_ptr(
+        tcx,
+        native_type(tcx, pointee)?,
+        if mutable {
+            rustc_hir::Mutability::Mut
+        } else {
+            rustc_hir::Mutability::Not
+        },
+    ))
+}
+
+/// Add checked Send and Sync bounds in that order, retaining the principal object's region and stable predicate order.
+fn marked_trait_object_type<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    path: &str,
+    send: bool,
+    sync: bool,
+) -> Result<Ty<'tcx>, PlanError> {
+    let principal = crate::callees::library_item(tcx, path, rustc_hir::def::DefKind::Trait)?;
+    let object = native_trait_object(tcx, principal, &[])?;
+    let rustc_middle::ty::Dynamic(predicates, region) = object.kind() else {
+        return Err(PlanError::UnknownCallee(path.to_owned()));
+    };
+    let mut predicates: Vec<_> = predicates.iter().collect();
+    for (required, name) in [(send, rustc_span::sym::Send), (sync, rustc_span::sym::Sync)] {
+        if required {
+            let marker = tcx
+                .get_diagnostic_item(name)
+                .ok_or_else(|| PlanError::UnknownCallee(name.to_string()))?;
+            predicates.push(rustc_middle::ty::Binder::dummy(
+                rustc_middle::ty::ExistentialPredicate::AutoTrait(marker),
+            ));
+        }
+    }
+    predicates.sort_by(|left, right| left.skip_binder().stable_cmp(tcx, &right.skip_binder()));
+    Ok(Ty::new_dynamic(
+        tcx,
+        tcx.mk_poly_existential_predicates(&predicates),
+        *region,
+    ))
+}
+
+/// Resolve the checked future output through its synthesized alias, refusing malformed arity before lookup.
+fn future_alias_type<'tcx>(tcx: TyCtxt<'tcx>, arguments: &[PlanType]) -> Result<Ty<'tcx>, PlanError> {
+    let [output] = arguments else {
+        return Err(PlanError::Unsupported {
+            function: "future".into(),
+            reason: "future output arity".into(),
+        });
+    };
+    enum_type(tcx, &crate::futures::alias_name(output))
+}
+
+/// Construct a body-internal reference using its checked mutability and the erased native region.
+fn native_reference<'tcx>(tcx: TyCtxt<'tcx>, referent: Ty<'tcx>, mutable: bool) -> Ty<'tcx> {
+    if mutable {
+        Ty::new_mut_ref(tcx, tcx.lifetimes.re_erased, referent)
+    } else {
+        Ty::new_imm_ref(tcx, tcx.lifetimes.re_erased, referent)
+    }
+}
+
+/// Resolve the runtime carrier's native storage before constructing its shared body-internal reference.
+fn runtime_reference_type<'tcx>(tcx: TyCtxt<'tcx>, carrier: RuntimeCarrier) -> Result<Ty<'tcx>, PlanError> {
+    Ok(native_reference(tcx, runtime_carrier_type(tcx, carrier)?, false))
+}
+
+/// Resolve generator storage before applying the admitted shared or mutable reference.
+fn generator_reference_type<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    name: &str,
+    leaf: &ListLeaf,
+    depth: i64,
+    mutable: bool,
+) -> Result<Ty<'tcx>, PlanError> {
+    Ok(native_reference(tcx, generator_type(tcx, name, leaf, depth)?, mutable))
+}
+
+/// Translate tuple fields in declaration order, propagating the first native type refusal.
+fn native_tuple_type<'tcx>(tcx: TyCtxt<'tcx>, elements: &[PlanType]) -> Result<Ty<'tcx>, PlanError> {
+    let fields = elements
+        .iter()
+        .map(|element| native_type(tcx, element))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Ty::new_tup(tcx, &fields))
+}
+
+/// Preserve the plan's tuple-element storage conversion before constructing its native tuple.
+fn tuple_value_type<'tcx>(tcx: TyCtxt<'tcx>, elements: &[crate::plan::TupleElement]) -> Result<Ty<'tcx>, PlanError> {
+    let fields = elements
+        .iter()
+        .map(|element| native_type(tcx, &tuple_element_type(element.clone())))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Ty::new_tup(tcx, &fields))
+}
+
+/// Borrow the resolved native hash collection without changing its leaf ordering.
+fn hash_reference_type<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    name: &str,
+    leaves: &[&ListLeaf],
+    mutable: bool,
+) -> Result<Ty<'tcx>, PlanError> {
+    Ok(native_reference(tcx, hash_collection_type(tcx, name, leaves)?, mutable))
+}
+
+/// Resolve the existing external-versus-planned function identity and instantiate its non-generic item type.
+fn function_item_type<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Result<Ty<'tcx>, PlanError> {
+    let definition = if name.contains("::") {
+        crate::callees::external(tcx, name)?
+    } else {
+        crate::callees::planned(tcx, name)?
+    };
+    Ok(Ty::new_fn_def(tcx, definition, tcx.mk_args(&[])))
+}
+
+/// Require exactly one native slice element before translating it; reference modes are applied by the caller.
+fn native_slice_type<'tcx>(tcx: TyCtxt<'tcx>, elements: &[PlanType]) -> Result<Ty<'tcx>, PlanError> {
+    let [element] = elements else {
+        return Err(PlanError::Unsupported {
+            function: "native slice".into(),
+            reason: "slice requires one element".into(),
+        });
+    };
+    Ok(Ty::new_slice(tcx, native_type(tcx, element)?))
+}
+
+/// Preserve native array arity and length admission before borrowing its storage with the erased region.
+fn array_reference_type<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    elements: &[PlanType],
+    count: i64,
+    mutable: bool,
+) -> Result<Ty<'tcx>, PlanError> {
+    Ok(native_reference(tcx, native_array_type(tcx, elements, count)?, mutable))
+}
+
+/// Borrow a fixed-size text array after its element type and length have been admitted.
+fn text_array_reference_type<'tcx>(tcx: TyCtxt<'tcx>, element: Ty<'tcx>, count: i64) -> Result<Ty<'tcx>, PlanError> {
+    Ok(native_reference(tcx, array_type(tcx, element, count)?, false))
 }
 
 /// Translate a preflight-validated single scalar referent, rejecting malformed arity before constructing its native

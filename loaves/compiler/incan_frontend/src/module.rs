@@ -322,7 +322,7 @@ fn primary_import_base_dir(base_dir: &Path, source_root: Option<&Path>, path: &I
 /// Infer a source root from conventional project layout when no manifest-driven root is available.
 fn discover_source_root_from_layout(base_dir: &Path) -> PathBuf {
     let mut project_root = base_dir.to_path_buf();
-    while !project_root.join("Cargo.toml").exists() && !project_root.join("src").exists() {
+    while !project_root.join("loaf.toml").exists() && !project_root.join("src").exists() {
         if !project_root.pop() {
             break;
         }
@@ -808,8 +808,10 @@ pub type CliNewtypeProbe = newtype int:
         }
     }
 
+    /// A caller-supplied project source root resolves imports outside a test directory.
     #[test]
-    fn resolve_import_path_falls_back_to_project_source_root_for_tests_dir() -> Result<(), Box<dyn std::error::Error>> {
+    fn resolve_import_path_falls_back_to_supplied_source_root_for_tests_dir() -> Result<(), Box<dyn std::error::Error>>
+    {
         let tmp = tempfile::tempdir()?;
         let root = tmp.path();
         std::fs::write(
@@ -826,11 +828,16 @@ version = "0.1.0"
         let dataset = src_dir.join("dataset.incn");
         std::fs::write(&dataset, "pub trait DataSet[T]:\n    pass\n")?;
 
-        let resolved = resolve_import_path(&tests_dir, &relative_from_import("dataset"));
-        assert_eq!(resolved, Some(dataset.canonicalize().unwrap_or(dataset)));
+        let SourceModuleImportResolution::Local(resolved) =
+            resolve_source_module_import(&tests_dir, Some(&src_dir), &relative_from_import("dataset"))
+        else {
+            return Err("source-root import was not resolved locally".into());
+        };
+        assert_eq!(resolved.file_path, dataset.canonicalize()?);
         Ok(())
     }
 
+    /// A test-local module wins over a module under the caller-supplied source root.
     #[test]
     fn resolve_import_path_prefers_base_dir_before_source_root_fallback() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
@@ -851,13 +858,18 @@ version = "0.1.0"
         std::fs::write(&tests_dataset, "pub trait LocalDataSet[T]:\n    pass\n")?;
         std::fs::write(&src_dataset, "pub trait SourceDataSet[T]:\n    pass\n")?;
 
-        let resolved = resolve_import_path(&tests_dir, &relative_from_import("dataset"));
-        assert_eq!(resolved, Some(tests_dataset.canonicalize().unwrap_or(tests_dataset)));
+        let SourceModuleImportResolution::Local(resolved) =
+            resolve_source_module_import(&tests_dir, Some(&src_dir), &relative_from_import("dataset"))
+        else {
+            return Err("test-local import was not resolved locally".into());
+        };
+        assert_eq!(resolved.file_path, tests_dataset.canonicalize()?);
         Ok(())
     }
 
+    /// Manifest orchestration supplies a nonstandard source root explicitly at the resolution boundary.
     #[test]
-    fn resolve_import_path_uses_manifest_source_root_when_configured() -> Result<(), Box<dyn std::error::Error>> {
+    fn resolve_import_path_uses_supplied_source_root_when_configured() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let root = tmp.path();
         std::fs::write(
@@ -877,8 +889,22 @@ source-root = "library"
         let dataset = library_dir.join("dataset.incn");
         std::fs::write(&dataset, "pub trait DataSet[T]:\n    pass\n")?;
 
-        let resolved = resolve_import_path(&tests_dir, &relative_from_import("dataset"));
-        assert_eq!(resolved, Some(dataset.canonicalize().unwrap_or(dataset)));
+        let SourceModuleImportResolution::Local(resolved) =
+            resolve_source_module_import(&tests_dir, Some(&library_dir), &relative_from_import("dataset"))
+        else {
+            return Err("configured source-root import was not resolved locally".into());
+        };
+        assert_eq!(resolved.file_path, dataset.canonicalize()?);
+        let root_dataset = root.join("dataset.incn");
+        std::fs::write(&root_dataset, "pub trait RootDataSet[T]:\n    pass\n")?;
+        let mut root_import = relative_from_import("dataset");
+        if let ImportKind::From { module, .. } = &mut root_import.kind {
+            module.is_absolute = true;
+        }
+        assert_eq!(
+            resolve_import_path(&tests_dir, &root_import),
+            Some(root_dataset.canonicalize()?)
+        );
         Ok(())
     }
 

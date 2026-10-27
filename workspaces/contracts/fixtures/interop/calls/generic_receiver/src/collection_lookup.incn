@@ -1,0 +1,8 @@
+"""Use a native enum-returning function without importing its return enum."""
+
+from rust::incan_lang::lang::types::collections import from_str as collection_type
+
+
+pub def recognizes() -> bool:
+    """Recognize the collection through the function's producer-selected return owner."""
+    return collection_type("List") != None

@@ -1,6 +1,7 @@
 """Bind runtime operations to authenticated compiled frames or ordinary governed body instances."""
 
 from pub::incan_mir_plan import (
+    semantic_type_matches,
     PlanType,
     Function,
     ExternalFunction,
@@ -30,6 +31,8 @@ from type_parameters import Instance, instantiate, request_instance
 from lowering import frame_parameter_type, merge_externals
 from runtime_frames import runtime_frame_adapter
 from layout_types import native_source_type
+from native_type_identity import ConstructorIndex
+from program_context import ProgramContext, retain_nominal_tables
 from unions import collect_unions
 from async_ import evaluator_name
 from nominal_instances import NominalInstance, retain_frame_nominals, instance_arguments, template_base
@@ -37,7 +40,6 @@ from collections import is_owned_collection
 from options import retain_body_carriers
 from table_views import borrowed_at, borrowed_table
 from rust::std::collections import BTreeMap
-from compilation_work import enabled as work_enabled, record as record_work
 
 
 pub model RuntimeRedirect:
@@ -63,6 +65,8 @@ pub def runtime_redirects() -> RuntimeRedirects:
 
 
 pub def retain_runtime_instances(
+    template_constructors: &ConstructorIndex,
+    mut program: ProgramContext,
     mut module: &mut BodyIrModule,
     templates: &BodyIrModule,
     mut functions: list[Function],
@@ -82,9 +86,7 @@ pub def retain_runtime_instances(
     The explicit foreign mutable loan keeps frame retention from snapshotting every checked body per request.
     """
     # 1. Retain coroutine instances before ordinary call frames.
-    if work_enabled():
-        record_work("runtime_round", str(module.module_id.path()), len(externals))
-    retain_runtime_future_instances(module, functions, instances, intrinsics, unions)?
+    retain_runtime_future_instances(program.constructors.as_ref(), module, functions, instances, intrinsics, unions)?
     mut retained: list[ExternalFunction] = []
     # 2. Close each selected body, adapt its inputs and retain its canonical instance and final redirection.
     for external in externals:
@@ -92,7 +94,16 @@ pub def retain_runtime_instances(
             None =>
                 if external.path.startswith("incan_native_runtime::") and len(external.type_arguments) != 0:
                     return Err(f"runtime publishes no governed body for {external.path}")
-                if retain_runtime_frame_call(module, functions, retained, external, intrinsics, unions, redirects)?:
+                if retain_runtime_frame_call(
+                    program.constructors.as_ref(),
+                    module,
+                    functions,
+                    retained,
+                    external,
+                    intrinsics,
+                    unions,
+                    redirects,
+                )?:
                     continue
                 merge_externals(retained, [external])?
             Some(body) =>
@@ -106,23 +117,34 @@ pub def retain_runtime_instances(
                 owned = runtime_owned_slots(body, external)?
                 # 2. Close frame layouts before reading their parameter and result storage.
                 closed = instantiate(body, arguments, owned)?
-                declarations = retain_frame_nominals(module, templates, closed, nominal_instances)?
-                for declaration in declarations:
+                added = retain_frame_nominals(template_constructors, module, templates, closed, nominal_instances)?
+                for declaration in added:
                     module.nominal_declarations.append(declaration.clone())
-                if len(declarations) != 0:
+                retain_nominal_tables(program, module)
+                if len(added) != 0:
                     while len(unions) != 0:
                         _ = unions.pop()
                     unions.extend(collect_unions(module))
-                retain_body_carriers(module, intrinsics, closed, str(external.span.file))?
+                file = str(external.span.file)
+                constructors = program.constructors.as_ref()
+                retain_body_carriers(constructors, module, intrinsics, closed, file)?
                 nominals = borrowed_table(module.nominal_declarations)
                 enums = borrowed_table(module.enum_declarations)
                 symbol = function_name(module, closed)
                 mut parameters: list[PlanType] = []
                 for parameter in closed.params:
                     parameters.append(
-                        frame_parameter_type(nominals, enums, closed, parameter, intrinsics, str(external.span.file))?,
+                        frame_parameter_type(
+                            constructors,
+                            nominals,
+                            enums,
+                            closed,
+                            parameter,
+                            intrinsics,
+                            str(external.span.file),
+                        )?,
                     )
-                result = native_source_type(nominals, enums, unions, closed.return_type, intrinsics)?
+                result = native_source_type(constructors, nominals, enums, unions, closed.return_type, intrinsics)?
                 mut called = symbol
                 match runtime_frame_adapter(module, external, parameters, result, symbol, CalleeKind.Planned(symbol))?:
                     Some(adapter) =>
@@ -140,6 +162,7 @@ pub def retain_runtime_instances(
 
 
 def retain_runtime_frame_call(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     mut functions: list[Function],
     mut externals: list[ExternalFunction],
@@ -158,9 +181,17 @@ def retain_runtime_frame_call(
             mut parameters: list[PlanType] = []
             for parameter in frame.params:
                 parameters.append(
-                    frame_parameter_type(nominals, enums, frame, parameter, intrinsics, str(external.span.file))?,
+                    frame_parameter_type(
+                        constructors,
+                        nominals,
+                        enums,
+                        frame,
+                        parameter,
+                        intrinsics,
+                        str(external.span.file),
+                    )?,
                 )
-            result = native_source_type(nominals, enums, unions, frame.return_type, intrinsics)?
+            result = native_source_type(constructors, nominals, enums, unions, frame.return_type, intrinsics)?
             symbol = function_name(module, frame)
             mut target = callee
             # 2. Adapt declared storage; an exact ABI calls the compiled item directly.
@@ -279,6 +310,7 @@ def runtime_canonical(module: &BodyIrModule, path: str) -> Result[Option[RustCan
 
 
 def retain_runtime_future_instances(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     mut functions: list[Function],
     mut instances: list[Instance],
@@ -334,10 +366,18 @@ def retain_runtime_future_instances(
         closed = instantiate(body, arguments, owned)?
         # 2. Verify the coroutine's exact captures and output before selecting its deferred evaluator.
         for slot in range(len(closed.params)):
-            expected = frame_parameter_type(nominals, enums, closed, closed.params[slot], intrinsics, str(span.file))?
+            expected = frame_parameter_type(
+                constructors,
+                nominals,
+                enums,
+                closed,
+                closed.params[slot],
+                intrinsics,
+                str(span.file),
+            )?
             if expected != parameters[slot]:
                 return Err(f"unsupported governed runtime future capture ABI for {path}")
-        output = native_source_type(nominals, enums, unions, closed.return_type, intrinsics)?
+        output = native_source_type(constructors, nominals, enums, unions, closed.return_type, intrinsics)?
         if function.return_type != PlanType.Future([output]):
             return Err(f"unsupported governed runtime future output ABI for {path}")
         symbol = evaluator_name(module, closed)
@@ -420,9 +460,6 @@ def retain_runtime_redirect(
 pub def redirect_runtime_calls(mut functions: list[Function], redirects: RuntimeRedirects) -> Result[None, str]:
     """Rewrite each completed block once, preserving call operands and edges and refusing primitive reentry."""
     for function_index in range(len(functions)):
-        if work_enabled():
-            function = borrowed_at(functions, function_index)
-            record_work("runtime_function_rewrite", function.name, len(function.blocks))
         for block_index in range(runtime_block_count(functions, function_index)):
             rewritten = redirected_runtime_terminator(functions, function_index, block_index, redirects)?
             match rewritten:
@@ -533,7 +570,7 @@ def runtime_argument(
         PlanType.Model(owner, _name) =>
             declaration = borrowed_at(module.nominal_declarations, owner)
             if declaration.type_parameter_count != 0 and declaration.canonical.kind != SemanticSourceTargetKind.RustItem:
-                return Ok(generic(template_base(declaration), instance_arguments(module, declaration)?))
+                return Ok(generic(template_base(declaration), instance_arguments(declaration)?))
             return Ok(RustType.Named(str(declaration.name)))
         PlanType.ModelRef(owner, name) =>
             return Ok(RustType.Ref(runtime_argument(module, PlanType.Model(owner, name), intrinsics, unions)?))
@@ -623,7 +660,7 @@ def runtime_enum_argument(
     if declaration.carrier != "Option" and declaration.carrier != "Result":
         for position in range(len(unions)):
             union = borrowed_at(unions, position)
-            if declaration.source_type == str(union):
+            if semantic_type_matches(declaration, union):
                 return Ok(union.clone())
         return Err("unsupported governed runtime intrinsic enum argument")
     for variant in declaration.variants:

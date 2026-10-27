@@ -17,7 +17,7 @@ pub def uses_native_argument(module: &BodyIrModule, name: str) -> Result[bool, s
         for argument in declaration.native_type_arguments:
             arguments.append(argument.clone())
         if len(arguments) == 0:
-            arguments = instance_arguments(module, declaration)?
+            arguments = instance_arguments(declaration)?
         for argument in arguments:
             if contains_name(argument, name):
                 return Ok(true)

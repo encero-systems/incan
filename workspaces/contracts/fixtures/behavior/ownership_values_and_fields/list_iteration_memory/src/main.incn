@@ -13,16 +13,27 @@ from rust::memory_probe import peak_resident_bytes
 
 
 def main() -> Result[None, str]:
-    """1. Run a selected child measurement. 2. Compare flat and nested iteration with their allocation baseline."""
+    """
+    Check child diagnostics and compare iteration memory with its allocation baseline.
+
+    1. Run a selected child measurement or the deliberate diagnostic failure.
+    2. Require an unsuccessful child report to retain its status and stderr cause.
+    3. Compare flat and nested iteration with their allocation baseline.
+    """
     # 1. A child builds its list once and performs the selected iteration.
     match var("INCAN_LIST_MEMORY_CHILD"):
         Ok(mode) =>
+            if mode == "diagnostic-failure":
+                return Err("controlled memory child failure")
             run_child(mode)
             println(peak_resident_bytes().map_err((error) => str(error))?)
             return Ok(None)
         Err(_) => pass
 
-    # 2. Each measurement runs in a fresh process, independent of allocator high-water marks.
+    # 2. A child refusal must not hide the mechanism that failed before a memory comparison begins.
+    verify_child_diagnostic()
+
+    # 3. Each measurement runs in a fresh process, independent of allocator high-water marks.
     for shape in ["flat", "nested"]:
         baseline = measure(f"{shape}-baseline")?
         for operation in ["iter", "expression"]:
@@ -44,9 +55,21 @@ def measure(mode: str) -> Result[int, str]:
     report = Command.new(executable).env("INCAN_LIST_MEMORY_CHILD", mode).output()
     output = report.map_err((error) => str(error))?
     if not output.status.success():
-        return Err(f"memory measurement failed for {mode}")
+        cause = RustString.from_utf8_lossy(output.stderr.as_slice()).into_owned()
+        status = output.status
+        return Err(f"memory measurement failed for {mode} ({status}): {cause.strip()}")
     text = RustString.from_utf8(output.stdout).map_err((error) => str(error))?
     return Ok(int(text.strip()))
+
+
+def verify_child_diagnostic() -> None:
+    """Observe a deliberate child failure without allocating a large source, requiring both exit status and cause."""
+    match measure("diagnostic-failure"):
+        Ok(_value) =>
+            assert false, "a deliberately unsuccessful child was accepted as a memory measurement"
+        Err(message) =>
+            assert "memory measurement failed for diagnostic-failure (exit status: 1):" in message
+            assert "controlled memory child failure" in message
 
 
 def run_child(mode: str) -> None:

@@ -3,6 +3,7 @@
 from rust::incan_std_core::strings import str_len
 from rust::incan_std_core::errors import raise_value_error
 from rust::std::fs import read_to_string, write as native_write
+from integer_helpers import integer_power
 from rust::incan_std_core::collections::__private import (
     list_min_copy,
     list_max_copy,
@@ -11,6 +12,9 @@ from rust::incan_std_core::collections::__private import (
     list_min_f64,
     list_max_f64,
 )
+
+const MINIMUM_INT: int = -9223372036854775808
+const MAXIMUM_INT: int = 9223372036854775807
 
 
 pub def absolute_int(value: int) -> int:
@@ -26,7 +30,7 @@ pub def absolute_int(value: int) -> int:
 
 def absolute_overflows(value: int) -> bool:
     """Only the signed minimum has no representable absolute value."""
-    return value == -9223372036854775808
+    return value == MINIMUM_INT
 
 
 pub def truth_int(value: int) -> bool:
@@ -83,9 +87,9 @@ def sum_add(total: int, value: int) -> int:
 def sum_overflows(total: int, value: int) -> bool:
     """Compare against safe signed bounds without overflowing the guard's own subtraction."""
     if value > 0:
-        return total > 9223372036854775807 - value
+        return total > MAXIMUM_INT - value
     if value < 0:
-        return total < -9223372036854775808 - value
+        return total < MINIMUM_INT - value
     return false
 
 
@@ -156,23 +160,8 @@ pub def truth_list[T](value: &list[T]) -> bool:
 
 
 pub def power_i64(left: int, right: int) -> int:
-    """
-    Match legacy's `i64::pow`: the same `u32` exponent truncation and Rust's square-and-multiply steps.
-
-    Each step uses `*`, which overflows exactly as Rust's `pow` does in the same profile, so results and overflow
-    panics agree with legacy.
-    """
-    mut exponent = right & 4294967295
-    if exponent == 0:
-        return 1
-    mut base = left
-    mut accumulator = 1
-    while exponent > 1:
-        if exponent & 1 == 1:
-            accumulator = accumulator * base
-        exponent = exponent // 2
-        base = base * base
-    return accumulator * base
+    """Preserve integer power's low-32-bit exponent and checked multiplication behavior."""
+    return integer_power[int](left, right, 1)
 
 
 pub def power_f64(left: float, right: float) -> float:

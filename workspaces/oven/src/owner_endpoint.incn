@@ -11,7 +11,7 @@ simultaneous commands start exactly one. A stale socket (nothing listens) is rem
 or an ordinary file in its place is left alone and the command prepares its executable itself.
 """
 
-from rust::std::env import current_exe
+from rust::std::env import current_exe, vars_os
 from rust::std::fs import Permissions, metadata, set_permissions
 from rust::std::io import ErrorKind
 from rust::std::os::unix::fs import FileTypeExt, PermissionsExt
@@ -91,10 +91,10 @@ pub def endpoint_for(root: str) -> Result[Endpoint, str]:
 def generation_of(root: str) -> Result[str, str]:
     """
     The first sixteen digits of the digest of the protocol, this executable, the project, the home, the standard
-    library, toolchain description, selected SDK configuration and requested compiler diagnostics.
+    library, toolchain description, selected SDK/deployment configuration and requested compiler diagnostics.
     """
     exe = executable()?
-    configuration = [
+    mut configuration = [
         PROTOCOL,
         exe,
         observe(Path(exe))?.stamp,
@@ -109,7 +109,29 @@ def generation_of(root: str) -> Result[str, str]:
         inherited_setting("INCAN_TRACE_DIR"),
         inherited_setting("INCAN_JEC_TRACE"),
     ]
+    configuration.extend(inherited_deployment_configuration()?)
     return Ok(fingerprint(configuration)?[0:16])
+
+
+def inherited_deployment_configuration() -> Result[list[str], str]:
+    """Keep an owner's inherited deployment selection distinct before it can prepare native inputs for a caller."""
+    mut entries: list[tuple[str, str]] = []
+    for key, value in vars_os():
+        name = key.into_string().map_err((_) => "an owner environment name is not Unicode")?
+        if name.ends_with("_DEPLOYMENT_TARGET"):
+            setting = value.into_string().map_err((_) => "an owner deployment setting is not Unicode")?
+            entries.append((str(name), str(setting)))
+    return Ok(deployment_configuration(entries))
+
+
+pub def deployment_configuration(entries: list[tuple[str, str]]) -> list[str]:
+    """
+    Normalize deployment-selection inputs without duplicating rustc's platform/default policy.
+
+    Names and exact values distinguish absent, empty and explicit settings. The native producer still asks rustc for
+    its effective target; this guard only prevents another inherited selection from reusing the process first.
+    """
+    return sorted([f"{name}={value}" for name, value in entries if name.endswith("_DEPLOYMENT_TARGET")])
 
 
 def inherited_setting(name: str) -> str:

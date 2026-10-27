@@ -44,9 +44,9 @@ pub def checked_deserialize_name(declaration: &NominalDeclaration) -> Result[str
 
 pub def checked_owner_arguments(
     declaration: &NominalDeclaration,
-    instances: list[NominalInstance],
+    instances: &list[NominalInstance],
 ) -> Result[list[RustType], str]:
-    """Use the exact discovery registry for scheduling; physical names only verify the selected closed layout."""
+    """Borrow the exact discovery registry and retain only the selected owner's arguments for scheduling."""
     if len(declaration.type_parameters) == 0:
         return Ok([])
     for instance in instances:

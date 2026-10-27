@@ -57,7 +57,7 @@ pub(crate) fn items(
     for derive in model
         .derives
         .iter()
-        .filter(|derive| !matches!(derive.as_str(), "Debug" | "Clone"))
+        .filter(|derive| !matches!(derive.as_str(), "Debug" | "Clone" | "Display"))
     {
         declaration
             .attrs
@@ -70,6 +70,13 @@ pub(crate) fn items(
     }
     if model.derives.iter().any(|derive| derive == "Clone") {
         items.push(clone_impl(model, span));
+    }
+    if model.derives.iter().any(|derive| derive == "Display") {
+        items.push(crate::derived_display::implementation(
+            self_type(model, span),
+            parameters_of(model, Some(&["core", "fmt", "Debug"]), span),
+            span,
+        ));
     }
     items
 }
@@ -357,7 +364,7 @@ fn initialized_field(name: &str, expr: Box<ast::Expr>, span: Span) -> ast::ExprF
 }
 
 /// Declare one method in a native trait implementation without authored source tokens.
-fn trait_method(name: &str, sig: ast::FnSig, body: Box<ast::Block>, span: Span) -> Box<ast::AssocItem> {
+pub(crate) fn trait_method(name: &str, sig: ast::FnSig, body: Box<ast::Block>, span: Span) -> Box<ast::AssocItem> {
     Box::new(ast::AssocItem {
         attrs: ThinVec::new(),
         id: ast::DUMMY_NODE_ID,
@@ -384,11 +391,6 @@ fn trait_impl(
     method: Box<ast::AssocItem>,
     span: Span,
 ) -> Box<ast::Item> {
-    let arguments = model
-        .parameters
-        .iter()
-        .map(|name| GenericLayoutType::Parameter(name.clone()))
-        .collect();
     let mut implementation = declarations::item(
         ast::ItemKind::Impl(ast::Impl {
             generics: parameters_of(model, Some(path), span),
@@ -402,13 +404,23 @@ fn trait_impl(
                     ref_id: ast::DUMMY_NODE_ID,
                 },
             })),
-            self_ty: layout_type(&GenericLayoutType::Applied(model.name.clone(), arguments), span),
+            self_ty: self_type(model, span),
             items: thin_vec![method],
         }),
         span,
     );
     implementation.vis = inherited(span);
     implementation
+}
+
+/// Apply a provider's declared type parameters in their original order for every native trait implementation.
+fn self_type(model: &GenericModelDeclaration, span: Span) -> Box<ast::Ty> {
+    let arguments = model
+        .parameters
+        .iter()
+        .map(|name| GenericLayoutType::Parameter(name.clone()))
+        .collect();
+    layout_type(&GenericLayoutType::Applied(model.name.clone(), arguments), span)
 }
 
 /// A source string literal used only by the injected Debug implementation.

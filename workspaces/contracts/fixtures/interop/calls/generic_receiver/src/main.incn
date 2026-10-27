@@ -1,4 +1,4 @@
-# behavior: native receivers retain owners, iterator outputs, primitive views, callbacks, lazy captures, blanket associated iterator types and independently bound borrowed inputs (#2256, #2368)
+# behavior: native generic calls retain owners, results and borrowed inputs across import contexts (#2256, #2368)
 # expect-stdout:
 #   1
 #   770
@@ -51,6 +51,8 @@ from std.derives.copying import Clone
 from std.derives.comparison import Ord
 from std.traits.callable import Callable1
 from std.rust import Static
+import collection_lookup
+import collection_lookup_with_enum
 
 
 model DecodedValue[T with Clone]:
@@ -353,6 +355,8 @@ def check_borrowed_captures() -> None:
 
 def main() -> None:
     """Run each registry-crate observation in the order of the cases it carries."""
+    assert collection_lookup.recognizes()
+    assert collection_lookup_with_enum.recognizes()
     show_extension_traits()
     show_generic_receivers()
     show_slice_methods()
@@ -366,6 +370,8 @@ def main() -> None:
     check_primitive_and_parameter_receivers()
     offset = 5
     deferred = captured_chain(singleton(1), (value) => singleton(value + offset))
+    renamed = captured_chain(singleton(2), (different) => singleton(different + offset))
+    assert list(renamed) == [7]
     println("captured chain created")
     println(native_snapshot_length[str](words))
     check_borrowed_captures()

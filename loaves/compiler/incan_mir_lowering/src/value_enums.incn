@@ -1,6 +1,7 @@
 """Identity-checked value-enum construction and generated scalar getter admission."""
 
 from table_views import borrowed_at
+from native_type_identity import ConstructorIndex
 from rust::incan_semantics_core import SymbolNamespace, SemanticSourceTargetKind, IncanType as RustType
 from rust::incan_semantics_core::body_ir import (
     BodyIrModule,
@@ -71,6 +72,7 @@ pub def validate_layout(layout: &EnumDeclaration, declaration: &ValueEnumDeclara
 
 
 pub def value_method_owner(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     target: &MethodTarget,
     locals: list[Local],
@@ -82,7 +84,7 @@ pub def value_method_owner(
     """Admit the getter under its owner's span; declared methods and authenticated SDK trait calls retain their own paths."""
     if target.loaf_trait != None:
         return Ok(None)
-    index = receiver_layout(module, locals, argument, span, unions, intrinsics)?
+    index = receiver_layout(constructors, module, locals, argument, span, unions, intrinsics)?
     if index < 0 or index >= len(module.enum_declarations):
         return Ok(None)
     for owner in range(len(module.value_enum_declarations)):
@@ -125,6 +127,7 @@ pub def value_enum_from_value_owner(module: &BodyIrModule, target: &NamedCallabl
 
 
 pub def enum_message_layout(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     target: &MethodTarget,
     locals: list[Local],
@@ -147,7 +150,7 @@ pub def enum_message_layout(
                 or identity.kind != SemanticSourceTargetKind.Method
             ):
                 return Ok(None)
-            index = receiver_layout(module, locals, argument, span, unions, intrinsics)?
+            index = receiver_layout(constructors, module, locals, argument, span, unions, intrinsics)?
             if index < 0 or index >= len(module.enum_declarations):
                 return Ok(None)
             owner = module.enum_declarations[index].canonical
@@ -164,6 +167,7 @@ pub def enum_message_layout(
 
 
 def receiver_layout(
+    constructors: &ConstructorIndex,
     module: &BodyIrModule,
     locals: list[Local],
     argument: &ArgumentElement,
@@ -178,6 +182,7 @@ def receiver_layout(
             mut union_layouts = unions
             mut intrinsic_layouts = intrinsics
             source = model_place(
+                constructors,
                 module.nominal_declarations,
                 frame_locals,
                 read.place,

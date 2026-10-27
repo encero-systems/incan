@@ -30,8 +30,7 @@ pub def nominal_place(mut builder: Builder, value: &RustOperand, span: SourceSpa
         RustOperand.Place(read) =>
             if is_element_place(builder, read.place)?:
                 match element_place_type(builder, read.place)?:
-                    PlanType.Model(_owner, _name) =>
-                        return Ok(Some(materialized_receiver(builder, read.place, span)?))
+                    PlanType.Model(_owner, _name) => return Ok(Some(materialized_receiver(builder, read.place, span)?))
                     _ => return Ok(None)
             match read.place.local_id():
                 None => return Ok(None)
@@ -171,13 +170,14 @@ pub def display_model_operand(
                     match builder.nominals[owner].display_method:
                         Some(_selected) => return Ok(Some(display_checked_model(builder, owner, place, span)?))
                         None => pass
-                    if library_item(builder.nominals[owner]) != "":
-                        argument = borrow_model(builder, place, place_type(builder.locals, place), span)?
-                        return Ok(Some(native_format_text(builder, argument, false, span)?))
-                    if "Display" not in builder.nominals[owner].derives:
+                    if (
+                        library_item(builder.nominals[owner]) == ""
+                        and "Display" not in builder.nominals[owner].derives
+                    ):
                         return Err("unsupported Body IR model display without derived Display")
                 _ => return Err("unsupported Body IR model display carrier")
-            return Ok(Some(debug_model(builder, place, span)?))
+            argument = borrow_model(builder, place, place_type(builder.locals, place), span)?
+            return Ok(Some(native_format_text(builder, argument, false, span)?))
 
 
 def display_checked_model(mut builder: Builder, owner: int, place: Place, span: SourceSpan) -> Result[Place, str]:
@@ -333,7 +333,14 @@ def static_receiver_type(mut builder: Builder, target: &NamedCallableTarget) -> 
     match target.receiver_type:
         Some(ty) =>
             closed: RustType = substitute(ty, builder.type_parameters, builder.type_arguments)?
-            return native_source_type(builder.nominals, builder.enums, builder.unions, closed, builder.intrinsics)
+            return native_source_type(
+                builder.constructors,
+                builder.nominals,
+                builder.enums,
+                builder.unions,
+                closed,
+                builder.intrinsics,
+            )
         None => return Err("unsupported Body IR from_json without a receiver type")
 
 

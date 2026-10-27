@@ -37,7 +37,14 @@ pub def model_default_arguments(
             mut types: list[PlanType] = []
             for ty in declaration.field_types:
                 types.append(
-                    native_source_type(builder.nominals, builder.enums, builder.unions, ty, builder.intrinsics)?,
+                    native_source_type(
+                        builder.constructors,
+                        builder.nominals,
+                        builder.enums,
+                        builder.unions,
+                        ty,
+                        builder.intrinsics,
+                    )?,
                 )
             return default_arguments(module, builder, binding, elements, body, types, span, 0, true)
         None => return Err(f"unsupported Body IR unavailable field defaults on {declaration.name}")
@@ -65,15 +72,20 @@ pub def method_default_arguments(
             if preset_binding.name != target.name or Some(preset_binding.target.clone()) != target.canonical:
                 continue
             frame = preset_binding.frame
-            if frame.canonical != body.canonical or len(frame.params) != len(body.params) or len(frame.params) != len(
-                types,
-            ) + 1:
+            if (
+                frame.canonical != body.canonical
+                or len(frame.params) != len(body.params)
+                or len(frame.params) != len(types) + 1
+            ):
                 return Err("invalid Body IR method-partial frame")
             # One generic owner contributes a frame per closed layout; the retained receiver selects this instance.
             if frame.params[0].ty != body.params[0].ty:
                 continue
             for index in range(len(frame.params)):
-                if frame.params[index].name != body.params[index].name or frame.params[index].ty != body.params[index].ty:
+                if (
+                    frame.params[index].name != body.params[index].name
+                    or frame.params[index].ty != body.params[index].ty
+                ):
                     return Err("invalid Body IR method-partial parameter")
             values = default_arguments(module, builder, target.binding, arguments[1:], frame, types, span, 1, false)?
             return Ok(Some(values))
@@ -186,8 +198,7 @@ def mapped_written_operands(
             return Err("invalid Body IR argument slot map")
         occupied.append(slot)
         match elements[index].as_one():
-            Some(value) =>
-                operands[slot] = call_argument_operand(builder, value, types[slot], span, owned)?
+            Some(value) => operands[slot] = call_argument_operand(builder, value, types[slot], span, owned)?
             None => return Err("unsupported Body IR spread ArgumentElement")
     return Ok(operands)
 
@@ -262,6 +273,7 @@ pub def evaluate_default(
                 builder.locals.append(
                     Local(
                         ty=native_source_type(
+                            builder.constructors,
                             builder.nominals,
                             builder.enums,
                             builder.unions,
@@ -282,8 +294,7 @@ pub def evaluate_default(
             result = call_argument_operand(builder, computation.result, ty, span, owned)?
             mut result_owner = -1
             match result.kind:
-                OperandKind.Move(place) =>
-                    result_owner = place.local
+                OperandKind.Move(place) => result_owner = place.local
                 _ => pass
             if not owned and (is_list(ty) or is_collection(ty)):
                 result_owner = borrowed_default_owner(builder, computation.result, before, span)?

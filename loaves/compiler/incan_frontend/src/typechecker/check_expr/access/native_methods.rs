@@ -345,6 +345,18 @@ impl TypeChecker {
             Some(receiver) => Self::substitute_rust_self_type_with_resolved(result, receiver),
             None => Self::substitute_rust_self_type(result, call.rust_path),
         };
+        // An associated call through a public alias keeps that source owner when it returns the alias target.
+        // Native storage still freezes the same structural target, while subsequent calls retain the public path
+        // that selected its specialized impl rather than the target's unspecialized method inventory.
+        let alias = ResolvedType::RustPath(call.rust_path.to_owned());
+        let result = if matches!(&result, ResolvedType::RustPath(_) | ResolvedType::Generic(_, _))
+            && owner.alias_target.is_some()
+            && self.rust_trait_carriers_match(&result, &alias)
+        {
+            alias
+        } else {
+            result
+        };
         // ---- Retained native callee ----
         let receiver = (!receiver_is_type && Self::rust_signature_has_receiver(signature))
             .then(|| {
@@ -357,6 +369,11 @@ impl TypeChecker {
             .map(|receiver| self.primitive_receiver(receiver, owner));
         self.retain_checked_rust_method(
             selected,
+            if specialized.specializes_owner {
+                &[]
+            } else {
+                &signature.type_params
+            },
             owner,
             call.rust_path,
             call.args,

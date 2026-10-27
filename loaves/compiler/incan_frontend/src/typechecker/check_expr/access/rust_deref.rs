@@ -150,6 +150,7 @@ impl TypeChecker {
         if self.errors.len() == errors_before {
             self.retain_checked_rust_method(
                 method,
+                &method.signature.type_params,
                 info,
                 "[]",
                 call.args,
@@ -292,6 +293,7 @@ impl TypeChecker {
             }
             self.retain_checked_rust_method(
                 method,
+                &method.signature.type_params,
                 info,
                 &path,
                 call.args,
@@ -351,7 +353,7 @@ impl TypeChecker {
         if let Some(result) = self.retain_bound_rust_trait_call(call, receiver, source) {
             return Some(result);
         }
-        if let Some(result) = self.retain_rust_parameter_trait_call(call, receiver, source) {
+        if let Some(result) = self.retain_rust_source_trait_call(call, receiver, source) {
             self.retain_explicit_rust_receiver(call.span)?;
             return Some(result);
         }

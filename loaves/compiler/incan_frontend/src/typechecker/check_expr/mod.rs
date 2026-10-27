@@ -1325,10 +1325,9 @@ fn decimal_literal_digit_counts(body: &str) -> Option<(usize, usize, usize)> {
 /// Return the signed value represented by an integer literal or unary-negative integer literal.
 fn signed_int_literal_value(expr: &Spanned<Expr>) -> Option<i128> {
     match &expr.node {
-        Expr::Literal(Literal::Int(value)) => i128::try_from(value.magnitude).ok(),
+        Expr::Literal(Literal::Int(value)) => value.signed_value(false),
         Expr::Unary(UnaryOp::Neg, inner) => match &inner.node {
-            Expr::Literal(Literal::Int(value)) if value.magnitude == (1_u128 << 127) => Some(i128::MIN),
-            Expr::Literal(Literal::Int(value)) => i128::try_from(value.magnitude).ok().map(|value| -value),
+            Expr::Literal(Literal::Int(value)) => value.signed_value(true),
             _ => None,
         },
         _ => None,

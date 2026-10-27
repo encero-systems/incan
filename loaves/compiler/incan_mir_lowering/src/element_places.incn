@@ -27,7 +27,17 @@ pub def is_element_place(mut builder: Builder, source: &RustPlace) -> Result[boo
         None => return Ok(false)
         Some(local) =>
             root = builder.locals[int(local.index()) + 1 + builder.local_offset].ty
-            if is_list(root) or is_collection(root) or root in [PlanType.String, PlanType.StringRef, PlanType.StringMutRef, PlanType.FrozenStr, PlanType.FrozenBytes]:
+            if (
+                is_list(root)
+                or is_collection(root)
+                or root in [
+                    PlanType.String,
+                    PlanType.StringRef,
+                    PlanType.StringMutRef,
+                    PlanType.FrozenStr,
+                    PlanType.FrozenBytes,
+                ]
+            ):
                 return Ok(true)
             match root:
                 PlanType.NativeArray(_elements, _length) => return Ok(true)
@@ -53,18 +63,12 @@ pub def element_prefix_type(mut builder: Builder, source: &RustPlace, count: int
             mut ty = builder.locals[int(local.index()) + 1 + builder.local_offset].ty
             # A receiver reference projects its model's fields.
             match ty:
-                PlanType.ModelRef(owner, name) =>
-                    ty = PlanType.Model(owner, name)
-                PlanType.ModelMutRef(owner, name) =>
-                    ty = PlanType.Model(owner, name)
-                PlanType.TupleMutRef(elements) =>
-                    ty = PlanType.Tuple(elements)
-                PlanType.TupleRef(elements) =>
-                    ty = PlanType.Tuple(elements)
-                PlanType.StringRef =>
-                    ty = PlanType.String
-                PlanType.StringMutRef =>
-                    ty = PlanType.String
+                PlanType.ModelRef(owner, name) => ty = PlanType.Model(owner, name)
+                PlanType.ModelMutRef(owner, name) => ty = PlanType.Model(owner, name)
+                PlanType.TupleMutRef(elements) => ty = PlanType.Tuple(elements)
+                PlanType.TupleRef(elements) => ty = PlanType.Tuple(elements)
+                PlanType.StringRef => ty = PlanType.String
+                PlanType.StringMutRef => ty = PlanType.String
                 _ => pass
             for slot in range(count):
                 ty = projected_type(builder, ty, source.projection[slot])?
@@ -102,7 +106,17 @@ def projected_type(mut builder: Builder, ty: PlanType, projection: &PlaceElem) -
                 Some((leaf, depth)) => return Ok(PlanType.List(leaf, depth))
                 None => return Err("unsupported Body IR slicing non-list")
         _ => pass
-    return Ok(field_projection(builder.nominals, ty, projection, builder.enums, builder.unions, builder.intrinsics)?.ty)
+    return Ok(
+        field_projection(
+            builder.constructors,
+            builder.nominals,
+            ty,
+            projection,
+            builder.enums,
+            builder.unions,
+            builder.intrinsics,
+        )?.ty,
+    )
 
 
 def frozen_read_type(storage: PlanType) -> PlanType:

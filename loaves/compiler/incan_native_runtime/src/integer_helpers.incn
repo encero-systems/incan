@@ -1,4 +1,30 @@
-"""Explicit u8 overflow policies at the native runtime boundary."""
+"""Shared integer power semantics and explicit u8 overflow policies at the native runtime boundary."""
+
+const MAXIMUM_POWER_EXPONENT: int = 4294967295
+
+
+pub def integer_power[T](left: T, right: int, identity: T) -> T:
+    """
+    Preserve integer power's carrier, multiplication order and overflow diagnostics.
+
+    1. Retain the low 32 exponent bits, returning the carrier's identity for zero.
+    2. Accumulate odd factors and square the base while another factor is needed.
+    3. Multiply the last factor without an unused final square.
+    """
+    # 1. The exponent boundary is shared by every exact-width integer carrier.
+    mut exponent = right & MAXIMUM_POWER_EXPONENT
+    if exponent == 0:
+        return identity
+    # 2. Keep the original multiplication sequence, including checked-overflow failures.
+    mut base = left
+    mut accumulator = identity
+    while exponent > 1:
+        if exponent & 1 == 1:
+            accumulator = accumulator * base
+        exponent = exponent // 2
+        base = base * base
+    # 3. Squaring here could overflow even when the requested result is representable.
+    return accumulator * base
 
 
 pub def checked_add_u8(left: u8, right: u8) -> Option[u8]:

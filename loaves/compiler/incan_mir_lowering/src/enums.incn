@@ -1,6 +1,7 @@
 """Canonical normal-enum layouts and identity-checked native construction and pattern admission."""
 
 from table_views import borrowed_at, borrowed_table
+from native_type_identity import ConstructorIndex
 from rust::incan_semantics_core import IncanType as RustType
 from rust::incan_semantics_core::body_ir import (
     EnumDeclaration as RustEnumDeclaration,
@@ -14,7 +15,7 @@ from rust::incan_semantics_core::body_ir import (
     Constant as RustConstant,
     ValueEnumBacking,
 )
-from pub::incan_mir_plan import EnumDeclaration, EnumVariant, PlanType, SourceSpan
+from pub::incan_mir_plan import EnumDeclaration, EnumVariant, PlanType, SourceSpan, semantic_type_matches
 from pub::incan_mir_plan import source_span as plan_span
 from models import model_type as plain_model_type
 from layout_types import native_source_type as retained_source_type
@@ -181,24 +182,25 @@ pub def validate_binding(binding: &ArgumentBinding, count: int) -> Result[None, 
 
 
 pub def native_source_type(
+    constructors: &ConstructorIndex,
     nominals: &list[RustNominalDeclaration],
     declarations: &list[RustEnumDeclaration],
     ty: &RustType,
     mut intrinsics: list[EnumDeclaration],
 ) -> Result[PlanType, str]:
     """Resolve retained standard carriers and source enums before delegating the existing scalar/model boundary."""
-    source_type = str(ty)
     mut index = 0
     for declaration in intrinsics:
-        if declaration.source_type == source_type:
+        if semantic_type_matches(declaration, ty):
             return Ok(PlanType.Enum(len(declarations) + index, declaration.name))
         index += 1
     match enum_type(declarations, ty):
         Some(result) => return Ok(result)
-        None => return plain_model_type(nominals, ty)
+        None => return plain_model_type(constructors, nominals, ty)
 
 
 pub def lower_enum_declarations(
+    constructors: &ConstructorIndex,
     module: &RustBodyIrModule,
     file: str,
     mut intrinsics: list[EnumDeclaration] = [],
@@ -221,14 +223,16 @@ pub def lower_enum_declarations(
         for variant in declaration.variants:
             mut fields: list[PlanType] = []
             for ty in variant.fields:
-                fields.append(retained_source_type(nominals, layouts, unions, ty, intrinsics)?)
+                fields.append(retained_source_type(constructors, nominals, layouts, unions, ty, intrinsics)?)
             variants.append(EnumVariant(name=str(variant.name), fields=fields))
         # A stdlib enum is the SDK crate's own type; its derives and storage belong to that crate.
         item = library_enum_item(declaration)
         mut native_arguments: list[PlanType] = []
         if item != "":
             for argument in declaration.native_type_arguments:
-                native_arguments.append(retained_source_type(nominals, layouts, unions, argument, intrinsics)?)
+                native_arguments.append(
+                    retained_source_type(constructors, nominals, layouts, unions, argument, intrinsics)?,
+                )
         selected = with_serde_derives(declaration.derives, str(declaration.name), reached)
         mut derives: list[str] = []
         if item == "":

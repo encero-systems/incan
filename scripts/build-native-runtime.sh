@@ -11,7 +11,8 @@ home_dir=${SELFBUILD_HOME:-$lane/dev8-home}
 toolchain=$home_dir/toolchains/0.6.0-dev.8
 installation=${SELFBUILD_INSTALL_HOME:-$home_dir}/toolchains/0.6.0-dev.8
 [[ -f $installation/toolchain.json ]] || { print -u2 "missing destination toolchain: $installation"; exit 1; }
-builder=${SELFBUILD_OVEN:-$lane/oven-bin/incan}
+builder=${SELFBUILD_NATIVE_BUILDER:-$lane/out/native-builds/toolchain-native}
+[[ -x $builder ]] || { print -u2 'build the native description helper first: scripts/build-native-support.sh --tool-only'; exit 1; }
 profile=debug
 if [[ ${1:-} == --release && $# == 1 ]]; then
     profile=release
@@ -30,7 +31,8 @@ driver=$(jq -er '.driver' "$manifest")
 sysroot=$(jq -er '.sysroot' "$manifest")
 [[ $sysroot == /* ]] || sysroot=$toolchain/$sysroot
 
-"$builder" describe-unit "$repo/loaves/compiler/incan_native_runtime/src/lib.incn" --profile "$profile" > "$unit.prepared"
+# The helper binds the installed support generation instead of rebuilding local Rust facets.
+"$builder" "$repo" runtime "$profile" > "$unit.prepared"
 jq --slurpfile interfaces "${SELFBUILD_SOURCE_INTERFACES:-/dev/null}" '
     .kind = "library" | .externs |= map(select(.name != "incan_native_runtime"
         and (.name | startswith("incan_stdlib_") | not)))

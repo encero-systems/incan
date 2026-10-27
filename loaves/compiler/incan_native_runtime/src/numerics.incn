@@ -1,6 +1,7 @@
 """Monomorphic exact-carrier boundaries preserving numeric widths and language display contracts."""
 
 from model_values import display_value
+from integer_helpers import integer_power
 from rust::incan_std_core::strings import float_to_string
 from rust::std::ops import Neg
 from rust::incan_std_core::conversions import int_from_str, float_from_str
@@ -424,172 +425,59 @@ pub def negate_isize(value: isize) -> isize:
     return value.neg()
 
 
-# Exact-width integer powers. Legacy emits `base.pow(exponent as u32)` with the base keeping its own carrier, so each
-# helper truncates the exponent to `u32` and repeats `power_i64`'s square-and-multiply steps in that carrier, which
-# overflow exactly where the carrier's `pow` does in the same profile.
 pub def power_i8(left: i8, right: int) -> i8:
-    """Match legacy's `i8::pow` with the exponent truncated to `u32`."""
-    mut exponent = right & 4294967295
-    if exponent == 0:
-        return 1
-    mut base = left
-    mut accumulator: i8 = 1
-    while exponent > 1:
-        if exponent & 1 == 1:
-            accumulator = accumulator * base
-        exponent = exponent // 2
-        base = base * base
-    return accumulator * base
+    """Preserve i8 power's exponent boundary and checked multiplication behavior."""
+    return integer_power[i8](left, right, 1)
 
 
 pub def power_i16(left: i16, right: int) -> i16:
-    """Match legacy's `i16::pow` with the exponent truncated to `u32`."""
-    mut exponent = right & 4294967295
-    if exponent == 0:
-        return 1
-    mut base = left
-    mut accumulator: i16 = 1
-    while exponent > 1:
-        if exponent & 1 == 1:
-            accumulator = accumulator * base
-        exponent = exponent // 2
-        base = base * base
-    return accumulator * base
+    """Preserve i16 power's exponent boundary and checked multiplication behavior."""
+    return integer_power[i16](left, right, 1)
 
 
 pub def power_i32(left: i32, right: int) -> i32:
-    """Match legacy's `i32::pow` with the exponent truncated to `u32`."""
-    mut exponent = right & 4294967295
-    if exponent == 0:
-        return 1
-    mut base = left
-    mut accumulator: i32 = 1
-    while exponent > 1:
-        if exponent & 1 == 1:
-            accumulator = accumulator * base
-        exponent = exponent // 2
-        base = base * base
-    return accumulator * base
+    """Preserve i32 power's exponent boundary and checked multiplication behavior."""
+    return integer_power[i32](left, right, 1)
 
 
 pub def power_i128(left: i128, right: int) -> i128:
-    """Match legacy's `i128::pow` with the exponent truncated to `u32`."""
-    mut exponent = right & 4294967295
-    if exponent == 0:
-        return 1
-    mut base = left
-    mut accumulator: i128 = 1
-    while exponent > 1:
-        if exponent & 1 == 1:
-            accumulator = accumulator * base
-        exponent = exponent // 2
-        base = base * base
-    return accumulator * base
+    """Preserve i128 power's exponent boundary and checked multiplication behavior."""
+    return integer_power[i128](left, right, 1)
 
 
 pub def power_isize(left: isize, right: int) -> isize:
-    """Match legacy's `isize::pow` with the exponent truncated to `u32`."""
-    mut exponent = right & 4294967295
-    if exponent == 0:
-        return 1
-    mut base = left
-    mut accumulator: isize = 1
-    while exponent > 1:
-        if exponent & 1 == 1:
-            accumulator = accumulator * base
-        exponent = exponent // 2
-        base = base * base
-    return accumulator * base
+    """Preserve isize power's exponent boundary and checked multiplication behavior."""
+    return integer_power[isize](left, right, 1)
 
 
 pub def power_u8(left: u8, right: int) -> u8:
-    """Match legacy's `u8::pow` with the exponent truncated to `u32`."""
-    mut exponent = right & 4294967295
-    if exponent == 0:
-        return 1
-    mut base = left
-    mut accumulator: u8 = 1
-    while exponent > 1:
-        if exponent & 1 == 1:
-            accumulator = accumulator * base
-        exponent = exponent // 2
-        base = base * base
-    return accumulator * base
+    """Preserve u8 power's exponent boundary and checked multiplication behavior."""
+    return integer_power[u8](left, right, 1)
 
 
 pub def power_u16(left: u16, right: int) -> u16:
-    """Match legacy's `u16::pow` with the exponent truncated to `u32`."""
-    mut exponent = right & 4294967295
-    if exponent == 0:
-        return 1
-    mut base = left
-    mut accumulator: u16 = 1
-    while exponent > 1:
-        if exponent & 1 == 1:
-            accumulator = accumulator * base
-        exponent = exponent // 2
-        base = base * base
-    return accumulator * base
+    """Preserve u16 power's exponent boundary and checked multiplication behavior."""
+    return integer_power[u16](left, right, 1)
 
 
 pub def power_u32(left: u32, right: int) -> u32:
-    """Match legacy's `u32::pow` with the exponent truncated to `u32`."""
-    mut exponent = right & 4294967295
-    if exponent == 0:
-        return 1
-    mut base = left
-    mut accumulator: u32 = 1
-    while exponent > 1:
-        if exponent & 1 == 1:
-            accumulator = accumulator * base
-        exponent = exponent // 2
-        base = base * base
-    return accumulator * base
+    """Preserve u32 power's exponent boundary and checked multiplication behavior."""
+    return integer_power[u32](left, right, 1)
 
 
 pub def power_u64(left: u64, right: int) -> u64:
-    """Match legacy's `u64::pow` with the exponent truncated to `u32`."""
-    mut exponent = right & 4294967295
-    if exponent == 0:
-        return 1
-    mut base = left
-    mut accumulator: u64 = 1
-    while exponent > 1:
-        if exponent & 1 == 1:
-            accumulator = accumulator * base
-        exponent = exponent // 2
-        base = base * base
-    return accumulator * base
+    """Preserve u64 power's exponent boundary and checked multiplication behavior."""
+    return integer_power[u64](left, right, 1)
 
 
 pub def power_u128(left: u128, right: int) -> u128:
-    """Match legacy's `u128::pow` with the exponent truncated to `u32`."""
-    mut exponent = right & 4294967295
-    if exponent == 0:
-        return 1
-    mut base = left
-    mut accumulator: u128 = 1
-    while exponent > 1:
-        if exponent & 1 == 1:
-            accumulator = accumulator * base
-        exponent = exponent // 2
-        base = base * base
-    return accumulator * base
+    """Preserve u128 power's exponent boundary and checked multiplication behavior."""
+    return integer_power[u128](left, right, 1)
 
 
 pub def power_usize(left: usize, right: int) -> usize:
-    """Match legacy's `usize::pow` with the exponent truncated to `u32`."""
-    mut exponent = right & 4294967295
-    if exponent == 0:
-        return 1
-    mut base = left
-    mut accumulator: usize = 1
-    while exponent > 1:
-        if exponent & 1 == 1:
-            accumulator = accumulator * base
-        exponent = exponent // 2
-        base = base * base
-    return accumulator * base
+    """Preserve usize power's exponent boundary and checked multiplication behavior."""
+    return integer_power[usize](left, right, 1)
 
 
 # Float classification members. Each is the standard library method legacy calls on the same carrier.

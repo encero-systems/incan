@@ -12,8 +12,21 @@ from native_closure_input import NativeClosureInput, native_bindings
 from standalone_rust import published_bindings
 from scratch import scratch_directory
 from rust_freshness import compilation_observations, inputs_unchanged, library_key
-from rust_units import BuiltUnit, RegistryUnits, RustBuild, linking
-from loaf_local_graph import LocalFacet
+from rust_units import (
+    BuiltUnit,
+    RegistryUnits,
+    RustBuild,
+    RustFacet,
+    compile_rust_library,
+    identity,
+    library_compile_arguments,
+    linking,
+    native_artifacts,
+    package_environment,
+    rust_library_producer_key,
+    rust_library_graph_key,
+)
+from loaf_local_graph import LocalEdge, LocalFacet
 from rust_activation import DependencyDomain
 from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription, UnitLoaf
@@ -21,8 +34,10 @@ from unit_rust import add_extern, compile_library_unit
 from unit_freshness import (
     Key,
     artifact_files,
+    artifact_identity,
     compiler_fingerprint,
     reusable,
+    record,
     rust_key,
     description_digest,
     unit_key_with,
@@ -594,6 +609,181 @@ pub def test_rust_unit_key_follows_its_crate_manifest_how_it_is_built_and_what_i
     write(setup.dependency, "core two, rebuilt")?
     linked = rust_pass(setup, "another compiler", "alloc")?.key
     assert linked != compiler
+    verify_installed_rust_producer(scratch.path().joinpath("installed"))?
+    return Ok(None)
+
+
+def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
+    """
+    A complete installed proof reuses one producer without invoking a compiler; every changed input still refuses.
+
+    1. Stamp a source facet with an external included file and one exact native dependency.
+    2. Require installed reuse even after unrelated toolchain search directories are added.
+    3. Refuse changed features, rustc, source, environment, output and exact extern artifacts.
+    """
+    # 1. This synthetic producer's compiler path is deliberately not executable.
+    setup = rust_crate(scratch)?
+    consumer = fixture(scratch.joinpath("consumer"))?
+    mut facet = LocalFacet(
+        project=setup.facet.0,
+        domain=DependencyDomain.Target,
+        features=[],
+        local=[LocalEdge(alias="core", project="native-core", domain=DependencyDomain.Target)],
+        registry=[],
+        registry_aliases=[],
+    )
+    mut declared = RustFacet(
+        crate_name="data",
+        kind="lib",
+        edition="2024",
+        library=setup.facet.joinpath("rust/src/lib.rs").0,
+        binaries=[],
+        package="data",
+        version="0.1.0",
+        unstable=false,
+        sysroot=false,
+    )
+    installed = scratch.joinpath("generation")
+    artifact = installed.joinpath(f"libdata-{identity(facet, "release")}.rlib")
+    graph = installed.joinpath("data.incngraph")
+    dependencies = installed.joinpath("library.d")
+    included = scratch.joinpath("included value.txt")
+    write(artifact, "one installed library")?
+    write(graph, "one checked graph")?
+    write(included, "one included value")?
+    escaped = included.0.replace(" ", "\\ ")
+    write(dependencies, f"library: {declared.library} {escaped}\n\n# env-dep:CARGO_PKG_VERSION=0.1.0\n")?
+    mut toolchain = consumer.toolchain
+    toolchain.externs.append(NativeCrate(name="data", path=artifact.0))
+    mut request = RustBuild(
+        project=setup.facet.0,
+        profile="release",
+        rustc="must-not-run-rustc",
+        registry=RegistryUnits(units=[], search=[]),
+        toolchain=Some(toolchain),
+        native_compiler="pinned native compiler",
+        installed=native_artifacts(toolchain.externs),
+    )
+    built = {"native-core@target": BuiltUnit(crate_name="core", artifact=setup.dependency.0, directory=scratch.0)}
+    arguments = library_compile_arguments(facet, declared, installed, request, built, [])?
+    environment = package_environment(facet.project, declared, declared.crate_name)
+    key = rust_library_producer_key(facet, installed, arguments, environment, request, toolchain)?
+    stamp = installed.joinpath("library.oven-inputs")
+    record(stamp, key, [artifact, graph, dependencies])?
+    record(installed.joinpath("library.graph-inputs"), rust_library_graph_key(key, toolchain.driver)?, [graph])?
+    # 2. The selected producer is returned, rather than creating a consumer-local library with the same identity.
+    output = scratch.joinpath("must-not-build")
+    request.toolchain_search = [scratch.joinpath("unrelated-standard-directory").0]
+    retained = compile_rust_library(facet, declared, output, request, built, [])?
+    assert retained.reused and retained.artifact == artifact.0
+    assert not output.is_dir()
+    verify_installed_graph_refresh(facet, declared, output, request, built, artifact, graph, dependencies, included)?
+    # 3. Each proof dimension independently prevents reuse.
+    request.installed["data"] = [artifact.0, artifact.0]
+    require_installed_refusal(facet, declared, output, request, built, "unique")?
+    request.installed["data"] = [artifact.0]
+    remove(stamp)?
+    require_installed_refusal(facet, declared, output, request, built, "no stored build")?
+    record(stamp, key, [artifact, graph, dependencies])?
+    facet.features = ["alloc"]
+    require_installed_refusal(facet, declared, output, request, built, "features")?
+    facet.features = []
+    request.native_compiler = "different pinned native compiler"
+    require_installed_refusal(facet, declared, output, request, built, "compiler")?
+    request.native_compiler = "pinned native compiler"
+    write(included, "changed included value")?
+    require_installed_refusal(facet, declared, output, request, built, "sources")?
+    write(included, "one included value")?
+    declared.version = "0.2.0"
+    require_installed_refusal(facet, declared, output, request, built, "environment")?
+    declared.version = "0.1.0"
+    write(artifact, "replaced installed library")?
+    require_installed_refusal(facet, declared, output, request, built, "replaced")?
+    write(artifact, "one installed library")?
+    record(stamp, key, [artifact, graph, dependencies])?
+    write(setup.dependency, "rebuilt exact native dependency")?
+    require_installed_refusal(facet, declared, output, request, built, "artifacts")?
+    assert not output.is_dir()
+    return Ok(None)
+
+
+def verify_installed_graph_refresh(
+    facet: LocalFacet,
+    declared: RustFacet,
+    output: Path,
+    request: RustBuild,
+    built: Dict[str, BuiltUnit],
+    artifact: Path,
+    graph: Path,
+    dependencies: Path,
+    included: Path,
+) -> Result[None, str]:
+    """
+    A changed observer refreshes only the graph; stale native inputs refuse before any graph command runs.
+
+    1. Replace the synthetic graph observer with one that refuses native code generation.
+    2. Require one analysis-only refresh without changing native artifact or dependency evidence identities.
+    3. Reuse its graph, then refuse a changed source before invoking another observer generation.
+    """
+    # 1. The test driver accepts only the graph observation command.
+    selected = request
+    toolchain = match selected.toolchain:
+        Some(value) => value
+        None => return Err("graph fixture has no selected toolchain")
+
+    driver = Path(toolchain.driver)
+    attempts = graph.parent().joinpath("graph-attempts")
+    script = "#!/bin/sh\nset -eu\n[ \"$1\" = --rust-codegraph ] || exit 2\n" + f"printf x >> '{attempts.0}'\n" + "printf 'new checked graph' > \"$2\"\n"
+    write(driver, script)?
+    mut chmod = Command.new("/bin/chmod")
+    assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
+    native_before = artifact_identity(artifact)?
+    dependencies_before = artifact_identity(dependencies)?
+    # 2. A new graph generation must retain both native outputs verbatim.
+    refreshed = compile_rust_library(facet, declared, output, selected, built, [])?
+    assert refreshed.reused and refreshed.artifact == artifact.0
+    assert graph.read_text("utf-8", "strict").map_err((error) => error.message())? == "new checked graph"
+    assert artifact_identity(artifact)? == native_before
+    assert artifact_identity(dependencies)? == dependencies_before
+    # 3. No second analysis is needed, and stale source never authorizes a graph refresh.
+    retained = compile_rust_library(facet, declared, output, selected, built, [])?
+    assert retained.artifact == artifact.0
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "x"
+    write(driver, script + "# another observer generation\n")?
+    write(included, "source changed before graph refresh")?
+    require_installed_refusal(facet, declared, output, selected, built, "sources")?
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "x"
+    write(included, "one included value")?
+    _ = compile_rust_library(facet, declared, output, selected, built, [])?
+    # A source mutation during observation cannot publish either the pending graph or a new native proof.
+    changed = script + f"printf 'late source write' > '{included.0}'\n" + "printf 'must not publish' > \"$2\"\n"
+    write(driver, changed)?
+    match compile_rust_library(facet, declared, output, selected, built, []):
+        Ok(_) =>
+            assert false, "graph refresh certified a source mutation"
+        Err(error) =>
+            assert "inputs changed while refreshing data" in error, error
+    assert graph.read_text("utf-8", "strict").map_err((error) => error.message())? == "new checked graph"
+    assert artifact_identity(artifact)? == native_before
+    assert artifact_identity(dependencies)? == dependencies_before
+    write(included, "one included value")?
+    return Ok(None)
+
+
+def require_installed_refusal(
+    facet: LocalFacet,
+    declared: RustFacet,
+    output: Path,
+    request: RustBuild,
+    built: Dict[str, BuiltUnit],
+    cause: str,
+) -> Result[None, str]:
+    """Require a named installed-producer refusal without falling back to a consumer-local compilation."""
+    match compile_rust_library(facet, declared, output, request, built, []):
+        Ok(_) =>
+            assert false, f"changed {cause} authorized stale installed support"
+        Err(error) =>
+            assert "installed native" in error and "data" in error and cause in error, error
     return Ok(None)
 
 
