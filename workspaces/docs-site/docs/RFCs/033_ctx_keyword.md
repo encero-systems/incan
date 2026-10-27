@@ -29,7 +29,7 @@
 
 ## Summary
 
-Introduce `ctx` as a core language keyword for typed, environment-aware configuration. A declaration describes typed fields, deferred model construction, and layered resolution from defaults, ordered recursive contributions from nestable `when` blocks, explicitly declared YAML sources, and environment variables. First use resolves the whole context at runtime and publishes a completed frozen value for subsequent reads. An explicit fallible `preflight()` performs the same resolution early for callers that want to handle failures; an unchecked first-use failure reports the typed diagnostic and terminates execution unsuccessfully. Resolved context values are non-cloneable; separate declarations provide separate retained sessions while reusing ordinary model contracts. Tests use ordinary sources and fixtures with runner-provided isolation. Resolution retains explainable, secret-safe provenance rather than reducing configuration failures to panic messages.
+Introduce `ctx` as a core language keyword for typed, environment-aware configuration. A declaration describes typed fields, deferred model construction, and layered resolution from defaults, ordered recursive contributions from nestable `if` blocks, explicitly declared YAML sources, and environment variables. First use resolves the whole context at runtime and publishes a completed frozen value for subsequent reads. An explicit fallible `preflight()` performs the same resolution early for callers that want to handle failures; an unchecked first-use failure reports the typed diagnostic and terminates execution unsuccessfully. Resolved context values are non-cloneable; separate declarations provide separate retained sessions while reusing ordinary model contracts. Tests use ordinary sources and fixtures with runner-provided isolation. Resolution retains explainable, secret-safe provenance rather than reducing configuration failures to panic messages.
 
 ## Motivation
 
@@ -62,7 +62,7 @@ Static checking validates authored field references, defaults, and overrides. It
 
 - Retain concise typed configuration declarations and convenient published-name reads.
 - Compose common defaults and environment-dependent differences recursively across the configuration tree.
-- Select coordinated settings once through ordinary Boolean conditions and nested `when` blocks.
+- Select coordinated settings once through ordinary Boolean conditions and nested `if` blocks.
 - Assemble declared model fields lazily, without explicit constructor calls in the context.
 - Resolve layered inputs through checked types and recoverable configuration errors.
 - Compose explicit YAML sources, including common and environment-specific files selected from resolved fields, through the same checked configuration shape.
@@ -84,7 +84,7 @@ Static checking validates authored field references, defaults, and overrides. It
 - Implicit transport of configuration between an orchestrator and worker processes.
 - Defining managed resource entry, exit, ownership transfer, cleanup, or shutdown; that design is deferred to RFC 094.
 
-Multiple selectors, compound Boolean conditions, nested `when` blocks, and dotted field contributions are included. Selected blocks compose in source order; recursive merging preserves unspecified fields and dictionary entries and appends list contributions. Environment-specific entries belong in their corresponding conditional blocks or selected YAML files. Explicit collection replacement and removal are out of scope; permitted expression effects and whole-collection environment decoding remain questions below.
+Multiple selectors, compound Boolean conditions, nested `if` blocks, and dotted field contributions are included. Selected blocks compose in source order; recursive merging preserves unspecified fields and dictionary entries and appends list contributions. Environment-specific entries belong in their corresponding conditional blocks or selected YAML files. Explicit collection replacement and removal are out of scope; permitted expression effects and whole-collection environment decoding remain questions below.
 
 ## Guide-level explanation (how users think about it)
 
@@ -103,18 +103,18 @@ ctx AppConfig(env_prefix="APP_"):
     debug: bool = true
     output_dir: str = "output"
 
-    when env == "dev":
+    if env == "dev":
         batch_size = 10
 
-    when env == "prod":
+    if env == "prod":
         database_url = "postgres://db.example.com/app"
         debug = false
         batch_size = 5000
 ```
 
-`env` is an ordinary typed field, mapped to `APP_ENV`. There is no implicit enum selector or special interpretation of a type name. `when` uses a Boolean condition; `==` compares values and `=` contributes configuration values during resolution. The block does not mutate a published instance. No block needs to match when the defaults and external inputs already provide a complete configuration.
+`env` is an ordinary typed field, mapped to `APP_ENV`. There is no implicit enum selector or special interpretation of a type name. `if` uses a Boolean condition; `==` compares values and `=` contributes configuration values during resolution. The block does not mutate a published instance. No block needs to match when the defaults and external inputs already provide a complete configuration.
 
-RFC 163's proposed compilation `when` is separate: it selects compiled declarations, type members or executable statements using compiler-provided target and feature facts. Within a `ctx` contribution body, `when` keeps this RFC's runtime-resolution semantics and ordinary typed field lookup; it does not acquire the compilation predicate namespace or exclude fields from the declared configuration contract.
+RFC 163 reserves `when` and compiler-owned `@when` for compile-time selection using compiler-provided target and feature facts. Runtime configuration selection uses `if` inside `ctx`: it reads ordinary typed fields during first-use resolution or preflight, contributes values to the declared configuration, and does not exclude compiled fields or acquire the compilation predicate namespace. The same binary can therefore resolve different settings in different runtime environments.
 
 ### Model-like access without eager construction
 
@@ -133,7 +133,7 @@ ctx PipelineConfig(env_prefix="PIPE_"):
     env: Literal["dev", "prod"] = "dev"
     delivery: DeliverySettings
 
-    when env == "prod":
+    if env == "prod":
         delivery.endpoint = "https://delivery.example.com"
         delivery.retry.attempts = 4
 ```
@@ -220,11 +220,11 @@ A cycle encountered during preflight is returned as that resolution's failure. A
 
 | Field          | Env var            | Lookup order                  |
 | -------------- | ------------------ | ----------------------------- |
-| `database_url` | `APP_DATABASE_URL` | env → YAML → when → default   |
-| `batch_size`   | `APP_BATCH_SIZE`   | env → YAML → when → default   |
-| `debug`        | `APP_DEBUG`        | env → YAML → when → default   |
+| `database_url` | `APP_DATABASE_URL` | env → YAML → if → default   |
+| `batch_size`   | `APP_BATCH_SIZE`   | env → YAML → if → default   |
+| `debug`        | `APP_DEBUG`        | env → YAML → if → default   |
 
-Selectors use the same field mapping as other settings. In the first example, `APP_ENV=prod` supplies the Literal value used by `when env == "prod"`; Literal string membership does not gain case-insensitive matching.
+Selectors use the same field mapping as other settings. In the first example, `APP_ENV=prod` supplies the Literal value used by `if env == "prod"`; Literal string membership does not gain case-insensitive matching.
 
 ```bash
 APP_ENV=prod APP_BATCH_SIZE=10000 incan run
@@ -237,7 +237,7 @@ This selects the production contributions and then gives the direct `APP_BATCH_S
 ```text
 Field defaults                  ← lowest
     ↓
-Matching when contributions     ← source order, recursively merged
+Matching if contributions     ← source order, recursively merged
     ↓
 Declared YAML sources           ← listed order, recursively merged
     ↓
@@ -322,7 +322,7 @@ ctx PipelineConfig(
         f"s3://{storage.incoming_bucket}/{storage.prefix}"
     )
 
-    when env == "prod":
+    if env == "prod":
         gaps.default_days = 2
 ```
 
@@ -346,13 +346,13 @@ ctx WorkerConfig(env_prefix="WORKER_"):
     workers: int = 1
     batch_size: int = workers * 128
 
-    when env == "prod":
+    if env == "prod":
         workers = 8
 ```
 
 Defaults may reference other fields. They observe those fields' resolved values, including selected conditional contributions and direct environment inputs. Production selects workers 8, so the batch-size default is 1024. Adding `WORKER_WORKERS=10` makes it 1280. Supplying `WORKER_BATCH_SIZE=500` instead selects 500 without evaluating the replaced scalar default for that field.
 
-This is dependency-based resolution, not a new category of calculated fields or a property recalculated on every read. Moving the `batch_size` declaration above `workers` must not change the result. Matching `when` contributions still compose in source order. A reached cycle must identify the participating fields and conditions in a typed diagnostic; resolution must not repeatedly recalculate until values appear to stabilize.
+This is dependency-based resolution, not a new category of calculated fields or a property recalculated on every read. Moving the `batch_size` declaration above `workers` must not change the result. Matching `if` contributions still compose in source order. A reached cycle must identify the participating fields and conditions in a typed diagnostic; resolution must not repeatedly recalculate until values appear to stabilize.
 
 These rules apply during initial resolution. Context values cannot be cloned or reconstructed through clone overrides. Separate context declarations resolve their own dependent defaults. Recursive collection composition still needs any lower-priority fragments that contribute to the result; skipping a replaced scalar default must not discard a required collection fragment.
 
@@ -379,7 +379,7 @@ ctx ClientConfig(env_prefix="CLIENT_"):
     mode: Literal["request", "subscription"] = "request"
     deadline_seconds: Option[float] = None
 
-    when mode == "request":
+    if mode == "request":
         deadline_seconds = 30.0
 ```
 
@@ -405,18 +405,18 @@ ctx ImportConfig(env_prefix="IMPORT_"):
     workers: int = 1
     writer: WriterSettings
 
-    when env == "prod":
+    if env == "prod":
         workers = 8
         writer.retry.attempts = 4
 
-        when region == "eu":
+        if region == "eu":
             workers = 12
             writer.retry.delay_seconds = 0.5
 
-        when mode == "replay":
+        if mode == "replay":
             writer.batch_size = 4096
 
-    when mode == "replay":
+    if mode == "replay":
         workers = 2
 ```
 
@@ -439,17 +439,17 @@ ctx RouterConfig(env_prefix="ROUTER_"):
     region: Literal["eu", "us"] = "eu"
     routing: RoutingSettings
 
-    when env == "prod":
+    if env == "prod":
         routing.destinations = {
             "events": "https://events.example.com",
         }
         routing.labels = ["production"]
 
-    when region == "eu":
+    if region == "eu":
         routing.labels = ["eu"]
 ```
 
-For production in Europe, `events` uses the production endpoint while the unspecified `metrics` entry retains its default. Labels become `["audited", "production", "eu"]`. Dictionary keys follow their declared key type; dotted paths select declared fields, not arbitrary dictionary keys. The `=` in a `when` block contributes to recursive composition rather than performing ordinary assignment on a completed collection.
+For production in Europe, `events` uses the production endpoint while the unspecified `metrics` entry retains its default. Labels become `["audited", "production", "eu"]`. Dictionary keys follow their declared key type; dotted paths select declared fields, not arbitrary dictionary keys. The `=` in a `if` block contributes to recursive composition rather than performing ordinary assignment on a completed collection.
 
 Preserving a value does not establish that it is appropriate for every deployment. An application validation rule may reject a production destination that still points to localhost. Configuration assembly must retain ordinary validation before publication. Explicit collection replacement and removal are out of scope. Authors should place environment-specific entries in their matching blocks or files, and reserve unconditional defaults and common files for contributions intended to survive across environments.
 
@@ -460,10 +460,10 @@ ctx ContractConfig(env_prefix="CONTRACT_"):
     env [env="ENV"]: Literal["dev", "prod"] = "dev"
     allowed_contracts: list[str] = []
 
-    when env == "dev":
+    if env == "dev":
         allowed_contracts = ["sandbox"]
 
-    when env == "prod":
+    if env == "prod":
         allowed_contracts = ["live"]
 ```
 
@@ -492,7 +492,7 @@ ctx DatabaseConfig(env_prefix="DB_"):
     pool_size: int = 10
 ```
 
-The declaration is valid without a default for `url`. Resolution requires `DB_URL`; if it is absent, resolution returns a typed missing-field error and does not publish an application value. An absent `DB_POOL_SIZE` retains 10. Invalid supplied input produces a typed decoding failure. Required fields need not have dummy defaults or exhaustive condition coverage: a selected when block or another declared source may supply them. A required field with provably no possible source under the declared resolution contract is rejected statically.
+The declaration is valid without a default for `url`. Resolution requires `DB_URL`; if it is absent, resolution returns a typed missing-field error and does not publish an application value. An absent `DB_POOL_SIZE` retains 10. Invalid supplied input produces a typed decoding failure. Required fields need not have dummy defaults or exhaustive condition coverage: a selected if block or another declared source may supply them. A required field with provably no possible source under the declared resolution contract is rejected statically.
 
 ### Override nested fields
 
@@ -505,7 +505,7 @@ ctx AppConfig(env_prefix="APP_"):
     env: Literal["dev", "prod"] = "dev"
     database: DatabaseSettings
 
-    when env == "prod":
+    if env == "prod":
         database.host = "db.example.com"
 ```
 
@@ -657,9 +657,9 @@ An explanation of `ImportConfig.workers` for the production, Europe, and replay 
 ```text
 workers = 2
     declaration default:          1
-    when env == "prod":           8
-        when region == "eu":     12
-    when mode == "replay":        2  <- selected
+    if env == "prod":           8
+        if region == "eu":     12
+    if mode == "replay":        2  <- selected
 ```
 
 Secret fields and sensitive inputs must remain redacted in inspection, failures, and retained provenance. RFC 103 owns secret-value handling; RFC 104 owns capability checks and receipts at environment or secret-provider boundaries. The exact report schema and accessors within the report remain open.
@@ -672,21 +672,21 @@ Secret fields and sensitive inputs must remain redacted in inspection, failures,
 ctx_decl       ::= "ctx" IDENT "(" ctx_params ")" ":" ctx_body
 ctx_params     ::= ctx_param ("," ctx_param)*
 ctx_param      ::= IDENT "=" expr
-ctx_body       ::= NEWLINE INDENT (field_decl | when_block | docstring)+ DEDENT
-when_block     ::= "when" expr ":" NEWLINE INDENT when_item+ DEDENT
-when_item      ::= field_override | when_block
+ctx_body       ::= NEWLINE INDENT (field_decl | configuration_if_block | docstring)+ DEDENT
+configuration_if_block     ::= "if" expr ":" NEWLINE INDENT configuration_if_item+ DEDENT
+configuration_if_item      ::= field_override | configuration_if_block
 field_override ::= field_path "=" expr NEWLINE
 field_path     ::= IDENT ("." IDENT)*
 ```
 
-`ctx` is a core reserved keyword. `when` introduces conditional configuration contributions inside its declaration. Ordinary `match` expressions retain their existing meaning; this RFC removes the earlier special `match EnumType: case Variant:` configuration-selection proposal. The grammar abbreviates ordinary expression and field syntax, including field metadata and multiline expressions.
+`ctx` is a core reserved keyword. Within its contribution body, `if` introduces runtime conditional configuration contributions. Conditions are evaluated during resolution, not while importing or compiling the declaration. Nested blocks keep the same contribution semantics; this spelling does not turn their contents into general executable statement bodies. Ordinary `match` expressions retain their existing meaning; this RFC removes the earlier special `match EnumType: case Variant:` configuration-selection proposal. The grammar abbreviates ordinary expression and field syntax, including field metadata and multiline expressions.
 
 ### Declaration rules
 
 1. The ctx name must be a valid identifier. `env_prefix` is required and declares its external namespace independently of that name.
 2. The optional `sources` parameter declares an ordered tuple of source descriptors. Its expressions may reference the ctx's checked fields; constructing descriptors must not eagerly read files at import.
-3. The body must contain typed field declarations and may contain a docstring and conditional `when` blocks. Data contracts and ordinary application data may be defined outside the ctx and referenced without becoming additional fields.
-4. A `when` body may contain field contributions and nested `when` blocks. Every enclosing condition must hold for a nested contribution to apply. Nesting must not introduce new field namespaces.
+3. The body must contain typed field declarations and may contain a docstring and conditional `if` blocks. Data contracts and ordinary application data may be defined outside the ctx and referenced without becoming additional fields.
+4. A `if` body may contain field contributions and nested `if` blocks. Every enclosing condition must hold for a nested contribution to apply. Nesting must not introduce new field namespaces.
 5. Contribution paths must identify declared fields rooted in the same ctx. They must not introduce unknown fields, mutate external objects, or treat arbitrary dictionary keys as declared field names.
 6. Required fields need not have source defaults or exhaustive condition coverage. Successful resolution must supply every required field from selected declared sources. Missing input must produce a typed failure without publication. A declaration must be rejected statically when a required field provably has no possible source; compilation must not require deployment environment variables to be present.
 
@@ -756,7 +756,7 @@ Resolution must combine selected nested values before final validation and froze
 
 ### Conditional selection and recursive composition
 
-Resolution must apply selected `when` contributions in source order. It must descend into each selected nested block where that block appears, then resume its enclosing block and subsequent siblings. A false enclosing condition must prevent its nested blocks from contributing. Implementations must not reorder contributions according to condition specificity.
+Resolution must apply selected `if` contributions in source order. It must descend into each selected nested block where that block appears, then resume its enclosing block and subsequent siblings. A false enclosing condition must prevent its nested blocks from contributing. Implementations must not reorder contributions according to condition specificity.
 
 For overlapping scalar leaves, the later selected contribution must replace the earlier value. For nested model inputs and dictionaries, composition must retain unspecified fields or entries and recursively combine supplied ones. Conflicting dictionary keys must retain their ordinary declared equality semantics, with later scalar values winning. List contributions must append in source order without implied deduplication. Empty lists or dictionaries must contribute no new contents rather than clear lower-priority contents. Resolution must not infer replacement or removal intent from an empty collection. Other leaves must retain checked value semantics; composition must not infer dictionary structure from strings or arbitrary object attributes.
 
@@ -770,13 +770,13 @@ The proposed `std.config.yaml(path, required=true)` adapter must describe a lazy
 
 Paths must follow ordinary runtime filesystem semantics relative to the application's working directory unless explicitly made absolute by application code. A source must not acquire authority by being declared in ctx; file access and retained evidence must follow RFC 104. Source descriptor creation and importing a context must not read files.
 
-Resolution must combine field defaults, ordered selected `when` contributions, listed YAML contributions, and direct environment inputs in increasing priority. YAML fragments must use the checked ctx field shape and preserve missing values separately from explicit values. Nested field and dictionary contributions must merge recursively, and lists must append in order. Later scalar contributions must win. Supplied fields must be decoded against their declared types, and unknown field paths must be diagnosed rather than silently accepted. Incomplete fragments must not require premature model construction; complete required-field and construction validation must precede publication.
+Resolution must combine field defaults, ordered selected `if` contributions, listed YAML contributions, and direct environment inputs in increasing priority. YAML fragments must use the checked ctx field shape and preserve missing values separately from explicit values. Nested field and dictionary contributions must merge recursively, and lists must append in order. Later scalar contributions must win. Supplied fields must be decoded against their declared types, and unknown field paths must be diagnosed rather than silently accepted. Incomplete fragments must not require premature model construction; complete required-field and construction validation must precede publication.
 
 A required missing file must fail resolution. With `required=false`, absence must contribute no values; syntax errors, denied access, and other failures of a present source must remain typed failures. Diagnostics and provenance must retain source filenames, field paths, and available line and column locations while preserving redaction. Successful context resolution must retain its observed source facts rather than reread files during inspection or subsequent access. This contract does not provide automatic source discovery, implicit cross-process forwarding, or runtime reload.
 
 ### Dependent defaults
 
-A default expression that references another field must use that field's resolved value under the declared source priority and conditional composition rules. Reordering field declarations must not change these dependencies' results. This rule must not change the source-order precedence of `when` contributions.
+A default expression that references another field must use that field's resolved value under the declared source priority and conditional composition rules. Reordering field declarations must not change these dependencies' results. This rule must not change the source-order precedence of `if` contributions.
 
 When a selected higher-priority scalar replacement supplies a field, resolution must not evaluate its discarded default solely to construct that field. If another field or condition needs the default's dependencies for its own resolution, those dependencies must still resolve. Recursive dictionary and list composition must retain contributing lower-priority fragments; it must not treat every collection contribution as a replacement.
 
@@ -828,7 +828,7 @@ The compiler lowers each `ctx` declaration to a resolved-value representation, a
 
 1. collects pending field inputs and recursively declared model defaults without constructing incomplete values;
 2. obtains the selector inputs required by conditions, including their direct environment inputs;
-3. applies selected `when` contributions in source order, recursively visiting nested blocks and merging their inputs;
+3. applies selected `if` contributions in source order, recursively visiting nested blocks and merging their inputs;
 4. resolves declared source paths and combines their checked fragments in listed order, above conditional contributions;
 5. gives direct environment inputs precedence over other contributions, without appending the same source twice;
 6. validates the complete result and constructs a frozen value;
@@ -859,7 +859,7 @@ Environment and secret-provider access must remain subject to RFC 104's governed
 | **How you access it**   | Via a variable: `user.name`      | Declaration-name reads or checked access to its value |
 | **How it's created**    | `User(name="Alice", age=30)`     | First use or preflight                                |
 | **Mutability**          | Per-instance (mutable via `mut`) | Frozen field bindings; shallow contents contract      |
-| **Conditional blocks**  | No                               | Nestable `when` blocks and recursive composition      |
+| **Conditional blocks**  | No                               | Nestable `if` blocks and recursive composition      |
 | **Env var integration** | No                               | Yes — fields auto-read from env vars                  |
 
 **Mental model: `model` describes data. `ctx` describes the world the data lives in.**
@@ -876,7 +876,7 @@ ctx InfraConfig(env_prefix="INFRA_"):
     env: Literal["dev", "prod"] = "dev"
     cluster: ClusterConfig
 
-    when env == "prod":
+    if env == "prod":
         cluster.node_type = "large"
         cluster.min_workers = 8
         cluster.max_workers = 16
@@ -939,11 +939,11 @@ Rejected. Retained fields can include dependent defaults and live resources. Cop
 
 ### Special matching on enum type names
 
-The earlier proposal used `match Env: case Prod:` to implicitly read an environment variable. This gave a type name a hidden runtime-selection meaning and used a separate matching grammar. Ordinary selector fields and `when env == "prod":` keep the tested value explicit, support compound conditions and nesting, and preserve ordinary match expressions.
+The earlier proposal used `match Env: case Prod:` to implicitly read an environment variable. This gave a type name a hidden runtime-selection meaning and used a separate matching grammar. Ordinary selector fields and `if env == "prod":` keep the tested value explicit, support compound conditions and nesting, and preserve ordinary match expressions.
 
 ### A separate match for each field
 
-Field-local matches can express isolated defaults, but coordinated environment choices become duplicated across unrelated branches of the configuration tree. One `when` block may contribute to several depths without repeating its condition. Mandatory nested model declarations and implicit model-construction assignment arms are unnecessary for this surface.
+Field-local matches can express isolated defaults, but coordinated environment choices become duplicated across unrelated branches of the configuration tree. One `if` block may contribute to several depths without repeating its condition. Mandatory nested model declarations and implicit model-construction assignment arms are unnecessary for this surface.
 
 ### Soft keyword via library
 
@@ -953,7 +953,7 @@ Ship `ctx` as a library-provided soft keyword instead of a core keyword.
 
 ## Drawbacks
 
-- **Language surface**: a reserved `ctx` declaration and conditional `when` blocks add syntax to learn and support.
+- **Language surface**: a reserved `ctx` declaration and conditional `if` blocks add syntax to learn and support.
 - **Order-sensitive composition**: moving overlapping contributions can change results. Lists append rather than replace inside conditional composition, so ordinary-looking assignments need clear documentation and provenance.
 - **Deferred construction**: pending model inputs and condition dependencies require diagnostics for missing values and cycles without eager incomplete instances.
 - **Global dependency**: convenient published-name access still couples callers to the retained application configuration. Contexts cannot be cloned to obtain variations; another retained session requires a separate declaration or an ordinary application-owned factory.
@@ -963,18 +963,19 @@ Ship `ctx` as a library-provided soft keyword instead of a core keyword.
 
 ## Layers affected
 
-- **Language surface** — `ctx` becomes a core reserved keyword with first-class declaration syntax, field declarations, dotted contributions, and nestable `when` blocks.
+- **Language surface** — `ctx` becomes a core reserved keyword with first-class declaration syntax, field declarations, dotted contributions, and nestable `if` blocks.
 - **Type system** — implementations must validate field types, Boolean conditions, dotted path compatibility, deferred model construction, and typed declaration-name access.
 - **Initialization model** — runtime first use, fallible preflight, complete frozen construction, independent session declarations, publication coordination, and declared source priority.
 - **Errors / validation** — RFC 131 configuration failures retaining original causes, RFC 133 Literal checks, and shared construction validation.
 - **Stdlib / sources** — proposed `std.config.yaml` descriptors, checked fragment loading, runtime source paths, and file-location diagnostics.
 - **Runtime / governance** — secret-safe retained provenance, RFC 103 secret ingress, RFC 104 governed environment and file access, and ordinary checked sharing rules.
-- **Formatter** — `ctx` declarations, dotted contributions, and nested `when` blocks should format predictably.
+- **Formatter** — `ctx` declarations, dotted contributions, and nested `if` blocks should format predictably.
 - **LSP / tooling** — completions and hover for `CtxName.field` access, structured field types, mapped sources, and resolution explanations.
 - **Test support** — RFC 019 fixture integration, fresh ctx resolution state per case, and ordinary application access without a production reset API.
 
 ## Design Decisions
 
+- Runtime conditional contributions in ctx use `if`, including nested blocks. `when` and compiler-owned `@when` remain compile-time selectors under RFC 163. This spelling change preserves dependency-based resolution, source-order recursive merging, lazy first use and retained successful preflight values.
 - Retain concise ctx declarations and convenient declaration-name reads. First runtime use resolves the whole context and publishes the completed frozen value. Imports and static references do not activate contexts, and there is no automatic pre-main sweep.
 - `ContextName.preflight()` performs the same whole-context resolution early, returning a recoverable Result with None on success and the configuration error umbrella on failure. Successful preflight prepares the retained value used by subsequent reads; it does not merely validate inputs for later rereading. The error is the standard `ConfigError` umbrella with retained original failures.
 - Failed preflights leave the context unresolved and permit subsequent explicit attempts. Recovery and retry timing belong to the application; each call makes at most one attempt without automatic retries. A new attempt may repeat permitted construction effects, while previously returned errors retain their own diagnostic facts. Successful resolution is permanent and is reused by subsequent reads and preflights.
@@ -990,12 +991,12 @@ Ship `ctx` as a library-provided soft keyword instead of a core keyword.
 - Whole-model environment inputs use JSON objects as checked field contributions, preserving omitted lower-priority fields and defaults before final construction. Explicit descendant inputs patch this structured base at the same source priority. The descendant input wins independently of environment enumeration order, with a warning identifying overlapping input names and affected field paths without printing their values. Original input facts and selected results remain in redacted provenance. Ordinary construction and validation still apply.
 - An explicit compatible `TryFrom[str]` takes precedence over automatic underlying decoding. Its rejection fails resolution without a fallback parse. Without that converter, validated newtypes use checked underlying decoding and recoverable `from_underlying`, without duplicate handwritten text conversion or panic-producing coercion. The resolver retains actual typed failures when supplied and explicitly identifies the current TryFrom string rejection without fabricating typed identity or stacks. General conversion-trait signature migration is outside this RFC.
 - Nested environment overrides use `__` between field-path segments. An explicit parent name rebases its descendant namespace, while a more specific explicit child mapping remains authoritative. Explicit names preserve their spelling without renaming source fields or YAML keys. Supplied leaves retain ordinary checked decoding and validation; unspecified siblings retain selected values. Nested resolution precedes final validation and frozen construction, and ambiguous external-name mappings receive diagnostics.
-- Selectors are ordinary typed fields, including Literal fields, using the normal environment mapping. `when` accepts Boolean conditions and may nest; every enclosing condition must hold. A selected block may contribute to multiple depths through dotted declared-field paths.
+- Selectors are ordinary typed fields, including Literal fields, using the normal environment mapping. `if` accepts Boolean conditions and may nest; every enclosing condition must hold. A selected block may contribute to multiple depths through dotted declared-field paths.
 - Selected contributions apply in source order, descending into matching nested blocks at their position. Later scalar contributions win without condition-specificity ranking. Nested model inputs and dictionaries merge recursively, preserving unspecified entries; list contributions append in order. Direct environment inputs retain higher priority.
 - Model-typed fields without initializers are assembled recursively from pending field defaults and contributions during whole-context resolution. No explicit constructor call or nested type declaration is required. Ordinary model construction elsewhere remains unchanged; required scalar fields still need a source, and complete values must pass ordinary validation before publication.
 - Dependent defaults and conditions observe resolved field values, including conditional contributions and direct environment inputs. Field declaration order does not affect dependency results. Replaced scalar defaults are not evaluated solely for construction; contributing collection fragments remain part of recursive composition. Reached cycles produce typed dependency diagnostics without fixed-point recalculation. Defaults are construction inputs, and successful context resolution is retained rather than recalculated on reads.
 - Explicit YAML sources use the proposed `std.config.yaml` adapter and an ordered `sources` tuple. Their recursive contributions apply above conditional settings and below direct environment inputs. A common file may be followed by `yaml(f"config/{env}.yaml")`, with the filename selector resolved independently before that selected file is read. Header source expressions may refer to checked ctx fields. Files are required by default; `required=false` permits absence without hiding malformed or unreadable present inputs. Loading is lazy, successful values are retained, unknown field paths receive diagnostics, and source evidence retains file locations under redaction. No YAML-root selection API or automatic cross-process transport is required by this decision.
-- Environment-specific collection entries belong in their respective `when` blocks or selected environment files, with unconditional defaults and common files reserved for universal contributions. Empty collections do not clear lower-priority contents. Explicit replacement, clearing, and removal markers are out of scope.
+- Environment-specific collection entries belong in their respective `if` blocks or selected environment files, with unconditional defaults and common files reserved for universal contributions. Empty collections do not clear lower-priority contents. Explicit replacement, clearing, and removal markers are out of scope.
 - Managed resource lifetimes and their integration with ctx are deferred to RFC 094, including cleanup after partial initialization and the lifetime of successfully retained resources. RFC 033 introduces no separate resource lifecycle or destructor-only public cleanup guarantee. This is a scope deferral, not an unresolved question for RFC 033.
 - An absent override preserves the previously selected value; an explicit optional clear replaces it with None. Nested absence must not be flattened during layer resolution. External clearing syntax remains open.
 - `ContextName.explain()` returns a structured report of resolution state and available retained evidence without initializing or retrying the context, reading runtime sources, or evaluating initializers. It supports passive interactive inspection before first use, clearly distinguishes unresolved, in-progress, failed, and successfully resolved state, and does not present failure evidence as a published value. Resolution retains the full observed, ordered contribution history, including superseded scalar and surviving collection contributions, with RFC 103 redaction and RFC 104 authority checks and receipts. Missing or omitted evidence is explicit rather than silently truncating the explanation to the winning source; evidence retention does not require whole-file copies, raw secrets, or evaluating otherwise skipped expressions. Inspection does not reread sources and misrepresent current values as historical evidence. Exact report schemas and accessors remain open.

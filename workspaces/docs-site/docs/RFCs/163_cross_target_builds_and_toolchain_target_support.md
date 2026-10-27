@@ -200,7 +200,7 @@ A method's application data does not become a compilation predicate:
 # Use if self.workers > 4: for this runtime decision.
 ```
 
-This does not change RFC 033's `ctx` contribution blocks. A `when env == "prod":` inside a `ctx` declaration evaluates during runtime configuration resolution and retains ordinary typed field lookup. It does not select compiled declarations or acquire this RFC's predicate namespace.
+RFC 033 uses `if env == "prod":` inside `ctx` for runtime configuration contributions. That condition reads ordinary typed fields during resolution; it does not select compiled declarations or acquire this RFC's predicate namespace. `when` and compiler-owned `@when` retain their compile-time meaning.
 
 ### Selection and declaration annotations
 
@@ -277,7 +277,7 @@ error: cannot link for x86_64-pc-windows-msvc on this host
 - Conditions must be evaluated against the domain the module is compiled for before ordinary name resolution, type checking, derives, declaration-metadata checks or user-defined decorator application. Excluded source must remain syntactically valid, but its declarations and imports must not contribute semantic facts or annotation obligations. This ordering must not depend on the written order of annotations.
 - A retained block's contents must occupy its source position in the surrounding lexical scope; compilation selection must not introduce a runtime branch or an extra scope. Nested compilation conditions must require every enclosing condition to hold. Ordinary name binding, ownership, control-flow and return analysis must check the resulting body. A selection that leaves a required return path uncovered or a referenced name absent must produce the ordinary diagnostic for that selected configuration.
 - Model and class construction, member lookup, reflection, schema, validation, serialization and derives must use only retained members. Excluded members must have no constructor argument, stored slot or published member metadata. Retained types must still satisfy ordinary trait, composition and validation contracts; selection must not waive an obligation.
-- Compilation conditions inside a method must retain the dedicated predicate namespace. They must not read `self`, parameters, local values or runtime environment settings; a diagnostic for such use must explain that an ordinary `if` is needed. RFC 033 configuration-contribution `when` blocks retain their separate runtime-resolution semantics and ordinary typed field lookup.
+- Compilation conditions inside a method must retain the dedicated predicate namespace. They must not read `self`, parameters, local values or runtime environment settings; a diagnostic for such use must explain that an ordinary `if` is needed. RFC 033 configuration-contribution `if` blocks retain their runtime-resolution semantics and ordinary typed field lookup.
 - A retained declaration's annotations must keep their own contracts. In particular, RFC 148 must check discarded expressions against retained must-use declarations; selection must not change its severity, defaults, exemption rules or deliberate-discard contract.
 - A module compiled in both domains must be checked once per domain; each compilation sees only the declarations its conditions admit. If retained definitions collide, ordinary duplicate-declaration diagnostics must apply; `when` must not choose a winner by source order.
 - The formatter must preserve condition meaning and give both forms a consistent spelling. Explicit property comparisons and their documented shorthands must have identical selection behavior.
@@ -317,7 +317,7 @@ The truth of a target condition comes from the unit's domain configuration, and 
 
 ### Interaction with RFC 033 and RFC 114
 
-RFC 033 uses `when` within `ctx` declarations to contribute runtime configuration defaults. That is a different grammatical context with a different namespace and evaluation time; this RFC must not reinterpret its selectors as compilation predicates.
+RFC 033 uses `if` within `ctx` declarations to contribute runtime configuration defaults, preserving ordinary typed field lookup. `when` and compiler-owned `@when` remain compile-time-only selectors with the dedicated predicate namespace. Runtime input must not be interpreted as a compilation predicate.
 
 RFC 114 defines additive package-feature resolution and its existing positive, compilation-unit declaration conditions. This RFC extends the source condition grammar and the permitted locations; it does not add feature disabling, precedence or a separate feature resolver. Explicitly conditional model or class members make that type's member set configuration-dependent, a scoped extension to RFC 114's restriction on feature-dependent changes to an unconditional type. This must be visible in the selected constructor and published type metadata, with consumers checked against that same selected configuration. It must not silently rewrite a retained field's declared type, waive an unconditional trait obligation or relax provider verification of supported feature projections.
 
