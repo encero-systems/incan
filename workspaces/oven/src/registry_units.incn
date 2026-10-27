@@ -1,0 +1,259 @@
+"""Select compiled registry roots together, preserving every producer's exact dependency entries."""
+
+from std.fs import Path
+from rust_activation import version_matches
+
+
+@derive(Eq)
+pub model RegistryUnit:
+    """A compiled registry artifact and the exact entries its producer linked."""
+
+    pub loaf: str
+    pub version: str
+    pub domain: str
+    pub directory: str
+    pub features: list[str] = []
+    pub entry: str = ""
+    pub dependencies: list[str] = []
+    pub profile: str = ""
+    pub recorded: bool = true
+    pub name: str = ""
+    pub crate_hash: str = ""
+    pub refusal: str = ""
+    pub artifact: str = ""
+    pub kind: str = "lib"
+
+
+pub model RegistrySelection:
+    """One authored registry version and feature requirement."""
+
+    pub loaf: str
+    pub requirement: str
+    pub features: list[str]
+
+
+pub model RegistryDemand:
+    """A registry requirement in its consumer's compilation domain."""
+
+    pub selection: RegistrySelection
+    pub domain: str
+
+    def key(self) -> str:
+        """Retain distinct requirements while deduplicating equivalent requests deterministically."""
+        return f"{self.domain}:{self.selection.loaf}:{self.selection.requirement}:{sorted(self.selection.features)}"
+
+
+pub model RegistryUnits:
+    """Available compiled units, or one graph's coherent selected units and root bindings."""
+
+    pub units: list[RegistryUnit]
+    pub search: list[str]
+    pub bindings: Dict[str, str] = {}
+    pub anchors: list[Tuple[str, str]] = []
+    pub recorded_bindings: list[Tuple[str, str]] = []
+
+    def artifact_for(self, selection: RegistrySelection, domain: str) -> Result[str, str]:
+        """Bind a root only from the graph's recorded selection, selecting a singleton request when needed."""
+        demand = RegistryDemand(selection=selection, domain=domain)
+        mut selected = self
+        if demand.key() not in selected.bindings:
+            selected = self.select([demand])?
+        entry = selected.bindings[demand.key()]
+        for unit in selected.units:
+            if identity(unit) == entry:
+                return sole_library(unit)
+        return Err(f"selected registry entry is absent: {entry}")
+
+    def artifact(self, loaf: str, requirement: str, domain: str, features: list[str] = []) -> Result[str, str]:
+        """Bind the coherent closure of one explicit registry request."""
+        return self.artifact_for(RegistrySelection(loaf=loaf, requirement=requirement, features=features), domain)
+
+    def select(self, demands: list[RegistryDemand], profile: str = "") -> Result[RegistryUnits, str]:
+        """
+        Resolve all requested compiled roots as one graph; never mix independently chosen producers.
+
+        1. Index exact entries and canonicalize the requests.
+        2. Search compatible roots while each producer pins its complete dependency closure.
+        3. Refuse missing or ambiguous graphs, otherwise retain exact root bindings.
+        """
+        # 1. Entry identity is authoritative; directory spelling is only a legacy synthetic-test fallback.
+        mut entries: Dict[str, RegistryUnit] = {}
+        for unit in self.units:
+            entries[identity(unit)] = unit
+        mut requests: Dict[str, RegistryDemand] = {}
+        for demand in demands:
+            requests[demand.key()] = demand
+        roots = [requests[key] for key in sorted([key for key in requests.keys()])]
+        # 2. A root can be chosen only when every recorded dependency agrees with the selected graph.
+        mut pinned: Dict[str, str] = {}
+        for domain, entry in self.anchors:
+            if entry not in entries:
+                return Err(f"installed registry producer entry is absent: {entry}")
+            pinned = extend(entries[entry], entries, pinned, domain)?
+        names = ", ".join(sorted([request.selection.loaf for request in roots]))
+        solutions = resolve(roots, 0, entries, pinned, {}, self.bindings, self.recorded_bindings).map_err(
+            (reason) => f"no coherent compiled registry closure for {names}: {reason}",
+        )?
+        # 3. No ordering of stored artifacts is permission to break a tie between coherent feature graphs.
+        if len(solutions) == 0:
+            return Err(f"no coherent compiled registry closure for {names}")
+        if len(solutions) > 1:
+            return Err(f"ambiguous compiled registry closure for {names}; specify an exact producer closure")
+        chosen, bindings = solutions[0]
+        units = [entries[chosen[key]] for key in sorted([key for key in chosen.keys()])]
+        return Ok(
+            RegistryUnits(
+                units=units,
+                search=self.search,
+                bindings=bindings,
+                anchors=self.anchors,
+                recorded_bindings=self.recorded_bindings,
+            ),
+        )
+
+
+def identity(unit: RegistryUnit) -> str:
+    """Use the published entry, preserving small source-free fixtures that identify units by directory."""
+    if unit.entry != "":
+        return unit.entry
+    return unit.directory
+
+
+def slot(unit: RegistryUnit, domain: str) -> str:
+    """Versions may coexist; two producers of the same version in one native domain may not."""
+    return f"{domain}:{unit.loaf}@{unit.version}"
+
+
+def resolve(
+    roots: list[RegistryDemand],
+    index: int,
+    entries: Dict[str, RegistryUnit],
+    chosen: Dict[str, str],
+    bindings: Dict[str, str],
+    resolved: Dict[str, str],
+    recorded: list[Tuple[str, str]],
+) -> Result[list[Tuple[Dict[str, str], Dict[str, str]]], str]:
+    """Backtrack exact producer closures, stopping after two distinct solutions prove ambiguity."""
+    if index == len(roots):
+        return Ok([(chosen, bindings)])
+    demand = roots[index]
+    groups = candidate_groups([unit for unit in entries.values()], demand, resolved, recorded)?
+    mut refusals: list[str] = []
+    for candidates in groups:
+        mut solutions: list[Tuple[Dict[str, str], Dict[str, str]]] = []
+        for unit in candidates:
+            match extend(unit, entries, chosen, demand.domain):
+                Err(reason) => refusals.append(reason)
+                Ok(next) =>
+                    mut linked = bindings
+                    linked[demand.key()] = identity(unit)
+                    match resolve(roots, index + 1, entries, next, linked, resolved, recorded):
+                        Err(reason) => refusals.append(reason)
+                        Ok(found) => solutions = solutions + found
+                    if len(solutions) > 1:
+                        return Ok(solutions)
+        if len(solutions) > 0:
+            return Ok(solutions)
+    if len(refusals) > 0:
+        return Err(refusals[0])
+    return Ok([])
+
+
+def extend(
+    root: RegistryUnit,
+    entries: Dict[str, RegistryUnit],
+    selected: Dict[str, str],
+    domain: str,
+) -> Result[Dict[str, str], str]:
+    """Pin the producer and every transitive entry, refusing missing evidence and conflicting identities."""
+    mut chosen = selected
+    mut root_domain = domain
+    if root.kind == "proc-macro":
+        root_domain = "host"
+    mut pending = [(identity(root), root_domain)]
+    while len(pending) > 0:
+        entry, role = pending.pop()
+        if entry not in entries:
+            return Err(f"registry producer {root.loaf} names absent dependency entry {entry}")
+        unit = entries[entry]
+        if unit.refusal != "":
+            return Err(unit.refusal)
+        key = slot(unit, role)
+        if key in chosen:
+            if chosen[key] != entry:
+                return Err(f"{root.loaf} pins {unit.loaf} {entry}, conflicting with selected {chosen[key]}")
+            continue
+        if not unit.recorded:
+            return Err(f"registry producer {unit.loaf} {entry} has no recorded dependency identities")
+        chosen[key] = entry
+        for dependency in unit.dependencies:
+            mut child_role = role
+            if dependency in entries and entries[dependency].kind == "proc-macro":
+                child_role = "host"
+            pending.append((dependency, child_role))
+    return Ok(chosen)
+
+
+def candidate_groups(
+    units: list[RegistryUnit],
+    demand: RegistryDemand,
+    resolved: Dict[str, str],
+    recorded: list[Tuple[str, str]],
+) -> Result[list[list[RegistryUnit]], str]:
+    """Honor exact producer records, distinguishing an unavailable request from an incompatible recorded choice."""
+    if demand.key() in resolved:
+        return Ok([[unit for unit in units if identity(unit) == resolved[demand.key()]]])
+    loaf = demand.selection.loaf
+    locked = [unit for unit in units if (demand.domain, identity(unit)) in recorded and unit.loaf == loaf]
+    if len(locked) > 0:
+        compatible = [unit for unit in locked if qualifies(unit, demand.selection)?]
+        if len(compatible) > 0:
+            return Ok([compatible])
+        if len([unit for unit in units if qualifies(unit, demand.selection)?]) > 0:
+            return Err(f"recorded registry closure does not satisfy {demand.key()}")
+    mut candidates: list[RegistryUnit] = []
+    for domain in [demand.domain, "host", "target"]:
+        candidates = [unit for unit in units if unit.domain == domain and qualifies(unit, demand.selection)?]
+        if len(candidates) > 0:
+            break
+    if len(candidates) == 0:
+        selected = demand.selection
+        return Err(
+            f"no compiled registry unit of {selected.loaf} satisfies {selected.requirement} with features {selected.features}",
+        )
+    return Ok([candidates])
+
+
+def qualifies(unit: RegistryUnit, selection: RegistrySelection) -> Result[bool, str]:
+    """Require the authored version and every requested feature without treating feature supersets as identity."""
+    if unit.loaf != selection.loaf:
+        return Ok(false)
+    if not version_matches(selection.requirement, unit.version, unit.loaf).map_err((error) => error.message())?:
+        return Ok(false)
+    return Ok(len([feature for feature in selection.features if feature not in unit.features]) == 0)
+
+
+pub def sole_library(unit: RegistryUnit) -> Result[str, str]:
+    """Read the one canonical native library in an exact producer entry; never guess among files."""
+    if unit.artifact != "":
+        return Ok(unit.artifact)
+    mut artifacts: list[str] = []
+    for candidate in Path(unit.directory).iterdir().map_err((error) => error.message())?:
+        name = candidate.name()
+        if name.startswith("lib") and is_rust_library(name):
+            artifacts.append(candidate.resolve().map_err((error) => error.message())?.0)
+    if len(artifacts) != 1:
+        return Err(
+            f"the compiled unit of {unit.loaf} {unit.version} has {len(artifacts)} libraries in {unit.directory}; expected exactly one",
+        )
+    return Ok(artifacts[0])
+
+
+pub def is_rust_library(name: str) -> bool:
+    """Recognize native static libraries and platform dynamic libraries."""
+    return name.endswith(".rlib") or is_dynamic_library(name)
+
+
+pub def is_dynamic_library(name: str) -> bool:
+    """Recognize the supported native dynamic library suffixes."""
+    return name.endswith(".dylib") or name.endswith(".so")

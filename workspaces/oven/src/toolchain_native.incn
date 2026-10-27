@@ -19,6 +19,7 @@ from rust_units import (
     identity,
     ordered,
     read_registry_units,
+    selected_registry,
     rust_facet,
     target_configuration,
 )
@@ -60,8 +61,8 @@ def publish_support(repository: Path, toolchain: Toolchain) -> Result[None, str]
     # 1. Source manifests remain the authority for every dependency and feature.
     require_fresh_generation(toolchain)?
     rustc = rust_compiler(toolchain)
-    registry = read_registry_units(Path(toolchain.registry_units))?
     facets = support_facets(rustc)?
+    registry = selected_registry(read_registry_units(Path(toolchain.registry_units))?, facets, "release")?
     # 2. These are the runtime's Rust support crates, never compiled Incan standard facades.
     externs, directories = build_support(repository, rustc, registry, facets)?
     # 3. No artifact or directory from the builder's runtime or standard packages enters this closure.
@@ -95,7 +96,7 @@ def describe_standard(repository: Path, package: str, profile: str, toolchain: T
         defaults=false,
     )
     facets = local_facets(demand, configuration)?
-    registry = read_registry_units(Path(toolchain.registry_units))?
+    registry = selected_registry(read_registry_units(Path(toolchain.registry_units))?, facets, "release")?
     built = installed_support(facets, toolchain)?
     # 2. A Rust edge selects its Rust facet, never an Incan facade that links this same runtime.
     mut native_edges: list[str] = []

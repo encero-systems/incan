@@ -45,7 +45,7 @@ pub def test_unsupported_intent_is_not_dropped() -> None:
     2. Refuse unsupported manifest sections.
     """
     # 1. Implemented intent remains accepted.
-    for extra in ["[project.features]\ndefault=[]\n", "[interop.c]\n"]:
+    for extra in ["[project.features]\ndefault=[]\n", "[interop.c]\n", "[build]\nregistry-lock='closure.json'\n"]:
         match parse_intent(project_manifest(extra), "loaf.toml"):
             Ok(_) => pass
             Err(error) => fail(error.message())

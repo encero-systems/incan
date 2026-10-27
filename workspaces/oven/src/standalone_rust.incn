@@ -2,14 +2,16 @@
 
 from std.fs import Path
 from std.json import JsonValue
-from files import make_directory, parse_json, write
+from files import make_directory, parse_json, read_json, write
 from driver_command import driver_command
 from home import standard_packages
 from json_fields import array, field, required_text, strings
 from loaf_local_graph import unique
 from rust_units import RegistrySelection, decoded, read_registry_units
+from registry_units import RegistryDemand
+from registry_metadata import bound_entries
 from toml_fields import optional_string, optional_strings, read_manifest
-from toolchain import NativeCrate, Toolchain
+from toolchain import NativeCrate, Toolchain, located
 from unit import UnitDescription
 
 
@@ -29,12 +31,47 @@ pub def standalone_crates(described: UnitDescription, toolchain: Toolchain) -> R
     if len(selections) == 0:
         return Ok([])
     # 3. The ordinary registry resolver selects exact artifacts and refuses missing or ambiguous units.
-    registry = read_registry_units(Path(toolchain.registry_units))?
+    mut available = read_registry_units(Path(toolchain.registry_units), described.project_root)?
+    for entry in bound_entries(
+        available.units,
+        published_bindings(described, toolchain, [name for name in selections.keys()])?,
+    )?:
+        if ("target", entry) not in available.anchors:
+            available.anchors.append(("target", entry))
+    registry = available.select(
+        [RegistryDemand(selection=selections[name], domain="target") for name in sorted(
+            [name for name in selections.keys()],
+        )],
+        described.profile,
+    )?
     mut externs: list[NativeCrate] = []
     for name in sorted([name for name in selections.keys()]):
         artifact = registry.artifact_for(selections[name], "target")?
         externs.append(NativeCrate(name=name, path=artifact))
     return Ok(externs)
+
+
+pub def published_bindings(unit: UnitDescription, toolchain: Toolchain, roots: list[str]) -> Result[list[str], str]:
+    """Pin only requested native roots offered by available Loaves, matching the driver's required-root boundary."""
+    mut paths: list[str] = []
+    for loaf in unit.loaves:
+        closure = Path(loaf.dir).joinpath(f"{loaf.name}.native.json")
+        if not closure.is_file():
+            continue
+        document = read_json(closure)?
+        match document.get("externs"):
+            None => continue
+            Some(value) =>
+                for item in value.expect_array().map_err((error) => error.message())?:
+                    binding = item.expect_array().map_err((error) => error.message())?
+                    if len(binding) != 2:
+                        return Err(f"{closure.0}: native extern must contain a name and artifact")
+                    name = binding[0].expect_str().map_err((error) => error.message())?
+                    if name not in roots:
+                        continue
+                    artifact = binding[1].expect_str().map_err((error) => error.message())?
+                    paths.append(located(closure.parent(), artifact))
+    return Ok(unique(paths))
 
 
 def source_requests(unit: UnitDescription, toolchain: Toolchain) -> Result[list[JsonValue], str]:

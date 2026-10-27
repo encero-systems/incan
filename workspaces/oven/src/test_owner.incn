@@ -7,6 +7,8 @@ from owner_endpoint import Endpoint, attach, endpoint_for, greeted, timeout_for
 from owner_protocol import Connection, Reply, Request, listen
 from owner_state import Owner, unchanged, watch
 from scratch import scratch_directory
+from intake import ManifestReader
+from rust_units import registry_record_path
 
 
 def endpoint_in(directory: Path) -> Endpoint:
@@ -145,4 +147,13 @@ pub def test_retained_answers_are_guarded_by_the_files_they_came_from() -> Resul
     again = watch([manifest.0, lock.0])
     remove(lock)?
     assert not unchanged(again)
+    write(manifest, "[build]\nregistry-lock='producer.json'\n")?
+    producer = registry_record_path(scratch.path().0, ManifestReader())?
+    assert producer == scratch.path().joinpath("producer.json").0
+    absent = watch([producer])
+    write(Path(producer), "first producer")?
+    assert not unchanged(absent)
+    present = watch([producer])
+    write(Path(producer), "another producer")?
+    assert not unchanged(present)
     return Ok(None)

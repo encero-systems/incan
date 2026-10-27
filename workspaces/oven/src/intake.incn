@@ -250,7 +250,7 @@ def parse_raw_intent(source: str, manifest: str) -> Result[ProjectIntent, Intake
     mut source_root: Option[str] = None
     if "build" in root:
         build = table(root["build"], manifest, ["build"])?
-        allowed(build, ["target", "profile", "rust-edition", "source-root"], manifest, ["build"])?
+        allowed(build, ["target", "profile", "rust-edition", "source-root", "registry-lock"], manifest, ["build"])?
         if "target" in build:
             required(build, "target", manifest, ["build", "target"])?
         if "profile" in build:
@@ -259,6 +259,8 @@ def parse_raw_intent(source: str, manifest: str) -> Result[ProjectIntent, Intake
             edition = required(build, "rust-edition", manifest, ["build", "rust-edition"])?
         if "source-root" in build:
             source_root = Some(required(build, "source-root", manifest, ["build", "source-root"])?)
+        if "registry-lock" in build:
+            required(build, "registry-lock", manifest, ["build", "registry-lock"])?
     if "rust" in root:
         rust_facet = table(root["rust"], manifest, ["rust"])?
         if "edition" in rust_facet:

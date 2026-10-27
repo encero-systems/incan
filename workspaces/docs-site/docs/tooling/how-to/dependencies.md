@@ -46,6 +46,17 @@ The declared requirement must match the installed registry's available unit, inc
 
 Use `optional = true` on an edge and activate it from a package feature with `dep:ALIAS`. Dependency feature requests use `ALIAS/FEATURE`. See [Select package features](sdk_components_and_package_features.md).
 
+## Select a recorded producer closure
+
+When a registry catalog contains several coherent builds that satisfy your requirements, point the project at its producer's recorded closure:
+
+```toml
+[build]
+registry-lock = "closure.json"
+```
+
+Use the record exported by that producer. Its exact entry identities must already exist in the installed catalog; the path does not provision artifacts. Oven holds the selected bindings for the entire graph. Without a project record, an installed standard-producer record supplies its selection; otherwise an ambiguous choice is refused by name.
+
 ## Inspect the selection
 
 ```bash

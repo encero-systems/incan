@@ -107,14 +107,16 @@ pub def compiler_fingerprint(toolchain: Toolchain) -> Result[str, str]:
     The installed driver is named by its content digest, and its path is part of the fingerprint.
 
     1. The driver, its sysroot and the driver's identity.
-    2. The native crates every unit links, and the Rust ABI caches checking reads.
+    2. The native crates every unit links, its recorded registry selection and the Rust ABI caches checking reads.
     3. The directories the dependencies of those crates live in.
     """
     # 1. A different driver, at another path or rebuilt in place, is a different compiler.
     driver = [toolchain.driver, toolchain.sysroot, artifact_identity(Path(toolchain.driver))?]
     # 2. So is a changed runtime or support crate, or a changed Rust fact cache.
     natives = native_identities(toolchain.externs)?
-    caches = cache_identities(toolchain.rust_abi)?
+    mut caches = cache_identities(toolchain.rust_abi)?
+    if toolchain.registry_lock != "":
+        caches.append(artifact_identity(Path(toolchain.registry_lock))?)
     # 3. The directories the crates' own dependencies live in are part of the compiler's reach.
     return fingerprint(driver + natives + caches + toolchain.search + [sdk_identity(toolchain.sysroot)?])
 

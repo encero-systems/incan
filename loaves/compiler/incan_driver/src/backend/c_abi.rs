@@ -339,13 +339,17 @@ pub fn verify_checked_c_binding(
 }
 
 /// Start one verifier process with the exact selected ABI target and manifest-owned definitions.
+///
+/// The verifier reads headers in the GNU C11 dialect, the one C libraries are ordinarily compiled against, so it sees
+/// the declarations a header exposes by default. Strict ISO C11 would make glibc hide its POSIX declarations, such as
+/// `gai_strerror` in `netdb.h`, which macOS headers expose either way.
 fn verifier_command(toolchain: &ClangToolchain, plan: &CAbiVerificationPlan) -> Command {
     let mut command = Command::new(&toolchain.executable);
     command.args(&toolchain.arguments);
     for definition in plan.definitions() {
         command.arg(format!("-D{definition}"));
     }
-    command.args(["-std=c11", "-Werror", "-x", "c", "-target"]);
+    command.args(["-std=gnu11", "-Werror", "-x", "c", "-target"]);
     command.arg(plan.target().triple());
     command
 }

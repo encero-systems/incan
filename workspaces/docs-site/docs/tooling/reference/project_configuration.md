@@ -4,7 +4,7 @@ A project manifest is a TOML file named `loaf.toml`. Source commands select the 
 
 ## Root tables
 
-The accepted root tables are `project`, `dependencies`, `rust-dependencies`, `build`, `rust`, `vocab`, `tool` and `interop`. Unknown semantic tables or fields are refused. `sdk`, `workspace`, `envs` and `rust-dev-dependencies` are not accepted.
+The accepted root tables are `project`, `dependencies`, `rust-dependencies`, `build`, `rust`, `vocab`, `tool`, `interop` and `envs`. Unknown root tables are refused. `sdk`, `workspace` and `rust-dev-dependencies` are not accepted.
 
 ## `[project]`
 
@@ -18,7 +18,7 @@ version = "0.1.0"
 
 ### `[project.scripts]`
 
-Maps script names to existing source-path strings. A project must have at least one script, a conventional `src/lib.incn`, or a `tests` directory. A script resolving to the conventional library is refused. Source commands still require an explicit path; a `main` script does not supply an omitted argument.
+Maps script names to existing source-path strings. Project intake requires at least one script, an Incan `lib.incn` under the selected source root, a Rust `src/lib.rs`, or a `tests` directory. A script resolving to the conventional Incan library is refused. Source commands still require an explicit path; a `main` script does not supply an omitted argument.
 
 ### `[project.features]`
 
@@ -77,12 +77,21 @@ A requirement must match an available toolchain registry unit. Declaration does 
 | `target` | String | Authored compilation-target intent. |
 | `profile` | String | Authored profile intent; CLI unit commands default to `debug` and accept `--profile`. |
 | `rust-edition` | String | Authored Rust edition intent. |
+| `registry-lock` | Nonempty string | Path to an `incan.oven.closure/1` producer record, relative to the project or absolute. Its `units` select exact registry `entry` identities in `host` or `target` domains, overriding the installation's standard selection. Missing entries, incompatible requirements and undecided ambiguities are refused. Omitted by default. |
 
 Declaring a target or profile does not install its artifacts.
 
+## `[envs.NAME]`
+
+An environment accepts `dependencies` and `rust-dependencies` tables with the same edge fields as their root counterparts. `incan test` selects the root project's `test` environment in addition to its production dependencies, including for a Rust facet's unit-test harness. Ordinary builds do not select that overlay, and a dependency's own test environment does not propagate to consumers.
+
 ## `[rust]`
 
-Accepted fields are `name`, `type`, `edition` and `source`. `type` accepts `lib` or `proc-macro`. `edition` accepts `2015`, `2018`, `2021` or `2024`. `[rust.source]` accepts a required string `root`.
+Accepted fields are `name`, `type`, `edition`, `source`, `bin` and `lib`. `name` defaults to the project name, with hyphens replaced by underscores. `type` accepts `lib` (the default) or `proc-macro`. `edition` accepts `2015`, `2018`, `2021` or `2024`, overrides `build.rust-edition` and defaults to `2024`.
+
+`[rust.source]` accepts a required string `root`, relative to the project. The library source is `src/lib.rs` under that directory, or under the project when `root` is omitted. `rust.lib` does not override this discovery.
+
+Each `[[rust.bin]]` requires string fields `name` and `path`; the source path is relative to the project. `unstable_features` and `sysroot_dependencies` are optional string lists, empty by default. A nonempty list enables unstable-feature compilation or pinned-sysroot library linking, respectively, for the project's Rust binaries.
 
 ## `[vocab]`
 

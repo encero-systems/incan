@@ -37,6 +37,8 @@ Oven reuses unchanged executables and retains project preparation in resident ow
 
 A build requires the matching driver, local Rust sysroot and compiled dependency artifacts for its profile. A missing package is an error, not an automatic download. Toolchain packing and installation transfer the native closure between compatible hosts.
 
+Oven selects compiled registry dependencies together as one producer graph. Each selected artifact pins the exact dependency entries recorded by its producer; compatible versions and feature supersets alone do not establish that two artifacts can link together. Older artifacts whose closure records omit those edges use retained readings of the pinned compiler's crate metadata. Multiple coherent choices without an exact producer selection are reported as an ambiguous registry closure.
+
 The 0.5 Oven Alpha CLI and SDK-component model are historical interfaces. Dev.8's accepted commands and options are specified in the [CLI reference](../reference/cli_reference.md).
 
 </section>

@@ -422,7 +422,7 @@ def build_selected(options: Options) -> None:
 def build_project(options: Options) -> Result[list[str], str]:
     """Compile a Rust project against the registry units of its installed toolchain."""
     toolchain = load_toolchain()?
-    registry = read_registry_units(Path(toolchain.registry_units))?
+    registry = read_registry_units(Path(toolchain.registry_units), options.path, options.manifests)?
     request = RustBuild(
         project=options.path,
         profile=options.profile,

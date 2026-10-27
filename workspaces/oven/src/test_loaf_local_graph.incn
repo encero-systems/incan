@@ -5,6 +5,7 @@ from std.fs import Path
 from std.testing import fail
 from loaf_local_graph import LocalDemand, LocalFacet, catalog, local_facets
 from rust_activation import CfgSnapshot, DependencyDomain, TargetConfiguration
+from registry_units import RegistryDemand, RegistrySelection, RegistryUnit, RegistryUnits
 
 
 def root(defaults: bool) -> Result[LocalDemand, str]:
@@ -35,7 +36,107 @@ pub def test_local_graph_selects_features_and_host_transitives() -> Result[None,
             assert len(facet.registry) == 1
             defaults = facet.registry[0].require("default-features").map_err((error) => error.message())?
             assert not defaults.expect_bool().map_err((error) => error.message())?
+    registry_closure_controls()?
     return Ok(None)
+
+
+def registry_closure_controls() -> Result[None, str]:
+    """Two serde builds must agree with serde_json's exact core; an unanchored choice is a named ambiguity."""
+    core_a = registry_fixture("serde_core", "core-a", [], ["alloc", "std"])
+    core_b = registry_fixture("serde_core", "core-b", [], ["std"])
+    serde_a = registry_fixture("serde", "serde-a", ["core-a"], ["derive", "alloc"])
+    serde_b = registry_fixture("serde", "serde-b", ["core-b"], ["derive"])
+    json = registry_fixture("serde_json", "json-b", ["core-b"], ["std"])
+    registry = RegistryUnits(units=[serde_a, core_a, json, serde_b, core_b], search=[])
+    serde = RegistryDemand(
+        selection=RegistrySelection(loaf="crates-io/serde", requirement="1", features=["derive"]),
+        domain="target",
+    )
+    json_request = RegistryDemand(
+        selection=RegistrySelection(loaf="crates-io/serde_json", requirement="1", features=[]),
+        domain="target",
+    )
+    selected = registry.select([serde, json_request], "release")?
+    assert selected.bindings[serde.key()] == "serde-b"
+    assert selected.bindings[json_request.key()] == "json-b"
+    assert sorted([unit.entry for unit in selected.units]) == ["core-b", "json-b", "serde-b"]
+    reversed = RegistryUnits(units=[core_b, serde_b, json, core_a, serde_a], search=[])
+    assert reversed.select([json_request, serde], "release")?.bindings == selected.bindings
+    incomplete_alternative = RegistryUnits(units=[serde_a, serde_b, core_b, json], search=[])
+    assert incomplete_alternative.select([serde, json_request], "release")?.bindings == selected.bindings
+    installed = RegistryUnits(units=registry.units, search=[], anchors=[("target", "core-a")])
+    assert installed.select([serde], "release")?.bindings[serde.key()] == "serde-a"
+    match installed.select([serde, json_request], "release"):
+        Ok(_) => fail("a registry graph conflicting with an installed native producer was accepted")
+        Err(reason) =>
+            assert "no coherent compiled registry closure" in reason
+    match registry.select([serde], "release"):
+        Ok(_) => fail("two independently coherent serde feature graphs were selected arbitrarily")
+        Err(reason) =>
+            assert "ambiguous compiled registry closure" in reason
+            assert "crates-io/serde" in reason
+    json_a = registry_fixture("serde_json", "json-a", ["core-a"], ["std"])
+    mut cohorts = RegistryUnits(units=registry.units + [json_a], search=[])
+    match cohorts.select([serde, json_request], "release"):
+        Ok(_) => fail("two coherent producer cohorts were selected without a record")
+        Err(reason) =>
+            assert "ambiguous compiled registry closure" in reason
+    cohorts.recorded_bindings = [("target", "serde-a"), ("target", "json-a")]
+    pinned = cohorts.select([serde, json_request], "release")?
+    assert pinned.bindings[serde.key()] == "serde-a"
+    assert pinned.bindings[json_request.key()] == "json-a"
+    assert pinned.select([serde], "debug")?.bindings[serde.key()] == "serde-a"
+    host_serde = RegistryDemand(selection=serde.selection, domain="host")
+    domains = RegistryUnits(
+        units=registry.units,
+        search=[],
+        anchors=[("host", "core-a")],
+        recorded_bindings=[("host", "serde-a"), ("target", "serde-b")],
+    )
+    separate = domains.select([serde, host_serde])?
+    assert separate.bindings[host_serde.key()] == "serde-a"
+    assert separate.bindings[serde.key()] == "serde-b"
+    mut incompatible = cohorts
+    incompatible.recorded_bindings = [("target", "serde-b")]
+    alloc = RegistryDemand(
+        selection=RegistrySelection(loaf="crates-io/serde", requirement="1", features=["alloc"]),
+        domain="target",
+    )
+    match incompatible.select([alloc]):
+        Ok(_) => fail("an incompatible recorded producer fell back to another catalog entry")
+        Err(reason) =>
+            assert "recorded registry closure does not satisfy" in reason
+    unavailable_requests: list[Tuple[str, list[str]]] = [("999", []), ("1", ["not_a_feature"])]
+    for requirement, features in unavailable_requests:
+        unavailable = RegistryDemand(
+            selection=RegistrySelection(loaf="crates-io/serde", requirement=requirement, features=features),
+            domain="target",
+        )
+        match incompatible.select([unavailable]):
+            Ok(_) => fail("an unavailable registry version or feature was accepted")
+            Err(reason) =>
+                assert "no compiled registry unit of crates-io/serde satisfies" in reason
+                assert "recorded registry closure does not satisfy" not in reason
+    missing = RegistryUnits(units=[serde_b], search=[])
+    match missing.select([serde], "release"):
+        Ok(_) => fail("a producer whose exact dependency is absent was accepted")
+        Err(reason) =>
+            assert "absent dependency entry core-b" in reason
+    return Ok(None)
+
+
+def registry_fixture(name: str, entry: str, dependencies: list[str], features: list[str]) -> RegistryUnit:
+    """Describe a source-free compiled producer identity without filesystem or compiler work."""
+    return RegistryUnit(
+        loaf=f"crates-io/{name}",
+        version="1.0.0",
+        domain="target",
+        directory=entry,
+        entry=entry,
+        dependencies=dependencies,
+        features=features,
+        profile="release",
+    )
 
 
 pub def test_local_graph_normal_selection_excludes_test_environment() -> Result[None, str]:

@@ -12,6 +12,7 @@ Its description is `<home>/toolchains/<toolchain>/toolchain.json` (`incan.toolch
   manifest dependency takes precedence over a support crate's ambient alias.
 - `search`: the directories the dependencies of those crates live in.
 - `registry_units`: the prepared registry closure (`incan.oven.closure/1`) available to this toolchain.
+- `registry_lock`: an optional producer closure whose exact entries decide registry root selection.
 
 Every path is relative to the toolchain directory, which is what makes a toolchain relocatable; an absolute path is
 used as written (a bootstrap home that has not been packed).
@@ -53,6 +54,7 @@ pub model Toolchain:
     # A resident owner's worker selection, held only while it watches the compiler inputs and its inherited
     # environment stays unchanged. Ordinary toolchain loading leaves this empty and derives the selection afresh.
     pub worker_generation: str = ""
+    pub registry_lock: str = ""
 
 
 pub def rust_compiler(toolchain: Toolchain) -> str:
@@ -136,8 +138,21 @@ def toolchain_of(document: JsonValue, directory: Path) -> Result[Toolchain, list
             externs=externs,
             search=[located(directory, item) for item in search],
             registry_units=located(directory, text_field(document, "registry_units", [])?),
+            console="",
+            worker_generation="",
+            registry_lock=optional_path(document, "registry_lock", directory)?,
         ),
     )
+
+
+def optional_path(document: JsonValue, key: str, directory: Path) -> Result[str, list[str]]:
+    """Locate an optional recorded input without treating an empty path as the toolchain directory."""
+    if document.get(key) == None:
+        return Ok("")
+    value = text_field(document, key, [])?
+    if value == "":
+        return Ok("")
+    return Ok(located(directory, value))
 
 
 pub def toolchain_file() -> Result[Path, str]:

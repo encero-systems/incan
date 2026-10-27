@@ -8,6 +8,7 @@ from files import make_directory, read, remove, write as write_file
 from compiler_refusals import check_or_replay, compile_or_replay
 from incan_units import executable_outputs, install_executable, test_report
 from observation import load_ledger
+from standalone_rust import published_bindings
 from scratch import scratch_directory
 from rust_freshness import compilation_observations, inputs_unchanged, library_key
 from rust_units import BuiltUnit, RegistryUnits, RustBuild, linking
@@ -341,6 +342,20 @@ pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
         Err(_) => pass
     verify_completed_library_abi(scratch.path().joinpath("publication"))?
     verify_native_alias_artifacts(scratch.path().joinpath("aliases"))?
+    verify_requested_loaf_roots(scratch.path().joinpath("requested-roots"))?
+    return Ok(None)
+
+
+def verify_requested_loaf_roots(scratch: Path) -> Result[None, str]:
+    """Requested native roots keep their offered identity; unrelated published bindings do not become graph anchors."""
+    setup = fixture(scratch)?
+    mut unit = setup.unit
+    unit.loaves = [unit.loaves[0]]
+    directory = Path(unit.loaves[0].dir)
+    closure = directory.joinpath("dep.native.json")
+    write(closure, "{\"externs\":[[\"wanted\",\"libwanted.rlib\"],[\"private\",\"libprivate.rlib\"]]}")?
+    assert published_bindings(unit, setup.toolchain, ["wanted"])? == [directory.joinpath("libwanted.rlib").0]
+    assert published_bindings(unit, setup.toolchain, ["other"])? == []
     return Ok(None)
 
 
@@ -404,7 +419,7 @@ def verify_completed_library_abi(scratch: Path) -> Result[None, str]:
 
 
 pub def test_toolchain_change_rekeys_every_unit() -> Result[None, str]:
-    """The driver, a native crate, a Rust ABI cache and the target each change the fingerprint; nothing else does."""
+    """Compiler, native, ABI, recorded producer selection and target changes each invalidate a unit's generation."""
     scratch = scratch_directory()?
     setup = fixture(scratch.path())?
     first = compiler_fingerprint(setup.toolchain)?
@@ -418,6 +433,14 @@ pub def test_toolchain_change_rekeys_every_unit() -> Result[None, str]:
     write(Path(setup.toolchain.rust_abi[0]), "abi two, other facts")?
     abi = compiler_fingerprint(setup.toolchain)?
     assert abi != runtime
+    mut recorded = setup.toolchain
+    lock = scratch.path().joinpath("selected.json")
+    write(lock, "first producer closure")?
+    recorded.registry_lock = lock.0
+    selected = compiler_fingerprint(recorded)?
+    assert selected != abi
+    write(lock, "other producer closure")?
+    assert compiler_fingerprint(recorded)? != selected
     mut moved = setup.toolchain
     moved.sysroot = "/rust/1.98.0-x86_64-unknown-linux-gnu"
     assert compiler_fingerprint(moved)? != abi

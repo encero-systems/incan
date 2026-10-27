@@ -2,7 +2,7 @@
 # Rehearse one host's source release without publishing anything.
 # Usage: INCAN_HOME=SEED_HOME RELEASE_DEV8_OVEN=/path/incan release-dev8.sh SHA NEW_OUT
 # The clean checkout builds natively from its own source with the seed toolchain, through the checkout's native build
-# scripts (zsh): Oven, then the driver with its Incan lowering, the runtime, the standard packages and the bundled tools.
+# scripts (zsh): Oven, the runtime and standard packages, then the driver with its Incan lowering and bundled tools.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -30,6 +30,8 @@ step() {
 receipt() {
     local status=$? file
     trap - EXIT
+    # An interrupted foreground command can leave EXIT with status zero before the rehearsal finishes.
+    if [[ $status == 0 && $phase != complete ]]; then status=130; fi
     local artifacts='{}'
     for file in toolchain.tar.zst incan incan-lsp; do
         if [[ -f "$out/bundle/$file" ]]; then
@@ -62,10 +64,28 @@ prepare_build_home() {
         def absolute: if startswith("/") then . else $base + . end;
         .driver |= absolute | .sysroot |= absolute | .rust_abi |= map(absolute) |
         .externs |= map(.path |= absolute) | .search |= map(absolute) |
-        if (.registry_units // "") != "" then .registry_units |= absolute else . end
+        (if (.registry_units // "") != "" then .registry_units |= absolute else . end) |
+        if (.registry_lock // "") != "" then .registry_lock |= absolute else . end
     ' "$seed_directory/toolchain.json" > "$toolchain/toolchain.json"
     ln -s "$(jq -er '.sysroot' "$toolchain/toolchain.json")" "$toolchain/sysroot"
     ln -s "$seed_directory/loaves" "$toolchain/loaves"
+    # A relocatable seed names its read-only artifact stores relative to its toolchain directory, as its Loaves do.
+    # Present them at that location; writable entries (tools, ABI caches) stay in the build home.
+    local store
+    for store in native registry; do
+        [[ ! -e $seed_directory/$store ]] || ln -s "$seed_directory/$store" "$toolchain/$store"
+    done
+    # Preserve the seed's producer selection while source support replaces its ambient runtime externs.
+    # Linking the record's parent retains the meaning of relative artifact paths in an admitted full closure.
+    local registry_lock
+    registry_lock=$(jq -r '.registry_lock // ""' "$toolchain/toolchain.json")
+    if [[ -n $registry_lock ]]; then
+        [[ -f $registry_lock ]] || fail "seed registry producer record is absent: $registry_lock"
+        ln -s "$(dirname "$registry_lock")" "$toolchain/registry-producer"
+        jq --arg record "registry-producer/$(basename "$registry_lock")" '.registry_lock=$record' \
+            "$toolchain/toolchain.json" > "$toolchain/toolchain.json.next"
+        mv "$toolchain/toolchain.json.next" "$toolchain/toolchain.json"
+    fi
     shasum -a 256 "$seed_oven" "$seed_directory/toolchain.json" > "$out/seed.sha256"
 }
 
@@ -85,26 +105,38 @@ native() {
         SELFBUILD_STDLIB="$INCAN_STDLIB" INCAN_RELINK_LOG="$out/$phase-oven.log" zsh "$source/scripts/$script" "$@"
 }
 
-# Compile standard packages in dependency order and publish only complete artifact sets into this build home.
+# Build the source generation before the compiler selects it. Checked interfaces break the runtime/core cycle;
+# no installed runtime or standard facade enters this generation, and the existing native scripts own publication.
+build_source_closure() {
+    export SELFBUILD_BUILDER_HOME=$seed_home
+    native support-tool-build build-native-support.sh --tool-only
+    unset SELFBUILD_BUILDER_HOME
+    [[ -L "$toolchain/loaves" ]] || fail 'expected the disposable seed Loaf link'
+    rm -- "$toolchain/loaves"
+    jq '.externs=[] | .search=[]' "$toolchain/toolchain.json" > "$toolchain/toolchain.json.next"
+    mv "$toolchain/toolchain.json.next" "$toolchain/toolchain.json"
+    step support-build "$lane/out/native-builds/toolchain-native" "$source"
+    native source-interfaces build-native-interfaces.sh
+    export SELFBUILD_SOURCE_INTERFACES=$INCAN_HOME/source-interfaces/loaves.json
+    native runtime-build build-native-runtime.sh --release
+    unset SELFBUILD_SOURCE_INTERFACES
+    check_runtime_roots
+    build_standard_packages
+}
+
+# Compile both profiles through the same generation-bound producer used by native lane builds.
 build_standard_packages() {
-    local package name directory profile file
-    mkdir "$out/stdlib"
-    export INCAN_STDLIB=$out/stdlib
-    # These are installed seed artifacts in this script's disposable home, never user-owned sources.
-    rm -r -- "$toolchain/loaves"
-    for package in core testing interop async system codecs compression web data observability; do
-        name=incan_stdlib_$package
-        step "std-$package" "$seed_oven" build "$source/loaves/stdlib/$package/src/lib.incn"
-        directory=$source/loaves/stdlib/$package/target/incan/loaves/$name/debug
-        for file in "lib$name.rlib" "$name.incnlib" "$name.incnbody" "$name.native.json"; do
-            [[ -f "$directory/$file" ]] || fail "missing standard artifact: $directory/$file"
+    local package profile
+    mkdir "$out/standards"
+    for profile in release debug; do
+        export SELFBUILD_PROFILE=$profile
+        export SELFBUILD_ADMITTED_STDLIB=$out/standards/$profile-admitted.txt
+        : > "$SELFBUILD_ADMITTED_STDLIB"
+        for package in core testing async system codecs compression web data observability vocab interop; do
+            native "std-$package-$profile" build-native-stdlib.sh "$package"
         done
-        for profile in debug release; do
-            mkdir -p "$toolchain/loaves/$name/$profile"
-            cp -R "$directory/." "$toolchain/loaves/$name/$profile/"
-        done
-        ln -s "$source/loaves/stdlib/$package" "$out/stdlib/$package"
     done
+    unset SELFBUILD_PROFILE SELFBUILD_ADMITTED_STDLIB
 }
 
 # The installed runtime must be one root: two externs with one name would make every unit's closure ambiguous.
@@ -179,6 +211,8 @@ export TMPDIR=$out/tmp
 step clone git clone --shared --no-checkout "$ROOT" "$source"
 step checkout git -C "$source" checkout --detach "$sha"
 [[ -z $(git -C "$source" status --porcelain) ]] || fail 'source checkout is dirty'
+# Rust metadata records the working directory; support and compiler artifacts must share the clean source context.
+cd "$source"
 unset RUSTC_BOOTSTRAP INCAN_LSP INCAN_STDLIB
 export INCAN_NO_BANNER=1 OVEN_OWNER=off RUSTUP_TOOLCHAIN=1.98.0
 rustup run 1.98.0 rustc -vV > "$out/rust.txt"
@@ -192,14 +226,13 @@ builder=$seed_oven
 native conductor-build build-native-tools.sh oven
 seed_oven=$lane/oven-bin/incan
 builder=$seed_oven
+build_source_closure
 
 # The candidate compiler must come from the clean tree: Oven compiles the Incan lowering with the seed's driver, then
-# the driver, and installs it with its Rust ABI cache into the build home. A seed archive is never relabeled as its
-# output.
+# the driver, and installs it with its Rust ABI cache into the build home. Relinking prepares the same compiler-only
+# home as lane builds, retaining the installed runtime/std closure while the source graph owns incan_lang.
+# A seed archive is never relabeled as its output.
 native driver-build relink-driver.sh --release
-native runtime-build build-native-runtime.sh
-check_runtime_roots
-build_standard_packages
 native oven-build build-native-tools.sh oven --rebuild
 cp "$lane/oven-bin/incan" "$out/bundle/incan"
 oven=$out/bundle/incan

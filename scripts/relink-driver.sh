@@ -33,7 +33,10 @@ emitted=$EPOCHREALTIME
 
 sysroot=$(jq -er '.sysroot' "$toolchain/toolchain.json")
 [[ $sysroot == /* ]] || sysroot=$toolchain/$sysroot
-export RUSTC=$sysroot/bin/rustc INCAN_STDLIB=${SELFBUILD_STDLIB:-$repo/loaves/stdlib} INCAN_HOME=$toolchain_home
+# Compiler source owns incan_lang; the installed runtime/std generation remains the authority for every other root.
+compiler_home=$toolchain_home/compiler-build
+zsh "$repo/scripts/prepare-compiler-home.sh" "$toolchain_home" "$compiler_home"
+export RUSTC=$sysroot/bin/rustc INCAN_STDLIB=${SELFBUILD_STDLIB:-$repo/loaves/stdlib} INCAN_HOME=$compiler_home
 prepared=$EPOCHREALTIME
 build_log=${INCAN_RELINK_LOG:-$bootstrap/driver-build-$profile.log}
 

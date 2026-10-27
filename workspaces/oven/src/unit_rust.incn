@@ -17,12 +17,15 @@ from rust_units import (
     facet_bindings,
     incan_artifacts,
     read_registry_units,
+    registry_selection,
+    selected_registry,
     rust_facet,
     target_configuration,
 )
 from search_index import search_index
 from toolchain import NativeCrate, Toolchain, load_toolchain, located, rust_compiler
-from standalone_rust import standalone_crates
+from standalone_rust import published_bindings, standalone_crates
+from registry_metadata import bound_entries
 from unit import UnitDescription, UnitLoaf, describe
 from observation import trace
 from unit_compiler import compile_prepared_unit
@@ -275,7 +278,7 @@ def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[
     mut facets = unit.facets
     if len(facets) == 0:
         facets = local_facets(demand, configuration)?
-    registry = linked_registry(facets, toolchain)?
+    registry = registry_for_unit(unit, facets, toolchain)?
     # 3. The local units the edges reach are compiled, each once, before the unit that links them.
     request = RustBuild(
         project=unit.project_root,
@@ -305,7 +308,32 @@ def resolve_dependencies(unit: UnitDescription, toolchain: Toolchain) -> Result[
     return Ok(result)
 
 
-def linked_registry(facets: list[LocalFacet], toolchain: Toolchain) -> Result[RegistryUnits, str]:
+def registry_for_unit(
+    unit: UnitDescription,
+    facets: list[LocalFacet],
+    toolchain: Toolchain,
+) -> Result[RegistryUnits, str]:
+    """Bind the unit's authored Rust roots to Loaf-offered artifacts without importing private ambient dependencies."""
+    mut registry = linked_registry(facets, toolchain, unit.project_root)?
+    mut roots: list[str] = []
+    for facet in facets:
+        if facet.project != unit.project_root or facet.domain != DependencyDomain.Target:
+            continue
+        for record in facet.registry:
+            name = registry_selection(record)?.loaf.split("/")[-1].replace("-", "_")
+            if name not in roots:
+                roots.append(name)
+    for entry in bound_entries(registry.units, published_bindings(unit, toolchain, roots)?)?:
+        if ("target", entry) not in registry.anchors:
+            registry.anchors.append(("target", entry))
+    return selected_registry(registry, facets, unit.profile)
+
+
+def linked_registry(
+    facets: list[LocalFacet],
+    toolchain: Toolchain,
+    project: str,
+) -> Result[RegistryUnits, str]:
     """
     The toolchain's compiled registry units when the graph links any: a facet with a registry edge, or a Rust crate
     rustc compiles against the registry's directories. A graph of Incan Loaves alone reads no registry closure; the
@@ -313,7 +341,7 @@ def linked_registry(facets: list[LocalFacet], toolchain: Toolchain) -> Result[Re
     """
     for facet in facets:
         if len(facet.registry) > 0 or rust_facet(facet.project, false)?.kind != "":
-            return read_registry_units(Path(toolchain.registry_units))
+            return read_registry_units(Path(toolchain.registry_units), project)
     return Ok(RegistryUnits(units=[], search=[]))
 
 

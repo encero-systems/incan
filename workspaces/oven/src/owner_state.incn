@@ -22,7 +22,7 @@ from intake import intake
 from loaf_local_graph import unique
 from observation import SETTLE_SECONDS, Ledger, load_ledger, now_seconds, trace_boundary
 from owner_protocol import Reply, Request, prepares_executable
-from rust_units import rust_facet
+from rust_units import registry_record_path, rust_facet
 from testing import tests_binary
 from toolchain import Toolchain, load_toolchain, toolchain_file
 from unit import UnitDescription, describe
@@ -269,6 +269,10 @@ def toolchain_paths(toolchain: Toolchain) -> Result[list[str], str]:
         paths.append(native.path)
     for cache in toolchain.rust_abi:
         paths.append(cache)
+    if toolchain.registry_units != "":
+        paths.append(toolchain.registry_units)
+    if toolchain.registry_lock != "":
+        paths.append(toolchain.registry_lock)
     return Ok(paths + sdk_paths(toolchain.sysroot)?)
 
 
@@ -277,7 +281,7 @@ def guard_paths(unit: UnitDescription) -> Result[list[str], str]:
     The files a prepared unit depends on.
 
     1. The manifests of its project graph.
-    2. Its lock.
+    2. Its lock and any explicit registry producer record.
     3. The standard library directory with its packages' manifests.
     4. The libraries of the standard providers and compiler facades it links.
     """
@@ -288,8 +292,11 @@ def guard_paths(unit: UnitDescription) -> Result[list[str], str]:
         graph = intake(root).map_err((error) => error.message())?
         for project in graph.projects:
             paths.append(Path(project.root).joinpath("loaf.toml").0)
-    # 2. So does a change of the lock.
+    # 2. So does a change of the lock or its explicit producer selection.
     paths.append(root.joinpath("oven.lock").0)
+    registry_lock = registry_record_path(root.0)?
+    if registry_lock != "":
+        paths.append(registry_lock)
     # 3. So does a change to the set of standard packages, or to the manifest of any of them.
     paths.append(get_or("INCAN_STDLIB", ""))
     for package in standard_packages()?:
