@@ -1,6 +1,6 @@
 # RFC 141: Type matching with infer and named type operations
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-11
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -15,7 +15,7 @@
     - RFC 107 (type-directed APIs and compile-time type tokens)
     - RFC 128 (one Callable trait and the shared signature model)
     - RFC 140 (typed holes and shared language-server diagnostics)
-- **Issue:** —
+- **Issue:** [#2460](https://github.com/encero-systems/incan/issues/2460)
 - **RFC PR:** —
 - **Written against:** v0.6
 - **Shipped in:** —

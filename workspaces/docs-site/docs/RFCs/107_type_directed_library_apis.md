@@ -69,6 +69,8 @@ The larger design still needs an RFC because this surface touches several langua
 - Allowing overload aliases to change signatures, defaults, decorators, or runtime behavior.
 - Defining new syntax for overload declaration beyond the existing overload model.
 
+RFC 141 separately specifies structured type matching and named compile-time type operations. Type[T] tokens retain this RFC’s bounded dispatch role; that separate capability does not make tokens generally matchable or turn reflected descriptions into static generic arguments.
+
 ## Guide-level explanation
 
 A type-directed library API uses `Type[T]` when the type is an argument to the API contract rather than a value carried by the user's data.

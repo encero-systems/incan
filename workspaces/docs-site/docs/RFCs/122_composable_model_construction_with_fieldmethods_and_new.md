@@ -1,6 +1,6 @@
 # RFC 122: Composable model construction with fieldmethods and `new`
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-09-03
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
