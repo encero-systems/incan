@@ -19,6 +19,7 @@ from rust_units import (
     binary_arguments,
     decoded,
     library_arguments,
+    inspect_rust_library,
     linking,
     package_environment,
     rust_facet,
@@ -126,14 +127,22 @@ def library_graph(
     """
     The graph of a facet's Rust library.
 
-    1. A dependency contributes its published graph, or refuses by name when the publication is missing.
+    1. A dependency contributes a graph requested from its validated native producer.
     2. Only the selected project's own library is exported from source, once per digest of its inputs.
     """
-    # 1. A library built for a dependency has published its graph beside it, and that graph is the one used.
+    # 1. Native preparation may be cached; explicitly validate and request this producer's graph.
     key = facet.key()
     mut graph = Path("")
     if not own and key in prepared.built:
-        graph = Path(prepared.built[key].directory).joinpath(f"{declared.package}.incngraph")
+        graph = inspect_rust_library(
+            facet,
+            declared,
+            prepared.built[key],
+            prepared.request,
+            prepared.built,
+            search,
+            toolchain,
+        )?
     if graph.0 != "" and graph.is_file():
         project = Path(facet.project)
         return Ok(GraphUnit(path=graph, root=project, package=declared.package, version=declared.version))

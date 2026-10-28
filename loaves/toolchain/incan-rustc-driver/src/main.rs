@@ -54,6 +54,7 @@ mod panic_hooks;
 mod plan;
 mod program_entries;
 mod rust_codegraph;
+mod rust_compilation;
 mod rust_facts;
 mod rust_graph_bodies;
 mod rust_graph_records;
@@ -83,14 +84,14 @@ const CHECK_CERTIFICATE: &str = "incan.compiler-check/1\n";
 
 const USAGE: &str = "usage: incan-rustc-driver --unit UNIT CRATE OUTPUT SYSROOT [--certify PATH] [OPTIONS] | \
                      --source-interface UNIT SYSROOT DIRECTORY | \
-                     --check UNIT SYSROOT [--format text|json] [--certify PATH] [OPTIONS] | --fmt UNIT PATH [--check] | --source-files PATH | --rust-imports UNIT | --codegraph UNIT SYSROOT OUTPUT [INTERFACE] | --read-codegraph GRAPH ROOT GROUP [FIELDS_JSON] | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-compile-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --resident SOCKET GENERATION READY IDLE_SECONDS | --identity SYSROOT\n\
+                     --check UNIT SYSROOT [--format text|json] [--certify PATH] [OPTIONS] | --fmt UNIT PATH [--check] | --source-files PATH | --rust-imports UNIT | --codegraph UNIT SYSROOT OUTPUT [INTERFACE] | --read-codegraph GRAPH ROOT GROUP [FIELDS_JSON] | --rust-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-compile-codegraph OUTPUT ROOT RUSTC_ARGS... | --rust-compile RUSTC_ARGS... | --rust-abi SYSROOT OUTPUT CRATE... [--extern CRATE=RLIB] [--search DIR] | --resident SOCKET GENERATION READY IDLE_SECONDS | --identity SYSROOT\n\
                      OPTIONS: --rustc-arg ARG, --library, --shared-native DIR (native artifacts and ABI caches come from UNIT)";
 
 /// Compile an Incan unit (`--unit`, or serially from a `--resident` worker) or check one (`--check`), each from the
 /// unit description Oven wrote, publish a checking-only source interface (`--source-interface`), or write the ABI cache
 /// of Rust crates (`--rust-abi`), format source with the unit's vocabulary (`--fmt`), discover authored files
-/// (`--source-files`), or export and read checked graphs (`--codegraph`, `--read-codegraph`, `--rust-codegraph` and
-/// `--rust-compile-codegraph`).
+/// (`--source-files`), compile a native Rust producer without graph observation (`--rust-compile`), or export and read
+/// checked graphs (`--codegraph`, `--read-codegraph`, `--rust-codegraph` and `--rust-compile-codegraph`).
 ///
 /// The shared opt-in invocation sink is initialized before dispatch; disabled tracing uses the ordinary logging filter.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -116,6 +117,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("--read-codegraph") => codegraph::read(&args[1..]),
         Some("--rust-codegraph") => rust_codegraph::export(&args[1..]),
         Some("--rust-compile-codegraph") => rust_codegraph::compile(&args[1..]),
+        Some("--rust-compile") => rust_compilation::compile(&args[1..]),
         Some("--rust-abi") => rust_abi(&args[1..]),
         Some("--rust-imports") => rust_imports::export(&args[1..]),
         Some("--identity") => verify_sysroot(&args[1..]),

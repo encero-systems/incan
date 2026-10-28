@@ -21,6 +21,7 @@ from rust_units import (
     RustBuild,
     RustFacet,
     compile_rust_library,
+    inspect_rust_library,
     identity,
     library_compile_arguments,
     linking,
@@ -900,6 +901,7 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
     environment = package_environment(facet.project, declared, declared.crate_name)
     key = rust_library_producer_key(facet, installed, arguments, environment, request, toolchain)?
     stamp = installed.joinpath("library.oven-inputs")
+    # A fully validated older three-output proof migrates without asking its observer to run.
     record(stamp, key, [artifact, graph, dependencies])?
     record(installed.joinpath("library.graph-inputs"), rust_library_graph_key(key, toolchain.driver)?, [graph])?
     # 2. The selected producer is returned, rather than creating a consumer-local library with the same identity.
@@ -908,6 +910,7 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
     retained = compile_rust_library(facet, declared, output, request, built, [])?
     assert retained.reused and retained.artifact == artifact.0
     assert not output.is_dir()
+    assert reusable([artifact, dependencies], stamp, key)?
     verify_relocated_rust_producer(facet, declared, output, request, built, artifact)?
     verify_installed_graph_refresh(facet, declared, output, request, built, artifact, graph, dependencies, included)?
     # 3. Each proof dimension independently prevents reuse.
@@ -916,7 +919,7 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
     request.installed["data"] = [artifact.0]
     remove(stamp)?
     require_installed_refusal(facet, declared, output, request, built, "no stored build")?
-    record(stamp, key, [artifact, graph, dependencies])?
+    record(stamp, key, [artifact, dependencies])?
     facet.features = ["alloc"]
     require_installed_refusal(facet, declared, output, request, built, "features")?
     facet.features = []
@@ -932,7 +935,7 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
     write(artifact, "replaced installed library")?
     require_installed_refusal(facet, declared, output, request, built, "replaced")?
     write(artifact, "one installed library")?
-    record(stamp, key, [artifact, graph, dependencies])?
+    record(stamp, key, [artifact, dependencies])?
     write(setup.dependency, "rebuilt exact native dependency")?
     require_installed_refusal(facet, declared, output, request, built, "artifacts")?
     assert not output.is_dir()
@@ -950,11 +953,11 @@ def verify_relocated_rust_producer(
     """
     Relocate an unchanged native producer and its dependency, retaining all changed-input refusals.
 
-    1. Give graph refresh an observer that cannot compile native code.
+    1. Replace the optional observer without changing native completeness.
     2. Copy the complete producer and exact dependency into another store.
     3. Reuse those bytes, then refuse replaced native and dependency bytes.
     """
-    # 1. Only graph analysis is permitted after the producer was already completed.
+    # 1. Native reuse must not invoke even an analysis-only observer after its replacement.
     selected = request
     toolchain = match selected.toolchain:
         Some(value) => value
@@ -992,10 +995,11 @@ def verify_relocated_rust_producer(
     require_installed_refusal(facet, declared, output, moved_request, relocated, "replaced")?
     write(moved, "one installed library")?
     graph = directory.joinpath("data.incngraph")
-    original_graph = read(graph)?
     write(graph, "replaced relocated graph")?
-    require_installed_refusal(facet, declared, output, moved_request, relocated, "replaced")?
-    write(graph, original_graph)?
+    kept = compile_rust_library(facet, declared, output, moved_request, relocated, [])?
+    assert kept.reused and kept.artifact == moved.0
+    requested = inspect_rust_library(facet, declared, kept, moved_request, relocated, [], toolchain)?
+    assert read(requested)? == "relocated checked graph"
     write(dependency, "replaced relocated dependency")?
     require_installed_refusal(facet, declared, output, moved_request, relocated, "artifacts")?
     return Ok(None)
@@ -1013,10 +1017,10 @@ def verify_installed_graph_refresh(
     included: Path,
 ) -> Result[None, str]:
     """
-    A changed observer refreshes only the graph; stale native inputs refuse before any graph command runs.
+    Native reuse never observes a graph; explicit inspection refreshes it only for unchanged native inputs.
 
     1. Replace the synthetic graph observer with one that refuses native code generation.
-    2. Require one analysis-only refresh without changing native artifact or dependency evidence identities.
+    2. Reuse with a missing graph, then explicitly refresh without changing either native output's identity.
     3. Reuse its graph, then refuse a changed source before invoking another observer generation.
     """
     # 1. The test driver accepts only the graph observation command.
@@ -1033,26 +1037,35 @@ def verify_installed_graph_refresh(
     assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
     native_before = artifact_identity(artifact)?
     dependencies_before = artifact_identity(dependencies)?
-    # 2. A new graph generation must retain both native outputs verbatim.
+    # 2. A missing graph and a changed observer do not create native work or an implicit inspection.
+    remove(graph)?
     refreshed = compile_rust_library(facet, declared, output, selected, built, [])?
     assert refreshed.reused and refreshed.artifact == artifact.0
+    assert not graph.is_file() and not attempts.is_file()
+    requested = inspect_rust_library(facet, declared, refreshed, selected, built, [], toolchain)?
+    assert requested.0 == graph.0
     assert graph.read_text("utf-8", "strict").map_err((error) => error.message())? == "new checked graph"
     assert artifact_identity(artifact)? == native_before
     assert artifact_identity(dependencies)? == dependencies_before
     # 3. No second analysis is needed, and stale source never authorizes a graph refresh.
     retained = compile_rust_library(facet, declared, output, selected, built, [])?
     assert retained.artifact == artifact.0
+    reused_graph = inspect_rust_library(facet, declared, retained, selected, built, [], toolchain)?
+    assert reused_graph.0 == graph.0
     assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "x"
     write(driver, script + "# another observer generation\n")?
     write(included, "source changed before graph refresh")?
     require_installed_refusal(facet, declared, output, selected, built, "sources")?
     assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "x"
     write(included, "one included value")?
-    _ = compile_rust_library(facet, declared, output, selected, built, [])?
+    native = compile_rust_library(facet, declared, output, selected, built, [])?
+    assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "x"
+    updated_graph = inspect_rust_library(facet, declared, native, selected, built, [], toolchain)?
+    assert updated_graph.0 == graph.0
     # A source mutation during observation cannot publish either the pending graph or a new native proof.
     changed = script + f"printf 'late source write' > '{included.0}'\n" + "printf 'must not publish' > \"$2\"\n"
     write(driver, changed)?
-    match compile_rust_library(facet, declared, output, selected, built, []):
+    match inspect_rust_library(facet, declared, native, selected, built, [], toolchain):
         Ok(_) =>
             assert false, "graph refresh certified a source mutation"
         Err(error) =>

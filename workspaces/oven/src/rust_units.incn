@@ -555,6 +555,7 @@ def build_prepared_rust(request: RustBuild) -> Result[list[str], str]:
         body = "\n\n".join(reports)
         return Err(f"{len(reports)} of {len(facets)} Rust units did not compile:\n\n{body}")
     # 4. The libraries that were built are recorded, so a later code graph finds them without scanning directories.
+    output.mkdir(true, true).map_err((error) => error.message())?
     publish(output.joinpath("units.json"), json_text(receipt_document(built, false))?)?
     return Ok(binaries)
 
@@ -906,9 +907,8 @@ def installed_rust_library(
     key = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain).map_err(
         (error) => f"installed native {declared.crate_name} has no current producer proof: {error}",
     )?
-    graph = directory.joinpath(f"{declared.package}.incngraph")
     dependencies = directory.joinpath("library.d")
-    outputs = [artifact, graph, dependencies]
+    outputs = [artifact, dependencies]
     stamp = directory.joinpath("library.oven-inputs")
     why = staleness(outputs, stamp, key)?
     portable = portable_key(key, directory, arguments)?
@@ -1011,7 +1011,7 @@ def retain_rust_library_graph(
 
     1. Reuse a graph from the current driver generation.
     2. Analyze unchanged native inputs without code generation or dependency-file replacement.
-    3. Require unchanged native outputs, inputs and graph producer before replacing the graph and both proofs.
+    3. Require unchanged native outputs, inputs and graph producer before replacing the graph and its proof.
     """
     # 1. The caller holds the producer directory lock across validation and graph publication.
     directory = artifact.parent()
@@ -1045,8 +1045,47 @@ def retain_rust_library_graph(
     if rust_library_graph_key(native, toolchain.driver)?.digest != selected.digest:
         return Err(f"Rust graph producer changed while refreshing {declared.crate_name}")
     place(pending, graph)?
-    record(directory.joinpath("library.oven-inputs"), native, [artifact, graph, dependencies])?
     return record(graph_stamp, selected, [graph])
+
+
+pub def inspect_rust_library(
+    facet: LocalFacet,
+    declared: RustFacet,
+    unit: BuiltUnit,
+    request: RustBuild,
+    built: Dict[str, BuiltUnit],
+    search: list[str],
+    toolchain: Toolchain,
+) -> Result[Path, str]:
+    """
+    Materialize a requested graph beside the exact completed native producer, without compiling native code.
+
+    1. Lock and validate its native inputs, outputs and relocation proof.
+    2. Reuse or refresh the graph under its independent observer identity.
+    """
+    # 1. Cached graph-preparation receipts do not authorize stale native producers.
+    artifact = Path(unit.artifact)
+    directory = artifact.parent()
+    reading = directory.lock_exclusive().map_err((error) => error.message())?
+    arguments = library_compile_arguments(facet, declared, directory, request, built, search)?
+    environment = package_environment(facet.project, declared, declared.crate_name)
+    native = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain)?
+    portable = portable_key(native, directory, arguments)?
+    if not retain_current_rust_library(
+        facet,
+        declared,
+        artifact,
+        arguments,
+        environment,
+        request,
+        toolchain,
+        native,
+        portable,
+    )?:
+        return Err(f"{declared.package}: native producer is stale; build its Loaf before inspection")
+    # 2. Only inspection requests graph work; its publication never changes native completeness.
+    retain_rust_library_graph(facet, declared, artifact, arguments, environment, request, toolchain, native)?
+    return Ok(directory.joinpath(f"{declared.package}.incngraph"))
 
 
 def compile_local_rust_library(
@@ -1130,11 +1169,11 @@ def reuse_shared_rust_library(
     toolchain: Toolchain,
 ) -> Result[Option[BuiltUnit], str]:
     """
-    Reuse a locked producer only with its complete native proof; a new graph observer refreshes only the graph.
+    Reuse a locked producer only with its complete native proof, independently of any graph observer.
 
     1. Require the requested native identity and every completed output.
     2. Reconcile relocation by exact output and extern bytes, never by artifact names.
-    3. Refresh the graph independently and return the same native artifact to this consumer.
+    3. Return the same native artifact to this consumer without graph analysis.
     """
     # 1. An entry directory's name alone cannot certify either its inputs or a partial publication.
     artifact = match library_artifact(directory, declared.crate_name, identity(facet, request.profile), declared.kind)?:
@@ -1160,7 +1199,7 @@ def reuse_shared_rust_library(
         portable,
     )?:
         return Ok(None)
-    # 3. A different graph producer does not invalidate native compilation.
+    # 3. A graph is optional and never part of this consumer's native output set.
     trace(f"unit {declared.crate_name} rust: reused shared producer")
     return Ok(
         Some(
@@ -1190,23 +1229,26 @@ def retain_current_rust_library(
     Validate a locked native producer under the same proof policy for installed generations and shared entries.
 
     1. Require complete outputs and either current filesystem identities or an exact relocation content proof.
-    2. Refresh a changed graph observer without compiling native code.
+    2. Validate a legacy three-output proof before migrating it to native-only completeness.
     3. Retain the completed output content proof for later relocation.
     """
     directory = artifact.parent()
-    graph = directory.joinpath(f"{declared.package}.incngraph")
-    outputs = [artifact, graph, directory.joinpath("library.d")]
+    outputs = [artifact, directory.joinpath("library.d")]
     stamp = directory.joinpath("library.oven-inputs")
     # 1. A moved store still needs its completed proof and stable current inputs.
     if not reusable(outputs, stamp, native)?:
-        if not stamp.is_file() or not portable_reusable(directory, portable, outputs)?:
+        if not stamp.is_file():
+            return Ok(false)
+        # 2. An old completion proof must validate every output before its graph is made optional.
+        graph = directory.joinpath(f"{declared.package}.incngraph")
+        legacy = [artifact, graph, directory.joinpath("library.d")]
+        retained = portable_reusable(directory, portable, outputs)? or reusable(legacy, stamp, native)?
+        if not retained and not portable_reusable(directory, portable, legacy)?:
             return Ok(false)
         current = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain)?
         if current.digest != native.digest:
             return Err(f"Rust producer inputs changed while verifying {declared.crate_name}")
         record(stamp, native, outputs)?
-    # 2. The graph producer has its own identity and cannot authorize stale native inputs.
-    retain_rust_library_graph(facet, declared, artifact, arguments, environment, request, toolchain, native)?
     # 3. Only completed and validated producers receive a portable proof.
     record_portable(directory, portable, outputs)?
     return Ok(true)
@@ -1226,7 +1268,7 @@ def produce_rust_library(
     Compile a locked native producer through the ordinary driver and publish only unchanged complete inputs.
 
     1. Withdraw any old proof and observe the discovered native inputs.
-    2. Compile the native artifact and checked graph together.
+    2. Compile only the native artifact and dep-info through the driver's existing pinned compiler policy.
     3. Require the selected identity and unchanged inputs before publishing completion proofs.
     """
     # 1. The discovery prepass already recorded every include and environment dependency.
@@ -1243,14 +1285,17 @@ def produce_rust_library(
         extern_artifacts(arguments),
         toolchain,
     )?
-    # 2. Native code generation and graph collection remain one existing producer invocation.
+    # 2. Native consumers need no graph; inspection observes the completed producer separately.
     trace(f"unit {declared.crate_name} rust: compiled (no current library proof)")
-    pending = directory.joinpath(f"{declared.package}.incngraph.{id()}.pending")
-    graph_arguments = ["--rust-compile-codegraph", pending.0, facet.project, "--sysroot", toolchain.sysroot] + arguments
-    invoke_rustc(toolchain.driver, graph_arguments, environment, false, declared.crate_name, Some(toolchain))?
-    # 3. Publish the graph and stamp the complete successful output set.
-    graph = directory.joinpath(f"{declared.package}.incngraph")
-    place(pending, graph)?
+    invoke_rustc(
+        toolchain.driver,
+        ["--rust-compile", "--sysroot", toolchain.sysroot] + arguments,
+        environment,
+        false,
+        declared.crate_name,
+        Some(toolchain),
+    )?
+    # 3. Stamp the complete successful native output set after revalidating its inputs.
     unit = identity(facet, request.profile)
     match library_artifact(directory, declared.crate_name, unit, declared.kind)?:
         None => return Err(f"rustc wrote no library for {declared.crate_name} into {directory.0}")
@@ -1259,9 +1304,8 @@ def produce_rust_library(
             portable = portable_key(key, directory, arguments)?
             if portable.digest != selected.digest or not inputs_unchanged(dependencies, observations)?:
                 return Err(f"Rust producer inputs changed while compiling {declared.crate_name}")
-            record(stamp, key, [artifact, graph, dependencies])?
-            record(directory.joinpath("library.graph-inputs"), rust_library_graph_key(key, toolchain.driver)?, [graph])?
-            record_portable(directory, portable, [artifact, graph, dependencies])?
+            record(stamp, key, [artifact, dependencies])?
+            record_portable(directory, portable, [artifact, dependencies])?
             return Ok(
                 BuiltUnit(
                     crate_name=declared.crate_name,
