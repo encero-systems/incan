@@ -6,7 +6,8 @@ from std.fs import Path
 from std.json import JsonValue
 from files import json_text, make_directory, read, remove, write as write_file
 from compiler_refusals import check_or_replay, compile_or_replay
-from incan_units import executable_outputs, install_executable, test_report
+from incan_units import compile_unit, executable_outputs, install_executable, test_report
+from features import FeatureRequest
 from intake import ManifestReader
 from observation import load_ledger
 from native_closure_input import NativeClosureInput, native_bindings
@@ -29,8 +30,9 @@ from rust_units import (
 )
 from loaf_local_graph import LocalEdge, LocalFacet
 from rust_activation import DependencyDomain
-from toolchain import NativeCrate, Toolchain
-from unit import UnitDescription, UnitLoaf
+from rust_target import decoded
+from toolchain import NativeCrate, Toolchain, load_toolchain
+from unit import UnitDescription, UnitLoaf, describe
 from unit_rust import add_extern, compile_library_unit
 from unit_freshness import (
     Key,
@@ -157,7 +159,15 @@ pub def test_unchanged_unit_is_keyed_without_reading_or_listing() -> Result[None
 
 
 pub def test_source_edit_rekeys_and_hashes_only_what_changed() -> Result[None, str]:
-    """An edited source changes the key and costs one hash; a new module also relists its directory."""
+    """
+    Retain precise source keys and current executable behavior after edits.
+
+    1. Rekey changed sources and directories, keeping equivalent rewritten bytes reusable.
+    2. Invalidate changed manifests and test siblings.
+    3. Replay only unchanged certified refusals and check reports.
+    4. Compare a private body edit's executed result with an independent cold build.
+    """
+    # 1. Changed inputs cost only their own hash or directory listing.
     scratch = scratch_directory()?
     setup = fixture(scratch.path())?
     first = reconcile(scratch.path(), setup)?
@@ -174,7 +184,7 @@ pub def test_source_edit_rekeys_and_hashes_only_what_changed() -> Result[None, s
     write(Path(setup.unit.source), "def main() -> None:\n    println(\"edited\")\n")?
     rewritten = reconcile(scratch.path(), setup)?
     assert rewritten.key == added.key
-    # Configuration is part of the key, and so are the siblings of an entry outside the source root (a test).
+    # 2. Configuration and siblings of an entry outside the source root belong in the key too.
     write(setup.root.joinpath("loaf.toml"), "[project]\nname = \"app\"\nversion = \"0.2.0\"\n")?
     manifest = reconcile(scratch.path(), setup)?
     assert manifest.key != rewritten.key
@@ -187,9 +197,74 @@ pub def test_source_edit_rekeys_and_hashes_only_what_changed() -> Result[None, s
     write(setup.root.joinpath("tests").joinpath("helpers.incn"), "pub def helper() -> int:\n    return 2\n")?
     helper = reconcile(scratch.path(), testing)?
     assert helper.key != before.key
+    # 3. Cached failures and check reports obey the same source freshness rules.
     verify_refusal_replay(scratch.path().joinpath("refusals"))?
     verify_check_replay(scratch.path().joinpath("checks"))?
+    # 4. A current key must produce current behavior, including through an unchanged caller.
+    verify_private_body_execution(scratch.path().joinpath("execution"))?
     return Ok(None)
+
+
+def verify_private_body_execution(scratch: Path) -> Result[None, str]:
+    """
+    Compare warm and cold executable behavior after a private function body changes without changing its signature.
+
+    1. Build a three-module program and reuse its unchanged executable.
+    2. Edit one private body, shifting a later declaration, and require its callers to observe the new result.
+    3. Compare with an independent cold project, then restore the original body and behavior.
+    """
+    toolchain = load_toolchain()?
+    warm = scratch.joinpath("warm")
+    cold = scratch.joinpath("cold")
+    original = "def private_value() -> int:\n    return 7\n"
+    edited = "def private_value() -> int:\n    answer = 40\n    return answer + 1\n"
+    # 1. The stable sibling and the public caller are unchanged throughout the edit sequence.
+    write_body_project(warm, original)?
+    assert body_program_output(warm, toolchain)? == "10\n"
+    binary = warm.joinpath("target/body-probe")
+    before = artifact_identity(binary)?
+    assert body_program_output(warm, toolchain)? == "10\n"
+    assert artifact_identity(binary)? == before
+    # 2. The private declaration's signature stays the same; its body and the caller's coordinates change.
+    write_body_module(warm, edited)?
+    actual = body_program_output(warm, toolchain)?
+    assert actual == "44\n", actual
+    # 3. A fresh project has no retained unit, checked module or function plan to replay.
+    write_body_project(cold, edited)?
+    assert body_program_output(cold, toolchain)? == actual
+    write_body_module(warm, original)?
+    assert body_program_output(warm, toolchain)? == "10\n"
+    return Ok(None)
+
+
+def write_body_project(project: Path, body: str) -> Result[None, str]:
+    """Create one program whose private helper is reached through an unchanged public caller and sibling module."""
+    manifest = "[project]\nname='body_reuse'\nversion='0.1.0'\n[project.scripts]\nmain='src/main.incn'\n"
+    write(project.joinpath("loaf.toml"), manifest)?
+    imports = "from values import read_value\nfrom stable import stable_value\n\n\n"
+    main = "def main() -> None:\n    println(read_value() + stable_value())\n"
+    write(project.joinpath("src/main.incn"), imports + main)?
+    write(project.joinpath("src/stable.incn"), "pub def stable_value() -> int:\n    return 3\n")?
+    return write_body_module(project, body)
+
+
+def write_body_module(project: Path, body: str) -> Result[None, str]:
+    """Replace the private implementation while preserving the exact public caller's source text."""
+    caller = "\n\npub def read_value() -> int:\n    return private_value()\n"
+    return write(project.joinpath("src/values.incn"), body + caller)
+
+
+def body_program_output(project: Path, toolchain: Toolchain) -> Result[str, str]:
+    """Build through the ordinary described-unit producer and return the successfully executed program's stdout."""
+    source = project.joinpath("src/main.incn")
+    unit = describe(source, "debug", FeatureRequest(), selected_toolchain=Some(toolchain))?
+    binary = project.joinpath("target/body-probe")
+    code = compile_unit(unit, toolchain, binary)?
+    assert code == 0, f"body-edit program failed to compile: {code}"
+    mut command = Command.new(binary.0)
+    output = command.output().map_err((error) => f"cannot run {binary.0}: {error}")?
+    assert output.status.success(), decoded(output.stderr)
+    return Ok(decoded(output.stdout))
 
 
 def verify_refusal_replay(scratch: Path) -> Result[None, str]:
