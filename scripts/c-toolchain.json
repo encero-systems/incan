@@ -1,0 +1,19 @@
+{
+  "schema": "incan.c-toolchain-release/1",
+  "registry": "ghcr.io/encero-systems/incan.pub",
+  "llvm": "22.1.8",
+  "clang": {
+    "x86_64-unknown-linux-gnu": {
+      "repository": "toolchain/clang",
+      "tag": "22.1.8-x86_64-unknown-linux-gnu",
+      "digest": "sha256:10c1931e3c9db6191ffbe8f7df4056b810d74eb7b06edd39c908e5933a72c25d"
+    }
+  },
+  "sysroots": {
+    "x86_64-unknown-linux-gnu": {
+      "repository": "toolchain/c-sysroot",
+      "tag": "glibc-2.28-x86_64-unknown-linux-gnu-81490a014fd0",
+      "digest": "sha256:2c9fb8f57c533d039a03f615db02d18c92d45510a9a40e83ed89e25f623d04d9"
+    }
+  }
+}

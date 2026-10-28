@@ -440,6 +440,9 @@ pub model LocalFacet:
     pub registry: list[JsonValue]
     # The aliases of the active registry edges, in the order of `registry`.
     pub registry_aliases: list[str]
+    # The Loaf's declared name and version, which name its compiled unit the same way in every checkout.
+    pub package: str = ""
+    pub version: str = ""
 
     def key(self) -> str:
         """What names the facet in a build: its project and compilation domain."""
@@ -656,5 +659,7 @@ def facet_of(
         local=local,
         registry=registry,
         registry_aliases=aliases,
+        package=optional_string(document, "project.name")?.unwrap_or(""),
+        version=optional_string(document, "project.version")?.unwrap_or(""),
     )
     return Ok((facet, children))
