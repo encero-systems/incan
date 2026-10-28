@@ -22,6 +22,7 @@ pub mod body_ir;
 mod body_ir_parameter_names;
 pub mod compiler_stack;
 pub mod contract_metadata;
+pub mod declaration_interface;
 pub mod decorator_resolution;
 pub mod executable_resolution;
 pub mod feature_metadata;

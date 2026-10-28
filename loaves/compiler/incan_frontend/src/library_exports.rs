@@ -215,13 +215,15 @@ fn path_is_already_absolute(path: &[String]) -> bool {
     matches!(path.first().map(String::as_str), Some("std" | "rust" | "pub"))
 }
 
-#[derive(Debug, Clone)]
+/// Checked type parameter and its complete declared and inferred caller obligations.
+#[derive(Debug, Clone, PartialEq)]
 pub struct CheckedTypeParam {
     pub name: String,
     pub bounds: Vec<CheckedTypeBound>,
 }
 
-#[derive(Debug, Clone)]
+/// Resolved generic obligation, preserving owner provenance and implementation-only requirements for exact replay.
+#[derive(Debug, Clone, PartialEq)]
 pub struct CheckedTypeBound {
     pub name: String,
     pub source_name: Option<String>,
@@ -268,7 +270,9 @@ pub struct CheckedMethod {
     pub has_body: bool,
 }
 
-#[derive(Debug, Clone)]
+/// Checked callable surface, including keyword binding and materializable defaults. Equality compares all retained
+/// facts so a private codec can reject a lossy public-contract projection before publishing a reusable header.
+#[derive(Debug, Clone, PartialEq)]
 pub struct CheckedFunctionExport {
     pub name: String,
     pub emitted_name: Option<String>,
@@ -1353,7 +1357,7 @@ fn checked_preset_path(expr: &Expr) -> Vec<String> {
 ///
 /// A type parameter exports its declared bounds as spelled in source, then the `Eq` and `Hash` bounds the checker
 /// inferred for it because the body hashes it (#1758).
-fn checked_function_export(
+pub(crate) fn checked_function_export(
     function: &FunctionDecl,
     checker: &TypeChecker,
     span: Span,
