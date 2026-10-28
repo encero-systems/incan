@@ -2,7 +2,8 @@
 //!
 //! Tracks all named entities (types, functions, variables, traits) and their scopes.
 
-use std::collections::{HashMap, HashSet};
+use std::cell::RefCell;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
 use std::sync::Arc;
 
@@ -300,6 +301,8 @@ pub struct SymbolTable {
     /// Module type spellings whose shadowing can change a nominal or alias contribution.
     nominal_binding_names: HashSet<String>,
     symbols: Vec<Symbol>,
+    /// Historical Rust bindings in definition order, refreshed after arbitrary mutable symbol access.
+    rust_items: RefCell<RustItemIndex>,
     scopes: Vec<Scope>,
     current_scope: usize,
     current_scope_binding_transaction: Option<BindingTransaction>,
@@ -354,6 +357,14 @@ pub struct SymbolTable {
     binding_collisions: Vec<SymbolBindingCollision>,
 }
 
+/// A kind index over the authoritative symbol vector, including inactive and shadowed Rust definitions.
+/// Mutable access queues an ID because it can change either the kind or the attached Rust metadata.
+#[derive(Debug, Default)]
+struct RustItemIndex {
+    items: BTreeSet<SymbolId>,
+    pending: HashSet<SymbolId>,
+}
+
 impl Default for SymbolTable {
     /// Construct a usable root scope with builtin symbols, matching [`SymbolTable::new`]. An empty scope vector is
     /// not a valid table: lexical lookup and registration require the current root scope to exist.
@@ -369,6 +380,7 @@ impl SymbolTable {
             nominal_revision: InventoryRevision::default(),
             nominal_binding_names: HashSet::new(),
             symbols: Vec::new(),
+            rust_items: RefCell::new(RustItemIndex::default()),
             scopes: vec![Scope::new(None, ScopeKind::Module)],
             current_scope: 0,
             current_scope_binding_transaction: None,
@@ -919,6 +931,9 @@ impl SymbolTable {
         }
 
         let name = symbol.name.clone();
+        if matches!(&symbol.kind, SymbolKind::RustItem(_)) {
+            self.rust_items.get_mut().items.insert(id);
+        }
         self.symbols.push(symbol);
 
         if self.minting_builtins {
@@ -1367,7 +1382,47 @@ impl SymbolTable {
     /// Get a mutable symbol by ID, invalidating nominal facts before root metadata can change.
     pub fn get_mut(&mut self, id: SymbolId) -> Option<&mut Symbol> {
         self.invalidate_nominal_symbol(id);
+        if self.symbols.get(id).is_some() {
+            self.rust_items.get_mut().pending.insert(id);
+        }
         self.symbols.get_mut(id)
+    }
+
+    /// Refresh only symbols whose mutable access could have changed Rust-binding membership.
+    fn refresh_rust_items(&self) {
+        if self.rust_items.borrow().pending.is_empty() {
+            return;
+        }
+        let mut index = self.rust_items.borrow_mut();
+        let RustItemIndex { items, pending } = &mut *index;
+        for id in pending.drain() {
+            if self
+                .symbols
+                .get(id)
+                .is_some_and(|symbol| matches!(&symbol.kind, SymbolKind::RustItem(_)))
+            {
+                items.insert(id);
+            } else {
+                items.remove(&id);
+            }
+        }
+    }
+
+    /// Borrow live Rust item records in their original definition order without scanning unrelated symbols.
+    ///
+    /// The callback scopes the index borrow; metadata stays in the symbol vector, so attachment, replacement,
+    /// shadowing and kind changes retain the same first-match behavior as a historical full-table scan.
+    pub(crate) fn with_rust_items<'a, T>(
+        &'a self,
+        consume: impl FnOnce(&mut dyn Iterator<Item = &'a RustItemInfo>) -> T,
+    ) -> T {
+        self.refresh_rust_items();
+        let index = self.rust_items.borrow();
+        let mut items = index.items.iter().filter_map(|id| match &self.symbols.get(*id)?.kind {
+            SymbolKind::RustItem(info) => Some(info),
+            _ => None,
+        });
+        consume(&mut items)
     }
 
     /// Invalidate before mutable root-symbol access can alter its identity, kind or spelling.
@@ -3155,8 +3210,9 @@ mod tests {
         assert_eq!(r, ResolvedType::RustPath("substrait::proto::type::Binary".to_string()));
     }
 
+    /// Rust aliases retain canonical resolution while their sparse view follows arbitrary symbol mutations.
     #[test]
-    fn resolve_type_canonicalizes_generic_rust_import_and_nested_collection() {
+    fn resolve_type_canonicalizes_generic_rust_import_and_nested_collection() -> Result<(), String> {
         let mut table = SymbolTable::new();
         for (name, path) in [
             ("RustEnvelope", "rust_shadow::Envelope"),
@@ -3189,6 +3245,37 @@ mod tests {
             resolve_type(&ty, &table),
             ResolvedType::RustPath("rust_shadow::Envelope<Vec<rust_shadow::Token>>".to_string())
         );
+        assert_rust_items_match_history(&table);
+        let token = table.lookup("RustToken").ok_or("missing token")?;
+        let previous = table.get(token).ok_or("missing token symbol")?.kind.clone();
+        table.get_mut(token).ok_or("missing mutable token")?.kind = SymbolKind::Type(TypeInfo::TypeAlias);
+        assert_rust_items_match_history(&table);
+        table.get_mut(token).ok_or("missing mutable token")?.kind = previous;
+        assert_rust_items_match_history(&table);
+        table.enter_scope(ScopeKind::Block);
+        table.define_explicit_shadow(Symbol {
+            name: "RustToken".to_string(),
+            kind: SymbolKind::Type(TypeInfo::TypeAlias),
+            span: Span::default(),
+            scope: 0,
+        });
+        assert_rust_items_match_history(&table);
+        table.exit_scope();
+        assert_rust_items_match_history(&table);
+        Ok(())
+    }
+
+    /// The kind index must preserve the full scan's records and precedence, including inactive definitions.
+    fn assert_rust_items_match_history(table: &SymbolTable) {
+        let expected = table
+            .all_symbols()
+            .iter()
+            .filter_map(|symbol| match &symbol.kind {
+                SymbolKind::RustItem(info) => Some(info),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        table.with_rust_items(|items| assert_eq!(items.collect::<Vec<_>>(), expected));
     }
 
     #[test]

@@ -1443,14 +1443,15 @@ impl TypeChecker {
     /// Return already-attached or cache-only metadata for one canonical Rust identity path.
     fn known_rust_metadata_for_path(&self, canonical_path: &str) -> Option<Arc<RustItemMetadata>> {
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
-        if let Some(metadata) = self.symbols.all_symbols().iter().find_map(|sym| {
-            let SymbolKind::RustItem(info) = &sym.kind else {
-                return None;
-            };
-            if Self::normalize_rust_namespace_path(info.path.as_str()) != canonical_path {
-                return None;
+        if let Some(metadata) = self.symbols.with_rust_items(|items| {
+            for info in items {
+                if Self::normalize_rust_namespace_path(info.path.as_str()) == canonical_path
+                    && let Some(metadata) = &info.metadata
+                {
+                    return Some(Arc::clone(metadata));
+                }
             }
-            info.metadata.clone()
+            None
         }) {
             return Some(metadata);
         }
@@ -1574,42 +1575,41 @@ impl TypeChecker {
         if display_tail.contains("::") {
             let wanted = incan_lang::interop::ancestral_rust_path(display_tail);
             let mut matches = HashSet::new();
-            for symbol in self.symbols.all_symbols() {
-                let SymbolKind::RustItem(info) = &symbol.kind else {
-                    continue;
-                };
-                if matches!(info.binding, RustImportBindingKind::CrateRoot) {
-                    continue;
+            self.symbols.with_rust_items(|items| {
+                for info in items {
+                    if matches!(info.binding, RustImportBindingKind::CrateRoot) {
+                        continue;
+                    }
+                    let path = Self::normalize_rust_namespace_path(info.path.as_str()).to_string();
+                    if incan_lang::interop::ancestral_rust_path(path.as_str()) == wanted {
+                        matches.insert(path);
+                    }
                 }
-                let path = Self::normalize_rust_namespace_path(info.path.as_str()).to_string();
-                if incan_lang::interop::ancestral_rust_path(path.as_str()) == wanted {
-                    matches.insert(path);
-                }
-            }
+            });
             let mut iter = matches.into_iter();
             let first = iter.next()?;
             return if iter.next().is_none() { Some(first) } else { None };
         }
         let mut matches = HashSet::new();
-        for symbol in self.symbols.all_symbols() {
-            let SymbolKind::RustItem(info) = &symbol.kind else {
-                continue;
-            };
-            if matches!(info.binding, RustImportBindingKind::CrateRoot) {
-                continue;
-            }
-            let path = Self::normalize_rust_namespace_path(info.path.as_str()).to_string();
-            if path.rsplit("::").next() == Some(display_tail) {
-                matches.insert(path);
-                continue;
-            }
-            if let Some(metadata) = info.metadata.as_ref() {
-                let canonical_path = Self::normalize_rust_namespace_path(metadata.canonical_path.as_str()).to_string();
-                if canonical_path.rsplit("::").next() == Some(display_tail) {
-                    matches.insert(canonical_path);
+        self.symbols.with_rust_items(|items| {
+            for info in items {
+                if matches!(info.binding, RustImportBindingKind::CrateRoot) {
+                    continue;
+                }
+                let path = Self::normalize_rust_namespace_path(info.path.as_str()).to_string();
+                if path.rsplit("::").next() == Some(display_tail) {
+                    matches.insert(path);
+                    continue;
+                }
+                if let Some(metadata) = info.metadata.as_ref() {
+                    let canonical_path =
+                        Self::normalize_rust_namespace_path(metadata.canonical_path.as_str()).to_string();
+                    if canonical_path.rsplit("::").next() == Some(display_tail) {
+                        matches.insert(canonical_path);
+                    }
                 }
             }
-        }
+        });
         let mut iter = matches.into_iter();
         let first = iter.next()?;
         if iter.next().is_none() { Some(first) } else { None }
