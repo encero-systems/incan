@@ -26,8 +26,8 @@ use crate::loaf_index::LoafEntry;
 use crate::symbols::*;
 use crate::testing_markers::testing_marker_semantics_from_manifest;
 use crate::typechecker::{
-    PartialProjectionInfo, PartialProjectionPreset, PartialProjectionTargetKind, PublicLibraryTypeIdentity,
-    TypeChecker, canonical_public_library_type_name,
+    CanonicalLibraryTypeRemapping, PartialProjectionInfo, PartialProjectionPreset, PartialProjectionTargetKind,
+    PublicLibraryTypeIdentity, TypeChecker, canonical_public_library_type_name,
 };
 use incan_lang::interop::is_rust_capability_bound;
 use incan_lang::lang::decorators::{self as core_decorators, DecoratorId};
@@ -972,7 +972,10 @@ impl TypeChecker {
         manifest: &LibraryManifest,
         owner_module_path: &[String],
     ) -> HashMap<String, String> {
-        let mut remapping = self.public_library_canonical_type_remapping(library, manifest);
+        let mut remapping = self
+            .public_library_canonical_type_remapping(library, manifest)
+            .as_ref()
+            .clone();
         self.register_pub_library_declarations(library, manifest, &remapping);
         remapping.extend(self.pub_library_declaration_scope(library, manifest, owner_module_path));
         remapping
@@ -1092,7 +1095,10 @@ impl TypeChecker {
             local_names.dedup();
         }
 
-        let mut remapping = self.public_library_canonical_type_remapping(library, manifest);
+        let mut remapping = self
+            .public_library_canonical_type_remapping(library, manifest)
+            .as_ref()
+            .clone();
         for (public_name, local_names) in local_names_by_public_export {
             if let Some(identity) = self.public_library_nominal_type_identity(library, manifest, &public_name) {
                 for local_name in &local_names {
@@ -1111,12 +1117,31 @@ impl TypeChecker {
     ///
     /// Qualified module access has no local `from` import whose alias can carry identity, so every nominal manifest
     /// spelling is mapped to its checker-owned canonical key before the member's signature enters expression checking.
+    /// The admitted provider is immutable for this pass. Repeated reads restore its own identity bindings without
+    /// reconstructing layouts; source-local aliases are applied by the caller to a separate map.
     pub(super) fn public_library_canonical_type_remapping(
         &mut self,
         library: &str,
         manifest: &LibraryManifest,
-    ) -> HashMap<String, String> {
+    ) -> Arc<HashMap<String, String>> {
+        // ---- A previously projected provider ----
+        if let Some(cached) = self.canonical_pub_type_remappings.get(library) {
+            for (name, identity) in &cached.identities {
+                if !self
+                    .public_library_type_identities
+                    .get(name)
+                    .is_some_and(|existing| existing.same_binding(identity))
+                {
+                    self.public_library_type_identities
+                        .insert(name.clone(), identity.clone());
+                }
+            }
+            return Arc::clone(&cached.remapping);
+        }
+
+        // ---- The provider's canonical types ----
         let mut remapping = HashMap::new();
+        let mut identities = HashMap::new();
         let public_names = manifest
             .contract_metadata
             .identity_graph
@@ -1129,11 +1154,20 @@ impl TypeChecker {
                 continue;
             };
             let canonical_name = canonical_public_library_type_name(library, &public_name);
+            identities.insert(canonical_name.clone(), identity.clone());
             self.public_library_type_identities
                 .insert(canonical_name.clone(), identity);
             remapping.insert(public_name, canonical_name);
         }
         remapping.extend(self.public_library_foreign_type_remapping(library, manifest));
+        let remapping = Arc::new(remapping);
+        self.canonical_pub_type_remappings.insert(
+            library.to_string(),
+            CanonicalLibraryTypeRemapping {
+                remapping: Arc::clone(&remapping),
+                identities,
+            },
+        );
         remapping
     }
 
@@ -1426,6 +1460,12 @@ impl TypeChecker {
         manifest: &LibraryManifest,
         public_name: &str,
     ) -> Option<PublicLibraryTypeIdentity> {
+        if let Some(cached) = self.canonical_pub_type_remappings.get(library) {
+            return cached
+                .identities
+                .get(&canonical_public_library_type_name(library, public_name))
+                .cloned();
+        }
         self.manifest_nominal_type_info(manifest, public_name)?;
         let entry = manifest
             .contract_metadata

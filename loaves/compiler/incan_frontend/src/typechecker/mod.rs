@@ -286,6 +286,14 @@ pub struct PublicLibraryTypeIdentity {
     selected_provider: Option<LoafIdentity>,
 }
 
+/// One provider's immutable type projection for a checker pass, before source-local aliases are overlaid.
+/// The identity writes are retained separately because another import route can replace the same qualified binding.
+#[derive(Debug)]
+struct CanonicalLibraryTypeRemapping {
+    remapping: Arc<HashMap<String, String>>,
+    identities: HashMap<String, PublicLibraryTypeIdentity>,
+}
+
 impl PartialEq for PublicLibraryTypeIdentity {
     /// Compare exact declaring instances independently of consumer aliases, retaining legacy source-path distinction.
     fn eq(&self, other: &Self) -> bool {
@@ -328,6 +336,14 @@ impl std::hash::Hash for PublicLibraryTypeIdentity {
 }
 
 impl PublicLibraryTypeIdentity {
+    /// Compare complete binding provenance, which semantic equality deliberately ignores for equivalent routes.
+    fn same_binding(&self, other: &Self) -> bool {
+        self.dependency_key == other.dependency_key
+            && self.source_path == other.source_path
+            && self.canonical == other.canonical
+            && self.selected_provider == other.selected_provider
+    }
+
     /// Build one provider-qualified identity from the active dependency key and manifest source path.
     pub fn new(dependency_key: &str, source_path: &[String]) -> Self {
         Self {
@@ -808,6 +824,8 @@ pub struct TypeChecker {
     /// Tracks which `pub::` libraries have already seeded the internal transitive semantic caches for this checker
     /// run.
     pub cached_pub_libraries: HashSet<String>,
+    /// Provider projections computed once per checker pass; local import aliases remain live outside this cache.
+    canonical_pub_type_remappings: HashMap<String, CanonicalLibraryTypeRemapping>,
     /// Physical type routes projected once from checked foreign leaf identities for each imported provider.
     pub foreign_pub_type_remappings: HashMap<String, HashMap<String, String>>,
     /// Per imported provider and checked API module: the type names the module's declarations spell whose meaning
@@ -1047,6 +1065,7 @@ impl TypeChecker {
             public_library_type_identities: NominalInventory::default(),
             transitive_pub_traits: HashMap::new(),
             cached_pub_libraries: HashSet::new(),
+            canonical_pub_type_remappings: HashMap::new(),
             foreign_pub_type_remappings: HashMap::new(),
             pub_library_declaration_scopes: HashMap::new(),
             dependency_semantics_pending: false,
@@ -2681,6 +2700,7 @@ impl TypeChecker {
 
     /// Set the compiled Loaves this program imports from: its dependencies and the standard packages (DD-0007).
     pub fn set_loaves(&mut self, loaves: Arc<LoafIndex>) {
+        self.canonical_pub_type_remappings.clear();
         self.loaves = loaves;
     }
 
@@ -7110,6 +7130,7 @@ impl TypeChecker {
             self.public_library_type_identities.clear();
             self.transitive_pub_traits.clear();
             self.cached_pub_libraries.clear();
+            self.canonical_pub_type_remappings.clear();
             self.foreign_pub_type_remappings.clear();
             self.pub_library_declaration_scopes.clear();
         }
@@ -8942,6 +8963,7 @@ impl TypeChecker {
         self.public_library_type_identities.clear();
         self.transitive_pub_traits.clear();
         self.cached_pub_libraries.clear();
+        self.canonical_pub_type_remappings.clear();
         self.foreign_pub_type_remappings.clear();
         self.pub_library_declaration_scopes.clear();
         self.dependency_exports.clear();
@@ -8989,6 +9011,7 @@ impl TypeChecker {
         self.public_library_type_identities.clear();
         self.transitive_pub_traits.clear();
         self.cached_pub_libraries.clear();
+        self.canonical_pub_type_remappings.clear();
         self.foreign_pub_type_remappings.clear();
         self.pub_library_declaration_scopes.clear();
         // Skip populating dependency exports so visibility checks are bypassed.
