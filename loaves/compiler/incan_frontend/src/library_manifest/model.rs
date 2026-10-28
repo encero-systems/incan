@@ -637,8 +637,7 @@ impl LibraryIdentityGraph {
                     && entry
                         .canonical
                         .as_ref()
-                        .and_then(CanonicalIdentityExport::hydrate)
-                        .is_some_and(|candidate| candidate == *canonical)
+                        .is_some_and(|candidate| candidate.matches_canonical(canonical))
             })
             .map(|entry| entry.source_path.as_slice())
     }
@@ -700,6 +699,39 @@ pub struct CanonicalIdentityExport {
 }
 
 impl CanonicalIdentityExport {
+    /// Compare a published identity with its checked representation without allocating a hydrated copy.
+    ///
+    /// This has exactly the membership semantics of `hydrate() == Some(canonical)`, including rejection of local
+    /// scopes, unknown kinds and spans that cannot be represented on this host. Manifest searches borrow the
+    /// record rather than copying every candidate's package and module path before discovering a mismatch.
+    pub fn matches_canonical(&self, canonical: &CanonicalSymbolId) -> bool {
+        if canonical.scope_discriminant.is_some()
+            || matches!(canonical.kind, SemanticSourceTargetKind::Other(_))
+            || SymbolNamespace::from(self.namespace) != canonical.namespace
+            || self.declaration_name != canonical.declaration_name
+            || self.kind != canonical.kind.as_str()
+            || usize::try_from(self.declaration_span.start).ok() != Some(canonical.declaration_span.start)
+            || usize::try_from(self.declaration_span.end).ok() != Some(canonical.declaration_span.end)
+            || self.declaration_span.expansion != canonical.declaration_span.expansion
+        {
+            return false;
+        }
+        match (&self.origin, &canonical.origin) {
+            (
+                CanonicalIdentityOriginExport::Package { library, module_path },
+                SymbolOrigin::Package {
+                    library: checked_library,
+                    module_path: checked_module,
+                },
+            ) => library == checked_library && module_path == checked_module,
+            (CanonicalIdentityOriginExport::RustCrate { path }, SymbolOrigin::RustCrate(checked_path)) => {
+                path == checked_path
+            }
+            (CanonicalIdentityOriginExport::Builtin, SymbolOrigin::Builtin) => true,
+            _ => false,
+        }
+    }
+
     /// Project a frontend identity into the stable compiled-package identity domain.
     pub fn from_canonical(package_name: &str, identity: &CanonicalSymbolId) -> Option<Self> {
         if identity.scope_discriminant.is_some() || matches!(identity.kind, SemanticSourceTargetKind::Other(_)) {

@@ -524,7 +524,12 @@ impl LoafIndex {
                         .identity_graph
                         .exports
                         .iter()
-                        .any(|export| export.canonical.as_ref().and_then(|id| id.hydrate()).as_ref() == Some(canonical))
+                        .any(|export| {
+                            export
+                                .canonical
+                                .as_ref()
+                                .is_some_and(|id| id.matches_canonical(canonical))
+                        })
             })?;
         Some(entry)
     }
@@ -539,7 +544,12 @@ impl LoafIndex {
             .identity_graph
             .exports
             .iter()
-            .filter(|export| export.canonical.as_ref().and_then(|id| id.hydrate()).as_ref() == Some(canonical))
+            .filter(|export| {
+                export
+                    .canonical
+                    .as_ref()
+                    .is_some_and(|id| id.matches_canonical(canonical))
+            })
             .filter(|export| {
                 matches!(
                     export.kind,

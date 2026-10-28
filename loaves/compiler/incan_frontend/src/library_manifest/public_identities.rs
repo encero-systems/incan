@@ -225,6 +225,7 @@ mod tests {
             declaration_span: HirSourceSpan::new(1, 2),
         };
         export.canonical = Some(CanonicalIdentityExport::from_canonical("pkg", &canonical).ok_or("identity missing")?);
+        assert_borrowed_identity_membership(export.canonical.as_ref().ok_or("identity missing")?, &canonical);
         manifest.contract_metadata.identity_graph.exports.push(export);
         assert_eq!(
             public_executable_identities(&manifest),
@@ -265,6 +266,45 @@ mod tests {
         });
         assert_eq!(public_executable_identities(&manifest), expected);
         Ok(())
+    }
+
+    /// Borrowed membership must equal hydrated structural equality for every identity dimension and refused shape.
+    fn assert_borrowed_identity_membership(published: &CanonicalIdentityExport, canonical: &CanonicalSymbolId) {
+        let mut candidates = vec![canonical.clone()];
+        let mut changed = canonical.clone();
+        changed.namespace = SymbolNamespace::Member;
+        candidates.push(changed);
+        let mut changed = canonical.clone();
+        changed.declaration_name.push_str("different");
+        candidates.push(changed);
+        let mut changed = canonical.clone();
+        changed.origin = SymbolOrigin::Builtin;
+        candidates.push(changed);
+        let mut changed = canonical.clone();
+        changed.kind = SemanticSourceTargetKind::Model;
+        candidates.push(changed);
+        let mut changed = canonical.clone();
+        changed.declaration_span.start += 1;
+        candidates.push(changed);
+        let mut changed = canonical.clone();
+        changed.declaration_span.end += 1;
+        candidates.push(changed);
+        let mut changed = canonical.clone();
+        changed.declaration_span.expansion = Some([1; 32]);
+        candidates.push(changed);
+        let mut changed = canonical.clone();
+        changed.scope_discriminant = Some(incan_semantics_core::ScopeDiscriminant(1));
+        candidates.push(changed);
+        for candidate in candidates {
+            assert_eq!(
+                published.matches_canonical(&candidate),
+                published.hydrate().as_ref() == Some(&candidate)
+            );
+        }
+        let mut unknown = published.clone();
+        unknown.kind = "unrecognized".into();
+        assert!(!unknown.matches_canonical(canonical));
+        assert!(unknown.hydrate().is_none());
     }
 
     /// Project a source declaration fixture into the package identity domain used by manifest consumers.
