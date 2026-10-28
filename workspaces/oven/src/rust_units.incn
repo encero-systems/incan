@@ -129,7 +129,7 @@ pub def read_registry_units(
         units=completed,
         search=search,
         anchors=[],
-        recorded_bindings=recorded_registry_bindings(completed, path)?,
+        installation_bindings=recorded_registry_bindings(completed, path)?,
     )
     return project_registry(registry, project, reader)
 
@@ -141,6 +141,7 @@ def project_registry(registry: RegistryUnits, project: str, reader: ManifestRead
         return Ok(registry)
     mut selected = registry
     selected.recorded_bindings = registry_record(registry.units, Path(path))?
+    selected.installation_bindings = []
     return Ok(selected)
 
 
@@ -158,7 +159,7 @@ pub def registry_record_path(project: str, reader: ManifestReader) -> Result[str
 
 
 def recorded_registry_bindings(units: list[RegistryUnit], source: Path) -> Result[list[Tuple[str, str]], str]:
-    """Read only the selected installation's explicit producer record, validating every named catalog identity."""
+    """Read the installation's default producer choices, validating identities without creating a project lock."""
     toolchain = load_toolchain()?
     if toolchain.registry_lock == "":
         return Ok([])
@@ -368,13 +369,35 @@ def declares_any(table: TomlValue, key: str) -> Result[bool, str]:
 
 
 pub def identity(facet: LocalFacet, profile: str) -> str:
-    """A unit's identity: its project, domain, features and profile."""
-    text = f"{facet.project}\n{facet.domain.value()}\n{",".join(sorted(facet.features))}\n{profile}"
+    """
+    A unit's identity: its Loaf's name and version, domain, features and profile.
+
+    The checkout a Loaf lives in is not part of it, so an installed unit matches the same source anywhere. A facet
+    without a declared name keeps its project path.
+    """
+    mut owner = facet.project
+    if facet.package != "":
+        owner = f"{facet.package}\n{facet.version}"
+    text = f"{owner}\n{facet.domain.value()}\n{",".join(sorted(facet.features))}\n{profile}"
     return hexlify(sha256.digest(text.encode("utf-8")))[0:16]
+
+
+def refuse_shared_identities(facets: list[LocalFacet]) -> Result[None, str]:
+    """Two local Loaves declaring one name and version would compile to one unit; refuse instead of colliding."""
+    mut owners: Dict[str, str] = {}
+    for facet in facets:
+        if facet.package == "":
+            continue
+        named = f"{facet.package} {facet.version} ({facet.domain.value()})"
+        if named in owners and owners[named] != facet.project:
+            return Err(f"two local Loaves both declare {named}: {owners[named]} and {facet.project}")
+        owners[named] = facet.project
+    return Ok(None)
 
 
 pub def ordered(facets: list[LocalFacet]) -> Result[list[LocalFacet], str]:
     """The facets in an order where every unit follows the local units it links."""
+    refuse_shared_identities(facets)?
     mut done: list[str] = []
     mut result: list[LocalFacet] = []
     while len(result) < len(facets):
@@ -911,18 +934,21 @@ def installed_rust_library(
     why = staleness(outputs, stamp, key)?
     mut relocation: Option[Key] = None
     if why != "":
-        portable = portable_key(key, directory, arguments)?
+        portable = portable_key(key, directory, arguments, Path(facet.project))?
         if not stamp.is_file() or not portable_reusable(directory, portable, outputs)?:
             return Err(f"installed native {declared.crate_name} is stale: {why}; rebuild its support generation")
         current = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain)?
         if current.digest != key.digest:
             return Err(f"installed native {declared.crate_name} inputs changed while verifying relocation")
         record(stamp, key, outputs)?
+        # The portable proof covered the graph's exact bytes too, so it is kept for this key rather than rebuilt from
+        # the producer's original checkout.
+        record(directory.joinpath("library.graph-inputs"), rust_library_graph_key(key, toolchain.driver)?, [graph])?
         relocation = Some(portable)
     retain_rust_library_graph(facet, declared, artifact, arguments, environment, request, toolchain, key)?
     portable = match relocation:
         Some(selected) => selected
-        None => portable_key(key, directory, arguments)?
+        None => portable_key(key, directory, arguments, Path(facet.project))?
 
     record_portable(directory, portable, outputs)?
     # 3. Consumers search the same graph-selected native closure as the installed producer.
@@ -1097,7 +1123,7 @@ def compile_local_rust_library(
                         )?
                         record_portable(
                             directory,
-                            portable_key(key, directory, arguments)?,
+                            portable_key(key, directory, arguments, Path(facet.project))?,
                             [artifact, graph, dependencies],
                         )?
                         trace(f"unit {declared.crate_name} rust: reused")
@@ -1130,7 +1156,11 @@ def compile_local_rust_library(
                 return Err(f"Rust producer inputs changed while compiling {declared.crate_name}")
             record(stamp, key, [artifact, graph, dependencies])?
             record(directory.joinpath("library.graph-inputs"), rust_library_graph_key(key, toolchain.driver)?, [graph])?
-            record_portable(directory, portable_key(key, directory, arguments)?, [artifact, graph, dependencies])?
+            record_portable(
+                directory,
+                portable_key(key, directory, arguments, Path(facet.project))?,
+                [artifact, graph, dependencies],
+            )?
             return Ok(
                 BuiltUnit(
                     crate_name=declared.crate_name,

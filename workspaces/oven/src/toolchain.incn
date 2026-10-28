@@ -13,6 +13,8 @@ Its description is `<home>/toolchains/<toolchain>/toolchain.json` (`incan.toolch
 - `search`: the directories the dependencies of those crates live in.
 - `registry_units`: the prepared registry closure (`incan.oven.closure/1`) available to this toolchain.
 - `registry_lock`: an optional producer closure whose exact entries decide registry root selection.
+- `c_compiler` and `c_sysroot`: the optional Clang and C sysroot that C ABI checks use. A Linux toolchain carries
+  them; without them the driver uses the machine's own Clang (Xcode's on macOS).
 
 Every path is relative to the toolchain directory, which is what makes a toolchain relocatable; an absolute path is
 used as written (a bootstrap home that has not been packed).
@@ -57,6 +59,8 @@ pub model Toolchain:
     # Published linking fields are read once within this selection, never retained across owner requests blindly.
     pub native_closures: NativeClosureInput = NativeClosureInput()
     pub registry_lock: str = ""
+    pub c_compiler: str = ""
+    pub c_sysroot: str = ""
 
 
 pub def rust_compiler(toolchain: Toolchain) -> str:
@@ -145,6 +149,8 @@ def toolchain_of(document: JsonValue, directory: Path) -> Result[Toolchain, list
             worker_generation="",
             native_closures=NativeClosureInput(),
             registry_lock=optional_path(document, "registry_lock", directory)?,
+            c_compiler=optional_path(document, "c_compiler", directory)?,
+            c_sysroot=optional_path(document, "c_sysroot", directory)?,
         ),
     )
 

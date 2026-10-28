@@ -10,4 +10,9 @@ pub def driver_command(toolchain: Toolchain) -> Result[Command, str]:
     mut command = Command.new(toolchain.driver)
     configure_sdk(command, toolchain.sysroot)?
     command.env_remove("RUSTC_BOOTSTRAP")
+    # C ABI checks use the toolchain's own Clang and sysroot when it carries them, never whatever the machine has.
+    if toolchain.c_compiler != "":
+        command.env("INCAN_C_ABI_CLANG", toolchain.c_compiler)
+    if toolchain.c_sysroot != "":
+        command.env("INCAN_C_ABI_SYSROOT", toolchain.c_sysroot)
     return Ok(command)

@@ -228,6 +228,13 @@ rustup run 1.98.0 rustc -vV > "$out/rust.txt"
 export INCAN_HOME=$out/build-home
 toolchain=$INCAN_HOME/toolchains/0.6.0-dev.8
 prepare_build_home
+# A Linux toolchain carries its own pinned Clang and sysroot for C ABI checks; macOS uses the machine's Xcode.
+if [[ $target == x86_64-unknown-linux-gnu ]]; then
+    step c-toolchain "$source/scripts/fetch-c-toolchain.sh" "$target" "$toolchain/c-toolchain"
+    jq --arg clang "$toolchain/c-toolchain/clang/bin/clang" --arg sysroot "$toolchain/c-toolchain/sysroot" \
+        '.c_compiler = $clang | .c_sysroot = $sysroot' "$toolchain/toolchain.json" > "$toolchain/toolchain.json.next"
+    mv "$toolchain/toolchain.json.next" "$toolchain/toolchain.json"
+fi
 export INCAN_STDLIB=$source/loaves/stdlib
 prepare_reference
 prepare_native_lane
@@ -262,8 +269,12 @@ status=0
 [[ $status -le 1 ]] || fail "baseline runner exited $status"
 step baseline "$source/scripts/check-dev8-baseline.sh" "$source/workspaces/contracts/dev8-pass-baseline.txt" \
     "$out/baseline-contracts.log"
+# Verify from a second checkout at another path: nothing installed may depend on where it was built.
+verification=$out/verification-source
+step verification-clone git clone --shared --no-checkout "$ROOT" "$verification"
+step verification-checkout git -C "$verification" checkout --detach "$sha"
 export CI_DEV8_OUT=$out/ci
-step installed-ci "$source/scripts/ci-dev8.sh" "$out/bundle/toolchain.tar.zst" "$oven" "$out/bundle/incan-lsp"
+step installed-ci "$verification/scripts/ci-dev8.sh" "$out/bundle/toolchain.tar.zst" "$oven" "$out/bundle/incan-lsp"
 installed=($out/ci/run.*/contracts.log)
 [[ ${#installed[@]} == 1 && -f ${installed[0]} ]] || fail 'expected one installed census'
 compare_censuses "${installed[0]}"

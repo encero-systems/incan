@@ -122,6 +122,16 @@ def registry_closure_controls() -> Result[None, str]:
         Ok(_) => fail("an incompatible recorded producer fell back to another catalog entry")
         Err(reason) =>
             assert "recorded registry closure does not satisfy" in reason
+    installation = RegistryUnits(
+        units=registry.units,
+        search=[],
+        installation_bindings=[("target", "serde-b")],
+    )
+    assert installation.select([alloc], "release")?.bindings[alloc.key()] == "serde-a"
+    assert installation.select([serde], "release")?.bindings[serde.key()] == "serde-b"
+    mut published = installation
+    published.anchors = [("target", "core-a")]
+    assert published.select([serde], "release")?.bindings[serde.key()] == "serde-a"
     unavailable_requests: list[Tuple[str, list[str]]] = [("999", []), ("1", ["not_a_feature"])]
     for requirement, features in unavailable_requests:
         unavailable = RegistryDemand(
