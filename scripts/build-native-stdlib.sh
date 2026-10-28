@@ -28,20 +28,24 @@ for package in "$@"; do
     env -u RUSTC_BOOTSTRAP "$driver" --unit "$unit" "$name" "$staged/lib$name.rlib" "$sysroot" --library \
         > "$staged/build.log" 2>&1 || { tail -20 "$staged/build.log" | cut -c1-600; exit 1; }
     # Preserve the current package until its complete replacement is available to dependent source units.
+    previous=
     if [[ -e $output || -L $output ]]; then
         previous=$(mktemp -d "$output.previous.XXXXXX")
         rmdir "$previous"
         mv "$output" "$previous"
     fi
     mv "$staged" "$output"
+    [[ -z $previous ]] || rm -rf -- "$previous"
     if [[ $profile == release ]]; then
         default=$toolchain/loaves/$name/debug
+        previous=
         if [[ -e $default || -L $default ]]; then
             previous=$(mktemp -d "$default.previous.XXXXXX")
             rmdir "$previous"
             mv "$default" "$previous"
         fi
         ln -s release "$default"
+        [[ -z $previous ]] || rm -rf -- "$previous"
     fi
     if [[ -n ${SELFBUILD_ADMITTED_STDLIB:-} ]]; then
         print -r -- "$name" >> "$SELFBUILD_ADMITTED_STDLIB"
