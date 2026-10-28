@@ -405,22 +405,28 @@ def verify_native_alias_artifacts(scratch: Path) -> Result[None, str]:
 
 def verify_completed_library_abi(scratch: Path) -> Result[None, str]:
     """
-    Reuse a library whose first compilation creates its indexed Rust ABI cache.
+    Reuse complete libraries, rebuild edited or damaged ones, and preserve publication across failed replacements.
 
     1. Count a compiler that cannot start a worker and publishes the complete library artifact set, including a new
        ABI cache.
     2. Compile the prepared library twice without changing its inputs.
-    3. Require one compiler invocation and retain the published ABI cache.
+    3. Require one invocation, then invalidate source and outputs without losing the previous build on failure.
     """
     # 1. The optional cache appears only after the first compiler invocation.
     setup = fixture(scratch)?
     attempts = scratch.joinpath("attempts")
+    mode = scratch.joinpath("mode")
+    write(mode, "complete")?
     driver = Path(setup.toolchain.driver)
     mut script = "#!/bin/sh\nset -eu\n[ \"$1\" = --resident ] && exit 1\n" + f"printf x >> '{attempts.0}'\n"
     script += "directory=${4%/*}\nmkdir -p \"$directory\"\n"
+    script += f"mode=$(cat '{mode.0}')\n[ \"$mode\" != fail ] || exit 7\n"
     script += "for name in libapp.rlib app.incnlib app.incnbody app.native.json app.incngraph app.rustabi; do\n"
     script += "printf published > \"$directory/$name\"\ndone\n"
     script += "printf '{}' > \"$directory/app.incnlib\"\n"
+    script += "[ \"$mode\" != incomplete ] || rm \"$directory/app.incnbody\"\n"
+    script += "if [ \"$mode\" = without-abi ]; then rm \"$directory/app.rustabi\"; fi\n"
+    script += "exit 0\n"
     write(driver, script)?
     mut chmod = Command.new("/bin/chmod")
     assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()
@@ -433,6 +439,35 @@ def verify_completed_library_abi(scratch: Path) -> Result[None, str]:
     # 3. A missing cache or an incomplete stamp cannot pass by recompiling silently.
     assert read(attempts)? == "x"
     assert output.parent().joinpath("app.rustabi").is_file()
+    before = artifact_identity(output)?
+    stamp = output.parent().joinpath(".oven-inputs.sha256")
+    witnessed = read(stamp)?
+    write(Path(library.source), "def main() -> None:\n    println(\"edited\")\n")?
+    write(mode, "fail")?
+    assert compile_library_unit(library, setup.toolchain, output)? == 7
+    assert artifact_identity(output)? == before
+    assert read(stamp)? == witnessed
+    write(mode, "incomplete")?
+    match compile_library_unit(library, setup.toolchain, output):
+        Ok(_) =>
+            assert false, "an incomplete build cannot replace a published library"
+        Err(reason) =>
+            assert "compiler did not publish" in reason
+    assert artifact_identity(output)? == before
+    assert read(stamp)? == witnessed
+    write(mode, "without-abi")?
+    assert compile_library_unit(library, setup.toolchain, output)? == 0
+    assert artifact_identity(output)? != before
+    assert not output.parent().joinpath("app.rustabi").is_file()
+    assert compile_library_unit(library, setup.toolchain, output)? == 0
+    assert read(attempts)? == "xxxx"
+    # A missing output or a rewritten output invalidates its otherwise unchanged input proof.
+    remove(output.parent().joinpath("app.incnbody"))?
+    assert compile_library_unit(library, setup.toolchain, output)? == 0
+    write(output, "damaged")?
+    assert compile_library_unit(library, setup.toolchain, output)? == 0
+    assert read(attempts)? == "xxxxxx"
+    assert read(output)? == "published"
     return Ok(None)
 
 

@@ -1,6 +1,7 @@
 """Bind the shared local graph's exact artifacts to a compiler unit description (DD-0008)."""
 
 from std.fs import Path
+from std.tempfile import TemporaryDirectory
 from std.json import JsonValue
 from std.toml import TomlValue
 from features import FeatureRequest
@@ -30,7 +31,7 @@ from observation import trace
 from intake import ManifestReader
 from native_closure_input import NativeClosureInput
 from unit_compiler import compile_prepared_unit
-from unit_freshness import artifact_files, record, staleness, unit_key
+from unit_freshness import artifact_files, install_all, staleness, unit_key
 from vocabulary import prepare_vocabulary, stage_vocabulary
 
 
@@ -112,32 +113,47 @@ pub def compile_library_unit(
     The caller supplies its selected toolchain and exact output path after dependency preparation is complete.
 
     1. Key the library against its stored artifact stamp.
-    2. Reuse a current library, or withdraw its stale stamp and stage its vocabulary worker before compilation.
-    3. Require every published artifact, including a worker its manifest names, before recording the build.
+    2. Reuse a current library, serializing replacement with other producers of this output.
+    3. Compile in a temporary directory, requiring every published artifact before replacing the stored build.
+    4. Install the completed outputs and stamp their final filesystem identities.
     """
     # 1. Both source and native inputs contribute to the ordinary library key.
     directory = output.parent()
-    artifacts = artifact_files(directory, library.package)?
+    mut artifacts = artifact_files(directory, library.package)?
     key = unit_key(library, toolchain, compiler)?
     stamp = directory.joinpath(".oven-inputs.sha256")
     why = staleness(artifacts, stamp, key)?
-    # 2. A stamp vouches only for a complete current build.
+    # 2. Recheck after acquiring the publication lock: another producer may have completed the same request.
     if why == "":
         trace(f"unit {library.package} library: reused")
         return Ok(0)
-    if stamp.is_file():
-        stamp.unlink().map_err((error) => f"{stamp.0}: {error.message()}")?
-    stage_vocabulary(library, directory)?
-    compiled = compile_prepared_unit(library, toolchain, output, Some(key), why)?
+    directory.mkdir(true, true).map_err((error) => error.message())?
+    building = output.lock_exclusive().map_err((error) => error.message())?
+    artifacts = artifact_files(directory, library.package)?
+    if staleness(artifacts, stamp, key)? == "":
+        trace(f"unit {library.package} library: reused (built meanwhile by another command)")
+        return Ok(0)
+    # 3. A refusal or incomplete publication leaves the previous complete library available.
+    stage = TemporaryDirectory.try_new_with(".oven-library-", "", Some(directory)).map_err((error) => error.message())?
+    staged = stage.path()
+    stage_vocabulary(library, staged)?
+    compiled = compile_prepared_unit(library, toolchain, staged.joinpath(output.name()), Some(key), why)?
     if compiled != 0:
         return Ok(compiled)
-    # 3. Partial publication never receives a stamp. Publication can add an indexed Rust ABI cache, and the new
-    #    manifest decides whether a vocabulary worker belongs to the completed set.
-    completed = artifact_files(directory, library.package)?
+    # Publication can add an ABI cache or a vocabulary worker, so the staged manifest decides the completed set.
+    completed = artifact_files(staged, library.package)?
     for artifact in completed:
         if not artifact.is_file():
             return Err(f"compiler did not publish {artifact.0}")
-    record(stamp, key, completed)?
+    # 4. No old optional cache or worker may survive a build that no longer publishes it.
+    names = [artifact.name() for artifact in completed]
+    finals = [directory.joinpath(name) for name in names]
+    if stamp.is_file():
+        stamp.unlink().map_err((error) => error.message())?
+    for previous in artifacts:
+        if previous.name() not in names and previous.is_file():
+            previous.unlink().map_err((error) => error.message())?
+    install_all(completed, finals, stamp, key)?
     return Ok(0)
 
 

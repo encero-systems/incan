@@ -27,8 +27,7 @@ from rust_units import (
 )
 from toolchain import NativeCrate, Toolchain, load_toolchain, rust_compiler, toolchain_file
 from unit import UnitDescription, UnitLoaf, describe
-from unit_rust import add_extern, prepare_linked
-from vocabulary import stage_vocabulary
+from unit_rust import add_extern, compile_library_unit, prepare_linked
 
 
 def main() -> Result[None, str]:
@@ -37,21 +36,49 @@ def main() -> Result[None, str]:
 
     1. Validate the requested production mode.
     2. Read the selected source root and installed toolchain.
-    3. Produce support artifacts or describe the selected source unit.
+    3. Produce support artifacts, describe source, or compile a standard library with ordinary freshness checks.
     """
-    # 1. Only support production and a package/profile description are accepted.
+    # 1. A standard build additionally supplies its stable publication directory.
     arguments = [argument for argument in args()]
-    if len(arguments) != 2 and len(arguments) != 4:
-        return Err("usage: toolchain_native REPOSITORY [PACKAGE|runtime PROFILE]")
+    if len(arguments) not in [2, 4, 5]:
+        return Err("usage: toolchain_native REPOSITORY [PACKAGE|runtime PROFILE [OUTPUT]]")
     # 2. Both modes use the same selected source tree and native generation.
     repository = Path(arguments[1]).resolve().map_err((error) => error.message())?
     # 3. Describing source never rebuilds dependencies beneath an installed runtime.
-    if len(arguments) == 4:
+    if len(arguments) >= 4:
         toolchain = load_toolchain()?
+        if len(arguments) == 5:
+            if arguments[2] == "runtime":
+                return Err("runtime production requires its explicit source-interface description")
+            return build_standard(repository, arguments[2], arguments[3], Path(arguments[4]), toolchain)
         if arguments[2] == "runtime":
             return describe_runtime(repository, arguments[3], toolchain)
         return describe_standard(repository, arguments[2], arguments[3], toolchain)
     return publish_support(repository)
+
+
+def build_standard(
+    repository: Path,
+    package: str,
+    profile: str,
+    directory: Path,
+    toolchain: Toolchain,
+) -> Result[None, str]:
+    """
+    Compile or reuse a standard package against its admitted installed dependencies.
+
+    1. Prepare the same exact source unit as the description-only producer.
+    2. Publish through the ordinary library key, complete artifact stamp and staged replacement.
+    """
+    # 1. Native support and admitted standard providers are selected before freshness is tested.
+    project = repository.joinpath("loaves").joinpath("stdlib").joinpath(package)
+    ready = prepared_source_unit(project, profile, toolchain, false)?
+    # 2. The stable destination retains a proof across separate producer invocations.
+    output = directory.joinpath(f"lib{ready.package.replace("-", "_")}.rlib")
+    code = compile_library_unit(ready, toolchain, output)?
+    if code != 0:
+        return Err(f"standard package {package} compilation exited with status {code}")
+    return Ok(None)
 
 
 def publish_support(repository: Path) -> Result[None, str]:
@@ -89,13 +116,12 @@ def describe_standard(repository: Path, package: str, profile: str, toolchain: T
     Describe one standard source unit without rebuilding the installed generation's Rust facets.
 
     1. Prepare its source and native inputs against the installed support generation.
-    2. Stage its vocabulary worker and emit the compiler's unit description.
+    2. Emit the compiler's unit description without publishing artifacts.
     """
     # 1. Standard providers retain their admitted compiled dependencies.
     project = repository.joinpath("loaves").joinpath("stdlib").joinpath(package)
     ready = prepared_source_unit(project, profile, toolchain, false)?
-    # 2. Only standard publication stages a vocabulary worker.
-    stage_standard_worker(ready)?
+    # 2. Library compilation owns vocabulary staging together with every other published artifact.
     println(json_text(ready.to_json())?)
     return Ok(None)
 
@@ -174,14 +200,6 @@ def runtime_support_toolchain(toolchain: Toolchain, loaves: list[UnitLoaf]) -> T
 def compiled_runtime_provider(name: str) -> bool:
     """Identify compiled providers forbidden in the runtime producer's native closure."""
     return name == "incan_native_runtime" or name.startswith("incan_stdlib_")
-
-
-def stage_standard_worker(unit: UnitDescription) -> Result[None, str]:
-    """Stage a prepared vocabulary worker at the caller's publication directory when one was requested."""
-    directory = get_or("SELFBUILD_LIBRARY_OUTPUT", "")
-    if directory != "":
-        stage_vocabulary(unit, Path(directory))?
-    return Ok(None)
 
 
 def installed_support(
