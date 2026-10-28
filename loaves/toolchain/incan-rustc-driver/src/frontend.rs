@@ -1154,6 +1154,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     }
     let kind = unit.kind;
     let overflow_checks = unit.profile != "release";
+    let debug_info = unit.debug_info;
     let loaves = unit.loaves.clone();
     // A library's closure publishes only the directories beyond the toolchain generation's search index.
     let published_search = unit.own_search.clone();
@@ -1189,6 +1190,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         kind,
         overflow_checks,
         program.manifest.as_ref(),
+        debug_info,
     )
     .map_err(|error| {
         if matches!(error, crate::adapter::DriverError::Plan(_)) {

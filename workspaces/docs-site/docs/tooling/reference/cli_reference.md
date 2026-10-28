@@ -72,6 +72,7 @@ Writes the selected source's unit description as a JSON object. Execution-only o
 | `kind` | String | `program`, `library` or `test`; the default is `program`. |
 | `program_entries` | Array of strings | Additional selected program-entry paths. |
 | `package`, `version`, `profile` | Strings | Package identity, package version and selected artifact profile. |
+| `debug_info` | Integer | Native debug-information level: `0` for release, `2` for debug and other profiles. Omitted fields default to `2`. |
 | `declared_features`, `active_features` | Arrays of strings | Declared root features and the selected root features. |
 | `loaves` | Array of objects | Each entry has string `key`, `name` and `dir`, Boolean `standard`, and optional string `source_root`. The latter is omitted when authored source is unavailable. |
 | `loaves[].toolchain_provided` | Boolean | Whether the toolchain supplies the facade rather than the project declaring a dependency. Default: `false`. |

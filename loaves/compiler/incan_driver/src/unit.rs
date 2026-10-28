@@ -66,6 +66,10 @@ pub struct UnitDescription {
     pub version: String,
     /// The build profile whose Loaf artifacts the unit reads.
     pub profile: String,
+    /// Oven's selected native debug-information level. Older descriptions retain their previous full debug
+    /// information.
+    #[serde(default = "legacy_debug_info")]
+    pub debug_info: u32,
     /// Every feature the package declares, which `when feature(...)` may name.
     pub declared_features: BTreeSet<String>,
     /// The features active for this unit.
@@ -127,6 +131,11 @@ struct SearchIndex {
 /// Preserve the default policy when reading unit descriptions written before explicit provider evidence.
 fn default_vocab_policy() -> String {
     "locked-dependencies".into()
+}
+
+/// Preserve the native adapter's level 2 policy for descriptions written before Oven supplied this setting.
+fn legacy_debug_info() -> u32 {
+    2
 }
 
 /// One exact native artifact bound to the crate alias the unit names.

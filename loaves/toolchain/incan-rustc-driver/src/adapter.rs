@@ -824,6 +824,7 @@ fn instantiate_generic_externals(tcx: TyCtxt<'_>, plan: &Plan) -> Result<Option<
 /// ordinary builds and release compilation do not select that policy.
 /// `overflow_checks` is the unit profile's integer overflow policy, the one the lowering already applied to the plan;
 /// rustc applies the same policy to the arithmetic it compiles from Rust crates, such as inlined standard library code.
+/// `debug_info` is Oven's selected level from the unit description; explicit rustc arguments can override it.
 pub fn compile(
     plan: Plan,
     crate_name: &str,
@@ -836,6 +837,7 @@ pub fn compile(
     kind: UnitKind,
     overflow_checks: bool,
     manifest: Option<&incan_frontend::library_manifest::LibraryManifest>,
+    debug_info: u32,
 ) -> Result<(), DriverError> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::native_compile", input = %output.display(), functions = plan.functions.len()).entered();
     let mut timing = crate::native_timing::Timing::requested();
@@ -879,7 +881,15 @@ pub fn compile(
     let plan = Arc::new(plan);
     *PLAN.lock().map_err(|_| DriverError::State)? = Some(Arc::clone(&plan));
     *FAILURE.lock().map_err(|_| DriverError::State)? = None;
-    let mut args = compilation_arguments(crate_name, output, identity, kind, overflow_checks, &plan.span.file);
+    let mut args = compilation_arguments(
+        crate_name,
+        output,
+        identity,
+        kind,
+        overflow_checks,
+        &plan.span.file,
+        debug_info,
+    );
     let all = externs.iter().chain(&shared).cloned().collect::<Vec<_>>();
     for (name, path) in &all {
         args.push("--extern".into());
@@ -921,7 +931,8 @@ pub fn compile(
 }
 
 /// Preserve the ordinary native argument sequence; optional development linkage is appended only by its caller.
-/// Overflow checks follow the unit profile: on in debug, off in release.
+/// Overflow checks follow the unit profile; debug information uses the setting Oven supplied, before explicit
+/// overrides.
 fn compilation_arguments(
     crate_name: &str,
     output: &Path,
@@ -929,6 +940,7 @@ fn compilation_arguments(
     kind: UnitKind,
     overflow_checks: bool,
     source: &str,
+    debug_info: u32,
 ) -> Vec<String> {
     let overflow = if overflow_checks { "yes" } else { "no" };
     let mut args = vec![
@@ -946,7 +958,7 @@ fn compilation_arguments(
         "-C".into(),
         "opt-level=3".into(),
         "-C".into(),
-        "debuginfo=2".into(),
+        format!("debuginfo={debug_info}"),
         "-o".into(),
         output.to_string_lossy().into_owned(),
         // A named input is never read: the callback installs the source-free root without consuming stdin.

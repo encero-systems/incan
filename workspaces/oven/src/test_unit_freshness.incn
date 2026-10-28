@@ -145,7 +145,7 @@ def reconcile(scratch: Path, setup: Fixture) -> Result[Pass, str]:
 
 
 pub def test_unchanged_unit_is_keyed_without_reading_or_listing() -> Result[None, str]:
-    """A second pass over unchanged inputs yields the same key from metadata alone: nothing hashed or listed."""
+    """Unchanged inputs reuse metadata, with native profile settings explicitly included in their identity."""
     scratch = scratch_directory()?
     setup = fixture(scratch.path())?
     first = reconcile(scratch.path(), setup)?
@@ -155,6 +155,12 @@ pub def test_unchanged_unit_is_keyed_without_reading_or_listing() -> Result[None
     assert second.key == first.key
     assert second.hashed == 0
     assert second.listed == 0
+    assert "\"debug_info\":2" in json_text(setup.unit.to_json())?
+    debug_description = description_digest(setup.unit)?
+    mut release = setup.unit
+    release.profile = "release"
+    assert "\"debug_info\":0" in json_text(release.to_json())?
+    assert description_digest(release)? != debug_description
     return Ok(None)
 
 

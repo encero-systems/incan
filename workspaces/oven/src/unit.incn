@@ -5,6 +5,7 @@ The compiler reads no manifest; it reads this. Its fields are the compiler's `in
 
 from std.fs import Path
 from std.json import JsonValue
+from codegen import native_debug_info
 from features import ActiveGraph, FeatureRequest, resolve_features
 from home import StandardPackage, dependency_artifact_dir, standard_artifact_dir, standard_packages
 from intake import LocalIntake, LocalProject, ManifestReader, intake, source_root_of
@@ -82,7 +83,7 @@ pub model UnitDescription:
     pub selected_toolchain: Option[Toolchain] = None
 
     def to_json(self) -> JsonValue:
-        """The description as the compiler reads it."""
+        """Serialize the unit and the native debug-information level selected by its profile."""
         return JsonValue.object(
             {"schema": JsonValue.string(UNIT_DESCRIPTION_SCHEMA), "source": JsonValue.string(self.source), "kind": JsonValue.string(
                 self.kind,
@@ -90,7 +91,9 @@ pub model UnitDescription:
                 self.source_root,
             ), "package": JsonValue.string(self.package), "version": JsonValue.string(self.version), "profile": JsonValue.string(
                 self.profile,
-            ), "declared_features": texts(self.declared_features), "active_features": texts(self.active_features), "loaves": JsonValue.array(
+            ), "debug_info": JsonValue.int(native_debug_info(self.profile)), "declared_features": texts(
+                self.declared_features,
+            ), "active_features": texts(self.active_features), "loaves": JsonValue.array(
                 [loaf.to_json() for loaf in self.loaves],
             ), "rust_crates": texts(self.rust_crates), "contract_models": texts(self.contract_models), "c_headers": texts(
                 self.c_headers,

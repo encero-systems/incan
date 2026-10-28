@@ -1,22 +1,18 @@
-"""Select optimization flags for native units and frame the flags the Incan compiler receives."""
+"""Select profile settings for native Incan units and Rust facets."""
 
 
 model CodegenProfile:
-    """Effective native compiler flags for each authored unit language."""
+    """Code-generation settings for Incan units and Rust facets."""
 
     incan_flags: list[str]
     rust_flags: list[str]
+    # Native Incan debug information is serialized in the unit's reuse identity.
+    debug_info: int = 2
 
 
-def selected_profile(profile: str) -> CodegenProfile:
-    """One profile table preserves each unit language's optimization, assertions and debug-information policy."""
-    profiles = {"debug": CodegenProfile(incan_flags=["opt-level=0", "debug-assertions=no"], rust_flags=["debuginfo=0"]), "release": CodegenProfile(
-        incan_flags=["opt-level=3"],
-        rust_flags=["opt-level=3", "debuginfo=0"],
-    )}
-    if profile in profiles:
-        return profiles[profile]
-    return CodegenProfile(incan_flags=["opt-level=0"], rust_flags=["debuginfo=0"])
+pub def native_debug_info(profile: str) -> int:
+    """Return the native Incan debug-information level selected by the profile."""
+    return selected_profile(profile).debug_info
 
 
 pub def native_arguments(profile: str) -> list[str]:
@@ -28,7 +24,8 @@ pub def rust_arguments(profile: str) -> list[str]:
     """Frame the selected profile's Rust flags for a direct rustc invocation."""
     mut arguments: list[str] = []
     for option in selected_profile(profile).rust_flags:
-        arguments = arguments + ["-C", option]
+        arguments.append("-C")
+        arguments.append(option)
     return arguments
 
 
@@ -39,3 +36,12 @@ pub def driver_arguments(profile: str) -> list[str]:
         forwarded.append("--rustc-arg")
         forwarded.append(argument)
     return forwarded
+
+
+def selected_profile(profile: str) -> CodegenProfile:
+    """Select native flags and Incan debug information: full in debug, omitted in release."""
+    if profile == "release":
+        return CodegenProfile(incan_flags=["opt-level=3"], rust_flags=["opt-level=3", "debuginfo=0"], debug_info=0)
+    if profile == "debug":
+        return CodegenProfile(incan_flags=["opt-level=0", "debug-assertions=no"], rust_flags=["debuginfo=0"])
+    return CodegenProfile(incan_flags=["opt-level=0"], rust_flags=["debuginfo=0"])
