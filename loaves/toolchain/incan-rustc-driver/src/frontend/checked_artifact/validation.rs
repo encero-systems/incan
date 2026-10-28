@@ -33,9 +33,9 @@ struct ProgramWitness<'a>(&'a mut CheckedProgram);
 impl<'a, 'de> DeserializeSeed<'de> for ProgramWitness<'a> {
     type Value = ();
 
-    /// Read the exact eight fields of the compiler-bound private program representation.
+    /// Read the exact seven fields of the compiler-bound private program representation.
     fn deserialize<D: Deserializer<'de>>(self, decoder: D) -> Result<(), D::Error> {
-        decoder.deserialize_tuple(8, self)
+        decoder.deserialize_tuple(7, self)
     }
 }
 
@@ -81,10 +81,6 @@ impl<'de> Visitor<'de> for ProgramWitness<'_> {
             return Err(A::Error::custom("checked entry inventory differs"));
         }
 
-        // ---- Already encoded graph bytes ----
-        input
-            .next_element_seed(ValuesWitness(&original.graph))?
-            .ok_or_else(missing)?;
         Ok(())
     }
 }

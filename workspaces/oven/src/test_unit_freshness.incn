@@ -186,20 +186,19 @@ def verify_checked_source_profiles(setup: Fixture) -> Result[None, str]:
     for loaf in debug.loaves:
         closure = Path(loaf.dir).joinpath(f"{loaf.name}.native.json")
         write(closure, "{\"externs\":[],\"macro_externs\":[],\"search\":[]}")?
+    absent = retain_checked_source(debug, setup.toolchain)?
+    for loaf in debug.loaves:
+        write(Path(loaf.dir).joinpath(f"{loaf.name}.incngraph"), "one requested checked graph")?
     first = retain_checked_source(debug, setup.toolchain)?
     assert first.checked_key is not None
+    assert first.checked_key == absent.checked_key
     assert retain_checked_source(first, setup.toolchain)?.checked_key == first.checked_key
     mut release = debug
     release.profile = "release"
     mut providers: list[UnitLoaf] = []
     for loaf in release.loaves:
         directory = Path(loaf.dir).parent().joinpath("release")
-        for name in [
-            f"{loaf.name}.incnlib",
-            f"{loaf.name}.incnbody",
-            f"{loaf.name}.incngraph",
-            f"{loaf.name}.native.json",
-        ]:
+        for name in [f"{loaf.name}.incnlib", f"{loaf.name}.incnbody", f"{loaf.name}.native.json"]:
             write(directory.joinpath(name), read(Path(loaf.dir).joinpath(name))?)?
         write(directory.joinpath(f"lib{loaf.name}.rlib"), "different native profile")?
         mut selected = loaf
@@ -210,6 +209,9 @@ def verify_checked_source_profiles(setup: Fixture) -> Result[None, str]:
     # 2. Semantic equivalence does not authorize reusing profile-dependent native results.
     shared = retain_checked_source(release, setup.toolchain)?
     assert shared.checked_key == first.checked_key
+    for loaf in release.loaves:
+        write(Path(loaf.dir).joinpath(f"{loaf.name}.incngraph"), "a different requested graph")?
+    assert retain_checked_source(release, setup.toolchain)?.checked_key == first.checked_key
     assert description_digest(debug)? != description_digest(release)?
     mut changed = release
     changed.active_features = ["other"]

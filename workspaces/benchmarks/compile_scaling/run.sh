@@ -82,7 +82,8 @@ for subject in ${SCALING_SUBJECTS:-lowering data oven}; do
     case $subject in
         lowering) file=loaves/compiler/incan_mir_lowering/src/lowering.incn
             stamp=loaves/toolchain/incan-rustc-driver/target/incan/loaves/incan_mir_lowering/release/.oven-inputs.sha256 ;;
-        data) file=loaves/stdlib/data/src/datetime/civil/naive.incn; stamp= ;;
+        data) file=loaves/stdlib/data/src/datetime/civil/naive.incn
+            stamp=$experiment_home/toolchains/0.6.0-dev.8/loaves/incan_stdlib_data/release/.oven-inputs.sha256 ;;
         oven) file=workspaces/oven/src/main.incn
             stamp=workspaces/oven/target/incan/release/bin/oven.oven-inputs ;;
         *) echo "Unknown subject: $subject" >&2; exit 2 ;;

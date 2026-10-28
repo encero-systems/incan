@@ -11,7 +11,7 @@ from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription, UnitLoaf
 from unit_freshness import artifact_identity, cache_identities, compiler_fingerprint, digested, fingerprint, unit_files
 
-const CHECKED_DOMAIN: str = "incan.oven.checked-source/1"
+const CHECKED_DOMAIN: str = "incan.oven.checked-source/2"
 
 
 pub def retain_checked_source(unit: UnitDescription, toolchain: Toolchain) -> Result[UnitDescription, str]:
@@ -99,12 +99,12 @@ def semantic_search(unit: UnitDescription) -> Result[list[str], str]:
 
 
 def interface_inputs(unit: UnitDescription, mut ledger: Ledger) -> Result[list[str], str]:
-    """Witness every selected Loaf's semantic bytes and native closure, including transitive dependency evidence."""
+    """Witness semantic interfaces and native closure; separately requested tooling graphs are not checker inputs."""
     mut inputs: list[str] = []
     for loaf in unit.loaves:
         inputs.append(loaf.key)
         inputs.append(loaf.name)
-        for extension in ["incnlib", "incnbody", "incngraph", "rustabi"]:
+        for extension in ["incnlib", "incnbody", "rustabi"]:
             path = Path(loaf.dir).joinpath(f"{loaf.name}.{extension}")
             inputs.append(extension)
             if path.is_file():

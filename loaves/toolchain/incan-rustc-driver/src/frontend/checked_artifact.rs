@@ -23,9 +23,9 @@ use super::CheckedProgram;
 mod validation;
 
 /// Private binary layout; Oven also binds every snapshot to its complete compiler generation.
-const SCHEMA: &str = "incan.checked-source/3";
+const SCHEMA: &str = "incan.checked-source/4";
 
-/// Borrow a complete checked program without copying its bodies or graph during serialization.
+/// Borrow a complete checked program without copying its bodies; requested graphs have a separate producer.
 #[derive(Serialize)]
 struct ProgramSnapshot<'a> {
     modules: Vec<ModuleSnapshot<'a>>,
@@ -35,7 +35,6 @@ struct ProgramSnapshot<'a> {
     files: &'a [String],
     entry: usize,
     own: usize,
-    graph: &'a [u8],
 }
 
 /// Owned twin of `ProgramSnapshot`, in the same positional order, for restoring one private compilation.
@@ -48,7 +47,6 @@ struct StoredProgram {
     files: Vec<String>,
     entry: usize,
     own: usize,
-    graph: Vec<u8>,
 }
 
 /// Preserve the public body representation and supplement every field publication intentionally skips.
@@ -182,7 +180,6 @@ fn encode<W: Write>(program: &mut CheckedProgram, writer: W) -> Result<W, Box<dy
         files: &program.files,
         entry: program.entry,
         own: program.own,
-        graph: &program.graph,
     };
     Ok(postcard::to_io(&snapshot, writer)?)
 }
@@ -228,7 +225,6 @@ fn decode(bytes: &[u8]) -> Result<CheckedProgram, Box<dyn std::error::Error>> {
         files: snapshot.files,
         entry: snapshot.entry,
         own: snapshot.own,
-        graph: snapshot.graph,
         tests: Vec::new(),
     })
 }
