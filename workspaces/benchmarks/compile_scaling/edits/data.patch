@@ -1,0 +1,8 @@
+--- a/loaves/stdlib/data/src/datetime/civil/naive.incn
++++ b/loaves/stdlib/data/src/datetime/civil/naive.incn
+@@ -1778,4 +1778,4 @@
+     """
+-    if year % 400 == 0:
++    if year % 400 == 0 and true:
+         return true
+     if year % 100 == 0:

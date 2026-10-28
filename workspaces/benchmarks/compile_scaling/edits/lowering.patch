@@ -1,0 +1,8 @@
+--- a/loaves/compiler/incan_mir_lowering/src/lowering.incn
++++ b/loaves/compiler/incan_mir_lowering/src/lowering.incn
+@@ -8213,4 +8213,4 @@
+ def trace_lowering(enabled: bool, stage: str) -> None:
+     """Report one requested lowering stage without repeating diagnostic selection at each step."""
+-    if enabled:
++    if enabled and true:
+         println(f"lowering: {stage}")
