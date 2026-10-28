@@ -136,13 +136,14 @@ pub fn required_loaf_identities(
     Ok(requested)
 }
 
-/// Read the authenticated dependency closure, allowing only exact checked source identities to satisfy local edges.
+/// Read the authenticated dependency closure and its reached package identities, allowing only exact checked
+/// source identities to satisfy local edges. Native linking consumes the same package set rather than treating
+/// every available ambient standard package as reached.
 pub fn load_loaf_modules(
     loaves: &LoafIndex,
     requested: &BTreeSet<CanonicalSymbolId>,
     checked_local: &BTreeSet<CanonicalSymbolId>,
-) -> Result<Vec<BodyIrModule>, String> {
+) -> Result<incan_frontend::executable_resolution::ResolvedExecutableModules, String> {
     incan_frontend::executable_resolution::resolve_loaf_declarations(loaves, requested, checked_local)
-        .map(|resolved| resolved.modules)
         .map_err(|error| format!("unsupported Body IR Loaf declaration: {error}"))
 }

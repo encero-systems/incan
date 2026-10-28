@@ -54,9 +54,12 @@ pub def standalone_crates(described: UnitDescription, toolchain: Toolchain) -> R
 
 
 pub def published_bindings(unit: UnitDescription, toolchain: Toolchain, roots: list[str]) -> Result[list[str], str]:
-    """Pin only requested native roots offered by available Loaves, matching the driver's required-root boundary."""
+    """Pin authored providers early; the compiler enforces standard bindings from its checked declaration reach."""
     mut paths: list[str] = []
     for loaf in unit.loaves:
+        # Standards are ambient availability here; only the compiler knows which providers this unit reaches.
+        if loaf.standard:
+            continue
         closure = Path(loaf.dir).joinpath(f"{loaf.name}.native.json")
         if not closure.is_file():
             continue
