@@ -968,8 +968,20 @@ pub(crate) fn is_package_root_module(module_path: &[String]) -> bool {
 pub fn materialize_checked_api_public_namespaces(
     api: &mut CheckedApiMetadataPackage,
 ) -> Result<(), CheckedApiPublicNamespaceError> {
+    api.public_namespaces = public_namespaces_from_modules(&api.modules)?;
+    Ok(())
+}
+
+/// Project namespaces from borrowed checked modules without copying their declarations or callable bodies.
+///
+/// Producers, legacy readers and validation use this same projection. An empty graph is legitimate for a package
+/// containing only its root module; observing that absence must not copy its complete API on every import.
+fn public_namespaces_from_modules(
+    modules: &[CheckedApiMetadata],
+) -> Result<Vec<CheckedApiPublicNamespace>, CheckedApiPublicNamespaceError> {
+    // ---- Checked source modules ----
     let mut module_paths = HashSet::new();
-    for module in &api.modules {
+    for module in modules {
         if !module_paths.insert(module.module_path.clone()) {
             return Err(CheckedApiPublicNamespaceError::DuplicateSourceModule {
                 module_path: module.module_path.clone(),
@@ -977,8 +989,9 @@ pub fn materialize_checked_api_public_namespaces(
         }
     }
 
+    // ---- Public namespaces and member origins ----
     let mut namespaces = HashMap::<Vec<String>, CheckedApiPublicNamespace>::new();
-    for module in &api.modules {
+    for module in modules {
         if is_package_root_module(&module.module_path) {
             continue;
         }
@@ -1036,6 +1049,7 @@ pub fn materialize_checked_api_public_namespaces(
             }
         }
     }
+    // ---- Deterministic publication order ----
     let mut namespaces = namespaces.into_values().collect::<Vec<_>>();
     for namespace in &mut namespaces {
         namespace
@@ -1046,8 +1060,7 @@ pub fn materialize_checked_api_public_namespaces(
         namespace.child_modules.dedup();
     }
     namespaces.sort_by(|left, right| left.path.cmp(&right.path));
-    api.public_namespaces = namespaces;
-    Ok(())
+    Ok(namespaces)
 }
 
 /// Validate that a serialized namespace projection exactly matches its checked declaration modules.
@@ -1057,11 +1070,8 @@ pub fn validate_checked_api_public_namespaces(
     if api.public_namespaces.is_empty() {
         return Ok(());
     }
-    let serialized = api.public_namespaces.clone();
-    let mut derived = api.clone();
-    derived.public_namespaces.clear();
-    materialize_checked_api_public_namespaces(&mut derived)?;
-    if serialized != derived.public_namespaces {
+    let derived = public_namespaces_from_modules(&api.modules)?;
+    if api.public_namespaces != derived {
         return Err(CheckedApiPublicNamespaceError::SerializedProjectionMismatch);
     }
     Ok(())
@@ -1076,15 +1086,8 @@ pub fn checked_api_public_module_paths(api: &CheckedApiMetadataPackage) -> Vec<V
             .map(|namespace| namespace.path.clone())
             .collect();
     }
-    let mut compatibility = api.clone();
-    materialize_checked_api_public_namespaces(&mut compatibility)
-        .map(|()| {
-            compatibility
-                .public_namespaces
-                .into_iter()
-                .map(|namespace| namespace.path)
-                .collect()
-        })
+    public_namespaces_from_modules(&api.modules)
+        .map(|namespaces| namespaces.into_iter().map(|namespace| namespace.path).collect())
         .unwrap_or_default()
 }
 
@@ -1110,21 +1113,22 @@ pub fn checked_api_modules_for_public_namespace<'a>(
 }
 
 /// Return one materialized namespace, deriving a compatibility projection only for older artifacts.
+///
+/// A populated, validated graph owns both membership and absence. Reconstructing it after a miss cannot add facts;
+/// only an omitted graph authorizes compatibility reconstruction from the borrowed modules.
 pub fn checked_api_public_namespace(
     api: &CheckedApiMetadataPackage,
     module_path: &[String],
 ) -> Option<CheckedApiPublicNamespace> {
-    if let Some(namespace) = api
-        .public_namespaces
-        .iter()
-        .find(|namespace| namespace.path == module_path)
-    {
-        return Some(namespace.clone());
+    if !api.public_namespaces.is_empty() {
+        return api
+            .public_namespaces
+            .iter()
+            .find(|namespace| namespace.path == module_path)
+            .cloned();
     }
-    let mut compatibility = api.clone();
-    materialize_checked_api_public_namespaces(&mut compatibility).ok()?;
-    compatibility
-        .public_namespaces
+    public_namespaces_from_modules(&api.modules)
+        .ok()?
         .into_iter()
         .find(|namespace| namespace.path == module_path)
 }
@@ -3697,10 +3701,23 @@ pub from crate.widgets import Widget as PublicWidget
         Ok(())
     }
 
+    /// Published namespace graphs preserve legacy lookup results and own negative namespace membership facts.
     #[test]
     fn checked_api_materializes_public_namespace_members_and_children_issue948() -> Result<(), String> {
         let mut index =
             metadata_for("pub def build() -> int:\n  return 1\n").map_err(|errors| format!("{errors:?}"))?;
+        index.module_path = vec!["main".to_string()];
+        let mut root_only = CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![index.clone()],
+            public_namespaces: Vec::new(),
+        };
+        assert!(checked_api_public_module_paths(&root_only).is_empty());
+        materialize_checked_api_public_namespaces(&mut root_only).map_err(|error| error.to_string())?;
+        assert!(root_only.public_namespaces.is_empty());
+        assert!(checked_api_public_module_paths(&root_only).is_empty());
+        assert!(checked_api_public_namespace(&root_only, &["build".to_string()]).is_none());
         index.module_path = vec!["hyperquant".to_string(), "index".to_string()];
         let mut package = CheckedApiMetadataPackage {
             schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
@@ -3709,16 +3726,28 @@ pub from crate.widgets import Widget as PublicWidget
             public_namespaces: Vec::new(),
         };
 
+        let legacy = checked_api_public_namespace(&package, &["hyperquant".to_string()])
+            .ok_or_else(|| "missing legacy parent namespace".to_string())?;
+        assert!(checked_api_public_namespace(&package, &["missing".to_string()]).is_none());
         materialize_checked_api_public_namespaces(&mut package).map_err(|error| error.to_string())?;
 
         let parent = checked_api_public_namespace(&package, &["hyperquant".to_string()])
             .ok_or_else(|| "missing parent namespace".to_string())?;
+        assert_eq!(parent, legacy);
         assert_eq!(parent.child_modules, vec!["index".to_string()]);
         assert_eq!(parent.members.len(), 1);
         assert_eq!(parent.members[0].name, "build");
         assert_eq!(
             parent.members[0].source_path,
             vec!["hyperquant".to_string(), "index".to_string(), "build".to_string()]
+        );
+        assert!(checked_api_public_namespace(&package, &["missing".to_string()]).is_none());
+        assert!(
+            checked_api_public_namespace(
+                &package,
+                &["hyperquant".to_string(), "index".to_string(), "build".to_string()]
+            )
+            .is_none()
         );
         Ok(())
     }
