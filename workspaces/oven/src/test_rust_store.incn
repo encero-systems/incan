@@ -1,0 +1,266 @@
+"""Native Rust producers are shared across consumers only while every compilation input remains equivalent."""
+
+from rust::std::fs import copy
+from rust::std::env import current_exe
+from rust::std::process import Child, Command, Stdio
+from std.environ import get_or
+from std.fs import Path
+from files import make_directory, read, write
+from home import home
+from loaf_local_graph import LocalEdge, LocalFacet
+from observation import load_ledger
+from rust_activation import DependencyDomain
+from rust_units import BuiltUnit, RegistryUnits, RustBuild, RustFacet, compile_rust_library, identity, prepared_build
+from rust_store import discovery_directory
+from scratch import scratch_directory
+from toolchain import load_toolchain, read_toolchain, rust_compiler, toolchain_directory
+from unit_freshness import artifact_identity
+
+
+model ProducerFixture:
+    """One Rust source facet reached from two independent consumer output directories."""
+
+    root: Path
+    facet: LocalFacet
+    declared: RustFacet
+    request: RustBuild
+    built: Dict[str, BuiltUnit]
+
+
+pub def test_native_rust_producers_are_shared_and_inputs_remain_authoritative() -> Result[None, str]:
+    """
+    Share one completed native producer across consumers without weakening its invalidation rules.
+
+    1. Compile a real library twice for different consumers and require the exact same artifact.
+    2. Change source, an external include, package environment, features and profile independently.
+    3. Rebuild a linked native dependency and require a new consumer producer.
+    4. Reuse through graph refresh, relocation and concurrent publication, retaining the original variant.
+    """
+    child_root = get_or("OVEN_TEST_RUST_STORE_ROOT", "")
+    if child_root != "":
+        return child_consumer(Path(child_root))
+    temporary = scratch_directory()?
+    mut setup = producer_fixture(temporary.path())?
+    # 1. Consumer ownership never changes the native inputs of the same source facet.
+    first = compile(setup, "first")?
+    before = artifact_identity(Path(first.artifact))?
+    second = compile(setup, "second")?
+    assert second.reused and second.artifact == first.artifact
+    assert artifact_identity(Path(first.artifact))? == before
+    # 2. Every native input dimension selects a different completed producer.
+    verify_input_changes(setup, first)?
+    # 3. The exact linked artifact, including its native ABI, belongs in the producer identity.
+    verify_linked_dependency(setup)?
+    # 4. A different variant or observer cannot overwrite the completed original native producer.
+    retained = compile(setup, "original")?
+    assert retained.reused and retained.artifact == first.artifact
+    assert artifact_identity(Path(first.artifact))? == before
+    assert read(Path(first.directory).joinpath("library.oven-inputs"))? != ""
+    verify_graph_refresh(setup, first)?
+    verify_relocation(setup, first)?
+    verify_concurrent_publication(temporary.path().joinpath("concurrent"))?
+    return Ok(None)
+
+
+def producer_fixture(root: Path, create: bool = true) -> Result[ProducerFixture, str]:
+    """Create a real Rust facet whose dep-info tracks both package environment and an external included file."""
+    project = root.joinpath("shared")
+    if create:
+        make_directory(project.joinpath("src"))?
+        manifest = "[project]\nname='shared_fixture'\nversion='1.0.0'\n[rust]\ntype='lib'\nedition='2024'\n"
+        write(project.joinpath("loaf.toml"), manifest)?
+        write(root.joinpath("included.txt"), "one included value")?
+        write(project.joinpath("src/lib.rs"), source(7))?
+    facet = LocalFacet(
+        project=project.0,
+        domain=DependencyDomain.Target,
+        features=[],
+        local=[],
+        registry=[],
+        registry_aliases=[],
+    )
+    declared = RustFacet(
+        crate_name="shared_fixture",
+        kind="lib",
+        edition="2024",
+        library=project.joinpath("src/lib.rs").0,
+        binaries=[],
+        package="shared_fixture",
+        version="1.0.0",
+        unstable=false,
+        sysroot=false,
+    )
+    selected = get_or("OVEN_TEST_RUST_STORE_TOOLCHAIN", "")
+    toolchain = match selected:
+        "" => load_toolchain()?
+        _ => read_toolchain(Path(selected))?
+
+    request = prepared_build(
+        RustBuild(
+            project=project.0,
+            profile="release",
+            rustc=rust_compiler(toolchain),
+            registry=RegistryUnits(units=[], search=[]),
+            toolchain=Some(toolchain),
+            toolchain_search=toolchain.search,
+        ),
+    )?
+    return Ok(ProducerFixture(root=root, facet=facet, declared=declared, request=request, built={}))
+
+
+def source(value: int) -> str:
+    """The facet's public values consume source, external include, environment and feature inputs."""
+    included = "/// Retain an external include.\npub const TEXT: &str = include_str!(\"../../included.txt\");\n"
+    environment = "/// Retain the package environment.\npub const VERSION: &str = env!(\"CARGO_PKG_VERSION\");\n"
+    ordinary = "#[cfg(not(feature = \"extra\"))]\npub const VALUE: u32 = " + str(value) + ";\n"
+    feature = "#[cfg(feature = \"extra\")]\npub const VALUE: u32 = 99;\n"
+    return included + environment + ordinary + feature
+
+
+def compile(setup: ProducerFixture, consumer: str) -> Result[BuiltUnit, str]:
+    """Compile the unchanged source facet in one independently owned consumer context."""
+    output = setup.root.joinpath(consumer).joinpath("target")
+    mut request = setup.request
+    request.project = setup.root.joinpath(consumer).0
+    return compile_rust_library(setup.facet, setup.declared, output, request, setup.built, [])
+
+
+def verify_input_changes(setup: ProducerFixture, original: BuiltUnit) -> Result[None, str]:
+    """Require source, include, environment, features, flags and compiler changes to invalidate independently."""
+    write(Path(setup.declared.library), source(8))?
+    assert compile(setup, "edited")?.artifact != original.artifact
+    write(Path(setup.declared.library), source(7))?
+    write(setup.root.joinpath("included.txt"), "another included value")?
+    assert compile(setup, "included")?.artifact != original.artifact
+    write(setup.root.joinpath("included.txt"), "one included value")?
+    mut changed = setup
+    changed.declared.version = "2.0.0"
+    assert compile(changed, "environment")?.artifact != original.artifact
+    changed = setup
+    changed.facet.features = ["extra"]
+    assert compile(changed, "features")?.artifact != original.artifact
+    changed = setup
+    changed.request.profile = "debug"
+    assert compile(changed, "profile")?.artifact != original.artifact
+    changed = setup
+    changed.declared.edition = "2021"
+    assert compile(changed, "flags")?.artifact != original.artifact
+    changed = setup
+    changed.request.native_compiler += " changed ABI"
+    assert compile(changed, "compiler")?.artifact != original.artifact
+    return Ok(None)
+
+
+def verify_graph_refresh(setup: ProducerFixture, original: BuiltUnit) -> Result[None, str]:
+    """A different graph observer may analyze the shared library but must never compile its native artifact."""
+    mut changed = setup
+    toolchain = match changed.request.toolchain:
+        Some(value) => value
+        None => return Err("shared producer fixture lacks its compiler")
+
+    wrapper = setup.root.joinpath("graph-only")
+    script = "#!/bin/sh\nset -eu\n[ \"$1\" = --rust-codegraph ] || exit 2\n"
+    write(wrapper, script + f"exec '{toolchain.driver}' \"$@\"\n")?
+    mut chmod = Command.new("/bin/chmod")
+    assert chmod.arg("+x").arg(wrapper.0).status().map_err((error) => str(error))?.success()
+    mut selected = toolchain
+    selected.driver = wrapper.0
+    changed.request.toolchain = Some(selected)
+    native = artifact_identity(Path(original.artifact))?
+    dependencies = artifact_identity(Path(original.directory).joinpath("library.d"))?
+    refreshed = compile(changed, "observer")?
+    assert refreshed.reused and refreshed.artifact == original.artifact
+    assert artifact_identity(Path(original.artifact))? == native
+    assert artifact_identity(Path(original.directory).joinpath("library.d"))? == dependencies
+    return Ok(None)
+
+
+def verify_relocation(setup: ProducerFixture, original: BuiltUnit) -> Result[None, str]:
+    """Copy a completed store into another home and require exact-byte reuse under its new filesystem identity."""
+    relocated = setup.root.joinpath("relocated-home")
+    entries = relocated.joinpath("store/rust-native/entries")
+    directory = Path(original.directory)
+    moved = entries.joinpath(directory.name())
+    copy_directory(directory, moved)?
+    # Dependency discovery refers to the same source, but its observations are reconciled in the new home.
+    unit = discovery_directory(identity(setup.facet, setup.request.profile))?
+    copy_directory(unit, relocated.joinpath("store/rust-native/units").joinpath(unit.name()))?
+    mut child = consumer_process(setup.root, "relocated", relocated.0)?
+    assert child.wait().map_err((error) => str(error))?.success()
+    artifact = moved.joinpath(Path(original.artifact).name())
+    assert read(setup.root.joinpath("relocated.result"))? == artifact.0 + "\ntrue"
+    assert file_digest(artifact)? == file_digest(Path(original.artifact))?
+    return Ok(None)
+
+
+def file_digest(path: Path) -> Result[str, str]:
+    """Compare binary artifacts by complete bytes rather than names or metadata."""
+    mut ledger = load_ledger(path.parent().joinpath("test-digests.json"), 0)
+    return ledger.digest(path)
+
+
+def copy_directory(source: Path, destination: Path) -> Result[None, str]:
+    """Copy a flat producer directory, preserving every proof while changing filesystem identity."""
+    make_directory(destination)?
+    for entry in source.iterdir().map_err((error) => error.message())?:
+        if entry.is_file():
+            copy(entry.0, destination.joinpath(entry.name()).0).map_err((error) => str(error))?
+    return Ok(None)
+
+
+def verify_concurrent_publication(root: Path) -> Result[None, str]:
+    """Two independent first consumers must publish once and receive the same completed artifact."""
+    _ = producer_fixture(root)?
+    mut first = consumer_process(root, "concurrent-one", home()?.0)?
+    mut second = consumer_process(root, "concurrent-two", home()?.0)?
+    first_ok = first.wait().map_err((error) => str(error))?.success()
+    second_ok = second.wait().map_err((error) => str(error))?.success()
+    assert first_ok and second_ok
+    one = read(root.joinpath("concurrent-one.result"))?.split("\n")
+    two = read(root.joinpath("concurrent-two.result"))?.split("\n")
+    assert one[0] == two[0]
+    assert sorted([one[1], two[1]]) == ["false", "true"]
+    return Ok(None)
+
+
+def consumer_process(root: Path, consumer: str, selected_home: str) -> Result[Child, str]:
+    """Start this test's child branch against one source fixture and an explicitly selected artifact store."""
+    executable = current_exe().map_err((error) => str(error))?
+    mut command = Command.new(f"{executable.display()}")
+    command.arg("--exact").arg("test_native_rust_producers_are_shared_and_inputs_remain_authoritative")
+    command.env("OVEN_TEST_RUST_STORE_ROOT", root.0)
+    command.env("OVEN_TEST_RUST_STORE_CONSUMER", consumer)
+    command.env("OVEN_TEST_RUST_STORE_TOOLCHAIN", toolchain_directory()?.0)
+    command.env("INCAN_HOME", selected_home).stdout(Stdio.null())
+    return command.spawn().map_err((error) => str(error))
+
+
+def child_consumer(root: Path) -> Result[None, str]:
+    """Compile one concurrent or relocated consumer without reinitializing the shared source fixture."""
+    setup = producer_fixture(root, false)?
+    consumer = get_or("OVEN_TEST_RUST_STORE_CONSUMER", "")
+    unit = compile(setup, consumer)?
+    return write(root.joinpath(consumer + ".result"), unit.artifact + "\n" + str(unit.reused))
+
+
+def verify_linked_dependency(setup: ProducerFixture) -> Result[None, str]:
+    """A changed native dependency selects a new consumer producer even when its source is unchanged."""
+    mut dependency = setup
+    dependency.facet.project = setup.root.joinpath("dependency").0
+    dependency.declared.crate_name = "shared_fixture_dep"
+    dependency.declared.package = "shared_fixture_dep"
+    dependency.declared.library = Path(dependency.facet.project).joinpath("src/lib.rs").0
+    make_directory(Path(dependency.declared.library).parent())?
+    write(Path(dependency.facet.project).joinpath("loaf.toml"), "[project]\nname='shared_fixture_dep'\n")?
+    write(Path(dependency.declared.library), "pub const VALUE: u32 = 4;\n")?
+    first = compile(dependency, "dependency-first")?
+    mut consumer = setup
+    consumer.facet.local = [LocalEdge(alias="helper", project=dependency.facet.project, domain=DependencyDomain.Target)]
+    consumer.built[dependency.facet.key()] = first
+    linked = compile(consumer, "linked-first")?
+    write(Path(dependency.declared.library), "pub const VALUE: u64 = 5;\n")?
+    second = compile(dependency, "dependency-second")?
+    assert second.artifact != first.artifact
+    consumer.built[dependency.facet.key()] = second
+    assert compile(consumer, "linked-second")?.artifact != linked.artifact
+    return Ok(None)

@@ -3,9 +3,10 @@
 from std.fs import Path
 from files import make_directory, write
 from rust_testing import build_rust_tests
-from loaf_local_graph import LocalFacet
+from loaf_local_graph import LocalDemand, LocalFacet, local_facets
 from rust_activation import DependencyDomain
-from rust_units import RustBuild, identity, read_registry_units, rust_output
+from rust_units import RustBuild, build_dependencies, identity, read_registry_units, target_configuration
+from home import home
 from scratch import scratch_directory
 from testing import run_rust_harness, test_sources
 from toolchain import load_toolchain, rust_compiler
@@ -92,13 +93,31 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
 
 
 def verify_macro_domains(macro: Path, helper: Path, request: RustBuild) -> Result[None, str]:
-    """Require one host macro producer and a target-domain test dependency, using canonical project identities."""
+    """Reuse the completed host macro and target test dependency through their exact graph keys and artifact names."""
+    canonical = macro.resolve().map_err((error) => error.message())?.0
+    demand = LocalDemand(
+        project=canonical,
+        domain=DependencyDomain.Target,
+        features=[],
+        defaults=false,
+        environment="test",
+    )
+    producers = [LocalDemand(project=canonical, domain=DependencyDomain.Host, features=[], defaults=false)]
+    facets = local_facets(demand, target_configuration(request.rustc)?, additional_roots=producers)?
+    mut native = request
+    native.rust_facet_dependencies = true
+    built = build_dependencies(native, facets, false)?
+    store = home()?.joinpath("store/rust-native/entries")
     roles = [(macro, DependencyDomain.Host, "macro_fixture"), (helper, DependencyDomain.Target, "helper")]
     for project, domain, name in roles:
         root = project.resolve().map_err((error) => error.message())?
         facet = LocalFacet(project=root.0, domain=domain, features=[], local=[], registry=[], registry_aliases=[])
-        directory = rust_output(macro, request.profile).joinpath(f"{name}-{identity(facet, request.profile)}")
-        assert directory.is_dir(), f"{name} must retain its {domain.value()} producer identity"
+        assert facet.key() in built, f"{name} must retain its {domain.value()} producer identity"
+        unit = built[facet.key()]
+        assert unit.reused, f"{name} was not completed by the test graph's original producer"
+        assert Path(unit.directory).parent().0 == store.0
+        assert Path(unit.artifact).name().startswith(f"lib{name}-{identity(facet, request.profile)}.")
+        assert Path(unit.artifact).is_file()
     return Ok(None)
 
 

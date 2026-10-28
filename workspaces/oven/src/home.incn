@@ -7,6 +7,7 @@ standard packages come from.
   `<home>/toolchains/<toolchain>/loaves/<package>/<profile>`.
 - A path dependency's artifacts live in the target directory of the root project that reaches it, so one graph's
   unified features build it once: `<root>/target/incan/loaves/<package>/<profile>`.
+- Native Rust library producers are shared across projects under `<home>/store/rust-native/entries/<input-digest>`.
 - The standard packages are the packages of the toolchain's standard-library directory, `INCAN_STDLIB`: each of its
   immediate subdirectories that holds a `loaf.toml`.
 """

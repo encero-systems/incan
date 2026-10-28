@@ -1,0 +1,15 @@
+"""Locate home-owned Rust producers by their complete native input proof, independently of consumers."""
+
+from std.fs import Path
+from home import home
+from unit_freshness import Key
+
+
+pub def discovery_directory(unit: str) -> Result[Path, str]:
+    """Retain one unit's dependency discovery under its lock; this directory never supplies a native artifact."""
+    return Ok(home()?.joinpath("store").joinpath("rust-native").joinpath("units").joinpath(unit))
+
+
+pub def producer_directory(key: Key) -> Result[Path, str]:
+    """Separate native producers by all input dimensions, retaining earlier variants for later consumers."""
+    return Ok(home()?.joinpath("store").joinpath("rust-native").joinpath("entries").joinpath(key.digest))
