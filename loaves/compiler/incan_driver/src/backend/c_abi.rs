@@ -128,9 +128,8 @@ impl CAbiVerificationPlan {
 
 /// Explicit Clang executable used for one verifier invocation.
 ///
-/// Oven will eventually provide this capability through a selected Loaf target. The first checked-binding slice
-/// keeps that policy out of source declarations while accepting an explicit test/CI override and the platform's
-/// Clang-compatible toolchain.
+/// Oven passes a toolchain's own Clang and sysroot (`INCAN_C_ABI_CLANG`, `INCAN_C_ABI_SYSROOT`) when the toolchain
+/// carries them, as Linux toolchains do. Otherwise the platform's Clang-compatible toolchain is used: Xcode's on macOS.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClangToolchain {
     executable: PathBuf,
@@ -141,9 +140,14 @@ impl ClangToolchain {
     /// Select the current platform's Clang-compatible compiler without consulting binding names or headers.
     pub fn discover(plan: &CAbiVerificationPlan) -> Result<Self, CAbiVerificationError> {
         if let Some(executable) = env::var_os("INCAN_C_ABI_CLANG").filter(|value| !value.is_empty()) {
+            let mut arguments = Vec::new();
+            if let Some(sysroot) = env::var_os("INCAN_C_ABI_SYSROOT").filter(|value| !value.is_empty()) {
+                arguments.push(OsString::from("--sysroot"));
+                arguments.push(sysroot);
+            }
             return Ok(Self {
                 executable: PathBuf::from(executable),
-                arguments: Vec::new(),
+                arguments,
             });
         }
         if plan.target().is_android() {

@@ -100,6 +100,8 @@ struct CheckedProgram {
     entry: usize,
     /// The first of the program's own modules; the Loaf declarations it reaches come before it.
     own: usize,
+    /// Standard native closures constrain linking only when this checked declaration closure reaches their package.
+    reached_loaves: BTreeSet<String>,
     /// A library unit's manifest, which its executable representation completes once the unit compiles (DD-0007).
     manifest: Option<LibraryManifest>,
     /// The owning library's portable graph bytes, encoded while its checked source context is still owned here.
@@ -247,7 +249,9 @@ fn checked_modules(
     requested.extend(runtime_callable_bindings.iter().map(|binding| binding.canonical.clone()).filter(
         |identity| matches!(&identity.origin, SymbolOrigin::Package { library, .. } if library != package_identity),
     ));
-    let mut bodies = load_loaf_modules(session.loaves(), &requested, &checked_local)?;
+    let resolved = load_loaf_modules(session.loaves(), &requested, &checked_local)?;
+    let reached_loaves = resolved.package_versions.into_keys().collect();
+    let mut bodies = resolved.modules;
     // Loaf declarations retain canonical spans but carry no source text. Do not attribute those spans to the entry.
     let mut files = bodies
         .iter()
@@ -284,6 +288,7 @@ fn checked_modules(
             files,
             entry,
             own: loaf_modules,
+            reached_loaves,
             manifest,
             graph,
             tests,
@@ -374,7 +379,9 @@ fn complete_dependency_context(
     );
     if !defaults.is_subset(&requested) {
         requested.extend(defaults);
-        let mut expanded = load_loaf_modules(loaves, &requested, checked_local)?;
+        let resolved = load_loaf_modules(loaves, &requested, checked_local)?;
+        program.reached_loaves = resolved.package_versions.into_keys().collect();
+        let mut expanded = resolved.modules;
         let own = program.modules.split_off(program.own);
         let mut files = program.files.split_off(program.own);
         let mut sources = program.sources.split_off(program.own);
@@ -1176,7 +1183,8 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     let tests = crate::test_unit::report(&program.tests, &plan.tests)?;
 
     // ---- Exact native dependencies, including checked Loaf implementation layouts ----
-    let native_externs = crate::native_crates::link_externs(&plan, &dependencies.externs, &loaves)?;
+    let native_externs =
+        crate::native_crates::link_externs(&plan, &dependencies.externs, &loaves, &program.reached_loaves)?;
     crate::adapter::compile(
         plan,
         &arguments[1],
