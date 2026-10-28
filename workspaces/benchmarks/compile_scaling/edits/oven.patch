@@ -1,0 +1,9 @@
+--- a/workspaces/oven/src/main.incn
++++ b/workspaces/oven/src/main.incn
+@@ -58,5 +58,5 @@
+     for argument in args():
+         arguments.append(argument)
+-    if len(arguments) < 2:
++    if len(arguments) < 2 and true:
+         fail("incan: a command is required", 2)
+     command = arguments[1]
