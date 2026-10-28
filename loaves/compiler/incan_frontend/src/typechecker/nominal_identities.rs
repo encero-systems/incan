@@ -65,13 +65,27 @@ mod tests {
     /// Dependency interface restoration, same-spelled declarations and alias imports retain fresh-computation maps.
     #[test]
     fn nominal_cache_matches_fresh_across_modules() -> Result<(), String> {
-        let left = program("pub model Left:\n    pub value: int\n\npub type Alias = Left\n")?;
+        let left = program(
+            "pub model Left:\n    pub value: int\n\npub type Alias = Left\n\npub def measure(value: Left) -> int:\n    return value.value\n",
+        )?;
         let right = program("from left import Alias\n\npub model Right:\n    pub value: Alias\n")?;
         let main =
             program("from right import Right\n\ndef read(value: Right) -> int:\n    return value.value.value\n")?;
+        let left_path = vec!["left".to_string()];
+        let inputs = Arc::new(super::super::SourceInterfaceInputs::from_programs([(
+            left_path.as_slice(),
+            &left,
+        )]));
         let mut checker = TypeChecker::new();
+        checker.set_source_interface_inputs(Arc::clone(&inputs));
         checker.import_module(&left, "left");
         assert_fresh(&checker);
+        assert_shared_direct_tables(&checker, "left")?;
+        let mut other = TypeChecker::new();
+        other.set_source_interface_inputs(inputs);
+        other.import_module(&left, "left");
+        assert!(!checker.local_function_decls.contains_key("measure"));
+        assert!(!other.local_function_decls.contains_key("measure"));
         let owner = checker
             .declaration_nominal_scopes
             .iter()
@@ -85,6 +99,17 @@ mod tests {
         );
         checker.import_module(&right, "right");
         assert_fresh(&checker);
+        assert_shared_direct_tables(&checker, "right")?;
+        let direct = checker
+            .dependency_direct_member_symbols
+            .get("right")
+            .ok_or("missing right declarations")?;
+        let resolved = checker
+            .dependency_member_symbols
+            .get("right")
+            .ok_or("missing right projection")?;
+        assert!(!direct.contains_key("Alias"));
+        assert!(resolved.contains_key("Alias"));
         checker.check_program(&main).map_err(|errors| format!("{errors:?}"))?;
         assert!(checker.checking_nominal_scope.borrow().is_none());
         let published = checker.type_info.declarations.named_type_identities.clone();
@@ -94,6 +119,38 @@ mod tests {
         let refused = program("def wrong() -> int:\n    return \"wrong\"\n")?;
         assert!(checker.check_program(&refused).is_err());
         assert!(checker.checking_nominal_scope.borrow().is_none());
+        Ok(())
+    }
+
+    /// Resolved member views share the declaration owner even when an import overlay adds more names.
+    fn assert_shared_direct_tables(checker: &TypeChecker, module: &str) -> Result<(), String> {
+        let direct = checker
+            .dependency_direct_member_symbols
+            .get(module)
+            .ok_or("missing direct symbols")?;
+        let resolved = checker
+            .dependency_member_symbols
+            .get(module)
+            .ok_or("missing member symbols")?;
+        assert!(Arc::ptr_eq(direct, &resolved.direct));
+        let direct = checker
+            .dependency_direct_member_type_aliases
+            .get(module)
+            .ok_or("missing direct aliases")?;
+        let resolved = checker
+            .dependency_member_type_aliases
+            .get(module)
+            .ok_or("missing member aliases")?;
+        assert!(Arc::ptr_eq(direct, &resolved.direct));
+        let direct = checker
+            .dependency_direct_member_partial_projections
+            .get(module)
+            .ok_or("missing direct projections")?;
+        let resolved = checker
+            .dependency_member_partial_projections
+            .get(module)
+            .ok_or("missing member projections")?;
+        assert!(Arc::ptr_eq(direct, &resolved.direct));
         Ok(())
     }
 

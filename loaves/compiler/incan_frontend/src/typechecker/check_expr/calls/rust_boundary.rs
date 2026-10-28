@@ -2125,9 +2125,9 @@ mod validate_rust_function_call_tests {
     }
 
     /// Native collection namespaces keep structural identity, public nominal owners remain import-independent, and
-    /// metadata aliases preserve unsized text only at the native boundary without changing source string values.
+    /// metadata aliases preserve unsized text, and binding-derived queries follow live symbol mutations.
     #[test]
-    fn canonical_rust_collection_namespaces_keep_structural_boundary_identity() {
+    fn canonical_rust_collection_namespaces_keep_structural_boundary_identity() -> Result<(), String> {
         let mut loaves = crate::loaf_index::LoafIndex::default();
         loaves.add_rust_facts(
             [("std::primitive::str", "str"), ("native::Text", "str")]
@@ -2175,7 +2175,120 @@ mod validate_rust_function_call_tests {
         for display in ["String", "std::string::String"] {
             assert_eq!(checker.native_rust_signature_type(display, ""), ResolvedType::Str);
         }
+        // ---- Imported owners and mutable binding queries ----
         verify_native_owner_is_import_independent();
+        verify_rust_binding_queries_follow_mutations()
+    }
+
+    /// Positive, negative and ambiguous queries must track insertions, metadata replacement, kind changes and a
+    /// completely new symbol table, even when the same spelling was already queried in the previous generation.
+    fn verify_rust_binding_queries_follow_mutations() -> Result<(), String> {
+        // ---- Missing, unique and ambiguous imported tails ----
+        let mut checker = TypeChecker::new();
+        assert_eq!(checker.unique_imported_rust_item_path_for_display_tail("Token"), None);
+        assert!(checker.known_rust_metadata_for_path("first::Token").is_none());
+        let first = define_query_rust_binding(&mut checker, "First", "first::Token");
+        assert_eq!(
+            checker
+                .unique_imported_rust_item_path_for_display_tail("Token")
+                .as_deref(),
+            Some("first::Token")
+        );
+        let second = define_query_rust_binding(&mut checker, "Second", "second::Token");
+        assert_eq!(checker.unique_imported_rust_item_path_for_display_tail("Token"), None);
+        let second_kind = checker
+            .symbols
+            .get(second)
+            .ok_or("missing second binding")?
+            .kind
+            .clone();
+        checker
+            .symbols
+            .get_mut(second)
+            .ok_or("missing mutable second binding")?
+            .kind = SymbolKind::Type(TypeInfo::TypeAlias);
+        assert_eq!(
+            checker
+                .unique_imported_rust_item_path_for_display_tail("Token")
+                .as_deref(),
+            Some("first::Token")
+        );
+
+        // ---- Late metadata attachment ----
+        assert_eq!(checker.unique_imported_rust_item_path_for_display_tail("Owned"), None);
+        assert!(checker.known_rust_metadata_for_path("first::Token").is_none());
+        let original = std::sync::Arc::new(RustItemMetadata {
+            canonical_path: "real::Owned".into(),
+            definition_path: None,
+            visibility: RustVisibility::Public,
+            kind: RustItemKind::Type(RustTypeInfo::default()),
+        });
+        let SymbolKind::RustItem(info) = &mut checker.symbols.get_mut(first).ok_or("missing first binding")?.kind
+        else {
+            return Err("first binding lost its Rust kind".into());
+        };
+        info.metadata = Some(std::sync::Arc::clone(&original));
+        let attached = checker
+            .known_rust_metadata_for_path("rust::first::Token")
+            .ok_or("missing metadata")?;
+        assert!(std::sync::Arc::ptr_eq(&attached, &original));
+        assert_eq!(
+            checker
+                .unique_imported_rust_item_path_for_display_tail("Owned")
+                .as_deref(),
+            Some("real::Owned")
+        );
+
+        // ---- Metadata and path replacement ----
+        let replacement = std::sync::Arc::new(RustItemMetadata {
+            canonical_path: "real::Replacement".into(),
+            ..original.as_ref().clone()
+        });
+        let SymbolKind::RustItem(info) = &mut checker.symbols.get_mut(first).ok_or("missing first binding")?.kind
+        else {
+            return Err("first binding lost its Rust kind".into());
+        };
+        info.path = "moved::Token".into();
+        info.metadata = Some(std::sync::Arc::clone(&replacement));
+        assert!(checker.known_rust_metadata_for_path("first::Token").is_none());
+        let attached = checker
+            .known_rust_metadata_for_path("moved::Token")
+            .ok_or("missing replacement")?;
+        assert!(std::sync::Arc::ptr_eq(&attached, &replacement));
+        assert_eq!(checker.unique_imported_rust_item_path_for_display_tail("Owned"), None);
+        assert_eq!(
+            checker
+                .unique_imported_rust_item_path_for_display_tail("Replacement")
+                .as_deref(),
+            Some("real::Replacement")
+        );
+
+        // ---- Kind restoration and table replacement ----
+        checker.symbols.get_mut(second).ok_or("missing second binding")?.kind = second_kind;
+        assert_eq!(checker.unique_imported_rust_item_path_for_display_tail("Token"), None);
+        checker.symbols = Default::default();
+        assert_eq!(checker.unique_imported_rust_item_path_for_display_tail("Token"), None);
+        assert_eq!(
+            checker.unique_imported_rust_item_path_for_display_tail("Replacement"),
+            None
+        );
+        assert!(checker.known_rust_metadata_for_path("moved::Token").is_none());
+        Ok(())
+    }
+
+    /// Bind a native import without ABI facts so query tests can attach and replace them explicitly.
+    fn define_query_rust_binding(checker: &mut TypeChecker, name: &str, path: &str) -> usize {
+        checker.symbols.define(Symbol {
+            name: name.to_string(),
+            kind: SymbolKind::RustItem(RustItemInfo {
+                crate_name: path.split_once("::").map_or(path, |(root, _)| root).to_string(),
+                path: path.to_string(),
+                binding: RustImportBindingKind::FromImport,
+                metadata: None,
+            }),
+            span: Span::default(),
+            scope: 0,
+        })
     }
 
     /// Import aliases cannot replace a producer-authenticated public owner. Private definitions and another bound

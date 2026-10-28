@@ -54,6 +54,11 @@ pub fn typecheck_modules(
         .cloned()
         .collect::<std::collections::HashSet<_>>();
     let module_idx_by_key = module_key_index(modules);
+    let interface_inputs = Arc::new(typechecker::SourceInterfaceInputs::from_programs(
+        modules
+            .iter()
+            .map(|module| (module.path_segments.as_slice(), &module.ast)),
+    ));
     let mut diagnostics_out = Vec::new();
     let mut warnings_out = Vec::new();
     let mut type_infos = Vec::with_capacity(modules.len());
@@ -66,6 +71,7 @@ pub fn typecheck_modules(
         warnings_out.extend(parser_warning_diagnostics(module));
 
         let mut checker = typechecker::TypeChecker::new();
+        checker.set_source_interface_inputs(Arc::clone(&interface_inputs));
         checker.set_declared_crate_names(declared.clone());
         checker.set_current_module_path(Some(module.path_segments.clone()));
         checker.set_current_package_identity(package.map(str::to_owned));

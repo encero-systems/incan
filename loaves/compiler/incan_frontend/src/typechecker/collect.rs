@@ -1,6 +1,7 @@
 //! First-pass collection: register types, functions, and imports into the symbol table.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::ast::*;
 use crate::diagnostics::CompileError;
@@ -1851,6 +1852,7 @@ impl TypeChecker {
 
     /// Register a top-level function declaration.
     fn collect_function(&mut self, func: &FunctionDecl, span: Span) {
+        let source = self.source_function_declaration(func, span);
         let existing_module_function_id = self.current_module_function_symbols.get(&func.name).copied();
         let type_params: Vec<String> = func.type_params.iter().map(|tp| tp.name.clone()).collect();
         let (type_param_bounds, type_param_bound_details) = self.collect_function_type_param_bounds(&func.type_params);
@@ -1893,7 +1895,9 @@ impl TypeChecker {
         if let Some(existing_id) = existing_module_function_id
             && let Some(existing_symbol) = self.symbols.get_mut(existing_id)
         {
-            self.local_function_decls.insert(func.name.clone(), func.clone());
+            if let Some(source) = &source {
+                self.local_function_decls.insert(func.name.clone(), Arc::clone(source));
+            }
             self.type_info
                 .declarations
                 .function_bindings
@@ -1951,7 +1955,9 @@ impl TypeChecker {
         }
         // Local declarations replace marker semantics only when registration accepted them.
         self.testing_marker_import_bindings.remove(&func.name);
-        self.local_function_decls.insert(func.name.clone(), func.clone());
+        if let Some(source) = source {
+            self.local_function_decls.insert(func.name.clone(), source);
+        }
         self.type_info
             .declarations
             .function_bindings

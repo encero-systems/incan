@@ -363,6 +363,8 @@ pub struct SymbolTable {
 struct RustItemIndex {
     items: BTreeSet<SymbolId>,
     pending: HashSet<SymbolId>,
+    /// Changes only when the historical Rust view can change, including attached metadata replacements.
+    revision: InventoryRevision,
 }
 
 impl Default for SymbolTable {
@@ -932,7 +934,9 @@ impl SymbolTable {
 
         let name = symbol.name.clone();
         if matches!(&symbol.kind, SymbolKind::RustItem(_)) {
-            self.rust_items.get_mut().items.insert(id);
+            let index = self.rust_items.get_mut();
+            index.items.insert(id);
+            index.revision = InventoryRevision::default();
         }
         self.symbols.push(symbol);
 
@@ -1298,6 +1302,11 @@ impl SymbolTable {
         self.dependency_interface_bindings = Some(HashMap::new());
     }
 
+    /// Return whether collection is preparing another module's interface rather than local body analyses.
+    pub(crate) fn collecting_dependency_interface(&self) -> bool {
+        self.dependency_interface_bindings.is_some()
+    }
+
     /// Drop the active dependency-interface view before another module or consumer source is checked.
     pub fn finish_dependency_interface_bindings(&mut self) {
         self.nominal_revision = InventoryRevision::default();
@@ -1394,18 +1403,31 @@ impl SymbolTable {
             return;
         }
         let mut index = self.rust_items.borrow_mut();
-        let RustItemIndex { items, pending } = &mut *index;
+        let RustItemIndex { items, pending, .. } = &mut *index;
+        let mut changed = false;
         for id in pending.drain() {
-            if self
+            let was_rust_item = items.contains(&id);
+            let is_rust_item = self
                 .symbols
                 .get(id)
-                .is_some_and(|symbol| matches!(&symbol.kind, SymbolKind::RustItem(_)))
-            {
+                .is_some_and(|symbol| matches!(&symbol.kind, SymbolKind::RustItem(_)));
+            changed |= was_rust_item || is_rust_item;
+            if is_rust_item {
                 items.insert(id);
             } else {
                 items.remove(&id);
             }
         }
+        if changed {
+            index.revision = InventoryRevision::default();
+        }
+    }
+
+    /// Witness the live historical Rust view, including deferred kind and metadata changes. Ordinary non-Rust
+    /// bindings cannot change this view; replacing the whole table starts an independent revision.
+    pub(crate) fn rust_item_revision(&self) -> InventoryRevision {
+        self.refresh_rust_items();
+        self.rust_items.borrow().revision.clone()
     }
 
     /// Borrow live Rust item records in their original definition order without scanning unrelated symbols.
@@ -3246,10 +3268,24 @@ mod tests {
             ResolvedType::RustPath("rust_shadow::Envelope<Vec<rust_shadow::Token>>".to_string())
         );
         assert_rust_items_match_history(&table);
+
+        // ---- Mutations outside the Rust view ----
+        let revision = table.rust_item_revision();
+        let unrelated = table.define(Symbol {
+            name: "Unrelated".to_string(),
+            kind: SymbolKind::Type(TypeInfo::TypeAlias),
+            span: Span::default(),
+            scope: 0,
+        });
+        table.get_mut(unrelated).ok_or("missing unrelated symbol")?.kind = SymbolKind::Type(TypeInfo::TypeAlias);
+        assert_eq!(revision, table.rust_item_revision());
+
+        // ---- Rust kind changes and lexical shadowing ----
         let token = table.lookup("RustToken").ok_or("missing token")?;
         let previous = table.get(token).ok_or("missing token symbol")?.kind.clone();
         table.get_mut(token).ok_or("missing mutable token")?.kind = SymbolKind::Type(TypeInfo::TypeAlias);
         assert_rust_items_match_history(&table);
+        assert_ne!(revision, table.rust_item_revision());
         table.get_mut(token).ok_or("missing mutable token")?.kind = previous;
         assert_rust_items_match_history(&table);
         table.enter_scope(ScopeKind::Block);

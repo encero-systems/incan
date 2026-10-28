@@ -51,6 +51,7 @@ mod collect;
 mod collection_annotations;
 mod const_eval;
 mod decorated_method_receivers;
+mod dependency_members;
 mod derive_contract;
 mod derive_requirements;
 mod for_item_taking;
@@ -67,6 +68,7 @@ mod nominal_type_param_bounds;
 mod reachability;
 mod receiver_change;
 mod reserved_names;
+mod source_interface_inputs;
 mod trait_bound_relations;
 mod type_info;
 pub(crate) use type_info::{ClassLayoutInfo, RustCheckedCall};
@@ -76,6 +78,8 @@ mod validate_rust_module;
 mod web_routes;
 
 pub use const_eval::ConstValue;
+pub use dependency_members::DependencyMembers;
+pub use source_interface_inputs::SourceInterfaceInputs;
 pub use type_info::{
     BodyIrIterationHooksInfo, BodyIrPropertyBindingInfo, BodyIrProtocolCallInfo, ClassFieldDefaultInfo,
     semantic_type_from_resolved,
@@ -95,7 +99,7 @@ pub use type_info::{
     ValidatedNewtypeCoercionStep, c_binding_descriptor_identity,
 };
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, RefCell, RefMut};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
@@ -649,7 +653,9 @@ pub struct TypeChecker {
     /// Collected module-level static declarations in source order.
     pub static_decls: Vec<(StaticDecl, Span)>,
     /// Collected module-level function declarations for static dependency analysis.
-    pub local_function_decls: HashMap<String, FunctionDecl>,
+    pub local_function_decls: HashMap<String, Arc<FunctionDecl>>,
+    /// Immutable parsed declarations of this collected unit, shared by its interface and body consumers.
+    source_interface_inputs: Option<Arc<SourceInterfaceInputs>>,
     /// Names of the declarations the program being checked marks `pub`.
     ///
     /// A public library carries a parameter default that constructs a model or class to its consumers only when they
@@ -716,12 +722,12 @@ pub struct TypeChecker {
     ///
     /// Direct source imports use this map before falling back to ambient symbol lookup so `from module import name as
     /// alias` binds `module.name`, not an unrelated same-name symbol imported earlier from a sibling dependency.
-    pub dependency_member_symbols: HashMap<String, HashMap<String, SymbolKind>>,
+    pub dependency_member_symbols: HashMap<String, DependencyMembers<SymbolKind>>,
     /// Exact transparent type-alias targets exported by dependency modules.
     ///
     /// Alias expansion is source semantics, so targets are keyed by owner module and are copied into the consumer's
     /// local alias map only when an explicit source import creates that binding.
-    pub dependency_member_type_aliases: HashMap<String, HashMap<String, TypeAliasTarget>>,
+    pub dependency_member_type_aliases: HashMap<String, DependencyMembers<TypeAliasTarget>>,
     /// Checked `Registry.define(...)` contracts exported by dependency source modules, keyed by canonical module name.
     ///
     /// This cache is deliberately separate from imported static types. A `Registry[K, T]` type alone is not proof of
@@ -731,15 +737,15 @@ pub struct TypeChecker {
     ///
     /// Source imports must preserve the callable projection, not only the callable signature, so const evaluation and
     /// lowering see the same partial preset semantics on both sides of an import or facade boundary.
-    pub dependency_member_partial_projections: HashMap<String, HashMap<String, PartialProjectionInfo>>,
+    pub dependency_member_partial_projections: HashMap<String, DependencyMembers<PartialProjectionInfo>>,
     /// Module-owned direct dependency members captured while that module is being imported.
     ///
     /// Dependency re-export refresh runs after all modules have been imported, when the ambient symbol table may
     /// contain unrelated same-name declarations from sibling modules. Direct members must therefore come from this
     /// per-module snapshot rather than a later global `lookup_symbol(...)`.
-    pub dependency_direct_member_symbols: HashMap<String, HashMap<String, SymbolKind>>,
+    pub dependency_direct_member_symbols: HashMap<String, Arc<HashMap<String, SymbolKind>>>,
     /// Direct dependency-owned type-alias targets before facade re-export projection.
-    pub dependency_direct_member_type_aliases: HashMap<String, HashMap<String, TypeAliasTarget>>,
+    pub dependency_direct_member_type_aliases: HashMap<String, Arc<HashMap<String, TypeAliasTarget>>>,
     /// Canonical identities retained by direct dependency member bindings, including source aliases.
     ///
     /// A public `alias` binding carries its target declaration's identity, so reconstructing identity from the alias
@@ -780,7 +786,7 @@ pub struct TypeChecker {
     /// declare names its declaration (#1796).
     nominal_declarations: union_member_identity::NominalDeclarationContext,
     /// Module-owned direct partial projection metadata captured while that module is being imported.
-    pub dependency_direct_member_partial_projections: HashMap<String, HashMap<String, PartialProjectionInfo>>,
+    pub dependency_direct_member_partial_projections: HashMap<String, Arc<HashMap<String, PartialProjectionInfo>>>,
     /// RFC 024 derivable-module metadata from imported source modules, keyed by module path.
     pub dependency_derivable_modules: HashMap<String, Vec<String>>,
     /// RFC 024/user-module trait metadata from imported source modules, keyed by module-qualified trait name.
@@ -930,6 +936,8 @@ struct NativeQueryState {
     nested_type_compatibility_depth: Cell<usize>,
     /// Successful canonical Rust ABI lookups made by this checker, including inferred receiver and return types.
     rust_metadata_queries: RefCell<BTreeSet<String>>,
+    /// Binding-derived positive and negative queries, released when their symbol owner's Rust view changes.
+    rust_binding_lookups: RefCell<RustBindingLookups>,
     /// Native signature types already resolved by this checker, keyed by metadata display and owner path.
     ///
     /// Resolution depends only on the Rust facts and path normalization, which are fixed for a checker's lifetime,
@@ -943,6 +951,14 @@ struct NativeQueryState {
     /// Actual complete-type lookup requests observed by this isolated checker in demand regression tests.
     #[cfg(test)]
     rust_complete_type_lookup_requests: Cell<usize>,
+}
+
+/// Results derived solely from one live historical Rust-binding view, excluding Loaf ABI fallback and demand.
+#[derive(Default)]
+struct RustBindingLookups {
+    revision: InventoryRevision,
+    metadata: HashMap<String, Option<Arc<RustItemMetadata>>>,
+    display_tails: HashMap<String, Option<String>>,
 }
 
 /// Dependency-owned registry contracts and their canonical source-module identity.
@@ -1019,6 +1035,7 @@ impl TypeChecker {
             const_decls: HashMap::new(),
             static_decls: Vec::new(),
             local_function_decls: HashMap::new(),
+            source_interface_inputs: None,
             current_module_public_declarations: HashSet::new(),
             receiver_plan_inputs: Default::default(),
             body_ir_decorator_factory_span: None,
@@ -1443,7 +1460,32 @@ impl TypeChecker {
     /// Return already-attached or cache-only metadata for one canonical Rust identity path.
     fn known_rust_metadata_for_path(&self, canonical_path: &str) -> Option<Arc<RustItemMetadata>> {
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
-        if let Some(metadata) = self.symbols.with_rust_items(|items| {
+        self.attached_rust_metadata_for_path(canonical_path)
+            .or_else(|| self.rust_item_metadata_for_path(canonical_path))
+    }
+
+    /// Borrow only the current binding generation's results. Callers release this guard before resolving a miss,
+    /// so recursive metadata lookup never runs while the query state is mutably borrowed.
+    fn rust_binding_lookups(&self) -> RefMut<'_, RustBindingLookups> {
+        let revision = self.symbols.rust_item_revision();
+        let mut lookups = self.native_queries.rust_binding_lookups.borrow_mut();
+        if lookups.revision != revision {
+            *lookups = RustBindingLookups {
+                revision,
+                ..RustBindingLookups::default()
+            };
+        }
+        lookups
+    }
+
+    /// Retain the first attached metadata in historical binding order, including a complete negative result.
+    /// ABI fallback remains outside this memo so its lookup authority and successful-demand recording are unchanged.
+    fn attached_rust_metadata_for_path(&self, canonical_path: &str) -> Option<Arc<RustItemMetadata>> {
+        let cached = self.rust_binding_lookups().metadata.get(canonical_path).cloned();
+        if let Some(metadata) = cached {
+            return metadata;
+        }
+        let metadata = self.symbols.with_rust_items(|items| {
             for info in items {
                 if Self::normalize_rust_namespace_path(info.path.as_str()) == canonical_path
                     && let Some(metadata) = &info.metadata
@@ -1452,10 +1494,11 @@ impl TypeChecker {
                 }
             }
             None
-        }) {
-            return Some(metadata);
-        }
-        self.rust_item_metadata_for_path(canonical_path)
+        });
+        self.rust_binding_lookups()
+            .metadata
+            .insert(canonical_path.to_string(), metadata.clone());
+        metadata
     }
 
     /// Return the Rust definition metadata for a canonical path.
@@ -1569,6 +1612,20 @@ impl TypeChecker {
         if display_tail.is_empty() {
             return None;
         }
+        let cached = self.rust_binding_lookups().display_tails.get(display_tail).cloned();
+        if let Some(path) = cached {
+            return path;
+        }
+        let path = self.resolve_imported_rust_item_display_tail(display_tail);
+        self.rust_binding_lookups()
+            .display_tails
+            .insert(display_tail.to_string(), path.clone());
+        path
+    }
+
+    /// Resolve one uncached display through the current historical bindings, preserving import spelling,
+    /// ancestral path equivalence and ambiguity rather than choosing a same-named candidate arbitrarily.
+    fn resolve_imported_rust_item_display_tail(&self, display_tail: &str) -> Option<String> {
         // A qualified display names an item outright. Match it against the imported items by ancestral identity so
         // metadata's `alloc::boxed::Box` finds a source-level `from rust::std::boxed import Box`, and hand back the
         // import's own spelling so later nominal checks line up with the symbol the source actually bound.
@@ -7865,26 +7922,31 @@ impl TypeChecker {
         self.cache_dependency_adoption_traits();
     }
 
-    /// Cache exact member symbols exported by one dependency module for source `from ... import ...` resolution.
+    /// Share one module's exact declarations and refresh only its resolved import overlay. Facade resolution stays
+    /// current without copying a module's complete signatures, aliases or partial projections.
     fn cache_dependency_member_symbols(&mut self, module_name: &str, module_ast: &Program, public_only: bool) {
         self.retain_body_ir_dependency_pub_reexports(module_name, module_ast, public_only);
-        let mut member_symbols = HashMap::new();
-        let mut member_type_aliases = HashMap::new();
-        let mut member_projections = HashMap::new();
-        if let Some(direct_symbols) = self.dependency_direct_member_symbols.get(module_name) {
-            member_symbols.extend(direct_symbols.clone());
-        } else {
+        if !self.dependency_direct_member_symbols.contains_key(module_name) {
             self.cache_dependency_direct_member_symbols(module_name, module_ast, public_only);
-            if let Some(direct_symbols) = self.dependency_direct_member_symbols.get(module_name) {
-                member_symbols.extend(direct_symbols.clone());
-            }
         }
-        if let Some(direct_projections) = self.dependency_direct_member_partial_projections.get(module_name) {
-            member_projections.extend(direct_projections.clone());
-        }
-        if let Some(direct_aliases) = self.dependency_direct_member_type_aliases.get(module_name) {
-            member_type_aliases.extend(direct_aliases.clone());
-        }
+        let mut member_symbols = DependencyMembers::from_direct(
+            self.dependency_direct_member_symbols
+                .get(module_name)
+                .cloned()
+                .unwrap_or_default(),
+        );
+        let mut member_type_aliases = DependencyMembers::from_direct(
+            self.dependency_direct_member_type_aliases
+                .get(module_name)
+                .cloned()
+                .unwrap_or_default(),
+        );
+        let mut member_projections = DependencyMembers::from_direct(
+            self.dependency_direct_member_partial_projections
+                .get(module_name)
+                .cloned()
+                .unwrap_or_default(),
+        );
         let mut reexports = HashMap::new();
         // A facade's own relative imports resolve against the facade's module, not the consumer's. Resolving them
         // from the consumer would bind `pkg.facade`'s `from helpers import render` to the root `helpers`.
@@ -8048,13 +8110,13 @@ impl TypeChecker {
             }
         }
         self.dependency_direct_member_symbols
-            .insert(module_name.to_string(), direct_symbols);
+            .insert(module_name.to_string(), Arc::new(direct_symbols));
         self.dependency_direct_member_type_aliases
-            .insert(module_name.to_string(), direct_type_aliases);
+            .insert(module_name.to_string(), Arc::new(direct_type_aliases));
         self.dependency_direct_member_identities
             .insert(module_name.to_string(), direct_identities);
         self.dependency_direct_member_partial_projections
-            .insert(module_name.to_string(), direct_projections);
+            .insert(module_name.to_string(), Arc::new(direct_projections));
     }
 
     /// Share a module's immutable lexical scope across its declarations, fields and methods, returning whether this
@@ -8141,7 +8203,7 @@ impl TypeChecker {
         let adoptions = self
             .dependency_direct_member_symbols
             .values()
-            .flat_map(HashMap::values)
+            .flat_map(|members| members.values())
             .filter_map(|kind| match kind {
                 SymbolKind::Type(TypeInfo::Model(info)) => Some(info.trait_adoptions.as_slice()),
                 SymbolKind::Type(TypeInfo::Class(info)) => Some(info.trait_adoptions.as_slice()),
@@ -8809,8 +8871,10 @@ impl TypeChecker {
                 if public_only && !is_public_decl(decl) {
                     continue;
                 }
-                if let Some(symbol) = Self::dependency_interface_shell(decl) {
-                    members.entry(symbol.name).or_insert(symbol.kind);
+                if let Some(symbol) = Self::dependency_interface_shell(decl)
+                    && !members.contains_key(&symbol.name)
+                {
+                    Arc::make_mut(&mut members.direct).insert(symbol.name, symbol.kind);
                 }
             }
         }
