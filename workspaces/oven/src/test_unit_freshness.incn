@@ -149,6 +149,11 @@ pub def test_unchanged_unit_is_keyed_without_reading_or_listing() -> Result[None
     """Unchanged inputs reuse metadata, with native profile settings explicitly included in their identity."""
     scratch = scratch_directory()?
     setup = fixture(scratch.path())?
+    assert setup.unit.to_json().get("codegraph") == None
+    mut requested = setup.unit
+    requested.codegraph = true
+    assert requested.to_json().get("codegraph") == None
+    assert description_digest(requested)? == description_digest(setup.unit)?
     first = reconcile(scratch.path(), setup)?
     assert first.hashed > 0
     assert first.listed == 1
@@ -518,6 +523,11 @@ pub def test_dependency_artifacts_rekey_their_consumers() -> Result[None, str]:
     setup = fixture(scratch.path())?
     first = reconcile(scratch.path(), setup)?
     verify_closure_readings(scratch.path().joinpath("closure.json"))?
+    # Inspection publications are independent of executable freshness, including first materialization and corruption.
+    graph = Path(setup.unit.loaves[0].dir).joinpath("dep.incngraph")
+    for contents in ["a requested graph", "a replaced inspection graph"]:
+        write(graph, contents)?
+        assert reconcile(scratch.path(), setup)?.key == first.key
     dependency = artifact_files(Path(setup.unit.loaves[0].dir), "dep")?
     write(dependency[0], "dependency rebuilt with different code")?
     rebuilt = reconcile(scratch.path(), setup)?

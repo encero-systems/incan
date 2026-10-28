@@ -35,7 +35,9 @@ dev.8 removes generated Rust crates and Cargo artifact coordinates. The library-
 | `<name>.incnbody` | the governed bodies: the executable representation of every body a caller instantiates (functions with type parameters) |
 | `lib<name>.rlib` | the library unit: every other body, compiled once, with a crate-root export for each public name |
 | `<name>.native.json` | the unit's native closure: the rlibs and search paths it links |
-| `<name>.incngraph` | the Loaf's checked declarations, references, calls and imports, with span-free identities and Loaf-relative paths in a versioned indexed-postcard artifact |
+| `<name>.incngraph` | an explicitly requested inspection publication: the Loaf's checked declarations, references, calls and imports, with span-free identities and Loaf-relative paths in a versioned indexed-postcard artifact |
+
+Incan compilation omits graph collection. Inspection and publication share a checked export cache keyed by exact source, compiler and dependency inputs; native and graph proofs remain separate.
 
 ### The index
 

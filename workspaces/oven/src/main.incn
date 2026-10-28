@@ -39,6 +39,7 @@ pub model Options:
     pub program_entries: list[str] = []
     pub argv0: Option[str] = None
     pub feature_options: bool = false
+    pub codegraph: bool = false
     # One CLI preparation owns its source readings, including its provider callbacks.
     pub manifests: ManifestReader = ManifestReader()
 
@@ -181,6 +182,8 @@ def parse_options(arguments: list[str]) -> Result[Options, str]:
         elif argument == "--all-features":
             options.feature_options = true
             options.request.all_features = true
+        elif argument == "--codegraph":
+            options.codegraph = true
         elif argument.startswith("-"):
             return Err(f"unknown option `{argument}`")
         elif options.path != "":
@@ -374,6 +377,14 @@ def validated(command: str, options: Options) -> Options:
 
 def require_command_options(command: str, options: Options) -> Result[None, str]:
     """Each command admits only options it applies, and feature selection requires an owning project."""
+    if options.codegraph:
+        if command != "build":
+            return Err("--codegraph requires an Incan library build")
+        match build_source(Path(options.path), options.manifests)?:
+            None => return Err("--codegraph requires an Incan library build")
+            Some(entry) =>
+                if entry.name() != "lib.incn":
+                    return Err("--codegraph requires an Incan library build")
     if options.argv0 != None and command != "run":
         return Err("--argv0 requires run")
     if len(options.program_entries) > 0 and command not in ["run", "build"]:
@@ -512,6 +523,7 @@ def built(options: Options, source: Path) -> Result[i32, str]:
     mut output = program_binary(unit)
     if library:
         unit.kind = "library"
+        unit.codegraph = options.codegraph
         directory = dependency_artifact_dir(unit.project_root, unit.package, unit.profile)
         output = directory.joinpath(f"lib{crate_name(unit)}.rlib")
     return compile_unit(unit, toolchain_for(unit)?, output)

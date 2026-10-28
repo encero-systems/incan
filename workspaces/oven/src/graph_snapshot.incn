@@ -35,10 +35,10 @@ pub def snapshot_identity(units: list[GraphUnit], root: str, strict: bool) -> Re
         parts.append(fingerprint(tree_inputs(Path(source))?)?)
     # 4. Observations only avoid hashing unchanged bytes; their metadata never enters the identity.
     save_observations(ledger)
-    return Ok(f"snapshot:{fingerprint(['incan.graph.snapshot/1', root, str(strict)] + sorted(parts))?}")
+    return Ok(f"snapshot:{fingerprint(["incan.graph.snapshot/1", root, str(strict)] + sorted(parts))?}")
 
 
-def artifact_observations(root: str) -> Ledger:
+pub def artifact_observations(root: str) -> Ledger:
     """Keep optional artifact digest observations in the caller's cache; missing storage still hashes exact bytes."""
     mut owner = Path(root)
     if owner.is_file():
@@ -49,7 +49,8 @@ def artifact_observations(root: str) -> Ledger:
 
 pub def snapshot_status(expected: str, current: str) -> JsonValue:
     """Compare a retained export with current facts without interpreting an unavailable input as fresh."""
-    return JsonValue.object({
-        "record": JsonValue.string("snapshot_status"), "expected": JsonValue.string(expected),
-        "snapshot_id": JsonValue.string(current), "stale": JsonValue.bool(expected != current),
-    })
+    return JsonValue.object(
+        {"record": JsonValue.string("snapshot_status"), "expected": JsonValue.string(expected), "snapshot_id": JsonValue.string(
+            current,
+        ), "stale": JsonValue.bool(expected != current)},
+    )

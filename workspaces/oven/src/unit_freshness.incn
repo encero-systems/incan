@@ -34,10 +34,10 @@ const UNIT_DOMAIN: str = "incan.oven.unit/1"
 
 
 pub def artifact_files(directory: Path, package: str) -> Result[list[Path], str]:
-    """The complete DD-0007 artifact set required to reuse a library."""
+    """The executable DD-0007 artifact set; optional inspection graphs are not native compilation inputs."""
     linked = package.replace("-", "_")
     compiled = [f"lib{linked}.rlib", f"{package}.incnlib", f"{package}.incnbody"]
-    described = [f"{package}.native.json", f"{package}.incngraph"]
+    described = [f"{package}.native.json"]
     mut artifacts = [directory.joinpath(name) for name in compiled + described]
     cache = directory.joinpath(f"{package}.rustabi")
     if cache.is_file():
@@ -145,7 +145,7 @@ pub def cache_identities(caches: list[str]) -> Result[list[str], str]:
 
 
 pub def description_digest(unit: UnitDescription) -> Result[str, str]:
-    """The unit description and its effective native flags: changing a profile's code generation invalidates reuse."""
+    """Native compilation inputs and effective profile flags; requesting an inspection graph changes no native fact."""
     return fingerprint([json_text(unit.to_json())?] + native_arguments(unit.profile))
 
 

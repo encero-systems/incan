@@ -104,8 +104,6 @@ struct CheckedProgram {
     own: usize,
     /// A library unit's manifest, which its executable representation completes once the unit compiles (DD-0007).
     manifest: Option<LibraryManifest>,
-    /// The owning library's portable graph bytes, encoded while its checked source context is still owned here.
-    graph: Vec<u8>,
     /// Session-collected tests; lowering receives their names and Oven receives their outcome policy.
     tests: Vec<crate::test_unit::CollectedTest>,
 }
@@ -261,18 +259,6 @@ fn checked_modules(
 
     // ---- The program's own modules ----
     lower_authored_modules(&modules, &analysis, &session, &mut bodies, &mut files)?;
-    let graph = if library {
-        let records = incan_driver::inspect::codegraph::collect_checked_unit_codegraph(
-            unit,
-            &session,
-            &modules,
-            &analysis,
-            &mut bodies[loaf_modules..],
-        );
-        incan_codegraph::artifact::encode_graph(&records, &unit.project_root).map_err(|error| error.to_string())?
-    } else {
-        Vec::new()
-    };
     sources.extend(modules.into_iter().map(|module| module.source));
     let program_entrypoints = program_entrypoints(unit, &bodies, &files)?;
     let entry_module = bodies.get_mut(entry).ok_or("selected Body IR entry is missing")?;
@@ -287,7 +273,6 @@ fn checked_modules(
             entry,
             own: loaf_modules,
             manifest,
-            graph,
             tests,
         },
         session.loaves(),
@@ -1108,14 +1093,7 @@ pub fn source_interface(arguments: &[String]) -> Result<(), Box<dyn std::error::
         .ok_or("a checked source interface requires a library manifest")?;
     closure.macro_externs = macro_externs(&manifest, &closure.externs, &loaf_links);
     std::fs::create_dir_all(directory)?;
-    write_loaf(
-        directory,
-        manifest,
-        &program.modules[program.own..],
-        &closure,
-        &program.graph,
-    )
-    .map_err(|error| error.to_string())?;
+    write_loaf(directory, manifest, &program.modules[program.own..], &closure).map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -1213,14 +1191,8 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
             search: published_search,
             macro_externs: macro_externs(&manifest, &dependencies.externs, &loaf_links),
         };
-        write_loaf(
-            directory,
-            manifest,
-            &program.modules[program.own..],
-            &closure,
-            &program.graph,
-        )
-        .map_err(|error| error.to_string())?;
+        write_loaf(directory, manifest, &program.modules[program.own..], &closure)
+            .map_err(|error| error.to_string())?;
     }
     Ok(())
 }

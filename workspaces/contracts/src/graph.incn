@@ -175,6 +175,7 @@ def check_documents(incan: str, project: Path, existing: list[str]) -> Result[li
     mut failures: list[str] = []
     if canonical != json_text(JsonValue.array(lines))?:
         failures.append("JSON and JSONL exports disagree")
+    check_fresh_projection(incan, project, canonical)?
     # 3. A source edit changes the export's spans but not its declaration identities, and broken source is unchecked.
     failures = failures + check_source_edits(incan, project, original, snapshot)?
     # 4. A failing unit costs its siblings nothing, and a published provider graph is read as it was published.
@@ -183,6 +184,24 @@ def check_documents(incan: str, project: Path, existing: list[str]) -> Result[li
     check_lsp(incan, project)?
     check_process(incan, project)?
     return Ok(failures)
+
+
+def check_fresh_projection(incan: str, project: Path, expected: str) -> Result[None, str]:
+    """
+    Retained and freshly collected graphs must agree on every record, identity and source span.
+
+    1. Withdraw only source inspection exports in this contract's disposable project.
+    2. Recollect through inspection and compare its complete document with the retained answer.
+    """
+    # 1. Native artifacts and their published graphs remain untouched.
+    for graph in project.rglob("*.incngraph").map_err((error) => error.message())?:
+        if "/target/incan/codegraph/" in graph.0:
+            remove(graph)?
+    # 2. A fresh collection must preserve distinct references even when their spelling or authored ranges coincide.
+    actual = json_text(parse_json(document(incan, project, "json")?)?)?
+    if actual != expected:
+        return Err("a retained graph differs from a fresh collection for the same inputs")
+    return Ok(None)
 
 
 def json_lines(text: str) -> Result[list[JsonValue], str]:
@@ -417,7 +436,7 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
     """
     An explicitly built provider ships a portable binary graph; consumers read it despite unbuilt source edits.
 
-    1. Build the provider. Its compiled Loaf carries a version-one binary graph that names no physical project root.
+    1. An ordinary build omits the graph; a requested publication matches fresh inspection and is retained unchanged.
     2. A consumer reads the published graph, though the provider's source has since become invalid.
     3. A corrupt published graph is refused, not silently replaced or reused.
     4. A provider with no published graph is exported once, and the export is stable.
@@ -430,10 +449,26 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
     if checked.code != Some(0):
         return Err(f"provider inspection failed: {checked.stderr}")
     checked_digest = helper_digest(checked.stdout)?
-    # 1. The provider's compiled Loaf carries a version-one binary graph that names no physical project root.
+    # 1. No graph is projected until a consumer requests a portable publication.
     built = invoke(incan, ["build", source.0], project)?
     if built.code != Some(0):
         return Err(f"provider build failed: {built.stderr}")
+    if len(published_graphs(project, provider)) != 0:
+        return Err("an ordinary provider build collected an unrequested graph")
+    native_before = library_artifacts(provider)?
+    requested = invoke(incan, ["build", source.0, "--codegraph"], project)?
+    if requested.code != Some(0):
+        return Err(f"provider graph publication failed: {requested.stderr}")
+    if library_artifacts(provider)? != native_before:
+        return Err("requesting a graph recompiled an unchanged native library")
+    retained = published_graphs(project, provider)
+    before_graphs = [read_bytes(path)? for path in retained]
+    before_artifacts = library_artifacts(provider)?
+    repeated_build = invoke(incan, ["build", source.0, "--codegraph"], project)?
+    if repeated_build.code != Some(0) or [read_bytes(path)? for path in retained] != before_graphs:
+        return Err("an unchanged requested graph was not retained")
+    if library_artifacts(provider)? != before_artifacts:
+        return Err("an unchanged requested graph recompiled its native library")
     consumer = invoke(incan, ["build", "src/main.incn"], project)?
     if consumer.code != Some(0):
         return Err(f"consumer preparation failed: {consumer.stderr}")
@@ -444,6 +479,7 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
     compiled = document(incan, project, "json")?
     if helper_digest(compiled)? != checked_digest:
         return Err("the inspected cross-module library body differs from its compiled publication")
+    check_provider_generation(incan, project, source, checked_digest)?
     # 2. A consumer reads the published graph, though the provider's source has since become invalid.
     arguments = ["inspect", "codegraph", ".", "--query", "defs", "checked_helper"]
     original = invoke(incan, arguments, project)?
@@ -467,6 +503,23 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
     stable = legacy.stdout == repeated.stdout and legacy.code == repeated.code
     if legacy.code != Some(0) or legacy.stdout != original.stdout or not stable:
         return Err(f"older artifact did not receive a stable cached graph export: {legacy.stderr}")
+    return Ok(None)
+
+
+def check_provider_generation(incan: str, project: Path, source: Path, original: str) -> Result[None, str]:
+    """A consumer's changed producer cannot borrow an older published graph of the same package and features."""
+    before = read(source)?
+    write(source, before.replace("return value", "return value + 1"))?
+    built = invoke(incan, ["build", "src/main.incn"], project)?
+    changed = document(incan, project, "json")
+    write(source, before)?
+    if built.code != Some(0):
+        return Err(f"changed provider preparation failed: {built.stderr}")
+    if helper_digest(changed?)? == original:
+        return Err("a changed native producer reused another generation's published graph")
+    restored = invoke(incan, ["build", "src/main.incn"], project)?
+    if restored.code != Some(0):
+        return Err(f"restored provider preparation failed: {restored.stderr}")
     return Ok(None)
 
 

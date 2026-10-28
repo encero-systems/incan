@@ -9,7 +9,7 @@
 #   incan check PATH [--format text|json] [UNIT OPTIONS]
 #   incan test PATH [UNIT OPTIONS]
 #   incan describe-unit PATH [UNIT OPTIONS]
-#   incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
+#   incan build PATH [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 #   incan fmt [--check] PATH...
 #   incan owner stop
 #   incan inspect codegraph PATH [GRAPH OPTIONS]

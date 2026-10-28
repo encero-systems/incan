@@ -11,7 +11,8 @@ const RUN_USAGE: str = "incan run PATH [UNIT OPTIONS] [--argv0 TEXT] [--program-
 const CHECK_USAGE: str = "incan check PATH [--format text|json] [UNIT OPTIONS]"
 const TEST_USAGE: str = "incan test PATH [UNIT OPTIONS]"
 const DESCRIBE_USAGE: str = "incan describe-unit PATH [UNIT OPTIONS]"
-const BUILD_USAGE: str = "incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"
+const BUILD_SELECTION: str = "incan build PATH [--codegraph] [--substitute NAME=DIR]..."
+const BUILD_USAGE: str = BUILD_SELECTION + " [--program-entry PATH]... [UNIT OPTIONS]"
 const OWNER_USAGE: str = "incan owner stop"
 pub const UNIT_VALUE_OPTIONS: FrozenList[str] = [
     "--profile",
@@ -103,6 +104,7 @@ def unit_help(command: str) -> str:
     return render(
         BUILD_USAGE,
         options + [
+            "  --codegraph            Publish an Incan library's checked graph for source-independent inspection.",
             "  --substitute NAME=DIR  Supply a local Rust dependency substitution; repeatable.",
             "  --program-entry PATH   Add a program entry to a program build; repeatable.",
         ],

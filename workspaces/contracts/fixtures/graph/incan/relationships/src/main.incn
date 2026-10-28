@@ -1,4 +1,4 @@
-# behavior: graph CLI, MCP and LSP agree on edit-stable nominal identities, bounded context and freshness
+# behavior: graph consumers agree on edit-stable nominal identities and fresh facts; compilation projects graphs only on request (#2256)
 # graph-commands:
 #   src/main.incn --query defs helper
 #   src/main.incn --query callers helper

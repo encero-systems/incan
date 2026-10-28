@@ -97,30 +97,6 @@ impl From<CodegraphError> for crate::error::CliError {
     }
 }
 
-/// Project a compiled library's graph from the exact checking pass and Body IR used by compilation. This boundary
-/// performs no collection, type checking or Body IR construction, and records only the owning unit's authored modules.
-pub fn collect_checked_unit_codegraph(
-    unit: &UnitDescription,
-    session: &CompilationSession,
-    modules: &[ParsedModule],
-    analysis: &CompilationAnalysis,
-    bodies: &mut [incan_semantics_core::body_ir::BodyIrModule],
-) -> Vec<CodegraphRecord> {
-    let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::checked_unit_codegraph", modules = modules.len()).entered();
-    let mut builder = checked_unit_builder(unit, session, modules, analysis);
-    let projection = stable_identity_projection(analysis, bodies);
-    builder.set_lowered_declaration_facts(
-        bodies
-            .iter_mut()
-            .flat_map(|body| body_declaration_facts(body, &projection))
-            .collect(),
-    );
-    for module in modules {
-        builder.collect_parsed_module(module, Vec::new());
-    }
-    builder.finish()
-}
-
 /// Project editor buffers from their existing checking pass into the same records as persisted inspection. A failed
 /// pass contributes only marked parseable facts and diagnostics; it never retains checked call or reference edges.
 pub fn collect_live_unit_codegraph(

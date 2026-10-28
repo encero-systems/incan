@@ -2,17 +2,17 @@
 
 from std.fs import Path
 from std.toml import TomlValue
-from files import parse_json
+from files import parse_json, read
 from graph_cache import GraphUnit, read_graph
-from graph_dependencies import unit_natives
+from graph_dependencies import active_features
 from graph_incan import inspect_incan
 from graph_queries import text
 from home import standard_artifact_dir, standard_packages
 from intake import library_source
-from loaf_local_graph import LocalDemand, LocalFacet, local_facets
-from rust_activation import DependencyDomain
-from rust_units import RustBuild, read_registry_units, registry_selection, selected_registry, target_configuration
-from toolchain import Toolchain, rust_compiler
+from loaf_local_graph import LocalFacet
+from native_closure_input import native_bindings
+from rust_units import RustBuild, registry_selection
+from toolchain import NativeCrate, Toolchain, located
 
 
 pub def standard_graphs(
@@ -77,29 +77,20 @@ def standard_graph(
     2. Otherwise export the package's own source, under the requesting project's cache.
     """
     # 1. A package compiled with a graph is read from the graph it published.
-    graph = standard_artifact_dir(package, profile)?.joinpath(f"{package}.incngraph")
+    directory = standard_artifact_dir(package, profile)?
+    graph = directory.joinpath(f"{package}.incngraph")
     if graph.is_file():
         return Ok(GraphUnit(path=graph, root=Path(f"@std/{package}"), package=package))
     # 2. Any other is exported from its source, once, into the requesting project's own cache.
-    rustc = rust_compiler(toolchain)
-    demand = LocalDemand(project=source_root, domain=DependencyDomain.Target, features=[], defaults=true)
-    facets = local_facets(demand, target_configuration(rustc)?)?
-    request = RustBuild(
-        project=owner.0,
-        profile=profile,
-        rustc=rustc,
-        registry=selected_registry(read_registry_units(Path(toolchain.registry_units), source_root)?, facets, profile)?,
-        toolchain_search=toolchain.search,
-        toolchain=Some(toolchain),
-    )
-    for facet in facets:
-        if facet.project != source_root or facet.domain != DependencyDomain.Target:
-            continue
-        source = library_source(Path(source_root))?
-        natives = unit_natives(facet, {}, request)?
-        legacy = inspect_incan(source, toolchain, natives, {}, facet.features, false, [], Some(owner))?
-        return Ok(GraphUnit(path=legacy, root=Path(f"@std/{package}"), package=package, source_root=source_root))
-    return Err(f"no standard graph source selected for {package}")
+    # The published native closure decides Rust bindings and profiles; inspection never resolves another cohort.
+    closure = directory.joinpath(f"{package}.native.json")
+    mut natives: Dict[str, NativeCrate] = {}
+    for name, artifact in native_bindings(closure, toolchain.native_closures)?:
+        natives[name] = NativeCrate(name=name, path=located(directory, artifact))
+    manifest = parse_json(read(directory.joinpath(f"{package}.incnlib"))?)?
+    source = library_source(Path(source_root))?
+    legacy = inspect_incan(source, toolchain, natives, {}, active_features(manifest)?, false, [], Some(owner))?
+    return Ok(GraphUnit(path=legacy, root=Path(f"@std/{package}"), package=package, source_root=source_root))
 
 
 pub def registry_artifacts(facets: list[LocalFacet], request: RustBuild) -> Result[Dict[str, str], str]:

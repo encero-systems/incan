@@ -1,0 +1,6 @@
+"""The provider's Incan declarations are collected when a Rust graph consumer requests them."""
+
+
+pub def inspection_helper() -> int:
+    """Remain discoverable without an eagerly published Incan graph."""
+    return 7

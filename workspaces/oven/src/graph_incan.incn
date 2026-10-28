@@ -1,19 +1,11 @@
 """Check Incan inspection units and cache their interfaces without building native libraries."""
 
-from rust::std::process import id
 from std.fs import Path
 from features import FeatureRequest
-from files import json_text, make_directory, read, remove
-from graph_cache import cache_file, is_unchecked, publish_unchecked, tree_inputs
-from publication import publish, publish_binary
-from unit_freshness import artifact_identity, cache_identities, fingerprint, native_identities
-from unit_compiler import crate_name, run_compiler, write_unit
+from graph_exports import inspect_prepared
 from toolchain import NativeCrate, Toolchain
 from unit import UnitDescription, UnitLoaf, describe
 from unit_rust import prepare_linked
-
-# The version of the key an export is cached under; changing it discards every cached export.
-const EXPORT_DOMAIN: str = "incan.codegraph.incan/4"
 
 
 pub def inspect_incan(
@@ -35,9 +27,7 @@ pub def inspect_incan(
     facts. Only an abnormal compiler exit fails, and nothing is cached for it.
 
     1. Describe the unit against the toolchain, linking the checked interfaces of the Loaves it reaches.
-    2. Name the export by a digest of everything it reads; a cached export is returned as it is.
-    3. Have the compiler export the unit's graph, and its interface when it is a library.
-    4. Publish the graph, the interface and the note of a unit that failed checking.
+    2. Retain the checked graph and interface through the same exporter library publication uses.
     """
     # 1. The unit is described against the toolchain, and links the interfaces its dependencies were checked into.
     entry_source = source.resolve().map_err((error) => error.message())?
@@ -45,29 +35,8 @@ pub def inspect_incan(
     if source.name() == "lib.incn":
         unit.kind = "library"
     ready = prepared_unit(unit, toolchain, built, interfaces, source_loaves)?
-    # 2. An export is made once per digest of everything it reads; a cached one, checked or not, is returned as it is.
-    project = Path(unit.project_root)
-    mut cache_root = project
-    if let Some(selected) = owner:
-        cache_root = selected
-    entry = cache_file(cache_root, export_digest(ready, project, toolchain)?)?
-    directory = interface_directory(entry)
-    interface = directory.joinpath(f"{unit.package}.incnlib")
-    if is_unchecked(entry) or (entry.is_file() and (ready.kind != "library" or interface.is_file())):
-        return Ok(entry)
-    # 3. The compiler writes its output beside the entry's name, so a failed export leaves nothing at the entry itself.
-    description = write_unit(ready, crate_name(ready), Some(cache_root))?
-    output = Path(f"{entry.0}.{id()}.analysis")
-    pending = Path(f"{interface.0}.{id()}.analysis")
-    mut arguments = ["--codegraph", description.0, toolchain.sysroot, output.0]
-    if ready.kind == "library":
-        make_directory(directory)?
-        arguments.append(pending.0)
-    if run_compiler(toolchain, arguments)? != 0:
-        return Err(f"Incan graph export failed for {unit.package}")
-    # 4. The graph, the interface and any note are published whole, a note before the entry it describes.
-    publish_export(entry, interface, unit.package, output, pending, ready.kind == "library")?
-    return Ok(entry)
+    # 2. The prepared unit is exported without selecting its dependencies again or building a native library.
+    return inspect_prepared(ready, toolchain, owner)
 
 
 def prepared_unit(
@@ -108,58 +77,3 @@ def linked_loaves(loaves: list[UnitLoaf], interfaces: Dict[str, Path]) -> Result
             loaf.dir = interfaces[loaf.name].0
             linked[index] = loaf
     return Ok(linked)
-
-
-def export_digest(ready: UnitDescription, project: Path, toolchain: Toolchain) -> Result[str, str]:
-    """
-    The digest an export is cached under: the compiler, the unit's description, its native crates and ABI caches, its
-    search directories and the authored files of its project and of the Loaves it reaches.
-    """
-    head = [EXPORT_DOMAIN, artifact_identity(Path(toolchain.driver))?, toolchain.sysroot, json_text(ready.to_json())?]
-    mut inputs = head + native_identities(ready.externs)? + cache_identities(toolchain.rust_abi)?
-    inputs = inputs + ready.search + tree_inputs(project)?
-    for loaf in ready.loaves:
-        inputs = inputs + tree_inputs(Path(loaf.dir))?
-    return fingerprint(inputs)
-
-
-def publish_export(
-    entry: Path,
-    interface: Path,
-    package: str,
-    output: Path,
-    pending: Path,
-    library: bool,
-) -> Result[None, str]:
-    """
-    Publish what the compiler exported, and remove its pending files.
-
-    1. A unit that failed checking leaves a note, which is published beside the entry before the entry itself.
-    2. Otherwise a library's interface is published.
-    3. The graph is published when the compiler wrote one; an export without a graph and without a note is an error.
-    """
-    note = Path(f"{output.0}.unchecked")
-    if note.is_file():
-        # 1. A unit that failed checking is cached with a note saying why, and what facts it still contributes.
-        reason = read(note)?
-        mut consequence = "contributing no facts"
-        if output.is_file():
-            consequence = "using its parseable facts only"
-        publish_unchecked(entry, package, consequence, reason)?
-        remove(note)?
-    elif library:
-        # 2. A checked library publishes the interface its dependents are checked against.
-        publish(interface, read(pending)?)?
-        remove(pending)?
-    # 3. The graph the compiler wrote becomes the entry; an export with neither a graph nor a note is an error.
-    if output.is_file():
-        publish_binary(entry, output.read_bytes().map_err((error) => error.message())?)?
-        remove(output)?
-    elif not is_unchecked(entry):
-        return Err(f"Incan graph export produced no graph for {package}")
-    return Ok(None)
-
-
-pub def interface_directory(entry: Path) -> Path:
-    """Keep checking-only manifests separate from ordinary compiled Loaf artifact directories."""
-    return Path(f"{entry.0}.interface")

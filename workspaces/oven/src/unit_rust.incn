@@ -6,6 +6,8 @@ from std.json import JsonValue
 from std.toml import TomlValue
 from features import FeatureRequest
 from json_fields import array, strings
+from graph_cache import is_unchecked
+from graph_exports import inspect_prepared
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets, unique
 from rust_activation import DependencyDomain
 from rust_units import (
@@ -31,7 +33,8 @@ from observation import trace
 from intake import ManifestReader
 from native_closure_input import NativeClosureInput
 from unit_compiler import compile_prepared_unit
-from unit_freshness import artifact_files, install_all, staleness, unit_key
+from unit_freshness import Key, artifact_files, install_all, record, staleness, unit_key
+from publication import publish_binary
 from vocabulary import prepare_vocabulary, stage_vocabulary
 
 
@@ -113,7 +116,7 @@ pub def compile_library_unit(
     The caller supplies its selected toolchain and exact output path after dependency preparation is complete.
 
     1. Key the library against its stored artifact stamp.
-    2. Reuse a current library, serializing replacement with other producers of this output.
+    2. Reuse a current library and export requested graphs, serializing replacement with other producers.
     3. Compile in a temporary directory, requiring every published artifact before replacing the stored build.
     4. Install the completed outputs and stamp their final filesystem identities.
     """
@@ -125,12 +128,14 @@ pub def compile_library_unit(
     why = staleness(artifacts, stamp, key)?
     # 2. Recheck after acquiring the publication lock: another producer may have completed the same request.
     if why == "":
+        retain_library_graph(library, toolchain, directory, key, compiler)?
         trace(f"unit {library.package} library: reused")
         return Ok(0)
     directory.mkdir(true, true).map_err((error) => error.message())?
     building = output.lock_exclusive().map_err((error) => error.message())?
     artifacts = artifact_files(directory, library.package)?
     if staleness(artifacts, stamp, key)? == "":
+        retain_library_graph(library, toolchain, directory, key, compiler)?
         trace(f"unit {library.package} library: reused (built meanwhile by another command)")
         return Ok(0)
     # 3. A refusal or incomplete publication leaves the previous complete library available.
@@ -154,7 +159,40 @@ pub def compile_library_unit(
         if previous.name() not in names and previous.is_file():
             previous.unlink().map_err((error) => error.message())?
     install_all(completed, finals, stamp, key)?
+    retain_library_graph(library, toolchain, directory, key, compiler)?
     return Ok(0)
+
+
+def retain_library_graph(
+    library: UnitDescription,
+    toolchain: Toolchain,
+    directory: Path,
+    key: Key,
+    compiler: str,
+) -> Result[None, str]:
+    """
+    Materialize a requested graph without rebuilding a current native library or selecting dependencies again.
+
+    1. Reuse a graph retained for these exact semantic inputs.
+    2. Obtain the same prepared unit's checked export through the shared inspection cache.
+    3. Revalidate the native inputs before publishing the graph and its separate proof.
+    """
+    # 1. An observer request never changes native compilation identity.
+    if not library.codegraph:
+        return Ok(None)
+    graph = directory.joinpath(f"{library.package}.incngraph")
+    stamp = directory.joinpath(".oven-codegraph.sha256")
+    if staleness([graph], stamp, key)? == "":
+        return Ok(None)
+    # 2. A publication must contain checked facts, even though inspection can retain tolerant exports.
+    cached = inspect_prepared(library, toolchain)?
+    if is_unchecked(cached):
+        return Err(f"{library.package}: cannot publish an unchecked graph")
+    # 3. An edit during export cannot attach a different source generation to the native artifact.
+    if unit_key(library, toolchain, compiler)?.digest != key.digest:
+        return Err(f"{library.package}: inputs changed while exporting its graph; retry the build")
+    publish_binary(graph, cached.read_bytes().map_err((error) => error.message())?)?
+    return record(stamp, key, [graph])
 
 
 pub def prepare_native(described: UnitDescription, toolchain: Toolchain) -> Result[UnitDescription, str]:

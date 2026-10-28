@@ -6,9 +6,11 @@ from std.json import JsonValue
 from std.toml import TomlValue
 from features import FeatureRequest
 from files import json_text, parse_json, read
-from graph_cache import GraphUnit, cache_file, is_unchecked, tree_inputs
-from graph_incan import inspect_incan, interface_directory
+from graph_cache import GraphUnit, cache_file, is_unchecked, save_observations, tree_inputs
+from graph_incan import inspect_incan
+from graph_exports import interface_directory
 from graph_queries import nested, text
+from graph_snapshot import artifact_observations
 from home import dependency_artifact_dir
 from intake import library_source, read_project
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
@@ -36,7 +38,7 @@ from toml_fields import optional_strings, read_manifest
 from toolchain import NativeCrate, Toolchain, rust_compiler
 from unit import UnitLoaf
 from unit_rust import compile_incan_library
-from unit_freshness import artifact_identity, compiler_fingerprint, fingerprint, native_identities
+from unit_freshness import artifact_files, artifact_identity, compiler_fingerprint, fingerprint, native_identities
 
 # The version of the key native preparation is cached under; changing it discards every cached preparation.
 const NATIVE_DOMAIN: str = "incan.graph.native/2"
@@ -348,37 +350,70 @@ def compiled_directory(
     version: str,
 ) -> Result[Option[Path], str]:
     """
-    An Incan dependency's published graph is admitted only beside its Incan manifest, never from bootstrap-emitted Rust.
+    Admit an Incan dependency's native artifact set independently of its optional inspection graph.
 
     The candidates are the artifact directories of the root project and of the dependency's own project, and the
-    directory its library was built into. The first that holds a graph and an interface must be a complete, matching
-    compiled Loaf.
+    directory its library was built into. A manifest there must describe a complete, matching compiled Loaf.
     """
-    mut candidates = [
+    mut candidates: list[Path] = []
+    if key in built:
+        candidates.append(Path(built[key].directory))
+    candidates = candidates + [
         dependency_artifact_dir(request.project, package, request.profile),
         dependency_artifact_dir(project, package, request.profile),
     ]
-    if key in built:
-        candidates.append(Path(built[key].directory))
+    mut selected: Option[Path] = None
     for directory in candidates:
-        if directory.joinpath(f"{package}.incnlib").is_file() and directory.joinpath(f"{package}.incngraph").is_file():
+        if directory.joinpath(f"{package}.incnlib").is_file():
+            if let Some(native) = selected:
+                if not directory.joinpath(f"{package}.incngraph").is_file():
+                    continue
+                if (
+                    native.0 != directory.0
+                    and not same_compiled_generation(native, directory, package, request.project)?
+                ):
+                    continue
             verify_compiled_loaf(directory, package, version, features)?
-            return Ok(Some(directory))
-    return Ok(None)
+            if directory.joinpath(f"{package}.incngraph").is_file():
+                return Ok(Some(directory))
+            selected = Some(directory)
+    return Ok(selected)
+
+
+def same_compiled_generation(first: Path, second: Path, package: str, owner: str) -> Result[bool, str]:
+    """Admit another copy's graph only for the same producer key and byte-identical native artifacts."""
+    first_stamp = first.joinpath(".oven-inputs.sha256")
+    second_stamp = second.joinpath(".oven-inputs.sha256")
+    if not first_stamp.is_file() or not second_stamp.is_file():
+        return Ok(false)
+    producer = read(first_stamp)?.split("\n")[0]
+    if producer == "" or producer != read(second_stamp)?.split("\n")[0]:
+        return Ok(false)
+    first_files = artifact_files(first, package)?
+    second_files = artifact_files(second, package)?
+    if [path.name() for path in first_files] != [path.name() for path in second_files]:
+        return Ok(false)
+    mut observations = artifact_observations(owner)
+    for index in range(len(first_files)):
+        if observations.digest(first_files[index])? != observations.digest(second_files[index])?:
+            save_observations(observations)
+            return Ok(false)
+    save_observations(observations)
+    return Ok(true)
 
 
 def verify_compiled_loaf(directory: Path, package: str, version: str, features: list[str]) -> Result[None, str]:
     """
     Refuse a compiled Loaf that is incomplete, is not the selected dependency, or was built for other features.
 
-    1. The rest of the artifact set is beside the graph.
+    1. Native artifacts form a complete publication, with or without a graph.
     2. Its manifest names this package and version, and has its native ABI cache when it declares one.
     3. Its active features are the ones selected.
     """
-    # 1. A graph beside a partial artifact set would let a consumer rely on a Loaf that cannot be linked.
+    # 1. A partial artifact set cannot grant native declarations or executable vocabulary workers.
     for name in [f"lib{package.replace("-", "_")}.rlib", f"{package}.incnbody", f"{package}.native.json"]:
         if not directory.joinpath(name).is_file():
-            return Err(f"{package}: incomplete compiled Loaf beside its graph")
+            return Err(f"{package}: incomplete compiled Loaf")
     # 2. The Loaf is the package and version selected, and carries the native ABI cache it declares.
     manifest = parse_json(read(directory.joinpath(f"{package}.incnlib"))?)?
     if text(manifest, "name") != package or text(manifest, "version") != version:
@@ -392,7 +427,7 @@ def verify_compiled_loaf(directory: Path, package: str, version: str, features: 
     return Ok(None)
 
 
-def active_features(manifest: JsonValue) -> Result[list[str], str]:
+pub def active_features(manifest: JsonValue) -> Result[list[str], str]:
     """The features a compiled Loaf's manifest records as active in its provider metadata."""
     provider = nested(nested(manifest, "contract_metadata"), "provider")
     mut active: list[str] = []
@@ -411,12 +446,12 @@ def checked_units(
     published_only: bool = false,
 ) -> Result[Tuple[list[GraphUnit], Dict[str, Path]], str]:
     """
-    Read dependency publications, checking legacy and own Incan units after their dependencies for usable interfaces.
+    Read requested dependency graphs, exporting missing ones from source after their dependencies for usable interfaces.
 
     A unit that fails checking publishes no interface; its dependents check without it and report their own diagnostics.
 
     1. A facet that is not the project's own is read from the published graph of its compiled Loaf, when it has one.
-    2. Unless only publications were requested, check other Incan libraries against earlier interfaces.
+    2. Check unpublished dependencies against earlier interfaces; declaration-only preparation may defer the root.
     """
     mut paths: list[GraphUnit] = []
     mut interfaces: Dict[str, Path] = {}
@@ -424,6 +459,7 @@ def checked_units(
         declared = rust_facet(facet.project, false)?
         package = declared.package
         own = inspect_root and facet.project == request.project and facet.domain == DependencyDomain.Target
+        mut native_interface = false
         # 1. A dependency with a compiled Loaf contributes the graph it published, and its interface joins the others.
         if not own:
             published = compiled_directory(
@@ -438,16 +474,20 @@ def checked_units(
             match published:
                 Some(directory) =>
                     interfaces[package] = directory
+                    native_interface = true
                     graph = directory.joinpath(f"{package}.incngraph")
-                    root = Path(facet.project)
-                    paths.append(GraphUnit(path=graph, root=root, package=package, version=declared.version))
-                    continue
+                    if graph.is_file():
+                        root = Path(facet.project)
+                        paths.append(GraphUnit(path=graph, root=root, package=package, version=declared.version))
+                        continue
                 None => pass
-        # 2. Any other facet with an Incan library is checked from source, against the interfaces checked before it.
-        if published_only:
+        # 2. Missing dependency publications are collected on demand, including for a Rust declaration query.
+        if published_only and own:
             continue
         source = library_source(Path(facet.project))?
         if not source.is_file():
+            if native_interface:
+                return Err(f"{package}: no published graph or source; publish the library with --codegraph")
             continue
         loaves = unit_loaves(facet, interfaces)?
         natives = unit_natives(facet, built, request, loaves)?
@@ -455,7 +495,8 @@ def checked_units(
         started = Instant.now()
         path = inspect_incan(source, toolchain, natives, interfaces, facet.features, false, loaves)?
         trace(f"graph checked {package}: {started.elapsed().as_millis()} ms")
-        if not is_unchecked(path):
+        # A checked source export cannot replace the native interface that admits executable vocabulary.
+        if not native_interface and not is_unchecked(path):
             interfaces[package] = interface_directory(path)
         paths.append(
             GraphUnit(

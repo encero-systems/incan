@@ -30,17 +30,28 @@ pub def check_lsp(incan: str, project: Path) -> Result[None, str]:
     source = source_path.read_text("utf-8", "strict").map_err((error) => error.message())?
     uri = file_uri(source_path)
     mut peer = start(binary, project)?
-    initialized = peer.request(1, "initialize", JsonValue.object({
-        "processId": JsonValue.null(), "rootUri": JsonValue.string(file_uri(project)),
-        "capabilities": JsonValue.object({}),
-    }))?
+    initialized = peer.request(
+        1,
+        "initialize",
+        JsonValue.object(
+            {"processId": JsonValue.null(), "rootUri": JsonValue.string(file_uri(project)), "capabilities": JsonValue.object(
+                {},
+            )},
+        ),
+    )?
     if "callHierarchyProvider" not in initialized.to_json().map_err((error) => error.message())?:
         return Err("LSP did not advertise graph call hierarchy")
     peer.notify("initialized", JsonValue.object({}))?
-    peer.notify("textDocument/didOpen", JsonValue.object({"textDocument": JsonValue.object({
-        "uri": JsonValue.string(uri), "languageId": JsonValue.string("incan"),
-        "version": JsonValue.int(1), "text": JsonValue.string(source),
-    })}))?
+    peer.notify(
+        "textDocument/didOpen",
+        JsonValue.object(
+            {"textDocument": JsonValue.object(
+                {"uri": JsonValue.string(uri), "languageId": JsonValue.string("incan"), "version": JsonValue.int(1), "text": JsonValue.string(
+                    source,
+                )},
+            )},
+        ),
+    )?
     peer.diagnostics(uri, 1)?
     # 2. Navigation projects the same declaration and proved caller relationships.
     at_helper = cursor(uri, source, "println(helper())", "helper")?
@@ -71,20 +82,30 @@ pub def check_lsp(incan: str, project: Path) -> Result[None, str]:
     provider_path = project.joinpath("src").joinpath("provider.incn")
     provider_source = provider_path.read_text("utf-8", "strict").map_err((error) => error.message())?
     provider_uri = file_uri(provider_path)
-    peer.notify("textDocument/didOpen", JsonValue.object({"textDocument": JsonValue.object({
-        "uri": JsonValue.string(provider_uri), "languageId": JsonValue.string("incan"),
-        "version": JsonValue.int(1), "text": JsonValue.string(f"\n{provider_source}"),
-    })}))?
+    peer.notify(
+        "textDocument/didOpen",
+        JsonValue.object(
+            {"textDocument": JsonValue.object(
+                {"uri": JsonValue.string(provider_uri), "languageId": JsonValue.string("incan"), "version": JsonValue.int(
+                    1,
+                ), "text": JsonValue.string(f"\n{provider_source}")},
+            )},
+        ),
+    )?
     peer.diagnostics(provider_uri, 1)?
     at_dependency = cursor(uri, source, "println(checked_helper())", "checked_helper")?
     dependency_definition = peer.request(10, "textDocument/definition", at_dependency)?
     if "/deps/checked/src/lib.incn" not in dependency_definition.to_json().map_err((error) => error.message())?:
         return Err("LSP lost a checked dependency definition while its graph was stale")
     # 3. An edited buffer invalidates the old hierarchy item before shutdown.
-    peer.notify("textDocument/didChange", JsonValue.object({
-        "textDocument": JsonValue.object({"uri": JsonValue.string(uri), "version": JsonValue.int(2)}),
-        "contentChanges": JsonValue.array([JsonValue.object({"text": JsonValue.string(f"\n{source}")})]),
-    }))?
+    peer.notify(
+        "textDocument/didChange",
+        JsonValue.object(
+            {"textDocument": JsonValue.object({"uri": JsonValue.string(uri), "version": JsonValue.int(2)}), "contentChanges": JsonValue.array(
+                [JsonValue.object({"text": JsonValue.string(f"\n{source}")})],
+            )},
+        ),
+    )?
     peer.diagnostics(uri, 2)?
     stale = peer.request(8, "callHierarchy/incomingCalls", JsonValue.object({"item": prepared[0]}))?
     if not stale.is_null():
@@ -102,17 +123,28 @@ def check_vocabulary(incan: str, binary: str, project: Path) -> Result[None, str
     source = path.read_text("utf-8", "strict").map_err((error) => error.message())?
     uri = file_uri(path)
     mut peer = start(binary, project)?
-    peer.request(1, "initialize", JsonValue.object({
-        "processId": JsonValue.null(), "rootUri": JsonValue.string(file_uri(project)),
-        "capabilities": JsonValue.object({}),
-    }))?
+    peer.request(
+        1,
+        "initialize",
+        JsonValue.object(
+            {"processId": JsonValue.null(), "rootUri": JsonValue.string(file_uri(project)), "capabilities": JsonValue.object(
+                {},
+            )},
+        ),
+    )?
     peer.notify("initialized", JsonValue.object({}))?
-    peer.notify("textDocument/didOpen", JsonValue.object({"textDocument": JsonValue.object({
-        "uri": JsonValue.string(uri), "languageId": JsonValue.string("incan"),
-        "version": JsonValue.int(1), "text": JsonValue.string(source),
-    })}))?
+    peer.notify(
+        "textDocument/didOpen",
+        JsonValue.object(
+            {"textDocument": JsonValue.object(
+                {"uri": JsonValue.string(uri), "languageId": JsonValue.string("incan"), "version": JsonValue.int(1), "text": JsonValue.string(
+                    source,
+                )},
+            )},
+        ),
+    )?
     peer.diagnostics(uri, 1)?
-    position = cursor(uri, source, "value = query:", "query")?
+    position = cursor(uri, source, "value = query", "query")?
     hover = peer.request(2, "textDocument/hover", position)?
     if "helper" in hover.to_json().map_err((error) => error.message())?:
         return Err("LSP attributed a generated helper identity to the authored vocabulary keyword")
@@ -145,8 +177,11 @@ def cursor(uri: str, source: str, line_fragment: str, name: str) -> Result[JsonV
             continue
         for column in range(len(lines[line])):
             if lines[line][column:column + len(name)] == name:
-                return Ok(JsonValue.object({
-                    "textDocument": JsonValue.object({"uri": JsonValue.string(uri)}),
-                    "position": JsonValue.object({"line": JsonValue.int(line), "character": JsonValue.int(column)}),
-                }))
+                return Ok(
+                    JsonValue.object(
+                        {"textDocument": JsonValue.object({"uri": JsonValue.string(uri)}), "position": JsonValue.object(
+                            {"line": JsonValue.int(line), "character": JsonValue.int(column)},
+                        )},
+                    ),
+                )
     return Err(f"fixture has no {line_fragment}")

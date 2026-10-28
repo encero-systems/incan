@@ -68,6 +68,8 @@ pub model UnitDescription:
     pub search_index: Option[str] = None
     pub rust_abi: list[str] = []
     pub kind: str = "program"
+    # A local observer request; it changes neither the compiler description nor native compilation identity.
+    pub codegraph: bool = false
     pub program_entries: list[str] = []
     pub vocab_entry: Option[str] = None
     pub vocab: Option[str] = None
@@ -86,7 +88,7 @@ pub model UnitDescription:
     pub selected_toolchain: Option[Toolchain] = None
 
     def to_json(self) -> JsonValue:
-        """Serialize the unit and the native debug-information level selected by its profile."""
+        """Serialize native profile policy and optional checked artifacts; graph requests stay outside the wire contract."""
         mut document = JsonValue.object(
             {"schema": JsonValue.string(UNIT_DESCRIPTION_SCHEMA), "source": JsonValue.string(self.source), "kind": JsonValue.string(
                 self.kind,

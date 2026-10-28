@@ -1,0 +1,102 @@
+"""Retain checked graph exports for already prepared units without selecting dependencies or compiling native code."""
+
+from rust::std::process import id
+from std.fs import Path
+from files import json_text, make_directory, read, remove
+from graph_cache import cache_file, is_unchecked, publish_unchecked, tree_inputs
+from publication import publish, publish_binary
+from toolchain import Toolchain
+from unit import UnitDescription
+from unit_compiler import crate_name, run_compiler, write_unit
+from unit_freshness import artifact_identity, cache_identities, fingerprint, native_identities
+
+const EXPORT_DOMAIN: str = "incan.codegraph.incan/4"
+
+
+pub def inspect_prepared(unit: UnitDescription, toolchain: Toolchain, owner: Option[Path] = None) -> Result[Path, str]:
+    """
+    Export an already bound unit once per complete input digest; a failed check retains its diagnostic note.
+
+    1. Normalize the publication request and identify every input to the checked export.
+    2. Reuse a retained graph and its checking interface, or an unchecked note.
+    3. Ask the compiler for the graph and optional checking-only interface.
+    4. Publish the complete export and any diagnostic note.
+    """
+    # 1. Publishing a graph does not change the facts that graph describes.
+    mut ready = unit
+    ready.codegraph = false
+    project = Path(ready.project_root)
+    mut cache_root = project
+    if let Some(selected) = owner:
+        cache_root = selected
+    entry = cache_file(cache_root, export_digest(ready, project, toolchain)?)?
+    directory = interface_directory(entry)
+    interface = directory.joinpath(f"{ready.package}.incnlib")
+    # 2. A retained unchecked unit is an inspection result, not an abnormal compiler failure.
+    if is_unchecked(entry) or (entry.is_file() and (ready.kind != "library" or interface.is_file())):
+        return Ok(entry)
+    # 3. A refused export cannot replace an existing entry with a partial graph.
+    description = write_unit(ready, crate_name(ready), Some(cache_root))?
+    output = Path(f"{entry.0}.{id()}.analysis")
+    pending = Path(f"{interface.0}.{id()}.analysis")
+    mut arguments = ["--codegraph", description.0, toolchain.sysroot, output.0]
+    if ready.kind == "library":
+        make_directory(directory)?
+        arguments.append(pending.0)
+    if run_compiler(toolchain, arguments)? != 0:
+        return Err(f"Incan graph export failed for {ready.package}")
+    # 4. Diagnostic notes are published before the graph they describe.
+    publish_export(entry, interface, ready.package, output, pending, ready.kind == "library")?
+    return Ok(entry)
+
+
+pub def interface_directory(entry: Path) -> Path:
+    """Keep checking-only manifests separate from ordinary compiled Loaf artifact directories."""
+    return Path(f"{entry.0}.interface")
+
+
+def export_digest(ready: UnitDescription, project: Path, toolchain: Toolchain) -> Result[str, str]:
+    """Key the compiler, prepared unit, native and ABI artifacts, search paths and reached source trees."""
+    head = [EXPORT_DOMAIN, artifact_identity(Path(toolchain.driver))?, toolchain.sysroot, json_text(ready.to_json())?]
+    mut inputs = head + native_identities(ready.externs)? + cache_identities(toolchain.rust_abi)?
+    inputs = inputs + ready.search + tree_inputs(project)?
+    for loaf in ready.loaves:
+        inputs = inputs + tree_inputs(Path(loaf.dir))?
+    return fingerprint(inputs)
+
+
+def publish_export(
+    entry: Path,
+    interface: Path,
+    package: str,
+    output: Path,
+    pending: Path,
+    library: bool,
+) -> Result[None, str]:
+    """
+    Publish what the compiler exported, and remove its pending files.
+
+    1. A failed check publishes a diagnostic note before its entry.
+    2. A successful library check publishes its interface.
+    3. Publish the graph; an export without a graph or a note is refused.
+    """
+    note = Path(f"{output.0}.unchecked")
+    if note.is_file():
+        # 1. A unit's note states which facts it can contribute.
+        reason = read(note)?
+        mut consequence = "contributing no facts"
+        if output.is_file():
+            consequence = "using its parseable facts only"
+        publish_unchecked(entry, package, consequence, reason)?
+        remove(note)?
+    elif library:
+        # 2. A checking-only interface grants no native artifact.
+        publish(interface, read(pending)?)?
+        remove(pending)?
+    # 3. Only complete compiler output becomes a cache entry.
+    if output.is_file():
+        publish_binary(entry, output.read_bytes().map_err((error) => error.message())?)?
+        remove(output)?
+    elif not is_unchecked(entry):
+        return Err(f"Incan graph export produced no graph for {package}")
+    return Ok(None)

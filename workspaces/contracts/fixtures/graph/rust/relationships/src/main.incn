@@ -1,4 +1,4 @@
-# behavior: Rust graph CLI and MCP agree on identities, bounded context, freshness, git evidence and expiring feedback
+# behavior: Rust graph consumers retain Incan dependency declarations without eager graph publication (#2256)
 # graph-commands:
 #   . --query defs helper
 #   . --query callers helper
@@ -14,6 +14,7 @@
 #   . --query defs value --limit 1
 #   . --query defs rust_relationships::provider::helper
 #   . --query callees closure_caller
+#   . --query defs inspection_helper
 # expect-stdout-contains:
 #   declaration rust_relationships::provider::helper src/lib.rs:4
 #   call rust_relationships::caller src/lib.rs:28
@@ -31,3 +32,4 @@
 #   … 4 more
 #   call rust_relationships::closure_caller src/lib.rs:61
 #   call rust_relationships::provider::helper src/lib.rs:61
+#   declaration graph_provider::main::inspection_helper deps/provider/src/lib.incn:4

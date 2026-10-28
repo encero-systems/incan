@@ -272,17 +272,14 @@ fn retain_feature_requirements(manifest: &mut LibraryManifest, modules: &[Parsed
         .collect();
 }
 
-/// Write a Loaf's files beside its rlib in `dir`: `<name>.incnbody`, the executable representation of `bodies` (the
-/// unit's own Body IR modules) projected onto the manifest's public identities; `<name>.incngraph`, the already-encoded
-/// graph from that same checking pass; `<name>.native.json`, the unit's native closure; an indexed `<name>.rustabi`
-/// when dependency-owned native facts are needed; and `<name>.incnlib` last,
-/// so its presence means the artifact set is complete.
+/// Publish a Loaf's native artifacts beside its rlib: governed bodies projected onto public identities, the native
+/// closure, an indexed ABI cache when needed, and the manifest last to mark completion. Inspection publications have
+/// their own proof; replacing native artifacts withdraws a previous generation's graph.
 pub fn write_loaf(
     dir: &Path,
     mut manifest: LibraryManifest,
     bodies: &[BodyIrModule],
     closure: &LoafNativeClosure,
-    graph: &[u8],
 ) -> CliResult<()> {
     let name = manifest.name.clone();
     let write = |file: String, bytes: &[u8]| {
@@ -314,7 +311,12 @@ pub fn write_loaf(
         content_digest: hex::encode(Sha256::digest(&surface)),
     });
     write(format!("{name}.incnbody"), &surface)?;
-    write(format!("{name}.incngraph"), graph)?;
+    let graph_path = dir.join(format!("{name}.incngraph"));
+    if graph_path.exists() {
+        // A new artifact set must never inherit the graph of its previous source generation.
+        fs::remove_file(&graph_path)
+            .map_err(|error| CliError::failure(format!("cannot withdraw {}: {error}", graph_path.display())))?;
+    }
     write_rust_abi_cache(dir, &mut manifest)?;
 
     // ---- Native closure and manifest ----

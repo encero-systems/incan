@@ -62,8 +62,10 @@ mkdir -p "$installation/runtime"
 staged=$(mktemp -d "$installation/runtime/.staged.XXXXXX")
 temporary=
 trap '[[ -z ${temporary:-} ]] || rm -f "$temporary"; [[ -z ${staged:-} ]] || rm -rf "$staged"' EXIT
-for artifact in libincan_native_runtime.rlib incan_native_runtime.incnlib incan_native_runtime.incnbody \
-    incan_native_runtime.rustabi incan_native_runtime.incngraph; do
+artifacts=(libincan_native_runtime.rlib incan_native_runtime.incnlib incan_native_runtime.incnbody \
+    incan_native_runtime.rustabi)
+[[ ! -f $output/incan_native_runtime.incngraph ]] || artifacts+=(incan_native_runtime.incngraph)
+for artifact in $artifacts; do
     cp "$output/$artifact" "$staged/$artifact"
 done
 # Native closure paths belong to the producer directory; moving the sidecar must retain those exact artifacts.
@@ -74,14 +76,11 @@ jq --arg directory "$output" '
     | .search |= map(absolute)' "$output/incan_native_runtime.native.json" \
     > "$staged/incan_native_runtime.native.json"
 # Names and bytes both contribute; unchanged machine code cannot hide changed governed bodies or native facts.
-(cd "$staged" && shasum -a 256 libincan_native_runtime.rlib incan_native_runtime.incnlib \
-    incan_native_runtime.incnbody incan_native_runtime.native.json incan_native_runtime.rustabi \
-    incan_native_runtime.incngraph) > "$staged/artifacts.sha256"
+(cd "$staged" && shasum -a 256 $artifacts incan_native_runtime.native.json) > "$staged/artifacts.sha256"
 digest=$(shasum -a 256 "$staged/artifacts.sha256" | cut -d ' ' -f1)
 installed=$installation/runtime/$digest
 if [[ -e $installed ]]; then
-    for artifact in libincan_native_runtime.rlib incan_native_runtime.incnlib incan_native_runtime.incnbody \
-        incan_native_runtime.native.json incan_native_runtime.rustabi incan_native_runtime.incngraph artifacts.sha256; do
+    for artifact in $artifacts incan_native_runtime.native.json artifacts.sha256; do
         cmp "$staged/$artifact" "$installed/$artifact" \
             || { print -u2 "runtime generation $digest has conflicting $artifact bytes"; exit 1; }
     done

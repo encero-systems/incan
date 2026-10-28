@@ -17,7 +17,7 @@ pub def test_help_uses_each_commands_synopsis_and_respects_operands() -> None:
         ("check", "incan check PATH [--format text|json] [UNIT OPTIONS]"),
         ("test", "incan test PATH [UNIT OPTIONS]"),
         ("describe-unit", "incan describe-unit PATH [UNIT OPTIONS]"),
-        ("build", "incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"),
+        ("build", "incan build PATH [--codegraph] [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]"),
         ("fmt", "incan fmt [--check] PATH..."),
         ("owner stop", "incan owner stop"),
         ("inspect codegraph", "incan inspect codegraph PATH [GRAPH OPTIONS]"),
