@@ -170,7 +170,7 @@ pub def unit_key_with(unit: UnitDescription, compiler: str, described: str, mut 
     return assembled(compiler, described, sources, artifacts)
 
 
-def digested(paths: list[str], mut ledger: Ledger) -> Result[list[str], str]:
+pub def digested(paths: list[str], mut ledger: Ledger) -> Result[list[str], str]:
     """Each path followed by the digest of its bytes, reconciled through the ledger."""
     mut inputs: list[str] = []
     for path in paths:
@@ -235,7 +235,7 @@ pub def rust_key(
     return assembled(compiler, description, sources, artifacts)
 
 
-def unit_files(unit: UnitDescription, mut project: Ledger) -> Result[list[str], str]:
+pub def unit_files(unit: UnitDescription, mut project: Ledger) -> Result[list[str], str]:
     """
     The files a unit's compilation reads from its project: manifest, lock, entry, sources and metadata inputs.
 

@@ -20,6 +20,8 @@ use incan_mir_lowering::{SourceInputs, program_refusals, unit_plan};
 use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable, NativeUnionDeclaration, NominalDeclaration};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 
+mod checked_artifact;
+
 /// Environment variable naming the file where the census receives every refusal of one compilation, one per line.
 ///
 /// Unset, compilation reports only its first refusal, as it always has. Set, the driver also lowers every body on its
@@ -1117,15 +1119,15 @@ pub fn source_interface(arguments: &[String]) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-/// Compile through the same native pipeline with a full canonical session, borrowing only generation-guarded
-/// immutable readings. A resident worker has no use for a persisted unchanged-source lookup footprint.
+/// Compile through the same native pipeline and explicit checked-source witness as a short-lived invocation.
+/// A resident worker retains only generation-guarded immutable readings outside that witnessed artifact.
 pub(crate) fn compile_resident(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     compile_unit(arguments, true)
 }
 
-/// Compile one unit with the invocation's immutable-input retention policy; source checking and native execution
-/// remain fresh for both short-lived and resident callers. A leading `--certify PATH` option names where a refusal
-/// that unchanged inputs reproduce writes its receipt. Checking, lowering and native compilation retain their
+/// Compile one unit with its immutable-input policy and Oven's optional checked-source witness; native lowering and
+/// compilation remain fresh for both short-lived and resident callers. A leading `--certify PATH` option names where a
+/// refusal that unchanged inputs reproduce writes its receipt. Checking, lowering and native compilation retain their
 /// separate refusal boundaries; only successful compilation publishes library artifacts.
 fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std::error::Error>> {
     if arguments.len() < 4 {
@@ -1223,8 +1225,9 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     Ok(())
 }
 
-/// Check owned invocation inputs on the compiler stack and preserve the source refusal report on failure. The
-/// returned program owns checked facts; no invocation descriptor is copied to bridge the stack boundary.
+/// Read Oven's explicitly witnessed private checked-source artifact, or check owned inputs on the compiler stack
+/// and retain a complete round trip. Failures preserve the source refusal report; native policy never enters this
+/// artifact, and no invocation descriptor is copied to bridge the stack boundary.
 fn check_compilation_source(
     unit: UnitDescription,
     rust: RustFactsSetup,
@@ -1234,7 +1237,12 @@ fn check_compilation_source(
     let parent = tracing::Span::current();
     let checked = incan_frontend::compiler_stack::run_on_compiler_stack(move || {
         let _parent = parent.enter();
-        checked_modules(&unit, &rust, resident, &receipt)
+        if let Some(program) = checked_artifact::read(&unit) {
+            return Ok(program);
+        }
+        let mut program = checked_modules(&unit, &rust, resident, &receipt)?;
+        checked_artifact::write(&unit, &mut program);
+        Ok(program)
     });
     match checked {
         Ok(program) => Ok(program),

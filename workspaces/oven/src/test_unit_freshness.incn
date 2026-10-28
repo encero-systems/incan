@@ -6,6 +6,7 @@ from std.fs import Path
 from std.json import JsonValue
 from files import json_text, make_directory, read, remove, write as write_file
 from compiler_refusals import check_or_replay, compile_or_replay
+from checked_source import retain_checked_source
 from incan_units import compile_unit, executable_outputs, install_executable, test_report
 from features import FeatureRequest
 from intake import ManifestReader
@@ -161,6 +162,105 @@ pub def test_unchanged_unit_is_keyed_without_reading_or_listing() -> Result[None
     release.profile = "release"
     assert "\"debug_info\":0" in json_text(release.to_json())?
     assert description_digest(release)? != debug_description
+    verify_checked_source_profiles(setup)?
+    return Ok(None)
+
+
+def verify_checked_source_profiles(setup: Fixture) -> Result[None, str]:
+    """
+    Check shared semantic identity and independent native policy in the existing freshness contract.
+
+    1. Prepare equivalent dependency profiles with complete semantic and native evidence.
+    2. Prove profile sharing, then invalidate features, source, interfaces and native bindings independently.
+    3. Refuse dynamic vocabulary and unobserved C-header inputs.
+    """
+    # 1. Only native code bytes differ between the dependency's two profiles.
+    mut debug = setup.unit
+    debug.kind = "library"
+    debug.search = [debug.loaves[0].dir]
+    for loaf in debug.loaves:
+        closure = Path(loaf.dir).joinpath(f"{loaf.name}.native.json")
+        write(closure, "{\"externs\":[],\"macro_externs\":[],\"search\":[]}")?
+    first = retain_checked_source(debug, setup.toolchain)?
+    assert first.checked_key is not None
+    assert retain_checked_source(first, setup.toolchain)?.checked_key == first.checked_key
+    mut release = debug
+    release.profile = "release"
+    mut providers: list[UnitLoaf] = []
+    for loaf in release.loaves:
+        directory = Path(loaf.dir).parent().joinpath("release")
+        for name in [
+            f"{loaf.name}.incnlib",
+            f"{loaf.name}.incnbody",
+            f"{loaf.name}.incngraph",
+            f"{loaf.name}.native.json",
+        ]:
+            write(directory.joinpath(name), read(Path(loaf.dir).joinpath(name))?)?
+        write(directory.joinpath(f"lib{loaf.name}.rlib"), "different native profile")?
+        mut selected = loaf
+        selected.dir = directory.0
+        providers.append(selected)
+    release.loaves = providers
+    release.search = [release.loaves[0].dir, release.loaves[0].dir]
+    # 2. Semantic equivalence does not authorize reusing profile-dependent native results.
+    shared = retain_checked_source(release, setup.toolchain)?
+    assert shared.checked_key == first.checked_key
+    assert description_digest(debug)? != description_digest(release)?
+    mut changed = release
+    changed.active_features = ["other"]
+    assert retain_checked_source(changed, setup.toolchain)?.checked_key != first.checked_key
+    changed = release
+    changed.declared_features = ["available"]
+    assert retain_checked_source(changed, setup.toolchain)?.checked_key != first.checked_key
+    source = Path(release.source)
+    original = read(source)?
+    write(source, original + "# a source edit\n")?
+    assert retain_checked_source(release, setup.toolchain)?.checked_key != first.checked_key
+    write(source, original)?
+    interface = Path(release.loaves[0].dir).joinpath("dep.incnbody")
+    body = read(interface)?
+    write(interface, body + "changed")?
+    assert retain_checked_source(release, setup.toolchain)?.checked_key != first.checked_key
+    write(interface, body)?
+    closure = Path(release.loaves[0].dir).joinpath("dep.native.json")
+    original_closure = read(closure)?
+    extra = JsonValue.array([JsonValue.string("native_alias"), JsonValue.string(release.externs[0].path)])
+    for field in ["externs", "macro_externs"]:
+        mut document = JsonValue.object(
+            {"externs": JsonValue.array([]), "macro_externs": JsonValue.array([]), "search": JsonValue.array([])},
+        )
+        document.set(field, JsonValue.array([extra])).map_err((error) => error.message())?
+        write(closure, json_text(document)?)?
+        assert retain_checked_source(release, setup.toolchain)?.checked_key != first.checked_key
+    write(closure, original_closure)?
+    indirect = setup.root.joinpath("native-search").joinpath("libindirect.rlib")
+    write(indirect, "first transitive artifact")?
+    changed = release
+    changed.search = [indirect.parent().0]
+    indirect_before = retain_checked_source(changed, setup.toolchain)?
+    write(indirect.parent().joinpath("build.log"), "nonsemantic observation output")?
+    assert retain_checked_source(changed, setup.toolchain)?.checked_key == indirect_before.checked_key
+    rewrite_in_place(indirect, "second transitive artifact")?
+    assert retain_checked_source(changed, setup.toolchain)?.checked_key != indirect_before.checked_key
+    native = Path(release.externs[0].path)
+    artifact = read(native)?
+    write(native, artifact + "changed")?
+    assert retain_checked_source(release, setup.toolchain)?.checked_key != first.checked_key
+    # 3. Unwitnessed dynamic inputs cannot enter a reusable checked-source artifact.
+    changed = shared
+    changed.vocabulary = true
+    vocabulary = retain_checked_source(changed, setup.toolchain)?
+    match vocabulary.checked_key:
+        None => pass
+        Some(_) =>
+            assert false, "executable vocabulary authorized checked-source reuse"
+    changed = shared
+    changed.c_headers = ["include/header.h"]
+    headers = retain_checked_source(changed, setup.toolchain)?
+    match headers.checked_key:
+        None => pass
+        Some(_) =>
+            assert false, "unobserved C headers authorized checked-source reuse"
     return Ok(None)
 
 

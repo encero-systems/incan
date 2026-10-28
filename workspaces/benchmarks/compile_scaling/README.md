@@ -81,3 +81,48 @@ A full-debug control then used the same final installed compiler and standard ge
 | std.data | 29.157 | 4.550 | 0.007 | 2,026,360,096 |
 
 Relative to this final control, level `0` saves 13.557 s (32.3%) in lowering LLVM/ThinLTO and 1.267 s (27.8%) for data. Physical peaks fall by 504,809,008 and 75,612,256 bytes. Whole invocation time is 7.969 s higher for lowering and 0.843 s lower for data. Lowering's Incan phase varies from 91.730 s in the control to 109.739 s in the default sample despite identical source sizes and Body IR counts. These single trials support the backend and memory benefit; total cold time remains variable.
+
+## Standard-package profile reuse
+
+The standard source producer can retain checking, Body IR, source provenance, library interfaces and codegraphs across equivalent release and debug builds. Oven supplies an explicit private artifact and equivalence key; native lowering and codegen still run separately. The key covers authored inputs, declared and active features, vocabulary, every admitted Loaf's semantic artifacts and native closure, Rust facts, compiler generation, target and SDK. Only native profile policy and authenticated locations of semantically equivalent Loaf artifacts are normalized. Executable vocabulary and C headers refuse reuse until their additional observations can be witnessed, so interop builds independently in both profiles.
+
+The experiment builds core, testing, async, system, codecs, compression, web, data, observability, vocab and interop in that order, release first and then debug. Dependencies are already built and remain fixed. Each observed driver invocation uses the same two-token jobserver, diagnostic observer and host admission as above. Descriptions are freshly prepared by the source-built `toolchain-native` helper, which attaches the private semantic key. For a separate uncached control, prepare the same description, remove `checked_artifact` and `checked_key`, and compile again with the same driver, working directory and output paths. Compare every `.rlib`, `.incnlib`, `.incnbody`, `.incngraph`, `.native.json`, and any Rust ABI or vocabulary worker output by SHA-256. Different working directories or output paths can change native metadata and are unsuitable byte controls. A byte-only validation pass precedes the timed comparison. Retain cached and control originals separately so no prior artifact can mask a missing output.
+
+The preceding compiler's 22 invocations took 115.270 s, or 120.558 s including the observed commands and receipt processing. Its descriptions were prepared before timing. Debug alone repeated 10.495 s of frontend/checking, 1.667 s of Body IR/context and 2.004 s of codegraph collection. These aggregate intervals include interop, which remains uncached. They exclude graph encoding and other residual work, and cannot be added to predict the final saving.
+
+This is whole-package semantic reuse. An authored body edit still checks and lowers the affected package as a whole. It does not provide function-level incremental checking or reuse native plans between profiles.
+
+### Observed results
+
+Measured October 28, 2026 on macOS arm64. Each timing set contains 22 successful invocations admitted individually under the load, memory and disk limits above. Release starts without a retained checked-source snapshot; debug can reuse the first profile's result. These are single observations, not medians. The current compiler was also measured with both proof fields removed, providing a matched-driver control.
+
+| Set | Release driver (s) | Debug driver (s) | All 22 driver invocations (s) | Observed commands (s) |
+| --- | ---: | ---: | ---: | ---: |
+| Preceding compiler, no reuse | 56.160 | 59.111 | 115.270 | 120.558 |
+| Current compiler, reuse disabled | 46.344 | 50.871 | 97.215 | 110.192 |
+| Current compiler, reuse enabled | 47.871 | 45.459 | 93.330 | 106.417 |
+
+Against the matched-driver control, reuse reduces observed driver time by 3.885 s (4.0%) and command time by 3.774 s (3.4%). Cold release is 1.527 s slower; the second profile is 5.412 s faster. Commands include description preparation, vocabulary-worker staging and receipt processing; the preceding compiler's descriptions were prepared beforehand. Its uncached checking also took longer despite byte-identical standard Rust ABI caches. The larger parent-to-current difference therefore does not isolate the effect of this cache.
+
+Ten debug invocations reuse checked source; interop checks independently in both profiles. Their Body IR body, statement and local counts match the uncached controls and preceding compiler. Across the ten eligible debug builds, the matched control spends 7.168 s in checking, Body IR/context and graph collection. Reuse replaces those calls with 0.632 s of snapshot reads. The first profile spends 1.186 s writing and structurally validating snapshots. Native lowering, rustc analysis, LLVM and linking still run; their variability contributes to the observed wall-time difference.
+
+| Debug phase, all eleven packages | Reuse disabled (s) | Reuse enabled (s) |
+| --- | ---: | ---: |
+| Frontend/checking | 3.666 | 0.008 |
+| Body IR/context | 1.599 | 0.019 |
+| Codegraph collection | 1.958 | 0.027 |
+| Incan lowering | 23.275 | 24.442 |
+| rustc analysis | 2.547 | 2.681 |
+| LLVM/ThinLTO | 13.994 | 14.496 |
+| Link | 0.039 | 0.030 |
+
+The remaining semantic intervals in the enabled column belong to interop. No checking or graph-collection span occurs on a hit. Snapshot publication streams to a private file and validates one module and Rust item at a time, avoiding a second complete program or an in-memory payload buffer.
+
+| std.data | Reuse disabled invocation (s) | Reuse enabled invocation (s) | Disabled peak physical bytes | Enabled peak physical bytes |
+| --- | ---: | ---: | ---: | ---: |
+| Release, cold semantic result | 22.816 | 23.317 | 2,049,100,296 | 2,068,695,608 |
+| Debug, second profile | 24.482 | 22.359 | 1,987,561,992 | 1,720,043,992 |
+
+Cold publication raises the observed release peak by 19,595,312 bytes against the matched control. Both release observations remain below 2 GiB; the enabled sample has 78,788,040 bytes of headroom. The debug hit lowers the observed peak by 267,518,000 bytes. These per-process observations are not a maximum-memory guarantee.
+
+All 22 native/public output inventories match separate uncached builds byte for byte, with cached and control originals retained separately. An `i8` overflow probe shares the same checked-source key while release prints `-128` and debug exits `101`. A corrupt private snapshot falls back to checking and reproduces the original artifacts. Source, feature, interface and native-closure changes invalidate equivalence; directory sidecars and equivalent search aliases do not. Full validation passes with unchanged verdicts: 1,214 contracts pass, zero fail and one remains pending; all 69 Oven tests, 18 Rust facets and 23 source builds pass.

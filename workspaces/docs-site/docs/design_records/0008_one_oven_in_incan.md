@@ -32,6 +32,7 @@ Until 0.6.0-dev.8 Oven had two halves. The Rust crates under `loaves/oven/` and 
 - Native Incan compilation policy: debug units use optimization level 0, preserving the existing assertion and overflow policy; other profiles retain the driver's optimization. The selected flags are part of the unit's reuse identity.
 - Unit orchestration: every Loaf a unit reaches is compiled before the unit (DD-0005), standard packages included (DD-0007).
 - The store: prepared units, their identities and their reuse, so that unchanged work is never repeated (DD-0005).
+- Private checked-source artifacts may be shared across profiles only under an explicit complete semantic equivalence witness selected by Oven; profile-specific native lowering and linking remain fresh, and public Loaf executable representations are unchanged.
 - The toolchain and home layout.
 - The `incan` command line. `incan` is an Incan program.
 

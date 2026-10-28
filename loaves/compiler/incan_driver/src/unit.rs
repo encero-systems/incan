@@ -70,6 +70,13 @@ pub struct UnitDescription {
     /// information.
     #[serde(default = "legacy_debug_info")]
     pub debug_info: u32,
+    /// Oven-selected private checked-source artifact and semantic equivalence witness. Native policy is excluded
+    /// from this witness; compilation still lowers and checks the selected native closure on every invocation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_artifact: Option<PathBuf>,
+    /// Complete semantic input identity supplied by Oven for `checked_artifact`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked_key: Option<String>,
     /// Every feature the package declares, which `when feature(...)` may name.
     pub declared_features: BTreeSet<String>,
     /// The features active for this unit.

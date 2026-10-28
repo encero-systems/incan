@@ -75,6 +75,9 @@ pub model UnitDescription:
     pub vocab_admissions: list[str] = []
     pub vocab_policy: str = "locked-dependencies"
     pub vocab_desugarer: bool = false
+    # Private checked-source reuse selected by Oven, separate from profile-specific executable artifacts.
+    pub checked_artifact: Option[str] = None
+    pub checked_key: Option[str] = None
     # Oven retains the selected graph in memory; it is not part of the compiler's unit description.
     pub facets: list[LocalFacet] = []
     # Source readings belong to this preparation and are not part of the compiler's public description.
@@ -84,7 +87,7 @@ pub model UnitDescription:
 
     def to_json(self) -> JsonValue:
         """Serialize the unit and the native debug-information level selected by its profile."""
-        return JsonValue.object(
+        mut document = JsonValue.object(
             {"schema": JsonValue.string(UNIT_DESCRIPTION_SCHEMA), "source": JsonValue.string(self.source), "kind": JsonValue.string(
                 self.kind,
             ), "program_entries": texts(self.program_entries), "project_root": JsonValue.string(self.project_root), "source_root": JsonValue.string(
@@ -105,6 +108,11 @@ pub model UnitDescription:
                 self.search_index,
             ), "rust_abi": texts(self.rust_abi)},
         )
+        if let Some(path) = self.checked_artifact:
+            _ = document.set("checked_artifact", JsonValue.string(path))
+        if let Some(key) = self.checked_key:
+            _ = document.set("checked_key", JsonValue.string(key))
+        return document
 
 
 def texts(items: list[str]) -> JsonValue:

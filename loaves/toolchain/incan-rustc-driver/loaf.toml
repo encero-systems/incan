@@ -15,6 +15,8 @@ thiserror = { loaf = "crates-io/thiserror", version = "2" }
 serde_json = { loaf = "crates-io/serde_json", version = "1" }
 hex = { loaf = "crates-io/hex", version = "0.4.3" }
 sha2 = { loaf = "crates-io/sha2", version = "0.10.9" }
+postcard = { default-features = false, features = ["use-std"], loaf = "crates-io/postcard", version = "1.1" }
+serde = { features = ["derive"], loaf = "crates-io/serde", version = "1.0" }
 incan_semantics_core = { loaf = "incan_semantics_core", path = "../../kernel/incan_semantics_core" }
 incan_lang = { loaf = "incan_lang", path = "../../kernel/incan_lang" }
 incan_frontend = { loaf = "incan_frontend", path = "../../compiler/incan_frontend", default-features = false }

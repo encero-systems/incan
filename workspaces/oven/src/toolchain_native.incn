@@ -28,6 +28,7 @@ from rust_units import (
 from toolchain import NativeCrate, Toolchain, load_toolchain, rust_compiler, toolchain_file
 from unit import UnitDescription, UnitLoaf, describe
 from unit_rust import add_extern, compile_library_unit, prepare_linked
+from checked_source import retain_checked_source
 
 
 def main() -> Result[None, str]:
@@ -72,7 +73,7 @@ def build_standard(
     """
     # 1. Native support and admitted standard providers are selected before freshness is tested.
     project = repository.joinpath("loaves").joinpath("stdlib").joinpath(package)
-    ready = prepared_source_unit(project, profile, toolchain, false)?
+    ready = retain_checked_source(prepared_source_unit(project, profile, toolchain, false)?, toolchain)?
     # 2. The stable destination retains a proof across separate producer invocations.
     output = directory.joinpath(f"lib{ready.package.replace("-", "_")}.rlib")
     code = compile_library_unit(ready, toolchain, output)?
@@ -120,7 +121,7 @@ def describe_standard(repository: Path, package: str, profile: str, toolchain: T
     """
     # 1. Standard providers retain their admitted compiled dependencies.
     project = repository.joinpath("loaves").joinpath("stdlib").joinpath(package)
-    ready = prepared_source_unit(project, profile, toolchain, false)?
+    ready = retain_checked_source(prepared_source_unit(project, profile, toolchain, false)?, toolchain)?
     # 2. Library compilation owns vocabulary staging together with every other published artifact.
     println(json_text(ready.to_json())?)
     return Ok(None)
