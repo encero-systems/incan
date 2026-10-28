@@ -7,6 +7,7 @@ require 'csv'
 def invocation(path)
   record = JSON.parse(File.read(path))
   return nil unless record.key?('status')
+  return nil if record['role'] == 'daemon' || record.dig('argv', 0) == '--resident'
   prefix = path.delete_suffix('.json')
   timers = Hash.new(0.0)
   boundaries = {}
@@ -70,9 +71,11 @@ base = ARGV.fetch(0)
 paths = Dir.glob(base+'/commands/*.json').reject { |path| path.end_with?('.unit.json') }
 incomplete = paths.reject { |path| JSON.parse(File.read(path)).key?('status') }
 File.write(base+'/incomplete-invocations.json', JSON.pretty_generate(incomplete))
+daemons = paths.map { |path| JSON.parse(File.read(path)) }.select { |record| record.dig('argv', 0) == '--resident' }
+File.write(base+'/daemon-invocations.json', JSON.pretty_generate(daemons))
 records = paths.map { |path| invocation(path) }.compact
 File.write(base+'/invocations.json', JSON.pretty_generate(records))
-columns = %w[trial package profile wall status checking body_ir_context codegraph lowering rustc_analysis llvm link footprint_bytes]
+columns = %w[trial package profile wall postprocess_wall collector_wall status checking body_ir_context codegraph lowering rustc_analysis llvm link footprint_bytes]
 CSV.open(base+'/phases.tsv', 'w', col_sep: "\t") do |csv|
   csv << columns
   records.each do |record|

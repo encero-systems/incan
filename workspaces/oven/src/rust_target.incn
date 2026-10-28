@@ -7,6 +7,7 @@ from std.json import JsonValue
 from observation import observe
 from retained_readings import recall, retain
 from rust_activation import CfgSnapshot, TargetConfiguration
+from jec import begin, record
 
 
 pub def target_configuration(rustc: str) -> Result[TargetConfiguration, str]:
@@ -56,13 +57,26 @@ def probed(rustc: str, arguments: list[str]) -> Result[str, str]:
 
 
 pub def run_text(program: str, arguments: list[str]) -> Result[str, str]:
-    """Run a program to completion and return its stdout; a failure returns its stderr."""
+    """
+    Run a program to completion and return its stdout; a failure returns its stderr.
+
+    1. Prepare the exact requested command.
+    2. Run it once and record its completed observation, including failures.
+    3. Decode its output and preserve the exit-status diagnostic.
+    """
+    # 1. Arguments retain their original boundaries.
+    clock = begin()
     mut command = Command.new(program)
     for argument in arguments:
         command.arg(argument)
+    # 2. Immediate matching retains the native error without copying its result container.
     match command.output():
-        Err(error) => return Err(f"cannot run {program}: {error}")
+        Err(error) =>
+            record("tool_query", " ".join([program] + arguments), clock)
+            return Err(f"cannot run {program}: {error}")
         Ok(output) =>
+            record("tool_query", " ".join([program] + arguments), clock)
+            # 3. Observation output never replaces the program's own output or status.
             stdout = decoded(output.stdout)
             if not output.status.success():
                 return Err(f"{program} {" ".join(arguments)} failed:\n{decoded(output.stderr)}")

@@ -29,6 +29,7 @@ from toolchain import NativeCrate, Toolchain, load_toolchain, rust_compiler, too
 from unit import UnitDescription, UnitLoaf, describe
 from unit_rust import add_extern, compile_library_unit, prepare_linked
 from checked_source import retain_checked_source
+from jec import begin, record
 
 
 def main() -> Result[None, str]:
@@ -73,10 +74,17 @@ def build_standard(
     """
     # 1. Native support and admitted standard providers are selected before freshness is tested.
     project = repository.joinpath("loaves").joinpath("stdlib").joinpath(package)
-    ready = retain_checked_source(prepared_source_unit(project, profile, toolchain, false)?, toolchain)?
+    preparation = begin()
+    described = prepared_source_unit(project, profile, toolchain, false)?
+    record("standard_source_preparation", project.0, preparation)
+    retention = begin()
+    ready = retain_checked_source(described, toolchain)?
+    record("standard_checked_source", project.0, retention)
     # 2. The stable destination retains a proof across separate producer invocations.
     output = directory.joinpath(f"lib{ready.package.replace("-", "_")}.rlib")
+    compilation = begin()
     code = compile_library_unit(ready, toolchain, output)?
+    record("standard_library_request", project.0, compilation)
     if code != 0:
         return Err(f"standard package {package} compilation exited with status {code}")
     return Ok(None)

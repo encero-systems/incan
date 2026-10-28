@@ -423,6 +423,8 @@ pub model RustBuild:
     pub manifests: ManifestReader = ManifestReader()
     # Native Rust artifacts depend on the actual rustc, independently of installed Incan providers.
     pub native_compiler: str = ""
+    # The same request-owned installation facts used by the native fingerprint and sysroot-linked binaries.
+    pub compiler_libraries: Option[ToolchainLibraries] = None
     # One name index retains ambiguity in the selected installed artifact generation.
     pub installed: Dict[str, list[str]] = {}
     # Rust implementations consume native facets; Incan consumers require complete public Loaf facades.
@@ -450,7 +452,9 @@ pub def prepared_build(request: RustBuild) -> Result[RustBuild, str]:
         prepared.compiler = compiler_fingerprint(selected)?
     prepared.installed = native_artifacts(selected.externs)
     if prepared.native_compiler == "":
-        prepared.native_compiler = native_compiler_fingerprint(prepared.rustc, prepared.project)?
+        libraries = toolchain_libraries(prepared.rustc, prepared.project)?
+        prepared.compiler_libraries = Some(libraries)
+        prepared.native_compiler = native_compiler_fingerprint(prepared.rustc, prepared.project, Some(libraries))?
     return Ok(prepared)
 
 
@@ -464,10 +468,14 @@ pub def native_artifacts(externs: list[NativeCrate]) -> Dict[str, list[str]]:
     return artifacts
 
 
-def native_compiler_fingerprint(rustc: str, project: str) -> Result[str, str]:
-    """Identify the actual pinned compiler and SDK, resolving an installation's sysroot alias before observing them."""
+def native_compiler_fingerprint(
+    rustc: str,
+    project: str,
+    retained: Option[ToolchainLibraries] = None,
+) -> Result[str, str]:
+    """Identify the actual pinned compiler and SDK, reusing only this request's selected installation facts."""
     compiler = Path(rustc).resolve().map_err((error) => error.message())?
-    libraries = toolchain_libraries(compiler.0, project)?
+    libraries = selected_compiler_libraries(compiler.0, project, retained)?
     return fingerprint(
         [
             compiler.0,
@@ -1453,7 +1461,7 @@ pub def compile_binary(
     # 2. The binary links the root's own library first when it has one, then everything the facet links.
     mut libraries: Option[ToolchainLibraries] = None
     if declared.sysroot:
-        libraries = Some(toolchain_libraries(request.rustc, facet.project)?)
+        libraries = Some(selected_compiler_libraries(request.rustc, facet.project, request.compiler_libraries)?)
     environment = binary_environment(request.rustc, facet.project, declared, crate_id, libraries)?
     # 3. A binary that loads the toolchain's own libraries can find them, wherever its `sysroot` link points.
     if let Some(selected) = libraries:
@@ -1538,7 +1546,8 @@ def binary_key(
     unit = identity(facet, request.profile)
     ledger = unit_ledger(request.project, f"rust-{request.profile}-bin-{name}-{unit}")
     mut crates = load_ledger(ledger, SETTLE_SECONDS, "")
-    compiler = fingerprint([request.rustc, artifact_identity(Path(request.rustc))?, run_text(request.rustc, ["-vV"])?])?
+    version = request_compiler_version(request)?
+    compiler = fingerprint([request.rustc, artifact_identity(Path(request.rustc))?, version])?
     mut described = [f"binary {name} {declared.package} {declared.version} unstable={declared.unstable}"] + arguments
     for variable in sorted([key for key in environment.keys()]):
         described.append(f"{variable}={environment[variable]}")
@@ -1554,6 +1563,13 @@ def binary_key(
     return Ok(key)
 
 
+def request_compiler_version(request: RustBuild) -> Result[str, str]:
+    """Use the request's selected installation facts; direct callers without them retain their ordinary query."""
+    match request.compiler_libraries:
+        Some(selected) => return Ok(selected.environment["INCAN_DRIVER_RUSTC_IDENTITY"])
+        None => return run_text(request.rustc, ["-vV"])
+
+
 pub def binary_environment(
     rustc: str,
     project: str,
@@ -1564,15 +1580,19 @@ pub def binary_environment(
     """The package and pinned-driver identity environment shared by binary compilation and analysis."""
     mut environment = package_environment(project, declared, name)
     if declared.sysroot:
-        libraries = binary_libraries(rustc, project, retained)?
+        libraries = selected_compiler_libraries(rustc, project, retained)?
         for variable in sorted([key for key in libraries.environment.keys()]):
             value = libraries.environment[variable]
             environment[variable] = value
     return Ok(environment)
 
 
-def binary_libraries(rustc: str, project: str, retained: Option[ToolchainLibraries]) -> Result[ToolchainLibraries, str]:
-    """Reuse the binary's selected toolchain libraries during both argument and environment construction."""
+def selected_compiler_libraries(
+    rustc: str,
+    project: str,
+    retained: Option[ToolchainLibraries],
+) -> Result[ToolchainLibraries, str]:
+    """Reuse one request's selected installation facts across fingerprint, argument and environment construction."""
     match retained:
         Some(selected) => return Ok(selected)
         None => return toolchain_libraries(rustc, project)
@@ -1648,6 +1668,7 @@ def invoke_rustc(
     driver: Option[Toolchain] = None,
 ) -> Result[None, str]:
     """Run the pinned rustc for one unit; a failure carries rustc's diagnostics."""
+    clock = begin()
     mut command = Command.new(rustc)
     if let Some(toolchain) = driver:
         command = driver_command(toolchain)?
@@ -1660,11 +1681,24 @@ def invoke_rustc(
     if unstable:
         command.env("RUSTC_BOOTSTRAP", "1")
     match command.output():
-        Err(error) => return Err(f"cannot run {rustc}: {error}")
+        Err(error) =>
+            record_work(rust_invocation_category(arguments), unit, clock)
+            return Err(f"cannot run {rustc}: {error}")
         Ok(result) =>
+            record_work(rust_invocation_category(arguments), unit, clock)
             if result.status.success():
                 return Ok(None)
             return Err(f"rustc failed for {unit}:\n{decoded(result.stderr)}")
+
+
+def rust_invocation_category(arguments: list[str]) -> str:
+    """Distinguish actual native production and graph observation from other pinned compiler requests."""
+    if len(arguments) > 0:
+        if arguments[0] == "--rust-compile":
+            return "rust_native_compile"
+        if arguments[0] in ["--rust-codegraph", "--rust-compile-codegraph"]:
+            return "rust_graph_request"
+    return "rustc_request"
 
 
 def declared_binaries(document: TomlValue) -> Result[list[TomlValue], str]:

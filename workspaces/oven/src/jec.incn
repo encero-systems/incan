@@ -1,14 +1,14 @@
 """Record opt-in work observations without granting caching or build authority."""
 
 from rust::std::process import id
-from rust::std::time import Instant
+from rust::std::time import Instant, SystemTime, UNIX_EPOCH
 from std.environ import get_or
 from std.fs import Path
 from std.json import JsonValue
 
 
 pub def begin() -> Option[Instant]:
-    """Read a work clock only when INCAN_JEC_TRACE names an existing output directory."""
+    """Read a work clock only when INCAN_JEC_TRACE is set; unavailable output paths remain harmless."""
     if get_or("INCAN_JEC_TRACE", "") == "":
         return None
     return Some(Instant.now())
@@ -19,19 +19,30 @@ pub def record(category: str, input: str, clock: Option[Instant], bytes: int = 0
     Append one measured operation to this process's trace; an unavailable trace never changes its caller's result.
 
     Durations cover the named boundary and may overlap nested operations. Bytes count known read payloads;
-    allocations are unavailable rather than inferred from time or file size.
+    allocations are unavailable rather than inferred from time or file size. Completion anchors use host-clock
+    microseconds; durations use the monotonic clock, and an unavailable host clock is explicit.
+
+    1. Leave disabled observations without a clock or output write.
+    2. Retain the operation's duration and completion anchor.
+    3. Append only a complete JSON record.
     """
+    # 1. Disabled callers do no observation work.
     match clock:
         None => return
         Some(started) =>
-            fields = JsonValue.object(
-                {"schema": JsonValue.string("incan.jec/1"), "process": JsonValue.int(int(id())), "category": JsonValue.string(
-                    category,
-                ), "input": JsonValue.string(input), "nanoseconds": JsonValue.int(int(started.elapsed().as_nanos())), "bytes": JsonValue.int(
-                    bytes,
-                ), "allocations": JsonValue.null()},
-            )
-            match fields.to_json():
+            # 2. Monotonic duration and host-clock anchor have separate meanings.
+            elapsed = int(started.elapsed().as_nanos())
+            mut fields: Dict[str, JsonValue] = {}
+            fields["schema"] = JsonValue.string("incan.jec/1")
+            fields["process"] = JsonValue.int(int(id()))
+            fields["category"] = JsonValue.string(category)
+            fields["input"] = JsonValue.string(input)
+            fields["nanoseconds"] = JsonValue.int(elapsed)
+            fields["completed_unix_us"] = completion_epoch()
+            fields["bytes"] = JsonValue.int(bytes)
+            fields["allocations"] = JsonValue.null()
+            # 3. A failed observation cannot affect compilation or reuse.
+            match JsonValue.object(fields).to_json():
                 Err(_) => return
                 Ok(text) => append(text)
 
@@ -58,3 +69,10 @@ def append(text: str) -> None:
         Ok(opened) =>
             mut sink = opened
             _ = sink.write(text + "\n")
+
+
+def completion_epoch() -> JsonValue:
+    """Anchor an observed duration to the host clock in microseconds; an unavailable clock stays explicit."""
+    match SystemTime.now().duration_since(UNIX_EPOCH):
+        Err(_) => return JsonValue.null()
+        Ok(elapsed) => return JsonValue.int(int(elapsed.as_micros()))
