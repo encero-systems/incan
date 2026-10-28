@@ -48,6 +48,7 @@ impl CheckedCallableInterface {
         span: Span,
         checker: &TypeChecker,
     ) -> Result<Self, LibraryManifestError> {
+        // ---- Admission: retain the accepting checker's declaration authority ----
         if !declaration.decorators.is_empty()
             || !declaration.surface_modifiers.is_empty()
             || checker
@@ -76,6 +77,8 @@ impl CheckedCallableInterface {
             ));
         };
         let package = library.clone();
+
+        // ---- Projection: prove that the ordinary transport preserves the complete callable shape ----
         let mut source_path = checker.current_module_path.clone().unwrap_or_default();
         source_path.push(declaration.name.clone());
         let export = CheckedNamedExport {
@@ -88,6 +91,8 @@ impl CheckedCallableInterface {
         if !matches!(&restored.kind, CheckedExportKind::Function(restored) if restored == &function) {
             return Err(invalid("callable interface round trip changed a checked function fact"));
         }
+
+        // ---- Private facts: retain visibility and declaration-order mutation evidence ----
         let interface = Self {
             schema: 1,
             identity,
@@ -197,8 +202,9 @@ fn encode_record(payload: &[u8]) -> Result<Vec<u8>, LibraryManifestError> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{CheckedCallableInterface, encode_record};
     use crate::ast::Declaration;
+    use crate::typechecker::TypeChecker;
 
     /// Exercise the same parser and successful checker used by a source-unit producer, including private names.
     fn interfaces(source: &str, module: &str) -> Result<Vec<CheckedCallableInterface>, String> {
@@ -229,6 +235,7 @@ mod tests {
     /// remain distinct. Malformed supplemental fields and lossy projections cannot authorize header replay.
     #[test]
     fn callable_interfaces_preserve_checked_facts() -> Result<(), Box<dyn std::error::Error>> {
+        // ---- Source generations: preserve facts while declaration coordinates and owners change ----
         let source = "def read(mut value: int, scale: int = 2) -> int:\n    return value * scale\n\npub def main() -> int:\n    return read(3)\n";
         let original = interfaces(source, "lib")?;
         let moved = interfaces(&format!("# shift declaration locators\n\n{source}"), "lib")?;
@@ -242,6 +249,8 @@ mod tests {
             assert_eq!(restored.identity(), moved.identity());
             assert_ne!(restored.identity(), other.identity());
         }
+
+        // ---- Contract edits: distinguish implementation changes from keyword names and defaults ----
         let private = original.first().ok_or("missing private header")?;
         assert!(!private.is_public());
         assert_eq!(private.function()?.params[1].name.as_deref(), Some("scale"));
@@ -262,6 +271,8 @@ mod tests {
         let default_edit = interfaces(&source.replace("= 2", "= 4"), "lib")?;
         assert_ne!(private.function()?, default_edit[0].function()?);
         assert!(original.get(1).ok_or("missing public header")?.is_public());
+
+        // ---- Invalid records: reject incompatible fields and damaged transport bytes ----
         let encoded = private.to_bytes()?;
         let boundary = encoded.iter().position(|byte| *byte == b'\n').ok_or("missing header")?;
         let mut malformed: serde_json::Value = serde_json::from_slice(&encoded[boundary + 1..])?;
@@ -274,6 +285,8 @@ mod tests {
         damaged.push(b' ');
         assert!(CheckedCallableInterface::from_bytes(&damaged).is_err());
         assert!(CheckedCallableInterface::from_bytes(b"truncated").is_err());
+
+        // ---- Overloads: keep same-named declarations distinct by their checked signatures ----
         let overloads = interfaces(
             "def read(value: int) -> int:\n    return value\n\ndef read(value: str) -> str:\n    return value\n",
             "lib",
