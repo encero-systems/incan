@@ -6,6 +6,7 @@ use crate::symbols::ResolvedType;
 use crate::typechecker::FunctionBindingInfo;
 
 use super::args::fixed_elements;
+use super::work;
 use super::{
     BodyBuilder, CompilerNodeId, FunctionDefaultSource, HirSourceSpan, IncanType, SemanticSourceTargetKind, ast, bir,
     hir_span, semantic_type_from_resolved,
@@ -362,6 +363,7 @@ impl BodyBuilder<'_, '_> {
             }
         }
         let ty = self.resolve_ty(expr_span);
+        work::nested_body(self.module_identity, span, "partial_closure");
         self.push_assign_temp(
             bir::Rvalue::Closure {
                 params: frame.parameters,

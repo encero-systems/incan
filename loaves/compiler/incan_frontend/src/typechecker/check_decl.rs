@@ -2410,6 +2410,12 @@ impl TypeChecker {
     /// Dispatches to `check_model`, `check_class`, etc. Expects symbols to already be registered via
     /// [`collect_declaration`](Self::collect_declaration).
     pub fn check_declaration(&mut self, decl: &Spanned<Declaration>) {
+        if !matches!(
+            decl.node,
+            Declaration::Import(_) | Declaration::Alias(_) | Declaration::Docstring(_)
+        ) {
+            self.record_check_work("declaration", "top_level", decl.span);
+        }
         match &decl.node {
             Declaration::Import(_) => {} // Already handled
             Declaration::Const(konst) => self.check_const(konst, decl.span),
@@ -2456,6 +2462,13 @@ impl TypeChecker {
             Declaration::Capability(cap) => self.check_capability_decl(cap, decl.span),
             Declaration::Docstring(_) => {} // Docstrings don't need checking
         }
+    }
+
+    /// Observe an actual checking boundary. Module and source span distinguish physical inputs only within this
+    /// invocation; they are diagnostics, never stable identities or cache keys. Declaration and body work are separate.
+    pub(super) fn record_check_work(&self, action: &'static str, kind: &'static str, span: Span) {
+        tracing::trace!(target: "incan::invocation", phase = "checking", action, kind,
+            module = ?self.current_module_path, input = ?span, "compiler work");
     }
 
     /// Record how a declared model, class, enum or newtype displays when lowering has to give it a Rust `Display`: the
@@ -3646,7 +3659,9 @@ impl TypeChecker {
                     incan_lang::lang::stdlib::stdlib_json_trait_id_for_identity(module, name)
                 });
                 match protocol {
-                    Some(incan_lang::lang::stdlib::StdlibJsonTraitId::Serialize) => vec!["serde::Serialize".to_owned()],
+                    Some(incan_lang::lang::stdlib::StdlibJsonTraitId::Serialize) => {
+                        vec!["serde::Serialize".to_owned()]
+                    }
                     Some(incan_lang::lang::stdlib::StdlibJsonTraitId::Deserialize) => {
                         vec!["serde::Deserialize".to_owned()]
                     }
@@ -6638,6 +6653,7 @@ impl TypeChecker {
 
         // Check body
         let previous_function = (self.receiver_plan_inputs.current_function).replace(decl_span);
+        self.record_check_work("body", "function", decl_span);
         self.check_statement_block(&func.body);
         self.finalize_comprehension_collection_sources();
         self.receiver_plan_inputs.current_function = previous_function;
@@ -6966,6 +6982,7 @@ impl TypeChecker {
         self_ty: ResolvedType,
         owner_params: &[TypeParam],
     ) {
+        self.record_check_work("declaration", "property", property_span);
         self.symbols.enter_scope(ScopeKind::Method {
             receiver: Some(Receiver::Immutable),
         });
@@ -7016,6 +7033,7 @@ impl TypeChecker {
         self.current_return_error_type = return_type.result_err_type().cloned();
 
         if let Some(body) = &property.body {
+            self.record_check_work("body", "property", property_span);
             let prev_in_async_body = self.in_async_body;
             self.in_async_body = false;
             self.check_statement_block(body);
@@ -7045,6 +7063,7 @@ impl TypeChecker {
         self_ty: ResolvedType,
         owner_params: &[TypeParam],
     ) {
+        self.record_check_work("declaration", "method", method_span);
         self.validate_protected_type_param_bindings(&method.type_params, method_span);
         self.refuse_receiver_on_static_method(method, method_span);
         self.symbols.enter_scope(ScopeKind::Method {
@@ -7122,6 +7141,7 @@ impl TypeChecker {
 
         // Check body
         if let Some(body) = &method.body {
+            self.record_check_work("body", "method", method_span);
             let prev_in_async_body = self.in_async_body;
             let prev_yield_context = std::mem::replace(&mut self.current_yield_context, yield_context);
             self.in_async_body = method.is_async();

@@ -34,7 +34,7 @@ pub(super) fn lower_owner_member_bodies(
 /// skipped, which matters because a skipped kind is the one failure this module cannot make visible: every other
 /// unsupported construct leaves a `StatementKind::Unsupported` or `Operand::Unknown` marker behind, while a skipped
 /// declaration produces no [`bir::Body`] at all and a consumer counting bodies reads the program as fully
-/// represented. `every_declaration_kind_that_carries_methods_lowers_its_bodies` pins that.
+/// represented.
 pub(super) fn lower_owner_method_bodies(
     methods: &[ast::Spanned<ast::MethodDecl>],
     owner_name: &str,
@@ -251,6 +251,7 @@ pub(super) fn finish_static_initializer_body(
     let named_type_identities =
         builder.finish_type_identities(parameter_types::retained_type_identities(builder.type_info));
     let direct_call_id = CompilerNodeId::declaration_at(builder.module_identity, span);
+    work::built_body(&direct_call_id, "initializer");
     bir::Body {
         type_parameters: Vec::new(),
         trait_default_instantiation: None,
@@ -350,6 +351,7 @@ pub(super) fn lower_function_body(
 
     let named_type_identities =
         builder.finish_type_identities(parameter_types::retained_type_identities(lowering_facts.type_info));
+    work::built_body(&direct_call_id, "function");
     bir::Body {
         type_parameters: builder.type_parameters,
         trait_default_instantiation: None,
@@ -487,6 +489,7 @@ pub(super) fn lower_method_body(
 
     let named_type_identities =
         builder.finish_type_identities(parameter_types::retained_type_identities(lowering_facts.type_info));
+    work::built_body(&direct_call_id, "method");
     Some(bir::Body {
         trait_default_instantiation: None,
         nominal_instantiation: Vec::new(),

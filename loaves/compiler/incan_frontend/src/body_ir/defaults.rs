@@ -116,6 +116,7 @@ pub(super) fn attach_nominal_field_defaults(
         }
         let named_type_identities =
             builder.finish_type_identities(facts.type_info.declarations.named_type_identities.clone());
+        work::built_body(&declaration.direct_declaration_id, "field_defaults");
         declaration.field_default_body = Some(Box::new(bir::Body {
             trait_default_instantiation: None,
             nominal_instantiation: Vec::new(),

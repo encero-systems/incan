@@ -350,6 +350,7 @@ fn initializer(
         parameter.native_owned = ty.native_owned;
         parameter.local = builder.new_temp(parameter.ty.clone(), scope, hir_span(span));
     }
+    work::nested_body(builder.module_identity, span, "decorated_function_item");
     let mut value = builder.push_assign_temp(
         bir::Rvalue::Closure {
             params: parameters,
@@ -405,6 +406,7 @@ fn initializer(
         closure_holding_parameters: Vec::new(),
         closure_holding_return: false,
     });
+    work::built_body(&body.direct_call_id, "decorated_replacement");
     body
 }
 

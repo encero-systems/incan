@@ -80,7 +80,9 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         let count = match self.zero_based_unit_range_count(&comp.iter, scope, out) {
             Ok(Some(count)) => count,
             Ok(None) => return None,
-            Err(reason) => return Some(self.unsupported_operand(reason, scope, hir_span(span), out)),
+            Err(reason) => {
+                return Some(self.unsupported_operand(reason, scope, hir_span(span), out));
+            }
         };
         let value = self.lower_expr_to_operand(&comp.expr, scope, out);
         let helper = bir::HelperOp::RangeListFill;
@@ -222,6 +224,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         // Copy-shaped. Record that allocation fact directly rather than relying on incidental temporary locals.
         self.record_runtime_requirement(AbiV0RuntimeRequirement::Allocator);
         let ty = self.resolve_ty(span);
+        work::nested_body(self.module_identity, span, "generator");
         self.push_assign_temp(
             bir::Rvalue::Generator {
                 source,

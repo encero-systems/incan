@@ -233,6 +233,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 }
             }
         }
+        work::nested_body(self.module_identity, span, "local_partial");
         self.push_assign_temp(
             bir::Rvalue::Closure {
                 params,

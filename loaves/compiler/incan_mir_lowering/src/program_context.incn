@@ -1,6 +1,7 @@
 """Immutable program mappings shared by ordinary, instantiated, and lifted function frames."""
 
 from rust::std::sync import Arc
+from rust::std::env import var_os
 from pub::incan_mir_plan import CalleeKind
 from body_index import BodyIndex, empty_body_index
 from rust::incan_semantics_core::body_ir import (
@@ -26,7 +27,7 @@ pub model DisplayFunction:
 
 
 pub model ProgramContext:
-    """Share checked declaration tables, body positions and the unit's arithmetic policy across ordinary and lifted frames."""
+    """Share checked tables, body positions, arithmetic policy and diagnostic policy across ordinary and lifted frames."""
 
     pub body_indices: BodyIndex
     # This immutable copy keeps the specialized module's order, so the checked index selects the same executable facts.
@@ -44,6 +45,8 @@ pub model ProgramContext:
     pub decorated_bindings: Arc[list[DecoratedBinding]]
     # Lifted functions share their unit's ordinary integer policy along with its checked declaration tables.
     pub overflow_checks: bool = true
+    # Observe the diagnostic policy once per context, rather than reading the environment for every frame.
+    pub observe_work: bool = false
 
 
 pub def synthetic_program_context(module: &BodyIrModule, constructors: Arc[ConstructorIndex]) -> ProgramContext:
@@ -65,6 +68,7 @@ pub def synthetic_program_context(module: &BodyIrModule, constructors: Arc[Const
         enums=Arc.new(list(module.enum_declarations)),
         value_enums=Arc.new(list(module.value_enum_declarations)),
         decorated_bindings=Arc.new(bindings),
+        observe_work=var_os("INCAN_NATIVE_TIMING").is_some(),
     )
 
 

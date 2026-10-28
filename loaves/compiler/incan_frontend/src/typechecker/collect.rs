@@ -132,6 +132,7 @@ impl TypeChecker {
     /// and trait definitions. Bodies are **not** validated here; that happens in
     /// [`check_declaration`](Self::check_declaration) in the second pass.
     pub fn collect_declaration(&mut self, decl: &Spanned<Declaration>) {
+        self.record_check_work("header_visit", "top_level", decl.span);
         match &decl.node {
             Declaration::Import(import) => self.collect_import(import, decl.span),
             Declaration::Const(konst) => {

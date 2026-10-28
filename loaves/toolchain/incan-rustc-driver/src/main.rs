@@ -212,6 +212,7 @@ fn rust_abi(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 /// With `--certify PATH`, a report that unchanged inputs reproduce exactly (a pass, or a refusal by source
 /// diagnostics) also writes the check receipt there, which lets Oven replay it; any other outcome writes none.
 pub(crate) fn check(arguments: &[String]) -> Result<i32, Box<dyn std::error::Error>> {
+    native_timing::observe_frontend(false);
     let [path, sysroot, rest @ ..] = arguments else {
         return Err(USAGE.into());
     };

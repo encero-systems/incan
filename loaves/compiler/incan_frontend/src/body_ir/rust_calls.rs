@@ -1,6 +1,7 @@
 //! Checked Rust callees projected into the existing external callable and named-call machinery (DD-0006).
 
 use super::args::DeclaredSlot;
+use super::work;
 use super::{BodyBuilder, IncanType, TypeCheckInfo, ast, bir, hir_span};
 use crate::typechecker::RustCheckedCall;
 
@@ -311,6 +312,7 @@ impl BodyBuilder<'_, '_> {
         let binding = bir::ArgumentBinding::resolved_positional(parameters.len());
         let mut statements = Vec::new();
         let result = self.emit_checked_rust_call(&call, arguments, binding, expr.span, child, &mut statements)?;
+        work::nested_body(self.module_identity, span, "rust_function_item");
         Some(self.push_assign_temp(
             bir::Rvalue::Closure {
                 params: parameters,
@@ -346,7 +348,9 @@ impl BodyBuilder<'_, '_> {
         if call.path == "std::panic::set_hook" {
             let (operands, _binding) = match self.bind_declared_args(&call.path, None, args, scope, out) {
                 Ok(bound) => bound,
-                Err(reason) => return Some(self.unsupported_operand(reason, scope, hir_span(span), out)),
+                Err(reason) => {
+                    return Some(self.unsupported_operand(reason, scope, hir_span(span), out));
+                }
             };
             return Some(self.push_call_temp(
                 bir::Callee::Helper(bir::HelperOp::InstallPanicHook),

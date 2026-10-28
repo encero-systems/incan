@@ -16,12 +16,13 @@ record[:environment] = ENV.select do |key, _|
   ['CARGO_MAKEFLAGS', 'RAYON_NUM_THREADS', 'INCAN_HOME', 'INCAN_STDLIB', 'SCALING_DEBUG_INFO'].include?(key)
 end
 record[:driver_sha256] = ENV.fetch('SCALING_DRIVER_SHA256')
-if ARGV[0] == '--unit'
+unit_request = %w[--unit --check --codegraph --source-interface].include?(ARGV[0])
+if unit_request
   FileUtils.cp(ARGV[1], prefix + '.unit.json')
 end
 File.write(prefix + '.json', JSON.pretty_generate(record))
 started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-environment = {'INCAN_TRACE_DIR'=>ARGV[0] == '--unit' ? prefix + '.traces' : nil}
+environment = {'INCAN_TRACE_DIR'=>unit_request ? prefix + '.traces' : nil}
 command = [File.join(base, 'footprint'), driver, *ARGV]
 if ARGV[0] == '--unit' && ENV['SCALING_DEBUG_INFO']
   command += ['--rustc-arg', "-Cdebuginfo=#{ENV.fetch('SCALING_DEBUG_INFO')}"]

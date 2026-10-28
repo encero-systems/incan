@@ -1,0 +1,28 @@
+"""Observe real native lowering requests without changing their products or supplying reuse keys."""
+
+from rust::std::io import Write, stderr
+from rust::std::string import String as RustString
+from rust::incan_semantics_core import IncanType
+from rust::incan_semantics_core::body_ir import Body
+from symbols import type_component
+
+
+pub def record_lowering(enabled: bool, body: &Body, frame: str, arguments: &list[IncanType], file: str) -> None:
+    """
+    Record an actual lowering request, including repeated concrete instantiations.
+
+    1. Keep normal builds unobserved.
+    2. Identify the checked frame and its concrete request.
+    3. Write only a diagnostic; a closed stream cannot change compilation.
+    """
+    # 1. Native timing selects compiler work diagnostics.
+    if not enabled:
+        return
+    # 2. The generated frame and concrete arguments distinguish physical requests within this invocation.
+    mut concrete = ""
+    for argument in arguments:
+        concrete += type_component(argument)
+    text = f"redo-item: lowering\t{body.direct_call_id.path()}\t{frame}\t{concrete}\t{file}\n"
+    # 3. A failed diagnostic never changes a compilation verdict.
+    mut err = stderr()
+    _ = err.write_all(RustString.from(text).into_bytes())

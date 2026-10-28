@@ -21,5 +21,6 @@ impl rustc_driver::Callbacks for NativeCompiler {
     fn config(&mut self, config: &mut interface::Config) {
         config.opts.trimmed_def_paths = false;
         crate::native_timing::Timing::requested().configure(config);
+        config.override_queries = Some(|_session, providers| crate::native_timing::provide_codegen(providers));
     }
 }

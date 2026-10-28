@@ -4,7 +4,10 @@ from rust::std::fs import OpenOptions, metadata
 from rust::std::process import Command
 from std.fs import Path
 from std.json import JsonValue
-from files import json_text, make_directory, read, remove, write as write_file
+from files import json_text, make_directory, parse_json, read, remove, write as write_file
+from driver_command import driver_command
+from codegen import driver_arguments
+from unit_compiler import crate_name, write_unit
 from compiler_refusals import check_or_replay, compile_or_replay
 from checked_source import retain_checked_source
 from incan_units import compile_unit, executable_outputs, install_executable, test_report
@@ -35,7 +38,7 @@ from rust_activation import DependencyDomain
 from rust_target import decoded
 from toolchain import NativeCrate, Toolchain, load_toolchain
 from unit import UnitDescription, UnitLoaf, describe
-from unit_rust import add_extern, compile_library_unit
+from unit_rust import add_extern, compile_library_unit, prepare_native
 from unit_freshness import (
     Key,
     artifact_files,
@@ -280,6 +283,7 @@ pub def test_source_edit_rekeys_and_hashes_only_what_changed() -> Result[None, s
     2. Invalidate changed manifests and test siblings.
     3. Replay only unchanged certified refusals and check reports.
     4. Compare a private body edit's executed result with an independent cold build.
+    5. Verify real cold compiler work against its retained inventory.
     """
     # 1. Changed inputs cost only their own hash or directory listing.
     scratch = scratch_directory()?
@@ -316,7 +320,99 @@ pub def test_source_edit_rekeys_and_hashes_only_what_changed() -> Result[None, s
     verify_check_replay(scratch.path().joinpath("checks"))?
     # 4. A current key must produce current behavior, including through an unchanged caller.
     verify_private_body_execution(scratch.path().joinpath("execution"))?
+    # 5. A private fresh project has four source frames, regardless of linked retained bodies.
+    verify_work_observations(scratch.path().joinpath("work"))?
     return Ok(None)
+
+
+def verify_work_observations(project: Path) -> Result[None, str]:
+    """
+    Require actual frontend and native work observations from a fresh four-function project.
+
+    1. Prepare the ordinary exact inputs and compiler arguments.
+    2. Request diagnostics only on this child, preserving the parent's environment.
+    3. Check real source work, independently of loaded dependency inventories.
+    """
+    # 1. The normal description and preparation own the native closure and profile flags.
+    toolchain = load_toolchain()?
+    write_body_project(project, "def private_value() -> int:\n    return 7\n")?
+    unit = describe(project.joinpath("src/main.incn"), "release", FeatureRequest(), selected_toolchain=Some(toolchain))?
+    ready = prepare_native(unit, toolchain)?
+    compiled = crate_name(ready)
+    path = write_unit(ready, compiled)?
+    binary = project.joinpath("observed")
+    trace = project.joinpath("trace")
+    arguments = ["--unit", path.0, compiled, binary.0, toolchain.sysroot] + driver_arguments(ready.profile)
+    # 2. Direct capture observes the compiler; executable reuse cannot manufacture these diagnostics.
+    mut command = driver_command(toolchain)?
+    command.env("INCAN_NATIVE_TIMING", "1")
+    command.env("INCAN_TRACE_DIR", trace.0)
+    for argument in arguments:
+        command.arg(argument)
+    output = command.output().map_err((error) => f"cannot observe compiler work: {error}")?
+    diagnostics = decoded(output.stderr)
+    assert output.status.success(), diagnostics
+    # 3. Every source declaration and frame executes once; retained dependency bodies do not count as built.
+    counts = checked_work_counts(trace)?
+    for key in ["checking/declaration", "checking/body", "body_ir/built"]:
+        assert key in counts, f"missing {key} observations"
+        assert counts[key] == 4, f"expected four {key} executions, got {counts[key]}"
+    assert "redo-item: lowering\t" in diagnostics, diagnostics
+    assert "redo-codegen: " in diagnostics, diagnostics
+    verify_observed_library_bytes(ready, toolchain, project)?
+    return Ok(None)
+
+
+def verify_observed_library_bytes(unit: UnitDescription, toolchain: Toolchain, project: Path) -> Result[None, str]:
+    """Require diagnostics to preserve a library's bytes with identical compiler inputs and output paths."""
+    mut library = unit
+    library.kind = "library"
+    compiled = crate_name(library)
+    path = write_unit(library, compiled)?
+    artifact = project.joinpath(f"lib{compiled}.rlib")
+    arguments = ["--unit", path.0, compiled, artifact.0, toolchain.sysroot] + driver_arguments(library.profile)
+    mut baseline: bytes = b""
+    for observed in [false, true]:
+        mut command = driver_command(toolchain)?
+        command.env_remove("INCAN_NATIVE_TIMING")
+        command.env_remove("INCAN_TRACE_DIR")
+        if observed:
+            command.env("INCAN_NATIVE_TIMING", "1")
+        for argument in arguments:
+            command.arg(argument)
+        output = command.output().map_err((error) => f"cannot compare observed library: {error}")?
+        assert output.status.success(), decoded(output.stderr)
+        produced = artifact.read_bytes().map_err((error) => error.message())?
+        if observed:
+            assert produced == baseline, "diagnostic observation changed native library bytes"
+        else:
+            baseline = produced
+    return Ok(None)
+
+
+def checked_work_counts(directory: Path) -> Result[Dict[str, int], str]:
+    """Count actual producer events from the private child's complete structured trace files."""
+    mut counts: Dict[str, int] = {}
+    for file in directory.iterdir().map_err((error) => error.message())?:
+        for line in read(file)?.split("\n"):
+            if line == "":
+                continue
+            record = parse_json(line)?
+            if let Some(fields) = record.get("fields"):
+                if work_text(fields, "message") == "compiler work":
+                    key = work_text(fields, "phase") + "/" + work_text(fields, "action")
+                    if key not in counts:
+                        counts[key] = 0
+                    counts[key] += 1
+    return Ok(counts)
+
+
+def work_text(fields: JsonValue, name: str) -> str:
+    """Read one optional diagnostic string without treating a missing or differently typed value as evidence."""
+    if let Some(value) = fields.get(name):
+        if let Some(text) = value.as_str():
+            return text
+    return ""
 
 
 def verify_private_body_execution(scratch: Path) -> Result[None, str]:
@@ -1031,7 +1127,8 @@ def verify_installed_graph_refresh(
 
     driver = Path(toolchain.driver)
     attempts = graph.parent().joinpath("graph-attempts")
-    script = "#!/bin/sh\nset -eu\n[ \"$1\" = --rust-codegraph ] || exit 2\n" + f"printf x >> '{attempts.0}'\n" + "printf 'new checked graph' > \"$2\"\n"
+    header = "#!/bin/sh\nset -eu\n[ \"$1\" = --rust-codegraph ] || exit 2\n"
+    script = header + f"printf x >> '{attempts.0}'\n" + "printf 'new checked graph' > \"$2\"\n"
     write(driver, script)?
     mut chmod = Command.new("/bin/chmod")
     assert chmod.arg("+x").arg(driver.0).status().map_err((error) => str(error))?.success()

@@ -382,6 +382,7 @@ impl rustc_driver::Callbacks for Callbacks<'_> {
             input: String::new(),
         };
         config.override_queries = Some(|_session, providers| {
+            crate::native_timing::provide_codegen(providers);
             providers.queries.mir_built = mir_built;
             providers.queries.type_of = native_alias_type;
             providers.queries.fn_sig = native_function_signature;

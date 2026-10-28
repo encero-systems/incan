@@ -15,7 +15,9 @@ fn canonical_zip_local(mut local: bir::LocalId, mut statements: &[bir::Statement
                     destination: Some(destination),
                     callee: bir::Callee::Function(bir::CallableTarget::Named(target)),
                     ..
-                } if destination == &bir::Place::from_local(local) => return target.builtin == Some(BuiltinFnId::Zip),
+                } if destination == &bir::Place::from_local(local) => {
+                    return target.builtin == Some(BuiltinFnId::Zip);
+                }
                 bir::StatementKind::Call {
                     destination: Some(destination),
                     ..
@@ -29,7 +31,9 @@ fn canonical_zip_local(mut local: bir::LocalId, mut statements: &[bir::Statement
                     }
                     break;
                 }
-                bir::StatementKind::Assign { place, .. } if place.local_id() == Some(local) => return false,
+                bir::StatementKind::Assign { place, .. } if place.local_id() == Some(local) => {
+                    return false;
+                }
                 bir::StatementKind::If { .. }
                 | bir::StatementKind::Loop { .. }
                 | bir::StatementKind::UnsafeRegion { .. }
@@ -215,6 +219,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
         self.identity_bindings = enclosing_identity_bindings;
         self.materialized_range_locals = saved_materialized_range_locals;
 
+        work::nested_body(self.module_identity, expr_span, "closure");
         let closure_body = bir::ClosureBody {
             native_storage: self.type_info.rust.closure_storage.get(&expr_span).cloned(),
             original_callable: None,

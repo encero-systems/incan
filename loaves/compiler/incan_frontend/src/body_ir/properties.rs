@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use super::args::fixed_elements;
+use super::work;
 use super::{
     AbiV0RuntimeRequirement, BodyBuilder, BodyIrLoweringFacts, CanonicalSymbolId, CompilerNodeId,
     IncanCallableParamKind, IncanType, SemanticSourceTargetKind, ast, bir, hir_span, parameter_types,
@@ -62,6 +63,10 @@ pub(super) fn lower_getter_body(
     // ---- Retained callable ----
     let named_type_identities =
         builder.finish_type_identities(facts.type_info.declarations.named_type_identities.clone());
+    work::built_body(
+        &CompilerNodeId::declaration_at(facts.module_identity, property.span),
+        "property",
+    );
     Some(bir::Body {
         trait_default_instantiation: None,
         nominal_instantiation: Vec::new(),
@@ -143,7 +148,9 @@ impl BodyBuilder<'_, '_> {
         // ---- Closed result and receiver ----
         let returned = match self.property_result_type(base, span, &canonical) {
             Ok(returned) => returned,
-            Err(description) => return Some(self.unsupported_operand(description, scope, source_span, out)),
+            Err(description) => {
+                return Some(self.unsupported_operand(description, scope, source_span, out));
+            }
         };
         self.settled_types.insert(span, returned.clone());
         let receiver = self.lower_expr_to_place(base, scope, out);

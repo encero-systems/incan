@@ -1060,6 +1060,7 @@ pub fn compile(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 /// breaks source dependency cycles such as the runtime's standard trait bounds without importing a prior runtime.
 /// Consumers that require the provider's compiled crate still refuse until ordinary compilation supplies it.
 pub fn source_interface(arguments: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    crate::native_timing::observe_frontend(false);
     let [unit_path, sysroot, directory] = arguments else {
         return Err("usage: --source-interface UNIT SYSROOT DIRECTORY".into());
     };
@@ -1121,6 +1122,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     timing.mark("unit_descriptor");
     let source_path = unit.source.clone();
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::compile_unit", input = %source_path.display()).entered();
+    crate::native_timing::observe_frontend(true);
     let identity = crate::identity::verify(Path::new(&arguments[3]))?;
     let output = Path::new(&arguments[2]);
     let (certificate, options) = crate::certified_options(&arguments[4..]);
@@ -1235,7 +1237,9 @@ fn lower_compilation_plan(
     receipt: &RefusalReceipt,
     published_unions: &mut Vec<NativeUnionDeclaration>,
 ) -> Result<crate::plan::Plan, Box<dyn std::error::Error>> {
-    tracing::debug!(target: "incan::invocation", modules = ?program.modules, "checked direct-route Body IR");
+    tracing::debug!(target: "incan::invocation", modules = program.modules.len(),
+        module_body_entries = program.modules.iter().map(|module| module.bodies.len()).sum::<usize>(),
+        "checked Body IR inventory");
     let plan = {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::lower_program", modules = program.modules.len()).entered();
         let entry = program.entry.try_into()?;

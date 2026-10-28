@@ -2277,6 +2277,7 @@ mod partials;
 mod text_codecs;
 mod trait_returns;
 mod trait_values;
+mod work;
 
 mod primitives;
 

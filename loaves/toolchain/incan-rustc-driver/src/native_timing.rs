@@ -1,6 +1,49 @@
 //! Opt-in boundaries around fresh rustc setup, Incan injection, queries and teardown.
 
+use std::io::Write;
 use std::time::Instant;
+
+/// Mark complete frontend work observation for one semantic request. Frontend-only routes execute no native
+/// lowering; compile routes observe it only when the existing native diagnostic policy enables its Incan sink.
+pub(crate) fn observe_frontend(lowers: bool) {
+    tracing::trace!(target: "incan::invocation", schema = 1,
+        lowering_observed = !lowers || std::env::var_os("INCAN_NATIVE_TIMING").is_some(),
+        "compiler work observations");
+}
+
+/// Observe the pinned collector only when rustc requests it. Forcing this query in `after_analysis` changes
+/// metadata construction order, so diagnostic collection must wrap the existing provider instead of querying early.
+pub(crate) fn provide_codegen(providers: &mut rustc_middle::util::Providers) {
+    if std::env::var_os("INCAN_NATIVE_TIMING").is_some() {
+        providers.queries.collect_and_partition_mono_items = observed_partitions;
+    }
+}
+
+/// Preserve the default collector's inputs, result and execution order while counting its actual partitions.
+/// Nonincremental successful native compilation translates every partition. Incremental reuse remains unavailable,
+/// and allocator/metadata shims are deliberately outside this mono-item count. A failed sink cannot fail compilation.
+fn observed_partitions<'tcx>(
+    tcx: rustc_middle::ty::TyCtxt<'tcx>,
+    input: (),
+) -> rustc_middle::mono::MonoItemPartitions<'tcx> {
+    let partitions = (rustc_interface::DEFAULT_QUERY_PROVIDERS
+        .queries
+        .collect_and_partition_mono_items)(tcx, input);
+    let native = tcx.sess.opts.output_types.should_codegen() && !tcx.sess.opts.unstable_opts.no_codegen;
+    let execution = if !native {
+        "none"
+    } else if tcx.sess.opts.incremental.is_some() {
+        "unavailable_incremental"
+    } else {
+        "all_on_success"
+    };
+    let _ = writeln!(
+        std::io::stderr(),
+        "redo-codegen: {}",
+        serde_json::json!({"partitions": partitions.codegen_units.len(), "execution": execution})
+    );
+    partitions
+}
 
 /// A disabled timer never reads a clock; enabled records use the same console as rustc's phase diagnostics.
 pub(crate) struct Timing(Option<Clock>);
@@ -38,7 +81,8 @@ impl Timing {
             return;
         };
         let now = Instant::now();
-        eprintln!(
+        let _ = writeln!(
+            std::io::stderr(),
             "native-time: {}",
             serde_json::json!({
                 "boundary": boundary,

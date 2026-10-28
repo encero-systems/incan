@@ -1,6 +1,7 @@
 //! Declaration-owned forwarding bodies for checked source Partial declarations.
 
 use super::args::fixed_elements;
+use super::work;
 use super::{
     AbiV0RuntimeRequirement, BodyBuilder, BodyIrLoweringFacts, CanonicalSymbolId, CompilerNodeId,
     FunctionDefaultSource, HirSourceSpan, IncanType, SemanticSourceTargetKind, TypeCheckInfo, ast, bir, hir_span,
@@ -367,6 +368,7 @@ pub(super) fn lower_source_partial(
     let direct_call_id = CompilerNodeId::declaration_at(facts.module_identity, decl_span);
     let named_type_identities =
         builder.finish_type_identities(facts.type_info.declarations.named_type_identities.clone());
+    work::built_body(&direct_call_id, "partial");
     bir::Body {
         trait_default_instantiation: None,
         nominal_instantiation: Vec::new(),

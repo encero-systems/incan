@@ -20,6 +20,7 @@ The file reads top to bottom:
 
 # ---- The plan, re-exported so the driver reads one surface ----
 from pub::incan_mir_plan import source_span as plan_span
+from redo_counts import record_lowering
 from pub::incan_mir_plan import (
     semantic_type_matches,
     BasicBlock,
@@ -7771,6 +7772,7 @@ def program_context(
             value_enums=Arc.new(list(module.value_enum_declarations)),
             decorated_bindings=Arc.new(list(module.decorated_bindings)),
             overflow_checks=overflow_checks,
+            observe_work=native_environment("INCAN_NATIVE_TIMING").is_some(),
         ),
     )
 
@@ -9378,6 +9380,7 @@ def lower_function(
     enums: &list[RustEnumDeclaration] = borrowed_table(module.enum_declarations)
     span = location(body.span, source, file)
     selected_name = frame_name(evaluator_name(module, body), role)
+    record_lowering(program.observe_work, body, selected_name, type_arguments, file)
     cached_decorator, initializing_decorator = frame_decorator_role(module, body, role)?
     match body.extern_delegation:
         Some(delegation) =>
