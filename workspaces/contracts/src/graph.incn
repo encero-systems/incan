@@ -204,6 +204,7 @@ def check_source_edits(incan: str, project: Path, original: str, snapshot: str) 
         source = project.joinpath("src").joinpath("main.incn")
     before = read(source)?
     mut failures: list[str] = []
+    check_nominal_body_edit(incan, project, source, before, original)?
     check_comment_freshness(incan, project, source, before)?
     write(source, f"\n{before}")?
     moved = document(incan, project, "json")?
@@ -214,6 +215,8 @@ def check_source_edits(incan: str, project: Path, original: str, snapshot: str) 
         failures.append("source edit reused stale source spans")
     if declaration_identities(original)? != declaration_identities(moved)?:
         failures.append("line movement changed a declaration identity")
+    if declaration_meanings(original, "")? != declaration_meanings(moved, "")?:
+        failures.append("line movement changed a declaration's checked meaning")
     write(source, "this is invalid in both languages {")?
     invalid = invoke(incan, ["inspect", "codegraph", ".", "--format", "json"], project)?
     refused = invoke(incan, ["inspect", "codegraph", ".", "--strict"], project)?
@@ -223,6 +226,76 @@ def check_source_edits(incan: str, project: Path, original: str, snapshot: str) 
     if invalid.code != Some(0) or "is unchecked" not in invalid.stderr or invalid.stdout.strip() == original.strip():
         failures.append(f"broken source was not exported as an unchecked unit with a warning: {invalid.stderr}")
     return Ok(failures)
+
+
+def check_nominal_body_edit(incan: str, project: Path, source: Path, before: str, original: str) -> Result[None, str]:
+    """
+    Prove nominal identity and meaning survive a private body edit.
+
+    1. Change only the earlier private body, restoring the source before checking the result.
+    2. Require every other declaration's stable identity and meaning to stay byte-identical.
+    3. Change one callable signature and require exactly it and its caller's meaning to change.
+    """
+    if "def identity_before(" not in before:
+        return Ok(None)
+    # 1. The conjunction shifts later carrier coordinates without changing their source or meaning.
+    write(source, before.replace("if enabled:", "if enabled and true:"))?
+    movement = document(incan, project, "json")
+    write(source, before)?
+    # 2. The edited body changes meaning while all other declaration products survive.
+    baseline = declaration_meanings(original, "identity_before")?
+    moved = movement?
+    actual = declaration_meanings(moved, "identity_before")?
+    if baseline != actual:
+        return Err("private body edit changed another declaration's stable identity or meaning")
+    if declaration_meanings(original, "")? == declaration_meanings(moved, "")?:
+        return Err("the edited private body kept its old meaning digest")
+    check_nominal_reordering(incan, project, source, before, original)?
+    # 3. Another module's Item stays distinct inside the changed generic signature and return.
+    changed = before.replace("take(values: list[Item]) -> Item", "take(values: list[OtherItem]) -> OtherItem")
+    write(source, changed)?
+    revision = document(incan, project, "json")
+    write(source, before)?
+    revised = revision?
+    if declaration_meanings(original, "take|take_value")? != declaration_meanings(revised, "take|take_value")?:
+        return Err("signature edit changed an independent declaration's identity or meaning")
+    if declaration_meanings(original, "take_value")? == declaration_meanings(revised, "take_value")?:
+        return Err("different nominal signature reused the original identity and meaning")
+    if declaration_meanings(original, "take")? == declaration_meanings(revised, "take")?:
+        return Err("nominal signature edit did not change its dependent caller's meaning")
+    return Ok(None)
+
+
+def check_nominal_reordering(incan: str, project: Path, source: Path, before: str, original: str) -> Result[None, str]:
+    """Move the private declaration after its nominal users without changing any declaration's identity or meaning."""
+    parts = before.split("def identity_before(")
+    tail = parts[1].split("pub model Item:")
+    private = "def identity_before(" + tail[0]
+    write(source, parts[0] + "pub model Item:" + tail[1] + "\n\n" + private)?
+    moved = document(incan, project, "json")
+    write(source, before)?
+    if declaration_meanings(original, "")? != declaration_meanings(moved?, "")?:
+        return Err("declaration reordering changed a stable identity or meaning")
+    return Ok(None)
+
+
+def declaration_meanings(document: str, excluded: str) -> Result[list[str], str]:
+    """Compare checked declaration identities and digests, preserving all type arguments and nominal owners."""
+    mut result: list[str] = []
+    for record in items(parse_json(document)?)?:
+        if string_field(record, "record") != "declaration" or string_field(record, "name") in excluded.split("|"):
+            continue
+        stable = record.get("stable_identity").unwrap_or(JsonValue.null())
+        digest = string_field(record, "semantic_digest")
+        if (
+            string_field(record, "name") in ["make", "take", "take_value", "other", "ignore", "identity_before"]
+            and digest == ""
+        ):
+            return Err("nominal identity probe has no proven declaration digest")
+        if digest == "":
+            continue
+        result.append(json_text(stable)? + ":" + digest)
+    return Ok(sorted(result))
 
 
 def library_artifacts(project: Path) -> Result[list[str], str]:

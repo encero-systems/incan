@@ -1,7 +1,8 @@
 //! Translate the published `std.vocab` syntax schema at the compiler boundary, preserving source locations.
 //! Only these public shapes cross the worker pipe; compiler AST serialization is never an interchange format.
 
-use serde::Deserialize;
+use serde::ser::{SerializeMap, SerializeSeq};
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -23,7 +24,7 @@ pub(super) enum Output {
 }
 
 /// Decode a public response, rejecting schema drift and out-of-node source locations before AST construction.
-pub(super) fn response(value: &Value, anchor: ast::Span, request_identity: &str) -> Result<Output, String> {
+pub(super) fn response(value: &Value, anchor: ast::Span, expansion_namespace: &str) -> Result<Output, String> {
     if value.get("schema_version").and_then(Value::as_u64) != Some(u64::from(incan_vocab::VOCAB_SYNTAX_VERSION)) {
         return Err(format!(
             "vocabulary response schema version is unsupported; supported version {}",
@@ -32,13 +33,50 @@ pub(super) fn response(value: &Value, anchor: ast::Span, request_identity: &str)
     }
     validate_spans(value, anchor)?;
     let mut value = value["output"].clone();
-    expand_output_spans(&mut value, anchor, request_identity);
+    let identity = incan_semantics_core::semantic_digest::semantic_digest(&(
+        "incan.vocab.expansion/1",
+        expansion_namespace,
+        anchor.expansion,
+        ExpansionMeaning(&value),
+    ))
+    .map_err(|error| error.to_string())?;
+    expand_output_spans(&mut value, anchor, &identity);
     let output: SurfaceOutput =
         serde_json::from_value(value).map_err(|error| format!("malformed response: {error}"))?;
     match output {
         SurfaceOutput::Declarations(values) => Ok(Output::Declarations(declarations(values, anchor)?)),
         SurfaceOutput::Expression(value) => Ok(Output::Expression(value.into_ast(anchor)?)),
         SurfaceOutput::Statements(values) => Ok(Output::Statements(statements(values, anchor)?)),
+    }
+}
+
+/// Borrow validated public syntax for meaning projection. This wire schema reserves every `span` field for
+/// original-source coordinates; validation above rejects forged contexts and malformed ranges. Literal strings,
+/// scoped syntax, bindings and output order remain exact. The response cache still keys the complete request.
+struct ExpansionMeaning<'a>(&'a Value);
+
+impl Serialize for ExpansionMeaning<'_> {
+    /// Serialize public syntax through the existing semantic digest, omitting only its validated source ranges.
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.0 {
+            Value::Object(fields) => {
+                let mut map = serializer.serialize_map(Some(fields.keys().filter(|key| *key != "span").count()))?;
+                for (key, value) in fields {
+                    if key != "span" {
+                        map.serialize_entry(key, &ExpansionMeaning(value))?;
+                    }
+                }
+                map.end()
+            }
+            Value::Array(items) => {
+                let mut sequence = serializer.serialize_seq(Some(items.len()))?;
+                for item in items {
+                    sequence.serialize_element(&ExpansionMeaning(item))?;
+                }
+                sequence.end()
+            }
+            value => value.serialize(serializer),
+        }
     }
 }
 

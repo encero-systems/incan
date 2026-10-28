@@ -22,12 +22,11 @@ pub(crate) fn is_synthetic_span(span: ast::Span) -> bool {
     span == ast::Span::default() || span.expansion.is_some()
 }
 
-/// Seed compiler-generated syntax from its genuine source coordinates and any enclosing expansion context.
+/// Seed generated syntax from its enclosing expansion. Coordinates already distinguish source anchors in the full
+/// span; hashing them again would make unchanged generated meaning depend on an unrelated preceding edit.
 fn expansion_anchor(source: ast::Span) -> ast::Span {
     let mut identity = Sha256::new();
-    identity.update(b"incan.compiler.syntax/1\0");
-    identity.update(source.start.to_le_bytes());
-    identity.update(source.end.to_le_bytes());
+    identity.update(b"incan.compiler.syntax/2\0");
     if let Some(parent) = source.expansion {
         identity.update(parent);
     }
@@ -1557,6 +1556,7 @@ mod tests {
         Ok(())
     }
 
+    /// Moving an expansion preserves its contexts while its complete checked spans remain distinct.
     #[test]
     fn public_expression_anchor_assigns_distinct_spans_to_nested_calls() -> Result<(), Box<dyn std::error::Error>> {
         let expr = incan_vocab::IncanExpr::Call {
@@ -1584,6 +1584,15 @@ mod tests {
         assert_ne!(inner.span, value.span);
         assert_ne!(inner.span, ast::Span::default());
         assert_ne!(value.span, ast::Span::default());
+        let moved = public_expr_to_internal_with_anchor(&expr, ast::Span::new(100, 200))?;
+        let ast::Expr::Call(_, _, moved_args) = moved else {
+            return Err("expected moved outer call".into());
+        };
+        let ast::CallArg::Positional(moved_inner) = &moved_args[0] else {
+            return Err("expected moved positional argument".into());
+        };
+        assert_ne!(inner.span, moved_inner.span);
+        assert_eq!(inner.span.expansion, moved_inner.span.expansion);
         Ok(())
     }
 

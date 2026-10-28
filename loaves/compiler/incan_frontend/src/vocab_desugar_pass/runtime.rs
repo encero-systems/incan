@@ -276,7 +276,7 @@ impl NativeDesugarerRuntime {
         let mut malformed = replies.is_err();
         for (index, item) in items.into_iter().enumerate() {
             let reply = match &replies {
-                Ok(replies) => validate_reply(&item.provider, &replies[index], item.span, &item.digest),
+                Ok(replies) => validate_reply(&item.provider, &replies[index], item.span, &item.provider.name),
                 Err(message) => Err(ReplyFailure::Malformed(native_error(&provider, message.clone()))),
             };
             malformed |= matches!(reply, Err(ReplyFailure::Malformed(_)));
@@ -399,7 +399,7 @@ impl NativeDesugarerRuntime {
     fn read_cached(&self, item: &Pending) -> Option<Result<Output, VocabDesugarPassError>> {
         let bytes = fs::read(self.directory.join(format!("{}.json", item.digest))).ok()?;
         let value = serde_json::from_slice(&bytes).ok()?;
-        validate_reply(&item.provider, &value, item.span, &item.digest)
+        validate_reply(&item.provider, &value, item.span, &item.provider.name)
             .ok()
             .map(Ok)
     }
@@ -518,7 +518,7 @@ fn validate_reply(
     provider: &Provider,
     reply: &Value,
     span: ast::Span,
-    request_identity: &str,
+    expansion_namespace: &str,
 ) -> Result<Output, ReplyFailure> {
     let malformed = |message| ReplyFailure::Malformed(native_error(provider, message));
     surface::validate_spans(reply, span).map_err(malformed)?;
@@ -528,7 +528,7 @@ fn validate_reply(
         ));
     }
     if let Some(response) = reply.get(RUST_VOCAB_RESULT_OK_SYMBOL) {
-        let output = surface::response(response, span, request_identity).map_err(malformed)?;
+        let output = surface::response(response, span, expansion_namespace).map_err(malformed)?;
         let position_matches = matches!(
             (&output, provider.target),
             (Output::Expression(_), incan_vocab::DesugarTarget::Expression)

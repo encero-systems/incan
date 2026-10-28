@@ -19,7 +19,16 @@
 use serde::{Serialize, ser};
 use sha2::{Digest, Sha256};
 
+use crate::{CanonicalSymbolId, stable_identity::StableIdentityProjection};
+use std::collections::BTreeMap;
 use std::fmt::Display;
+
+/// Checked names used only in type positions; literal strings are never interpreted as identities.
+#[derive(Clone, Copy)]
+struct MeaningContext<'a> {
+    projection: &'a StableIdentityProjection,
+    bindings: &'a BTreeMap<String, CanonicalSymbolId>,
+}
 
 /// Length-delimit a semantic value so adjoining values cannot forge the same hash input by shifting a boundary.
 fn update_delimited(hasher: &mut Sha256, value: &[u8]) {
@@ -37,7 +46,16 @@ fn update_delimited(hasher: &mut Sha256, value: &[u8]) {
 /// moving any declaration renumbers every declaration traversed after it. Its *presence* is meaningful — it separates a
 /// nested binding from a module-level namesake — and [`crate::stable_identity::StableDeclarationId`] keeps that
 /// in the identity. Its value is position and belongs nowhere.
-const POSITIONAL_ID_FIELDS: &[&str] = &["decl_id", "direct_call_id", "id", "module_id", "scope_discriminant"];
+const POSITIONAL_ID_FIELDS: &[&str] = &[
+    "decl_id",
+    "direct_call_id",
+    "direct_declaration_id",
+    "enum_declaration_id",
+    "variant_declaration_id",
+    "id",
+    "module_id",
+    "scope_discriminant",
+];
 
 /// Whether a struct field is positional and must not reach the digest.
 ///
@@ -83,6 +101,7 @@ pub fn semantic_digest<T: Serialize>(value: &T) -> Result<String, DigestError> {
     value.serialize(DigestSerializer {
         hasher: &mut hasher,
         mode: DigestMode::Meaning,
+        context: None,
     })?;
     Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
 }
@@ -95,6 +114,7 @@ pub fn semantic_digest<T: Serialize>(value: &T) -> Result<String, DigestError> {
 pub struct DigestSerializer<'hasher> {
     hasher: &'hasher mut Sha256,
     mode: DigestMode,
+    context: Option<MeaningContext<'hasher>>,
 }
 
 /// A span contributes expansion identity but never its diagnostic byte coordinates.
@@ -103,19 +123,21 @@ enum DigestMode {
     Meaning,
     Span(&'static str),
     Expansion(&'static str),
+    TypeName,
+    TypeBindings,
 }
 
 impl DigestSerializer<'_> {
     /// Write a type tag, so values of different shapes cannot collide on identical payload bytes.
     fn tag(&mut self, tag: u8) {
-        if self.mode == DigestMode::Meaning {
+        if matches!(self.mode, DigestMode::Meaning | DigestMode::TypeBindings) {
             self.hasher.update([tag]);
         }
     }
 
     /// Write a length-delimited byte run, so adjacent values cannot run together.
     fn bytes(&mut self, value: &[u8]) {
-        if self.mode == DigestMode::Meaning {
+        if matches!(self.mode, DigestMode::Meaning | DigestMode::TypeBindings) {
             update_delimited(self.hasher, value);
         }
     }
@@ -183,6 +205,20 @@ impl<'hasher> ser::Serializer for DigestSerializer<'hasher> {
 
     /// Tag a string and write its bytes, length-delimited so adjacent values cannot run together.
     fn serialize_str(mut self, value: &str) -> Result<(), DigestError> {
+        let projected = if self.mode == DigestMode::TypeName {
+            self.mode = DigestMode::Meaning;
+            self.context
+                .map(|context| {
+                    context
+                        .projection
+                        .type_name(value, context.bindings)
+                        .ok_or_else(|| DigestError(format!("unproven nominal identity: {value}")))
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        let value = projected.as_deref().unwrap_or(value);
         self.tag(0x0d);
         self.bytes(value.as_bytes());
         Ok(())
@@ -212,6 +248,7 @@ impl<'hasher> ser::Serializer for DigestSerializer<'hasher> {
         value.serialize(DigestSerializer {
             hasher: self.hasher,
             mode: self.mode,
+            context: self.context,
         })
     }
 
@@ -250,7 +287,7 @@ impl<'hasher> ser::Serializer for DigestSerializer<'hasher> {
     /// Tag a newtype variant by name, then hash the value it wraps.
     fn serialize_newtype_variant<T: ?Sized + Serialize>(
         mut self,
-        _name: &'static str,
+        name: &'static str,
         _index: u32,
         variant: &'static str,
         value: &T,
@@ -259,14 +296,19 @@ impl<'hasher> ser::Serializer for DigestSerializer<'hasher> {
         self.bytes(variant.as_bytes());
         value.serialize(DigestSerializer {
             hasher: self.hasher,
-            mode: self.mode,
+            mode: if name == "IncanType" && variant == "Named" {
+                DigestMode::TypeName
+            } else {
+                self.mode
+            },
+            context: self.context,
         })
     }
 
     /// Tag a sequence and write its length, so two sequences cannot concatenate into one.
     fn serialize_seq(mut self, length: Option<usize>) -> Result<Self, DigestError> {
         self.tag(0x14);
-        if self.mode == DigestMode::Meaning {
+        if matches!(self.mode, DigestMode::Meaning | DigestMode::TypeBindings) {
             self.hasher.update((length.unwrap_or_default() as u64).to_le_bytes());
         }
         Ok(self)
@@ -301,25 +343,39 @@ impl<'hasher> ser::Serializer for DigestSerializer<'hasher> {
     /// Tag a map and write its length, then hash each key and value in turn.
     fn serialize_map(mut self, length: Option<usize>) -> Result<Self, DigestError> {
         self.tag(0x16);
-        if self.mode == DigestMode::Meaning {
+        if matches!(self.mode, DigestMode::Meaning | DigestMode::TypeBindings) {
             self.hasher.update((length.unwrap_or_default() as u64).to_le_bytes());
         }
         Ok(self)
     }
 
     /// Tag a struct; its fields are hashed by [`StructDigest`], which drops the positional ones.
-    fn serialize_struct(mut self, _name: &'static str, _length: usize) -> Result<StructDigest<'hasher>, DigestError> {
+    fn serialize_struct(mut self, name: &'static str, _length: usize) -> Result<StructDigest<'hasher>, DigestError> {
+        if name == "CompilerNodeId" && self.context.is_some() {
+            return Err(DigestError("unprojected compilation-local node identity".into()));
+        }
         self.tag(0x17);
         Ok(StructDigest {
             hasher: self.hasher,
             mode: self.mode,
+            context: self.context,
+            type_fields: false,
+            unsafe_receipt: name == "UnsafeAcknowledgment",
+            identity: (name == "CanonicalSymbolId" && self.context.is_some()).then(|| CanonicalSymbolId {
+                namespace: crate::SymbolNamespace::OrdinaryLexical,
+                origin: crate::SymbolOrigin::Builtin,
+                declaration_name: String::new(),
+                kind: crate::SemanticSourceTargetKind::Function,
+                scope_discriminant: None,
+                declaration_span: crate::HirSourceSpan::new(0, 0),
+            }),
         })
     }
 
     /// Tag a struct variant by name; its fields are hashed by [`StructDigest`].
     fn serialize_struct_variant(
         mut self,
-        _name: &'static str,
+        name: &'static str,
         _index: u32,
         variant: &'static str,
         _length: usize,
@@ -329,6 +385,10 @@ impl<'hasher> ser::Serializer for DigestSerializer<'hasher> {
         Ok(StructDigest {
             hasher: self.hasher,
             mode: self.mode,
+            context: self.context,
+            type_fields: name == "IncanType" && variant == "Generic",
+            unsafe_receipt: false,
+            identity: None,
         })
     }
 }
@@ -339,10 +399,12 @@ macro_rules! digest_sequence {
             type Ok = ();
             type Error = DigestError;
 
+            /// Keep each sequence child in its parent's checked meaning context.
             fn $method<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), DigestError> {
                 value.serialize(DigestSerializer {
                     hasher: self.hasher,
                     mode: self.mode,
+                    context: self.context,
                 })
             }
 
@@ -362,17 +424,29 @@ impl ser::SerializeMap for DigestSerializer<'_> {
     type Ok = ();
     type Error = DigestError;
 
+    /// Resolve retained type-binding keys through their checked identities; ordinary map keys remain literal.
     fn serialize_key<T: ?Sized + Serialize>(&mut self, key: &T) -> Result<(), DigestError> {
         key.serialize(DigestSerializer {
             hasher: self.hasher,
-            mode: self.mode,
+            mode: if self.mode == DigestMode::TypeBindings {
+                DigestMode::TypeName
+            } else {
+                self.mode
+            },
+            context: self.context,
         })
     }
 
+    /// Return to ordinary meaning after a binding key so canonical values keep their structured identity.
     fn serialize_value<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), DigestError> {
         value.serialize(DigestSerializer {
             hasher: self.hasher,
-            mode: self.mode,
+            mode: if self.mode == DigestMode::TypeBindings {
+                DigestMode::Meaning
+            } else {
+                self.mode
+            },
+            context: self.context,
         })
     }
 
@@ -388,18 +462,51 @@ impl ser::SerializeMap for DigestSerializer<'_> {
 pub struct StructDigest<'hasher> {
     hasher: &'hasher mut Sha256,
     mode: DigestMode,
+    context: Option<MeaningContext<'hasher>>,
+    type_fields: bool,
+    unsafe_receipt: bool,
+    identity: Option<CanonicalSymbolId>,
+}
+
+/// Recover one field of a known canonical identity, never a rendered spelling or an arbitrary checked value.
+fn identity_field<T: ?Sized + Serialize>(
+    identity: &mut CanonicalSymbolId,
+    key: &str,
+    value: &T,
+) -> Result<(), DigestError> {
+    match key {
+        "namespace" => identity.namespace = checked_identity_field(value)?,
+        "origin" => identity.origin = checked_identity_field(value)?,
+        "declaration_name" => identity.declaration_name = checked_identity_field(value)?,
+        "kind" => identity.kind = checked_identity_field(value)?,
+        "scope_discriminant" => identity.scope_discriminant = checked_identity_field(value)?,
+        "declaration_span" => identity.declaration_span = checked_identity_field(value)?,
+        _ => return Err(DigestError(format!("unrecognized canonical identity field: {key}"))),
+    }
+    Ok(())
+}
+
+/// Decode a field whose exact Rust type is fixed by CanonicalSymbolId's serialization contract.
+fn checked_identity_field<T: ?Sized + Serialize, V: serde::de::DeserializeOwned>(value: &T) -> Result<V, DigestError> {
+    let bytes = postcard::to_stdvec(value).map_err(|error| DigestError(error.to_string()))?;
+    postcard::from_bytes(&bytes).map_err(|error| DigestError(error.to_string()))
 }
 
 impl ser::SerializeStruct for StructDigest<'_> {
     type Ok = ();
     type Error = DigestError;
 
+    /// Project checked identity and type fields while excluding source coordinates and redundant physical IDs.
     fn serialize_field<T: ?Sized + Serialize>(&mut self, key: &'static str, value: &T) -> Result<(), DigestError> {
+        if let Some(identity) = &mut self.identity {
+            return identity_field(identity, key, value);
+        }
         if let DigestMode::Span(field) = self.mode {
             return if key == "expansion" {
                 value.serialize(DigestSerializer {
                     hasher: self.hasher,
                     mode: DigestMode::Expansion(field),
+                    context: self.context,
                 })
             } else {
                 Ok(())
@@ -409,19 +516,44 @@ impl ser::SerializeStruct for StructDigest<'_> {
             return value.serialize(DigestSerializer {
                 hasher: self.hasher,
                 mode: DigestMode::Span(key),
+                context: self.context,
             });
         }
         if is_positional_field(key) {
             return Ok(());
         }
+        // The enclosing unsafe region already retains its scope, expansion and operations. Its source receipt is
+        // checked before this boundary and carries no additional executable meaning.
+        if self.unsafe_receipt && key == "receipt" {
+            return Ok(());
+        }
         update_delimited(self.hasher, key.as_bytes());
         value.serialize(DigestSerializer {
             hasher: self.hasher,
-            mode: self.mode,
+            mode: if self.type_fields && key == "base" {
+                DigestMode::TypeName
+            } else if key == "named_type_identities" {
+                DigestMode::TypeBindings
+            } else {
+                self.mode
+            },
+            context: self.context,
         })
     }
 
+    /// Hash a complete canonical identity through the shared projection, retaining its expansion context.
     fn end(self) -> Result<(), DigestError> {
+        if let (Some(identity), Some(context)) = (self.identity, self.context) {
+            let stable = context
+                .projection
+                .declaration(&identity)
+                .ok_or_else(|| DigestError(format!("unproven lexical identity: {}", identity.render_compact())))?;
+            return (stable, identity.declaration_span.expansion).serialize(DigestSerializer {
+                hasher: self.hasher,
+                mode: DigestMode::Meaning,
+                context: None,
+            });
+        }
         Ok(())
     }
 }
@@ -453,15 +585,35 @@ impl ser::SerializeStructVariant for StructDigest<'_> {
 ///
 /// # Errors
 ///
-/// Returns a serialization error after restoring the complete input body.
-pub fn body_semantic_digest(body: &mut crate::body_ir::Body) -> Result<String, DigestError> {
+/// Returns a serialization error, including missing retained identity proof, after restoring the complete input body.
+pub fn body_semantic_digest(
+    body: &mut crate::body_ir::Body,
+    projection: &StableIdentityProjection,
+) -> Result<String, DigestError> {
     if body_docstring(body).is_none() {
-        return semantic_digest(body);
+        return checked_body_digest(body, projection);
     }
     let docstring = body.block.stmts.remove(0);
-    let digest = semantic_digest(body);
+    let digest = checked_body_digest(body, projection);
     body.block.stmts.insert(0, docstring);
     digest
+}
+
+/// Hash a borrowed body through its retained nominal proof; physical carrier strings never become meaning.
+fn checked_body_digest(
+    body: &crate::body_ir::Body,
+    projection: &StableIdentityProjection,
+) -> Result<String, DigestError> {
+    let mut hasher = Sha256::new();
+    body.serialize(DigestSerializer {
+        hasher: &mut hasher,
+        mode: DigestMode::Meaning,
+        context: Some(MeaningContext {
+            projection,
+            bindings: &body.named_type_identities,
+        }),
+    })?;
+    Ok(format!("sha256:{}", hex::encode(hasher.finalize())))
 }
 
 /// Extract a body's docstring, if it has one.
@@ -560,6 +712,69 @@ mod tests {
         assert_eq!(semantic_digest(&authored)?, semantic_digest(&moved)?);
         assert_ne!(semantic_digest(&authored)?, semantic_digest(&generated)?);
         assert_ne!(semantic_digest(&generated)?, semantic_digest(&other)?);
+        check_retained_nominal_meaning()?;
+        Ok(())
+    }
+
+    /// Physical names normalize only in checked type positions; literal text and distinct nominal owners stay distinct.
+    fn check_retained_nominal_meaning() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::{HirSourceSpan, IncanType, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
+        #[derive(Serialize)]
+        struct TypedValue {
+            ty: IncanType,
+            literal: String,
+            named_type_identities: BTreeMap<String, CanonicalSymbolId>,
+            target: crate::body_ir::ConstructorTarget,
+        }
+        let owner = CanonicalSymbolId {
+            namespace: SymbolNamespace::OrdinaryLexical,
+            origin: SymbolOrigin::Module(vec!["left".into()]),
+            declaration_name: "Item".into(),
+            kind: SemanticSourceTargetKind::Model,
+            scope_discriminant: None,
+            declaration_span: HirSourceSpan::new(10, 20),
+        };
+        let mut moved = owner.clone();
+        moved.declaration_span = HirSourceSpan::new(100, 200);
+        let projection = StableIdentityProjection::default();
+        let digest = |identity: CanonicalSymbolId, literal: &str| -> Result<String, Box<dyn std::error::Error>> {
+            let key = crate::body_ir::nominal_carrier_key(&identity).ok_or("missing carrier")?;
+            let bindings = BTreeMap::from([(key.clone(), identity)]);
+            let identity = bindings.get(&key).ok_or("missing checked binding")?;
+            let value = TypedValue {
+                ty: IncanType::Generic {
+                    base: "List".into(),
+                    args: vec![IncanType::Named(key)],
+                },
+                literal: literal.into(),
+                named_type_identities: bindings.clone(),
+                target: crate::body_ir::ConstructorTarget {
+                    name: "Item".into(),
+                    canonical: Some(identity.clone()),
+                    direct_declaration_id: Some(crate::CompilerNodeId::declaration_at(
+                        "left",
+                        identity.declaration_span,
+                    )),
+                    canonical_field_layout: Some(vec!["value".into()]),
+                    binding: crate::body_ir::ArgumentBinding::resolved_positional(1),
+                },
+            };
+            let mut hasher = Sha256::new();
+            value.serialize(DigestSerializer {
+                hasher: &mut hasher,
+                mode: DigestMode::Meaning,
+                context: Some(MeaningContext {
+                    projection: &projection,
+                    bindings: &bindings,
+                }),
+            })?;
+            Ok(hex::encode(hasher.finalize()))
+        };
+        let text = crate::body_ir::nominal_carrier_key(&owner).ok_or("missing literal carrier")?;
+        assert_eq!(digest(owner.clone(), &text)?, digest(moved.clone(), &text)?);
+        assert_ne!(digest(owner.clone(), &text)?, digest(owner.clone(), "other literal")?);
+        moved.origin = SymbolOrigin::Module(vec!["right".into()]);
+        assert_ne!(digest(owner, &text)?, digest(moved, &text)?);
         Ok(())
     }
 

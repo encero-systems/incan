@@ -6,7 +6,6 @@
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use incan_codegraph::{
@@ -26,7 +25,7 @@ use incan_codegraph::{
 use incan_lang::lang::c_abi::{link_capability_as_str, scalar_type_as_str};
 use incan_semantics_core::namespace::{enclosing_namespace, is_namespace_root};
 use incan_semantics_core::stable_identity::{
-    DeclarationSignature, StableDeclarationContext, StableDeclarationId, StableDeclarationLocation,
+    DeclarationSignature, StableDeclarationId, StableDeclarationLocation, StableIdentityProjection,
 };
 use incan_semantics_core::{CanonicalSymbolId, CompilerNodeId, SemanticModuleSnapshot, SymbolOrigin};
 use serde_json::{Value, json};
@@ -109,7 +108,13 @@ pub fn collect_checked_unit_codegraph(
 ) -> Vec<CodegraphRecord> {
     let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_driver::checked_unit_codegraph", modules = modules.len()).entered();
     let mut builder = checked_unit_builder(unit, session, modules, analysis);
-    builder.set_lowered_declaration_facts(bodies.iter_mut().flat_map(body_declaration_facts).collect());
+    let projection = stable_identity_projection(analysis, bodies);
+    builder.set_lowered_declaration_facts(
+        bodies
+            .iter_mut()
+            .flat_map(|body| body_declaration_facts(body, &projection))
+            .collect(),
+    );
     for module in modules {
         builder.collect_parsed_module(module, Vec::new());
     }
@@ -662,7 +667,7 @@ struct CodegraphBuilder<'analysis> {
     /// `signature` is `None`, which a consumer must read as unproven rather than as a key.
     signatures_by_identity: BTreeMap<CanonicalSymbolId, LoweredDeclarationFacts>,
     /// Checked owner and collision-local ordinal for nested declarations.
-    stable_contexts_by_identity: BTreeMap<CanonicalSymbolId, (CanonicalSymbolId, u32)>,
+    stable_projection: StableIdentityProjection,
     registry_metadata_by_path: BTreeMap<PathBuf, CheckedRegistryMetadataModule>,
     capabilities_by_path: BTreeMap<PathBuf, Vec<CapabilityDeclarationInfo>>,
     c_abi_by_path: BTreeMap<PathBuf, CAbiInteropArtifacts>,
@@ -710,7 +715,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
             records: Vec::new(),
             diagnostics: Vec::new(),
             signatures_by_identity: BTreeMap::new(),
-            stable_contexts_by_identity: BTreeMap::new(),
+            stable_projection: StableIdentityProjection::default(),
             file_ids: BTreeMap::new(),
             module_ids: BTreeSet::new(),
             namespace_ids: BTreeSet::new(),
@@ -736,35 +741,17 @@ impl<'analysis> CodegraphBuilder<'analysis> {
 
     /// Record the signatures derived from lowering, so exported identities can separate overloads.
     fn set_lowered_declaration_facts(&mut self, signatures: BTreeMap<CanonicalSymbolId, LoweredDeclarationFacts>) {
+        self.stable_projection.signatures = signatures
+            .iter()
+            .map(|(identity, facts)| (identity.clone(), facts.signature.clone()))
+            .collect();
         self.signatures_by_identity = signatures;
     }
 
     /// Project one checked identity into its exported edit-stable form, carrying a signature when one was proved.
     fn stable_identity_for(&self, canonical: Option<&CanonicalSymbolId>) -> Option<CodegraphStableDeclarationId> {
-        let canonical = canonical?;
-        let context = self
-            .stable_contexts_by_identity
-            .get(canonical)
-            .and_then(|(owner, binding_ordinal)| {
-                let owner = StableDeclarationId::from_canonical(
-                    owner,
-                    self.signatures_by_identity
-                        .get(owner)
-                        .map(|facts| facts.signature.clone()),
-                    None,
-                )?;
-                Some(StableDeclarationContext {
-                    owner,
-                    binding_ordinal: *binding_ordinal,
-                })
-            });
-        codegraph_stable_identity(
-            canonical,
-            self.signatures_by_identity
-                .get(canonical)
-                .map(|facts| facts.signature.clone()),
-            context,
-        )
+        let identity = self.stable_projection.declaration(canonical?)?;
+        Some(codegraph_stable_identity_from_semantic(&identity))
     }
 
     /// Borrow the compilation's checked facts, or own the snapshots returned by a standalone inspection pass.
@@ -773,7 +760,7 @@ impl<'analysis> CodegraphBuilder<'analysis> {
         &mut self,
         semantic_snapshots_by_path: Cow<'analysis, BTreeMap<PathBuf, SemanticModuleSnapshot>>,
     ) {
-        self.stable_contexts_by_identity.clear();
+        self.stable_projection.contexts.clear();
         for snapshot in semantic_snapshots_by_path.values() {
             for subject in snapshot.facts.subjects() {
                 let Some(identity) = snapshot.facts.symbol_identities_for(subject).next() else {
@@ -782,8 +769,9 @@ impl<'analysis> CodegraphBuilder<'analysis> {
                 let Some(context) = snapshot.facts.stable_declaration_contexts_for(subject).next() else {
                     continue;
                 };
-                self.stable_contexts_by_identity
-                    .insert(identity.clone(), (context.owner.clone(), context.binding_ordinal));
+                self.stable_projection
+                    .contexts
+                    .insert(identity.clone(), context.clone());
             }
         }
         self.semantic_snapshots_by_path = semantic_snapshots_by_path;
@@ -2572,13 +2560,55 @@ fn lowered_declaration_facts(
     let Ok(mut bodies) = crate::body_ir::checked_modules(modules, analysis, session) else {
         return BTreeMap::new();
     };
-    bodies.iter_mut().flat_map(body_declaration_facts).collect()
+    let projection = stable_identity_projection(analysis, &bodies);
+    bodies
+        .iter_mut()
+        .flat_map(|body| body_declaration_facts(body, &projection))
+        .collect()
+}
+
+/// Reuse the checker's lexical ownership proof for both compiled publication and standalone inspection.
+fn stable_identity_projection(
+    analysis: &CompilationAnalysis,
+    bodies: &[incan_semantics_core::body_ir::BodyIrModule],
+) -> StableIdentityProjection {
+    let mut projection = StableIdentityProjection::default();
+    for snapshot in analysis.semantic_snapshots().values() {
+        for subject in snapshot.facts.subjects() {
+            if let (Some(identity), Some(context)) = (
+                snapshot.facts.symbol_identities_for(subject).next(),
+                snapshot.facts.stable_declaration_contexts_for(subject).next(),
+            ) {
+                projection.contexts.insert(identity.clone(), context.clone());
+            }
+        }
+    }
+    for body in bodies.iter().flat_map(|module| &module.bodies) {
+        if let (Some(canonical), Some(signature)) = (&body.canonical, body_declaration_signature(body, &projection)) {
+            projection.signatures.insert(canonical.clone(), signature);
+        }
+    }
+    projection
+}
+
+/// Use the same checked nominal projection for exported signatures and lexical-owner overload discrimination.
+fn body_declaration_signature(
+    body: &incan_semantics_core::body_ir::Body,
+    projection: &StableIdentityProjection,
+) -> Option<DeclarationSignature> {
+    DeclarationSignature::from_retained_callable_types(
+        body.params.iter().map(|param| &param.ty),
+        &body.return_type,
+        &body.named_type_identities,
+        projection,
+    )
 }
 
 /// Read signatures and digests from checked Body IR once. Digesting temporarily detaches a leading docstring and
 /// restores it before returning, so compilation receives the identical body without a deep projection clone.
 fn body_declaration_facts(
     body_ir: &mut incan_semantics_core::body_ir::BodyIrModule,
+    projection: &StableIdentityProjection,
 ) -> BTreeMap<CanonicalSymbolId, LoweredDeclarationFacts> {
     use incan_semantics_core::semantic_digest::{body_docstring, body_semantic_digest, semantic_digest};
 
@@ -2589,35 +2619,19 @@ fn body_declaration_facts(
             let canonical = body.canonical.clone()?;
             // A body that will not digest contributes nothing rather than contributing a wrong answer: a consumer
             // reads the absent digest as changed, which costs a rebuild, where a wrong digest costs a wrong build.
-            let semantic = body_semantic_digest(body).ok()?;
+            let semantic = body_semantic_digest(body, projection).ok()?;
             let documentation = body_docstring(body).and_then(|text| semantic_digest(&text).ok());
+            let signature = projection.signatures.get(&canonical)?.clone();
             Some((
                 canonical,
                 LoweredDeclarationFacts {
-                    signature: DeclarationSignature::from_callable_types(
-                        body.params.iter().map(|param| &param.ty),
-                        &body.return_type,
-                    ),
+                    signature,
                     semantic_digest: semantic,
                     doc_digest: documentation,
                 },
             ))
         })
         .collect()
-}
-
-/// Project a checked identity into the edit-stable form exported beside the span-carrying one.
-///
-/// Derived from [`StableDeclarationId`] rather than rebuilt here, so the exported identity and the compiler's own
-/// cannot drift: an exported identity that keyed on spans would rebuild, one layer out, the defect that type exists
-/// to remove.
-fn codegraph_stable_identity(
-    identity: &CanonicalSymbolId,
-    signature: Option<DeclarationSignature>,
-    context: Option<StableDeclarationContext>,
-) -> Option<CodegraphStableDeclarationId> {
-    let stable = StableDeclarationId::from_canonical(identity, signature, context)?;
-    Some(codegraph_stable_identity_from_semantic(&stable))
 }
 
 /// Convert the compiler-owned stable identity into the storage-neutral codegraph shape.

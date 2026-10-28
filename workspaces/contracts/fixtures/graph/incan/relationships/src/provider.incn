@@ -1,3 +1,9 @@
 pub def helper() -> int:
     """A provider reached through a resolved import."""
     return 7
+
+
+pub model Item:
+    """Distinguish nominal identity by its checked declaring module."""
+
+    pub value: int

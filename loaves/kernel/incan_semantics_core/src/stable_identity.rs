@@ -24,9 +24,64 @@
 //!   module-global table position never enters this identity.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
-use crate::facts::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin};
+use crate::facts::{
+    CanonicalStableDeclarationContext, CanonicalSymbolId, SemanticSourceTargetKind, SymbolNamespace, SymbolOrigin,
+};
 use crate::types::IncanType;
+
+/// Checked correspondence for projecting physical types and lexical identities into semantic identity.
+///
+/// Bindings come from Body IR, not from parsing generated names. Missing lexical ownership or an unbound carrier
+/// refuses the projection; a consumer must then treat its digest or signature as unproven.
+#[derive(Debug, Default)]
+pub struct StableIdentityProjection {
+    /// Checker-owned nearest named owners, with collision-local binding ordinals.
+    pub contexts: BTreeMap<CanonicalSymbolId, CanonicalStableDeclarationContext>,
+    /// Final checked callable signatures, including the overload discriminant of a lexical owner.
+    pub signatures: BTreeMap<CanonicalSymbolId, DeclarationSignature>,
+}
+
+impl StableIdentityProjection {
+    /// Project a checked identity without allowing a scope-table index or diagnostic coordinate to participate.
+    pub fn declaration(&self, identity: &CanonicalSymbolId) -> Option<StableDeclarationId> {
+        self.declaration_with_owners(identity, &mut Vec::new())
+    }
+
+    /// Follow named owners with a cycle guard; malformed ownership never creates a portable key.
+    fn declaration_with_owners(
+        &self,
+        identity: &CanonicalSymbolId,
+        owners: &mut Vec<CanonicalSymbolId>,
+    ) -> Option<StableDeclarationId> {
+        if owners.contains(identity) {
+            return None;
+        }
+        let context = if identity.scope_discriminant.is_some() {
+            let context = self.contexts.get(identity)?;
+            owners.push(identity.clone());
+            let owner = self.declaration_with_owners(&context.owner, owners)?;
+            owners.pop();
+            Some(StableDeclarationContext {
+                owner,
+                binding_ordinal: context.binding_ordinal,
+            })
+        } else {
+            None
+        };
+        StableDeclarationId::from_canonical(identity, self.signatures.get(identity).cloned(), context)
+    }
+
+    /// Resolve a nominal type through its retained checked binding, keeping ordinary unbound type names literal.
+    /// Generated carrier names require proof, rather than offset-shaped suffix removal or source-name guessing.
+    pub fn type_name(&self, name: &str, bindings: &BTreeMap<String, CanonicalSymbolId>) -> Option<String> {
+        if let Some(identity) = bindings.get(name) {
+            return Some(self.declaration(identity)?.render_compact());
+        }
+        (!name.starts_with(crate::body_ir::NOMINAL_CARRIER_KEY_PREFIX)).then(|| name.to_owned())
+    }
+}
 
 /// Stable location of a declaration within its semantic owner.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -69,18 +124,68 @@ impl DeclarationSignature {
     ///
     /// Parameter *names* are deliberately excluded. Renaming a parameter does not produce a different declaration,
     /// and including the name would make a rename look like a new declaration to every consumer keyed on identity.
-    pub fn from_callable_types<'a>(
-        parameters: impl IntoIterator<Item = &'a IncanType>,
-        return_type: &IncanType,
-    ) -> Self {
+    fn from_callable_types<'a>(parameters: impl IntoIterator<Item = &'a IncanType>, return_type: &IncanType) -> Self {
         let rendered = parameters.into_iter().map(render_type).collect::<Vec<_>>().join(",");
         Self(format!("({rendered})->{}", render_type(return_type)))
+    }
+
+    /// Render the same signature after replacing physical nominal leaves by their checked stable identities.
+    /// The structural type traversal also covers nested function types, references and generic arguments.
+    /// Returns `None` when a retained carrier or lexical owner lacks identity proof.
+    pub fn from_retained_callable_types<'a>(
+        parameters: impl IntoIterator<Item = &'a IncanType>,
+        return_type: &IncanType,
+        bindings: &BTreeMap<String, CanonicalSymbolId>,
+        projection: &StableIdentityProjection,
+    ) -> Option<Self> {
+        let mut parameters: Vec<_> = parameters.into_iter().cloned().collect();
+        let mut return_type = return_type.clone();
+        for ty in parameters.iter_mut().chain(std::iter::once(&mut return_type)) {
+            project_type(ty, bindings, projection)?;
+        }
+        Some(Self::from_callable_types(parameters.iter(), &return_type))
     }
 
     /// The canonical rendering.
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
+
+/// Replace only structured type leaves, leaving literals, foreign paths and type parameter names untouched.
+fn project_type(
+    ty: &mut IncanType,
+    bindings: &BTreeMap<String, CanonicalSymbolId>,
+    projection: &StableIdentityProjection,
+) -> Option<()> {
+    match ty {
+        IncanType::Named(name) => *name = projection.type_name(name, bindings)?,
+        IncanType::Generic { base, args } => {
+            *base = projection.type_name(base, bindings)?;
+            for arg in args {
+                project_type(arg, bindings, projection)?;
+            }
+        }
+        IncanType::Tuple(elements) => {
+            for element in elements {
+                project_type(element, bindings, projection)?;
+            }
+        }
+        IncanType::Function { params, return_type } => {
+            for param in params {
+                project_type(&mut param.ty, bindings, projection)?;
+            }
+            project_type(return_type, bindings, projection)?;
+        }
+        IncanType::Ref(inner) | IncanType::RefMut(inner) | IncanType::TypeToken(inner) => {
+            project_type(inner, bindings, projection)?;
+        }
+        IncanType::NativeArray { element, .. } | IncanType::NativePointer { pointee: element, .. } => {
+            project_type(element, bindings, projection)?;
+        }
+        _ => {}
+    }
+    Some(())
 }
 
 /// Render one checked type into the signature alphabet.
@@ -423,6 +528,35 @@ mod tests {
             DeclarationSignature::from_callable_types([&str_type], &int_type),
             DeclarationSignature::from_callable_types([&str_type], &str_type)
         );
+        let projection = StableIdentityProjection::default();
+        let mut nominal = canonical_of_kind("Item", (100, 200), None, SemanticSourceTargetKind::Model);
+        let key = crate::body_ir::nominal_carrier_key(&nominal);
+        assert!(key.is_some());
+        if let Some(key) = key {
+            let ty = IncanType::Generic {
+                base: "List".into(),
+                args: vec![IncanType::Ref(Box::new(IncanType::Named(key.clone())))],
+            };
+            let before = DeclarationSignature::from_retained_callable_types(
+                [&ty],
+                &ty,
+                &BTreeMap::from([(key.clone(), nominal.clone())]),
+                &projection,
+            );
+            assert!(before.is_some());
+            nominal.declaration_span = crate::HirSourceSpan::new(300, 400);
+            // Even the old spelling projects through the exact retained binding, rather than parsing its offsets.
+            let moved = DeclarationSignature::from_retained_callable_types(
+                [&ty],
+                &ty,
+                &BTreeMap::from([(key, nominal.clone())]),
+                &projection,
+            );
+            assert_eq!(before, moved);
+            assert!(
+                DeclarationSignature::from_retained_callable_types([&ty], &ty, &BTreeMap::new(), &projection).is_none()
+            );
+        }
     }
 
     /// The rendering is persisted and compared across edits, so it must carry no offset at all.

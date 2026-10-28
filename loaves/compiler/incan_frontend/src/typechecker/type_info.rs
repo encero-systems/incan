@@ -2481,7 +2481,8 @@ impl TypeCheckInfo {
         stable_contexts
     }
 
-    /// Project written references and nominal type leaves once for both dependency execution and inspection.
+    /// Retain lexical owner proof at declarations, including unread bindings, and project checked references for
+    /// dependency execution and inspection. Reading a binding must not decide whether its body has a stable digest.
     fn record_semantic_reference_facts(
         &self,
         module_identity: &str,
@@ -2489,6 +2490,19 @@ impl TypeCheckInfo {
         facts: &mut Vec<SemanticFact>,
     ) {
         let stable_contexts = self.stable_declaration_contexts(declarations);
+        for (identity, context) in &stable_contexts {
+            let subject = CompilerNodeId::declaration_at(module_identity, identity.declaration_span);
+            facts.push(SemanticFact::new(
+                subject.clone(),
+                SemanticFactKind::SymbolIdentity,
+                SemanticFactValue::canonical_identity(identity.clone()),
+            ));
+            facts.push(SemanticFact::new(
+                subject,
+                SemanticFactKind::StableDeclarationContext,
+                SemanticFactValue::stable_declaration_context(context.clone()),
+            ));
+        }
         for (&span, identity) in &self.references.resolved_identities {
             let subject = CompilerNodeId::expression_at(module_identity, span);
             Self::record_semantic_reference(facts, &subject, span, identity, declarations);
