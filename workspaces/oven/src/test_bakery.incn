@@ -199,43 +199,22 @@ pub def test_a_killed_baker_leaves_no_claim_and_a_damaged_unit_is_baked_again() 
     return Ok(None)
 
 
-pub def test_collection_keeps_reachable_units_and_removes_the_rest() -> Result[None, str]:
+pub def test_collection_is_refused_and_removes_nothing() -> Result[None, str]:
     """
-    `incan bakery gc` keeps every unit a root reaches, through the units it records, and removes the others.
-
-    1. A root reaches a program, which reaches its library; a third unit is reached by nothing.
-    2. Collection removes only the unreached unit, its payload, and a dead staging directory.
-    3. Keeping one day of roots keeps today's; keeping none removes everything.
+    `incan bakery gc` is refused until collection honors live snapshot leases, and nothing it could reach is removed.
     """
     scratch = scratch_directory()?
     store = scratch.path().joinpath("bakery")
     library = digest_of("d4")
-    program = digest_of("e5")
     orphan = digest_of("f6")
-    # 1. Only the program is a root; the library is reached through it.
     assert bake(store, library, "library")?
-    assert bake(store, program, "program", [library])?
     assert bake(store, orphan, "orphan")?
-    orphan_payload = stored_payload(store, orphan, "payload")?
-    register_root(store, scratch.path().joinpath("project").0, program)?
-    write(staging_root(store).joinpath(f"{orphan}.999999").joinpath("payload"), "dead")?
-    # 2. What nothing reaches goes.
-    collected = collect(store, -1)?
-    assert collected.kept == 2, f"kept {collected.kept}"
-    assert collected.removed == 1, f"removed {collected.removed}"
-    assert collected.staging_cleared == 1
+    register_root(store, scratch.path().joinpath("project").0, library)?
+    match collect(store, -1):
+        Ok(_) => assert false, "collection ran without its lease protocol"
+        Err(reason) => assert "disabled" in reason, reason
     assert found(find(store, library)?)
-    assert found(find(store, program)?)
-    assert not found(find(store, orphan)?)
-    assert not orphan_payload.is_file()
-    # 3. A root used today is within one day; with no days kept, nothing is reached.
-    again = collect(store, 1)?
-    assert again.roots_dropped == 0
-    assert again.kept == 2
-    emptied = collect(store, 0)?
-    assert emptied.roots_dropped == 1
-    assert emptied.removed == 2
-    assert not found(find(store, program)?)
+    assert found(find(store, orphan)?)
     return Ok(None)
 
 
