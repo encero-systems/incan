@@ -14,7 +14,7 @@ incan describe-unit PATH [UNIT OPTIONS]
 incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 incan fmt [--check] PATH...
 incan owner stop
-incan bakery gc [--keep-days N]
+incan bakery gc [--keep-days N] | verify
 incan inspect codegraph PATH [GRAPH OPTIONS]
 incan mcp PATH
 incan toolchain pack OUT
@@ -96,7 +96,12 @@ Stops resident project owners belonging to the selected Incan home. `OVEN_OWNER=
 
 ## `incan bakery gc`
 
-Removes every fact of the selected Incan home's bakery (`<home>/bakery/`) that no root reaches. Each build registers the identities it uses as roots of its project; a fact is kept when a root reaches it directly or through the facts it records. `--keep-days N` first drops roots not used within the last `N` days; `--keep-days 0` drops every root. `INCAN_BAKERY` names another directory for the bakery, such as a cache volume. Staging directories whose baker no longer holds the claim are removed. Collection never runs automatically. It prints the number of facts kept and removed, roots dropped and staging directories cleared, then exits `0`.
+Removes every unit of the selected Incan home's bakery (`<home>/bakery/`) that no root reaches. Each build registers the identities it uses as roots of its project; a unit is kept when a root reaches it directly or through the units it records. `--keep-days N` first drops roots not used within the last `N` days; `--keep-days 0` drops every root. `INCAN_BAKERY` names another directory for the bakery, such as a cache volume. The store is compacted to the kept units, and segments, payload files and staging directories that nothing kept names are removed. Collection never runs automatically. It prints the number of units kept and removed, roots dropped and staging directories cleared, then exits `0`.
+
+
+## `incan bakery verify`
+
+Reads every byte of every payload file in the selected bakery and compares it with the digest the file is stored under. A build reads each payload in full the first time a process uses it and then trusts it while its size holds, so this is how damage that keeps a size is found. Each damaged payload is named with its unit and removed; its unit is then a miss, and the next build bakes it again. Exits `0` when every payload is intact and `1` otherwise.
 
 
 ## `incan inspect codegraph`

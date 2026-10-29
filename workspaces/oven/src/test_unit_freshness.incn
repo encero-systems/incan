@@ -6,7 +6,7 @@ from rust::std::process import Command
 from std.fs import Path
 from std.json import JsonValue
 from files import json_text, make_directory, read, remove, write as write_file
-from bakery import fact_directory, find, forget_verified, seal, staging
+from bakery import fact_file, find, forget_verified, seal, staging
 from compiler_refusals import check_or_replay, compile_or_replay, refusal_identity
 from incan_units import executable_outputs, test_report, view_executable
 from intake import ManifestReader
@@ -312,8 +312,14 @@ pub def test_source_edit_rekeys_and_hashes_only_what_changed() -> Result[None, s
 
 
 def retained_refusal(store: Path, key: Key) -> Result[Path, str]:
-    """Where the bakery keeps the certified refusal of `key`, sealed or not."""
-    return Ok(fact_directory(store, refusal_identity(key)?)?.joinpath("outcome"))
+    """Where the bakery stores the certified refusal of `key`."""
+    identity = refusal_identity(key)?
+    match find(store, identity)?:
+        None => return Err(f"refusal {identity[:12]} is not baked")
+        Some(fact) =>
+            match fact_file(store, fact, "outcome"):
+                Some(path) => return Ok(path)
+                None => return Err(f"refusal {identity[:12]} has no outcome")
 
 
 def verify_refusal_replay(scratch: Path) -> Result[None, str]:
@@ -365,14 +371,9 @@ def verify_refusal_replay(scratch: Path) -> Result[None, str]:
     edited = unit_key(setup.unit, setup.toolchain)?
     assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, edited, "test")? == 1
     assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xx"
-    # A damaged retained refusal is refused, naming the fact, and the next ask compiles and retains it again.
+    # A damaged retained refusal is a miss: the next ask compiles and retains it again, and the one after replays it.
     damage(retained_refusal(cache, edited)?, "incomplete document")?
     forget_verified()
-    match compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, edited, "test"):
-        Ok(_) =>
-            assert false, "a damaged refusal fact was replayed"
-        Err(reason) =>
-            assert "is damaged" in reason, reason
     assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, edited, "test")? == 1
     assert attempts.read_text("utf-8", "strict").map_err((error) => error.message())? == "xxx"
     assert compile_or_replay(setup.unit, setup.toolchain, invocation, options, cache, edited, "test")? == 1
@@ -661,16 +662,16 @@ pub def test_stored_executable_is_never_half_written() -> Result[None, str]:
     fact = seal(store, one, staged, "test", "app", [], "test")?
     # A test unit's report is viewed with its executable, and a lost view is recreated from the fact.
     tests = scratch.path().joinpath("tests")
-    view_executable(fact, tests.joinpath("app"), "test")?
+    view_executable(store, fact, tests.joinpath("app"), "test")?
     for path in executable_outputs("test", tests.joinpath("app")):
         assert path.is_file(), path.0
     remove(test_report(tests.joinpath("app")))?
-    view_executable(fact, tests.joinpath("app"), "test")?
+    view_executable(store, fact, tests.joinpath("app"), "test")?
     assert read(test_report(tests.joinpath("app")))? == "[]"
     # A view replaced behind Oven's back is the user's; the next view restores the fact's executable.
     write(tests.joinpath("app"), "someone else's binary")?
-    assert read(fact.joinpath("app"))? == "first build"
-    view_executable(fact, tests.joinpath("app"), "test")?
+    assert read(fact_file(store, fact, "app").unwrap())? == "first build"
+    view_executable(store, fact, tests.joinpath("app"), "test")?
     assert read(tests.joinpath("app"))? == "first build"
     # Rust libraries retain rustc's file dependencies, including escaped paths outside the source directory.
     setup = fixture(scratch.path())?
