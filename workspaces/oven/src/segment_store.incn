@@ -1,0 +1,422 @@
+"""
+A store of immutable, memory-mapped segments behind an atomically switched manifest (DD-0012, decision 9).
+
+This module is the storage substrate only. It knows keys, byte values and content-named payload files; it names no
+compiler, unit or Oven type, so it can move into IncQL-DB unchanged.
+
+Layout under the store root:
+
+- `segments/<fingerprint>.seg`: immutable segments. Each holds sorted entries of a 128-bit key and a byte value.
+- `manifests/<generation>`: the ordered segment list of one generation, canonical base first, deltas after it.
+- `CURRENT`: the generation readers start from; replaced by rename, never edited.
+- `payloads/<aa>/<digest>`: content-named files the OS and other tools read directly.
+- `claims/<key>`: exclusive locks of bakers of one key.
+
+Readers take a snapshot (one manifest generation and its mapped segments) and never wait. A baker of a key claims
+it under an exclusive lock, looks again, bakes, writes one delta segment, then switches the manifest only if it
+still names the generation the baker extended; otherwise it extends the newer generation and tries again. The kernel
+releases a dead holder's lock, so its claim is a miss for the next asker. A missing or damaged segment, entry or
+payload is a miss: the asker bakes it again.
+"""
+
+from rust::std::process import id
+from rust::std::string import String as RustString
+from std.encoding.hex import hexlify
+from std.fs import Path
+from std.fs.locking import FileLock
+from std.hash import file_digest, sha256
+from std.io import BytesIO, Endian, IoError, _BytesIO
+
+
+const KEY_BYTES: int = 32
+const INDEX_ENTRY_BYTES: int = 48
+const HEADER_BYTES: int = 16
+const MANIFEST_SCHEMA: str = "incan.segment-manifest/1"
+
+
+pub model Segment:
+    """One mapped segment: its content name and the bytes the mapping exposes."""
+
+    pub name: str
+    pub data: bytes
+    pub count: int
+
+
+pub model Snapshot:
+    """One manifest generation and its segments, base first; it never changes after it is taken."""
+
+    pub root: Path
+    pub generation: int
+    pub segments: list[Segment]
+
+
+pub def fingerprint(data: bytes) -> str:
+    """The 128-bit fingerprint of `data`, as 32 lowercase hexadecimal digits."""
+    return hexlify(sha256.digest(data))[:KEY_BYTES]
+
+
+pub def text_key(parts: list[str]) -> str:
+    """A 128-bit key over framed text parts, so no two part lists alias each other."""
+    mut framed = ""
+    for part in parts:
+        framed = framed + f"{len(part)}:{part};"
+    return fingerprint(framed.encode("utf-8"))
+
+
+pub def map_read(path: Path) -> Result[bytes, str]:
+    """The read-only view of one immutable file; the single place the store obtains segment bytes."""
+    return path.read_bytes().map_err((error) => error.message())
+
+
+# ---- Snapshots ----
+
+
+pub def snapshot(root: Path) -> Result[Snapshot, str]:
+    """The current generation and its segments; an unreadable segment is left out, so its entries are misses."""
+    generation = current_generation(root)
+    mut segments: list[Segment] = []
+    for name in manifest_segments(root, generation):
+        if let Some(segment) = open_segment(root, name):
+            segments.append(segment)
+    return Ok(Snapshot(root=root, generation=generation, segments=segments))
+
+
+def current_generation(root: Path) -> int:
+    """The generation `CURRENT` names; an absent or unreadable pointer is the empty generation 0."""
+    match root.joinpath("CURRENT").read_text("utf-8", "strict"):
+        Err(_) => return 0
+        Ok(text) =>
+            match natural(text.strip()):
+                Some(value) => return value
+                None => return 0
+
+
+def manifest_segments(root: Path, generation: int) -> list[str]:
+    """The segment names of one generation, base first; an absent or malformed manifest lists none."""
+    if generation == 0:
+        return []
+    match root.joinpath("manifests").joinpath(f"{generation}").read_text("utf-8", "strict"):
+        Err(_) => return []
+        Ok(text) =>
+            lines = text.strip().split("\n")
+            if len(lines) == 0 or lines[0] != MANIFEST_SCHEMA:
+                return []
+            return [line for line in lines[1:] if line != ""]
+
+
+def open_segment(root: Path, name: str) -> Option[Segment]:
+    """Map one segment and check its header and index bounds; anything else is treated as absent."""
+    match map_read(root.joinpath("segments").joinpath(f"{name}.seg")):
+        Err(_) => return None
+        Ok(data) =>
+            if len(data) < HEADER_BYTES or data[:8] != segment_magic():
+                return None
+            match read_u64_at(data, 8):
+                None => return None
+                Some(count) =>
+                    if HEADER_BYTES + count * INDEX_ENTRY_BYTES > len(data):
+                        return None
+                    return Some(Segment(name=name, data=data, count=count))
+
+
+pub def get(view: Snapshot, key: str) -> Option[bytes]:
+    """The newest value of `key` in the snapshot: deltas are searched newest first, then the base."""
+    mut index = len(view.segments) - 1
+    while index >= 0:
+        if let Some(value) = segment_value(view.segments[index], key):
+            return Some(value)
+        index -= 1
+    return None
+
+
+def segment_value(segment: Segment, key: str) -> Option[bytes]:
+    """Binary search of one segment's sorted index; an entry whose bounds fall outside the segment is a miss."""
+    mut low = 0
+    mut high = segment.count
+    while low < high:
+        middle = (low + high) // 2
+        entry = HEADER_BYTES + middle * INDEX_ENTRY_BYTES
+        found = key_at(segment.data, entry)
+        if found == key:
+            return value_at(segment.data, entry)
+        if found < key:
+            low = middle + 1
+        else:
+            high = middle
+    return None
+
+
+pub def keys(view: Snapshot) -> list[str]:
+    """Every distinct key visible in the snapshot, sorted."""
+    mut seen: set[str] = set()
+    for segment in view.segments:
+        for position in range(segment.count):
+            seen.add(key_at(segment.data, HEADER_BYTES + position * INDEX_ENTRY_BYTES))
+    return sorted([key for key in seen])
+
+
+def key_at(data: bytes, entry: int) -> str:
+    """The key of the index entry at byte `entry`; keys are 32 ASCII hexadecimal digits."""
+    match RustString.from_utf8(data[entry:entry + KEY_BYTES]):
+        Ok(text) => return str(text)
+        Err(_) => return ""
+
+
+def value_at(data: bytes, entry: int) -> Option[bytes]:
+    """The value an index entry points at, when it lies inside the segment."""
+    match read_u64_at(data, entry + KEY_BYTES):
+        None => return None
+        Some(offset) =>
+            match read_u64_at(data, entry + KEY_BYTES + 8):
+                None => return None
+                Some(length) =>
+                    if offset + length > len(data):
+                        return None
+                    return Some(data[offset:offset + length])
+
+
+def read_u64_at(data: bytes, offset: int) -> Option[int]:
+    """One little-endian u64 at `offset`, when eight bytes are there."""
+    if offset + 8 > len(data):
+        return None
+    reader = BytesIO(data[offset:offset + 8])
+    match read_u64(reader):
+        Ok(value) => return Some(int(value))
+        Err(_) => return None
+
+
+def read_u64(reader: _BytesIO) -> Result[u64, IoError]:
+    """Read one little-endian u64 with an explicit result type for `BytesIO` overload resolution."""
+    value: u64 = reader.read(Endian.Little)?
+    return Ok(value)
+
+
+# ---- Segments ----
+
+
+pub def encode_segment(entries: Dict[str, bytes]) -> Result[bytes, str]:
+    """
+    The canonical bytes of a segment holding `entries`.
+
+    Keys are sorted and values follow the index in key order, with no time or location in the encoding, so the same
+    entries always give the same bytes.
+    """
+    ordered = sorted([key for key in entries.keys()])
+    buffer = BytesIO(segment_magic())
+    buffer.seek(0, 2).map_err((error) => error.message())?
+    write_u64(buffer, len(ordered))?
+    mut offset = HEADER_BYTES + len(ordered) * INDEX_ENTRY_BYTES
+    for key in ordered:
+        if len(key) != KEY_BYTES:
+            return Err(f"segment keys are {KEY_BYTES} hexadecimal digits: {key}")
+        buffer.write_bytes(key.encode("utf-8")).map_err((error) => error.message())?
+        write_u64(buffer, offset)?
+        write_u64(buffer, len(entries[key]))?
+        offset += len(entries[key])
+    for key in ordered:
+        buffer.write_bytes(entries[key]).map_err((error) => error.message())?
+    return Ok(buffer.getvalue())
+
+
+def write_u64(buffer: _BytesIO, value: int) -> Result[None, str]:
+    """Append one little-endian u64."""
+    maybe: Option[u64] = value.try_resize()
+    match maybe:
+        None => return Err(f"{value} does not fit a segment counter")
+        Some(encoded) =>
+            buffer.write(encoded, Endian.Little).map_err((error) => error.message())?
+            return Ok(None)
+
+
+def write_segment(root: Path, entries: Dict[str, bytes]) -> Result[str, str]:
+    """Write a segment under its content name; an identical segment already present is reused as it is."""
+    data = encode_segment(entries)?
+    name = fingerprint(data)
+    target = root.joinpath("segments").joinpath(f"{name}.seg")
+    if target.is_file():
+        return Ok(name)
+    place_bytes(target, data)?
+    return Ok(name)
+
+
+# ---- Publication ----
+
+
+pub def claim(root: Path, key: str) -> Result[FileLock, str]:
+    """
+    Claim `key` for baking; waits while another baker holds it, and lasts as long as the returned lock.
+
+    The holder takes a fresh snapshot after the claim, because the previous holder may have published the key.
+    """
+    claims = root.joinpath("claims")
+    ensure_directory(claims)?
+    return claims.joinpath(key).lock_exclusive().map_err((error) => error.message())
+
+
+pub def publish(root: Path, base: Snapshot, entries: Dict[str, bytes]) -> Result[Snapshot, str]:
+    """
+    Publish `entries` as one delta segment and return the snapshot that contains them.
+
+    1. Write the delta under its content name; readers cannot see it yet.
+    2. Under the manifest lock, switch only if `CURRENT` still names the generation the manifest extends.
+    3. Another baker's switch since then is extended instead: claims keep the bakers' keys apart.
+    """
+    if len(entries) == 0:
+        return Ok(base)
+    # 1. An unpublished segment is invisible to every reader.
+    delta = write_segment(root, entries)?
+    # 2. The switch is the only step that takes the manifest lock; readers never take it.
+    ensure_directory(root)?
+    held = root.joinpath("manifest").lock_exclusive().map_err((error) => error.message())?
+    # 3. The newest generation is the one extended, so no other baker's delta is dropped.
+    generation = current_generation(root)
+    segments = manifest_segments(root, generation) + [delta]
+    switch(root, generation, segments)?
+    return snapshot(root)
+
+
+def switch(root: Path, base: int, segments: list[str]) -> Result[None, str]:
+    """Write generation `base + 1` and point `CURRENT` at it; the caller holds the manifest lock."""
+    if current_generation(root) != base:
+        return Err("the manifest moved while its lock was held")
+    following = base + 1
+    manifests = root.joinpath("manifests")
+    ensure_directory(manifests)?
+    document = MANIFEST_SCHEMA + "\n" + "\n".join(segments) + "\n"
+    place_bytes(manifests.joinpath(f"{following}"), document.encode("utf-8"))?
+    return place_bytes(root.joinpath("CURRENT"), f"{following}\n".encode("utf-8"))
+
+
+# ---- Compaction and collection ----
+
+
+pub def compact(root: Path, keep: set[str]) -> Result[Snapshot, str]:
+    """
+    Merge the current generation into one canonical base holding only the keys in `keep`.
+
+    The newest value of each kept key wins. The base's bytes depend only on the kept entries, so compacting equal
+    contents always gives a byte-identical base.
+    """
+    ensure_directory(root)?
+    held = root.joinpath("manifest").lock_exclusive().map_err((error) => error.message())?
+    current = snapshot(root)?
+    mut merged: Dict[str, bytes] = {}
+    for key in keys(current):
+        if key in keep:
+            if let Some(value) = get(current, key):
+                merged[key] = value
+    base = write_segment(root, merged)?
+    switch(root, current.generation, [base])?
+    return snapshot(root)
+
+
+pub def sweep_segments(root: Path) -> Result[int, str]:
+    """Remove segment files and old manifests the current generation does not name; returns the files removed."""
+    generation = current_generation(root)
+    named = set(manifest_segments(root, generation))
+    mut removed = 0
+    segments = root.joinpath("segments")
+    if segments.is_dir():
+        for path in segments.iterdir().map_err((error) => error.message())?:
+            if path.name().endswith(".seg") and path.name()[:-4] not in named:
+                if removed_file(path):
+                    removed += 1
+    manifests = root.joinpath("manifests")
+    if manifests.is_dir():
+        for path in manifests.iterdir().map_err((error) => error.message())?:
+            if path.name() != f"{generation}":
+                if removed_file(path):
+                    removed += 1
+    return Ok(removed)
+
+
+# ---- Payloads ----
+
+
+pub def payload_path(root: Path, digest: str) -> Path:
+    """Where the payload of `digest` lives."""
+    return root.joinpath("payloads").joinpath(digest[:2]).joinpath(digest)
+
+
+pub def put_payload(root: Path, source: Path) -> Result[str, str]:
+    """Store `source` under its content digest, read-only; an identical payload already stored is kept."""
+    digest = hexlify(file_digest(source, "sha256").map_err((error) => f"{source.0}: {error.message()}")?)
+    target = payload_path(root, digest)
+    if target.is_file():
+        return Ok(digest)
+    ensure_directory(target.parent())?
+    temporary = Path(f"{target.0}.{id()}.tmp")
+    source.copy(temporary, true, false).map_err((error) => error.message())?
+    temporary.chmod(true).map_err((error) => error.message())?
+    temporary.replace(target).map_err((error) => error.message())?
+    return Ok(digest)
+
+
+pub def payload_intact(root: Path, digest: str) -> bool:
+    """Whether the stored payload of `digest` still has exactly that content."""
+    target = payload_path(root, digest)
+    if not target.is_file():
+        return False
+    match file_digest(target, "sha256"):
+        Ok(found) => return hexlify(found) == digest
+        Err(_) => return False
+
+
+pub def drop_payload(root: Path, digest: str) -> bool:
+    """Forget a damaged or unreachable payload; the next ask that needs it stores it again."""
+    return removed_file(payload_path(root, digest))
+
+
+pub def sweep_payloads(root: Path, live: set[str]) -> Result[int, str]:
+    """Remove every payload whose digest is not in `live`; returns how many were removed."""
+    payloads = root.joinpath("payloads")
+    if not payloads.is_dir():
+        return Ok(0)
+    mut removed = 0
+    for shard in payloads.iterdir().map_err((error) => error.message())?:
+        for path in shard.iterdir().map_err((error) => error.message())?:
+            if path.name() not in live and drop_payload(root, path.name()):
+                removed += 1
+    return Ok(removed)
+
+
+# ---- Files ----
+
+
+def segment_magic() -> bytes:
+    """The header every segment starts with."""
+    return BytesIO(b"INCSEG\x00\x01").getvalue()
+
+
+def removed_file(path: Path) -> bool:
+    """Remove one file, read-only or not; false when it could not be removed."""
+    match path.chmod(false):
+        Ok(_) => pass
+        Err(_) => return False
+    match path.unlink():
+        Ok(_) => return True
+        Err(_) => return False
+
+
+def natural(text: str) -> Option[int]:
+    """A bounded decimal number, when `text` is one."""
+    if len(text) == 0 or len(text) > 18:
+        return None
+    for character in text:
+        if character not in "0123456789":
+            return None
+    return Some(int(text))
+
+
+def ensure_directory(path: Path) -> Result[None, str]:
+    """Create `path` and its parents when absent."""
+    return path.mkdir(true, true).map_err((error) => f"{path.0}: {error.message()}")
+
+
+def place_bytes(target: Path, data: bytes) -> Result[None, str]:
+    """Write a complete file beside `target`, then rename it into place."""
+    ensure_directory(target.parent())?
+    temporary = Path(f"{target.0}.{id()}.tmp")
+    temporary.write_bytes(data).map_err((error) => error.message())?
+    temporary.replace(target).map_err((error) => error.message())?
+    return Ok(None)
