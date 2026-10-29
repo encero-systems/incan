@@ -1,4 +1,4 @@
-"""Cache closed decorated text callables and register declaration names independently of callable signatures."""
+"""Initialize closed decorated callables once and register declaration names independently of callable signatures."""
 
 from rust::std::sync import Arc, Mutex, Condvar, MutexGuard
 from rust::std::collections import HashMap
@@ -9,23 +9,21 @@ from rust::std::mem import drop
 from rust::incan_std_core::errors import raise_value_error
 
 
-type TextCallback = () -> str
-
-
-type TextInitializer = () -> TextCallback
+# Runs a closed instance's decorators and stores their result in that instance's typed storage cell.
+type BindingPublisher = () -> None
 
 
 enum CacheBinding:
-    """Distinguish an initialized callable from the thread currently constructing that instance."""
+    """Distinguish a published instance from the thread currently publishing it."""
 
     Initializing(ThreadId)
-    Ready(TextCallback)
+    Ready
 
 
 enum ClaimDecision:
     """Return the locked lookup decision without retaining its guard across a caller's error reporting."""
 
-    Ready(TextCallback)
+    Ready
     Acquired
     Recursive
     Waiting
@@ -41,24 +39,29 @@ model BindingCache:
 
 @derive(Clone)
 model CacheEntry:
-    """Keep one shared cell for a source declaration independently of its closed type arguments."""
+    """
+    Keep one shared cell for each closed instance's publisher.
 
-    declaration: str
+    Each compiled unit owns the storage its publisher writes, so a unit that instantiates a declaration another unit
+    also instantiates publishes its own cell rather than observing the other unit's completion.
+    """
+
+    publisher: usize
     cell: BindingCache
 
 
 model CacheRegistry:
-    """Hold the short registry guard only while selecting a declaration's independent cell."""
+    """Hold the short registry guard only while selecting an instance's independent cell."""
 
     entries: list[CacheEntry]
 
-    def select(mut self, declaration: str) -> BindingCache:
-        """Return a shared cell before any initializer runs, permitting nested calls to another declaration."""
+    def select(mut self, publisher: usize) -> BindingCache:
+        """Return a shared cell before any initializer runs, permitting nested calls to another instance."""
         for entry in self.entries:
-            if entry.declaration == declaration:
+            if entry.publisher == publisher:
                 return entry.cell.clone()
         cell = BindingCache(values=Arc.new(Mutex.new(HashMap.new())), changed=Arc.new(Condvar.new()))
-        self.entries.append(CacheEntry(declaration=declaration, cell=cell.clone()))
+        self.entries.append(CacheEntry(publisher=publisher, cell=cell.clone()))
         return cell
 
 
@@ -101,46 +104,45 @@ def borrowed_cache_key(value: &RustString) -> &RustString:
     return value
 
 
-pub def cached_text_binding(
+pub def initialize_binding(
     module: str,
-    declaration: str,
     instance: str,
-    initialize: TextInitializer,
+    publish: BindingPublisher,
+    publisher: usize,
     original: usize,
     name: str,
-) -> TextCallback:
+) -> None:
     """
-    Register a declaration and initialize its closed callable once without holding a mutex across user code.
+    Register a declaration and publish its closed callable once without holding a mutex across user code.
 
-    1. Register the original callable's name and select its declaration cache.
-    2. Return an existing binding, wait for another thread, or claim this instance's initialization.
-    3. Initialize outside the guard, publishing success or removing the claim before resuming a panic.
+    `publisher` is the address of `publish`, which identifies this instance's storage within its compiled unit.
+
+    1. Register the original callable's name and select the instance's cache.
+    2. Return once published, wait for another thread, or claim this instance's initialization.
+    3. Publish outside the guard, recording success or removing the claim before resuming a panic.
     """
-    # 1. Select the declaration cache without executing user code.
+    # 1. Select the instance cache without executing user code.
     NAMES.record(module, original, name)
-    cell = CACHES.select(declaration)
+    cell = CACHES.select(publisher)
     key: RustString = RustString.from(instance)
     # 2. A claim applies only to this closed instance, never the entire declaration.
-    match claim_binding(cell, key):
-        Some(value) => return value
-        None => pass
+    if not claim_binding(cell, key):
+        return
     # 3. Unwinding cannot leave another caller waiting on an abandoned claim.
-    match catch_unwind(initialize):
-        Ok(value) =>
-            finish_binding(cell, key, Some(value))
-            return value
+    match catch_unwind(publish):
+        Ok(_) => finish_binding(cell, key, true)
         Err(payload) =>
-            finish_binding(cell, key, None)
+            finish_binding(cell, key, false)
             resume_unwind(payload)
 
 
-def claim_binding(cell: &BindingCache, key: &RustString) -> Option[TextCallback]:
-    """Wait for an existing owner or claim an absent instance; reject same-thread recursive initialization."""
+def claim_binding(cell: &BindingCache, key: &RustString) -> bool:
+    """Wait for an existing owner or claim an absent instance, returning whether this caller must publish it."""
     owner = current().id()
     while true:
         match claim_once(cell, key, owner):
-            ClaimDecision.Ready(value) => return Some(value)
-            ClaimDecision.Acquired => return None
+            ClaimDecision.Ready => return false
+            ClaimDecision.Acquired => return true
             ClaimDecision.Recursive => raise_value_error(f"recursive initialization of decorated callable '{key}'")
             ClaimDecision.Waiting => pass
             ClaimDecision.Poisoned =>
@@ -178,10 +180,10 @@ def inspect_claim(
     """Inspect or claim while borrowing the caller's guard; another thread's claim requires an atomic wait."""
     match guard.get(borrowed_cache_key(key)):
         Some(binding) =>
-            # Only a function pointer or thread id is copied; no cached inventory is copied with the state.
+            # Only a thread id is copied; no cached inventory is copied with the state.
             state: CacheBinding = binding.clone()
             match state:
-                CacheBinding.Ready(value) => return ClaimDecision.Ready(value)
+                CacheBinding.Ready => return ClaimDecision.Ready
                 CacheBinding.Initializing(initializer) =>
                     if initializer == owner:
                         return ClaimDecision.Recursive
@@ -191,15 +193,16 @@ def inspect_claim(
             return ClaimDecision.Acquired
 
 
-def finish_binding(cell: &BindingCache, key: RustString, value: Option[TextCallback]) -> None:
-    """Publish one initialized binding or clear its failed claim, then wake callers to recheck the state."""
+def finish_binding(cell: &BindingCache, key: RustString, published: bool) -> None:
+    """Record one published binding or clear its failed claim, then wake callers to recheck the state."""
     mut guard = match cell.values.lock():
         Ok(value) => value
         Err(error) => error.into_inner()
 
-    match value:
-        Some(callback) => _ = guard.insert(key, CacheBinding.Ready(callback))
-        None => _ = guard.remove(borrowed_cache_key(key))
+    if published:
+        _ = guard.insert(key, CacheBinding.Ready)
+    else:
+        _ = guard.remove(borrowed_cache_key(key))
     cell.changed.notify_all()
 
 
