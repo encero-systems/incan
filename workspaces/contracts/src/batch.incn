@@ -222,6 +222,8 @@ def entry(fixture: Fixture) -> Result[Entry, str]:
 
 def admit_source(source: str) -> Result[None, str]:
     """Refuse context observations and unproven initialization effects anywhere in a module case."""
+    if "std.environ" in source or "std::env" in source:
+        return Err("environment observations require the original process environment")
     if "__file__" in source or "current_exe" in source or "import this" in source:
         return Err("source paths, executable identity and entry effects require isolated compilation")
     if observes_module_identity(source):

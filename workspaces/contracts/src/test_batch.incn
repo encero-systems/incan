@@ -87,4 +87,6 @@ def process_sources() -> dict[str, str]:
     streams = "from rust::std::io import Write, stderr\n\ndef main() -> None:\n"
     sources["streams"] = streams + "    println(\"out\")\n    _ = stderr().write_all(b\"err\\n\")\n"
     sources["refusal"] = "def main() -> None:\n    _ = missing_name\n"
+    environment = "from std.environ import get_or\n\ndef main() -> None:\n"
+    sources["environment"] = environment + "    println(get_or(\"INCAN_CONTRACT_CASE\", \"unset\"))\n"
     return sources
