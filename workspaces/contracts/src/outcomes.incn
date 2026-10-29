@@ -1,0 +1,38 @@
+"""Keep completed case payloads on disk so discovery retains only a small index of fresh results."""
+
+from std.fs import Path
+from files import make_directory, read, write
+from processes import Outcome
+
+
+pub model Outcomes:
+    """An invocation-local index; files never authorize reuse on a subsequent runner invocation."""
+
+    pub root: Path
+    entries: dict[str, Result[tuple[Path, Option[int]], str]] = {}
+
+    def contains(self, name: str) -> bool:
+        """Whether this run produced a result for the named case, including a failed capture."""
+        return name in self.entries
+
+    def put(mut self, name: str, result: Result[Outcome, str]) -> None:
+        """Persist one fresh result before releasing its stdout and stderr from the worker wave."""
+        self.entries[name] = store(self.root.joinpath(name), result)
+
+    def get(self, name: str) -> Result[Outcome, str]:
+        """Read just the case being compared; missing or unreadable payloads fail that case explicitly."""
+        if name not in self.entries:
+            return Err(f"no completed outcome for {name}")
+        directory, code = self.entries[name]?
+        stdout = read(directory.joinpath("stdout"))?
+        stderr = read(directory.joinpath("stderr"))?
+        return Ok(Outcome(stdout=stdout, stderr=stderr, code=code))
+
+
+def store(directory: Path, result: Result[Outcome, str]) -> Result[tuple[Path, Option[int]], str]:
+    """Keep signal identity in the fresh in-memory index and preserve the captured stream text verbatim."""
+    outcome = result?
+    make_directory(directory)?
+    write(directory.joinpath("stdout"), outcome.stdout)?
+    write(directory.joinpath("stderr"), outcome.stderr)?
+    return Ok((directory, outcome.code))

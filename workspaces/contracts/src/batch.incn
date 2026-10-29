@@ -5,6 +5,7 @@ from families import command, read_program
 from files import make_directory, read, write
 from fixture import MINIMAL_MANIFEST, Fixture, fixture_files, materialize, materialize_files
 from group_hints import retain_hint
+from outcomes import Outcomes
 from run import Outcome, built_program, clear_trace, trace_file, unit_notes
 from timing import elapsed_hint
 from timing_hints import Costs, load_costs, retain_costs
@@ -48,7 +49,7 @@ model GroupProject:
 pub model BatchOutcomes:
     """Fresh per-case results and the shared compilation work Oven actually reported."""
 
-    pub outcomes: dict[str, Result[Outcome, str]]
+    pub outcomes: Outcomes
     pub notes: list[str]
 
 
@@ -85,15 +86,12 @@ pub def run_batches(
     # 3. Compile groups and run verified entries while refusals refine the next compilation wave.
     mut notes: list[str] = []
     mut partition: list[str] = []
-    mut built: list[GroupProject] = []
-    mut outcomes: dict[str, Result[Outcome, str]] = {}
+    mut outcomes = Outcomes(root=scratch.joinpath(".outcomes"))
     mut costs = load_costs(hint)
     mut projects: list[Path] = []
-    compile_groups(incan, scratch, groups, built, notes, partition, overlapping, outcomes, jobs, costs, projects)
+    compile_groups(incan, scratch, groups, notes, partition, overlapping, outcomes, jobs, costs, projects)
     retain_costs(hint, projects, costs)
     # 4. Retain the partition whose entries ran fresh in the owning pool.
-    for group in built:
-        partition.append("\t".join([candidate.fixture.case_name() for candidate in group.entries]))
     if len(entries) > 0:
         match write(plan, "\n".join(partition) + "\n"):
             Err(error) => println(f"batch plan: {error}")
@@ -241,18 +239,21 @@ def observes_module_identity(source: str) -> bool:
     return "__module__" in source or ".ordinal_encoding" in source
 
 
-pub def run_separate(
-    incan: str,
-    scratch: Path,
-    fixtures: list[Fixture],
-    mut outcomes: dict[str, Result[Outcome, str]],
-    jobs: int,
-) -> None:
+pub def run_separate(incan: str, scratch: Path, fixtures: list[Fixture], mut outcomes: Outcomes, jobs: int) -> None:
     """Run check-only, project, library and unbatchable cases under the same worker budget."""
+    mut offset = 0
+    while offset < len(fixtures):
+        wave = fixtures[offset:offset + MAX_GROUP_ENTRIES]
+        run_separate_wave(incan, scratch, wave, outcomes, jobs)
+        offset += MAX_GROUP_ENTRIES
+
+
+def run_separate_wave(incan: str, scratch: Path, fixtures: list[Fixture], mut outcomes: Outcomes, jobs: int) -> None:
+    """Materialize and retain captured payloads for only one bounded window of original commands."""
     mut requests: list[Invocation] = []
     mut names: list[str] = []
     for fixture in fixtures:
-        if fixture.case_name() in outcomes or fixture.family in ["format", "graph"]:
+        if outcomes.contains(fixture.case_name()) or fixture.family in ["format", "graph"]:
             continue
         match isolated_request(incan, scratch, fixture):
             Err(_) => pass
@@ -262,7 +263,7 @@ pub def run_separate(
                 names.append(fixture.case_name())
     results = invoke_many(requests, jobs)
     for index in range(len(requests)):
-        outcomes[names[index]] = results[index]
+        outcomes.put(names[index], results[index])
 
 
 def isolated_request(
@@ -294,11 +295,10 @@ def compile_groups(
     incan: str,
     scratch: Path,
     groups: list[list[Entry]],
-    mut built: list[GroupProject],
     mut notes: list[str],
     mut partition: list[str],
     separate: list[Fixture],
-    mut outcomes: dict[str, Result[Outcome, str]],
+    mut outcomes: Outcomes,
     jobs: int,
     costs: Costs,
     mut projects: list[Path],
@@ -317,15 +317,16 @@ def compile_groups(
     while len(pending) > 0 or len(isolated) > 0:
         mut requests: list[Invocation] = []
         mut attempts: list[GroupProject] = []
-        mut retry: list[list[Entry]] = []
+        wave = pending[:max([1, jobs])]
+        mut retry = pending[len(wave):]
         # 1. Singletons keep their own command; every shared group contributes one compilation request.
         mut queued = set([fixture.case_name() for fixture in isolated])
-        for entries in pending:
+        for entries in wave:
             if len(entries) < 2:
                 if len(entries) == 1:
                     partition.append(entries[0].fixture.case_name())
                     name = entries[0].fixture.case_name()
-                    if name not in outcomes and name not in queued:
+                    if not outcomes.contains(name) and name not in queued:
                         isolated.append(entries[0].fixture)
                         queued.add(name)
                 continue
@@ -345,7 +346,9 @@ def compile_groups(
                     projects.append(group.project)
         # 2. Retained original commands join the first wave under the same budget.
         mut names: list[str] = []
-        for fixture in isolated:
+        separate_wave = isolated[:MAX_GROUP_ENTRIES]
+        isolated = isolated[len(separate_wave):]
+        for fixture in separate_wave:
             duration = costs.duration(fixture.project_path(scratch))
             match isolated_request(incan, scratch, fixture, duration):
                 Err(_) => pass
@@ -354,7 +357,6 @@ def compile_groups(
                     requests.append(request)
                     names.append(fixture.case_name())
                     projects.append(request.project)
-        isolated = []
         # 3. Queue gated entries alongside builds and record original commands once.
         mut executions: list[tuple[int, list[str]]] = []
         for parent in range(len(attempts)):
@@ -363,7 +365,7 @@ def compile_groups(
             executions.append((first, selected))
         results = invoke_many(requests, jobs)
         for index in range(len(names)):
-            outcomes[names[index]] = results[len(attempts) + index]
+            outcomes.put(names[index], results[len(attempts) + index])
         # 4. Only clean compilations are shared; refusal diagnostics guide another attempt.
         for index in range(len(attempts)):
             group = attempts[index]
@@ -372,10 +374,10 @@ def compile_groups(
             refusal, evidence = compilation_refusal(results[index])
             if refusal == "":
                 budget.observe(group.project, len(group.entries))
-                built.append(group)
+                partition.append("\t".join([candidate.fixture.case_name() for candidate in group.entries]))
                 first, selected = executions[index]
                 for offset in range(len(selected)):
-                    outcomes[selected[offset]] = results[first + offset]
+                    outcomes.put(selected[offset], results[first + offset])
             else:
                 refine_group(group, retry, refusal, evidence)
         pending = retry

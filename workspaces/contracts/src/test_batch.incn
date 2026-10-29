@@ -27,7 +27,7 @@ pub def test_slow_shared_compilation() -> Result[None, str]:
     fixtures = discover_family(root.joinpath("fixtures"), "behavior")?
     batch = run_batches(oven.0, root.joinpath("scratch"), fixtures, 1)
     for fixture in fixtures:
-        match batch.outcomes[fixture.case_name()]:
+        match batch.outcomes.get(fixture.case_name()):
             Err(error) => return Err(error)
             Ok(outcome) =>
                 assert outcome.stdout == "selected\n"
@@ -37,7 +37,7 @@ pub def test_slow_shared_compilation() -> Result[None, str]:
     limited = run_batches(oven.0, root.joinpath("limited"), fixtures, 1)
     set_timeout(0)
     for fixture in fixtures:
-        match limited.outcomes[fixture.case_name()]:
+        match limited.outcomes.get(fixture.case_name()):
             Err(error) => return Err(error)
             Ok(outcome) =>
                 assert outcome.stdout == "isolated\n"
@@ -69,11 +69,11 @@ pub def test_shared_process_outcomes() -> Result[None, str]:
         project = materialize(fixture, root.joinpath("shared"))?
         program = read_program(fixture)?
         isolated = invoke(oven, command(fixture, program.header), project)?
-        match batch.outcomes[fixture.case_name()]:
+        match batch.outcomes.get(fixture.case_name()):
             Err(error) => return Err(error)
             Ok(shared) =>
                 assert shared.code == isolated.code
-                assert shared.stdout == isolated.stdout
+                assert shared.stdout == isolated.stdout, f"{fixture.name}: {shared.stdout} != {isolated.stdout}"
                 assert shared.stderr == isolated.stderr
     return Ok(None)
 

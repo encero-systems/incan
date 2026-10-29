@@ -6,6 +6,7 @@ from std.tempfile import TemporaryDirectory
 from batch import run_batches
 from files import make_directory, write
 from fixture import discover_family
+from outcomes import Outcomes
 
 
 pub def test_bounded_discovery() -> Result[None, str]:
@@ -24,11 +25,22 @@ pub def test_bounded_discovery() -> Result[None, str]:
     fixtures = discover_family(root.joinpath("fixtures"), "behavior")?
     batch = run_batches(oven.0, root.joinpath("scratch"), fixtures, 2)
     assert not root.joinpath("oversized").is_file()
+    assert root.joinpath("scratch/.outcomes/behavior/shared/case_0/stdout").is_file()
     for fixture in fixtures:
-        match batch.outcomes[fixture.case_name()]:
+        match batch.outcomes.get(fixture.case_name()):
             Err(error) => return Err(error)
             Ok(outcome) =>
                 assert outcome.code == Some(0)
+    fresh = Outcomes(root=root.joinpath("scratch/.outcomes"))
+    assert not fresh.contains(fixtures[0].case_name())
+    match fresh.get(fixtures[0].case_name()):
+        Err(_) => pass
+        Ok(_) =>
+            assert false
+    names = [fixture.case_name() for fixture in fixtures]
+    write(root.joinpath("scratch/batch-behavior-groups.tsv"), "\t".join(names) + "\n")?
+    repeated = run_batches(oven.0, root.joinpath("scratch"), fixtures, 2)
+    assert not root.joinpath("oversized").is_file()
     return Ok(None)
 
 
