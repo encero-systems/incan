@@ -37,7 +37,7 @@ An immediate Result combinator accepts a closure that reads a local, while a laz
 - Implicit writable references to captured locals.
 - Silently copying, cloning, or moving a value that ordinary ownership rules do not permit.
 - Making every callable Send, Static, repeatable, or concurrently reusable.
-- Changing RFC 128's Callable signature or invocation markers.
+- Changing RFC 128's `Callable[...]` annotations, shared signatures, or invocation markers.
 - Making lazy adapters eager.
 
 ## Guide-level explanation
@@ -54,9 +54,11 @@ The adapter retains the projection until consumption. It must retain factor safe
 Snapshot behavior matters even when consumption happens later:
 
 ```incan
+from std.traits.callable import Callable
+
 def snapshot_example(items: list[int]) -> list[int]:
     mut factor = 2
-    projection: (int) -> int = (value) => value * factor
+    projection: Callable[(int) -> int] = (value) => value * factor
     pending = items.iter().map(projection)
     factor = 9
     return pending.collect()
@@ -67,18 +69,40 @@ The proposed result uses 2 for every item. The body is still lazy: the input is 
 A typed callback field is another retained slot:
 
 ```incan
+from std.traits.callable import Callable
+
 model Adjustment:
-    apply: (int) -> int
+    apply: Callable[(int) -> int]
 
 
 def offset_adjustment(offset: int) -> Adjustment:
     return Adjustment(apply=(value) => value + offset)
 ```
 
-The returned Adjustment must remain usable after offset_adjustment returns. The signature already describes a function value; this proposal removes the storage limitation for safely retainable captures. It does not reinterpret the field as a fresh function-pointer-only API.
+The returned Adjustment must remain usable after offset_adjustment returns. The `Callable[...]` annotation describes the accepted call contract; this proposal removes the storage limitation for safely retainable captures. It does not reinterpret the field as a fresh function-pointer-only API.
+
+### A returned closure has the same callable contract
+
+```incan
+from std.traits.callable import Callable
+
+type Multiplier = Callable[(int) -> int]
+
+def make_multiplier(factor: int) -> Multiplier:
+    return (value) => value * factor
+
+def example() -> int:
+    times_three = make_multiplier(3)
+    return times_three(14)  # 42, after the factory returned.
+```
+
+The alias describes how to call the returned value. The closure retains `factor`; returning it does not execute its body. An expanded return annotation is `Callable[(int) -> int]`, rather than a second bare arrow after the function's return arrow. Nested callable-valued parameters and results also use `Callable[...]`.
+
+A compatible named function or a model/class explicitly adopting that same `Callable[...]` contract can be passed to the same annotated API. This does not erase its concrete identity or state. Signature compatibility alone never grants mutable receiver access, repeated consuming calls, capture retention, or concurrent reuse. Whether a callback executes immediately or later remains the consumer's contract.
 
 ## Reference-level explanation
 
+- Callable-signature value annotations must follow RFC 128's mandatory `Callable[...]` spelling or a named alias. This typing rule accepts functions, closures, and nominal adopters; it does not settle the capture categories below.
 - Capture reads must observe the captured local's value at closure construction, following existing Incan capture semantics.
 - Every retained slot must preserve the callable's permitted invocation behavior and keep required captured values alive.
 - A lazy adapter must not invoke its callback until its ordinary consumption operation requires it.
@@ -118,7 +142,7 @@ Safe retention can require owned storage and allocation. Some non-cloneable capt
 - Which capture categories are copied, moved, borrowed, or require an explicit clone under the existing ownership model?
 - How should mutable aggregate snapshots be expressed without introducing hidden sharing or copies?
 - What annotation, if any, distinguishes an immediate callback parameter from a retained one in a public API?
-- How are heterogeneous capturing values stored under one function-typed collection element?
+- How are heterogeneous capturing values stored under one `Callable[...]` collection element?
 - Which retention facts belong in exported callable metadata, and how do they interact with async invocation?
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved.

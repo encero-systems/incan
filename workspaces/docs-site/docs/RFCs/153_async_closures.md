@@ -17,7 +17,7 @@
 
 ## Summary
 
-Add explicit `async (value) => expression` closures whose bodies may await, with `async (A) -> R` signatures in RFC 128's shared callable model. R is the awaited payload. Construction and partial construction do not invoke or schedule work. Direct await and checked runtime task-argument positions accept invocation; retained captures and suspended calls follow ordinary ownership and consumer-specific concurrency requirements. This RFC does not introduce a general stored future value.
+Add explicit `async (value) => expression` closures whose bodies may await, with `Callable[async (A) -> R]` annotations in RFC 128's shared callable model. R is the awaited payload. Construction and partial construction do not invoke or schedule work. Direct await and checked runtime task-argument positions accept invocation; retained captures and suspended calls follow ordinary ownership and consumer-specific concurrency requirements. This RFC does not introduce a general stored future value.
 
 ## Motivation
 
@@ -45,9 +45,10 @@ All async closure and signature examples below describe proposed behavior. The i
 
 ```incan
 import std.async
+from std.traits.callable import Callable
 from std.async.time import sleep
 
-type AsyncTransform = async (int) -> int
+type AsyncTransform = Callable[async (int) -> int]
 
 async def delayed_double(value: int) -> int:
     await sleep(0.01)
@@ -66,6 +67,7 @@ A callback reused across calls may be bound locally:
 
 ```incan
 import std.async
+from std.traits.callable import Callable
 from std.async.time import sleep
 
 async def delayed_double(value: int) -> int:
@@ -73,7 +75,7 @@ async def delayed_double(value: int) -> int:
     return value * 2
 
 async def example() -> int:
-    work: async (int) -> int = async (value) => await delayed_double(value)
+    work: Callable[async (int) -> int] = async (value) => await delayed_double(value)
     first = await work(10)
     second = await work(11)
     return first + second
@@ -85,6 +87,7 @@ Constructing work does not sleep or schedule a task. Each awaited invocation per
 
 ```incan
 import std.async
+from std.traits.callable import Callable
 
 async def apply_twice[C with Callable[async (int) -> int]](
     value: int,
@@ -106,6 +109,7 @@ The bound extends RFC 128's shared signature grammar with async. It does not cre
 
 ```incan
 import std.async
+from std.traits.callable import Callable
 from std.async.task import spawn
 from std.async.time import sleep
 
@@ -114,7 +118,7 @@ async def delayed_double(value: int) -> int:
     return value * 2
 
 async def example() -> None:
-    work: async (int) -> int = async (value) => await delayed_double(value)
+    work: Callable[async (int) -> int] = async (value) => await delayed_double(value)
     handle = spawn(work(21))
     # The explicit spawn operation schedules the invocation.
     match await handle:
@@ -129,6 +133,7 @@ Existing named callable presets such as `partial delayed_double(value=21)` prese
 ## Reference-level explanation
 
 - The closure spelling must be `async (PARAMETERS) => EXPRESSION`. Only explicitly async closures may contain await. A nested ordinary closure must not inherit an enclosing async context.
+- Authored async callable-signature annotations must use `Callable[async (A) -> R]` or an alias under RFC 128. A bare async arrow is only a signature component, including inside named type operations under RFC 141.
 - Parameters and results must use ordinary expected-signature inference and argument binding. The signature `async (A) -> R` describes an awaited R, not a synchronous R-returning callable.
 - Async signatures must participate in RFC 128's common callable model, including `Callable[async (A) -> R]`. Async metadata must survive supported aliases, partials, generic bounds, retained fields and checked package exports.
 - Closure construction and partial construction must not invoke the body or schedule work. Task creation must remain explicit.
@@ -166,7 +171,7 @@ Retained async callbacks require ownership checks over suspension as well as sto
 
 ## Design Decisions
 
-- Use explicit async expression closures and `async (A) -> R`, with expected typing reducing call-site repetition. Substantial bodies can use named functions; no new block grammar is introduced here.
+- Use explicit async expression closures and `Callable[async (A) -> R]` annotations, with expected typing reducing call-site repetition. Substantial bodies can use named functions; no new block grammar is introduced here.
 - Accept direct await and explicit checked runtime task arguments. Constructing a closure or partial never invokes or schedules it.
 - Do not introduce general stored invocation results incidentally; retain existing stored-awaitable contracts separately.
 - Use ordinary duckborrowing and checked capture retention across suspension, without implicit cloning or authored lifetime parameters.

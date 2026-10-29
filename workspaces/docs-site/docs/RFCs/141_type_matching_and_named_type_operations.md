@@ -276,7 +276,7 @@ type Signature = SignatureOf[Formatter]            # (text: str, *, limit: int =
 type EquivalentContract = Callable[SignatureOf[Formatter]]
 ```
 
-`SignatureOf` selects the full caller-facing function type. It preserves keyword names, positional-only and keyword-only boundaries, permission to omit arguments, explicit argument mutability, and variadic parameter kinds. It does not extract or evaluate the implementation's default expressions.
+`SignatureOf` selects the full caller-facing signature component. Under RFC 128, a callable-value annotation must wrap that component: `operation: Callable[Signature]` is valid, while `operation: Signature` must receive the wrapper diagnostic. Naming a signature for compile-time operations does not make it a standalone callable-value annotation. It preserves keyword names, positional-only and keyword-only boundaries, permission to omit arguments, explicit argument mutability, and variadic parameter kinds. It does not extract or evaluate the implementation's default expressions.
 
 `ParametersOf` selects the parameter-list component. Its result is a parameter pack, not an ordinary tuple type:
 
@@ -405,7 +405,7 @@ Omission metadata must preserve whether a parameter is optional without evaluati
 
 ### Parameter-pack kind
 
-Parameter packs must be a distinct compile-time signature-component kind. They must not be silently converted into tuple types or runtime collections. `ParametersOf[F]` must be accepted in the parameter position of a function type, including `Callable[ParametersOf[F] -> R]`. `Callable[SignatureOf[F]]` must accept the projected function type directly.
+Parameter packs must be a distinct compile-time signature-component kind. They must not be silently converted into tuple types or runtime collections. `ParametersOf[F]` must be accepted in the parameter position of a function type, including `Callable[ParametersOf[F] -> R]`. `Callable[SignatureOf[F]]` must accept the projected signature component directly. A full-signature alias must retain its signature-component kind across imports and checked metadata; using it directly as a callable-value annotation must receive RFC 128's `Callable[...]` diagnostic. Ordinary concrete callable types and aliases to an already wrapped `Callable[...]` contract remain valid value annotations.
 
 A reusable parameter pack must be nameable through the existing type-declaration spelling, such as `type FormatterParameters = ParametersOf[Formatter]`. The checker must retain its parameter-pack kind rather than reinterpret the declaration as an ordinary value type. The name must be accepted wherever the corresponding direct parameter-pack projection is accepted, including `Callable[FormatterParameters -> R]`. Alias resolution, visibility, imports, and checked package metadata must preserve that kind and the complete parameter contract. Type operations returning a captured parameter pack must likewise retain its kind when named through this declaration spelling.
 

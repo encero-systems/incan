@@ -93,7 +93,7 @@ The two holes have different obligations:
 
 ```text
 Hole 1
-  Required callable: (ReadError) -> ConfigError
+  Required callable: Callable[(ReadError) -> ConfigError]
   Reasons:
     map_err receives the incoming Result's error
     ? must propagate an error compatible with ConfigError
