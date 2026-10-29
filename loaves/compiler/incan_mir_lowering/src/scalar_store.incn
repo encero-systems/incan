@@ -19,16 +19,17 @@ model ScalarRecord:
     digest: str
 
 
-pub def scalar_inputs(body: str, name: str, span: SourceSpan, overflow_checks: bool) -> list[str]:
-    """Bind a native product to its exact checked input, current physical frame and diagnostic provenance."""
+pub def scalar_inputs(body: str, name: str, span: SourceSpan, overflow_checks: bool, reads: str) -> list[str]:
+    """Bind a native product to its checked body, consumed signatures, physical frame and diagnostic provenance."""
     return [
-        "incan.scalar-function/1",
+        "incan.scalar-function/2",
         body,
         name,
         str(span.file),
         str(span.line),
         str(span.column),
         str(overflow_checks),
+        reads,
     ]
 
 
