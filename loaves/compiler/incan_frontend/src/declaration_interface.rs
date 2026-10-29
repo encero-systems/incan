@@ -5,6 +5,8 @@
 //! represent. A caller must use ordinary checking on that refusal. Import overlays and resolution read witnesses
 //! remain separate: this codec alone never authorizes skipping a body check.
 
+use std::collections::BTreeMap;
+
 use incan_semantics_core::stable_identity::{
     DeclarationSignature, StableDeclarationId, StableDeclarationLocation, StableIdentityProjection,
 };
@@ -16,8 +18,12 @@ use crate::ast::{FunctionDecl, Span, Visibility};
 use crate::library_exports::{
     CheckedExportIdentity, CheckedExportKind, CheckedFunctionExport, CheckedNamedExport, checked_function_export,
 };
-use crate::library_manifest::{CheckedExportReplay, LibraryManifestError};
+use crate::library_manifest::{CheckedExportReplay, LibraryManifestError, TypeRef, VisitTypeRefs};
 use crate::typechecker::TypeChecker;
+
+mod callable_module;
+
+pub use callable_module::{CallableLookupWitness, CheckedCallableModule};
 
 /// One checked free-function header, including private visibility and declaration-time mutation contracts.
 /// The canonical identity is a current-compilation locator; `identity` is the existing edit-stable authority.
@@ -29,6 +35,19 @@ pub struct CheckedCallableInterface {
     is_public: bool,
     mutation: Vec<Option<bool>>,
     replay: CheckedExportReplay,
+}
+
+/// Independent declaration-contract and checked-body digests under the producer's edit-stable identity.
+/// Computing this record after checking establishes meaning; it does not supply a pre-check cache-selection key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckedDeclarationFingerprints {
+    /// The declaration identity, including its checked overload discriminator.
+    pub identity: StableDeclarationId,
+    /// Complete callable contract, including defaults, parameter roles, visibility and mutation evidence.
+    pub signature: String,
+    /// Checked implementation meaning projected through the retained nominal and lexical correspondences.
+    pub body: String,
 }
 
 /// Authenticate the complete private payload before decoding it, as the checked-source artifact owner does.
@@ -138,16 +157,7 @@ impl CheckedCallableInterface {
     /// Decode and validate all supplemental facts. Unknown, missing or malformed records are ordinary misses to
     /// the owner of a private product store; this method never turns a damaged cache into a source diagnostic.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, LibraryManifestError> {
-        let boundary = bytes
-            .iter()
-            .position(|byte| *byte == b'\n')
-            .ok_or_else(|| invalid("missing callable interface payload boundary"))?;
-        let record: InterfaceRecord =
-            serde_json::from_slice(&bytes[..boundary]).map_err(|error| invalid(&error.to_string()))?;
-        let payload = &bytes[boundary + 1..];
-        if record.schema != 1 || record.digest != hex::encode(Sha256::digest(payload)) {
-            return Err(invalid("callable interface payload digest or schema differs"));
-        }
+        let payload = decode_record(bytes)?;
         let interface: Self = serde_json::from_slice(payload).map_err(|error| invalid(&error.to_string()))?;
         interface.validate()?;
         Ok(interface)
@@ -157,6 +167,85 @@ impl CheckedCallableInterface {
     /// before installing it into a checker; the canonical locator still belongs to the producer's generation.
     pub fn function(&self) -> Result<CheckedFunctionExport, LibraryManifestError> {
         self.validate()
+    }
+
+    /// Fingerprint the full accepted callable contract, independently of its overload discriminator and emitted
+    /// frame name. Nominal leaves use the accepting checker's bindings; an unproven carrier is a cache miss.
+    pub fn signature_digest(
+        &self,
+        bindings: &BTreeMap<String, CanonicalSymbolId>,
+        projection: &StableIdentityProjection,
+    ) -> Result<String, LibraryManifestError> {
+        self.validate()?;
+        let mut function = self.replay.callable_contract()?;
+        function.emitted_name = None;
+        let mut complete = true;
+        function.visit_type_refs(&mut |ty| match ty {
+            TypeRef::Named { name, .. } | TypeRef::Applied { name, .. } => match projection.type_name(name, bindings) {
+                Some(stable) => *name = stable,
+                None => complete = false,
+            },
+            TypeRef::NativeUnion(_) | TypeRef::Unknown => complete = false,
+            _ => {}
+        });
+        if !complete {
+            return Err(invalid("callable signature has unproven semantic type leaves"));
+        }
+        incan_semantics_core::semantic_digest::semantic_digest(&(
+            "incan.checked-callable-contract/1",
+            &self.identity,
+            self.is_public,
+            &self.mutation,
+            function,
+        ))
+        .map_err(|error| invalid(&error.to_string()))
+    }
+
+    /// Rebind a retained header to an independently accepted current header. This transfers only the root canonical
+    /// locator; nested types and defaults must already be identical. More general carrier replay requires typed
+    /// correspondence and refuses here, even if two semantic fingerprints happen to match.
+    pub fn replay_at(&self, current: &Self) -> Result<CheckedNamedExport, LibraryManifestError> {
+        if self.identity != current.identity
+            || self.is_public != current.is_public
+            || self.mutation != current.mutation
+            || self.function()? != current.function()?
+        {
+            return Err(invalid(
+                "callable replay requires an unchanged complete checked contract",
+            ));
+        }
+        let mut retained = self.replay.to_checked()?;
+        retained.identity = current.replay.to_checked()?.identity;
+        Ok(retained)
+    }
+
+    /// Pair the complete callable digest with its checked implementation digest. The body must name this exact
+    /// current declaration; specialized frames and native macros need their own private-product supplements and
+    /// refuse here because ordinary Body serialization intentionally skips those facts.
+    pub fn fingerprints(
+        &self,
+        body: &mut incan_semantics_core::body_ir::Body,
+        projection: &StableIdentityProjection,
+    ) -> Result<CheckedDeclarationFingerprints, LibraryManifestError> {
+        let canonical = self.replay.to_checked()?.identity.canonical;
+        if canonical.is_none()
+            || body.canonical != canonical
+            || !body.nominal_instantiation.is_empty()
+            || body.trait_default_instantiation.is_some()
+            || !body.native_attributes.is_empty()
+        {
+            return Err(invalid(
+                "callable fingerprints require the exact unspecialized checked source body",
+            ));
+        }
+        let signature = self.signature_digest(&body.named_type_identities, projection)?;
+        let digest = incan_semantics_core::semantic_digest::body_semantic_digest(body, projection)
+            .map_err(|error| invalid(&error.to_string()))?;
+        Ok(CheckedDeclarationFingerprints {
+            identity: self.identity.clone(),
+            signature,
+            body: digest,
+        })
     }
 
     /// Validate the complete header and its checked stable identity before exposing any retained facts.
@@ -200,22 +289,30 @@ fn encode_record(payload: &[u8]) -> Result<Vec<u8>, LibraryManifestError> {
     Ok(bytes)
 }
 
+/// Authenticate a private interface payload before any shape or supplemental facts are decoded.
+fn decode_record(bytes: &[u8]) -> Result<&[u8], LibraryManifestError> {
+    let boundary = bytes
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .ok_or_else(|| invalid("missing callable interface payload boundary"))?;
+    let record: InterfaceRecord =
+        serde_json::from_slice(&bytes[..boundary]).map_err(|error| invalid(&error.to_string()))?;
+    let payload = &bytes[boundary + 1..];
+    if record.schema != 1 || record.digest != hex::encode(Sha256::digest(payload)) {
+        return Err(invalid("callable interface payload digest or schema differs"));
+    }
+    Ok(payload)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{CheckedCallableInterface, encode_record};
-    use crate::ast::Declaration;
+    use super::{CheckedCallableInterface, CheckedCallableModule, encode_record};
+    use crate::ast::{Declaration, Program};
     use crate::typechecker::TypeChecker;
 
     /// Exercise the same parser and successful checker used by a source-unit producer, including private names.
     fn interfaces(source: &str, module: &str) -> Result<Vec<CheckedCallableInterface>, String> {
-        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
-        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
-        let mut checker = TypeChecker::new();
-        checker.set_current_module_path(Some(vec![module.to_owned()]));
-        checker.set_current_package_identity(Some("interface_test".to_owned()));
-        checker
-            .check_program(&program)
-            .map_err(|errors| format!("{errors:?}"))?;
+        let (program, checker) = checked(source, module)?;
         program
             .declarations
             .iter()
@@ -229,6 +326,19 @@ mod tests {
             })
             .map(|result| result.map_err(|error| error.to_string()))
             .collect()
+    }
+
+    /// Keep module/header tests on the same accepted parser and checker inputs instead of inventing fact records.
+    fn checked(source: &str, module: &str) -> Result<(Program, TypeChecker), String> {
+        let tokens = crate::lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec![module.to_owned()]));
+        checker.set_current_package_identity(Some("interface_test".to_owned()));
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        Ok((program, checker))
     }
 
     /// Private headers retain keyword/default/mutation facts through source movement, while overloads and owners
@@ -293,6 +403,174 @@ mod tests {
         )?;
         assert_eq!(overloads.len(), 2);
         assert_ne!(overloads[0].identity(), overloads[1].identity());
+        callable_namespace_witnesses(source)?;
+        nominal_signature_witnesses()?;
+        declaration_fingerprint_edits(source)?;
+        Ok(())
+    }
+
+    /// Exercise real lookup additions/removals, complete contract edits and replay into moved canonical locators.
+    fn callable_namespace_witnesses(source: &str) -> Result<(), Box<dyn std::error::Error>> {
+        // ---- Namespace capture: keep every overload and private callable through the exact private codec ----
+        let capture = |source: &str, module: &str| -> Result<CheckedCallableModule, Box<dyn std::error::Error>> {
+            let (program, checker) = checked(source, module)?;
+            Ok(CheckedCallableModule::from_checked(&program, &checker)?)
+        };
+        let original = capture(source, "lib")?;
+        let encoded = original.to_bytes()?;
+        let retained = CheckedCallableModule::from_bytes(&encoded)?;
+        let read = retained.lookup("read");
+        let absent = retained.lookup("absent");
+        let moved = capture(&format!("# moved root locators\n\n{source}"), "lib")?;
+        let body_edit = capture(&source.replace("value * scale", "value + scale"), "lib")?;
+        for current in [&moved, &body_edit] {
+            assert!(current.validates(&read));
+            assert!(current.validates(&absent));
+            let replayed = retained.replay_at(current)?;
+            let expected = current.replay_at(current)?;
+            assert_eq!(replayed.len(), expected.len());
+            for (replayed, expected) in replayed.iter().zip(expected) {
+                assert_eq!(replayed.identity, expected.identity);
+                let (
+                    crate::library_exports::CheckedExportKind::Function(replayed),
+                    crate::library_exports::CheckedExportKind::Function(expected),
+                ) = (&replayed.kind, &expected.kind)
+                else {
+                    return Err("replayed callable changed declaration kind".into());
+                };
+                assert_eq!(replayed, expected);
+            }
+        }
+        assert_ne!(
+            retained.replay_at(&retained)?[0].identity,
+            retained.replay_at(&moved)?[0].identity
+        );
+
+        // ---- Invalidations: full contracts and positive/negative candidate sets are independent of selection ----
+        for edited in [source.replace("scale", "factor"), source.replace("= 2", "= 4")] {
+            let edited = capture(&edited, "lib")?;
+            assert!(!edited.validates(&read));
+            assert!(edited.validates(&absent));
+            assert!(retained.replay_at(&edited).is_err());
+        }
+        let added = capture(&format!("{source}\ndef absent() -> int:\n    return 0\n"), "lib")?;
+        assert!(!added.validates(&absent));
+        assert!(added.validates(&read));
+        assert!(!capture(source, "other")?.validates(&absent));
+        let single = "def read(value: int) -> int:\n    return value\n";
+        let single_module = capture(single, "lib")?;
+        let overloads = capture(
+            &format!("{single}\ndef read(value: str) -> str:\n    return value\n"),
+            "lib",
+        )?;
+        assert!(!overloads.validates(&single_module.lookup("read")));
+        assert!(!single_module.validates(&overloads.lookup("read")));
+
+        // ---- Refusals: a different namespace category cannot masquerade as an absent callable ----
+        let (model, checker) = checked("model Hidden:\n    value: int\n", "lib")?;
+        assert!(CheckedCallableModule::from_checked(&model, &checker).is_err());
+        let mut damaged = encoded;
+        damaged.push(b' ');
+        assert!(CheckedCallableModule::from_bytes(&damaged).is_err());
+        let mut malformed = serde_json::to_value(&retained)?;
+        let entries = malformed["callables"]
+            .as_array_mut()
+            .ok_or("missing callable inventory")?;
+        entries.push(entries[0].clone());
+        assert!(CheckedCallableModule::from_bytes(&encode_record(&serde_json::to_vec(&malformed)?)?).is_err());
+        Ok(())
+    }
+
+    /// Nominal type positions project through checked identities without rewriting literals or source spellings.
+    fn nominal_signature_witnesses() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "model Hidden:\n    value: int\n\ndef read(value: Hidden) -> Hidden:\n    return value\n";
+        let fingerprint = |source: &str| -> Result<String, Box<dyn std::error::Error>> {
+            let (program, checker) = checked(source, "lib")?;
+            let declaration = program.declarations.last().ok_or("missing nominal callable")?;
+            let Declaration::Function(function) = &declaration.node else {
+                return Err("expected nominal callable".into());
+            };
+            let header = CheckedCallableInterface::from_checked(function, declaration.span, &checker)?;
+            Ok(header.signature_digest(
+                &checker.type_info().declarations.named_type_identities,
+                &incan_semantics_core::stable_identity::StableIdentityProjection::default(),
+            )?)
+        };
+        assert_eq!(
+            fingerprint(source)?,
+            fingerprint(&format!("# move nominal declarations\n{source}"))?
+        );
+        assert_ne!(fingerprint(source)?, fingerprint(&source.replace("Hidden", "Other"))?);
+        Ok(())
+    }
+
+    /// A private implementation edit changes one body key and no declaration contract; locators do not become keys.
+    fn declaration_fingerprint_edits(source: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let fingerprints =
+            |source: &str| -> Result<Vec<super::CheckedDeclarationFingerprints>, Box<dyn std::error::Error>> {
+                let (program, checker) = checked(source, "lib")?;
+                let providers = crate::body_ir::ProviderOperationCatalog::new();
+                let mut module = crate::body_ir::build_body_ir_module(
+                    &program,
+                    &["lib".to_owned()],
+                    checker.type_info(),
+                    &crate::body_ir::BodyIrContext {
+                        modules: &[],
+                        provider_operations: &providers,
+                        registry_package: None,
+                        library_package: Some("interface_test"),
+                    },
+                );
+                let headers = interfaces(source, "lib")?;
+                let mut projection = incan_semantics_core::stable_identity::StableIdentityProjection::default();
+                let facts = checker.type_info().semantic_fact_store(&["lib".to_owned()]);
+                for subject in facts.subjects() {
+                    if let (Some(identity), Some(context)) = (
+                        facts.symbol_identities_for(subject).next(),
+                        facts.stable_declaration_contexts_for(subject).next(),
+                    ) {
+                        projection.contexts.insert(identity.clone(), context.clone());
+                    }
+                }
+                for (header, body) in headers.iter().zip(&module.bodies) {
+                    if let (Some(canonical), Some(signature)) = (&body.canonical, &header.identity.signature) {
+                        projection.signatures.insert(canonical.clone(), signature.clone());
+                    }
+                }
+                let mut products = Vec::new();
+                for (header, body) in headers.iter().zip(&mut module.bodies) {
+                    products.push(header.fingerprints(body, &projection)?);
+                }
+                assert_eq!(products.len(), headers.len());
+                Ok(products)
+            };
+        let original = fingerprints(source)?;
+        let edited = fingerprints(&source.replace("value * scale", "value + scale"))?;
+        assert_eq!(original.len(), 2);
+        assert_eq!(
+            original
+                .iter()
+                .zip(&edited)
+                .filter(|(old, new)| old.body != new.body)
+                .count(),
+            1
+        );
+        assert!(
+            original
+                .iter()
+                .zip(&edited)
+                .all(|(old, new)| old.signature == new.signature)
+        );
+        assert_eq!(original, fingerprints(&format!("# move all locators\n\n{source}"))?);
+        let signature_edit = fingerprints(&source.replace("= 2", "= 4"))?;
+        assert_eq!(
+            original
+                .iter()
+                .zip(&signature_edit)
+                .filter(|(old, new)| old.signature != new.signature)
+                .count(),
+            1
+        );
         Ok(())
     }
 }
