@@ -1,0 +1,16 @@
+# behavior: reading a private field of a self-referential class outside its methods is refused with a diagnostic that names the class, never a generated carrier (#2476)
+# expect-stderr-contains:
+#   Field 'next' on 'Node' is private
+# expect-exit: 1
+
+class Node:
+    value: int
+    next: Option[Node]
+
+
+def main() -> None:
+    tail = Node(value=2, next=None)
+    head = Node(value=1, next=Some(tail))
+    match head.next:
+        Some(n) => println(n.value)
+        None => println("none")

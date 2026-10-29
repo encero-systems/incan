@@ -571,6 +571,12 @@ impl TypeChecker {
         }
     }
 
+    /// Report a private field under the source name of the class or model that declares it. The receiver's type
+    /// may name the declaration's generated carrier, which no diagnostic shows.
+    fn private_field_error(type_name: &str, field: &FieldInfo, name: &str, span: Span) -> CompileError {
+        errors::private_field(field.owner.as_deref().unwrap_or(type_name), name, span)
+    }
+
     /// Resolve an expression receiver like `math` to an imported module binding path.
     ///
     /// This is intentionally module-kind driven (`SymbolKind::Module`) instead of name-driven so member access does not
