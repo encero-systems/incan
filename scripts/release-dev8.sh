@@ -289,7 +289,7 @@ verification=$out/verification-source
 step verification-clone git clone --shared --no-checkout "$ROOT" "$verification"
 step verification-checkout git -C "$verification" checkout --detach "$sha"
 step relocated-rust relocate_rust "$out/rustup"
-export CI_DEV8_OUT=$out/ci
+export CI_DEV8_OUT=$out/ci CI_DEV8_BUILDER_HOME=$INCAN_HOME CI_DEV8_BUILDER_SOURCE=$source
 step installed-ci env RUSTUP_HOME="$out/rustup" \
     "$verification/scripts/ci-dev8.sh" "$out/bundle/toolchain.tar.zst" "$oven" "$out/bundle/incan-lsp"
 installed=($out/ci/run.*/contracts.log)

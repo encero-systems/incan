@@ -2,7 +2,7 @@
 
 from rust::std::env import VarError, var as env_var
 from std.fs import Path
-from files import read
+from files import read, write
 from observation import load_ledger, observe, skipped_directory, SETTLE_SECONDS
 from toolchain import Toolchain, located
 from unit_freshness import Key, artifact_identity, compiler_fingerprint, fingerprint
@@ -175,7 +175,7 @@ pub def compilation_observations(
                     Err(_) => pass
                     Ok(inputs) =>
                         external, _ = inputs
-                        paths.extend(external)
+                        paths.extend([dependency_location(project, path).0 for path in external])
     # 2. Retain their metadata before the compiler can read them.
     mut observations: Dict[str, str] = {}
     for path in paths:
@@ -183,7 +183,7 @@ pub def compilation_observations(
     return Ok(observations)
 
 
-pub def inputs_unchanged(dependencies: Path, observations: Dict[str, str]) -> Result[bool, str]:
+pub def inputs_unchanged(dependencies: Path, observations: Dict[str, str], project: Path) -> Result[bool, str]:
     """
     Allow publication only for files captured before compilation and still unchanged afterward.
 
@@ -196,7 +196,7 @@ pub def inputs_unchanged(dependencies: Path, observations: Dict[str, str]) -> Re
     paths, _ = dependency_inputs(text)?
     # 2. Require every recorded dependency to have been observed before compilation.
     for path in paths:
-        if path not in observations:
+        if dependency_location(project, path).0 not in observations:
             return Ok(false)
     # 3. Refuse proof for any changed source, compiler or linked artifact.
     for path in observations.keys():
@@ -284,3 +284,61 @@ def environment_inputs(names: list[str], environment: Dict[str, str]) -> Result[
                     VarError.NotPresent => inputs.append("unset")
                     _ => return Err("Rust environment dependency is not Unicode")
     return Ok(inputs)
+
+
+pub def relocate_dependencies(dependencies: Path, project: Path) -> Result[None, str]:
+    """
+    Rewrite rustc's dependency evidence so it names no checkout or home: project files relative to the project and
+    each rule's target by its file name. Evidence copied to another machine then still describes its sources.
+    """
+    prefixes = project_prefixes(project)
+    text = read(dependencies)?
+    rewritten = "\n".join([relocated_rule(line, prefixes) for line in text.split("\n")])
+    if rewritten == text:
+        return Ok(None)
+    return write(dependencies, rewritten)
+
+
+pub def dependency_location(project: Path, path: str) -> Path:
+    """Where a recorded dependency is read: a relative name lies in the project that is being built."""
+    if path.startswith("/"):
+        return Path(path)
+    return project.joinpath(path)
+
+
+def project_prefixes(project: Path) -> list[str]:
+    """The spellings of a project directory a dependency path can start with, as given and as resolved."""
+    mut prefixes = [project.0 + "/"]
+    match project.resolve():
+        Ok(canonical) =>
+            if canonical.0 + "/" not in prefixes:
+                prefixes.append(canonical.0 + "/")
+        Err(_) => pass
+    return prefixes
+
+
+def relocated_rule(line: str, prefixes: list[str]) -> str:
+    """One dependency rule with its project files made relative and its absolute target reduced to a file name."""
+    if line.startswith("#") or not line.endswith(":") and ": " not in line:
+        return line
+    mut target = line[:len(line) - 1]
+    mut rest = ""
+    if ": " in line:
+        parts = line.split(": ")
+        target = parts[0]
+        rest = " " + ": ".join(parts[1:])
+    for prefix in prefixes:
+        rest = rest.replace(" " + prefix.replace(" ", "\\ "), " ")
+    target = dependency_target(target, prefixes)
+    return f"{target}:{rest}"
+
+
+def dependency_target(target: str, prefixes: list[str]) -> str:
+    """A rule target inside the project keeps its relative name; any other absolute target keeps its file name."""
+    for prefix in prefixes:
+        escaped = prefix.replace(" ", "\\ ")
+        if target.startswith(escaped):
+            return target[len(escaped):]
+    if target.startswith("/"):
+        return Path(target).name()
+    return target

@@ -64,9 +64,14 @@ resolve_bundle() {
     printf '%s\n' "$input" > "$run/reference.txt"
 }
 
-# Expose only standard packages actually present in this installation, using checkout sources.
+# Use the standard sources the installation ships. A bundle that ships none exposes only the standard packages
+# present in it, using checkout sources.
 select_standard_packages() {
     local artifact package
+    if [[ -f "$INCAN_HOME/toolchains/0.6.0-dev.8/stdlib/core/loaf.toml" ]]; then
+        export INCAN_STDLIB=
+        return
+    fi
     mkdir "$run/stdlib"
     for artifact in "$INCAN_HOME/toolchains/0.6.0-dev.8/loaves/"*; do
         [[ -d "$artifact" ]] || continue
@@ -181,7 +186,8 @@ oven=$INCAN_HOME/bin/incan
 lsp=$INCAN_HOME/bin/incan-lsp
 export PATH=$INCAN_HOME/bin:$PATH
 logged_step install 'toolchain installation' "$oven" toolchain install "$archive"
-logged_step relocation 'toolchain relocation audit' bash "$ROOT/scripts/check-toolchain-relocation.sh" "$INCAN_HOME"
+logged_step relocation 'toolchain relocation audit' bash "$ROOT/scripts/check-toolchain-relocation.sh" \
+    "$INCAN_HOME" "${CI_DEV8_BUILDER_HOME:-}" "${CI_DEV8_BUILDER_SOURCE:-$ROOT}"
 select_standard_packages
 if $install_only; then
     export_installation

@@ -50,6 +50,7 @@ from rust_freshness import (
     graph_arguments,
     inputs_unchanged,
     library_key,
+    relocate_dependencies,
     producer_arguments,
     extern_paths,
 )
@@ -1093,7 +1094,7 @@ def retain_rust_library_graph(
     invoke_rustc(toolchain.driver, inspected, environment, false, declared.crate_name, Some(toolchain))?
     # 3. A new graph cannot vouch for stale source, a changed native artifact or another observer generation.
     current = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain)?
-    if current.digest != native.digest or not inputs_unchanged(dependencies, observations)?:
+    if current.digest != native.digest or not inputs_unchanged(dependencies, observations, Path(facet.project))?:
         return Err(f"Rust producer inputs changed while refreshing {declared.crate_name}'s graph")
     if artifact_identity(artifact)? != native_output or artifact_identity(dependencies)? != dependency_output:
         return Err(f"Rust producer outputs changed while refreshing {declared.crate_name}'s graph")
@@ -1174,13 +1175,14 @@ def compile_local_rust_library(
     pending = directory.joinpath(f"{declared.package}.incngraph.{id()}.pending")
     graph_arguments = ["--rust-compile-codegraph", pending.0, facet.project, "--sysroot", toolchain.sysroot] + arguments
     invoke_rustc(toolchain.driver, graph_arguments, environment, false, declared.crate_name, Some(toolchain))?
-    # 3. Publish the graph and stamp the complete successful output set.
+    # 3. Publish the graph, make the dependency evidence name no checkout, and stamp the complete output set.
+    relocate_dependencies(dependencies, Path(facet.project))?
     place(pending, graph)?
     match library_artifact(directory, declared.crate_name, unit, declared.kind)?:
         None => return Err(f"rustc wrote no library for {declared.crate_name} into {directory.0}")
         Some(artifact) =>
             key = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain)?
-            if not inputs_unchanged(dependencies, observations)?:
+            if not inputs_unchanged(dependencies, observations, Path(facet.project))?:
                 return Err(f"Rust producer inputs changed while compiling {declared.crate_name}")
             record(stamp, key, [artifact, graph, dependencies])?
             record(directory.joinpath("library.graph-inputs"), rust_library_graph_key(key, toolchain.driver)?, [graph])?

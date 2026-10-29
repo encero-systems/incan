@@ -16,6 +16,20 @@ driver=$(jq -er '.driver' "$toolchain/toolchain.json")
 sysroot=$(jq -er '.sysroot' "$toolchain/toolchain.json")
 [[ $sysroot == /* ]] || sysroot=$toolchain/$sysroot
 
+# Move an existing profile out of the way under a unique name, remembered in $previous.
+set_aside() {
+    previous=
+    if [[ -e $1 || -L $1 ]]; then
+        previous=$(mktemp -d "$1.previous.XXXXXX")
+        rmdir "$previous"
+        mv "$1" "$previous"
+    fi
+}
+
+discard_aside() {
+    [[ -z $previous ]] || rm -rf -- "$previous"
+}
+
 for package in "$@"; do
     project=$repo/loaves/stdlib/$package
     [[ -f $project/loaf.toml ]] || { print -u2 "unknown standard package: $package"; exit 2; }
@@ -27,25 +41,16 @@ for package in "$@"; do
     SELFBUILD_LIBRARY_OUTPUT=$staged "$builder" "$repo" "$package" "$profile" > "$unit"
     env -u RUSTC_BOOTSTRAP "$driver" --unit "$unit" "$name" "$staged/lib$name.rlib" "$sysroot" --library \
         > "$staged/build.log" 2>&1 || { tail -20 "$staged/build.log" | cut -c1-600; exit 1; }
-    # Preserve the current package until its complete replacement is available to dependent source units.
-    previous=
-    if [[ -e $output || -L $output ]]; then
-        previous=$(mktemp -d "$output.previous.XXXXXX")
-        rmdir "$previous"
-        mv "$output" "$previous"
-    fi
+    # Preserve the current package until its complete replacement is in place, then discard it: the home keeps
+    # only the profiles it serves.
+    set_aside "$output"
     mv "$staged" "$output"
-    [[ -z $previous ]] || rm -rf -- "$previous"
+    discard_aside
     if [[ $profile == release ]]; then
         default=$toolchain/loaves/$name/debug
-        previous=
-        if [[ -e $default || -L $default ]]; then
-            previous=$(mktemp -d "$default.previous.XXXXXX")
-            rmdir "$previous"
-            mv "$default" "$previous"
-        fi
+        set_aside "$default"
         ln -s release "$default"
-        [[ -z $previous ]] || rm -rf -- "$previous"
+        discard_aside
     fi
     if [[ -n ${SELFBUILD_ADMITTED_STDLIB:-} ]]; then
         print -r -- "$name" >> "$SELFBUILD_ADMITTED_STDLIB"
