@@ -94,7 +94,9 @@ platforms = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
 carrier = "executable"
 ```
 
-Selecting a triple the Loaf does not list is refused with a diagnostic naming the Loaf and its supported triples.
+Selecting a triple the Loaf does not list is refused with a diagnostic naming the Loaf and its supported triples. If a Loaf declares no `[targets.*]` blocks, it adds no project-specific restriction: any target supported by the active toolchain may be selected, subject to installed support, dependency declarations, carrier compatibility and ordinary compile and link checks. Omission is not a claim that every such target has been tested.
+
+`--target` accepts one literal triple, not a target-block name. With the manifest above, `oven build --target x86_64-unknown-linux-gnu` selects that triple; `oven build --target linux` is refused with a diagnostic showing the block's literal triples. Building a named group as a matrix requires a separate command contract.
 
 ### Code that differs by platform
 
@@ -227,7 +229,11 @@ A procedural macro used by a dependency, or a vocabulary desugarer, runs during 
 
 ### Running and testing
 
-`incan run --target <triple>` and `incan test --target <triple>` build for the target. They execute the result only when this machine can run that target's programs, such as an `x86_64` Linux target on an `x86_64` Linux host. Otherwise they build, report that execution was skipped and why, and exit with a distinct status so a script cannot mistake a build for a passing test.
+`incan run --target <triple>` and `incan test --target <triple>` build for the target. They execute the result only when this machine can run that target's programs, such as an `x86_64` Linux target on an `x86_64` Linux host. Otherwise they build, report that execution was skipped and why, and exit with status `3` so a script cannot mistake a build for a passing test. A failed build keeps its ordinary failure result and takes precedence over an execution skip. A successful cross build with skipped execution has no program exit status and no passing-test result.
+
+### Selecting an editor target
+
+The language server analyzes one active target for the selected project: an explicit editor target first, then existing workspace target policy, then the host only if that project permits it. For example, on a macOS host a project that declares only the two Linux triples above cannot silently use macOS or pick the first Linux entry. It must request an active target selection. Selecting `aarch64-unknown-linux-gnu` gives diagnostics and completion for that target, including declarations retained by `when linux and aarch64:`. Checking other targets as a matrix is separate from this active editing context.
 
 ### When a link is not possible here
 
@@ -246,7 +252,14 @@ error: cannot link for x86_64-pc-windows-msvc on this host
 - A plan's target must be selected as RFC 117 defines: an explicit invocation first, then workspace delivery policy, then a deterministic host default. When nothing selects a target, the target must be the build host.
 - A selected target must be a Rust target triple that the active toolchain release declares as supported. Any other triple must be refused before planning, with a diagnostic naming the triple and the release's supported targets.
 - A selected target whose support is not installed must be refused before planning, with a diagnostic naming the command that installs it.
-- A selected target that a selected Loaf's `[targets.*]` declarations exclude must be refused before planning, with a diagnostic naming the Loaf and the triples it supports.
+- A selected target that a selected Loaf's `[targets.*]` declarations exclude must be refused before planning, with a diagnostic naming the Loaf and the triples it supports. If no such blocks are declared, that Loaf must impose no additional target restriction; toolchain support, installed components, dependency target restrictions, carrier compatibility and ordinary compile and link checks must still apply. Absence must not be reported as proof of tested portability.
+- `--target <triple>` must select exactly one literal triple. A `[targets.<name>]` group name must not be expanded into one or more triples; it must receive a diagnostic naming the literal alternatives. Declaration order must not choose an architecture or introduce implicit matrix execution.
+
+### Editor analysis target
+
+- The language server must select one active analysis target using an explicit editor selection, then existing workspace target policy, then the build host only when the selected project's target declarations permit it. Each selected target must satisfy ordinary target-support and project-selection checks.
+- If no valid active target follows from those rules, tooling must diagnose the missing or incompatible selection and offer supported targets. It must not silently choose the first declaration, merge mutually exclusive target surfaces, or mark all targets checked.
+- Diagnostics, completion, selected-member metadata and semantic inspection must identify the active target. An additional matrix check must retain separate target-specific results rather than changing the active editor context.
 
 ### Target support
 
@@ -265,7 +278,7 @@ error: cannot link for x86_64-pc-windows-msvc on this host
 - These units must be compiled for the host domain: Rust procedural macros, declared build-time tools under RFC 119, vocabulary desugarer units under RFC 160, and any unit only such units depend on.
 - Every unit linked into a selected carrier must be compiled for the target domain.
 - A unit needed in both domains must be compiled once per domain; the two compilations are distinct RFC 124 units.
-- A host-domain unit's identity must name the build host's triple as its target and the host domain. A target-domain unit's identity must name the selected target and the target domain, and must not depend on which host compiled it, beyond the toolchain identity RFC 124 already includes.
+- A host-domain unit's identity must name the build host's triple as its target and the host domain. A target-domain unit's identity must name the selected target and the target domain. The build host alone must not distinguish otherwise identical portable target-domain units, but all actual compiler, provider, platform-file and generated-input identities required by RFC 124 must remain. Machine-local or host-sensitive inputs must retain their declared restrictions; selecting a target must not make them portable.
 
 ### Conditional compilation
 
@@ -285,8 +298,9 @@ error: cannot link for x86_64-pc-windows-msvc on this host
 ### Linking and platform files
 
 - A final link for a target must use that target's platform files under RFC 159 and the linker the toolchain release designates for the target.
-- When a plan's links need platform files the build host does not hold, Oven must refuse the plan before execution, naming the target and the missing platform files, unless the invocation selects compile-only output. A compile-only plan must produce every unit that does not link.
-- `--no-link` on `incan build` and `oven build` must select compile-only output. It must be accepted for any target, including the host.
+- When a selected carrier's final link needs platform files the build host does not hold, Oven must refuse that link before execution, naming the target and the missing platform files, unless the invocation selects compile-only output.
+- `--no-link` on `incan build` and `oven build` must omit the selected carrier's final link and must be accepted for any target, including the host. It must not disable links required to produce executable host tools, procedural macros or vocabulary desugarers used by the build, unless a usable admitted prebuilt artifact already supplies them.
+- A compile-only plan must retain every input needed by the units it actually compiles, including C headers and SDK compile inputs. Missing such inputs or required host-tool links must remain diagnosed before execution. An incomplete output must not be reported as a completed executable.
 - Platform files must be recorded by identity in the receipt of every unit and artifact they reach.
 
 ### Artifacts
@@ -297,8 +311,9 @@ error: cannot link for x86_64-pc-windows-msvc on this host
 
 ### Execution
 
-- `run` and `test` must execute a built program only when the build host can execute the target's programs. The toolchain must decide this from the two triples, not by trying to execute.
-- When execution is not possible, the command must build, report that execution was skipped and why, and exit with a status distinct from both success and test failure.
+- `run` and `test` must execute a built program only when the build host can execute the target's programs. The toolchain must use its declared host/target execution-compatibility facts together with the required loader, ABI and runtime availability. Matching architecture or comparing triples alone must not be treated as proof that the executable can run. It must not try an arbitrary target binary to discover compatibility.
+- If a build succeeds but execution is unavailable, the command must report execution as skipped, retain the host, target and reason, and exit with the dedicated non-success status `3`. This command-generated status is distinct from success (`0`) and the ordinary build or test failure status (`1`). It must not report a program exit status or count unexecuted tests as passing. Actual program exits retain their ordinary `run` behavior; structured reporting must distinguish them from a command-generated skip.
+- A compile, link or other build failure must retain its ordinary failure result and diagnostics, taking precedence over the execution-skip result. Successful execution must report the actual program or test outcome. The build and execution outcomes must remain separately inspectable through the same Oven result and receipt that RFC 118's Incan aliases forward.
 
 ### Toolchain hosts
 
@@ -331,7 +346,7 @@ This RFC adds no manifest field. `[targets.<name>]` keeps its meaning as the sup
 
 ### Interaction with RFC 119 and RFC 124
 
-RFC 119 already separates host and target and requires the plan to report both; this RFC fixes which units go to which domain. RFC 124 already puts the target triple and the domain into unit identity; this RFC adds that the build host, beyond the toolchain identity, must not enter a target-domain unit's identity, so a unit cross-built on one host and built natively on another can be the same unit.
+RFC 119 already separates host and target and requires the plan to report both; this RFC fixes which units go to which domain. RFC 124 already puts the target triple and the domain into unit identity. A portable target-domain unit cross-built on one host and built natively on another can be the same unit only when its actual identity inputs match. Host-sensitive inputs and machine-local restrictions remain part of that contract; cross-target selection must not erase them.
 
 ### Interaction with RFC 125
 
@@ -392,12 +407,8 @@ Every installation would hold every supported target's standard library and stan
 
 - **Member and statement contexts:** compilation selection is valid within models, classes, functions and methods. Selected statements share their enclosing scope and receive ordinary control-flow checks; selected members determine the actual type contract and generated metadata. Runtime `ctx` contributions remain governed by RFC 033.
 
-## Unresolved questions
-
-- Which target should the language server analyze a module for when its Loaf declares several targets: the host, the first declared target, or each declared target in turn?
-- Does a Loaf that declares no `[targets.*]` block support every target its toolchain supports, or only its build host?
-- Should `--target` also accept the name of a `[targets.<name>]` block, building every triple it lists?
-- What exit status should `run` and `test` use when execution is skipped on an incompatible host?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- **One active editor target:** explicit editor selection, then workspace target policy, then a permitted host fallback. Missing valid selection is diagnosed; declaration order and an implicit all-target analysis do not choose the editor surface.
+- **Omitted target tables add no restriction:** an undeclared project target matrix permits selection from the active toolchain's supported targets, while installed support, dependency restrictions and ordinary compile/link checks remain required. This is not a tested-portability claim.
+- **One literal triple per invocation:** `--target` does not expand a named target block or introduce implicit fan-out. A separately specified matrix operation may add that behavior later.
+- **Skipped execution is unsuccessful:** a successful build with unavailable execution exits with status `3`, retains separate build/execution facts and contributes no passing-test result. Build failure takes precedence. Compatibility requires checked host/target and runtime prerequisites, not trial execution.
+- **Compile-only preserves real prerequisites:** `--no-link` omits the selected carrier's final link; required host tools and target compile inputs remain necessary. RFC 124's portable and machine-local identity restrictions remain intact.
