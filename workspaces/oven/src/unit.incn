@@ -91,6 +91,9 @@ pub model UnitDescription:
     # The resolved sysroot whose libraries an executable that links sysroot dependencies loads at run time. Oven binds
     # it while admitting the declaration; it is part of the unit's identity and never of the compiler's description.
     pub runtime_sysroot: str = ""
+    # Source-independent semantic context and private independently validated callable products.
+    pub checked_context: Option[str] = None
+    pub checked_products: Option[str] = None
     # Oven retains the selected graph in memory; it is not part of the compiler's unit description.
     pub facets: list[LocalFacet] = []
     # Source readings belong to this preparation and are not part of the compiler's public description.
@@ -123,6 +126,10 @@ pub model UnitDescription:
             fields["registry_id"] = JsonValue.string(registry)
         if self.toolchain_access.declared():
             fields["toolchain_access"] = self.toolchain_access.to_json()
+        if let Some(context) = self.checked_context:
+            fields["checked_context"] = JsonValue.string(context)
+        if let Some(products) = self.checked_products:
+            fields["checked_products"] = JsonValue.string(products)
         return JsonValue.object(fields)
 
 

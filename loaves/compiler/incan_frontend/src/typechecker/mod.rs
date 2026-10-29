@@ -699,6 +699,8 @@ pub struct TypeChecker {
     pub static_decls: Vec<(StaticDecl, Span)>,
     /// Collected module-level function declarations for static dependency analysis.
     pub local_function_decls: HashMap<String, FunctionDecl>,
+    /// Accepted scalar-body products selected for one exact parsed input by the native producer.
+    callable_body_reuse: Option<crate::declaration_interface::ValidatedCallableBodies>,
     /// Names of the declarations the program being checked marks `pub`.
     ///
     /// A public library carries a parameter default that constructs a model or class to its consumers only when they

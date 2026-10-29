@@ -39,6 +39,7 @@ from observation import trace
 from intake import ManifestReader
 from native_closure_input import NativeClosureInput
 from unit_compiler import compile_prepared_unit
+from callable_products import retain_callable_products
 from unit_freshness import Key, artifact_files, unit_key
 from unit_publication import record_payload
 from compiler_facts import admit_fact
@@ -134,6 +135,21 @@ pub def compile_library_unit(
     toolchain: Toolchain,
     output: Path,
     compiler: str = "",
+) -> Result[i32, str]:
+    """Prepare private callable products for ordinary libraries, then publish through the complete native key."""
+    mut ready = library
+    if ready.checked_context is None:
+        match retain_callable_products(library, toolchain):
+            Ok(retained) => ready = retained
+            Err(reason) => trace(f"{library.package}: private callable products unavailable: {reason}")
+    return compile_retained_library(ready, toolchain, output, compiler)
+
+
+def compile_retained_library(
+    library: UnitDescription,
+    toolchain: Toolchain,
+    output: Path,
+    compiler: str,
 ) -> Result[i32, str]:
     """
     Obtain a prepared library from the home bakery; its artifact directory becomes a disposable view of the fact.

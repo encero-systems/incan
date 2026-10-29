@@ -1,13 +1,13 @@
-//! Producer-owned callable headers for private checked-product replay.
+//! Producer-owned callable headers and admitted private body products.
 //!
-//! These records preserve accepted declaration facts, not a mutable checker or an accepted implementation body.
-//! They deliberately refuse declarations whose source modifiers or native callback projections the header cannot
-//! represent. A caller must use ordinary checking on that refusal. Import overlays and resolution read witnesses
-//! remain separate: this codec alone never authorizes skipping a body check.
+//! Callable headers preserve accepted declaration facts without retaining a mutable checker. Body products add an
+//! explicitly bounded acceptance for authored scalar expressions with no nonlocal reads. Import overlays, general
+//! resolution witnesses, generated syntax and unsupported effects retain ordinary source checking. A header alone
+//! never authorizes skipping a body check.
 
 use std::collections::BTreeMap;
 
-use incan_semantics_core::stable_identity::{StableDeclarationId, StableDeclarationLocation};
+use incan_semantics_core::stable_identity::{StableDeclarationId, StableDeclarationLocation, StableIdentityProjection};
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -18,8 +18,10 @@ use crate::library_exports::{CheckedExportIdentity, CheckedExportKind, CheckedFu
 use crate::library_manifest::{CheckedExportReplay, LibraryManifestError, TypeRef, VisitTypeRefs};
 use crate::typechecker::TypeChecker;
 
+mod body_products;
 mod callable_module;
 
+pub use body_products::{CallableBodyInputs, CallableBodyProducts, ValidatedCallableBodies};
 pub use callable_module::{CallableLookupWitness, CheckedCallableModule};
 
 /// One checked free-function header, including private visibility and declaration-time mutation contracts.
@@ -171,13 +173,14 @@ impl CheckedCallableInterface {
     pub fn signature_digest(
         &self,
         bindings: &BTreeMap<String, CanonicalSymbolId>,
+        projection: &StableIdentityProjection,
     ) -> Result<String, LibraryManifestError> {
         self.validate()?;
         let mut function = self.replay.callable_contract()?;
         function.emitted_name = None;
         let mut complete = true;
         function.visit_type_refs(&mut |ty| match ty {
-            TypeRef::Named { name, .. } | TypeRef::Applied { name, .. } => match stable_type_name(name, bindings) {
+            TypeRef::Named { name, .. } | TypeRef::Applied { name, .. } => match projection.type_name(name, bindings) {
                 Some(stable) => *name = stable,
                 None => complete = false,
             },
@@ -221,6 +224,7 @@ impl CheckedCallableInterface {
     pub fn fingerprints(
         &self,
         body: &mut incan_semantics_core::body_ir::Body,
+        projection: &StableIdentityProjection,
     ) -> Result<CheckedDeclarationFingerprints, LibraryManifestError> {
         let canonical = self.replay.to_checked()?.identity.canonical;
         if canonical.is_none()
@@ -233,7 +237,7 @@ impl CheckedCallableInterface {
                 "callable fingerprints require the exact unspecialized checked source body",
             ));
         }
-        let signature = self.signature_digest(&body.named_type_identities)?;
+        let signature = self.signature_digest(&body.named_type_identities, projection)?;
         let digest = incan_semantics_core::semantic_digest::body_semantic_digest(body)
             .map_err(|error| invalid(&error.to_string()))?;
         Ok(CheckedDeclarationFingerprints {
@@ -301,7 +305,7 @@ fn decode_record(bytes: &[u8]) -> Result<&[u8], LibraryManifestError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CheckedCallableInterface, CheckedCallableModule, encode_record};
+    use super::{CallableBodyProducts, CheckedCallableInterface, CheckedCallableModule, encode_record};
     use crate::ast::{Declaration, Program};
     use crate::typechecker::TypeChecker;
 
@@ -401,6 +405,7 @@ mod tests {
         callable_namespace_witnesses(source)?;
         nominal_signature_witnesses()?;
         declaration_fingerprint_edits(source)?;
+        scalar_body_product_edits()?;
         Ok(())
     }
 
@@ -486,7 +491,10 @@ mod tests {
                 return Err("expected nominal callable".into());
             };
             let header = CheckedCallableInterface::from_checked(function, declaration.span, &checker)?;
-            Ok(header.signature_digest(&checker.type_info().declarations.named_type_identities)?)
+            Ok(header.signature_digest(
+                &checker.type_info().declarations.named_type_identities,
+                &incan_semantics_core::stable_identity::StableIdentityProjection::default(),
+            )?)
         };
         assert_eq!(
             fingerprint(source)?,
@@ -515,9 +523,24 @@ mod tests {
                     },
                 );
                 let headers = interfaces(source, "lib")?;
+                let mut projection = incan_semantics_core::stable_identity::StableIdentityProjection::default();
+                let facts = checker.type_info().semantic_fact_store(&["lib".to_owned()]);
+                for subject in facts.subjects() {
+                    if let (Some(identity), Some(context)) = (
+                        facts.symbol_identities_for(subject).next(),
+                        facts.stable_declaration_contexts_for(subject).next(),
+                    ) {
+                        projection.contexts.insert(identity.clone(), context.clone());
+                    }
+                }
+                for (header, body) in headers.iter().zip(&module.bodies) {
+                    if let (Some(canonical), Some(signature)) = (&body.canonical, &header.identity.signature) {
+                        projection.signatures.insert(canonical.clone(), signature.clone());
+                    }
+                }
                 let mut products = Vec::new();
                 for (header, body) in headers.iter().zip(&mut module.bodies) {
-                    products.push(header.fingerprints(body)?);
+                    products.push(header.fingerprints(body, &projection)?);
                 }
                 assert_eq!(products.len(), headers.len());
                 Ok(products)
@@ -551,6 +574,127 @@ mod tests {
         );
         Ok(())
     }
+
+    /// Reuse two untouched scalar bodies while the third is independently checked and built from its edited input.
+    /// Unsupported reads, changed owners, moved locators and corrupt products remain safe misses.
+    fn scalar_body_product_edits() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def first(value: int) -> int:\n    return value * 2\n\ndef second(value: int) -> int:\n    return value + 3\n\npub def third(value: int) -> int:\n    return value - 4\n";
+        let (program, checker) = checked(source, "lib")?;
+        let module = scalar_module(&program, &checker);
+        let products = CallableBodyProducts::from_checked(&program, source, &checker, &module)?;
+        let products = CallableBodyProducts::from_bytes(&products.to_bytes()?)?;
+        let edited = source.replace("value * 2", "value * 7");
+        let (current, cold) = checked(&edited, "lib")?;
+        let selection = products.select(&current, &edited, "interface_test", &["lib".to_owned()])?;
+        assert_eq!(selection.len(), 2);
+        let mut warm = TypeChecker::new();
+        warm.set_current_module_path(Some(vec!["lib".to_owned()]));
+        warm.set_current_package_identity(Some("interface_test".to_owned()));
+        warm.set_callable_body_reuse(selection);
+        warm.check_program(&current).map_err(|errors| format!("{errors:?}"))?;
+        assert_eq!(warm.type_info().reused_callable_bodies.len(), 2);
+        assert_eq!(scalar_module(&current, &warm), scalar_module(&current, &cold));
+        let retained_again =
+            CallableBodyProducts::from_checked(&current, &edited, &warm, &scalar_module(&current, &warm))?;
+        assert_eq!(
+            retained_again
+                .select(&current, &edited, "interface_test", &["lib".to_owned()])?
+                .len(),
+            3
+        );
+        let late_edit = source.replace("value - 4", "value - 8");
+        let (late_program, late_cold) = checked(&late_edit, "lib")?;
+        let mut late_warm = TypeChecker::new();
+        late_warm.set_current_module_path(Some(vec!["lib".to_owned()]));
+        late_warm.set_current_package_identity(Some("interface_test".to_owned()));
+        late_warm.set_callable_body_reuse(products.select(
+            &late_program,
+            &late_edit,
+            "interface_test",
+            &["lib".to_owned()],
+        )?);
+        late_warm
+            .check_program(&late_program)
+            .map_err(|errors| format!("{errors:?}"))?;
+        assert_eq!(
+            scalar_module(&late_program, &late_warm),
+            scalar_module(&late_program, &late_cold)
+        );
+        assert!(
+            products
+                .select(&current, &edited, "other", &["lib".to_owned()])?
+                .is_empty()
+        );
+
+        // ---- Invalidations: unsupported syntax and current source coordinates never borrow an old acceptance ----
+        let moved_source = format!("# move locators\n{source}");
+        let (moved, _) = checked(&moved_source, "lib")?;
+        assert!(
+            products
+                .select(&moved, &moved_source, "interface_test", &["lib".to_owned()])?
+                .is_empty()
+        );
+        for invalid in [
+            source.replace("value * 2", "missing()"),
+            source.replace("value * 2", "missing"),
+            format!("from std.math import sqrt\n{source}"),
+            source.replace("value: int", "mut value: int"),
+        ] {
+            let tokens = crate::lexer::lex(&invalid).map_err(|errors| format!("{errors:?}"))?;
+            let parsed = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+            if let Ok(selection) = products.select(&parsed, &invalid, "interface_test", &["lib".to_owned()]) {
+                assert!(selection.is_empty());
+            }
+        }
+        let mut damaged = products.to_bytes()?;
+        damaged.pop();
+        assert!(CallableBodyProducts::from_bytes(&damaged).is_err());
+        let mut expanded = program.clone();
+        if let Some(declaration) = expanded.declarations.first_mut() {
+            if let Declaration::Function(function) = &mut declaration.node {
+                if let Some(statement) = function.body.first_mut() {
+                    statement.span.expansion = Some([7; 32]);
+                }
+            }
+        }
+        assert!(
+            products
+                .select(&expanded, source, "interface_test", &["lib".to_owned()])?
+                .is_empty()
+        );
+        let mut sourceless = program.clone();
+        if let Some(declaration) = sourceless.declarations.first_mut() {
+            if let Declaration::Function(function) = &mut declaration.node {
+                if let Some(statement) = function.body.first_mut() {
+                    if let crate::ast::Statement::Return(Some(value)) = &mut statement.node {
+                        value.span = crate::ast::Span::default();
+                    }
+                }
+            }
+        }
+        assert!(
+            products
+                .select(&sourceless, source, "interface_test", &["lib".to_owned()])?
+                .is_empty()
+        );
+        Ok(())
+    }
+
+    /// Build the same scalar test module through the ordinary Body IR producer, including its complete context.
+    fn scalar_module(program: &Program, checker: &TypeChecker) -> incan_semantics_core::body_ir::BodyIrModule {
+        let providers = crate::body_ir::ProviderOperationCatalog::new();
+        crate::body_ir::build_body_ir_module(
+            program,
+            &["lib".to_owned()],
+            checker.type_info(),
+            &crate::body_ir::BodyIrContext {
+                modules: &[],
+                provider_operations: &providers,
+                registry_package: None,
+                library_package: Some("interface_test"),
+            },
+        )
+    }
 }
 
 /// Project only accepting-checker types and nominal bindings. Scoped owners require their producer's full lexical
@@ -566,14 +710,6 @@ fn checked_identity(
         .get(canonical)
         .cloned()
         .ok_or_else(|| invalid("callable interface has no checked source identity"))
-}
-
-/// Project one checked nominal binding with the source-signature authority available at this stack position.
-fn stable_type_name(name: &str, bindings: &BTreeMap<String, CanonicalSymbolId>) -> Option<String> {
-    if let Some(identity) = bindings.get(name) {
-        return StableDeclarationId::from_canonical(identity, None, None).map(|identity| identity.render_compact());
-    }
-    (!name.starts_with(incan_semantics_core::body_ir::NOMINAL_CARRIER_KEY_PREFIX)).then(|| name.to_owned())
 }
 
 /// Use the existing typed manifest boundary failure, so a cache owner can safely choose its ordinary miss path.

@@ -108,7 +108,9 @@ pub(super) fn build_module_seed_observed(
     let decorated_bindings =
         decorated_bindings::collect(program, &lowering_facts, &mut bodies, &mut static_declarations);
     for body in &bodies {
-        work::built_body(&body.direct_call_id);
+        if !type_info.reused_callable_bodies.contains_key(&body.span) {
+            work::built_body(&body.direct_call_id);
+        }
     }
     retain_source_body_contracts(program, type_info, &mut bodies);
     static_declarations.sort_by_key(|declaration| declaration.canonical.declaration_span.start);
@@ -299,6 +301,9 @@ pub(super) fn lower_source_bodies(
                     vec![partials::lower_source_partial(partial, decl.span, facts)]
                 }
                 ast::Declaration::Function(function) => {
+                    if let Some(body) = facts.type_info.reused_callable_bodies.get(&decl.span) {
+                        return vec![body.clone()];
+                    }
                     let body = lower_function_body(function, decl.span, facts);
                     let selected = observer(function, decl.span, facts, &body);
                     vec![selected.unwrap_or(body)]

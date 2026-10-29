@@ -25,6 +25,7 @@ use incan_mir_lowering::{
 use incan_semantics_core::body_ir::{BodyIrModule, LoafCallable, NativeUnionDeclaration, NominalDeclaration};
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 
+mod callable_products;
 mod checked_program;
 mod declaration_validation;
 
@@ -125,6 +126,8 @@ struct RuntimeDependencyContext {
 
 /// Checked owning modules and their source provenance, with one explicit native entry module.
 struct CheckedProgram {
+    /// Invocation-local producer evidence for self-contained scalar native function products.
+    cacheable_bodies: Vec<incan_semantics_core::CompilerNodeId>,
     dependencies: RuntimeDependencyContext,
     modules: Vec<BodyIrModule>,
     sources: Vec<String>,
@@ -253,7 +256,15 @@ pub fn dependency_report(arguments: &[String]) -> Result<(), Box<dyn std::error:
     let rust = dependencies.rust_facts(&unit, Path::new(sysroot));
     let receipt = RefusalReceipt(None);
     let mut program = check_compilation_source(unit, rust, false, receipt.clone())?;
-    lower_compilation_plan(&mut program, kind, overflow_checks, &source, &receipt, &mut Vec::new())?;
+    lower_compilation_plan(
+        &mut program,
+        kind,
+        overflow_checks,
+        &source,
+        &receipt,
+        &mut Vec::new(),
+        None,
+    )?;
     print!(
         "{}",
         crate::dependency_report::render(
@@ -368,6 +379,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
     // The grant comes only from the description, read after the identity check and the bootstrap refusal.
     let access = unit.toolchain_access.clone();
     let rust = dependencies.rust_facts(&unit, Path::new(&arguments[3]));
+    let native_products = callable_products::native_directory(&unit);
     let mut program = check_compilation_source(unit, rust, resident, receipt.clone())?;
     if census_complete(&mut program, kind, overflow_checks)? {
         return Ok(());
@@ -380,6 +392,7 @@ fn compile_unit(arguments: &[String], resident: bool) -> Result<(), Box<dyn std:
         &source_path,
         &receipt,
         &mut published_unions,
+        native_products,
     )?;
     let tests = crate::test_unit::report(&program.tests, &plan.tests)?;
 
@@ -470,6 +483,7 @@ fn lower_compilation_plan(
     source: &Path,
     receipt: &RefusalReceipt,
     published_unions: &mut Vec<NativeUnionDeclaration>,
+    native_products: Option<String>,
 ) -> Result<crate::plan::Plan, Box<dyn std::error::Error>> {
     tracing::debug!(target: "incan::invocation", modules = program.modules.len(),
         module_body_entries = program.modules.iter().map(|module| module.bodies.len()).sum::<usize>(),
@@ -487,6 +501,8 @@ fn lower_compilation_plan(
     loop {
         let _invocation = tracing::trace_span!(target: "incan::invocation", "incan_rustc_driver::lower_program", modules = program.modules.len()).entered();
         let inputs = SourceInputs {
+            scalar_products: native_products.clone(),
+            scalar_bodies: program.cacheable_bodies.clone(),
             sources: program.sources.clone(),
             files: program.files.clone(),
             tests: program.tests.iter().map(|test| test.name.clone()).collect(),
@@ -568,6 +584,8 @@ fn census_complete(
         let outcome = program_refusals(
             &program.modules,
             SourceInputs {
+                scalar_products: None,
+                scalar_bodies: Vec::new(),
                 sources: program.sources.clone(),
                 files: program.files.clone(),
                 tests: Vec::new(),
@@ -589,6 +607,8 @@ fn census_complete(
         match program_refusals(
             &program.modules,
             SourceInputs {
+                scalar_products: None,
+                scalar_bodies: Vec::new(),
                 sources: program.sources.clone(),
                 files: program.files.clone(),
                 tests: Vec::new(),

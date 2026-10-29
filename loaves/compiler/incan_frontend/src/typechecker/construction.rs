@@ -89,6 +89,7 @@ impl TypeChecker {
             const_decls: HashMap::new(),
             static_decls: Vec::new(),
             local_function_decls: HashMap::new(),
+            callable_body_reuse: None,
             current_module_public_declarations: HashSet::new(),
             receiver_plan_inputs: Default::default(),
             body_ir_decorator_factory_span: None,
@@ -160,6 +161,12 @@ impl TypeChecker {
             pending_trait_supertraits: Vec::new(),
             native_queries: NativeQueryState::default(),
         }
+    }
+
+    /// Install producer-validated bodies for one exact program. Declaration collection and final publication still
+    /// run; only admitted scalar bodies skip checking and are consumed directly by Body IR.
+    pub fn set_callable_body_reuse(&mut self, products: crate::declaration_interface::ValidatedCallableBodies) {
+        self.callable_body_reuse = Some(products);
     }
 
     /// Set the declared Rust crate names from `loaf.toml [rust-dependencies]` for checked direct imports and derives.

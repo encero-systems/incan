@@ -25,7 +25,7 @@ from pub::incan_mir_plan import (
 from trait_links import validate_project_implementation, has_open_trait_arguments
 from rust::std::env import var_os as native_environment
 from pub::incan_platform.probes import current_footprint, current_live_allocated
-from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId as RustCanonicalSymbolId
+from rust::incan_semantics_core import IncanType as RustType, CanonicalSymbolId as RustCanonicalSymbolId, CompilerNodeId
 from rust::incan_semantics_core::body_ir import (
     NativeUnionDeclaration,
     BodyIrModule as RustBodyIrModule,
@@ -40,6 +40,7 @@ from program_context import ProgramContext
 from native_type_identity import ConstructorIndex, constructor_index_with_packages as index_constructors
 from rust::std::collections import BTreeMap
 from rust::std::sync import Arc
+from rust::std::collections import BTreeSet
 from nominal_instances import NominalInstance, specialize_nominals_with_instances
 from checked_json import lower_checked_deserialize
 from string_conversion import lower_string_conversions
@@ -181,11 +182,28 @@ pub def unit_plan(
     mut published: list[NativeUnionDeclaration],
     package_versions: BTreeMap[str, str],
     overflow_checks: bool = true,
+    scalar_products: Option[str] = None,
+    scalar_bodies: list[CompilerNodeId] = [],
 ) -> Result[UnitPlanning, str]:
     """Lower one checked unit by kind; test entries come from session collection, never from naming heuristics here."""
     if kind != "program" and kind != "library" and kind != "test":
         return Err(f"unsupported unit kind {kind}")
-    return lowered_plan(modules, sources, files, entry, kind, tests, published, overflow_checks, package_versions)
+    mut scalar_index: BTreeSet[CompilerNodeId] = BTreeSet.new()
+    for identity in scalar_bodies:
+        _ = scalar_index.insert(identity)
+    return lowered_plan(
+        modules,
+        sources,
+        files,
+        entry,
+        kind,
+        tests,
+        published,
+        overflow_checks,
+        package_versions,
+        scalar_products,
+        scalar_index,
+    )
 
 
 def program_context(
@@ -226,6 +244,8 @@ def lowered_plan(
     mut published: list[NativeUnionDeclaration],
     overflow_checks: bool,
     package_versions: BTreeMap[str, str],
+    scalar_products: Option[str],
+    scalar_bodies: BTreeSet[CompilerNodeId],
 ) -> Result[UnitPlanning, str]:
     """Lower a checked unit once, preserving ordinary frames when exact runtime declarations need resolution."""
     trace_key: str = "INCAN_TRACE_LOWERING"
@@ -291,6 +311,8 @@ def lowered_plan(
         emitted_frames,
         unions,
         trace,
+        scalar_products,
+        scalar_bodies,
     )?
     mut statics = lower_computed_statics(
         context,
@@ -953,6 +975,7 @@ def lower_plan_frames(
     trace: bool,
 ) -> Result[BodyPlanning, str]:
     """Lower ordinary frames, then retain request layouts and the nominal length for source restoration."""
+    empty_scalar_bodies: BTreeSet[CompilerNodeId] = BTreeSet.new()
     lower_ordinary_bodies(
         context,
         program,
@@ -969,6 +992,8 @@ def lower_plan_frames(
         emitted_frames,
         unions,
         trace,
+        None,
+        empty_scalar_bodies,
     )?
     original_nominal_count = len(context.nominal_declarations)
     match lower_requested_frames(

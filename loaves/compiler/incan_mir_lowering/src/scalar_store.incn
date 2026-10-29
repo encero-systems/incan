@@ -1,0 +1,115 @@
+"""Read and atomically retain scalar native products under their producer's complete input witnesses."""
+
+from rust::serde import Serialize, Deserialize
+from rust::serde_json import to_string, from_str, Error as JsonError
+from rust::incan_semantics_core::semantic_digest import semantic_digest
+from rust::std::process import id as process_id
+from std.fs import Path
+from pub::incan_mir_plan import Function, SourceSpan
+from scalar_products import encode_scalar, decode_scalar
+
+
+@derive(Serialize, Deserialize)
+model ScalarRecord:
+    """Authenticate the exact producer inputs and complete native function text in a private product."""
+
+    schema: int
+    inputs: list[str]
+    function: str
+    digest: str
+
+
+pub def scalar_inputs(body: str, name: str, span: SourceSpan, overflow_checks: bool) -> list[str]:
+    """Bind a native product to its exact checked input, current physical frame and diagnostic provenance."""
+    return [
+        "incan.scalar-function/1",
+        body,
+        name,
+        str(span.file),
+        str(span.line),
+        str(span.column),
+        str(overflow_checks),
+    ]
+
+
+pub def retained_scalar(directory: str, inputs: list[str]) -> Option[Function]:
+    """
+    Read a complete native function whose full producer inputs still match.
+
+    1. Read the content-addressed private record.
+    2. Validate its input witness and payload digest.
+    3. Restore the complete native function or return a cache miss.
+    """
+    # 1. Missing, corrupt and concurrently replaced entries all remain ordinary misses.
+    match scalar_path(directory, inputs):
+        Err(_) => return None
+        Ok(path) =>
+            match path.read_text("utf-8", "strict"):
+                Err(_) => return None
+                Ok(text) => return restore_record(text, inputs)
+
+
+pub def retain_scalar(directory: str, inputs: list[str], function: &Function) -> None:
+    """
+    Publish a loss-checked scalar native function without changing compilation's verdict.
+
+    1. Encode and authenticate every function field against its producer inputs.
+    2. Write a complete temporary record and atomically replace its destination.
+    """
+    # 1. An unsupported native shape refuses this cache, retaining ordinary lowering.
+    match encoded_record(inputs, function):
+        Err(_) => return
+        Ok(text) =>
+            # 2. Publication is independent of the successful compilation's verdict.
+            _ = publish_record(directory, inputs, text)
+
+
+def encoded_record(inputs: list[str], function: &Function) -> Result[str, str]:
+    """Authenticate the entire native payload after the codec proves an exact structural round trip."""
+    payload = encode_scalar(function)?
+    digest = fingerprint([payload])?
+    record = ScalarRecord(schema=1, inputs=inputs, function=payload, digest=digest)
+    return to_string(record).map_err((error) => str(error))
+
+
+def restore_record(text: str, inputs: list[str]) -> Option[Function]:
+    """Treat invalid schema, changed inputs and altered native bytes as cache misses before decoding a function."""
+    match decode_record(text):
+        Err(_) => return None
+        Ok(record) =>
+            if record.schema != 1 or record.inputs != inputs:
+                return None
+            match fingerprint([record.function]):
+                Err(_) => return None
+                Ok(digest) =>
+                    if record.digest != digest:
+                        return None
+            match decode_scalar(record.function):
+                Ok(function) => return Some(function)
+                Err(_) => return None
+
+
+def decode_record(text: str) -> Result[ScalarRecord, JsonError]:
+    """Pass the expected private record type to the native generic decoder through its result contract."""
+    return from_str(text)
+
+
+def scalar_path(directory: str, inputs: list[str]) -> Result[Path, str]:
+    """Name a native product by the existing semantic digest owner's unambiguous framed serialization."""
+    digest = fingerprint(inputs)?
+    return Ok(Path(directory).joinpath(digest.replace("sha256:", "") + ".incnfunction"))
+
+
+def fingerprint(inputs: list[str]) -> Result[str, str]:
+    """Use the existing digest owner; these fingerprints never define a second declaration identity."""
+    return semantic_digest(inputs).map_err((error) => str(error))
+
+
+def publish_record(directory: str, inputs: list[str], text: str) -> Result[None, str]:
+    """Publish one complete record with a process-local temporary name under the producer's locked build."""
+    path = scalar_path(directory, inputs)?
+    path.parent().mkdir(true, true).map_err((error) => error.message())?
+    temporary = Path(f"{path.0}.{process_id()}.pending")
+    temporary.write_text(text, "utf-8", "strict", None).map_err((error) => error.message())?
+    _ = temporary.replace(path).map_err((error) => error.message())?
+    return Ok(None)
