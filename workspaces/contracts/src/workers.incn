@@ -22,6 +22,8 @@ pub model Invocation:
     pub deadline_seconds: int = 0
     # A selected entry starts only after this request compiled quietly and successfully in the same pool.
     pub after: Option[int] = None
+    # Commands that run in one project at the same time capture their streams under distinct names.
+    pub capture: str = ""
     # Optional scheduling evidence from another scratch directory; it never authorizes compilation reuse.
     pub duration_hint: int = 0
     # `NAME=value` settings a project case's `environment:` block adds to this command's inherited environment.
@@ -40,6 +42,7 @@ model Started:
     deadline_seconds: int
     measure: bool
     stdout_file: Option[Path]
+    capture: str
 
 
 # The runner enters one pool at a time; active records own child handles and their request metadata together.
@@ -83,6 +86,7 @@ pub def invoke_many(requests: list[Invocation], jobs: int) -> list[Result[Outcom
                 request.selector,
                 request.environment,
                 request.stdout_file,
+                request.capture,
             ):
                 Err(error) => record_failure(index, error)
                 Ok(child) =>
@@ -96,6 +100,7 @@ pub def invoke_many(requests: list[Invocation], jobs: int) -> list[Result[Outcom
                             deadline_seconds=request.deadline_seconds,
                             measure=measured_command(request),
                             stdout_file=request.stdout_file,
+                            capture=request.capture,
                         ),
                     )
             next += 1
@@ -207,7 +212,7 @@ def settle(info: Started, status: ExitStatus, timed_out: bool) -> None:
         None => pass
     if info.measure:
         record_elapsed(info.project, info.clock)
-    record_outcome(info.index, finish(info.project, code, timed_out, info.deadline_seconds, info.stdout_file))
+    record_outcome(info.index, finish(info.project, code, timed_out, info.deadline_seconds, info.stdout_file, info.capture))
     report_time(f"invocation {info.project.0}", info.clock)
 
 
