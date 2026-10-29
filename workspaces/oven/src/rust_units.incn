@@ -38,7 +38,6 @@ from unit_freshness import (
     cache_identities,
     compiler_fingerprint,
     fingerprint,
-    install_all,
     record,
     reusable,
     staleness,
@@ -55,6 +54,8 @@ from rust_freshness import (
     extern_paths,
 )
 from rust_portable import portable_reusable, record_portable
+from rust_bakery import baked_rust, claim_rust, rust_store, rust_unit_name, seal_rust, view_prior_evidence
+from bakery import find, register_root, seal, staging, view
 from unit_publication import import_payload
 from registry_units import sole_library as registry_artifact
 
@@ -929,7 +930,7 @@ def installed_rust_library(
     mut relocation: Option[Key] = None
     if why != "":
         portable = key
-        if not stamp.is_file() or not portable_reusable(directory, portable, outputs)?:
+        if not portable_reusable(directory, portable, outputs)?:
             return Err(f"installed native {declared.crate_name} is stale: {why}; rebuild its support generation")
         current = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain)?
         if current.digest != key.digest:
@@ -1122,68 +1123,109 @@ def compile_local_rust_library(
     toolchain: Toolchain,
 ) -> Result[BuiltUnit, str]:
     """
-    Compile or reuse one local producer with complete dep-info observations.
+    Obtain one local Rust producer from the home bakery, compiling it with complete dep-info observations on a miss.
 
-    1. Validate a previous complete library, graph and dependency set.
-    2. Discover dependencies, observe them, and compile without publishing a partial proof.
-    3. Require unchanged inputs and stamp the complete successful outputs.
+    1. Key the unit from its dependency evidence, viewing the evidence last baked under its name when there is none.
+    2. A baked identity is viewed and no compiler starts; concurrent bakers of the name wait for each other.
+    3. Otherwise compile, require unchanged inputs, and bake the library, graph and dependency evidence together.
     """
-    # 1. Describe the compiler command and validate a previous library and graph.
+    # 1. The directory is a view; the unit's dependency evidence names what its identity covers.
     unit = facet_slot(facet, request.profile)
     directory = output.joinpath(f"{declared.crate_name}-{unit}")
     directory.mkdir(true, true).map_err((error) => error.message())?
-    building = directory.lock_exclusive().map_err((error) => error.message())?
     dependencies = directory.joinpath("library.d")
     graph = directory.joinpath(f"{declared.package}.incngraph")
-    stamp = directory.joinpath("library.oven-inputs")
     context = artifact_context(facet, declared, request.profile)?
     arguments = library_compile_arguments(facet, declared, directory, request, built, search)?
     environment = package_environment(facet.project, declared, declared.crate_name)
     linked = extern_artifacts(arguments)
     reached_search = facet_search(facet, built)?
+    store = rust_store()?
+    name = rust_unit_name("library", declared.crate_name, context)
+    # 2. One bake per name at a time, in any checkout; a waiter finds what the holder baked.
+    held = claim_rust(store, name)?
+    view_prior_evidence(store, name, directory, dependencies)?
+    if let Some(identity) = baked_identity(facet, directory, arguments, environment, request, toolchain)?:
+        if baked_rust(store, identity, directory, facet.project)?:
+            match library_artifact(directory, declared.crate_name, context, declared.kind)?:
+                None => pass
+                Some(artifact) =>
+                    trace(f"unit {declared.crate_name} rust: reused identity={identity}")
+                    return Ok(
+                        BuiltUnit(
+                            crate_name=declared.crate_name,
+                            artifact=artifact.0,
+                            directory=directory.0,
+                            reused=true,
+                            search=reached_search,
+                        ),
+                    )
+    # 3. Compile with rustc's dependency evidence; nothing is baked unless every input held still.
+    artifact = compile_rust_producer(facet, declared, directory, arguments, environment, request, toolchain)?
+    key = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain)?
+    if key.refusal == "":
+        identity = rust_library_graph_key(key, toolchain.driver)?.digest
+        outputs = [artifact, graph, dependencies]
+        record_portable(directory, key, outputs)?
+        portable = directory.joinpath("library.portable-inputs")
+        seal_rust(store, identity, name, key.digest, directory, outputs, [portable], facet.project, linked)?
     match library_artifact(directory, declared.crate_name, context, declared.kind)?:
-        None => pass
-        Some(artifact) =>
-            match rust_library_producer_key(facet, directory, arguments, environment, request, toolchain):
-                Err(_) => pass
-                Ok(key) =>
-                    if reusable([artifact, graph, dependencies], stamp, key)?:
-                        retain_rust_library_graph(
-                            facet,
-                            declared,
-                            artifact,
-                            arguments,
-                            environment,
-                            request,
-                            toolchain,
-                            key,
-                        )?
-                        record_portable(directory, key, [artifact, graph, dependencies])?
-                        trace(f"unit {declared.crate_name} rust: reused identity={key.digest}")
-                        return Ok(
-                            BuiltUnit(
-                                crate_name=declared.crate_name,
-                                artifact=artifact.0,
-                                directory=directory.0,
-                                reused=true,
-                                search=reached_search,
-                            ),
-                        )
-    # 2. Withdraw the old proof and compile with rustc's dependency evidence.
-    if stamp.is_file():
-        stamp.unlink().map_err((error) => error.message())?
+        None => return Err(f"rustc wrote no library for {declared.crate_name} into {directory.0}")
+        Some(viewed) =>
+            return Ok(
+                BuiltUnit(
+                    crate_name=declared.crate_name,
+                    artifact=viewed.0,
+                    directory=directory.0,
+                    reused=false,
+                    search=reached_search,
+                ),
+            )
+
+
+def baked_identity(
+    facet: LocalFacet,
+    directory: Path,
+    arguments: list[str],
+    environment: Dict[str, str],
+    request: RustBuild,
+    toolchain: Toolchain,
+) -> Result[Option[str], str]:
+    """The bakery identity of a Rust library and its graph, when its dependency evidence admits one."""
+    match rust_library_producer_key(facet, directory, arguments, environment, request, toolchain):
+        Err(_) => return Ok(None)
+        Ok(key) =>
+            if key.refusal != "":
+                return Ok(None)
+            return Ok(Some(rust_library_graph_key(key, toolchain.driver)?.digest))
+
+
+def compile_rust_producer(
+    facet: LocalFacet,
+    declared: RustFacet,
+    directory: Path,
+    arguments: list[str],
+    environment: Dict[str, str],
+    request: RustBuild,
+    toolchain: Toolchain,
+) -> Result[Path, str]:
+    """Compile a Rust library and its checked graph into `directory`, refusing inputs that changed meanwhile."""
+    dependencies = directory.joinpath("library.d")
+    graph = directory.joinpath(f"{declared.package}.incngraph")
+    context = artifact_context(facet, declared, request.profile)?
+    linked = extern_artifacts(arguments)
     discovered = dependency_arguments(arguments, dependencies) + ["--sysroot", toolchain.sysroot]
     invoke_rustc(request.rustc, discovered, environment, false, declared.crate_name)?
     observations = compilation_observations(Path(facet.project), dependencies, arguments, linked, toolchain)?
     identified = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain)?
-    trace(f"unit {declared.crate_name} rust: compiled identity={identified.digest} (no current library proof)")
+    trace(f"unit {declared.crate_name} rust: compiled identity={identified.digest} (not baked)")
     pending = directory.joinpath(f"{declared.package}.incngraph.{id()}.pending")
     graph_arguments = ["--rust-compile-codegraph", pending.0, facet.project, "--sysroot", toolchain.sysroot] + materialized_arguments(
         arguments,
         identified,
     )
     invoke_rustc(toolchain.driver, graph_arguments, environment, false, declared.crate_name, Some(toolchain))?
-    # 3. Publish the graph, make the dependency evidence name no checkout, and stamp the complete output set.
+    # 3. Publish the graph and keep dependency evidence independent of the checkout.
     relocate_dependencies(dependencies, Path(facet.project))?
     place(pending, graph)?
     match library_artifact(directory, declared.crate_name, context, declared.kind)?:
@@ -1195,17 +1237,7 @@ def compile_local_rust_library(
                 or not inputs_unchanged(dependencies, observations, Some(Path(facet.project)), arguments)?
             ):
                 return Err(f"Rust producer inputs changed while compiling {declared.crate_name}")
-            record(stamp, key, [artifact, graph, dependencies])?
-            record(directory.joinpath("library.graph-inputs"), rust_library_graph_key(key, toolchain.driver)?, [graph])?
-            record_portable(directory, key, [artifact, graph, dependencies])?
-            return Ok(
-                BuiltUnit(
-                    crate_name=declared.crate_name,
-                    artifact=artifact.0,
-                    directory=directory.0,
-                    search=reached_search,
-                ),
-            )
+            return Ok(artifact)
 
 
 def library_artifact(directory: Path, crate_name: str, unit: str, kind: str) -> Result[Option[Path], str]:
@@ -1350,34 +1382,28 @@ pub def compile_binary(
     # 3. A binary that loads the toolchain's own libraries can find them, wherever its `sysroot` link points.
     if let Some(selected) = libraries:
         arguments = arguments + runpath_arguments(selected)
-    # 4. An unchanged binary is reused; otherwise the completed replacement is published atomically.
-    stamp = directory.joinpath(f"{output_name}.oven-inputs")
+    # 4. A baked binary of the identity is viewed; otherwise it is compiled and baked.
     dependencies = directory.joinpath(f"{output_name}.d")
-    mut inputs = binary_key(output_name, directory, dependencies, facet, declared, request, arguments, environment)?
-    outputs = [binary, dependencies]
-    why = staleness(outputs, stamp, inputs)?
-    label = f"unit {name} rust binary"
-    if why == "":
-        trace(f"{label}: reused")
-        println(f"reused {name}")
-        return Ok(binary.0)
-    building = binary.lock_exclusive().map_err((error) => error.message())?
-    if reusable(outputs, stamp, inputs)?:
-        trace(f"{label}: reused (built meanwhile by another command)")
-        println(f"reused {name}")
-        return Ok(binary.0)
-    trace(f"{label}: compiled ({why})")
-    invoke_rustc(request.rustc, dependency_arguments(arguments, dependencies), environment, declared.unstable, name)?
     inputs = binary_key(output_name, directory, dependencies, facet, declared, request, arguments, environment)?
+    label = f"unit {name} rust binary"
+    store = rust_store()?
+    held = claim_rust(store, f"binary {inputs.digest}")?
+    if inputs.refusal == "":
+        if view_baked_binary(store, inputs.digest, output_name, directory, facet.project)?:
+            trace(f"{label}: reused")
+            println(f"reused {name}")
+            return Ok(binary.0)
+    trace(f"{label}: compiled (not baked)")
     toolchain = selected_toolchain(request)?
     observations = compilation_observations(Path(facet.project), dependencies, arguments, [], toolchain)?
-    staged = directory.joinpath(f"{name}.pending")
-    staged_dependencies = directory.joinpath(f"{name}.pending.d")
+    staged = staging(store, f"binary-{name}")?
+    staged_binary = staged.joinpath(output_name)
+    staged_dependencies = staged.joinpath(f"{output_name}.d")
     emitted = materialized_arguments(arguments, inputs) + [
         "--emit",
         f"link,dep-info={staged_dependencies.0}",
         "-o",
-        staged.0,
+        staged_binary.0,
     ]
     invoke_rustc(request.rustc, emitted, environment, declared.unstable, name)?
     current = binary_key(output_name, directory, staged_dependencies, facet, declared, request, arguments, environment)?
@@ -1386,9 +1412,28 @@ pub def compile_binary(
         or not inputs_unchanged(staged_dependencies, observations, Some(Path(facet.project)), arguments)?
     ):
         return Err(f"Rust producer inputs changed while compiling {name}")
-    install_all([staged, staged_dependencies], outputs, stamp, current)?
+    if current.refusal != "":
+        place(staged_binary, binary)?
+        place(staged_dependencies, dependencies)?
+        println(f"compiled {name}")
+        return Ok(binary.0)
+    fact = seal(store, current.digest, staged, "rust binary", rust_unit_name("binary", output_name, ""), [], "rust binary")?
+    register_root(store, facet.project, current.digest)?
+    view(store, fact, output_name, binary)?
+    view(store, fact, f"{output_name}.d", dependencies)?
     println(f"compiled {name}")
     return Ok(binary.0)
+
+
+def view_baked_binary(store: Path, identity: str, output_name: str, directory: Path, project: str) -> Result[bool, str]:
+    """View a baked binary and its dependency evidence into `directory`; false when it is not baked."""
+    match find(store, identity)?:
+        None => return Ok(false)
+        Some(fact) =>
+            register_root(store, project, identity)?
+            view(store, fact, output_name, directory.joinpath(output_name))?
+            view(store, fact, f"{output_name}.d", directory.joinpath(f"{output_name}.d"))?
+            return Ok(true)
 
 
 pub def binary_arguments(
