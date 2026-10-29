@@ -48,7 +48,7 @@ impl CheckedCallableModule {
     /// Capture every declaration from an accepted module with no imports, nominal declarations or module directive.
     /// Unsupported declarations refuse the entire namespace rather than making a negative lookup unsound.
     pub fn from_checked(program: &Program, checker: &TypeChecker) -> Result<Self, LibraryManifestError> {
-        if program.rust_module_path.is_some() || !checker.errors.is_empty() {
+        if !checker.errors.is_empty() {
             return Err(invalid("callable module requires an accepted source-only namespace"));
         }
         let mut callables = Vec::new();
