@@ -110,6 +110,9 @@ impl TypeChecker {
             .entered();
             self.reset_program_check(program, preserve_dependency_semantics);
         }
+        if let Some(reuse) = self.callable_body_reuse.take() {
+            reuse.install(program, self);
+        }
         {
             let _trace = tracing::trace_span!(
                 target: "incan::invocation",
@@ -341,6 +344,11 @@ impl TypeChecker {
         }
         for decl in &program.declarations {
             if !matches!(decl.node, Declaration::Const(_)) {
+                if self.type_info.reused_callable_bodies.contains_key(&decl.span) {
+                    self.symbols.enter_scope(crate::symbols::ScopeKind::Function);
+                    self.symbols.exit_scope();
+                    continue;
+                }
                 self.check_environment_declaration(decl);
             }
         }

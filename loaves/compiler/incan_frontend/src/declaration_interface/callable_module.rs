@@ -7,7 +7,7 @@
 use std::collections::BTreeSet;
 
 use incan_semantics_core::SymbolOrigin;
-use incan_semantics_core::stable_identity::StableDeclarationId;
+use incan_semantics_core::stable_identity::{StableDeclarationId, StableIdentityProjection};
 use serde::{Deserialize, Serialize};
 
 use super::{CheckedCallableInterface, encode_record, invalid};
@@ -59,7 +59,10 @@ impl CheckedCallableModule {
                 ));
             };
             let header = CheckedCallableInterface::from_checked(function, declaration.span, checker)?;
-            let signature = header.signature_digest(&checker.type_info().declarations.named_type_identities)?;
+            let signature = header.signature_digest(
+                &checker.type_info().declarations.named_type_identities,
+                &StableIdentityProjection::default(),
+            )?;
             callables.push(CallableEntry { header, signature });
         }
         callables.sort_by(|left, right| left.header.identity.cmp(&right.header.identity));

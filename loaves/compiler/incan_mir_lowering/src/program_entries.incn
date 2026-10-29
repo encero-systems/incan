@@ -18,11 +18,14 @@ from rust::incan_semantics_core import (
     CanonicalSymbolId as RustCanonicalSymbolId,
     SymbolOrigin,
     canonical_module_identity,
+    CompilerNodeId,
 )
 from rust::incan_semantics_core::body_ir import Body as RustBody
 from classes import function_name, is_program_entry, body_module_identity
 from program_context import ProgramContext, body_at
-from rust::std::collections import BTreeMap
+from rust::std::collections import BTreeMap, BTreeSet
+from rust::serde_json import to_string as native_json
+from scalar_store import scalar_inputs, retained_scalar, retain_scalar
 from table_views import borrowed_at
 from decorator_caches import DecoratorFrame
 from traits import is_lazy_method_body
@@ -39,6 +42,7 @@ from frame_instances import (
     named_functions,
 )
 from function_frames import lower_function
+from checked_values import location
 
 
 pub def lower_ordinary_bodies(
@@ -57,6 +61,8 @@ pub def lower_ordinary_bodies(
     mut emitted_frames: EmittedFrames,
     unions: list[RustType],
     trace: bool,
+    scalar_products: Option[str],
+    scalar_bodies: &BTreeSet[CompilerNodeId],
 ) -> Result[None, str]:
     """
     Lower selected source frames in module order, retaining synthesized callees and checked instance requests.
@@ -85,7 +91,7 @@ pub def lower_ordinary_bodies(
             if trace:
                 println(f"lowering: body {body_module_identity(body)?} {body.name} {body.span.start}")
             diagnostic_owner = f" in {body.name} at {files[index]}"
-            function, runtime, pending, synthesized = lower_function(
+            function, runtime, pending, synthesized = lower_ordinary_frame(
                 context,
                 program,
                 body,
@@ -93,8 +99,8 @@ pub def lower_ordinary_bodies(
                 sources[index],
                 files[index],
                 intrinsics,
-                [],
-                DecoratorFrame.Normal,
+                scalar_products,
+                scalar_bodies,
             ).map_err((reason) => reason + diagnostic_owner)?
             merge_instance_requests(instances, pending)
             # Frames any helper appended since the last check are named first, so the check covers every frame.
@@ -128,6 +134,63 @@ pub def lower_ordinary_bodies(
             )?
             merge_indexed(externals, signatures, runtime)?
     return Ok(None)
+
+
+def lower_ordinary_frame(
+    context: &BodyIrModule,
+    program: ProgramContext,
+    body: &RustBody,
+    unions: list[RustType],
+    source: str,
+    file: str,
+    mut intrinsics: list[EnumDeclaration],
+    products: Option[str],
+    admitted: &BTreeSet[CompilerNodeId],
+) -> Result[tuple[Function, list[ExternalFunction], list[Instance], list[Function]], str]:
+    """Read only producer-admitted scalar products, or lower normally and retain an exact self-contained result."""
+    inputs = ordinary_product_inputs(context, body, source, file, program.overflow_checks, products, admitted)
+    original_intrinsics = len(intrinsics)
+    if let Some(directory) = products:
+        if let Some(witness) = inputs:
+            if let Some(function) = retained_scalar(directory, witness):
+                return Ok((function, [], [], []))
+    function, runtime, pending, synthesized = lower_function(
+        context,
+        program,
+        body,
+        unions,
+        source,
+        file,
+        intrinsics,
+        [],
+        DecoratorFrame.Normal,
+    )?
+    if len(runtime) == 0 and len(pending) == 0 and len(synthesized) == 0 and len(intrinsics) == original_intrinsics:
+        if let Some(directory) = products:
+            if let Some(witness) = inputs:
+                retain_scalar(directory, witness, function)
+    return Ok((function, runtime, pending, synthesized))
+
+
+def ordinary_product_inputs(
+    context: &BodyIrModule,
+    body: &RustBody,
+    source: str,
+    file: str,
+    overflow_checks: bool,
+    products: Option[str],
+    admitted: &BTreeSet[CompilerNodeId],
+) -> Option[list[str]]:
+    """Retain exact checked input only for frames whose empty nonlocal read set the source producer proved."""
+    if products is None:
+        return None
+    if not admitted.contains(body.direct_call_id):
+        return None
+    match native_json(body):
+        Err(_) => return None
+        Ok(input) =>
+            span = location(body.span, source, file)
+            return Some(scalar_inputs(input, evaluator_name(context, body), span, overflow_checks))
 
 
 pub def validate_program_entry_selection(modules: &list[BodyIrModule], entry: int) -> Result[None, str]:

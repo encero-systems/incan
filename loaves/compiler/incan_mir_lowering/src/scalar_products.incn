@@ -1,0 +1,538 @@
+"""Round-trip complete scalar native functions through a private, explicitly bounded product codec."""
+
+from rust::serde import Serialize, Deserialize
+from rust::serde_json import to_string, from_str, Error as JsonError
+from pub::incan_mir_plan import (
+    BasicBlock,
+    BinaryOp,
+    Constant,
+    Function,
+    Local,
+    Operand,
+    OperandKind,
+    Parameter,
+    Place,
+    PlanType,
+    Projection,
+    Rvalue,
+    RvalueKind,
+    SourceSpan,
+    Statement,
+    StatementKind,
+    Terminator,
+    TerminatorKind,
+    UnaryOp,
+    Unwind,
+    source_span,
+)
+
+
+@derive(Serialize, Deserialize)
+model StoredSpan:
+    """Portable source provenance without serializing the shared file handle's allocation."""
+
+    file: str
+    line: int
+    column: int
+
+
+@derive(Serialize, Deserialize)
+model StoredPlace:
+    """One scalar local and its exact whole-value or checked-arithmetic projection."""
+
+    local: int
+    projection: int
+    span: StoredSpan
+
+
+@derive(Serialize, Deserialize)
+enum StoredConstant:
+    """The exact scalar literal variants admitted by this codec."""
+
+    Int(int)
+    Float(float)
+    Bool(bool)
+    Unit
+
+
+@derive(Serialize, Deserialize)
+enum StoredRead:
+    """Retain explicit ownership intent rather than infer it when restoring an operand."""
+
+    Copy(StoredPlace)
+    Move(StoredPlace)
+    Literal(StoredConstant)
+
+
+@derive(Serialize, Deserialize)
+model StoredOperand:
+    """One native operand and its original diagnostic location."""
+
+    kind: StoredRead
+    span: StoredSpan
+
+
+@derive(Serialize, Deserialize)
+enum StoredRvalue:
+    """Self-contained scalar operations; any operation with an external context refuses capture."""
+
+    Use(StoredOperand)
+    Binary(int, StoredOperand, StoredOperand)
+    Unary(int, StoredOperand)
+    IntToFloat(StoredOperand)
+    FloatToInt(StoredOperand)
+    BoolToInt(StoredOperand)
+
+
+@derive(Serialize, Deserialize)
+enum StoredStatementKind:
+    """Exact scalar assignment and storage-lifetime operations."""
+
+    Assign(StoredPlace, StoredRvalue, StoredSpan)
+    Live(int)
+    Dead(int)
+
+
+@derive(Serialize, Deserialize)
+model StoredStatement:
+    """Keep the statement's location independently of its value and destination."""
+
+    kind: StoredStatementKind
+    span: StoredSpan
+
+
+@derive(Serialize, Deserialize)
+enum StoredUnwind:
+    """Exact cleanup control flow for scalar overflow assertions."""
+
+    Continue
+    Cleanup(int)
+    Terminate
+
+
+@derive(Serialize, Deserialize)
+enum StoredExit:
+    """Scalar control flow; native calls, coroutines and drops refuse this product codec."""
+
+    Goto(int)
+    Switch(StoredOperand, int, int)
+    Overflow(StoredOperand, int, StoredOperand, StoredOperand, int, StoredUnwind)
+    Return
+    Unreachable
+    Resume
+
+
+@derive(Serialize, Deserialize)
+model StoredBlock:
+    """One complete native scalar block, including cleanup status and terminator provenance."""
+
+    statements: list[StoredStatement]
+    exit: StoredExit
+    exit_span: StoredSpan
+    cleanup: bool
+    span: StoredSpan
+
+
+@derive(Serialize, Deserialize)
+model StoredSlot:
+    """A native local's scalar carrier and diagnostic source position."""
+
+    ty: int
+    span: StoredSpan
+
+
+@derive(Serialize, Deserialize)
+model StoredParameter:
+    """A named scalar parameter whose exact native slot is retained in declaration order."""
+
+    name: str
+    slot: StoredSlot
+
+
+@derive(Serialize, Deserialize)
+model StoredFunction:
+    """A versioned complete ordinary scalar function; unsupported native attributes and instances refuse."""
+
+    schema: int
+    name: str
+    parameters: list[StoredParameter]
+    result: int
+    locals: list[StoredSlot]
+    blocks: list[StoredBlock]
+    span: StoredSpan
+    lifetimes: list[list[str]]
+
+
+pub def encode_scalar(function: &Function) -> Result[str, str]:
+    """
+    Retain one complete self-contained scalar function.
+
+    1. Refuse attributes, coroutine state and generic loan provenance this codec cannot preserve.
+    2. Encode all native storage, control flow and source locations.
+    3. Round-trip the product against the original function before publishing its text.
+    """
+    # 1. No invocation-only function field may disappear through a default during replay.
+    if function.is_async or function.future_callee is not None:
+        return Err("scalar function products refuse coroutine state")
+    if len(function.attributes) != 0 or len(function.generic_loans) != 0:
+        return Err("scalar function products refuse attributes and generic loans")
+    # 2. Every scalar plan field crosses the codec explicitly.
+    parameters = [store_parameter(value)? for value in function.parameters]
+    slots = [store_slot(value.ty, value.span)? for value in function.locals]
+    blocks = [store_block(value)? for value in function.blocks]
+    stored = StoredFunction(
+        schema=1,
+        name=function.name,
+        parameters=parameters,
+        result=store_type(function.return_type)?,
+        locals=slots,
+        blocks=blocks,
+        span=store_span(function.span),
+        lifetimes=function.signature_lifetimes,
+    )
+    text = to_string(stored).map_err((error) => str(error))?
+    # 3. A loss in any native field refuses capture instead of becoming an accepted cache hit.
+    restored = decode_scalar(text)?
+    if not same_function(restored, function):
+        return Err("scalar function product round trip changed native facts")
+    return Ok(text)
+
+
+pub def decode_scalar(text: str) -> Result[Function, str]:
+    """
+    Restore a scalar function only from a recognized complete product.
+
+    1. Decode the producer's versioned wire record.
+    2. Restore its exact native fields and source locations.
+    """
+    # 1. Malformed or unfamiliar records are cache misses at the caller.
+    stored = decode_record(text).map_err((error) => str(error))?
+    if stored.schema != 1:
+        return Err("unknown scalar function product schema")
+    # 2. Native attributes, coroutine fields and generic loans were refused by the producer.
+    parameters = [restore_parameter(value)? for value in stored.parameters]
+    slots = [Local(ty=restore_type(value.ty)?, span=restore_span(value.span)) for value in stored.locals]
+    blocks = [restore_block(value)? for value in stored.blocks]
+    return Ok(
+        Function(
+            name=stored.name,
+            parameters=parameters,
+            return_type=restore_type(stored.result)?,
+            locals=slots,
+            blocks=blocks,
+            span=restore_span(stored.span),
+            signature_lifetimes=stored.lifetimes,
+        ),
+    )
+
+
+def store_parameter(value: Parameter) -> Result[StoredParameter, str]:
+    """Retain the parameter name, scalar carrier and independent source provenance."""
+    return Ok(StoredParameter(name=value.name, slot=store_slot(value.ty, value.span)?))
+
+
+def restore_parameter(value: StoredParameter) -> Result[Parameter, str]:
+    """Restore one complete parameter in its original declaration order."""
+    return Ok(Parameter(name=value.name, ty=restore_type(value.slot.ty)?, span=restore_span(value.slot.span)))
+
+
+def same_function(left: &Function, right: &Function) -> bool:
+    """Compare borrowed complete native functions without copying either plan."""
+    return left == right
+
+
+def decode_record(text: str) -> Result[StoredFunction, JsonError]:
+    """Give the native serde decoder its expected wire type through the ordinary return contract."""
+    return from_str(text)
+
+
+def store_span(span: SourceSpan) -> StoredSpan:
+    """Retain file text and both one-based coordinates without exposing an allocation identity."""
+    return StoredSpan(file=str(span.file), line=span.line, column=span.column)
+
+
+def restore_span(span: StoredSpan) -> SourceSpan:
+    """Use the plan owner's shared-file constructor for restored diagnostic locations."""
+    return source_span(file=span.file, line=span.line, column=span.column)
+
+
+def store_slot(ty: PlanType, span: SourceSpan) -> Result[StoredSlot, str]:
+    """Retain one scalar local or parameter carrier with its independent diagnostic location."""
+    return Ok(StoredSlot(ty=store_type(ty)?, span=store_span(span)))
+
+
+def store_type(ty: PlanType) -> Result[int, str]:
+    """Assign private codec tags only to scalar carriers with no external layout dependencies."""
+    match ty:
+        PlanType.Int => return Ok(0)
+        PlanType.Float => return Ok(1)
+        PlanType.Bool => return Ok(2)
+        PlanType.Unit => return Ok(3)
+        PlanType.CheckedInt => return Ok(4)
+        PlanType.Never => return Ok(5)
+        _ => return Err("scalar function products refuse this native carrier")
+
+
+def restore_type(tag: int) -> Result[PlanType, str]:
+    """Decode only the scalar carrier tags defined by this private schema."""
+    match tag:
+        0 => return Ok(PlanType.Int)
+        1 => return Ok(PlanType.Float)
+        2 => return Ok(PlanType.Bool)
+        3 => return Ok(PlanType.Unit)
+        4 => return Ok(PlanType.CheckedInt)
+        5 => return Ok(PlanType.Never)
+        _ => return Err("unknown scalar carrier tag")
+
+
+def store_place(place: Place) -> Result[StoredPlace, str]:
+    """Preserve whole-local and checked-arithmetic projections; owner-dependent projections refuse."""
+    mut projection = -1
+    match place.projection:
+        Projection.Whole => projection = 0
+        Projection.Value => projection = 1
+        Projection.Overflow => projection = 2
+        _ => return Err("scalar function products refuse this native projection")
+    return Ok(StoredPlace(local=place.local, projection=projection, span=store_span(place.span)))
+
+
+def restore_place(place: StoredPlace) -> Result[Place, str]:
+    """Restore the exact native scalar projection rather than infer it from a carrier."""
+    mut projection = Projection.Whole
+    match place.projection:
+        0 => pass
+        1 => projection = Projection.Value
+        2 => projection = Projection.Overflow
+        _ => return Err("unknown scalar projection tag")
+    return Ok(Place(local=place.local, projection=projection, span=restore_span(place.span)))
+
+
+def store_constant(value: Constant) -> Result[StoredConstant, str]:
+    """Preserve ordinary scalar constants without narrowing integer digits or floating-point values."""
+    match value:
+        Constant.Int(value) => return Ok(StoredConstant.Int(value))
+        Constant.Float(value) => return Ok(StoredConstant.Float(value))
+        Constant.Bool(value) => return Ok(StoredConstant.Bool(value))
+        Constant.Unit => return Ok(StoredConstant.Unit)
+        _ => return Err("scalar function products refuse this native constant")
+
+
+def restore_constant(value: StoredConstant) -> Constant:
+    """Recover the producer's exact scalar constant variant."""
+    match value:
+        StoredConstant.Int(value) => return Constant.Int(value)
+        StoredConstant.Float(value) => return Constant.Float(value)
+        StoredConstant.Bool(value) => return Constant.Bool(value)
+        StoredConstant.Unit => return Constant.Unit
+
+
+def store_operand(operand: Operand) -> Result[StoredOperand, str]:
+    """Retain the operand's ownership operation independently of its source position."""
+    match operand.kind:
+        OperandKind.Copy(place) =>
+            return Ok(StoredOperand(kind=StoredRead.Copy(store_place(place)?), span=store_span(operand.span)))
+        OperandKind.Move(place) =>
+            return Ok(StoredOperand(kind=StoredRead.Move(store_place(place)?), span=store_span(operand.span)))
+        OperandKind.Literal(value) =>
+            return Ok(StoredOperand(kind=StoredRead.Literal(store_constant(value)?), span=store_span(operand.span)))
+
+
+def restore_operand(operand: StoredOperand) -> Result[Operand, str]:
+    """Restore explicit copy, move and literal reads without recomputing ownership."""
+    span = restore_span(operand.span)
+    match operand.kind:
+        StoredRead.Copy(place) => return Ok(Operand(kind=OperandKind.Copy(restore_place(place)?), span=span))
+        StoredRead.Move(place) => return Ok(Operand(kind=OperandKind.Move(restore_place(place)?), span=span))
+        StoredRead.Literal(value) => return Ok(Operand(kind=OperandKind.Literal(restore_constant(value)), span=span))
+
+
+def store_binary(operation: BinaryOp) -> int:
+    """Encode the native operation by an explicit schema tag, independently of its display spelling."""
+    match operation:
+        BinaryOp.Add => return 0
+        BinaryOp.Subtract => return 1
+        BinaryOp.Multiply => return 2
+        BinaryOp.Divide => return 3
+        BinaryOp.Equal => return 4
+        BinaryOp.NotEqual => return 5
+        BinaryOp.Less => return 6
+        BinaryOp.LessEqual => return 7
+        BinaryOp.Greater => return 8
+        BinaryOp.GreaterEqual => return 9
+        BinaryOp.BitAnd => return 10
+        BinaryOp.BitOr => return 11
+        BinaryOp.BitXor => return 12
+        BinaryOp.ShiftLeft => return 13
+        BinaryOp.ShiftRight => return 14
+
+
+def restore_binary(tag: int) -> Result[BinaryOp, str]:
+    """Refuse unknown operation tags rather than map them to an approximate arithmetic operation."""
+    match tag:
+        0 => return Ok(BinaryOp.Add)
+        1 => return Ok(BinaryOp.Subtract)
+        2 => return Ok(BinaryOp.Multiply)
+        3 => return Ok(BinaryOp.Divide)
+        4 => return Ok(BinaryOp.Equal)
+        5 => return Ok(BinaryOp.NotEqual)
+        6 => return Ok(BinaryOp.Less)
+        7 => return Ok(BinaryOp.LessEqual)
+        8 => return Ok(BinaryOp.Greater)
+        9 => return Ok(BinaryOp.GreaterEqual)
+        10 => return Ok(BinaryOp.BitAnd)
+        11 => return Ok(BinaryOp.BitOr)
+        12 => return Ok(BinaryOp.BitXor)
+        13 => return Ok(BinaryOp.ShiftLeft)
+        14 => return Ok(BinaryOp.ShiftRight)
+        _ => return Err("unknown scalar binary operation tag")
+
+
+def store_unary(operation: UnaryOp) -> int:
+    """Encode each ordinary native unary operation explicitly."""
+    match operation:
+        UnaryOp.Not => return 0
+        UnaryOp.Negate => return 1
+        UnaryOp.Invert => return 2
+
+
+def restore_unary(tag: int) -> Result[UnaryOp, str]:
+    """Decode only the unary operations defined by the private schema."""
+    match tag:
+        0 => return Ok(UnaryOp.Not)
+        1 => return Ok(UnaryOp.Negate)
+        2 => return Ok(UnaryOp.Invert)
+        _ => return Err("unknown scalar unary operation tag")
+
+
+def store_rvalue(value: RvalueKind) -> Result[StoredRvalue, str]:
+    """Capture only self-contained scalar operations with complete explicit operand evidence."""
+    match value:
+        RvalueKind.Use(operand) => return Ok(StoredRvalue.Use(store_operand(operand)?))
+        RvalueKind.Binary(op, left, right) =>
+            return Ok(StoredRvalue.Binary(store_binary(op), store_operand(left)?, store_operand(right)?))
+        RvalueKind.Unary(op, operand) => return Ok(StoredRvalue.Unary(store_unary(op), store_operand(operand)?))
+        RvalueKind.IntToFloat(operand) => return Ok(StoredRvalue.IntToFloat(store_operand(operand)?))
+        RvalueKind.FloatToInt(operand) => return Ok(StoredRvalue.FloatToInt(store_operand(operand)?))
+        RvalueKind.BoolToInt(operand) => return Ok(StoredRvalue.BoolToInt(store_operand(operand)?))
+        _ => return Err("scalar function products refuse this native operation")
+
+
+def restore_rvalue(value: StoredRvalue) -> Result[RvalueKind, str]:
+    """Recover the exact native operation; the checker and lowering's decisions are never repeated."""
+    match value:
+        StoredRvalue.Use(operand) => return Ok(RvalueKind.Use(restore_operand(operand)?))
+        StoredRvalue.Binary(op, left, right) =>
+            return Ok(RvalueKind.Binary(restore_binary(op)?, restore_operand(left)?, restore_operand(right)?))
+        StoredRvalue.Unary(op, operand) => return Ok(RvalueKind.Unary(restore_unary(op)?, restore_operand(operand)?))
+        StoredRvalue.IntToFloat(operand) => return Ok(RvalueKind.IntToFloat(restore_operand(operand)?))
+        StoredRvalue.FloatToInt(operand) => return Ok(RvalueKind.FloatToInt(restore_operand(operand)?))
+        StoredRvalue.BoolToInt(operand) => return Ok(RvalueKind.BoolToInt(restore_operand(operand)?))
+
+
+def store_statement(statement: Statement) -> Result[StoredStatement, str]:
+    """Retain scalar assignments and explicit storage boundaries without dropping nested source spans."""
+    span = store_span(statement.span)
+    match statement.kind:
+        StatementKind.Assign(place, value) =>
+            kind = StoredStatementKind.Assign(store_place(place)?, store_rvalue(value.kind)?, store_span(value.span))
+            return Ok(StoredStatement(kind=kind, span=span))
+        StatementKind.StorageLive(local) => return Ok(StoredStatement(kind=StoredStatementKind.Live(local), span=span))
+        StatementKind.StorageDead(local) => return Ok(StoredStatement(kind=StoredStatementKind.Dead(local), span=span))
+
+
+def restore_statement(statement: StoredStatement) -> Result[Statement, str]:
+    """Restore every scalar statement field, including the value's independent source location."""
+    span = restore_span(statement.span)
+    match statement.kind:
+        StoredStatementKind.Assign(place, value, value_span) =>
+            kind = StatementKind.Assign(
+                restore_place(place)?,
+                Rvalue(kind=restore_rvalue(value)?, span=restore_span(value_span)),
+            )
+            return Ok(Statement(kind=kind, span=span))
+        StoredStatementKind.Live(local) => return Ok(Statement(kind=StatementKind.StorageLive(local), span=span))
+        StoredStatementKind.Dead(local) => return Ok(Statement(kind=StatementKind.StorageDead(local), span=span))
+
+
+def store_unwind(unwind: Unwind) -> StoredUnwind:
+    """Retain each native unwind continuation exactly."""
+    match unwind:
+        Unwind.Continue => return StoredUnwind.Continue
+        Unwind.Cleanup(block) => return StoredUnwind.Cleanup(block)
+        Unwind.Terminate => return StoredUnwind.Terminate
+
+
+def restore_unwind(unwind: StoredUnwind) -> Unwind:
+    """Recover cleanup propagation without choosing a new unwind policy."""
+    match unwind:
+        StoredUnwind.Continue => return Unwind.Continue
+        StoredUnwind.Cleanup(block) => return Unwind.Cleanup(block)
+        StoredUnwind.Terminate => return Unwind.Terminate
+
+
+def store_exit(exit: TerminatorKind) -> Result[StoredExit, str]:
+    """Retain native scalar branches and overflow checks; calls and owner-dependent cleanup refuse."""
+    match exit:
+        TerminatorKind.Goto(block) => return Ok(StoredExit.Goto(block))
+        TerminatorKind.SwitchBool(operand, no, yes) => return Ok(StoredExit.Switch(store_operand(operand)?, no, yes))
+        TerminatorKind.AssertOverflow(flag, op, left, right, target, unwind) =>
+            return Ok(
+                StoredExit.Overflow(
+                    store_operand(flag)?,
+                    store_binary(op),
+                    store_operand(left)?,
+                    store_operand(right)?,
+                    target,
+                    store_unwind(unwind),
+                ),
+            )
+        TerminatorKind.Return => return Ok(StoredExit.Return)
+        TerminatorKind.Unreachable => return Ok(StoredExit.Unreachable)
+        TerminatorKind.UnwindResume => return Ok(StoredExit.Resume)
+        _ => return Err("scalar function products refuse this native terminator")
+
+
+def restore_exit(exit: StoredExit) -> Result[TerminatorKind, str]:
+    """Restore the producer's exact scalar branch and overflow control flow."""
+    match exit:
+        StoredExit.Goto(block) => return Ok(TerminatorKind.Goto(block))
+        StoredExit.Switch(operand, no, yes) => return Ok(TerminatorKind.SwitchBool(restore_operand(operand)?, no, yes))
+        StoredExit.Overflow(flag, op, left, right, target, unwind) =>
+            return Ok(
+                TerminatorKind.AssertOverflow(
+                    restore_operand(flag)?,
+                    restore_binary(op)?,
+                    restore_operand(left)?,
+                    restore_operand(right)?,
+                    target,
+                    restore_unwind(unwind),
+                ),
+            )
+        StoredExit.Return => return Ok(TerminatorKind.Return)
+        StoredExit.Unreachable => return Ok(TerminatorKind.Unreachable)
+        StoredExit.Resume => return Ok(TerminatorKind.UnwindResume)
+
+
+def store_block(block: BasicBlock) -> Result[StoredBlock, str]:
+    """Retain the complete block, including its terminator and both block and exit locations."""
+    return Ok(
+        StoredBlock(
+            statements=[store_statement(value)? for value in block.statements],
+            exit=store_exit(block.terminator.kind)?,
+            exit_span=store_span(block.terminator.span),
+            cleanup=block.cleanup,
+            span=store_span(block.span),
+        ),
+    )
+
+
+def restore_block(block: StoredBlock) -> Result[BasicBlock, str]:
+    """Restore every block field without synthesizing control flow or source provenance."""
+    return Ok(
+        BasicBlock(
+            statements=[restore_statement(value)? for value in block.statements],
+            terminator=Terminator(kind=restore_exit(block.exit)?, span=restore_span(block.exit_span)),
+            cleanup=block.cleanup,
+            span=restore_span(block.span),
+        ),
+    )
