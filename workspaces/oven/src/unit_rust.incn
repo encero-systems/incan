@@ -3,6 +3,19 @@
 from std.fs import Path
 from std.json import JsonValue
 from std.toml import TomlValue
+from bakery import (
+    bakery,
+    claim,
+    find,
+    view_directory,
+    lookup,
+    reached,
+    register_root,
+    seal,
+    staging,
+    unit_identity,
+    unit_name,
+)
 from features import FeatureRequest
 from json_fields import array, strings
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets, unique
@@ -30,7 +43,8 @@ from observation import trace
 from intake import ManifestReader
 from native_closure_input import NativeClosureInput
 from unit_compiler import compile_prepared_unit
-from unit_freshness import artifact_files, record, staleness, unit_key
+from unit_freshness import Key, artifact_files, unit_key
+from unit_publication import record_payload
 from compiler_facts import admit_fact
 from vocabulary import prepare_vocabulary, published_workers, stage_vocabulary
 
@@ -109,37 +123,89 @@ pub def compile_library_unit(
     compiler: str = "",
 ) -> Result[i32, str]:
     """
-    Reuse or replace a prepared library and record all published artifacts.
+    Obtain a prepared library from the home bakery; its artifact directory becomes a link to the fact.
     The caller supplies its selected toolchain and exact output path after dependency preparation is complete.
 
-    1. Key the library against its stored artifact stamp.
-    2. Reuse a current library, or withdraw its stale stamp and stage its vocabulary worker before compilation.
-    3. Require every published artifact, including a worker its manifest names, before recording the build.
+    Compilers read a library's artifacts from the fact itself, through that link, so no artifact is copied.
+
+    1. Key the library; a sealed fact of its identity is linked and no compiler starts.
+    2. Otherwise claim the identity, and link a fact another command sealed meanwhile.
+    3. Stage its vocabulary worker and compile it into a staging directory of the fact.
+    4. Require every published artifact, including a worker its manifest names, before sealing the fact.
     """
     # 1. Both source and native inputs contribute to the ordinary library key.
     directory = output.parent()
-    artifacts = artifact_files(directory, library.package)?
     key = unit_key(library, toolchain, compiler)?
-    stamp = directory.joinpath(".oven-inputs.sha256")
-    why = staleness(artifacts, stamp, key)?
-    # 2. A stamp vouches only for a complete current build.
-    if why == "":
-        trace(f"unit {library.package} library: reused")
+    if key.refusal != "":
+        return compile_unbaked(library, toolchain, output, key)
+    store = bakery()?
+    identity = unit_identity(key)
+    register_root(store, library.project_root, identity)?
+    label = f"unit {library.package} library"
+    if let Some(fact) = find(store, identity)?:
+        view_directory(fact, directory)?
+        trace(f"{label}: reused")
         return Ok(0)
-    if stamp.is_file():
-        stamp.unlink().map_err((error) => f"{stamp.0}: {error.message()}")?
+    # 2. A concurrent bake of the same identity is waited for, not repeated.
+    held = claim(store, identity)?
+    if let Some(fact) = find(store, identity)?:
+        view_directory(fact, directory)?
+        trace(f"{label}: reused (built meanwhile by another command)")
+        return Ok(0)
+    # 3. A failed compilation publishes nothing.
+    staged = staging(store, identity)?
+    stage_vocabulary(library, staged)?
+    compiled = compile_prepared_unit(
+        library,
+        toolchain,
+        staged.joinpath(output.name()),
+        Some(key),
+        library_reason(store, library),
+    )?
+    if compiled != 0:
+        _ = staged.remove_tree()
+        return Ok(compiled)
+    # 4. Publication can add an indexed Rust ABI cache, and the new manifest decides whether a vocabulary worker
+    #    belongs to the completed set; a partial set is never sealed.
+    for artifact in artifact_files(staged, library.package)?:
+        if not artifact.is_file():
+            _ = staged.remove_tree()
+            return Err(f"compiler did not publish {directory.joinpath(artifact.name()).0}")
+    # 5. Each owned payload carries its producer identity into the fact; a borrowed worker keeps its own.
+    borrowed = [worker.0 for worker in published_workers(library, staged)?]
+    for artifact in artifact_files(staged, library.package)?:
+        if artifact.0 not in borrowed:
+            record_payload(artifact, key.digest, key.provenance)?
+    reaches = reached(store, [loaf.dir for loaf in library.loaves])?
+    fact = seal(store, identity, staged, "library", unit_name(library), reaches, f"incan library {library.profile}")?
+    view_directory(fact, directory)?
+    return Ok(0)
+
+
+def compile_unbaked(library: UnitDescription, toolchain: Toolchain, output: Path, key: Key) -> Result[i32, str]:
+    """Compile a library whose inputs cannot be named portably in place; nothing is baked or reused."""
+    directory = output.parent()
     stage_vocabulary(library, directory)?
-    compiled = compile_prepared_unit(library, toolchain, output, Some(key), why)?
+    compiled = compile_prepared_unit(library, toolchain, output, Some(key), key.refusal)?
     if compiled != 0:
         return Ok(compiled)
-    # 3. Partial publication never receives a stamp. Publication can add an indexed Rust ABI cache, and the new
-    #    manifest decides whether a vocabulary worker belongs to the completed set.
-    completed = artifact_files(directory, library.package)?
-    for artifact in completed:
+    borrowed = [worker.0 for worker in published_workers(library, directory)?]
+    for artifact in artifact_files(directory, library.package)?:
         if not artifact.is_file():
             return Err(f"compiler did not publish {artifact.0}")
-    record(stamp, key, completed, published_workers(library, directory)?)?
+        if artifact.0 not in borrowed:
+            record_payload(artifact, "", key.provenance, key.refusal)?
     return Ok(0)
+
+
+def library_reason(store: Path, library: UnitDescription) -> str:
+    """Why a library is baked: nothing was baked under its name yet, or what was is for other inputs."""
+    match lookup(store, unit_name(library)):
+        Ok(found) =>
+            if found is not None:
+                return "inputs changed"
+        Err(_) => pass
+    return "no stored build"
 
 
 pub def prepare_native(described: UnitDescription, toolchain: Toolchain) -> Result[UnitDescription, str]:

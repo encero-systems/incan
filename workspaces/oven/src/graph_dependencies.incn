@@ -9,6 +9,7 @@ from files import json_text, parse_json, read
 from graph_cache import GraphUnit, cache_file, is_unchecked, tree_inputs
 from graph_incan import inspect_incan, interface_directory
 from graph_queries import nested, text
+from bakery import viewed_fact
 from home import dependency_artifact_dir
 from intake import library_source, read_project
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
@@ -360,7 +361,10 @@ def compiled_directory(
     ]
     if key in built:
         candidates.append(Path(built[key].directory))
-    for directory in candidates:
+    for candidate in candidates:
+        mut directory = candidate
+        if let Some(fact) = viewed_fact(candidate)?:
+            directory = fact
         if directory.joinpath(f"{package}.incnlib").is_file() and directory.joinpath(f"{package}.incngraph").is_file():
             verify_compiled_loaf(directory, package, version, features)?
             return Ok(Some(directory))
