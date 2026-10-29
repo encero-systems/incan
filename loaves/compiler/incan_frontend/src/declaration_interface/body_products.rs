@@ -1,9 +1,8 @@
-//! Accepted parameter-only scalar bodies, retained under the callable interface's existing identities.
+//! Accepted scalar bodies and checked source-module calls under the callable interface's existing identities.
 //!
-//! This first product excludes every nonlocal read: calls, nominal types, defaults and mutable storage refuse body
-//! capture. A scalar prefix may precede ordinary checked callers; imports refuse the namespace. Physical locators
-//! must match too. A broader grammar needs explicit read witnesses and typed
-//! reanchoring before it can enter this store; a semantic digest alone never grants a hit.
+//! Calls retain their complete checked candidate/signature witnesses and exact current header inputs. Imports,
+//! nominal types, defaults, mutable storage and scope-changing bodies refuse capture. Physical locators must match
+//! too; a semantic digest alone never grants a hit.
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -14,8 +13,11 @@ use incan_semantics_core::stable_identity::StableIdentityProjection;
 use incan_semantics_core::{CanonicalStableDeclarationContext, CanonicalSymbolId};
 use serde::{Deserialize, Serialize};
 
+use super::callable_module::{CheckedCallableModule, CheckedCallableRead};
 use super::{CheckedCallableInterface, CheckedDeclarationFingerprints, decode_record, encode_record, invalid};
-use crate::ast::{Declaration, Expr, FunctionDecl, Literal, ParamKind, Program, Span, Spanned, Statement, Type};
+use crate::ast::{
+    CallArg, Declaration, Expr, FunctionDecl, Literal, ParamKind, Program, Span, Spanned, Statement, Type,
+};
 use crate::library_manifest::LibraryManifestError;
 use crate::typechecker::TypeChecker;
 use crate::vocab_ast_bridge::is_synthetic_span;
@@ -26,6 +28,7 @@ use crate::vocab_ast_bridge::is_synthetic_span;
 #[serde(deny_unknown_fields)]
 pub struct CallableBodyProducts {
     namespace: Vec<(Span, String)>,
+    interface: CheckedCallableModule,
     entries: Vec<BodyProduct>,
 }
 
@@ -33,9 +36,30 @@ pub struct CallableBodyProducts {
 /// This witness avoids cloning a checker or building Body IR twice just to populate a cache.
 pub struct CallableBodyInputs {
     namespace: Vec<(Span, String)>,
-    declarations: Vec<(CheckedCallableInterface, Span, String)>,
+    interface: CheckedCallableModule,
+    declarations: Vec<BodyInput>,
     contexts: Vec<(CanonicalSymbolId, CanonicalSymbolId, u32)>,
 }
+
+/// An accepted input and its explicit reads, awaiting the ordinary Body IR producer's completed result.
+struct BodyInput {
+    header: CheckedCallableInterface,
+    span: Span,
+    source: String,
+    reads: Vec<ReadGuard>,
+}
+
+/// One complete positive lookup and the exact source headers that produced its previously accepted signatures.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReadGuard {
+    name: String,
+    checked: CheckedCallableRead,
+    inputs: Vec<(Span, String)>,
+}
+
+/// Before-check header inputs indexed by name; each vector retains every overload in source order.
+type SignatureInputs = BTreeMap<String, Vec<(Span, String)>>;
 
 /// The complete ordinary Body and its accepted input, bound to the existing callable contract and meaning digest.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +68,7 @@ struct BodyProduct {
     header: CheckedCallableInterface,
     fingerprints: CheckedDeclarationFingerprints,
     source: String,
+    reads: Vec<ReadGuard>,
     contexts: Vec<(CanonicalSymbolId, CanonicalSymbolId, u32)>,
     body: Body,
 }
@@ -59,10 +84,18 @@ pub struct ValidatedCallableBodies {
 }
 
 impl CallableBodyProducts {
-    /// Borrow the existing invocation-local frame identities with a proven empty nonlocal read set. These remain
-    /// physical locators; the retained callable interface owns their edit-stable identity and fingerprints.
-    pub fn body_ids(&self) -> impl Iterator<Item = &incan_semantics_core::CompilerNodeId> {
-        self.entries.iter().map(|entry| &entry.body.direct_call_id)
+    /// Bind native frames to their accepted own fingerprints and complete consumed-signature witnesses. The native
+    /// owner additionally keys the full checked Body, profile and physical provenance before restoring a function.
+    pub fn native_inputs(&self) -> Result<Vec<(incan_semantics_core::CompilerNodeId, String)>, LibraryManifestError> {
+        self.entries
+            .iter()
+            .map(|entry| {
+                let reads = entry.reads.iter().map(|read| &read.checked).collect::<Vec<_>>();
+                let witness = serde_json::to_string(&(&entry.fingerprints, reads))
+                    .map_err(|error| invalid(&error.to_string()))?;
+                Ok((entry.body.direct_call_id.clone(), witness))
+            })
+            .collect()
     }
 
     /// Capture bodies only after successful checking and Body IR construction. Warnings and unsupported grammar
@@ -88,6 +121,8 @@ impl CallableBodyProducts {
         // ---- Admission: retain the complete current namespace and source provenance ----
         self.validate()?;
         admitted_functions(program)?;
+        let headers = signature_inputs(program, source)?;
+        let names = headers.keys().cloned().collect::<BTreeSet<_>>();
         if namespace(program) != self.namespace {
             return Ok(ValidatedCallableBodies {
                 program: program.clone(),
@@ -101,7 +136,7 @@ impl CallableBodyProducts {
             module_path: module.to_vec(),
         };
 
-        // ---- Selection: admit only exact untouched scalar bodies before an ordinary caller ----
+        // ---- Selection: admit exact untouched scalar bodies and every consumed source header ----
         let mut bodies = BTreeMap::new();
         let mut contexts = Vec::new();
         for (declaration, entry) in program
@@ -113,11 +148,15 @@ impl CallableBodyProducts {
             let Declaration::Function(function) = &declaration.node else {
                 break;
             };
-            if !admitted_function(function) {
+            let Some(reads) = admitted_reads(function, &names) else {
                 break;
-            }
+            };
             let input = source_slice(source, declaration.span)?;
-            if entry.header.identity().origin == owner && entry.body.span == declaration.span && entry.source == input {
+            if entry.header.identity().origin == owner
+                && entry.body.span == declaration.span
+                && entry.source == input
+                && matching_reads(&entry.reads, &reads, &headers)
+            {
                 bodies.insert(declaration.span, entry.body.clone());
                 contexts.extend(entry.contexts.iter().cloned());
             }
@@ -148,6 +187,7 @@ impl CallableBodyProducts {
 
     /// Require unique locators and the exact interface/body meaning originally accepted by the producer.
     fn validate(&self) -> Result<(), LibraryManifestError> {
+        let reads = self.interface.read_inventory()?;
         if self.entries.len() > self.namespace.len()
             || self
                 .entries
@@ -165,6 +205,10 @@ impl CallableBodyProducts {
             let mut body = entry.body.clone();
             if !identities.insert(entry.header.identity())
                 || !locators.insert(body.span)
+                || entry
+                    .reads
+                    .iter()
+                    .any(|read| reads.get(&read.name) != Some(&read.checked))
                 || entry.fingerprints != entry.header.fingerprints(&mut body, &entry.projection())?
             {
                 return Err(invalid("callable product lost its accepted identity or meaning"));
@@ -175,14 +219,18 @@ impl CallableBodyProducts {
 }
 
 impl CallableBodyInputs {
-    /// Capture accepted headers and lexical ownership before consuming a successful checker. Nonlocal reads and
-    /// diagnostics refuse capture; their missing evidence can never be interpreted as an empty dependency set.
+    /// Capture accepted headers and lexical ownership before consuming a successful checker. Unwitnessed reads and
+    /// diagnostics refuse capture; missing evidence can never be interpreted as an empty dependency set.
     pub fn from_checked(program: &Program, source: &str, checker: &TypeChecker) -> Result<Self, LibraryManifestError> {
         // ---- Admission: preserve ordinary diagnostics and the source-only namespace ----
         admitted_functions(program)?;
         if !checker.errors.is_empty() || !checker.warnings().is_empty() {
             return Err(invalid("callable products require accepted bodies without diagnostics"));
         }
+        let interface = CheckedCallableModule::from_checked(program, checker)?;
+        let checked_reads = interface.read_inventory()?;
+        let headers = signature_inputs(program, source)?;
+        let names = headers.keys().cloned().collect::<BTreeSet<_>>();
 
         // ---- Headers: stop before a body whose scope or nonlocal reads need a larger product ----
         let mut declarations = Vec::new();
@@ -193,14 +241,15 @@ impl CallableBodyInputs {
             let Declaration::Function(function) = &declaration.node else {
                 return Err(invalid("callable products require source-only free functions"));
             };
-            if !admitted_function(function) {
+            let Some(reads) = admitted_reads(function, &names) else {
                 break;
-            }
-            declarations.push((
-                CheckedCallableInterface::from_checked(function, declaration.span, checker)?,
-                declaration.span,
-                source_slice(source, declaration.span)?.to_owned(),
-            ));
+            };
+            declarations.push(BodyInput {
+                header: CheckedCallableInterface::from_checked(function, declaration.span, checker)?,
+                span: declaration.span,
+                source: source_slice(source, declaration.span)?.to_owned(),
+                reads: capture_reads(reads, &checked_reads, &headers)?,
+            });
         }
 
         // ---- Lexical evidence: retain the checker's owner and collision-local ordinal ----
@@ -223,6 +272,7 @@ impl CallableBodyInputs {
         }
         Ok(Self {
             namespace: namespace(program),
+            interface,
             declarations,
             contexts,
         })
@@ -252,7 +302,13 @@ impl CallableBodyInputs {
 
         // ---- Products: pair accepted headers with their complete ordinary bodies ----
         let mut entries = Vec::new();
-        for (header, span, source) in self.declarations {
+        for BodyInput {
+            header,
+            span,
+            source,
+            reads,
+        } in self.declarations
+        {
             let mut body = bodies
                 .get(&span)
                 .copied()
@@ -264,12 +320,13 @@ impl CallableBodyInputs {
                 .as_ref()
                 .and_then(|owner| owners.remove(owner))
                 .unwrap_or_default();
-            let projection = body_projection(&header, &body, &contexts);
+            let projection = body_projection(&header, &body, &contexts, &reads);
             let fingerprints = header.fingerprints(&mut body, &projection)?;
             entries.push(BodyProduct {
                 header,
                 fingerprints,
                 source,
+                reads,
                 contexts,
                 body,
             });
@@ -278,6 +335,7 @@ impl CallableBodyInputs {
         // ---- Publication: validate identity and meaning before exposing a product set ----
         let products = CallableBodyProducts {
             namespace: self.namespace,
+            interface: self.interface,
             entries,
         };
         products.validate()?;
@@ -288,7 +346,7 @@ impl CallableBodyInputs {
 impl BodyProduct {
     /// Recover the producer's checked lexical correspondence; physical scope indices never become semantic keys.
     fn projection(&self) -> StableIdentityProjection {
-        body_projection(&self.header, &self.body, &self.contexts)
+        body_projection(&self.header, &self.body, &self.contexts, &self.reads)
     }
 }
 
@@ -297,6 +355,7 @@ fn body_projection(
     header: &CheckedCallableInterface,
     body: &Body,
     contexts: &[(CanonicalSymbolId, CanonicalSymbolId, u32)],
+    reads: &[ReadGuard],
 ) -> StableIdentityProjection {
     let mut projection = StableIdentityProjection::default();
     for (identity, owner, ordinal) in contexts {
@@ -310,6 +369,9 @@ fn body_projection(
     }
     if let (Some(canonical), Some(signature)) = (&body.canonical, &header.identity().signature) {
         projection.signatures.insert(canonical.clone(), signature.clone());
+    }
+    for read in reads {
+        projection.signatures.extend(read.checked.signatures.iter().cloned());
     }
     projection
 }
@@ -362,19 +424,27 @@ fn admitted_functions(program: &Program) -> Result<(), LibraryManifestError> {
         };
         if !scalar_signature(function) {
             return Err(invalid(
-                "callable products refuse nonlocal reads and nonscalar body effects",
+                "callable products require undecorated immutable scalar signatures",
             ));
         }
     }
     Ok(())
 }
 
-/// Keep the first acceptance boundary explicit: no bounds, defaults, mutable storage, callbacks or owner types.
-fn admitted_function(function: &FunctionDecl) -> bool {
-    scalar_signature(function)
-        && matches!(function.body.as_slice(), [statement]
-            if !is_synthetic_span(statement.span)
-                && matches!(&statement.node, Statement::Return(Some(value)) if parameter_expression(value, function)))
+/// Enumerate every nonlocal read of one scalar expression. Unsupported scope creation still ends the reusable
+/// prefix, so skipped functions preserve the ordinary checker's physical function-scope numbering.
+fn admitted_reads(function: &FunctionDecl, names: &BTreeSet<String>) -> Option<BTreeSet<String>> {
+    let [statement] = function.body.as_slice() else {
+        return None;
+    };
+    if !scalar_signature(function) || is_synthetic_span(statement.span) {
+        return None;
+    }
+    let Statement::Return(Some(value)) = &statement.node else {
+        return None;
+    };
+    let mut reads = BTreeSet::new();
+    parameter_expression(value, function, names, &mut reads).then_some(reads)
 }
 
 /// Keep declaration collection independent of body reuse. A scalar prefix may precede an ordinary checked caller;
@@ -421,17 +491,97 @@ fn scalar_type(ty: &Type) -> bool {
 }
 
 /// Enumerate the admitted expression grammar instead of assuming that an absent call edge proves no dependency.
-fn parameter_expression(expression: &Spanned<Expr>, function: &FunctionDecl) -> bool {
+fn parameter_expression(
+    expression: &Spanned<Expr>,
+    function: &FunctionDecl,
+    names: &BTreeSet<String>,
+    reads: &mut BTreeSet<String>,
+) -> bool {
     if is_synthetic_span(expression.span) {
         return false;
     }
     match &expression.node {
         Expr::Ident(name) => function.params.iter().any(|parameter| parameter.node.name == *name),
         Expr::Literal(Literal::Int(_) | Literal::Float(_) | Literal::Bool(_)) => true,
-        Expr::Binary(left, _, right) => parameter_expression(left, function) && parameter_expression(right, function),
-        Expr::Unary(_, operand) | Expr::Paren(operand) => parameter_expression(operand, function),
+        Expr::Binary(left, _, right) => {
+            parameter_expression(left, function, names, reads) && parameter_expression(right, function, names, reads)
+        }
+        Expr::Unary(_, operand) | Expr::Paren(operand) => parameter_expression(operand, function, names, reads),
+        Expr::Call(callee, arguments, values) if arguments.is_empty() && !is_synthetic_span(callee.span) => {
+            let Expr::Ident(name) = &callee.node else {
+                return false;
+            };
+            if !names.contains(name) || function.params.iter().any(|parameter| parameter.node.name == *name) {
+                return false;
+            }
+            if !values.iter().all(|value| {
+                matches!(value, CallArg::Positional(value)
+                if parameter_expression(value, function, names, reads))
+            }) {
+                return false;
+            }
+            reads.insert(name.clone());
+            true
+        }
         _ => false,
     }
+}
+
+/// Retain exact signature inputs before any body check. Primitive-only annotations, the complete namespace and
+/// unchanged compiler/dependency context make these the same inputs previously accepted by the producer.
+fn signature_inputs(program: &Program, source: &str) -> Result<SignatureInputs, LibraryManifestError> {
+    let mut headers: SignatureInputs = BTreeMap::new();
+    for declaration in &program.declarations {
+        let Declaration::Function(function) = &declaration.node else {
+            continue;
+        };
+        let body = function
+            .body
+            .first()
+            .ok_or_else(|| invalid("callable signature has no source body locator"))?;
+        let span = Span {
+            end: body.span.start,
+            ..declaration.span
+        };
+        let text = source_slice(source, span)?.to_owned();
+        headers
+            .entry(function.name.clone())
+            .or_default()
+            .push((declaration.span, text));
+    }
+    Ok(headers)
+}
+
+/// Attach only producer-owned candidate/signature witnesses and their exact source-header inputs.
+fn capture_reads(
+    names: BTreeSet<String>,
+    checked: &BTreeMap<String, CheckedCallableRead>,
+    headers: &SignatureInputs,
+) -> Result<Vec<ReadGuard>, LibraryManifestError> {
+    names
+        .into_iter()
+        .map(|name| {
+            let read = checked
+                .get(&name)
+                .ok_or_else(|| invalid("source call has no checked candidate inventory"))?;
+            let inputs = headers
+                .get(&name)
+                .ok_or_else(|| invalid("source call has no complete header input inventory"))?;
+            Ok(ReadGuard {
+                name,
+                checked: read.clone(),
+                inputs: inputs.clone(),
+            })
+        })
+        .collect()
+}
+
+/// Require every current positive read and complete candidate header, including overloads. A missing witness,
+/// changed signature or duplicate/incomplete read set is a miss before the checker can skip a body.
+fn matching_reads(reads: &[ReadGuard], names: &BTreeSet<String>, headers: &SignatureInputs) -> bool {
+    reads.len() == names.len()
+        && reads.iter().map(|read| &read.name).eq(names.iter())
+        && reads.iter().all(|read| headers.get(&read.name) == Some(&read.inputs))
 }
 
 /// Read source through checked UTF-8 boundaries, refusing malformed or stale locators rather than indexing blindly.
