@@ -123,10 +123,10 @@ targets: list[Type[int]] = [int]
 The same API family should also support generic spelling when the library declares how `T` maps to its result type. A typed cast API should not need helper families or broad unions just because the caller prefers explicit call-site generics. The library declares one overload body per admitted `T`, keyed on the type parameter itself rather than on a value-position argument, and the compiler selects among them the same way it already selects trait implementations by type argument:
 
 ```incan
-def cast[T: int](expr: ColumnExpr) -> IntColumnExpr:
+def cast[T with Int](expr: ColumnExpr) -> IntColumnExpr:
     return IntColumnExpr(source=expr.name)
 
-def cast[T: float](expr: ColumnExpr) -> FloatColumnExpr:
+def cast[T with Float](expr: ColumnExpr) -> FloatColumnExpr:
     return FloatColumnExpr(source=expr.name)
 
 amount = cast[int](col("amount"))
