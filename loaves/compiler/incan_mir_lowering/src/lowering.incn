@@ -40,7 +40,6 @@ from program_context import ProgramContext
 from native_type_identity import ConstructorIndex, constructor_index_with_packages as index_constructors
 from rust::std::collections import BTreeMap
 from rust::std::sync import Arc
-from rust::std::collections import BTreeSet
 from nominal_instances import NominalInstance, specialize_nominals_with_instances
 from checked_json import lower_checked_deserialize
 from string_conversion import lower_string_conversions
@@ -183,14 +182,14 @@ pub def unit_plan(
     package_versions: BTreeMap[str, str],
     overflow_checks: bool = true,
     scalar_products: Option[str] = None,
-    scalar_bodies: list[CompilerNodeId] = [],
+    scalar_bodies: list[tuple[CompilerNodeId, str]] = [],
 ) -> Result[UnitPlanning, str]:
     """Lower one checked unit by kind; test entries come from session collection, never from naming heuristics here."""
     if kind != "program" and kind != "library" and kind != "test":
         return Err(f"unsupported unit kind {kind}")
-    mut scalar_index: BTreeSet[CompilerNodeId] = BTreeSet.new()
-    for identity in scalar_bodies:
-        _ = scalar_index.insert(identity)
+    mut scalar_index: BTreeMap[CompilerNodeId, str] = BTreeMap.new()
+    for identity, inputs in scalar_bodies:
+        _ = scalar_index.insert(identity, inputs)
     return lowered_plan(
         modules,
         sources,
@@ -245,7 +244,7 @@ def lowered_plan(
     overflow_checks: bool,
     package_versions: BTreeMap[str, str],
     scalar_products: Option[str],
-    scalar_bodies: BTreeSet[CompilerNodeId],
+    scalar_bodies: BTreeMap[CompilerNodeId, str],
 ) -> Result[UnitPlanning, str]:
     """Lower a checked unit once, preserving ordinary frames when exact runtime declarations need resolution."""
     trace_key: str = "INCAN_TRACE_LOWERING"
@@ -975,7 +974,7 @@ def lower_plan_frames(
     trace: bool,
 ) -> Result[BodyPlanning, str]:
     """Lower ordinary frames, then retain request layouts and the nominal length for source restoration."""
-    empty_scalar_bodies: BTreeSet[CompilerNodeId] = BTreeSet.new()
+    empty_scalar_bodies: BTreeMap[CompilerNodeId, str] = BTreeMap.new()
     lower_ordinary_bodies(
         context,
         program,
