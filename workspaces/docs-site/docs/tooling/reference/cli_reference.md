@@ -14,6 +14,7 @@ incan describe-unit PATH [UNIT OPTIONS]
 incan build PATH [--substitute NAME=DIR]... [--program-entry PATH]... [UNIT OPTIONS]
 incan fmt [--check] PATH...
 incan owner stop
+incan bakery gc [--keep-days N]
 incan inspect codegraph PATH [GRAPH OPTIONS]
 incan mcp PATH
 incan toolchain pack OUT
@@ -92,6 +93,11 @@ Formats one or more files or directory trees. `--check` leaves files unchanged a
 ## `incan owner stop`
 
 Stops resident project owners belonging to the selected Incan home. `OVEN_OWNER=off` disables owner use for run, build and test. Executables may still be reused with owners disabled. Tests execute afresh even when their executable is reused.
+
+## `incan bakery gc`
+
+Removes every fact of the selected Incan home's bakery (`<home>/bakery/`) that no root reaches. Each build registers the identities it uses as roots of its project; a fact is kept when a root reaches it directly or through the facts it records. `--keep-days N` first drops roots not used within the last `N` days; `--keep-days 0` drops every root. `INCAN_BAKERY` names another directory for the bakery, such as a cache volume. Staging directories whose baker no longer holds the claim are removed. Collection never runs automatically. It prints the number of facts kept and removed, roots dropped and staging directories cleared, then exits `0`.
+
 
 ## `incan inspect codegraph`
 
