@@ -1,6 +1,6 @@
 # RFC 160: Vocabulary in Incan and native desugarers
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-24
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -15,7 +15,7 @@
     - RFC 125 (`incan.pub` Loaf registry and baked asset distribution)
     - RFC 161 (the semantic core, SCIR)
     - RFC 162 (source surfaces: vocabularies, dialects and frontends)
-- **Issue:** —
+- **Issue:** [#2473](https://github.com/encero-systems/incan/issues/2473)
 - **RFC PR:** —
 - **Written against:** v0.6 (in development)
 - **Shipped in:** —

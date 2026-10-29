@@ -1,6 +1,6 @@
 # RFC 131: First-class error declarations
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-10-08
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -25,7 +25,7 @@
     - RFC 132 (frozen classes for immutable generated error records)
     - RFC 137 (named ordinary enum payloads)
     - RFC 146 (typed JSON decoding and complete validation)
-- **Issue:** —
+- **Issue:** [#2472](https://github.com/encero-systems/incan/issues/2472)
 - **RFC PR:** —
 - **Written against:** v0.6
 - **Shipped in:** —
