@@ -4,6 +4,7 @@ from std.fs import Path
 from compare import compare
 from header import Header
 from run import invoke, trace_file
+from workers import Invocation, invoke_many
 
 
 pub def compare_cli(incan: str, project: Path, header: Header) -> Result[list[str], str]:
@@ -13,11 +14,14 @@ pub def compare_cli(incan: str, project: Path, header: Header) -> Result[list[st
     1. Run each whitespace-separated command in the fixture project with the case's declared settings.
     2. Compare each command's streams and status independently.
     3. Require each declared trace substring in the Oven trace that command added.
+    4. Launch the `cli-concurrent:` commands together, comparing each the same way.
+    5. Require each `expect-trace-at-most-once:` substring at most once in everything the case traced.
     """
     mut failures: list[str] = []
+    start = trace_text(project)
     for command in header.items("cli-commands"):
         # 1. Each command runs afresh with its own streams and status.
-        arguments = [item for item in command.split(" ") if item != ""]
+        arguments = words(command)
         before = trace_text(project)
         outcome = invoke(incan, arguments, project, header.items("environment"))?
         # 2. A successful sibling cannot hide another command's failure.
@@ -28,7 +32,46 @@ pub def compare_cli(incan: str, project: Path, header: Header) -> Result[list[st
         for expected in header.items("expect-trace-contains"):
             if expected not in added:
                 failures.append(f"incan {command}: Oven's trace does not contain `{expected}`")
+    # 4. Concurrent commands start at once, each in its own process.
+    failures = failures + concurrent(incan, project, header)?
+    # 5. Work that must happen once across every command, concurrent ones included.
+    traced = trace_text(project)[len(start):]
+    for expected in header.items("expect-trace-at-most-once"):
+        count = len(traced.split(expected)) - 1
+        if count > 1:
+            failures.append(f"Oven's trace contains `{expected}` {count} times, not at most once")
     return Ok(failures)
+
+
+def concurrent(incan: str, project: Path, header: Header) -> Result[list[str], str]:
+    """Run every `cli-concurrent:` command at the same time and compare each outcome."""
+    commands = header.items("cli-concurrent")
+    if len(commands) == 0:
+        return Ok([])
+    mut requests: list[Invocation] = []
+    for index in range(len(commands)):
+        requests.append(
+            Invocation(
+                program=incan,
+                arguments=words(commands[index]),
+                project=project,
+                selector=None,
+                environment=header.items("environment"),
+                capture=f"-concurrent-{index}",
+            ),
+        )
+    outcomes = invoke_many(requests, len(requests))
+    mut failures: list[str] = []
+    for index in range(len(commands)):
+        outcome = outcomes[index]?
+        for failure in compare("cli", header, outcome):
+            failures.append(f"incan {commands[index]} (concurrent): {failure}")
+    return Ok(failures)
+
+
+def words(command: str) -> list[str]:
+    """A command line's whitespace-separated arguments."""
+    return [item for item in command.split(" ") if item != ""]
 
 
 def trace_text(project: Path) -> str:
