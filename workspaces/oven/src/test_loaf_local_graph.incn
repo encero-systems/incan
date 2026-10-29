@@ -87,6 +87,21 @@ def registry_closure_controls() -> Result[None, str]:
     assert pinned.bindings[serde.key()] == "serde-a"
     assert pinned.bindings[json_request.key()] == "json-a"
     assert pinned.select([serde], "debug")?.bindings[serde.key()] == "serde-a"
+    mut debug_serde = registry_fixture("serde", "serde-debug", ["core-a"], ["derive", "alloc"])
+    debug_serde.profile = "debug"
+    profiled = RegistryUnits(
+        units=registry.units + [debug_serde],
+        search=[],
+        recorded_bindings=[("target", "serde-a"), ("target", "serde-debug")],
+    )
+    assert profiled.select([serde], "release")?.bindings[serde.key()] == "serde-a"
+    assert profiled.select([serde], "debug")?.bindings[serde.key()] == "serde-debug"
+    unrecorded_profiles = RegistryUnits(units=[serde_a, debug_serde, core_a], search=[])
+    assert unrecorded_profiles.select([serde], "release")?.bindings[serde.key()] == "serde-a"
+    assert unrecorded_profiles.select([serde], "debug")?.bindings[serde.key()] == "serde-debug"
+    mut anchored_profiles = profiled
+    anchored_profiles.anchors = [("target", "serde-a")]
+    assert anchored_profiles.select([serde], "debug")?.bindings[serde.key()] == "serde-a"
     host_serde = RegistryDemand(selection=serde.selection, domain="host")
     domains = RegistryUnits(
         units=registry.units,
@@ -107,6 +122,16 @@ def registry_closure_controls() -> Result[None, str]:
         Ok(_) => fail("an incompatible recorded producer fell back to another catalog entry")
         Err(reason) =>
             assert "recorded registry closure does not satisfy" in reason
+    installation = RegistryUnits(
+        units=registry.units,
+        search=[],
+        installation_bindings=[("target", "serde-b")],
+    )
+    assert installation.select([alloc], "release")?.bindings[alloc.key()] == "serde-a"
+    assert installation.select([serde], "release")?.bindings[serde.key()] == "serde-b"
+    mut published = installation
+    published.anchors = [("target", "core-a")]
+    assert published.select([serde], "release")?.bindings[serde.key()] == "serde-a"
     unavailable_requests: list[Tuple[str, list[str]]] = [("999", []), ("1", ["not_a_feature"])]
     for requirement, features in unavailable_requests:
         unavailable = RegistryDemand(

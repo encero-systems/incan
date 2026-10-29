@@ -665,6 +665,7 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
         toolchain=Some(toolchain),
         manifests=ManifestReader(),
         native_compiler="pinned native compiler",
+        portable_compiler="pinned compiler content",
         installed=native_artifacts(toolchain.externs),
     )
     built = {"native-core@target": BuiltUnit(crate_name="core", artifact=setup.dependency.0, directory=scratch.0)}
@@ -693,8 +694,10 @@ def verify_installed_rust_producer(scratch: Path) -> Result[None, str]:
     require_installed_refusal(facet, declared, output, request, built, "features")?
     facet.features = []
     request.native_compiler = "different pinned native compiler"
+    request.portable_compiler = "different compiler content"
     require_installed_refusal(facet, declared, output, request, built, "compiler")?
     request.native_compiler = "pinned native compiler"
+    request.portable_compiler = "pinned compiler content"
     write(included, "changed included value")?
     require_installed_refusal(facet, declared, output, request, built, "sources")?
     write(included, "one included value")?
@@ -750,6 +753,8 @@ def verify_relocated_rust_producer(
     moved = directory.joinpath(artifact.name())
     mut moved_request = request
     moved_request.installed["data"] = [moved.0]
+    # Another machine installs the same compiler elsewhere: its location and filesystem identity differ, not its content.
+    moved_request.native_compiler = "the same compiler installed elsewhere"
     # 3. Filesystem relocation must not authorize changed content or another native compilation.
     proof = directory.joinpath("library.portable-inputs")
     saved = read(proof)?
@@ -760,6 +765,12 @@ def verify_relocated_rust_producer(
     assert retained.reused and retained.artifact == moved.0
     assert read(moved)? == "one installed library"
     assert not output.is_dir()
+    # A compiler with other content refuses, though the relocated proof covers every other input.
+    moved_request.native_compiler = "another compiler installed elsewhere"
+    moved_request.portable_compiler = "other compiler content"
+    require_installed_refusal(facet, declared, output, moved_request, relocated, "compiler")?
+    moved_request.native_compiler = "the same compiler installed elsewhere"
+    moved_request.portable_compiler = request.portable_compiler
     write(moved, "replaced relocated library")?
     require_installed_refusal(facet, declared, output, moved_request, relocated, "replaced")?
     write(moved, "one installed library")?

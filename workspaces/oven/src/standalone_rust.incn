@@ -8,7 +8,7 @@ from home import standard_packages
 from json_fields import array, field, required_text, strings
 from loaf_local_graph import unique
 from rust_units import RegistrySelection, decoded, read_registry_units
-from registry_units import RegistryDemand
+from registry_units import RegistryDemand, RegistryUnits
 from registry_metadata import bound_entries
 from native_closure_input import native_bindings
 from toml_fields import optional_string, optional_strings, read_manifest
@@ -33,13 +33,12 @@ pub def standalone_crates(described: UnitDescription, toolchain: Toolchain) -> R
     if len(selections) == 0:
         return Ok([])
     # 3. The ordinary registry resolver selects exact artifacts and refuses missing or ambiguous units.
-    mut available = read_registry_units(Path(toolchain.registry_units), described.project_root, described.manifests)?
-    for entry in bound_entries(
-        available.units,
-        published_bindings(described, toolchain, [name for name in selections.keys()])?,
-    )?:
-        if ("target", entry) not in available.anchors:
-            available.anchors.append(("target", entry))
+    available = bind_published(
+        read_registry_units(Path(toolchain.registry_units), described.project_root, described.manifests)?,
+        described,
+        toolchain,
+        [name for name in selections.keys()],
+    )?
     registry = available.select(
         [RegistryDemand(selection=selections[name], domain="target") for name in sorted(
             [name for name in selections.keys()],
@@ -53,10 +52,40 @@ pub def standalone_crates(described: UnitDescription, toolchain: Toolchain) -> R
     return Ok(externs)
 
 
-pub def published_bindings(unit: UnitDescription, toolchain: Toolchain, roots: list[str]) -> Result[list[str], str]:
-    """Pin only requested native roots offered by available Loaves, matching the driver's required-root boundary."""
+pub def bind_published(
+    registry: RegistryUnits,
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    roots: list[str],
+) -> Result[RegistryUnits, str]:
+    """
+    Bind requested roots to what the unit's Loaves publish: authored Loaves pin them, standard Loaves prefer them.
+
+    Standard Loaves are ambient availability, so a unit links only those it reaches. Their bindings break ties between
+    coherent producers without overriding an authored feature request; the compiler enforces the bindings of the
+    standard Loaves a checked program actually reaches.
+    """
+    mut bound = registry
+    for entry in bound_entries(bound.units, published_bindings(unit, toolchain, roots)?)?:
+        if ("target", entry) not in bound.anchors:
+            bound.anchors.append(("target", entry))
+    for entry in bound_entries(bound.units, published_bindings(unit, toolchain, roots, true)?)?:
+        if ("target", entry) not in bound.installation_bindings:
+            bound.installation_bindings.append(("target", entry))
+    return Ok(bound)
+
+
+pub def published_bindings(
+    unit: UnitDescription,
+    toolchain: Toolchain,
+    roots: list[str],
+    standard: bool = false,
+) -> Result[list[str], str]:
+    """The requested native roots as the unit's authored Loaves publish them, or its standard Loaves with `standard`."""
     mut paths: list[str] = []
     for loaf in unit.loaves:
+        if loaf.standard != standard:
+            continue
         closure = Path(loaf.dir).joinpath(f"{loaf.name}.native.json")
         if not closure.is_file():
             continue

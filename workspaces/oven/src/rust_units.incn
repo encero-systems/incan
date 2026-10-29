@@ -129,7 +129,7 @@ pub def read_registry_units(
         units=completed,
         search=search,
         anchors=[],
-        recorded_bindings=recorded_registry_bindings(completed, path)?,
+        installation_bindings=recorded_registry_bindings(completed, path)?,
     )
     return project_registry(registry, project, reader)
 
@@ -141,6 +141,7 @@ def project_registry(registry: RegistryUnits, project: str, reader: ManifestRead
         return Ok(registry)
     mut selected = registry
     selected.recorded_bindings = registry_record(registry.units, Path(path))?
+    selected.installation_bindings = []
     return Ok(selected)
 
 
@@ -158,7 +159,7 @@ pub def registry_record_path(project: str, reader: ManifestReader) -> Result[str
 
 
 def recorded_registry_bindings(units: list[RegistryUnit], source: Path) -> Result[list[Tuple[str, str]], str]:
-    """Read only the selected installation's explicit producer record, validating every named catalog identity."""
+    """Read the installation's default producer choices, validating identities without creating a project lock."""
     toolchain = load_toolchain()?
     if toolchain.registry_lock == "":
         return Ok([])
@@ -368,13 +369,35 @@ def declares_any(table: TomlValue, key: str) -> Result[bool, str]:
 
 
 pub def identity(facet: LocalFacet, profile: str) -> str:
-    """A unit's identity: its project, domain, features and profile."""
-    text = f"{facet.project}\n{facet.domain.value()}\n{",".join(sorted(facet.features))}\n{profile}"
+    """
+    A unit's identity: its Loaf's name and version, domain, features and profile.
+
+    The checkout a Loaf lives in is not part of it, so an installed unit matches the same source anywhere. A facet
+    without a declared name keeps its project path.
+    """
+    mut owner = facet.project
+    if facet.package != "":
+        owner = f"{facet.package}\n{facet.version}"
+    text = f"{owner}\n{facet.domain.value()}\n{",".join(sorted(facet.features))}\n{profile}"
     return hexlify(sha256.digest(text.encode("utf-8")))[0:16]
+
+
+def refuse_shared_identities(facets: list[LocalFacet]) -> Result[None, str]:
+    """Two local Loaves declaring one name and version would compile to one unit; refuse instead of colliding."""
+    mut owners: Dict[str, str] = {}
+    for facet in facets:
+        if facet.package == "":
+            continue
+        named = f"{facet.package} {facet.version} ({facet.domain.value()})"
+        if named in owners and owners[named] != facet.project:
+            return Err(f"two local Loaves both declare {named}: {owners[named]} and {facet.project}")
+        owners[named] = facet.project
+    return Ok(None)
 
 
 pub def ordered(facets: list[LocalFacet]) -> Result[list[LocalFacet], str]:
     """The facets in an order where every unit follows the local units it links."""
+    refuse_shared_identities(facets)?
     mut done: list[str] = []
     mut result: list[LocalFacet] = []
     while len(result) < len(facets):
@@ -421,6 +444,8 @@ pub model RustBuild:
     pub manifests: ManifestReader = ManifestReader()
     # Native Rust artifacts depend on the actual rustc, independently of installed Incan providers.
     pub native_compiler: str = ""
+    # The same rustc by content alone, which a relocated producer's proof is checked against on any machine.
+    pub portable_compiler: str = ""
     # One name index retains ambiguity in the selected installed artifact generation.
     pub installed: Dict[str, list[str]] = {}
     # Rust implementations consume native facets; Incan consumers require complete public Loaf facades.
@@ -437,7 +462,7 @@ pub def prepared_build(request: RustBuild) -> Result[RustBuild, str]:
     Select the installed compiler once, then retain its fingerprint for every facet in this build.
 
     1. Preserve a caller's loaded toolchain, or load it once.
-    2. Derive Incan-generation and actual Rust-compiler fingerprints once.
+    2. Derive the Incan-generation fingerprint and the actual Rust compiler's native and portable identities once.
     """
     # 1. The selected generation is shared by native facets and Incan providers.
     selected = selected_toolchain(request)?
@@ -447,8 +472,10 @@ pub def prepared_build(request: RustBuild) -> Result[RustBuild, str]:
     if prepared.compiler == "":
         prepared.compiler = compiler_fingerprint(selected)?
     prepared.installed = native_artifacts(selected.externs)
-    if prepared.native_compiler == "":
-        prepared.native_compiler = native_compiler_fingerprint(prepared.rustc, prepared.project)?
+    if prepared.native_compiler == "" or prepared.portable_compiler == "":
+        rustc = compiler_identity(prepared.rustc, prepared.project)?
+        prepared.native_compiler = rustc.native
+        prepared.portable_compiler = rustc.portable
     return Ok(prepared)
 
 
@@ -462,20 +489,44 @@ pub def native_artifacts(externs: list[NativeCrate]) -> Dict[str, list[str]]:
     return artifacts
 
 
-def native_compiler_fingerprint(rustc: str, project: str) -> Result[str, str]:
-    """Identify the actual pinned compiler and SDK, resolving an installation's sysroot alias before observing them."""
+pub model CompilerIdentity:
+    """The pinned rustc as this machine installs it, and as its content identifies it on any machine."""
+
+    # Location, filesystem identity, SDK and content: a moved or replaced compiler is noticed without reading its bytes.
+    pub native: str
+    # Content only, so another machine's copy of the same compiler proves a relocated producer.
+    pub portable: str
+
+
+def compiler_identity(rustc: str, project: str) -> Result[CompilerIdentity, str]:
+    """
+    Identify the actual pinned compiler where it is installed, and by its content alone.
+
+    1. Resolve an installation's sysroot alias, then read the compiler's version output, driver library digest and
+       effective deployment target.
+    2. The native identity adds the compiler's location, its filesystem identity and the selected SDK.
+    3. The portable identity keeps the content only. A Rust library or proc-macro producer links no SDK, so another
+       machine's SDK does not change what it compiled.
+    """
+    # 1. These are the same on every machine that installs this compiler.
     compiler = Path(rustc).resolve().map_err((error) => error.message())?
     libraries = toolchain_libraries(compiler.0, project)?
-    return fingerprint(
-        [
-            compiler.0,
-            artifact_identity(compiler)?,
-            libraries.environment["INCAN_DRIVER_RUSTC_IDENTITY"],
-            libraries.environment["INCAN_DRIVER_LIBRARY_DIGEST"],
-            sdk_identity(compiler.parent().parent().0)?,
-            native_deployment_target(compiler.0, libraries.environment["INCAN_DRIVER_RUSTC_IDENTITY"])?,
-        ],
-    )
+    version = libraries.environment["INCAN_DRIVER_RUSTC_IDENTITY"]
+    library = libraries.environment["INCAN_DRIVER_LIBRARY_DIGEST"]
+    target = native_deployment_target(compiler.0, version)?
+    # 2. A local check that never reads the compiler's bytes.
+    sdk = sdk_identity(compiler.parent().parent().0)?
+    native = fingerprint([compiler.0, artifact_identity(compiler)?, version, library, sdk, target])?
+    # 3. A check that holds after the toolchain is installed somewhere else.
+    portable = fingerprint(["incan.oven.portable-compiler/1", version, library, target])?
+    return Ok(CompilerIdentity(native=native, portable=portable))
+
+
+def portable_compiler(request: RustBuild) -> Result[str, str]:
+    """The prepared build's portable compiler identity; a direct one-facet caller derives it here."""
+    if request.portable_compiler != "":
+        return Ok(request.portable_compiler)
+    return Ok(compiler_identity(request.rustc, request.project)?.portable)
 
 
 def native_deployment_target(rustc: str, compiler: str) -> Result[str, str]:
@@ -911,18 +962,21 @@ def installed_rust_library(
     why = staleness(outputs, stamp, key)?
     mut relocation: Option[Key] = None
     if why != "":
-        portable = portable_key(key, directory, arguments)?
+        portable = portable_key(key, directory, arguments, Path(facet.project), portable_compiler(request)?)?
         if not stamp.is_file() or not portable_reusable(directory, portable, outputs)?:
             return Err(f"installed native {declared.crate_name} is stale: {why}; rebuild its support generation")
         current = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain)?
         if current.digest != key.digest:
             return Err(f"installed native {declared.crate_name} inputs changed while verifying relocation")
         record(stamp, key, outputs)?
+        # The portable proof covered the graph's exact bytes too, so it is kept for this key rather than rebuilt from
+        # the producer's original checkout.
+        record(directory.joinpath("library.graph-inputs"), rust_library_graph_key(key, toolchain.driver)?, [graph])?
         relocation = Some(portable)
     retain_rust_library_graph(facet, declared, artifact, arguments, environment, request, toolchain, key)?
     portable = match relocation:
         Some(selected) => selected
-        None => portable_key(key, directory, arguments)?
+        None => portable_key(key, directory, arguments, Path(facet.project), portable_compiler(request)?)?
 
     record_portable(directory, portable, outputs)?
     # 3. Consumers search the same graph-selected native closure as the installed producer.
@@ -969,7 +1023,7 @@ pub def rust_library_producer_key(
     """Reconcile a Rust producer with the actual compiler and exact inputs, independently of installed Incan Loaves."""
     mut compiler = request.native_compiler
     if compiler == "":
-        compiler = native_compiler_fingerprint(request.rustc, request.project)?
+        compiler = compiler_identity(request.rustc, request.project)?.native
     return library_key(
         Path(facet.project),
         directory,
@@ -1097,7 +1151,7 @@ def compile_local_rust_library(
                         )?
                         record_portable(
                             directory,
-                            portable_key(key, directory, arguments)?,
+                            portable_key(key, directory, arguments, Path(facet.project), portable_compiler(request)?)?,
                             [artifact, graph, dependencies],
                         )?
                         trace(f"unit {declared.crate_name} rust: reused")
@@ -1130,7 +1184,11 @@ def compile_local_rust_library(
                 return Err(f"Rust producer inputs changed while compiling {declared.crate_name}")
             record(stamp, key, [artifact, graph, dependencies])?
             record(directory.joinpath("library.graph-inputs"), rust_library_graph_key(key, toolchain.driver)?, [graph])?
-            record_portable(directory, portable_key(key, directory, arguments)?, [artifact, graph, dependencies])?
+            record_portable(
+                directory,
+                portable_key(key, directory, arguments, Path(facet.project), portable_compiler(request)?)?,
+                [artifact, graph, dependencies],
+            )?
             return Ok(
                 BuiltUnit(
                     crate_name=declared.crate_name,

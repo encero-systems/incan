@@ -179,6 +179,7 @@ oven=$INCAN_HOME/bin/incan
 lsp=$INCAN_HOME/bin/incan-lsp
 export PATH=$INCAN_HOME/bin:$PATH
 logged_step install 'toolchain installation' "$oven" toolchain install "$archive"
+logged_step relocation 'toolchain relocation audit' bash "$ROOT/scripts/check-toolchain-relocation.sh" "$INCAN_HOME"
 select_standard_packages
 if $install_only; then
     export_installation

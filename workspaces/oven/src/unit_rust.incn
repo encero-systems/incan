@@ -23,7 +23,7 @@ from rust_units import (
 )
 from search_index import search_index
 from toolchain import NativeCrate, Toolchain, load_toolchain, located, rust_compiler
-from standalone_rust import published_bindings, standalone_crates
+from standalone_rust import bind_published, standalone_crates
 from registry_metadata import bound_entries
 from unit import UnitDescription, UnitLoaf, describe
 from observation import trace
@@ -335,9 +335,7 @@ def registry_for_unit(
             name = registry_selection(record)?.loaf.split("/")[-1].replace("-", "_")
             if name not in roots:
                 roots.append(name)
-    for entry in bound_entries(registry.units, published_bindings(unit, toolchain, roots)?)?:
-        if ("target", entry) not in registry.anchors:
-            registry.anchors.append(("target", entry))
+    registry = bind_published(registry, unit, toolchain, roots)?
     return selected_registry(registry, facets, unit.profile)
 
 
