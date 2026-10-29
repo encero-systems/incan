@@ -253,7 +253,7 @@ status=0
 [[ $status -le 1 ]] || fail "baseline runner exited $status"
 step baseline "$source/scripts/check-dev8-baseline.sh" "$source/workspaces/contracts/dev8-pass-baseline.txt" \
     "$out/baseline-contracts.log"
-export CI_DEV8_OUT=$out/ci
+export CI_DEV8_OUT=$out/ci CI_DEV8_BUILDER_HOME=$INCAN_HOME
 step installed-ci "$source/scripts/ci-dev8.sh" "$out/bundle/toolchain.tar.zst" "$oven" "$out/bundle/incan-lsp"
 installed=($out/ci/run.*/contracts.log)
 [[ ${#installed[@]} == 1 && -f ${installed[0]} ]] || fail 'expected one installed census'

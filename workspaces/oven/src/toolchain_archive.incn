@@ -9,7 +9,7 @@ from std.json import JsonValue
 from std.hash import sha256
 from std.encoding.hex import hexlify
 from files import json_text, make_directory, read_json, write
-from home import TOOLCHAIN
+from home import TOOLCHAIN, standard_packages
 from json_fields import array_value, required_items, required_text, string_value
 from toolchain import (
     NativeCrate,
@@ -26,6 +26,10 @@ from cli_help import render, unknown_option
 
 # The file extensions of the native libraries an archive keeps in a Loaf's profile directory.
 const NATIVE_LIBRARY_SUFFIXES: FrozenList[str] = [".rlib", ".dylib", ".so", ".a", ".lib"]
+# The caches of file observations, keyed by the builder's paths; an installation observes its files afresh.
+const OBSERVATION_CACHES: FrozenList[str] = ["observations.json", "portable-observations.json"]
+# The profile directories of a standard Loaf an archive keeps.
+const PACKED_PROFILES: FrozenList[str] = ["debug", "release"]
 # What a packed Loaf's native document is relative to: its profile directory, three levels below the archive root.
 const FROM_PROFILE: str = "../../../"
 pub const PACK_USAGE: str = "incan toolchain pack OUT"
@@ -91,7 +95,7 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
 
     1. Stage the registry closure.
     2. Link the driver and the Rust ABI caches.
-    3. Stage the native crates, their search directories and the standard Loaves.
+    3. Stage the native crates, their search directories, the standard Loaves and their sources.
     4. Write the portable toolchain description.
     5. Archive the stage.
     """
@@ -101,10 +105,12 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
     driver = "bin/" + Path(toolchain.driver).name()
     link_file(Path(toolchain.driver), stage.joinpath(driver))?
     abi = stage_abi_caches(toolchain.rust_abi, stage)?
-    # 3. The runtime and support crates, the directories their dependencies live in and the standard Loaves come along.
+    # 3. The runtime and support crates, the directories their dependencies live in and the standard Loaves come along,
+    # with the standard sources, so the installation never names the checkout it was built from.
     externs = stage_externs(toolchain.externs, stage)?
     search = stage_search(toolchain.search, stage, "")?
     stage_loaves(directory.joinpath("loaves"), stage)?
+    stage_standard_sources(stage)?
     # 4. The description names only paths inside the toolchain, so the archive installs wherever it is unpacked.
     mut description = portable_description(driver, abi, externs, search)
     if toolchain.registry_lock != "":
@@ -208,12 +214,17 @@ def stage_registry(toolchain: Toolchain, stage: Path) -> Result[None, str]:
 
 
 def stage_loaves(source: Path, stage: Path) -> Result[None, str]:
-    """Ship compiled standard Loaves and their portable native closures, excluding unit descriptions."""
+    """
+    Ship compiled standard Loaves and their portable native closures, excluding unit descriptions.
+
+    Only the `debug` and `release` profiles travel; a builder's other directories, such as a replaced profile kept
+    while its successor was built, are never part of the toolchain.
+    """
     if not source.is_dir():
         return Err(f"no standard Loaves at {source.0}")
     for package in source.iterdir().map_err((error) => error.message())?:
         for profile in package.iterdir().map_err((error) => error.message())?:
-            if not profile.is_dir():
+            if not profile.is_dir() or profile.name() not in PACKED_PROFILES:
                 continue
             for artifact in profile.iterdir().map_err((error) => error.message())?:
                 name = artifact.name()
@@ -221,13 +232,33 @@ def stage_loaves(source: Path, stage: Path) -> Result[None, str]:
                     continue
                 destination = stage.joinpath("loaves").joinpath(package.name()).joinpath(profile.name()).joinpath(name)
                 if name.endswith(".native.json"):
-                    stage_native(artifact, destination, stage)?
+                    stage_native(artifact, destination, stage, FROM_PROFILE)?
                 else:
                     link_file(artifact, destination)?
     return Ok(None)
 
 
-def stage_native(source: Path, destination: Path, stage: Path) -> Result[None, str]:
+def stage_standard_sources(stage: Path) -> Result[None, str]:
+    """Ship each standard package's sources under `stdlib/`, so an installation needs no checkout to find them."""
+    for package in standard_packages()?:
+        stage_source_tree(Path(package.root), stage.joinpath("stdlib").joinpath(Path(package.root).name()))?
+    return Ok(None)
+
+
+def stage_source_tree(source: Path, destination: Path) -> Result[None, str]:
+    """Link a package's authored files into the stage, leaving out build output and hidden entries."""
+    for entry in source.iterdir().map_err((error) => error.message())?:
+        name = entry.name()
+        if name.startswith(".") or name == "target":
+            continue
+        if entry.is_dir():
+            stage_source_tree(entry, destination.joinpath(name))?
+        elif entry.is_file():
+            link_file(entry, destination.joinpath(name))?
+    return Ok(None)
+
+
+def stage_native(source: Path, destination: Path, stage: Path, prefix: str) -> Result[None, str]:
     """
     Resolve a Loaf's original paths once and express its native dependencies from its own directory.
 
@@ -238,22 +269,23 @@ def stage_native(source: Path, destination: Path, stage: Path) -> Result[None, s
     """
     document = read_json(source)?
     # 1. Each extern's artifact travels with the toolchain and is named from the profile directory the Loaf is in.
-    externs = stage_extern_pairs(source, document.require("externs").map_err((error) => error.message())?, stage)?
+    listed = document.require("externs").map_err((error) => error.message())?
+    externs = stage_extern_pairs(source, listed, stage, prefix)?
     # 2. The directories the closure searches are staged and named the same way, and missing ones are dropped.
     mut directories: list[str] = []
     for item in required_items(document, "search")?:
         directories.append(located(source.parent(), string_value(item)?))
-    search = stage_search(directories, stage, FROM_PROFILE)?
+    search = stage_search(directories, stage, prefix)?
     # 3. The crates the Loaf's attribute macros expand against travel and are named the same way.
     updated = replaced(document, "externs", JsonValue.array(externs))?
-    macros = stage_macro_externs(source, updated, stage)?
+    macros = stage_macro_externs(source, updated, stage, prefix)?
     # 4. Everything else the document says is kept as it was.
     rewritten = replaced(macros, "search", JsonValue.array([JsonValue.string(path) for path in search]))?
     write_json(destination, rewritten)?
     return Ok(None)
 
 
-def stage_extern_pairs(source: Path, listed: JsonValue, stage: Path) -> Result[list[JsonValue], str]:
+def stage_extern_pairs(source: Path, listed: JsonValue, stage: Path, prefix: str) -> Result[list[JsonValue], str]:
     """Stage each artifact of a native document's `[name, path]` pairs and name it from the Loaf's profile directory."""
     mut result: list[JsonValue] = []
     for value in array_value(listed)?:
@@ -262,16 +294,16 @@ def stage_extern_pairs(source: Path, listed: JsonValue, stage: Path) -> Result[l
             return Err(f"{source.0}: native extern must be [name, path]")
         path = string_value(pair[1])?
         relative = stage_artifact(Path(located(source.parent(), path)), stage)?
-        result.append(JsonValue.array([pair[0], JsonValue.string(FROM_PROFILE + relative)]))
+        result.append(JsonValue.array([pair[0], JsonValue.string(prefix + relative)]))
     return Ok(result)
 
 
-def stage_macro_externs(source: Path, document: JsonValue, stage: Path) -> Result[JsonValue, str]:
+def stage_macro_externs(source: Path, document: JsonValue, stage: Path, prefix: str) -> Result[JsonValue, str]:
     """Stage the Rust crates a Loaf's attribute macros expand against; a document without any stays as it is."""
     match document.get("macro_externs"):
         None => return Ok(document)
         Some(listed) =>
-            pairs = stage_extern_pairs(source, listed, stage)?
+            pairs = stage_extern_pairs(source, listed, stage, prefix)?
             return replaced(document, "macro_externs", JsonValue.array(pairs))
 
 
@@ -310,8 +342,25 @@ def stage_directory(source: Path, stage: Path) -> Result[str, str]:
         relative = "registry/entries/" + canonical.parent().name() + "/artifacts"
     destination = stage.joinpath(relative)
     if not destination.is_dir():
-        link_file(canonical, destination)?
+        stage_native_directory(canonical, destination, stage, "".join(["../" for _ in relative.split("/")]))?
     return Ok(relative)
+
+
+def stage_native_directory(source: Path, destination: Path, stage: Path, prefix: str) -> Result[None, str]:
+    """
+    Stage a native directory's files, leaving out its path-keyed observation caches and expressing each native
+    document from the directory, as a Loaf's is.
+    """
+    make_directory(destination)?
+    for entry in source.iterdir().map_err((error) => error.message())?:
+        name = entry.name()
+        if name in OBSERVATION_CACHES:
+            continue
+        if entry.is_file() and (name == "native.json" or name.endswith(".native.json")):
+            stage_native(entry, destination.joinpath(name), stage, prefix)?
+        else:
+            link_file(entry, destination.joinpath(name))?
+    return Ok(None)
 
 
 def stage_profile(source: Path, stage: Path) -> Result[str, str]:

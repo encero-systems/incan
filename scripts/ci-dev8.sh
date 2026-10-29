@@ -64,9 +64,14 @@ resolve_bundle() {
     printf '%s\n' "$input" > "$run/reference.txt"
 }
 
-# Expose only standard packages actually present in this installation, using checkout sources.
+# Use the standard sources the installation ships. A bundle that ships none exposes only the standard packages
+# present in it, using checkout sources.
 select_standard_packages() {
     local artifact package
+    if [[ -f "$INCAN_HOME/toolchains/0.6.0-dev.8/stdlib/core/loaf.toml" ]]; then
+        export INCAN_STDLIB=
+        return
+    fi
     mkdir "$run/stdlib"
     for artifact in "$INCAN_HOME/toolchains/0.6.0-dev.8/loaves/"*; do
         [[ -d "$artifact" ]] || continue
@@ -79,6 +84,19 @@ select_standard_packages() {
     done
     [[ -d "$run/stdlib/core" ]] || fail 'archive has no core standard package'
     export INCAN_STDLIB=$run/stdlib
+}
+
+# Refuse an installation that keeps builder leftovers or a text record naming the checkout or the build home
+# (CI_DEV8_BUILDER_HOME). Compiled libraries are binary and outside this audit.
+audit_relocation() {
+    local installed=$INCAN_HOME/toolchains/0.6.0-dev.8
+    local -a patterns=(-e "$ROOT/")
+    find "$installed" -name '*.previous.*' -print > "$run/relocation-leftovers.txt"
+    [[ ! -s "$run/relocation-leftovers.txt" ]] || fail "installation keeps builder leftovers: $run/relocation-leftovers.txt"
+    [[ -z "${CI_DEV8_BUILDER_HOME:-}" ]] || patterns+=(-e "$CI_DEV8_BUILDER_HOME/")
+    if grep -rIlF "${patterns[@]}" "$installed" > "$run/relocation-builder-paths.txt"; then
+        fail "installed records name the builder: $run/relocation-builder-paths.txt"
+    fi
 }
 
 # Hand the installed toolchain to the job's later steps; GitHub Actions reads environment and PATH additions from
@@ -181,6 +199,7 @@ oven=$INCAN_HOME/bin/incan
 lsp=$INCAN_HOME/bin/incan-lsp
 export PATH=$INCAN_HOME/bin:$PATH
 logged_step install 'toolchain installation' "$oven" toolchain install "$archive"
+audit_relocation
 select_standard_packages
 if $install_only; then
     export_installation
