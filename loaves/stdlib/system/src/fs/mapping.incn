@@ -1,0 +1,36 @@
+"""Read-only memory mappings of immutable files."""
+
+from rust::std::fs import File as RustFile
+from rust::std::path import Path as RustPath
+from rust::memmap2 import Mmap
+
+
+pub type MappedFile = newtype Mmap:
+    """
+    A read-only memory mapping of one whole file.
+
+    Reads touch only the pages that hold the bytes asked for, and every process that maps the same file shares one
+    physical copy of its pages. The file must not change while it is mapped: map only files that are never rewritten in
+    place, such as files replaced by rename.
+    """
+
+    def len(self) -> int:
+        """The number of mapped bytes."""
+        return int(self.0.len())
+
+    def read(self, offset: int, length: int) -> Option[bytes]:
+        """A copy of the `length` bytes at `offset`, or `None` when they do not all lie inside the mapping."""
+        if offset < 0 or length < 0 or offset + length > self.len():
+            return None
+        return Some(self.0[offset:offset + length].to_vec())
+
+
+pub def map_read(path: str) -> Result[MappedFile, str]:
+    """Map the file at `path` read-only."""
+    match RustFile.open(RustPath.new(path)):
+        Err(error) => return Err(f"{error}")
+        Ok(file) =>
+            unsafe:
+                match Mmap.map(file):
+                    Err(error) => return Err(f"{error}")
+                    Ok(mapped) => return Ok(MappedFile(mapped))

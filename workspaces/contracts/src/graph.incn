@@ -1,9 +1,12 @@
 """Public graph command contracts, including warm-query equality and wire-format agreement."""
 
+from std.encoding.hex import hexlify
 from std.fs import Path
+from std.hash import file_digest
+from std.environ import get_or
 from std.json import JsonValue
-from rust::std::fs import OpenOptions, metadata
-from rust::std::os::unix::fs import MetadataExt
+from rust::std::fs import OpenOptions, Permissions, metadata, set_permissions
+from rust::std::os::unix::fs import MetadataExt, PermissionsExt
 from compare import compare
 from files import (
     items,
@@ -346,7 +349,7 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
 
     1. Build the provider. Its compiled Loaf carries a version-one binary graph that names no physical project root.
     2. A consumer reads the published graph, though the provider's source has since become invalid.
-    3. A corrupt published graph is refused, not silently replaced or reused.
+    3. A corrupt view is restored; a corrupt stored payload is a miss: it is baked again, never reused.
     4. A provider with no published graph is exported once, and the export is stable.
     """
     provider = project.joinpath("deps").joinpath("checked")
@@ -380,12 +383,19 @@ def check_published_graph(incan: str, project: Path) -> Result[None, str]:
     if original.code != Some(0) or published.code != Some(0) or original.stdout != published.stdout:
         return Err(f"published dependency graph was rechecked from source: {published.stderr}")
     write(source, before)?
-    # 3. A corrupt published graph is refused, never silently replaced or reused.
+    # 3. A corrupt view in target/ is harmless and restored; a corrupt stored payload is a miss and is baked again.
+    stored = stored_payload(publications[0])?
     for graph in publications:
         write_bytes(graph, b"\x7f\x00\x00\x00")?
-    corrupt = invoke(incan, arguments, project)?
-    if corrupt.code == Some(0):
-        return Err("a corrupt published graph was silently replaced or reused")
+    restored = invoke(incan, arguments, project)?
+    if restored.code != Some(0) or restored.stdout != original.stdout:
+        return Err(f"a corrupt view in target/ reached the published graph: {restored.stderr}")
+    if read_bytes(publications[0])? == b"\x7f\x00\x00\x00":
+        return Err("a corrupt view in target/ was not restored from the published graph")
+    corrupt_fact(stored)?
+    rebaked = invoke(incan, arguments, project)?
+    if rebaked.code != Some(0) or rebaked.stdout != original.stdout:
+        return Err(f"a corrupt stored graph was not baked again: {rebaked.stderr}")
     # 4. A provider with no published graph is exported once, and a second export gives the same answer.
     for graph in publications:
         remove(graph)?
@@ -466,3 +476,21 @@ def check_rust_links(document: str) -> Result[None, str]:
             if callee.startswith(f"{root}::") and string_field(record, "target_id") not in declarations:
                 return Err(f"resolved Rust call has no declaration in its represented crate: {callee}")
     return Ok(None)
+
+
+def stored_payload(view: Path) -> Result[Path, str]:
+    """The bakery payload a view was cloned from: payloads are named by the digest of their bytes."""
+    digest = hexlify(file_digest(view, "sha256").map_err((error) => f"{view.0}: {error.message()}")?)
+    mut store = Path(get_or("INCAN_BAKERY", ""))
+    if store.0 == "":
+        mut home = Path(get_or("INCAN_HOME", ""))
+        if home.0 == "":
+            home = Path(get_or("HOME", "")).joinpath(".incan")
+        store = home.joinpath("bakery")
+    return Ok(store.joinpath("payloads").joinpath(digest[:2]).joinpath(digest))
+
+
+def corrupt_fact(path: Path) -> Result[None, str]:
+    """Overwrite a stored payload past its read-only permission, as a stray tool would."""
+    set_permissions(path.0, Permissions.from_mode(420)).map_err((error) => str(error))?
+    return write_bytes(path, b"\x7f\x00\x00\x00")

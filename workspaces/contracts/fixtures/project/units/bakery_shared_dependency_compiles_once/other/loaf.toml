@@ -1,0 +1,9 @@
+[project]
+name = "other"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+shared = { path = "../deps/shared" }

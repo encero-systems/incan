@@ -144,19 +144,23 @@ check_runtime_roots() {
     jq -e '.externs | group_by(.name) | all(length==1)' "$toolchain/toolchain.json" >/dev/null \
         || fail 'native runtime closure has conflicting direct roots'
 }
-
-# Count a complete census and compare all case outcomes, beyond the committed PASS floor.
+# Count a complete census and compare all case outcomes, beyond the committed PASS floor. The seed Oven predates the
+# cases in dev8-integration-changed.txt, so the integration census is compared without them; the candidate and the
+# installed bundle are still held to every case.
 compare_censuses() {
-    local installed_log=$1 log
+    local installed_log=$1 log changed=$source/workspaces/contracts/dev8-integration-changed.txt
     [[ $(cat "$reference_log.source-sha") == "$sha" ]] || fail 'integration census names a different source SHA'
-    step integration-baseline "$source/scripts/check-dev8-baseline.sh" \
-        "$source/workspaces/contracts/dev8-pass-baseline.txt" "$reference_log"
+    grep -v '^#' "$changed" | grep -v '^$' | sed 's/$/\t/' > "$out/integration-changed.keys" || true
+    grep -vxF -f <(grep -v '^#' "$changed" | grep -v '^$') "$source/workspaces/contracts/dev8-pass-baseline.txt" \
+        > "$out/integration-baseline.txt" || true
+    step integration-baseline "$source/scripts/check-dev8-baseline.sh" "$out/integration-baseline.txt" "$reference_log"
     cp "$reference_log" "$out/integration-contracts.log"
     shasum -a 256 "$out/integration-contracts.log" > "$out/integration-contracts.sha256"
     for log in "$out/integration-contracts.log" "$out/baseline-contracts.log" "$installed_log"; do
         awk '/^(PASS|FAIL|PEND) / {print $2 "\t" $1}' "$log" | sort > "$log.keys"
     done
-    diff -u "$out/integration-contracts.log.keys" "$out/baseline-contracts.log.keys" \
+    diff -u <(grep -vF -f "$out/integration-changed.keys" "$out/integration-contracts.log.keys") \
+        <(grep -vF -f "$out/integration-changed.keys" "$out/baseline-contracts.log.keys") \
         > "$out/integration-parity.diff" || fail 'candidate differs from the integration census'
     diff -u "$out/baseline-contracts.log.keys" "$installed_log.keys" > "$out/parity.diff" || fail 'baseline outcomes differ'
     parity=true

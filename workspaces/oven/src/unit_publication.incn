@@ -1,0 +1,215 @@
+"""Record a baked unit's identity, publication provenance and payload digest separately."""
+
+from std.fs import Path
+from std.encoding.hex import hexlify
+from std.hash import sha256
+from files import json_text, read_json
+from json_fields import required_text
+from std.json import JsonValue
+from observation import file_digest, observe
+from publication import publish
+from home import home
+
+const PUBLICATION_SCHEMA: str = "incan.oven.unit-publication/1"
+
+
+pub def record_payload(path: Path, identity: str, provenance: list[str] = [], refusal: str = "") -> Result[None, str]:
+    """
+    Publish the identity a completed artifact was baked under, independently of its bytes and location.
+
+    1. Observe and digest the completed payload at publication.
+    2. Refuse a concurrent replacement rather than certify mixed generations.
+    3. Record its identity, payload and provenance beside the artifact for copying with it.
+    """
+    # 1. Reading bytes belongs to publication, never to naming a linked unit.
+    before = observe(path)?.stamp
+    if record_path(path).is_file():
+        match read_json(record_path(path)):
+            Err(_) => pass
+            Ok(previous) =>
+                if (
+                    required_text(previous, "schema")? == PUBLICATION_SCHEMA
+                    and required_text(previous, "observation")? == before
+                ):
+                    payload = required_text(previous, "payload")?
+                    return record_verified_payload(path, identity, payload, before, provenance, refusal)
+    payload = file_digest(path)?
+    # 2. A changed file cannot receive a record for the bytes read before the change.
+    if observe(path)?.stamp != before:
+        return Err(f"{path.0}: artifact changed during publication")
+    # 3. The location and observation are recorded evidence, never identity inputs.
+    return publish_record(record_path(path), path, identity, payload, before, provenance, refusal)
+
+
+pub def record_verified_payload(
+    path: Path,
+    identity: str,
+    payload: str,
+    observation: str,
+    provenance: list[str] = [],
+    refusal: str = "",
+) -> Result[None, str]:
+    """
+    Publish a digest already verified under the caller's producer lock, without reading the payload again.
+
+    The caller must supply the exact file observation held across verification; a replacement refuses publication.
+    """
+    if observe(path)?.stamp != observation:
+        return Err(f"{path.0}: verified payload changed before publication")
+    mut origins = provenance
+    if record_path(path).is_file():
+        previous = read_json(record_path(path))?
+        if required_text(previous, "unit")? == identity and required_text(previous, "payload")? == payload:
+            origins = source_provenance(previous)?
+    return publish_record(record_path(path), path, identity, payload, observation, origins, refusal)
+
+
+pub def source_origins(path: Path) -> Result[list[str], str]:
+    """Read a payload's original source provenance for relocating its retained dependency evidence."""
+    if not record_path(path).is_file():
+        return Ok([])
+    return source_provenance(read_json(record_path(path))?)
+
+
+pub def published_identity(path: Path) -> Result[str, str]:
+    """
+    Name an unchanged published artifact without reading or hashing its payload.
+
+    Missing producer records and changed generations refuse; relocation must be admitted before naming the unit.
+    """
+    record = available_record(path)?
+    if not record.is_file():
+        return Err(f"unit identity refused: {path.0}: linked unit has no recorded producer identity")
+    document = read_json(record)?
+    if required_text(document, "schema")? != PUBLICATION_SCHEMA:
+        return Err(f"{path.0}: unsupported unit publication record")
+    if document.get("refusal") != None and required_text(document, "refusal")? != "":
+        return Err(required_text(document, "refusal")?)
+    if observe(path)?.stamp != required_text(document, "observation")?:
+        return Err(f"{path.0}: published payload changed; admission is required")
+    return required_text(document, "unit")
+
+
+pub def import_payload(path: Path, identity: str, expected_payload: str = "") -> Result[None, str]:
+    """
+    Admit an artifact whose producer identity arrived in a trusted registry closure or publication record.
+
+    1. Reuse an already admitted unchanged generation without reading its bytes.
+    2. Verify external changes against the retained payload digest.
+    3. Record first admission in this home's cache, leaving the imported store untouched.
+    """
+    # 1. Import is a trust boundary, distinct from naming an artifact during unit identification.
+    if identity == "":
+        return Err("unit identity refused: imported producer has no portable identity")
+    existing = available_record(path)?
+    mut expected = expected_payload
+    mut origins: list[str] = []
+    if existing.is_file():
+        document = read_json(existing)?
+        if required_text(document, "schema")? != PUBLICATION_SCHEMA or required_text(document, "unit")? != identity:
+            return Err(f"{path.0}: imported producer identity disagrees")
+        if expected != "" and required_text(document, "payload")? != expected:
+            return Err(f"{path.0}: imported payload digest disagrees")
+        if required_text(document, "observation")? == observe(path)?.stamp:
+            return Ok(None)
+        expected = required_text(document, "payload")?
+        origins = source_provenance(document)?
+    # 2. A replacement can be admitted only if it still carries the original payload bytes.
+    before = observe(path)?.stamp
+    payload = file_digest(path)?
+    if (expected != "" and payload != expected) or observe(path)?.stamp != before:
+        return Err(f"{path.0}: imported payload digest disagrees")
+    # 3. Locations and file generations belong to the local admission evidence only.
+    destination = imported_record(path)?
+    destination.parent().mkdir(true, true).map_err((error) => error.message())?
+    return publish_record(destination, path, identity, payload, before, origins)
+
+
+pub def publication(path: Path) -> Result[tuple[str, str], str]:
+    """Export an admitted producer identity and payload digest without rehashing its bytes."""
+    identity = published_identity(path)?
+    document = read_json(available_record(path)?)?
+    return Ok((identity, required_text(document, "payload")?))
+
+
+pub def import_publication(path: Path) -> Result[None, str]:
+    """Verify a transported producer record before an installed toolchain can name its relocated artifact."""
+    document = read_json(record_path(path))?
+    return import_payload(path, required_text(document, "unit")?)
+
+
+pub def admit_payload(path: Path) -> Result[None, str]:
+    """
+    Admit a copied or touched payload by verifying its bytes against its producer's recorded payload digest.
+
+    1. Read the existing producer identity and expected payload digest.
+    2. Verify the new file generation, preserving the producer's identity.
+    3. Publish the new observation and provenance after verification.
+    """
+    # 1. An unrecorded payload cannot manufacture its producer's identity from its own bytes.
+    document = read_json(record_path(path))?
+    if required_text(document, "schema")? != PUBLICATION_SCHEMA:
+        return Err(f"{path.0}: unsupported unit publication record")
+    identity = required_text(document, "unit")?
+    expected = required_text(document, "payload")?
+    # 2. Filesystem metadata guards a verified generation but never decides its identity.
+    before = observe(path)?.stamp
+    if file_digest(path)? != expected or observe(path)?.stamp != before:
+        return Err(f"{path.0}: published payload digest disagrees")
+    # 3. Keep the verified payload digest rather than read the artifact a second time.
+    return publish_record(record_path(path), path, identity, expected, before, source_provenance(document)?)
+
+
+pub def record_path(path: Path) -> Path:
+    """The portable producer record that accompanies one artifact."""
+    return Path(f"{path.0}.oven-unit")
+
+
+def imported_record(path: Path) -> Result[Path, str]:
+    """Locate per-home admission evidence by provenance; this cache address is never a unit identity input."""
+    located = hexlify(sha256.digest(path.0.encode("utf-8")))
+    return Ok(home()?.joinpath("cache/unit-admissions").joinpath(f"{located}.json"))
+
+
+def available_record(path: Path) -> Result[Path, str]:
+    """Prefer a producer's current publication, otherwise use the home's admitted imported generation."""
+    local = record_path(path)
+    if local.is_file():
+        document = read_json(local)?
+        if required_text(document, "observation")? == observe(path)?.stamp:
+            return Ok(local)
+    imported = imported_record(path)?
+    if imported.is_file():
+        return Ok(imported)
+    return Ok(local)
+
+
+def publish_record(
+    destination: Path,
+    path: Path,
+    identity: str,
+    payload: str,
+    observation: str,
+    provenance: list[str] = [],
+    refusal: str = "",
+) -> Result[None, str]:
+    """Publish the same three-way identity record for a local producer or an admitted imported payload."""
+    document = JsonValue.object(
+        {"schema": JsonValue.string(PUBLICATION_SCHEMA), "unit": JsonValue.string(identity), "payload": JsonValue.string(
+            payload,
+        ), "provenance": JsonValue.string(path.0), "observation": JsonValue.string(observation), "source_provenance": JsonValue.array(
+            [JsonValue.string(origin) for origin in provenance],
+        ), "refusal": JsonValue.string(refusal)},
+    )
+    return publish(destination, json_text(document)?)
+
+
+def source_provenance(document: JsonValue) -> Result[list[str], str]:
+    """Keep transported source origins without admitting them into unit identity."""
+    mut origins: list[str] = []
+    match document.get("source_provenance"):
+        None => return Ok(origins)
+        Some(value) =>
+            for origin in value.expect_array().map_err((error) => error.message())?:
+                origins.append(origin.expect_str().map_err((error) => error.message())?)
+    return Ok(origins)

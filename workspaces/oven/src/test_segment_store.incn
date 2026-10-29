@@ -1,0 +1,198 @@
+"""Segment store contracts: validated transactions, durable publication, damage told apart from absence, compaction."""
+
+from rust::std::string import String as RustString
+from std.fs import Path
+from scratch import scratch_directory
+from segment_store import (
+    EXPECT_ABSENT,
+    EXPECT_ABSENT_OR_DAMAGED,
+    Lookup,
+    Snapshot,
+    StoreError,
+    begin,
+    commit,
+    compact,
+    delete,
+    get,
+    keys,
+    lookup,
+    payload_intact,
+    payload_path,
+    put,
+    put_payload,
+    snapshot,
+)
+
+
+def text(found: Result[Lookup, StoreError]) -> str:
+    """A lookup as text: the value, `<deleted>`, `<absent>`, or `<integrity>` and the like for an error."""
+    match found:
+        Err(error) => return f"<{error.kind}>"
+        Ok(outcome) =>
+            match outcome:
+                Lookup.Found(value) =>
+                    match RustString.from_utf8(value):
+                        Ok(decoded) => return str(decoded)
+                        Err(_) => return "<bytes>"
+                Lookup.Deleted => return "<deleted>"
+                Lookup.Absent => return "<absent>"
+
+
+def write_one(root: Path, key: str, value: str, expect: int = 0) -> Result[Snapshot, StoreError]:
+    """Commit one value on the latest generation."""
+    return commit(put(begin(snapshot(root)?), key, value.encode("utf-8"), expect))
+
+
+def error_kind(result: Result[Snapshot, StoreError]) -> str:
+    """The kind of a commit's error, or `ok`."""
+    match result:
+        Ok(_) => return "ok"
+        Err(error) => return error.kind
+
+
+def count_files(directory: Path) -> int:
+    """How many entries a directory holds; zero when it does not exist."""
+    if not directory.is_dir():
+        return 0
+    match directory.iterdir():
+        Ok(entries) => return len(entries)
+        Err(_) => return 0
+
+
+pub def test_a_snapshot_keeps_its_generation_and_reads_tell_values_tombstones_and_absence_apart() -> Result[None, str]:
+    """
+    A reader's snapshot answers from its own generation; a tombstone is not absence, and a full key is not its locator.
+
+    1. An empty store is generation 0, and every key is absent.
+    2. Each commit adds one generation; a snapshot taken earlier still answers from its own.
+    3. A deleted key answers `Deleted`; a never-written key answers `Absent`.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    empty = snapshot(root).map_err((error) => error.message())?
+    assert empty.generation == 0
+    assert text(lookup(empty, "a")) == "<absent>"
+    first = write_one(root, "a", "one").map_err((error) => error.message())?
+    second = write_one(root, "a", "two").map_err((error) => error.message())?
+    assert first.generation == 1 and second.generation == 2
+    assert text(lookup(second, "a")) == "two"
+    assert text(lookup(first, "a")) == "one"
+    deleted = commit(delete(begin(second), "a")).map_err((error) => error.message())?
+    assert text(lookup(deleted, "a")) == "<deleted>"
+    assert text(lookup(deleted, "b")) == "<absent>"
+    assert keys(deleted).map_err((error) => error.message())? == []
+    return Ok(None)
+
+
+pub def test_concurrent_disjoint_writes_both_land_and_conflicting_writes_are_refused() -> Result[None, str]:
+    """
+    Two transactions begun on one generation: disjoint writes both commit; a conflicting one is refused; an equal one
+    commits nothing and adds no bytes.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    base = snapshot(root).map_err((error) => error.message())?
+    left = put(begin(base), "a", b"one", EXPECT_ABSENT)
+    right = put(begin(base), "b", b"two", EXPECT_ABSENT)
+    rival = put(begin(base), "a", b"other", EXPECT_ABSENT)
+    same = put(begin(base), "a", b"one", EXPECT_ABSENT)
+    assert commit(left).map_err((error) => error.message())?.generation > 0
+    landed = commit(right).map_err((error) => error.message())?
+    assert text(lookup(landed, "a")) == "one" and text(lookup(landed, "b")) == "two"
+    assert error_kind(commit(rival)) == "conflict"
+    segments = count_files(root.joinpath("segments"))
+    unchanged = commit(same).map_err((error) => error.message())?
+    assert unchanged.generation == landed.generation
+    assert count_files(root.joinpath("segments")) == segments
+    return Ok(None)
+
+
+pub def test_damage_is_an_error_never_absence_or_an_older_value() -> Result[None, str]:
+    """
+    A damaged frame is an integrity error, and the older value beneath it is never returned; a writer that expects
+    damage may replace it. A damaged pointer or manifest refuses the store instead of reading it as empty.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    assert write_one(root, "a", "old").map_err((error) => error.message())?.generation > 0
+    newer = write_one(root, "a", "newer").map_err((error) => error.message())?
+    damage_last_byte(root.joinpath("segments").joinpath(f"{newer.segments[1].name}.seg"))?
+    damaged = snapshot(root).map_err((error) => error.message())?
+    assert text(lookup(damaged, "a")) == "<integrity>"
+    assert error_kind(write_one(root, "a", "plain")) == "integrity"
+    repaired = write_one(root, "a", "repaired", EXPECT_ABSENT_OR_DAMAGED).map_err((error) => error.message())?
+    assert text(lookup(repaired, "a")) == "repaired"
+    root.joinpath("CURRENT").write_text("garbage", "utf-8", "strict", None).map_err((error) => error.message())?
+    match snapshot(root):
+        Ok(_) => assert false, "a malformed CURRENT was read"
+        Err(error) => assert error.kind == "format", error.message()
+    return Ok(None)
+
+
+pub def test_a_commit_interrupted_before_its_switch_leaves_the_last_generation_visible() -> Result[None, str]:
+    """
+    Objects installed and a manifest written without the `CURRENT` switch are not committed: readers see the last
+    generation, and the next commit publishes normally.
+    """
+    scratch = scratch_directory()?
+    root = scratch.path().joinpath("store")
+    committed = write_one(root, "a", "one").map_err((error) => error.message())?
+    other = scratch.path().joinpath("other")
+    assert write_one(other, "a", "two").map_err((error) => error.message())?.generation == 1
+    # A crashed writer's segment and a next-generation manifest, without the pointer switch.
+    for name in ["segments", "snapshots"]:
+        for entry in other.joinpath(name).iterdir().map_err((error) => error.message())?:
+            entry.copy(root.joinpath(name).joinpath(f"{entry.name()}.orphan"), true, true).map_err(
+                (error) => error.message(),
+            )?
+    seen = snapshot(root).map_err((error) => error.message())?
+    assert seen.generation == committed.generation
+    assert text(lookup(seen, "a")) == "one"
+    after = write_one(root, "b", "two").map_err((error) => error.message())?
+    assert after.generation == committed.generation + 1
+    assert text(lookup(after, "a")) == "one" and text(lookup(after, "b")) == "two"
+    return Ok(None)
+
+
+pub def test_compaction_preserves_contents_and_gives_a_byte_identical_base() -> Result[None, str]:
+    """
+    Compaction keeps every key's newest state, tombstones included, and equal contents give the same base however they
+    were written.
+    """
+    scratch = scratch_directory()?
+    one = scratch.path().joinpath("one")
+    two = scratch.path().joinpath("two")
+    assert write_one(one, "a", "x").map_err((error) => error.message())?.generation > 0
+    assert write_one(one, "b", "y").map_err((error) => error.message())?.generation > 0
+    assert write_one(one, "c", "z").map_err((error) => error.message())?.generation > 0
+    assert commit(delete(begin(snapshot(one).map_err((error) => error.message())?), "c")).map_err((error) => error.message())?.generation > 0
+    assert write_one(two, "c", "w").map_err((error) => error.message())?.generation > 0
+    assert commit(delete(begin(snapshot(two).map_err((error) => error.message())?), "c")).map_err((error) => error.message())?.generation > 0
+    assert write_one(two, "b", "old").map_err((error) => error.message())?.generation > 0
+    assert write_one(two, "b", "y").map_err((error) => error.message())?.generation > 0
+    assert write_one(two, "a", "x").map_err((error) => error.message())?.generation > 0
+    left = compact(one).map_err((error) => error.message())?
+    right = compact(two).map_err((error) => error.message())?
+    assert len(left.segments) == 1 and len(right.segments) == 1
+    assert left.segments[0].name == right.segments[0].name
+    assert text(lookup(right, "b")) == "y"
+    assert text(lookup(right, "c")) == "<deleted>"
+    source = scratch.path().joinpath("artifact")
+    source.write_bytes(b"program").map_err((error) => error.message())?
+    digest = put_payload(two, source).map_err((error) => error.message())?
+    assert payload_intact(two, digest)
+    stored = payload_path(two, digest)
+    stored.chmod(false).map_err((error) => error.message())?
+    stored.write_bytes(b"damaged").map_err((error) => error.message())?
+    match put_payload(two, source):
+        Ok(_) => assert false, "a damaged payload was accepted as stored"
+        Err(error) => assert error.kind == "integrity", error.message()
+    return Ok(None)
+
+
+def damage_last_byte(path: Path) -> Result[None, str]:
+    """Cut the last byte off a file, past its permissions, as a stray tool would."""
+    data = path.read_bytes().map_err((error) => error.message())?
+    path.chmod(false).map_err((error) => error.message())?
+    path.write_bytes(data[:len(data) - 1]).map_err((error) => error.message())?
+    return Ok(None)
