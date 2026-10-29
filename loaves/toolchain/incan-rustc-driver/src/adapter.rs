@@ -889,9 +889,13 @@ pub fn compile(
     if shared_store.is_some() {
         args.extend(["-Cprefer-dynamic".into(), "-Crpath".into()]);
         // Rustc already constructs the native Darwin invocation; bypass the C driver's extra process for edits.
-        if identity.target.ends_with("-apple-darwin") {
+        let darwin = identity.target.ends_with("-apple-darwin");
+        if darwin {
             args.push("-Clinker=/usr/bin/ld".into());
         }
+        // The executable is linked in the store and run from a copy elsewhere, so its libraries are also found
+        // through absolute search paths, which do not depend on where the copy lives.
+        args.extend(absolute_rpaths(&all, identity, darwin));
     }
     args.extend_from_slice(rustc_args);
     timing.mark("native_arguments");
@@ -1001,4 +1005,28 @@ fn verify_library_argument_profiles(tcx: TyCtxt<'_>, plan: &Plan) -> Result<(), 
         callees::verify_bounds(tcx, def, arguments)?;
     }
     Ok(())
+}
+
+/// Absolute run-time search paths for a shared-linkage executable: each shared library's directory and the
+/// toolchain's own library directory, so a copy of the executable loads them wherever it is placed.
+fn absolute_rpaths(linked: &[(String, PathBuf)], identity: &DriverIdentity, darwin: bool) -> Vec<String> {
+    let mut directories: Vec<PathBuf> = vec![identity.sysroot.join("lib/rustlib").join(&identity.target).join("lib")];
+    for (_, path) in linked {
+        let shared = matches!(path.extension().and_then(|e| e.to_str()), Some("dylib" | "so"));
+        if let (true, Some(parent)) = (shared, path.parent()) {
+            if !directories.iter().any(|known| known == parent) {
+                directories.push(parent.to_path_buf());
+            }
+        }
+    }
+    let mut args = Vec::new();
+    for directory in directories {
+        if darwin {
+            args.push("-Clink-arg=-rpath".into());
+            args.push(format!("-Clink-arg={}", directory.display()));
+        } else {
+            args.push(format!("-Clink-arg=-Wl,-rpath,{}", directory.display()));
+        }
+    }
+    args
 }
