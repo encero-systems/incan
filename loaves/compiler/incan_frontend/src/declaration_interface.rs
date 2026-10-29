@@ -763,10 +763,23 @@ mod tests {
         Ok(())
     }
 
-    /// Replay documented scalar bodies with immutable locals, retaining both local canonical identities and calls.
-    /// Mutable/shadowing bindings, forward reads and generated local names remain outside this product.
+    /// Exercise immutable locals and primitive mutation through the same complete product replay boundary.
     fn scalar_local_product_edits() -> Result<(), Box<dyn std::error::Error>> {
         let source = "def first(value: int) -> int:\n    \"\"\"Compute the first value.\"\"\"\n    doubled = value * 2\n    result = doubled + 1\n    return result\n\ndef second(value: int) -> int:\n    \"\"\"Compute the second value.\"\"\"\n    result: int = value + 3\n    return result\n\ndef third(value: int) -> int:\n    \"\"\"Compute the third value.\"\"\"\n    result = value - 4\n    return result\n\npub def answer(value: int) -> int:\n    \"\"\"Combine the private results.\"\"\"\n    initial = first(value)\n    remaining = second(value) + third(value)\n    return initial + remaining\n";
+        scalar_local_source_edits(source)?;
+        let mutable = source
+            .replace("first(value:", "first(mut value:")
+            .replace("doubled = value * 2", "value = value * 2\n    mut doubled = value")
+            .replace(
+                "result: int = value + 3",
+                "mut result: int = value + 3\n    result = result + 1\n    result = result - 1",
+            );
+        scalar_local_source_edits(&mutable)
+    }
+
+    /// Replay documented scalar locals with exact canonical identities, mutation facts and witnessed calls.
+    /// Unknown reassignment targets, shadowing bindings, forward reads and generated local names refuse capture.
+    fn scalar_local_source_edits(source: &str) -> Result<(), Box<dyn std::error::Error>> {
         let (program, checker) = checked(source, "lib")?;
         let products =
             CallableBodyProducts::from_checked(&program, source, &checker, &scalar_module(&program, &checker))?;
@@ -792,10 +805,16 @@ mod tests {
         );
 
         // ---- Refusals: isolate grammar guards while retaining the exact old physical input ----
-        for kind in [crate::ast::BindingKind::Mutable, crate::ast::BindingKind::Reassign] {
+        for kind in [crate::ast::BindingKind::Let, crate::ast::BindingKind::Reassign] {
             let mut changed = program.clone();
             let assignment = first_local_assignment(&mut changed)?;
             assignment.binding = kind;
+            assignment.name = if kind == crate::ast::BindingKind::Let {
+                "value"
+            } else {
+                "unbound"
+            }
+            .to_owned();
             assert!(
                 products
                     .select(&changed, source, "interface_test", &["lib".to_owned()])?
@@ -810,7 +829,7 @@ mod tests {
                 .select(&generated, source, "interface_test", &["lib".to_owned()])?
                 .is_empty()
         );
-        let forward = source.replace("doubled = value * 2", "doubled = missing");
+        let forward = source.replace("value * 2", "missing");
         let tokens = crate::lexer::lex(&forward).map_err(|errors| format!("{errors:?}"))?;
         let parsed = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
         let mut rejected = TypeChecker::new();

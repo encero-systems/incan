@@ -396,7 +396,7 @@ def verify_observed_library_bytes(unit: UnitDescription, toolchain: Toolchain, p
 
 
 def verify_callable_item_products(project: Path) -> Result[None, str]:
-    """Require the same private-edit reuse for direct scalar expressions and documented immutable locals."""
+    """Require the same private-edit reuse for direct scalar expressions and documented primitive storage."""
     original = "\n\n".join(
         [
             "def first() -> int:\n    return 1",
@@ -407,6 +407,7 @@ def verify_callable_item_products(project: Path) -> Result[None, str]:
     ) + "\n"
     verify_callable_product_source(project, original, "return 1")?
     verify_callable_product_source(project.joinpath("locals"), documented_local_source(), "value = 1")?
+    verify_callable_product_source(project.joinpath("mutable"), mutable_scalar_source(), "value * 1")?
     return Ok(None)
 
 
@@ -435,6 +436,48 @@ def documented_local_source() -> str:
                     "    initial = first()",
                     "    remaining = second() + third()",
                     "    return initial + remaining",
+                ],
+            ),
+        ],
+    ) + "\n"
+
+
+def mutable_scalar_source() -> str:
+    """The same call graph with a mutable parameter, mutable locals and plain reassignment."""
+    return "\n\n".join(
+        [
+            "\n".join(
+                [
+                    "def first(mut value: int) -> int:",
+                    "    \"\"\"Return the edited parameter.\"\"\"",
+                    "    value = value * 1",
+                    "    return value",
+                ],
+            ),
+            "\n".join(
+                [
+                    "def second() -> int:",
+                    "    \"\"\"Return a reassigned local.\"\"\"",
+                    "    mut value = 2",
+                    "    value = value + 0",
+                    "    return value",
+                ],
+            ),
+            "\n".join(
+                [
+                    "def third() -> int:",
+                    "    \"\"\"Return an annotated mutable local.\"\"\"",
+                    "    mut value: int = 3",
+                    "    value = value + 0",
+                    "    return value",
+                ],
+            ),
+            "\n".join(
+                [
+                    "pub def answer() -> int:",
+                    "    \"\"\"Combine every mutable helper.\"\"\"",
+                    "    initial = first(1)",
+                    "    return initial + second() + third()",
                 ],
             ),
         ],
