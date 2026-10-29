@@ -5,7 +5,7 @@ from files import make_directory, write
 from rust_testing import build_rust_tests
 from loaf_local_graph import LocalFacet
 from rust_activation import DependencyDomain
-from rust_units import RustBuild, identity, read_registry_units, rust_output
+from rust_units import RustBuild, facet_slot, read_registry_units, rust_output
 from scratch import scratch_directory
 from testing import run_rust_harness, test_sources
 from toolchain import load_toolchain, rust_compiler
@@ -97,7 +97,7 @@ def verify_macro_domains(macro: Path, helper: Path, request: RustBuild) -> Resul
     for project, domain, name in roles:
         root = project.resolve().map_err((error) => error.message())?
         facet = LocalFacet(project=root.0, domain=domain, features=[], local=[], registry=[], registry_aliases=[])
-        directory = rust_output(macro, request.profile).joinpath(f"{name}-{identity(facet, request.profile)}")
+        directory = rust_output(macro, request.profile).joinpath(f"{name}-{facet_slot(facet, request.profile)}")
         assert directory.is_dir(), f"{name} must retain its {domain.value()} producer identity"
     return Ok(None)
 

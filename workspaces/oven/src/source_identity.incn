@@ -1,0 +1,39 @@
+"""Digest compiled source contents under logical source bindings, independently of checkout locations."""
+
+from std.fs import Path
+from observation import Ledger
+
+
+pub def source_inputs(paths: list[str], root: Path, mut ledger: Ledger) -> Result[list[str], str]:
+    """
+    Preserve which source supplies each logical module or included input while excluding its physical root.
+
+    RFC 106's semantic digest replaces this content-based seam when the compiler publishes it.
+    """
+    mut inputs: list[str] = []
+    mut bindings: Dict[str, str] = {}
+    for path in paths:
+        binding = source_binding(path, root)
+        if binding in bindings:
+            if bindings[binding] != path:
+                return Err(f"unit identity refused: ambiguous external source binding {binding}")
+            continue
+        bindings[binding] = path
+        inputs.append(f"{binding} {ledger.digest(Path(path))?}")
+    return Ok(sorted(inputs))
+
+
+def source_binding(path: str, root: Path) -> str:
+    """A module/input binding within the source inventory, never its absolute checkout or target location."""
+    prefix = root.0 + "/"
+    if path.startswith(prefix):
+        return path[len(prefix):].replace("/", "::")
+    return Path(path).name()
+
+
+pub def entry_scope(source: Path, root: Path) -> str:
+    """Retain the entry's logical import scope while excluding its physical filename and source-root location."""
+    directory = source.parent().0
+    if directory.startswith(root.0 + "/"):
+        return directory[len(root.0) + 1:].replace("/", "::")
+    return "root"
