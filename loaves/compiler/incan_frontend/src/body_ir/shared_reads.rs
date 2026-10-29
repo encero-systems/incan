@@ -27,6 +27,8 @@ struct ReadContext<'a> {
 pub(super) fn retain(module: &mut bir::BodyIrModule, program: &ast::Program) {
     let mut signatures = signatures(module);
     for body in &mut module.bodies {
+        retain_consumed_lists(body);
+        retain_iteration_items(body);
         retain_cursors(body, &signatures);
     }
     let private = program
@@ -430,5 +432,395 @@ fn walk_statements_mut(
             }
             _ => {}
         }
+    }
+}
+
+/// Bind a builtin loop's item by reference when the loop reads a list it borrows (#2426).
+///
+/// Body IR initializes a builtin list iterator with a shared borrow unless the loop takes the list's items or changes
+/// them in place. Such a loop reads each item where it stays, so an item of a model, class or text type is a
+/// shared reference to its element rather than a copy of it. A read that hands the item on by value clones it there,
+/// at the use, never once per step. The item must be written only by its `IterNext`.
+fn retain_iteration_items(body: &mut bir::Body) {
+    let mut iterators = Vec::new();
+    walk(&body.block.stmts, &mut |statement| {
+        if let bir::StatementKind::Assign {
+            place,
+            rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
+        } = &statement.kind
+            && read.fact == bir::OwnershipFact::Borrow
+            && let Some(local) = place.local_id()
+            && place.projection.is_empty()
+        {
+            iterators.push(local);
+        }
+    });
+    let items: Vec<_> = single_polls(&body.block.stmts)
+        .into_iter()
+        .filter(|(iterator, _)| iterators.contains(iterator) && is_list(&body.locals[iterator.index()].ty))
+        .map(|(_, item)| item)
+        .collect();
+    for item in items {
+        let ty = body.locals[item.index()].ty.clone();
+        if !borrowable_item(&ty, &body.named_type_identities) || item_writes(&body.block.stmts, item) != 1
+            || captured(&body.block.stmts, item)
+            || matched(&body.block.stmts, item)
+        {
+            continue;
+        }
+        // An item lent exclusively, to a `mut` parameter say, keeps its own copy (#1561).
+        let mut statements = body.block.stmts.clone();
+        let mut exclusive = false;
+        walk_mut(&mut statements, &mut |statement| {
+            let mut rewrite = |operand: &mut bir::Operand| exclusive |= clone_item_move(operand, item);
+            statement_places_mut(statement, &mut |place| place_indices_mut(place, &mut rewrite));
+            statement_operands_mut(statement, &mut rewrite);
+        });
+        if !exclusive {
+            body.locals[item.index()].ty = IncanType::Ref(Box::new(ty));
+            body.block.stmts = statements;
+        }
+    }
+}
+
+/// A builtin list, as Body IR spells its checked type.
+fn is_list(ty: &IncanType) -> bool {
+    matches!(ty, IncanType::Generic { base, args } if base == "List" && args.len() == 1)
+}
+
+/// An item type that owns storage and has a shared reference the lowering reads in place: a source model, class or
+/// enum, a Rust item, text, a list, or a tuple holding any of these.
+fn borrowable_item(ty: &IncanType, identities: &std::collections::BTreeMap<String, CanonicalSymbolId>) -> bool {
+    match ty {
+        IncanType::Primitive(incan_semantics_core::IncanPrimitiveType::Str) => true,
+        IncanType::Named(name) => identities.get(name).is_some_and(|identity| {
+            matches!(
+                identity.kind,
+                SemanticSourceTargetKind::Model
+                    | SemanticSourceTargetKind::Class
+                    | SemanticSourceTargetKind::Enum
+                    | SemanticSourceTargetKind::RustItem
+            )
+        }),
+        IncanType::Tuple(elements) => elements.iter().any(|element| borrowable_item(element, identities)),
+        _ => is_list(ty),
+    }
+}
+
+/// A closure or generator capturing the item keeps it owned: its environment holds values, not loans.
+fn captured(statements: &[bir::Statement], item: bir::LocalId) -> bool {
+    let mut found = false;
+    walk(statements, &mut |statement| {
+        if let bir::StatementKind::Assign {
+            rvalue: bir::Rvalue::Closure { captured_operands, .. } | bir::Rvalue::Generator { captured_operands, .. },
+            ..
+        } = &statement.kind
+        {
+            found |= captured_operands.iter().any(|operand| uses(operand, item));
+        }
+    });
+    found
+}
+
+/// An item matched by a pattern that binds a payload keeps its copy: payload bindings move out of owned values.
+fn matched(statements: &[bir::Statement], item: bir::LocalId) -> bool {
+    let mut found = false;
+    walk(statements, &mut |statement| match &statement.kind {
+        bir::StatementKind::Assign {
+            rvalue: bir::Rvalue::Match { scrutinee, arms },
+            ..
+        } => found |= uses(scrutinee, item) && arms.iter().any(|arm| binds(&arm.pattern)),
+        bir::StatementKind::Assert {
+            kind: bir::AssertionKind::Pattern { scrutinee, pattern },
+            ..
+        } => found |= uses(scrutinee, item) && binds(pattern),
+        _ => {}
+    });
+    found
+}
+
+/// Count the statements that write `item` as a whole or in part, its `IterNext` included.
+fn item_writes(statements: &[bir::Statement], item: bir::LocalId) -> usize {
+    let mut writes = 0;
+    walk(statements, &mut |statement| {
+        let place = match &statement.kind {
+            bir::StatementKind::Assign { place, .. } | bir::StatementKind::IterNext { destination: place, .. } => {
+                Some(place)
+            }
+            bir::StatementKind::Call { destination, .. } | bir::StatementKind::Await { destination, .. } => {
+                destination.as_ref()
+            }
+            bir::StatementKind::TryPropagate { destination, .. } => Some(destination),
+            _ => None,
+        };
+        writes += usize::from(place.is_some_and(|place| place.local_id() == Some(item)));
+    });
+    writes
+}
+
+/// Visit every operand one statement reads directly; nested blocks are reached by the statement walk.
+fn statement_operands_mut(statement: &mut bir::Statement, visit: &mut impl FnMut(&mut bir::Operand)) {
+    use bir::StatementKind as S;
+    match &mut statement.kind {
+        S::Assign { rvalue, .. } => rvalue_operands_mut(rvalue, visit),
+        S::Call { args, .. } => arguments_mut(args, visit),
+        S::If { cond, .. } => visit(cond),
+        S::Break { value } | S::Return { value } => value.iter_mut().for_each(|value| visit(value)),
+        S::Await { awaited, .. } => visit(awaited),
+        S::Race { arms, .. } => arms.iter_mut().for_each(|arm| {
+            visit(&mut arm.awaitable);
+            visit(&mut arm.result);
+        }),
+        S::Yield { value } | S::Expr { value } => visit(value),
+        S::Assert { kind, message, .. } => {
+            match kind {
+                bir::AssertionKind::Condition { cond } => visit(cond),
+                bir::AssertionKind::Pattern { scrutinee, .. } => visit(scrutinee),
+                bir::AssertionKind::Raises { call, .. } => visit(call),
+            }
+            message.iter_mut().for_each(|value| visit(value));
+        }
+        S::TryPropagate { operand, .. } => visit(operand),
+        S::IterNext { iterator, .. } => visit(iterator),
+        S::UnsafeRegion { .. } | S::Drop { .. } | S::Loop { .. } | S::Continue | S::Unsupported { .. } => {}
+    }
+}
+
+/// Visit the operands of one right-hand side, closure and generator captures included.
+fn rvalue_operands_mut(rvalue: &mut bir::Rvalue, visit: &mut impl FnMut(&mut bir::Operand)) {
+    use bir::Rvalue as R;
+    match rvalue {
+        R::Use(value) | R::UnaryOp(_, value) | R::IsInstance { value, .. } => visit(value),
+        R::BinaryOp(_, left, right) => {
+            visit(left);
+            visit(right);
+        }
+        R::Aggregate(_, elements) => arguments_mut(elements, visit),
+        R::Dict(entries) => entries.iter_mut().for_each(|entry| match entry {
+            bir::DictEntry::Pair(key, value) => {
+                visit(key);
+                visit(value);
+            }
+            bir::DictEntry::Spread(spread) => visit(&mut spread.source),
+        }),
+        R::ResultVariant(variant) => visit(&mut variant.payload),
+        R::Format(parts) => parts.iter_mut().for_each(|part| {
+            if let bir::FormatPart::Expr { operand, .. } = part {
+                visit(operand);
+            }
+        }),
+        R::Closure { captured_operands, .. } => captured_operands.iter_mut().for_each(|value| visit(value)),
+        R::Generator {
+            source,
+            captured_operands,
+            ..
+        } => {
+            visit(source);
+            captured_operands.iter_mut().for_each(|value| visit(value));
+        }
+        R::Match { scrutinee, arms } => {
+            visit(scrutinee);
+            for arm in arms {
+                arm.guard.iter_mut().for_each(|guard| visit(guard));
+                visit(&mut arm.result);
+            }
+        }
+        R::ValueEnumVariant(_) | R::FieldlessEnumVariant(_) => {}
+    }
+}
+
+/// Visit positional, named and spread call or aggregate arguments.
+fn arguments_mut(arguments: &mut [bir::ArgumentElement], visit: &mut impl FnMut(&mut bir::Operand)) {
+    for argument in arguments {
+        match argument {
+            bir::ArgumentElement::One(operand) | bir::ArgumentElement::Named { operand, .. } => visit(operand),
+            bir::ArgumentElement::Spread(spread) => visit(&mut spread.source),
+        }
+    }
+}
+
+/// Turn a move of a borrowed loop item into a clone at that use, including inside index operands; report an exclusive
+/// loan of the item.
+fn clone_item_move(operand: &mut bir::Operand, item: bir::LocalId) -> bool {
+    let bir::Operand::Place(read) = operand else { return false };
+    let mut exclusive = false;
+    place_indices_mut(&mut read.place, &mut |index| exclusive |= clone_item_move(index, item));
+    if read.place.local_id() != Some(item) {
+        return exclusive;
+    }
+    if read.fact == bir::OwnershipFact::Move {
+        read.fact = bir::OwnershipFact::Clone;
+        read.last_use = false;
+    }
+    exclusive || read.fact == bir::OwnershipFact::MutBorrow
+}
+
+/// Visit the index operands of one place's projection.
+fn place_indices_mut(place: &mut bir::Place, visit: &mut impl FnMut(&mut bir::Operand)) {
+    for element in &mut place.projection {
+        if let bir::PlaceElem::Index(index) = element {
+            visit(index);
+        }
+    }
+}
+
+/// Visit the places one statement writes.
+fn statement_places_mut(statement: &mut bir::Statement, visit: &mut impl FnMut(&mut bir::Place)) {
+    use bir::StatementKind as S;
+    match &mut statement.kind {
+        S::Assign { place, .. } | S::IterNext { destination: place, .. } | S::TryPropagate { destination: place, .. } => {
+            visit(place)
+        }
+        S::Call { destination, .. } | S::Await { destination, .. } | S::Race { destination, .. } => {
+            destination.iter_mut().for_each(|place| visit(place))
+        }
+        _ => {}
+    }
+}
+
+/// Move an owned local list into its builtin loop when nothing reads the list again, so the loop owns the items (#2426).
+///
+/// The loop must run once: it sits in the body's own statements or their branches, never inside another loop or a
+/// match arm. No later statement may name the list, and no closure or generator may hold it. Such a loop's items are
+/// owned values, so a body that hands one on moves it instead of cloning it.
+fn retain_consumed_lists(body: &mut bir::Body) {
+    let mut candidates = Vec::new();
+    once_statements(&body.block.stmts, &mut |position, statement| {
+        if let bir::StatementKind::Assign {
+            place,
+            rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
+        } = &statement.kind
+            && read.fact == bir::OwnershipFact::Borrow
+            && read.place.projection.is_empty()
+            && place.projection.is_empty()
+            && let (Some(iterator), Some(list)) = (place.local_id(), read.place.local_id())
+            && is_list(&body.locals[list.index()].ty)
+            && matches!(body.locals[list.index()].origin, bir::LocalOrigin::UserBinding)
+            && matches!(body.locals[iterator.index()].origin, bir::LocalOrigin::Temporary)
+        {
+            candidates.push((position, iterator, list));
+        }
+    });
+    for (position, iterator, list) in candidates {
+        if !polled_builtin(&body.block.stmts, iterator)
+            || captured(&body.block.stmts, list)
+            || named_after(&mut body.block.stmts.clone(), position, list)
+        {
+            continue;
+        }
+        walk_mut(&mut body.block.stmts, &mut |statement| {
+            if let bir::StatementKind::Assign {
+                place,
+                rvalue: bir::Rvalue::Use(bir::Operand::Place(read)),
+            } = &mut statement.kind
+                && place.local_id() == Some(iterator)
+                && read.place.local_id() == Some(list)
+            {
+                read.fact = bir::OwnershipFact::Move;
+                read.last_use = true;
+            }
+        });
+    }
+}
+
+/// Visit, in source order with their walk positions, the statements that run at most once per call.
+fn once_statements(statements: &[bir::Statement], visit: &mut impl FnMut(usize, &bir::Statement)) {
+    let mut position = 0;
+    let mut repeated = Vec::new();
+    walk(statements, &mut |statement| {
+        repeated.retain(|end: &usize| position < *end);
+        if repeated.is_empty() {
+            visit(position, statement);
+        }
+        let nested = match &statement.kind {
+            bir::StatementKind::Loop { body } => Some(walked_len(&body.stmts)),
+            bir::StatementKind::Assign {
+                rvalue: bir::Rvalue::Match { arms, .. },
+                ..
+            } => Some(arms.iter().map(|arm| walked_len(&arm.guard_stmts) + walked_len(&arm.body_stmts)).sum()),
+            _ => None,
+        };
+        if let Some(length) = nested {
+            repeated.push(position + 1 + length);
+        }
+        position += 1;
+    });
+}
+
+/// Count the statements the lexical walk visits in a block, nested blocks included.
+fn walked_len(statements: &[bir::Statement]) -> usize {
+    let mut count = 0;
+    walk(statements, &mut |_| count += 1);
+    count
+}
+
+/// Report whether a loop polls this iterator alone.
+fn polled_builtin(statements: &[bir::Statement], iterator: bir::LocalId) -> bool {
+    single_polls(statements).iter().any(|(polled, _)| *polled == iterator)
+}
+
+/// The iterator and whole item local of each loop that polls exactly one builtin iterator. A loop polling several, such
+/// as `zip`, keeps its sources' own iteration contract.
+fn single_polls(statements: &[bir::Statement]) -> Vec<(bir::LocalId, bir::LocalId)> {
+    let mut polls = Vec::new();
+    walk(statements, &mut |statement| {
+        let bir::StatementKind::Loop { body } = &statement.kind else { return };
+        let direct: Vec<_> = body
+            .stmts
+            .iter()
+            .filter_map(|statement| match &statement.kind {
+                bir::StatementKind::IterNext {
+                    destination,
+                    iterator: bir::Operand::Place(read),
+                    protocol: bir::IterProtocol::Builtin,
+                } if read.place.projection.is_empty() && destination.projection.is_empty() => {
+                    Some((read.place.local_id()?, destination.local_id()?))
+                }
+                _ => None,
+            })
+            .collect();
+        if let [poll] = direct.as_slice() {
+            polls.push(*poll);
+        }
+    });
+    polls
+}
+
+/// Report whether any statement after walk position `position` reads or writes `list`, drops excepted.
+fn named_after(statements: &mut [bir::Statement], position: usize, list: bir::LocalId) -> bool {
+    let mut current = 0;
+    let mut named = false;
+    walk_mut(statements, &mut |statement| {
+        if current > position && !matches!(statement.kind, bir::StatementKind::Drop { .. }) {
+            let mut found = false;
+            statement_places_mut(statement, &mut |place| {
+                found |= place.local_id() == Some(list);
+                place_indices_mut(place, &mut |operand| found |= mentions_local(operand, list));
+            });
+            statement_operands_mut(statement, &mut |operand| found |= mentions_local(operand, list));
+            named |= found;
+        }
+        current += 1;
+    });
+    named
+}
+
+/// Report whether an operand reads `local`, directly or through an index operand.
+fn mentions_local(operand: &mut bir::Operand, local: bir::LocalId) -> bool {
+    let bir::Operand::Place(read) = operand else { return false };
+    let mut found = read.place.local_id() == Some(local);
+    place_indices_mut(&mut read.place, &mut |index| found |= mentions_local(index, local));
+    found
+}
+
+/// Report whether a pattern binds a name anywhere inside it.
+fn binds(pattern: &bir::Pattern) -> bool {
+    use bir::Pattern as P;
+    match pattern {
+        P::Var(_) => true,
+        P::Tuple(fields) | P::Result { fields, .. } | P::Enum { fields, .. } | P::Or(fields) => fields.iter().any(binds),
+        P::UnionMember { fields, .. } => fields.iter().any(binds),
+        P::Struct { fields, .. } | P::Nominal { fields, .. } => fields.iter().any(|(_, field)| binds(field)),
+        P::Wildcard | P::Literal(_) | P::FieldlessEnumVariant(_) => false,
     }
 }

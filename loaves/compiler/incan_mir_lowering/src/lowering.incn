@@ -894,6 +894,9 @@ def owned_target_read(
         OwnershipFact.Clone =>
             if frozen_observation_type(place_type(builder.locals, target)):
                 return Ok(read_place(target, false, span))
+            match shared_reference_clone(builder, target, span)?:
+                Some(cloned) => return Ok(cloned)
+                None => pass
             # A checked clone of an open parameter becomes Rust's copy-valued Clone on concrete scalar instances.
             ty = place_type(builder.locals, target)
             # A range value's four scalar fields own nothing, so its clone is a copy, as legacy's is.
@@ -952,6 +955,22 @@ def owned_target_read(
                     return Err(f"unsupported Body IR ownership Borrow outside formatting at {site}; {detail}")
         OwnershipFact.MutBorrow => return Err("unsupported Body IR ownership MutBorrow")
         OwnershipFact.Unknown => return Err("unsupported Body IR ownership Unknown")
+
+
+def shared_reference_clone(mut builder: Builder, target: Place, span: SourceSpan) -> Result[Option[Operand], str]:
+    """Clone the value a whole shared reference binding points to, such as a borrowed loop item, into an owned one."""
+    if target.projection != Projection.Whole:
+        return Ok(None)
+    reference = read_place(target, false, span)
+    match place_type(builder.locals, target):
+        PlanType.StringRef => return Ok(Some(read_place(clone_text_reference(builder, reference, span)?, true, span)))
+        PlanType.ModelRef(owner, name) => return Ok(Some(clone_model_reference(builder, reference, owner, name, span)))
+        PlanType.EnumRef(owner, name) => return Ok(Some(clone_enum_reference(builder, reference, owner, name, span)))
+        PlanType.ListRef(_leaf, _depth) => return Ok(Some(read_place(cloned_list(builder, target, span)?, true, span)))
+        PlanType.TupleRef(elements) =>
+            dereferenced = Place(local=target.local, projection=Projection.Deref(PlanType.Tuple(elements)), span=span)
+            return Ok(Some(clone_tuple_operand(builder, dereferenced, span)?))
+        _ => return Ok(None)
 
 
 def reads_through_reference(place: Place) -> bool:
@@ -11929,6 +11948,8 @@ def list_next(
     target = list_root_place(builder, destination, span)?
     if is_list(place_type(builder.locals, receiver)) and is_mutable_list_reference(place_type(builder.locals, receiver)):
         in_place_item(builder, receiver, target, element, position, span)?
+    elif is_list(ty) and is_borrowed_item(builder, target, element):
+        borrowed_item(builder, receiver, target, element, position, span)?
     else:
         item_reference = list_borrow(builder, receiver, false, span)?
         drop_owned(builder, target.local, span)
@@ -11956,6 +11977,37 @@ def list_next(
     builder.emit(plan_assign(pair, RvalueKind.Binary(BinaryOp.Add, position, one), span))
     result = Place(local=pair.local, projection=Projection.Value, span=span)
     builder.emit(plan_assign(plan_place(cursor, span), RvalueKind.Use(read_place(result, false, span)), span))
+    return Ok(None)
+
+
+def is_borrowed_item(mut builder: Builder, item: Place, element: PlanType) -> bool:
+    """Report whether Body IR bound this loop item as a shared reference to its element rather than a copy of it."""
+    match shared_receiver_type(element):
+        Ok(reference) => return place_type(builder.locals, item) == reference
+        Err(_error) => return false
+
+
+def borrowed_item(
+    mut builder: Builder,
+    iterator: Place,
+    item: Place,
+    element: PlanType,
+    position: Operand,
+    span: SourceSpan,
+) -> Result[None, str]:
+    """Bind a loop item Body IR borrows as a shared reference to its element; the element is never copied."""
+    reference = list_borrow(builder, iterator, false, span)?
+    borrowed = list_slice_view(builder, reference, [element], false, span)?
+    instantiated_external_call(
+        builder,
+        "incan_std_core::collections::list_get",
+        [element],
+        [PlanType.SliceRef([element]), PlanType.Int],
+        place_type(builder.locals, item),
+        [borrowed, position],
+        item,
+        span,
+    )?
     return Ok(None)
 
 
@@ -12076,11 +12128,13 @@ pub def list_root_place(mut builder: Builder, value: &RustPlace, span: SourceSpa
             None => return Err("unsupported Body IR global list root projection")
             Some(local) =>
                 mut ty = builder.locals[int(local.index()) + 1 + builder.local_offset].ty
-                # A receiver reference projects its model's fields.
+                # A receiver or loop item reference projects its model or tuple fields.
                 match ty:
                     PlanType.ModelRef(owner, name) => ty = PlanType.Model(owner, name)
                     PlanType.ModelMutRef(owner, name) => ty = PlanType.Model(owner, name)
                     PlanType.EnumMutRef(owner, name) => ty = PlanType.Enum(owner, name)
+                    PlanType.TupleRef(elements) => ty = PlanType.Tuple(elements)
+                    PlanType.TupleMutRef(elements) => ty = PlanType.Tuple(elements)
                     _ => pass
                 for projection in value.projection:
                     match projection:
@@ -13954,6 +14008,22 @@ pub def boundary_plan_operand(
     if source == PlanType.StrRef and target == PlanType.String:
         owned = owned_slice_text(builder, value, span)
         return Ok(read_place(owned, true, span))
+    # A borrowed text, list or tuple reaching an owning destination is cloned there, as a borrowed model is below.
+    if source == PlanType.StringRef and target == PlanType.String:
+        return Ok(read_place(clone_text_reference(builder, value, span)?, true, span))
+    match (source, target):
+        (PlanType.ListRef(leaf, depth), PlanType.List(target_leaf, target_depth)) =>
+            if leaf == target_leaf and depth == target_depth:
+                owned = temporary(builder, target, span)
+                list_call(builder, "clone_list", list_element(leaf, depth), [source], target, [value], owned, span)
+                return Ok(read_place(owned, true, span))
+        (PlanType.TupleRef(elements), PlanType.Tuple(_target_elements)) =>
+            if PlanType.Tuple(elements) == target:
+                reference = temporary(builder, source, span)
+                builder.emit(plan_assign(reference, RvalueKind.Use(value), span))
+                tuple = Place(local=reference.local, projection=Projection.Deref(target), span=span)
+                return clone_tuple_operand(builder, tuple, span)
+        _ => pass
     # A borrowed source model that reaches a destination owning one was admitted by the checker there, so it is cloned.
     match (source, target):
         (PlanType.Tuple(_source_fields), PlanType.Tuple(_target_fields)) =>

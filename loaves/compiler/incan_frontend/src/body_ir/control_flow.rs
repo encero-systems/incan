@@ -1464,6 +1464,10 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             (ast::Expr::Try(inner), true) => inner,
             _ => iter_expr,
         };
+        // A loop over `xs.iter()` reads the list itself, as `for x in xs` does, without a lazy snapshot of it (#2426).
+        let list_source = self.list_iter_source(effective_iter_expr);
+        let custom = custom && list_source.is_none();
+        let effective_iter_expr = list_source.unwrap_or(effective_iter_expr);
 
         if !custom
             && self.enumerated_pattern_is_normalizable(pattern_local)
@@ -2052,6 +2056,28 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
             return None;
         }
         collection_member_types(&self.resolve_ty(source.span), CollectionTypeId::Dict)?;
+        Some(source)
+    }
+
+    /// Select the list of a direct builtin `list.iter()` call, which a loop iterates in place like the list itself.
+    fn list_iter_source<'expr>(
+        &self,
+        expr: &'expr ast::Spanned<ast::Expr>,
+    ) -> Option<&'expr ast::Spanned<ast::Expr>> {
+        if let ast::Expr::Paren(inner) = &expr.node {
+            return self.list_iter_source(inner);
+        }
+        let ast::Expr::MethodCall(source, _, type_args, args) = &expr.node else {
+            return None;
+        };
+        if !type_args.is_empty() || !args.is_empty() {
+            return None;
+        }
+        let identity = self.type_info.resolved_identity(expr.span)?;
+        if identity.origin != incan_semantics_core::SymbolOrigin::Builtin || identity.declaration_name != "List.iter" {
+            return None;
+        }
+        collection_member_types(&self.resolve_ty(source.span), CollectionTypeId::List)?;
         Some(source)
     }
 

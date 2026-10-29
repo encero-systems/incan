@@ -1,0 +1,108 @@
+# behavior: a loop over a borrowed or read-only list binds each item by reference, and a loop consuming an owned list moves its items, without cloning them (#2426)
+# expect-stdout:
+#   borrowed parameter: 6 letters, 0 clones
+#   read-only local: 6 letters, 0 clones
+#   matched by equality: true, 0 clones
+#   changed in place: ["a!", "bb!", "ccc!"], 0 clones
+#   enum items: 2 tagged, 0 clones
+#   tuple items: 6 letters, 0 clones
+#   list items: 6 entries, 0 clones
+#   consumed owned list: 3 kept, 0 clones
+
+"""Each `Counted` clone is observable, so a loop that copies its items shows a nonzero count."""
+
+from rust::clone_counter import Counted, clone_count
+
+
+model Entry:
+    """A large value: a counted tag, a name and a payload."""
+
+    tag: Counted
+    name: str
+    payload: list[int]
+
+
+def entries() -> list[Entry]:
+    """Build three entries whose names have 1, 2 and 3 letters."""
+    mut built: list[Entry] = []
+    for index, name in enumerate(["a", "bb", "ccc"]):
+        built.append(Entry(tag=Counted.new(index), name=name, payload=[index, index, index]))
+    return built
+
+
+enum Slot:
+    """An enum whose payload owns a counted value."""
+
+    Tagged(Counted)
+    Empty
+
+
+def letters(items: list[Entry]) -> int:
+    """Read every item of a borrowed parameter."""
+    mut total = 0
+    for item in items:
+        total += len(item.name)
+    return total
+
+
+def contains(items: list[Entry], name: str, payload: list[int]) -> bool:
+    """Compare every item of a borrowed list with borrowed text and a borrowed list."""
+    for item in items:
+        if item.name == name and item.payload == payload:
+            return true
+    return false
+
+
+def main() -> None:
+    items = entries()
+
+    mut before = clone_count()
+    total = letters(items)
+    println(f"borrowed parameter: {total} letters, {clone_count() - before} clones")
+
+    before = clone_count()
+    mut local_total = 0
+    for item in items:
+        local_total += len(item.name)
+    println(f"read-only local: {local_total} letters, {clone_count() - before} clones")
+
+    before = clone_count()
+    found = contains(items, "bb", [1, 1, 1])
+    println(f"matched by equality: {found}, {clone_count() - before} clones")
+
+    mut changed = entries()
+    before = clone_count()
+    for item in changed:
+        item.name = item.name + "!"
+    names = [entry.name for entry in changed]
+    println(f"changed in place: {names}, {clone_count() - before} clones")
+
+    slots = [Slot.Tagged(Counted.new(7)), Slot.Empty, Slot.Tagged(Counted.new(8))]
+    before = clone_count()
+    mut tagged = 0
+    for slot in slots:
+        match slot:
+            Slot.Tagged(_) => tagged += 1
+            Slot.Empty => pass
+    println(f"enum items: {tagged} tagged, {clone_count() - before} clones")
+
+    pairs = [(entry.name, entry.tag) for entry in entries()]
+    before = clone_count()
+    mut pair_letters = 0
+    for pair in pairs:
+        pair_letters += len(pair[0])
+    println(f"tuple items: {pair_letters} letters, {clone_count() - before} clones")
+
+    groups = [entries(), entries()]
+    before = clone_count()
+    mut grouped = 0
+    for group in groups:
+        grouped += len(group)
+    println(f"list items: {grouped} entries, {clone_count() - before} clones")
+
+    owned = entries()
+    mut kept: list[Entry] = []
+    before = clone_count()
+    for item in owned:
+        kept.append(item)
+    println(f"consumed owned list: {len(kept)} kept, {clone_count() - before} clones")
