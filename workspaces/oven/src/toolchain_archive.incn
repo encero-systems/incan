@@ -101,18 +101,38 @@ def pack_staged(toolchain: Toolchain, directory: Path, stage: Path, output: Path
     driver = "bin/" + Path(toolchain.driver).name()
     link_file(Path(toolchain.driver), stage.joinpath(driver))?
     abi = stage_abi_caches(toolchain.rust_abi, stage)?
+    c_tools = stage_c_toolchain(toolchain, stage)?
     # 3. The runtime and support crates, the directories their dependencies live in and the standard Loaves come along.
     externs = stage_externs(toolchain.externs, stage)?
     search = stage_search(toolchain.search, stage, "")?
     stage_loaves(directory.joinpath("loaves"), stage)?
     # 4. The description names only paths inside the toolchain, so the archive installs wherever it is unpacked.
     mut description = portable_description(driver, abi, externs, search)
+    for key, relative in c_tools:
+        description = replaced(description, key, JsonValue.string(relative))?
     if toolchain.registry_lock != "":
         link_file(Path(toolchain.registry_lock), stage.joinpath("registry/selected.json"))?
         description = replaced(description, "registry_lock", JsonValue.string("registry/selected.json"))?
     write_json(stage.joinpath("toolchain.json"), description)?
     # 5. The stage becomes one archive that holds the files the links point at, not the links.
     return archive(stage, output)
+
+
+def stage_c_toolchain(toolchain: Toolchain, stage: Path) -> Result[list[Tuple[str, str]], str]:
+    """
+    Stage the Clang that C ABI checks use; the description fields that name it.
+
+    The checks only parse headers, so Clang travels with its resource headers; the machine supplies the headers of the
+    system libraries a binding links.
+    """
+    mut fields: list[Tuple[str, str]] = []
+    if toolchain.c_compiler != "":
+        compiler = Path(toolchain.c_compiler).resolve().map_err((error) => error.message())?
+        link_file(compiler, stage.joinpath("c/clang/bin/clang"))?
+        resources = compiler.parent().parent().joinpath("lib").joinpath("clang")
+        link_file(resources, stage.joinpath("c/clang/lib/clang"))?
+        fields.append(("c_compiler", "c/clang/bin/clang"))
+    return Ok(fields)
 
 
 def stage_abi_caches(caches: list[str], stage: Path) -> Result[list[str], str]:
@@ -186,7 +206,7 @@ def stage_registry(toolchain: Toolchain, stage: Path) -> Result[None, str]:
     Retain the closure's unit identities and copy each existing named registry artifact directory once.
 
     1. Stage the artifact directory of every registry unit that has one.
-    2. Rewrite each extern's path of the closure document to its staged place.
+    2. Rewrite each extern's path, and each unit's and dependency's artifact, to its staged place.
     """
     source = Path(toolchain.registry_units)
     # 1. A unit's artifacts are shipped from the directory the store holds them in, if that directory exists.
@@ -202,9 +222,43 @@ def stage_registry(toolchain: Toolchain, stage: Path) -> Result[None, str]:
         value = table.require(name).map_err((error) => error.message())?
         artifact = required_text(value, "path")?
         relative = stage_artifact(Path(located(source.parent(), artifact)), stage)?
-        externs[name] = replaced(value, "path", JsonValue.string(relative[9:]))?
-    write_json(stage.joinpath("registry/closure.json"), replaced(document, "externs", JsonValue.object(externs))?)?
+        externs[name] = replaced(value, "path", JsonValue.string(from_registry(relative)))?
+    mut units: list[JsonValue] = []
+    for unit in required_items(document, "units")?:
+        units.append(portable_unit(source, unit, stage)?)
+    portable = replaced(document, "externs", JsonValue.object(externs))?
+    write_json(stage.joinpath("registry/closure.json"), replaced(portable, "units", JsonValue.array(units))?)?
     return Ok(None)
+
+
+def portable_unit(source: Path, unit: JsonValue, stage: Path) -> Result[JsonValue, str]:
+    """Name a unit's artifact and its dependencies' artifacts from the staged registry, never the packing machine."""
+    staged = staged_artifact(source, unit, stage)?
+    match staged.get("dependencies"):
+        None => return Ok(staged)
+        Some(listed) =>
+            mut dependencies: list[JsonValue] = []
+            for dependency in array_value(listed)?:
+                dependencies.append(staged_artifact(source, dependency, stage)?)
+            return replaced(staged, "dependencies", JsonValue.array(dependencies))
+
+
+def staged_artifact(source: Path, record: JsonValue, stage: Path) -> Result[JsonValue, str]:
+    """Rewrite a record's artifact to its staged path; a record without an artifact stays as it is."""
+    match record.get("artifact"):
+        None => return Ok(record)
+        Some(value) =>
+            if value.is_null():
+                return Ok(record)
+            relative = stage_artifact(Path(located(source.parent(), string_value(value)?)), stage)?
+            return replaced(record, "artifact", JsonValue.string(from_registry(relative)))
+
+
+def from_registry(relative: str) -> str:
+    """Express a toolchain-relative path from the registry directory the closure document lives in."""
+    if relative.startswith("registry/"):
+        return relative[9:]
+    return "../" + relative
 
 
 def stage_loaves(source: Path, stage: Path) -> Result[None, str]:
@@ -213,6 +267,8 @@ def stage_loaves(source: Path, stage: Path) -> Result[None, str]:
         return Err(f"no standard Loaves at {source.0}")
     for package in source.iterdir().map_err((error) => error.message())?:
         for profile in package.iterdir().map_err((error) => error.message())?:
+            if ".previous." in profile.name():
+                return Err(f"stale standard generation cannot be packed: {profile.0}")
             if not profile.is_dir():
                 continue
             for artifact in profile.iterdir().map_err((error) => error.message())?:
@@ -227,9 +283,9 @@ def stage_loaves(source: Path, stage: Path) -> Result[None, str]:
     return Ok(None)
 
 
-def stage_native(source: Path, destination: Path, stage: Path) -> Result[None, str]:
+def stage_native(source: Path, destination: Path, stage: Path, prefix: str = FROM_PROFILE) -> Result[None, str]:
     """
-    Resolve a Loaf's original paths once and express its native dependencies from its own directory.
+    Resolve a closure's original paths once and express its native dependencies from its installed directory.
 
     1. Stage the artifact of every extern and name it from the Loaf's profile directory.
     2. Stage the search directories the same way.
@@ -237,24 +293,24 @@ def stage_native(source: Path, destination: Path, stage: Path) -> Result[None, s
     4. Write the rewritten document.
     """
     document = read_json(source)?
-    # 1. Each extern's artifact travels with the toolchain and is named from the profile directory the Loaf is in.
-    externs = stage_extern_pairs(source, document.require("externs").map_err((error) => error.message())?, stage)?
+    # 1. The prefix names the archive root from this closure's destination directory.
+    externs = stage_extern_pairs(source, document.require("externs").map_err((error) => error.message())?, stage, prefix)?
     # 2. The directories the closure searches are staged and named the same way, and missing ones are dropped.
     mut directories: list[str] = []
     for item in required_items(document, "search")?:
         directories.append(located(source.parent(), string_value(item)?))
-    search = stage_search(directories, stage, FROM_PROFILE)?
+    search = stage_search(directories, stage, prefix)?
     # 3. The crates the Loaf's attribute macros expand against travel and are named the same way.
     updated = replaced(document, "externs", JsonValue.array(externs))?
-    macros = stage_macro_externs(source, updated, stage)?
+    macros = stage_macro_externs(source, updated, stage, prefix)?
     # 4. Everything else the document says is kept as it was.
     rewritten = replaced(macros, "search", JsonValue.array([JsonValue.string(path) for path in search]))?
     write_json(destination, rewritten)?
     return Ok(None)
 
 
-def stage_extern_pairs(source: Path, listed: JsonValue, stage: Path) -> Result[list[JsonValue], str]:
-    """Stage each artifact of a native document's `[name, path]` pairs and name it from the Loaf's profile directory."""
+def stage_extern_pairs(source: Path, listed: JsonValue, stage: Path, prefix: str) -> Result[list[JsonValue], str]:
+    """Stage each native `[name, path]` pair and name it relative to the closure's destination directory."""
     mut result: list[JsonValue] = []
     for value in array_value(listed)?:
         pair = array_value(value)?
@@ -262,16 +318,16 @@ def stage_extern_pairs(source: Path, listed: JsonValue, stage: Path) -> Result[l
             return Err(f"{source.0}: native extern must be [name, path]")
         path = string_value(pair[1])?
         relative = stage_artifact(Path(located(source.parent(), path)), stage)?
-        result.append(JsonValue.array([pair[0], JsonValue.string(FROM_PROFILE + relative)]))
+        result.append(JsonValue.array([pair[0], JsonValue.string(prefix + relative)]))
     return Ok(result)
 
 
-def stage_macro_externs(source: Path, document: JsonValue, stage: Path) -> Result[JsonValue, str]:
+def stage_macro_externs(source: Path, document: JsonValue, stage: Path, prefix: str) -> Result[JsonValue, str]:
     """Stage the Rust crates a Loaf's attribute macros expand against; a document without any stays as it is."""
     match document.get("macro_externs"):
         None => return Ok(document)
         Some(listed) =>
-            pairs = stage_extern_pairs(source, listed, stage)?
+            pairs = stage_extern_pairs(source, listed, stage, prefix)?
             return replaced(document, "macro_externs", JsonValue.array(pairs))
 
 
@@ -310,26 +366,63 @@ def stage_directory(source: Path, stage: Path) -> Result[str, str]:
         relative = "registry/entries/" + canonical.parent().name() + "/artifacts"
     destination = stage.joinpath(relative)
     if not destination.is_dir():
-        link_file(canonical, destination)?
+        if relative.startswith("registry/"):
+            stage_registry_directory(canonical, destination)?
+        else:
+            stage_native_directory(canonical, destination, stage)?
     return Ok(relative)
+
+
+def is_machine_observation(name: str) -> bool:
+    """Filesystem observations are machine-local caches, never relocation proofs or linking inputs."""
+    return name in ["observations.json", "portable-observations.json"]
+
+
+def stage_registry_directory(source: Path, destination: Path) -> Result[None, str]:
+    """Stage a registry entry's artifacts as they are, without the builder's filesystem observations."""
+    make_directory(destination)?
+    for file in source.iterdir().map_err((error) => error.message())?:
+        if not is_machine_observation(file.name()):
+            link_file(file, destination.joinpath(file.name()))?
+    return Ok(None)
+
+
+def stage_native_directory(source: Path, destination: Path, stage: Path) -> Result[None, str]:
+    """Rewrite native crate closures too; creating the directory first closes recursive search references."""
+    make_directory(destination)?
+    for file in source.iterdir().map_err((error) => error.message())?:
+        if is_machine_observation(file.name()):
+            continue
+        if file.name().endswith(".native.json") or file.name() == "native.json":
+            stage_native(file, destination.joinpath(file.name()), stage, "../../")?
+        else:
+            link_file(file, destination.joinpath(file.name()))?
+    return Ok(None)
 
 
 def stage_profile(source: Path, stage: Path) -> Result[str, str]:
     """
     Retain the exact native snapshot a Loaf closure names, even when another home has a different build of that package.
 
-    Profile basenames are not identities. A path digest separates builder snapshots; only native libraries belong in
-    this search directory, while the installed standard Loaf's rewritten metadata stays in `loaves/`.
+    Profile basenames are not identities. The digest of the snapshot's native libraries separates builder snapshots, so
+    equal libraries stage under one name on every machine; only native libraries belong in this search directory,
+    while the installed standard Loaf's rewritten metadata stays in `loaves/`.
     """
-    digest = hexlify(sha256.digest(source.0.encode("utf-8")))
+    mut names: list[str] = []
+    for file in source.iterdir().map_err((error) => error.message())?:
+        if file.is_file() and is_native_library(file.name()):
+            names.append(file.name())
+    mut listed: list[str] = []
+    for name in sorted(names):
+        listed.append(f"{name}\t{file_digest(source.joinpath(name))?}")
+    digest = hexlify(sha256.digest("\n".join(listed).encode("utf-8")))
     relative = "native/" + source.parent().name() + "-" + digest
     destination = stage.joinpath(relative)
     if destination.is_dir():
         return Ok(relative)
     make_directory(destination)?
-    for file in source.iterdir().map_err((error) => error.message())?:
-        if file.is_file() and is_native_library(file.name()):
-            link_file(file, destination.joinpath(file.name()))?
+    for name in names:
+        link_file(source.joinpath(name), destination.joinpath(name))?
     return Ok(relative)
 
 
@@ -457,6 +550,8 @@ def verify_contents(toolchain: Toolchain) -> Result[None, str]:
     mut files = [toolchain.driver, toolchain.registry_units] + toolchain.rust_abi
     if toolchain.registry_lock != "":
         files.append(toolchain.registry_lock)
+    if toolchain.c_compiler != "":
+        files.append(toolchain.c_compiler)
     for file in files + [native.path for native in toolchain.externs]:
         if not Path(file).is_file():
             return Err(f"missing toolchain artifact: {file}")
@@ -477,12 +572,13 @@ def validate_paths(document: JsonValue) -> Result[None, str]:
 
 
 def manifest_paths(document: JsonValue) -> Result[list[str], str]:
-    """Every path a toolchain description names: driver, registry, ABI caches, search directories and externs."""
+    """Every path a toolchain description names: driver, registry, C tools, ABI caches, search directories, externs."""
     mut paths: list[str] = []
     for key in ["driver", "registry_units"]:
         paths.append(required_text(document, key)?)
-    if document.get("registry_lock") != None:
-        paths.append(required_text(document, "registry_lock")?)
+    for key in ["registry_lock", "c_compiler"]:
+        if document.get(key) != None:
+            paths.append(required_text(document, key)?)
     for key in ["rust_abi", "search"]:
         for value in required_items(document, key)?:
             paths.append(string_value(value)?)
