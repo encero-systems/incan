@@ -1,0 +1,2 @@
+# Incan sources: highlight as Python until GitHub Linguist knows Incan, without counting them as Python.
+*.incn linguist-language=Python -linguist-detectable
