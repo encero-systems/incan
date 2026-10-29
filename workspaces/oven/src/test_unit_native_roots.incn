@@ -1,0 +1,33 @@
+"""Only selected Rust import roots receive compiler metadata authority; ambient support remains link-only."""
+
+from toolchain import NativeCrate
+from unit import UnitDescription
+from unit_rust import add_extern, add_rust_root
+
+
+pub def test_an_owned_rust_facet_is_linked_and_declared_exactly_once() -> Result[None, str]:
+    """A native facet is a real import root, while an unrelated linked support crate is not."""
+    unit = UnitDescription(
+        source="src/lib.incn",
+        project_root="package",
+        source_root="src",
+        package="example",
+        version="1",
+        profile="release",
+        declared_features=[],
+        active_features=[],
+        loaves=[],
+        rust_crates=[],
+        contract_models=[],
+        c_headers=[],
+    )
+    ambient = NativeCrate(name="ambient", path="support.rlib")
+    owned = NativeCrate(name="example_native", path="example.rlib")
+    linked = add_extern(unit, ambient)?
+    assert linked.rust_crates == []
+    selected = add_rust_root(linked, owned)?
+    repeated = add_rust_root(selected, owned)?
+    assert repeated.rust_crates == ["example_native"]
+    assert len(repeated.externs) == 2
+    assert repeated.externs[1].name == "example_native"
+    return Ok(None)
