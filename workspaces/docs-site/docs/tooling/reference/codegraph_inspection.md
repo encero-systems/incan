@@ -58,6 +58,8 @@ A source span has `file`, an inclusive `start` and an exclusive `end` byte offse
 
 A semantic context has `project_root` and `loaves`. Each Loaf has `key`, `name`, `version`, `standard` and a `sha256:` artifact `digest`. Consumer identities, snapshots, context packs and optional process records are specified in [Agent context CLI and MCP](agent_context_cli.md).
 
+When a unit is refused before the compiler can export any facts, its presentation header retains request metadata and dependency addresses. Compiler-owned fields, including `schema_version`, `compiler_version` and `package`, are absent in that header.
+
 ## Files, namespaces and modules
 
 | Record | Fields |
