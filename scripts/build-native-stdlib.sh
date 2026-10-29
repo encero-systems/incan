@@ -19,6 +19,7 @@ for package in "$@"; do
     output=$toolchain/loaves/$name/$profile
     mkdir -p "${output:h}"
     # Debug initially aliases release; a real debug producer must own a separate artifact set and stamp.
+    previous=
     if [[ -L $output ]]; then
         previous=$(mktemp -d "$output.previous.XXXXXX")
         rmdir "$previous"
@@ -26,6 +27,8 @@ for package in "$@"; do
     fi
     # Oven retains the complete library key and stages replacement only when an input or output changed.
     "$builder" "$repo" "$package" "$profile" "$output"
+    # Never leave a retired generation beside the current one: packing refuses stale generations.
+    [[ -z $previous ]] || rm -rf -- "$previous"
     if [[ $profile == release ]]; then
         default=$toolchain/loaves/$name/debug
         # Supply a default only until debug has its own build; never evict another profile on an unchanged run.

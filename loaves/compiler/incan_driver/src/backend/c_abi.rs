@@ -128,9 +128,9 @@ impl CAbiVerificationPlan {
 
 /// Explicit Clang executable used for one verifier invocation.
 ///
-/// Oven will eventually provide this capability through a selected Loaf target. The first checked-binding slice
-/// keeps that policy out of source declarations while accepting an explicit test/CI override and the platform's
-/// Clang-compatible toolchain.
+/// Oven passes a toolchain's own Clang (`INCAN_C_ABI_CLANG`) when the toolchain carries one, as Linux toolchains do;
+/// it reads the machine's headers, those of the system libraries a binding links. Otherwise the platform's
+/// Clang-compatible toolchain is used: Xcode's on macOS.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClangToolchain {
     executable: PathBuf,

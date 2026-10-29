@@ -1,11 +1,12 @@
 """Rust facets use their test dependencies and report both passing and failing unit tests."""
 
 from std.fs import Path
+from std.testing import fail
 from files import make_directory, write
 from rust_testing import build_rust_tests
 from loaf_local_graph import LocalDemand, LocalFacet, local_facets
 from rust_activation import DependencyDomain
-from rust_units import RustBuild, build_dependencies, identity, read_registry_units, target_configuration
+from rust_units import RustBuild, build_dependencies, identity, ordered, read_registry_units, target_configuration
 from home import home
 from scratch import scratch_directory
 from testing import run_rust_harness, test_sources
@@ -93,7 +94,13 @@ pub def test_rust_facet_reports_passing_and_failing_tests() -> Result[None, str]
 
 
 def verify_macro_domains(macro: Path, helper: Path, request: RustBuild) -> Result[None, str]:
-    """Reuse the completed host macro and target test dependency through their exact graph keys and artifact names."""
+    """
+    Reuse the completed host macro and target test dependency, named by their Loaves rather than their checkout.
+
+    1. Each producer is reused from the shared store under its Loaf's name, version, domain and profile.
+    2. The same Loaf in another checkout has the same identity; two Loaves declaring one name and version refuse.
+    """
+    # 1. Both fixtures declare version 1.0.0.
     canonical = macro.resolve().map_err((error) => error.message())?.0
     demand = LocalDemand(
         project=canonical,
@@ -111,14 +118,36 @@ def verify_macro_domains(macro: Path, helper: Path, request: RustBuild) -> Resul
     roles = [(macro, DependencyDomain.Host, "macro_fixture"), (helper, DependencyDomain.Target, "helper")]
     for project, domain, name in roles:
         root = project.resolve().map_err((error) => error.message())?
-        facet = LocalFacet(project=root.0, domain=domain, features=[], local=[], registry=[], registry_aliases=[])
+        facet = local_facet(root.0, domain, name)
         assert facet.key() in built, f"{name} must retain its {domain.value()} producer identity"
         unit = built[facet.key()]
         assert unit.reused, f"{name} was not completed by the test graph's original producer"
         assert Path(unit.directory).parent().0 == store.0
         assert Path(unit.artifact).name().startswith(f"lib{name}-{identity(facet, request.profile)}.")
         assert Path(unit.artifact).is_file()
+    # 2. A relocated checkout keeps the identity; a different Loaf with the same declaration is refused.
+    here = local_facet(helper.0, DependencyDomain.Target, "helper")
+    elsewhere = local_facet("/another/checkout/helper", DependencyDomain.Target, "helper")
+    assert identity(here, request.profile) == identity(elsewhere, request.profile)
+    match ordered([here, elsewhere]):
+        Ok(_) => fail("two local Loaves declaring one name and version were compiled as one unit")
+        Err(reason) =>
+            assert "both declare helper 1.0.0" in reason
     return Ok(None)
+
+
+def local_facet(project: str, domain: DependencyDomain, name: str) -> LocalFacet:
+    """A dependency-free facet of a Loaf that declares `name` at version 1.0.0."""
+    return LocalFacet(
+        project=project,
+        domain=domain,
+        features=[],
+        local=[],
+        registry=[],
+        registry_aliases=[],
+        package=name,
+        version="1.0.0",
+    )
 
 
 def incan_fixture(header: str, body: str) -> str:

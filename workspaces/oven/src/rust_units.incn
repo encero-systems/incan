@@ -131,7 +131,7 @@ pub def read_registry_units(
         units=completed,
         search=search,
         anchors=[],
-        recorded_bindings=recorded_registry_bindings(completed, path)?,
+        installation_bindings=recorded_registry_bindings(completed, path)?,
     )
     return project_registry(registry, project, reader)
 
@@ -143,6 +143,7 @@ def project_registry(registry: RegistryUnits, project: str, reader: ManifestRead
         return Ok(registry)
     mut selected = registry
     selected.recorded_bindings = registry_record(registry.units, Path(path))?
+    selected.installation_bindings = []
     return Ok(selected)
 
 
@@ -160,7 +161,7 @@ pub def registry_record_path(project: str, reader: ManifestReader) -> Result[str
 
 
 def recorded_registry_bindings(units: list[RegistryUnit], source: Path) -> Result[list[Tuple[str, str]], str]:
-    """Read only the selected installation's explicit producer record, validating every named catalog identity."""
+    """Read the installation's default producer choices, validating identities without creating a project lock."""
     toolchain = load_toolchain()?
     if toolchain.registry_lock == "":
         return Ok([])
@@ -370,13 +371,35 @@ def declares_any(table: TomlValue, key: str) -> Result[bool, str]:
 
 
 pub def identity(facet: LocalFacet, profile: str) -> str:
-    """A unit's identity: its project, domain, features and profile."""
-    text = f"{facet.project}\n{facet.domain.value()}\n{",".join(sorted(facet.features))}\n{profile}"
+    """
+    A unit's identity: its Loaf's name and version, domain, features and profile.
+
+    The checkout a Loaf lives in is not part of it, so an installed unit matches the same source anywhere. A facet
+    without a declared name keeps its project path.
+    """
+    mut owner = facet.project
+    if facet.package != "":
+        owner = f"{facet.package}\n{facet.version}"
+    text = f"{owner}\n{facet.domain.value()}\n{",".join(sorted(facet.features))}\n{profile}"
     return hexlify(sha256.digest(text.encode("utf-8")))[0:16]
+
+
+def refuse_shared_identities(facets: list[LocalFacet]) -> Result[None, str]:
+    """Two local Loaves declaring one name and version would compile to one unit; refuse instead of colliding."""
+    mut owners: Dict[str, str] = {}
+    for facet in facets:
+        if facet.package == "":
+            continue
+        named = f"{facet.package} {facet.version} ({facet.domain.value()})"
+        if named in owners and owners[named] != facet.project:
+            return Err(f"two local Loaves both declare {named}: {owners[named]} and {facet.project}")
+        owners[named] = facet.project
+    return Ok(None)
 
 
 pub def ordered(facets: list[LocalFacet]) -> Result[list[LocalFacet], str]:
     """The facets in an order where every unit follows the local units it links."""
+    refuse_shared_identities(facets)?
     mut done: list[str] = []
     mut result: list[LocalFacet] = []
     while len(result) < len(facets):
@@ -919,7 +942,7 @@ def installed_rust_library(
     outputs = [artifact, dependencies]
     stamp = directory.joinpath("library.oven-inputs")
     why = staleness(outputs, stamp, key)?
-    portable = portable_key(key, directory, arguments)?
+    portable = portable_key(key, directory, arguments, Path(facet.project))?
     if not retain_current_rust_library(
         facet,
         declared,
@@ -1078,7 +1101,7 @@ pub def inspect_rust_library(
     arguments = library_compile_arguments(facet, declared, directory, request, built, search)?
     environment = package_environment(facet.project, declared, declared.crate_name)
     native = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain)?
-    portable = portable_key(native, directory, arguments)?
+    portable = portable_key(native, directory, arguments, Path(facet.project))?
     if not retain_current_rust_library(
         facet,
         declared,
@@ -1163,7 +1186,7 @@ def shared_rust_key(
 ) -> Result[Key, str]:
     """Bind the existing producer proof to content-identified externs and consumer-independent output locations."""
     native = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain)?
-    return portable_key(native, directory, arguments)
+    return portable_key(native, directory, arguments, Path(facet.project))
 
 
 def reuse_shared_rust_library(
@@ -1191,7 +1214,7 @@ def reuse_shared_rust_library(
     arguments = library_compile_arguments(facet, declared, directory, request, built, search)?
     environment = package_environment(facet.project, declared, declared.crate_name)
     native = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain)?
-    portable = portable_key(native, directory, arguments)?
+    portable = portable_key(native, directory, arguments, Path(facet.project))?
     if portable.digest != selected.digest:
         return Ok(None)
     # 2. Installed generations and shared entries obey one complete producer/relocation proof policy.
@@ -1309,7 +1332,7 @@ def produce_rust_library(
         None => return Err(f"rustc wrote no library for {declared.crate_name} into {directory.0}")
         Some(artifact) =>
             key = rust_library_producer_key(facet, directory, arguments, environment, request, toolchain)?
-            portable = portable_key(key, directory, arguments)?
+            portable = portable_key(key, directory, arguments, Path(facet.project))?
             if portable.digest != selected.digest or not inputs_unchanged(dependencies, observations)?:
                 return Err(f"Rust producer inputs changed while compiling {declared.crate_name}")
             record(stamp, key, [artifact, dependencies])?
