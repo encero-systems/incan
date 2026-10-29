@@ -413,6 +413,7 @@ mod tests {
         scalar_call_product_edits()?;
         scalar_local_product_edits()?;
         mixed_scalar_product_edits()?;
+        scalar_default_product_edits()?;
         Ok(())
     }
 
@@ -900,6 +901,40 @@ mod tests {
         warm.check_program(&current).map_err(|errors| format!("{errors:?}"))?;
         assert!(warm.type_info().reused_callable_bodies.is_empty());
         assert_eq!(scalar_module(&current, &warm), scalar_module(&current, &cold));
+        Ok(())
+    }
+
+    /// Retain omitted literal defaults and invalidate the unchanged caller when the declaration-owned value changes.
+    /// Computed defaults remain outside this read grammar rather than acquiring an empty dependency witness.
+    fn scalar_default_product_edits() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "def first(value: int = 1) -> int:\n    return value * 1\n\ndef second() -> int:\n    return 2\n\ndef third() -> int:\n    return 3\n\npub def answer() -> int:\n    return first() + second() + third()\n";
+        let (program, checker) = checked(source, "lib")?;
+        let products =
+            CallableBodyProducts::from_checked(&program, source, &checker, &scalar_module(&program, &checker))?;
+        for (edited, retained) in [
+            (source.replace("value * 1", "value * 9"), 3),
+            (source.replace("= 1", "= 8"), 2),
+        ] {
+            let (current, cold) = checked(&edited, "lib")?;
+            let mut warm = TypeChecker::new();
+            warm.set_current_module_path(Some(vec!["lib".to_owned()]));
+            warm.set_current_package_identity(Some("interface_test".to_owned()));
+            let selected = products.select(&current, &edited, "interface_test", &["lib".to_owned()])?;
+            assert_eq!(selected.len(), retained);
+            warm.set_callable_body_reuse(selected);
+            warm.check_program(&current).map_err(|errors| format!("{errors:?}"))?;
+            assert_eq!(warm.type_info().reused_callable_bodies.len(), retained);
+            assert_eq!(scalar_module(&current, &warm), scalar_module(&current, &cold));
+        }
+        let computed = source.replace("= 1", "= 2 + 3");
+        let (program, checker) = checked(&computed, "lib")?;
+        let products =
+            CallableBodyProducts::from_checked(&program, &computed, &checker, &scalar_module(&program, &checker))?;
+        assert_eq!(
+            products.native_inputs()?.len(),
+            2,
+            "computed defaults and their callers need explicit reads"
+        );
         Ok(())
     }
 
