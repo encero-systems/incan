@@ -70,9 +70,9 @@ pub model SourceInputs:
     pub tests: list[str]
     # Ordinary integer operations follow the selected unit's profile; explicit helpers keep their own policies.
     pub overflow_checks: bool = true
-    # Producer-owned empty-read-set evidence; absence preserves ordinary lowering.
+    # Producer-owned checked inputs and consumed signatures; absence preserves ordinary lowering.
     pub scalar_products: Option[str] = None
-    pub scalar_bodies: list[CompilerNodeId] = []
+    pub scalar_bodies: list[tuple[CompilerNodeId, str]] = []
 
 
 pub def unit_plan(

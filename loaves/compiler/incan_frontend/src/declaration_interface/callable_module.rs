@@ -1,13 +1,14 @@
 //! Complete candidate inventories for modules containing only checked free functions.
 //!
-//! Other declaration kinds and imports refuse capture. A lookup witness applies to this exact admitted namespace,
-//! never to a member, builtin or dependency overlay. These records do not replace the checker's lookup recorder or
-//! authorize selective body checking; they provide a checked replay boundary for its callable candidate sets.
+//! Inert module docstrings are ignored; other declaration kinds and imports refuse capture. A lookup witness applies to
+//! this exact admitted namespace, never to a member, builtin or dependency overlay. These records do not replace the
+//! checker's lookup recorder or authorize selective body checking; they provide a checked replay boundary for its
+//! callable candidate sets.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use incan_semantics_core::SymbolOrigin;
-use incan_semantics_core::stable_identity::{StableDeclarationId, StableIdentityProjection};
+use incan_semantics_core::stable_identity::{DeclarationSignature, StableDeclarationId, StableIdentityProjection};
+use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 use serde::{Deserialize, Serialize};
 
 use super::{CheckedCallableInterface, encode_record, invalid};
@@ -44,8 +45,18 @@ pub struct CallableLookupWitness {
     candidates: Vec<(StableDeclarationId, String)>,
 }
 
+/// One producer-owned positive lookup with the checked callable signatures its body digest consumes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CheckedCallableRead {
+    /// Every candidate, including private declarations and overloads, in canonical order.
+    pub(crate) witness: CallableLookupWitness,
+    /// Existing canonical roots paired with their accepted stable signature projections.
+    pub(crate) signatures: Vec<(CanonicalSymbolId, DeclarationSignature)>,
+}
+
 impl CheckedCallableModule {
-    /// Capture every declaration from an accepted module with no imports, nominal declarations or module directive.
+    /// Capture every callable from an accepted module with no imports, nominal declarations or module directive.
     /// Unsupported declarations refuse the entire namespace rather than making a negative lookup unsound.
     pub fn from_checked(program: &Program, checker: &TypeChecker) -> Result<Self, LibraryManifestError> {
         if program.rust_module_path.is_some() || !checker.errors.is_empty() {
@@ -53,6 +64,9 @@ impl CheckedCallableModule {
         }
         let mut callables = Vec::new();
         for declaration in &program.declarations {
+            if matches!(declaration.node, Declaration::Docstring(_)) {
+                continue;
+            }
             let Declaration::Function(function) = &declaration.node else {
                 return Err(invalid(
                     "callable module does not encode this declaration kind or import",
@@ -94,6 +108,42 @@ impl CheckedCallableModule {
                 .map(|entry| (entry.header.identity.clone(), entry.signature.clone()))
                 .collect(),
         }
+    }
+
+    /// Index positive reads once for item producers. Signatures come from accepted headers, never from parsed
+    /// spellings; consumers retain the complete candidate set rather than guessing a single overload.
+    pub(crate) fn read_inventory(&self) -> Result<BTreeMap<String, CheckedCallableRead>, LibraryManifestError> {
+        self.validate()?;
+        let mut reads = BTreeMap::new();
+        for entry in &self.callables {
+            let name = entry.header.identity.declaration_name.clone();
+            let read = reads.entry(name.clone()).or_insert_with(|| CheckedCallableRead {
+                witness: CallableLookupWitness {
+                    origin: self.origin.clone(),
+                    name,
+                    candidates: Vec::new(),
+                },
+                signatures: Vec::new(),
+            });
+            let canonical = entry
+                .header
+                .replay
+                .to_checked()?
+                .identity
+                .canonical
+                .ok_or_else(|| invalid("callable read has no accepted canonical root"))?;
+            let signature = entry
+                .header
+                .identity
+                .signature
+                .clone()
+                .ok_or_else(|| invalid("callable read has no accepted signature projection"))?;
+            read.witness
+                .candidates
+                .push((entry.header.identity.clone(), entry.signature.clone()));
+            read.signatures.push((canonical, signature));
+        }
+        Ok(reads)
     }
 
     /// Validate the complete candidate inventory against a current independently accepted namespace.

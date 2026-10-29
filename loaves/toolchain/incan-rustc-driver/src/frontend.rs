@@ -98,7 +98,7 @@ fn write_refusal_report(refusals: &[String]) -> Result<(), std::io::Error> {
 /// Checked owning modules and their source provenance, with one explicit native entry module.
 struct CheckedProgram {
     /// Invocation-local producer evidence for self-contained scalar native function products.
-    cacheable_bodies: Vec<incan_semantics_core::CompilerNodeId>,
+    cacheable_bodies: Vec<(incan_semantics_core::CompilerNodeId, String)>,
     modules: Vec<BodyIrModule>,
     sources: Vec<String>,
     files: Vec<String>,

@@ -1,8 +1,9 @@
 //! Native source-item products selected by Oven's source-independent semantic context.
 //!
 //! A module product contains independent checked bodies, not a replacement checking route. Its frontend owner
-//! admits only parameter-only scalar expressions and validates exact current locators. Every other module falls
-//! back to ordinary source checking; a missing, corrupt or concurrently replaced product is an ordinary miss.
+//! admits only scalar expressions with complete source-call witnesses and validates exact current locators. Every other
+//! module falls back to ordinary source checking; a missing, corrupt or concurrently replaced product is an ordinary
+//! miss.
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -77,7 +78,7 @@ impl CallableProducts {
         mut self,
         modules: &[ParsedModule],
         bodies: &[BodyIrModule],
-    ) -> Vec<incan_semantics_core::CompilerNodeId> {
+    ) -> Vec<(incan_semantics_core::CompilerNodeId, String)> {
         let Some(directory) = self.directory else {
             return Vec::new();
         };
@@ -90,7 +91,7 @@ impl CallableProducts {
                 .finish(body)
                 .map_err(|error| error.to_string())
                 .and_then(|products| {
-                    admitted.extend(products.body_ids().cloned());
+                    admitted.extend(products.native_inputs().map_err(|error| error.to_string())?);
                     publish(&directory.join(module_key(module)), products).map_err(|error| error.to_string())
                 });
             if let Err(error) = result {

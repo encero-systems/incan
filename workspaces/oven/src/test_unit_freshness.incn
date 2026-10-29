@@ -400,12 +400,12 @@ def verify_callable_item_products(project: Path) -> Result[None, str]:
     Require real checked-body, Body IR and native function hits after a private scalar implementation changes.
 
     1. Compile an ordinary library with three private scalar helpers and one public caller.
-    2. Edit one helper and require exactly two fewer source checks, Body IR builds and native lowerings.
+    2. Edit one helper and require one source check, one Body IR build and three fewer native lowerings.
     3. Compare every library product with a cold compilation using identical material compiler arguments.
     4. Corrupt private products, require full work and compare against a cold build again.
     5. Execute an ordinary consumer and require the edited result.
     """
-    # 1. All candidate bodies precede the ordinary caller, whose complete checking and lowering still run.
+    # 1. The unchanged caller retains the complete checked signatures it reads from this source-only module.
     toolchain = load_toolchain()?
     source = project.joinpath("src/lib.incn")
     write(project.joinpath("loaf.toml"), "[project]\nname='scalar_item_products'\nversion='0.1.0'\n")?
@@ -432,9 +432,9 @@ def verify_callable_item_products(project: Path) -> Result[None, str]:
     assert edited.checked_context == initial.checked_context, "a private body edit changed the semantic context"
     # The installed interop vocabulary can refuse whole-source snapshots while authored item products remain safe.
     counts, native, products = observe_item_library(edited, toolchain, project, "edited")?
-    assert counts["checking/declaration"] == 2, f"unexpected item checking work: {counts}"
-    assert counts["body_ir/built"] == 2, f"unexpected item Body IR work: {counts}"
-    assert native == cold_native - 2, f"native function products did not reuse two frames: {cold_native} -> {native}"
+    assert counts["checking/declaration"] == 1, f"unexpected item checking work: {counts}"
+    assert counts["body_ir/built"] == 1, f"unexpected item Body IR work: {counts}"
+    assert native == cold_native - 3, f"native function products did not reuse three frames: {cold_native} -> {native}"
     # 3. Cache placement and permission are the only differences from a full compilation of the edited source.
     mut independent = edited
     independent.checked_context = None

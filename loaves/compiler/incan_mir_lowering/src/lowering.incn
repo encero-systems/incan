@@ -216,7 +216,7 @@ from program_context import ProgramContext, body_at, retain_nominal_tables
 from native_type_identity import ConstructorIndex, constructor_index as index_constructors
 from pub::incan_mir_plan import ZipCarrier
 from rust::std::sync import Arc
-from rust::std::collections import BTreeMap, BTreeSet
+from rust::std::collections import BTreeMap
 from foreign_calls import lower_foreign_call
 from c_bridges import lower_checked_bridge
 from nominal_instances import (
@@ -7745,14 +7745,14 @@ pub def unit_plan(
     mut published: list[NativeUnionDeclaration],
     overflow_checks: bool = true,
     scalar_products: Option[str] = None,
-    scalar_bodies: list[CompilerNodeId] = [],
+    scalar_bodies: list[tuple[CompilerNodeId, str]] = [],
 ) -> Result[Option[Plan], str]:
     """Lower one checked unit by kind; test entries come from session collection, never from naming heuristics here."""
     if kind != "program" and kind != "library" and kind != "test":
         return Err(f"unsupported unit kind {kind}")
-    mut scalar_index: BTreeSet[CompilerNodeId] = BTreeSet.new()
-    for identity in scalar_bodies:
-        _ = scalar_index.insert(identity)
+    mut scalar_index: BTreeMap[CompilerNodeId, str] = BTreeMap.new()
+    for identity, inputs in scalar_bodies:
+        _ = scalar_index.insert(identity, inputs)
     return lowered_plan(
         modules,
         sources,
@@ -7806,7 +7806,7 @@ def lowered_plan(
     mut published: list[NativeUnionDeclaration],
     overflow_checks: bool,
     scalar_products: Option[str],
-    scalar_bodies: BTreeSet[CompilerNodeId],
+    scalar_bodies: BTreeMap[CompilerNodeId, str],
 ) -> Result[Option[Plan], str]:
     """Lower a checked unit: 1. Prepare layouts. 2. Lower bodies and instances. 3. Publish the completed plan."""
     trace_key: str = "INCAN_TRACE_LOWERING"
@@ -8047,7 +8047,7 @@ def lower_plan_frames(
     mut retained_nominals: list[NominalInstance],
     trace: bool,
     scalar_products: Option[str],
-    scalar_bodies: &BTreeSet[CompilerNodeId],
+    scalar_bodies: &BTreeMap[CompilerNodeId, str],
 ) -> Result[tuple[list[StaticCell], int], str]:
     """Lower ordinary frames, then retain request layouts and the nominal length for source restoration."""
     lower_ordinary_bodies(
@@ -8292,7 +8292,7 @@ def lower_ordinary_bodies(
     unions: list[RustType],
     trace: bool,
     scalar_products: Option[str],
-    scalar_bodies: &BTreeSet[CompilerNodeId],
+    scalar_bodies: &BTreeMap[CompilerNodeId, str],
 ) -> Result[None, str]:
     """Lower selected source frames in module order, retaining synthesized callees and checked instance requests."""
     for index in range(len(checked)):
@@ -8362,9 +8362,9 @@ def lower_ordinary_frame(
     file: str,
     mut intrinsics: list[EnumDeclaration],
     products: Option[str],
-    admitted: &BTreeSet[CompilerNodeId],
+    admitted: &BTreeMap[CompilerNodeId, str],
 ) -> Result[tuple[Function, list[ExternalFunction], list[Instance], list[Function]], str]:
-    """Read only producer-admitted scalar products, or lower normally and retain an exact self-contained result."""
+    """Read only producer-admitted scalar products, or lower normally and retain an exact witnessed result."""
     inputs = ordinary_product_inputs(context, body, source, file, program.overflow_checks, products, admitted)
     original_intrinsics = len(intrinsics)
     if let Some(directory) = products:
@@ -8396,18 +8396,20 @@ def ordinary_product_inputs(
     file: str,
     overflow_checks: bool,
     products: Option[str],
-    admitted: &BTreeSet[CompilerNodeId],
+    admitted: &BTreeMap[CompilerNodeId, str],
 ) -> Option[list[str]]:
-    """Retain exact checked input only for frames whose empty nonlocal read set the source producer proved."""
+    """Retain exact checked input only for frames whose complete read witnesses the source producer proved."""
     if products is None:
         return None
-    if not admitted.contains(body.direct_call_id):
-        return None
-    match native_json(body):
-        Err(_) => return None
-        Ok(input) =>
-            span = location(body.span, source, file)
-            return Some(scalar_inputs(input, evaluator_name(context, body), span, overflow_checks))
+    match admitted.get(body.direct_call_id):
+        None => return None
+        Some(witness) =>
+            match native_json(body):
+                Err(_) => return None
+                Ok(input) =>
+                    span = location(body.span, source, file)
+                    name = evaluator_name(context, body)
+                    return Some(scalar_inputs(input, name, span, overflow_checks, str(witness)))
 
 
 def validate_program_entry_selection(modules: &list[BodyIrModule], entry: int) -> Result[None, str]:

@@ -5,6 +5,8 @@ from rust::serde_json import to_string, from_str, Error as JsonError
 from pub::incan_mir_plan import (
     BasicBlock,
     BinaryOp,
+    Callee,
+    CalleeKind,
     Constant,
     Function,
     Local,
@@ -112,10 +114,11 @@ enum StoredUnwind:
 
 @derive(Serialize, Deserialize)
 enum StoredExit:
-    """Scalar control flow; native calls, coroutines and drops refuse this product codec."""
+    """Scalar control flow and checked source calls; external calls, coroutines and drops refuse this codec."""
 
     Goto(int)
     Switch(StoredOperand, int, int)
+    Call(str, StoredSpan, list[StoredOperand], StoredPlace, int, StoredUnwind)
     Overflow(StoredOperand, int, StoredOperand, StoredOperand, int, StoredUnwind)
     Return
     Unreachable
@@ -471,10 +474,12 @@ def restore_unwind(unwind: StoredUnwind) -> Unwind:
 
 
 def store_exit(exit: TerminatorKind) -> Result[StoredExit, str]:
-    """Retain native scalar branches and overflow checks; calls and owner-dependent cleanup refuse."""
+    """Retain scalar branches, planned source calls and overflow checks; owner-dependent cleanup refuses."""
     match exit:
         TerminatorKind.Goto(block) => return Ok(StoredExit.Goto(block))
         TerminatorKind.SwitchBool(operand, no, yes) => return Ok(StoredExit.Switch(store_operand(operand)?, no, yes))
+        TerminatorKind.Call(callee, args, destination, target, unwind) =>
+            return store_call(callee, args, destination, target, unwind)
         TerminatorKind.AssertOverflow(flag, op, left, right, target, unwind) =>
             return Ok(
                 StoredExit.Overflow(
@@ -497,6 +502,8 @@ def restore_exit(exit: StoredExit) -> Result[TerminatorKind, str]:
     match exit:
         StoredExit.Goto(block) => return Ok(TerminatorKind.Goto(block))
         StoredExit.Switch(operand, no, yes) => return Ok(TerminatorKind.SwitchBool(restore_operand(operand)?, no, yes))
+        StoredExit.Call(name, span, args, destination, target, unwind) =>
+            return restore_call(name, span, args, destination, target, unwind)
         StoredExit.Overflow(flag, op, left, right, target, unwind) =>
             return Ok(
                 TerminatorKind.AssertOverflow(
@@ -511,6 +518,49 @@ def restore_exit(exit: StoredExit) -> Result[TerminatorKind, str]:
         StoredExit.Return => return Ok(TerminatorKind.Return)
         StoredExit.Unreachable => return Ok(TerminatorKind.Unreachable)
         StoredExit.Resume => return Ok(TerminatorKind.UnwindResume)
+
+
+def store_call(
+    callee: Callee,
+    arguments: list[Operand],
+    destination: Place,
+    target: int,
+    unwind: Unwind,
+) -> Result[StoredExit, str]:
+    """Retain every field of a witnessed source call; external and dynamic references refuse capture."""
+    match callee.kind:
+        CalleeKind.Planned(name) =>
+            return Ok(
+                StoredExit.Call(
+                    name,
+                    store_span(callee.span),
+                    [store_operand(value)? for value in arguments],
+                    store_place(destination)?,
+                    target,
+                    store_unwind(unwind),
+                ),
+            )
+        _ => return Err("scalar function products refuse unwitnessed external or dynamic callees")
+
+
+def restore_call(
+    name: str,
+    span: StoredSpan,
+    arguments: list[StoredOperand],
+    destination: StoredPlace,
+    target: int,
+    unwind: StoredUnwind,
+) -> Result[TerminatorKind, str]:
+    """Restore the exact planned target, arguments, destination, successors and source provenance."""
+    return Ok(
+        TerminatorKind.Call(
+            Callee(kind=CalleeKind.Planned(name), span=restore_span(span)),
+            [restore_operand(value)? for value in arguments],
+            restore_place(destination)?,
+            target,
+            restore_unwind(unwind),
+        ),
+    )
 
 
 def store_block(block: BasicBlock) -> Result[StoredBlock, str]:

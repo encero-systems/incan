@@ -1,7 +1,7 @@
 //! Producer-owned callable headers and admitted private body products.
 //!
 //! Callable headers preserve accepted declaration facts without retaining a mutable checker. Body products add an
-//! explicitly bounded acceptance for authored scalar expressions with no nonlocal reads. Import overlays, general
+//! explicitly bounded acceptance for authored scalar expressions and witnessed source calls. Import overlays, general
 //! resolution witnesses, generated syntax and unsupported effects retain ordinary source checking. A header alone
 //! never authorizes skipping a body check.
 
@@ -409,6 +409,7 @@ mod tests {
         nominal_signature_witnesses()?;
         declaration_fingerprint_edits(source)?;
         scalar_body_product_edits()?;
+        scalar_call_product_edits()?;
         Ok(())
     }
 
@@ -679,6 +680,85 @@ mod tests {
                 .select(&sourceless, source, "interface_test", &["lib".to_owned()])?
                 .is_empty()
         );
+        Ok(())
+    }
+
+    /// Retain complete source-call reads, preserve edited/cold IR and invalidate only consumed signatures when
+    /// physical locators stay fixed. Missing candidates or incomplete retained reads never authorize a hit.
+    fn scalar_call_product_edits() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "\"\"\"Scalar module.\"\"\"\ndef first(value: int) -> int:\n    return value * 2\n\ndef second(value: int) -> int:\n    return value + 3\n\ndef third(value: int) -> int:\n    return value - 4\n\npub def answer(value: int) -> int:\n    return first(value) + second(value) + third(value)\n";
+        let (program, checker) = checked(source, "lib")?;
+        let products =
+            CallableBodyProducts::from_checked(&program, source, &checker, &scalar_module(&program, &checker))?;
+        let products = CallableBodyProducts::from_bytes(&products.to_bytes()?)?;
+        let edited = source.replace("value * 2", "value * 7");
+        let (current, cold) = checked(&edited, "lib")?;
+        let selection = products.select(&current, &edited, "interface_test", &["lib".to_owned()])?;
+        assert_eq!(
+            selection.len(),
+            3,
+            "the unchanged caller must retain its checked signature reads"
+        );
+        let mut warm = TypeChecker::new();
+        warm.set_current_module_path(Some(vec!["lib".to_owned()]));
+        warm.set_current_package_identity(Some("interface_test".to_owned()));
+        warm.set_callable_body_reuse(selection);
+        warm.check_program(&current).map_err(|errors| format!("{errors:?}"))?;
+        assert_eq!(warm.type_info().reused_callable_bodies.len(), 3);
+        assert_eq!(scalar_module(&current, &warm), scalar_module(&current, &cold));
+        let retained = CallableBodyProducts::from_checked(&current, &edited, &warm, &scalar_module(&current, &warm))?;
+        assert_eq!(retained.native_inputs()?.len(), 4);
+
+        // ---- Invalidations: a consumed header changes while unrelated implementations stay accepted ----
+        let changed = source.replacen("-> int", "-> f64", 1);
+        let tokens = crate::lexer::lex(&changed).map_err(|errors| format!("{errors:?}"))?;
+        let signature = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let selection = products.select(&signature, &changed, "interface_test", &["lib".to_owned()])?;
+        assert_eq!(
+            selection.len(),
+            2,
+            "a changed callee signature must invalidate its unchanged caller"
+        );
+        let mut rejected = TypeChecker::new();
+        rejected.set_current_module_path(Some(vec!["lib".to_owned()]));
+        rejected.set_current_package_identity(Some("interface_test".to_owned()));
+        rejected.set_callable_body_reuse(selection);
+        assert!(rejected.check_program(&signature).is_err());
+        let missing_source = source.replace("first(value) +", "other(value) +");
+        let tokens = crate::lexer::lex(&missing_source).map_err(|errors| format!("{errors:?}"))?;
+        let missing = crate::parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let selection = products.select(&missing, &missing_source, "interface_test", &["lib".to_owned()])?;
+        assert_eq!(
+            selection.len(),
+            3,
+            "a missing candidate must leave the caller on the full path"
+        );
+        let added_source = format!("{source}\ndef fourth() -> int:\n    return 0\n");
+        let (added, _) = checked(&added_source, "lib")?;
+        assert!(
+            products
+                .select(&added, &added_source, "interface_test", &["lib".to_owned()])?
+                .is_empty()
+        );
+
+        // ---- Transport: losing a read cannot turn an incomplete product into an accepted caller ----
+        let mut record: serde_json::Value = serde_json::from_slice(super::decode_record(&products.to_bytes()?)?)?;
+        let reads = record
+            .get_mut("entries")
+            .and_then(serde_json::Value::as_array_mut)
+            .and_then(|entries| entries.get_mut(3))
+            .and_then(|entry| entry.get_mut("reads"))
+            .ok_or("the caller product has no retained read field")?;
+        *reads = serde_json::json!([]);
+        let damaged = encode_record(&serde_json::to_vec(&record)?)?;
+        if let Ok(incomplete) = CallableBodyProducts::from_bytes(&damaged) {
+            assert_eq!(
+                incomplete
+                    .select(&program, source, "interface_test", &["lib".to_owned()])?
+                    .len(),
+                3
+            );
+        }
         Ok(())
     }
 
