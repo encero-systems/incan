@@ -248,7 +248,7 @@ Selector inputs such as `APP_ENV` must be available when their conditions are ev
 
 Within the conditional layer, later matching contributions win for the same scalar leaf. Declared YAML sources contribute above conditional settings and compose in their listed order. Nested fields and dictionary entries merge recursively; list contributions append in order. Direct environment inputs have higher priority. Whole-model environment inputs use JSON objects decoded into checked model-field contributions; declared collection types select checked JSON environment decoding under the same source-composition rules. Explicit descendant inputs override the corresponding parts of a whole-model input with an overlap warning.
 
-An absent override must preserve the previously selected value. An explicitly supplied `None` for an optional field must replace it. Resolution must not flatten these two cases together, even though the final field has an ordinary `Option[T]` type. The external spelling for explicitly clearing an optional environment setting remains open.
+An absent override must preserve the previously selected value. An explicitly supplied `None` for an optional field must replace it. Resolution must not flatten these two cases together, even though the final field has an ordinary `Option[T]` type. Ordinary optional defaults may be None. Removing an inherited present value uses an explicit application selector contributing None, or YAML null. This RFC adds no general environment clearing marker; empty text and the literal text null remain supplied strings for Option[str].
 
 ### Explicit YAML sources and environment-specific files
 
@@ -368,7 +368,22 @@ ctx AppConfig(env_prefix="APP_"):
     timeout: Option[int] = 30
 ```
 
-A source default of `"verbose"` is rejected statically. `APP_LOG_LEVEL=verbose` fails during resolution through a typed configuration error retaining the validation failure. An absent `APP_TIMEOUT` leaves `Some(30)` selected. An explicit clear selects `None`; it is not treated as a missing override. Literal membership and conversion reuse RFC 133 rather than introducing a separate choices declaration for configuration.
+A source default of `"verbose"` is rejected statically. `APP_LOG_LEVEL=verbose` fails during resolution through a typed configuration error retaining the validation failure. An absent `APP_TIMEOUT` leaves `Some(30)` selected. A selected conditional contribution of None or a YAML null selects None; it is not treated as a missing override. Literal membership and conversion reuse RFC 133 rather than introducing a separate choices declaration for configuration.
+
+### Optional values and deliberate absence
+
+Ordinary optional settings can default to None. A deployment that needs to remove an inherited present value can use an application-defined selector; it does not need a second generated environment input:
+
+```incan
+ctx ClientConfig(env_prefix="CLIENT_"):
+    mode: Literal["proxy", "direct"] = "proxy"
+    proxy: Option[str] = "http://proxy.example.com"
+
+    if mode == "direct":
+        proxy = None
+```
+
+With CLIENT_MODE=direct and no CLIENT_PROXY, proxy resolves to None. A supplied CLIENT_PROXY is a higher-priority explicit input, including empty text or the literal text null. An explicitly declared YAML source may instead contribute `proxy: null`. Missing input preserves the lower-priority selection. No __CLEAR or __NONE companion mapping is introduced.
 
 ### Plain values for Option fields
 
@@ -712,7 +727,7 @@ Environment variables are strings. Resolution must distinguish a missing variabl
 | `float`             | `"3.14"`          | Parse the float through its checked decoder.          |
 | `bool`              | `"true"` / `"1"`  | Decode a recognized Boolean spelling.                 |
 | `Option[T]`         | Supplied value    | Decode `T` and select `Some(value)`.                  |
-| `Option[T]`         | Explicit clear    | Select `None`; the external spelling remains open.    |
+| `Option[T]`         | YAML null or selected None contribution | Select `None`; no general environment clearing marker is added. |
 | `Literal[...]`      | Supplied value    | Decode its underlying type, then validate membership. |
 
 Resolution of invalid input must produce a typed configuration error retaining the original parsing or validation failure under RFC 131's error contract. Structured details must identify the field, contributing source, and expected type; sensitive actual values must remain redacted. Explicit preflight returns that failure as a recoverable Result. An unchecked first-use read must report the full retained diagnostic and terminate execution unsuccessfully. Neither path turns invalid configuration into a generated panic. The standard `ConfigError` hierarchy below classifies the failure without replacing the retained original error.
@@ -1052,14 +1067,12 @@ Ship `ctx` as a library-provided soft keyword instead of a core keyword.
 - Explicit YAML sources use the proposed `std.config.yaml` adapter and an ordered `sources` tuple. Their recursive contributions apply above conditional settings and below direct environment inputs. A common file may be followed by `yaml(f"config/{env}.yaml")`, with the filename selector resolved independently before that selected file is read. Header source expressions may refer to checked ctx fields. Files are required by default; `required=false` permits absence without hiding malformed or unreadable present inputs. Loading is lazy, successful values are retained, unknown field paths receive diagnostics, and source evidence retains file locations under redaction. No YAML-root selection API or automatic cross-process transport is required by this decision.
 - Environment-specific collection entries belong in their respective `if` blocks or selected environment files, with unconditional defaults and common files reserved for universal contributions. Empty collections do not clear lower-priority contents. Explicit replacement, clearing, and removal markers are out of scope.
 - Managed resource lifetimes and their integration with ctx are deferred to RFC 094, including cleanup after partial initialization and the lifetime of successfully retained resources. RFC 033 introduces no separate resource lifecycle or destructor-only public cleanup guarantee. This is a scope deferral, not an unresolved question for RFC 033.
-- An absent override preserves the previously selected value; an explicit optional clear replaces it with None. Nested absence must not be flattened during layer resolution. External clearing syntax remains open.
+- An absent override preserves the previously selected value; an explicit optional clear replaces it with None. Nested absence must not be flattened during layer resolution. Ordinary optional defaults may be None. An application selector may contribute None, and YAML null may clear an inherited present value. No __CLEAR, __NONE, empty-string sentinel or literal-text sentinel is added to the environment contract.
 - `ContextName.explain()` returns a structured report of resolution state and available retained evidence without initializing or retrying the context, reading runtime sources, or evaluating initializers. It supports passive interactive inspection before first use, clearly distinguishes unresolved, in-progress, failed, and successfully resolved state, and does not present failure evidence as a published value. Resolution retains the full observed, ordered contribution history, including superseded scalar and surviving collection contributions, with RFC 103 redaction and RFC 104 authority checks and receipts. Missing or omitted evidence is explicit rather than silently truncating the explanation to the winning source; evidence retention does not require whole-file copies, raw secrets, or evaluating otherwise skipped expressions. Inspection does not reread sources and misrepresent current values as historical evidence. Typed ContextReport records expose these facts independently of rendering.
 - The standard configuration umbrella is `std.config.ConfigError`, with MissingInput, InvalidInput, SourceFailure, DependencyCycle and Multiple categories. Checked paths, source identities, retained originals and blocked dependencies remain structured and secret-safe. Single failures retain their category; independent failures aggregate without evaluating blocked expressions. Preflight returns `Result[None, ConfigError]`; unchecked reads report the same attempt facts and terminate unsuccessfully.
 
 ## Unresolved questions
 
-1. **Explicit optional clearing.** What external spelling distinguishes an intentional None from missing input, and how are empty strings handled for Option[str] without silently losing valid text? A companion __CLEAR flag was proposed and rejected in review; neither it nor __NONE is accepted syntax.
-
-2. **Resolved-value construction and sharing.** What checked representation exposes fields, validation, and eligible traits while keeping the context frozen and non-cloneable? Which retained field types and access paths permit global or cross-thread publication while preserving RFC 132's shallow contract?
+1. **Resolved-value construction and sharing.** What checked representation exposes fields, validation, and eligible traits while keeping the context frozen and non-cloneable? Which retained field types and access paths permit global or cross-thread publication while preserving RFC 132's shallow contract?
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->

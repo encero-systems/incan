@@ -17,7 +17,7 @@
 
 ## Summary
 
-Propose compiler-defined `@must_use` annotations on value types and callable declarations, with source-level diagnostics when an expression statement discards a protected result. `@may_discard` is the candidate callable-specific exemption. The proposal covers discarded expressions; it does not claim that a bound resource was finalized or that a variable was subsequently used. Violating a declared obligation is an Incan source error by default; the explicit-discard spelling, built-in defaults, and exemption precedence remain open.
+Propose compiler-defined `@must_use` annotations on value types and callable declarations, with source-level diagnostics when an expression statement discards a protected result. `@may_discard` is the callable-specific exemption. The proposal covers discarded expressions; it does not claim that a bound resource was finalized or that a variable was subsequently used. Violating a declared obligation is an Incan source error by default; deliberate `_ = expression` discards and narrow callable exemptions are explicit, while built-in defaults remain open.
 
 ## Motivation
 
@@ -62,7 +62,7 @@ def configure() -> None:
 
 The check deliberately does not report the binding itself. A separate unused-binding diagnostic may exist, but it must not be represented as this feature proving that the Result was handled.
 
-A proposed explicit discard is `_ = checked_count(-1)`. That spelling is a candidate for discussion, not a claim about current wildcard-assignment semantics. The diagnostic should show the selected escape hatch alongside handling or propagation; it should not suggest discarding as the preferred fix.
+The explicit discard statement is `_ = checked_count(-1)`. It evaluates the expression once and discards its outer value, suppressing must-use only there. It does not create a readable local binding, change wildcard patterns, await work implicitly, convert Err to success or recover from it. The diagnostic must show this escape hatch alongside handling or propagation without presenting discard as the preferred fix. This statement is proposed language support, not a claim about current wildcard-assignment implementation.
 
 A type author could similarly mark a replacement-value API:
 
@@ -79,7 +79,7 @@ Here the returned Price matters because the method constructs a replacement. The
 
 ## Reference-level explanation
 
-- `@must_use` and the candidate `@may_discard` must be compiler-defined declaration annotations, not ordinary callable decorators under RFC 036. They must not add runtime wrappers.
+- `@must_use` and `@may_discard` must be compiler-defined declaration annotations, not ordinary callable decorators under RFC 036. They must not add runtime wrappers.
 - A must-use check must apply to an expression statement whose resolved callable or resulting type carries the obligation. Violating a declared obligation must be an Incan source error by default. The diagnostic must identify the responsible declaration and reason, and explain handling, explicit `?` propagation where legal, or deliberate per-expression discard. Existing diagnostic-policy controls must remain explicit; generated Rust suppression is not a substitute for this check.
 - A binding, return, argument, or enclosing expression must not be diagnosed as a direct discard merely because its value may later go unused.
 - Annotation arguments must be compile-time metadata. Messages must remain subject to RFC 103's non-disclosure rules.
@@ -92,7 +92,7 @@ Here the returned Price matters because the method constructs a replacement. The
 
 ## Design details
 
-The recommended starting policy is opt-in obligations plus built-in Result and Option protection. A callable-specific `@may_discard` exemption is useful for documented best-effort operations, but whether it overrides an explicit callable-level obligation or only a result-type obligation remains open. Contradictory annotations should be rejected rather than resolved by source order.
+The recommended starting policy is opt-in obligations plus built-in Result and Option protection. A compiler-defined callable-specific `@may_discard` exempts an obligation inherited from the outer result type at that call boundary only. It must not hide obligations on unrelated expressions or failures produced inside the body. Combining `@must_use` and `@may_discard` on the same callable must be rejected with both annotation locations; source order must not choose precedence. Canonical callable identity must preserve this contract through aliases and imports. Coincident callable/type obligations must produce one diagnostic identifying their declarations.
 
 Compiler diagnostics and editor hovers should expose the reason and declaration location as structured facts. The generated Rust lint is insufficient as the public diagnostic boundary. Rust's [diagnostic attributes](https://doc.rust-lang.org/reference/attributes/diagnostics.html) provide prior art for declaration-carried must-use obligations; Incan's exact defaults remain its own decision.
 
@@ -114,15 +114,16 @@ Built-in Result and Option protection will surface existing silent discards. An 
 
 ## Design Decisions
 
-- **Default diagnostic severity:** discarding a declared must-use result is an Incan source error, with a visible deliberate local escape once its spelling is settled. This does not choose built-in obligations or imply that a bound value was handled.
+- **Default diagnostic severity:** discarding a declared must-use result is an Incan source error, with the deliberate local escape `_ = expression`. This does not choose built-in obligations or imply that a bound value was handled.
 
 - **Composition with compile-time selection:** RFC 163's `@when(condition)` and `when condition:` select declarations before annotation semantics. `@must_use` applies only to retained declarations and types. This ordering does not decide the diagnostic defaults or discard mechanisms still open below.
+
+- **Deliberate discard:** `_ = expression` evaluates once and discards the outer value without a readable local binding or implicit await, recovery or success conversion. Wildcard pattern scope is unchanged.
+- **Narrow callable exemption:** compiler-defined `@may_discard` exempts an outer result-type obligation at that callable boundary. Conflicting callable `@must_use` and `@may_discard` annotations are rejected; aliases retain canonical policy and coincident obligations are diagnosed once.
 
 ## Unresolved questions
 
 - Should Result and Option be protected by default, or should every non-None callable be protected?
-- What is the explicit-discard spelling and how does it interact with wildcard binding?
-- Is `may_discard` the final name, and which type-level obligations may it override?
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved.
      An RFC cannot move from Draft to Planned until no unresolved questions remain. -->

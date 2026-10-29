@@ -249,9 +249,9 @@ pub enum ScopeExit:
     Panic
 ```
 
-Under these candidate names, Error includes both question-mark error propagation and a return whose evaluated Result is Err. Return denotes other explicit returns, including an Ok result. The failure outcome takes precedence over the return spelling for cleanup classification. Diagnostic metadata may retain the original control-flow mechanism in addition to that outcome; the exact payload shape remains open.
+ScopeExit is a reason-only enum owned by std.scope. Error includes both question-mark error propagation and a return whose evaluated Result is Err. Return denotes other explicit returns, including an Ok result. The failure outcome takes precedence over the return spelling for cleanup classification. Detailed originals, diagnostic provenance and the exit mechanism remain separate from these reason tags.
 
-An implementation may attach structured payloads to these variants if the language's public error and panic representations support that cleanly. Payloads must not be required for the cleanup guarantee.
+The reason tags must not carry a Python-style exception triple or acquire payload-dependent suppression behavior. Panic remains distinct from a recoverable Error value.
 
 ### Entry and exit
 
@@ -269,7 +269,7 @@ For example, a transaction-like manager may commit when its suite completes succ
 
 Every failure produced by the body or attempted finalization must be retained. If the body and cleanup both fail, neither error may replace, erase, or reduce the other to message text. Nested scopes must retain additional cleanup failures while preserving the required cleanup attempts for other successfully entered managers. Each retained typed error keeps its original identity, payload, diagnostic origin, upstream relationships, and any captured stack trace under RFC 131. Diagnostic presentation or propagation precedence must not determine which failures survive. Independent body and cleanup failures are aggregate members; retaining them together must not invent a caused_by relationship between them.
 
-For example, when a database statement fails and rollback also fails, the caller must be able to inspect both original typed failures. If an enclosing manager then fails during its own cleanup, that failure must also remain available. The public aggregate wrapper and static propagation contract remain to be specified with RFC 131; retention itself is not an optional policy.
+When only one work or finalization path fails, the original typed failure must propagate through a compatible enclosing error contract. When multiple paths fail, std.scope.ScopeFailure.Multiple must retain an immutable tuple of the original typed failures and per-member scope and phase provenance. The aggregate belongs to resource scopes, not to every Error. Reports must present work failure first, followed by attempted cleanup failures in actual inside-out order. An enclosing manager must still attempt cleanup and retain any additional failure. Independent members must not acquire a caused_by relationship merely because they are reported together. The complete generic protocol and caller propagation mechanics remain open; retention and reporting order are settled.
 
 A panic in cleanup retains its ordinary runtime significance. Panic precedence and its carrier remain unresolved, but must preserve available failure diagnostics where the runtime can execute cleanup and reporting. Retaining diagnostics does not make a panic recoverable through Result. Fallible cleanup must not be described as error suppression or as proof that cleanup always succeeds.
 
@@ -382,16 +382,15 @@ Vocabulary blocks that lower through context managers can use the same internal 
 
 - Separate local except matching into RFC 147. The preferred single match-arm block is retained there as an independent Result-handling direction; it is not part of the with grammar specified here. Resource lifetime and finalization must remain complete without that extension.
 
-- Always retain failures from the body and every attempted cleanup, including nested cleanup failures. Preserve original typed identities and diagnostic provenance under RFC 131; reporting or propagation precedence must never discard another failure. Independent failures remain distinct aggregate members rather than invented upstream causes. Public aggregate and propagation shapes, presentation order, and panic behavior remain open.
+- Always retain failures from the body and every attempted cleanup, including nested cleanup failures. Preserve original typed identities and diagnostic provenance under RFC 131; reporting or propagation precedence must never discard another failure. Independent failures remain distinct aggregate members rather than invented upstream causes. ScopeFailure.Multiple and work-before-inside-out-cleanup presentation are selected. The complete static propagation mechanics and panic carrier remain open.
 
 - Permit declared typed fallible finalization. If the body succeeds but finishing the resource fails, the caller must receive a failure rather than false success. The fallible `__exit__` returns `Result[None, E]`: Ok(None) completes cleanup, while Err retains its typed failure. Keep fallibility visible and checked without making every manager fallible. Complete protocol declarations and propagation through pending returns and loop control remain open; simultaneous body/finalization failures must all be retained. Local Result matching is explored independently in RFC 147.
 
-- Cleanup must observe failure for both question-mark error propagation and an explicit return whose evaluated Result is Err. Diagnostic metadata may additionally preserve the exit mechanism, but the return spelling must not hide failure or change cleanup into error suppression. Exact public outcome names and payload shapes remain open.
+- Cleanup must observe failure for both question-mark error propagation and an explicit return whose evaluated Result is Err. Diagnostic metadata may additionally preserve the exit mechanism, but the return spelling must not hide failure or change cleanup into error suppression. ScopeExit uses the six reason-only cases Success, Return, Break, Continue, Error and Panic; detailed failure evidence remains separate.
 
 ## Unresolved questions
 
-- What is the exact public spelling and payload shape of `ScopeExit`?
-- What public aggregate and static propagation contract represents simultaneous body and cleanup failures, and what deterministic presentation and panic precedence apply? All failures must be retained regardless of precedence; retention is settled.
+- What complete static propagation mechanics and panic carrier compose with the selected ScopeFailure.Multiple aggregate? Original typed failures, immutable membership with scope/phase provenance, work-first then actual inside-out cleanup presentation, and distinct panic significance are settled. The generic protocol and receiver questions below remain open.
 - What complete protocol declaration binds E for the selected `__exit__ -> Result[None, E]` form, and how do finalization failures propagate through an enclosing Result and interact with pending returns and loop control? Typed finalization failure, its Result return shape, checked fallibility, and rejection of false success are settled. Infallible cleanup retains its None-returning form.
 - What receiver, borrowed-view, and ownership-transfer rules connect the retained manager to its entered value, especially for existing reference-counted handles and guards? The protocol must prevent invalid escape and make promised resource release enforceable.
 - What is the exact async-safety rule: reject `await` in synchronous context-manager suites, require an await-safe marker, or introduce a separate async context-manager protocol?

@@ -218,7 +218,7 @@ The requested scope is the scan boundary. Maintainability findings are not limit
 
 The command must provide `--format text` and `--format json`. Text output is for humans. JSON output is the integration surface for agents, editors, CI, dashboards, and future baselining tools.
 
-The command should provide `--profile` with at least `architecture`, `safety`, `idioms`, `maintainability`, `risk`, `experimental`, and `all`. The default profile is unresolved by this draft. `experimental` is opt-in and may contain peer-baseline review candidates; `all` excludes it unless the user requests it explicitly.
+The command should provide `--profile` with at least `architecture`, `safety`, `idioms`, `maintainability`, `risk`, `experimental`, and `all`. The default profile must include all stable supported rule categories, with category, profile and priority filters explicit. Experimental rules remain opt-in, including when all is selected. A missing frontend capability must be visible as missing coverage rather than silently dropping the affected rule family. `experimental` is opt-in and may contain peer-baseline review candidates; `all` excludes it unless the user requests it explicitly.
 
 ### Finding model
 
@@ -265,6 +265,10 @@ Findings must be de-duplicated before output. Identical findings produced throug
 
 RFC 126 proposes evidence-backed investigations that may reference Architect findings when forming and testing hypotheses. A finding remains advisory evidence about a rule match; its priority and confidence do not establish the cause of a runtime failure. An investigation must retain the finding's source snapshot, rule identity, evidence, and counterexample risks separately from its execution observations. Architect does not acquire process-control, experiment-execution, or automatic-repair responsibilities through this integration.
 
+### Rust diagnostic integration
+
+Architect should reuse available Clippy information and Rust tooling capabilities through the selected Rust analysis path rather than duplicate Rust-local lint logic. Reused diagnostics or observations must retain their producing tool and version, source identity, selected target and relevant analysis configuration, with honest capability and coverage information. An unavailable integration must be reported as unavailable; it must not turn a skipped analysis into a clean result. Consuming Clippy information must not silently start a Cargo resolver, add a Cargo-compatibility mode, or turn generated Rust projections into independently authored peers. Equivalent findings must preserve their source identities and avoid duplicate reports. Project-wide Architect advice remains distinct from the Rust-local diagnostic it cites.
+
 ### Rule categories
 
 Architecture rules describe design pressure across declarations, modules, domains, language facets, or boundaries. Repeated match dispatch, growing literal domains, registry source-of-truth drift, competing source authorities, cache-key omissions, wrong-layer behavior, cross-language contract drift, disconnected implementations, and operation-boundary pressure belong here.
@@ -299,7 +303,7 @@ A peer group is a named set of comparable source owners, such as files, modules,
 
 Project metadata must be able to represent multiple valid peer groups below one broad role. It must not force a source owner into a single global category merely because its path or name resembles another group.
 
-Peer signatures may combine compiler-backed declaration kind, parameter and type shape, imports, resolved calls, references, ownership position, body summaries, and source topology. Names and paths may contribute weak context, but the signature must retain the provenance and strength of every fact so a consumer can distinguish checked identity from syntax-only or project-declared context.
+Peer signatures must expose versioned component facts and their evidence tiers. They may combine compiler-backed declaration kind, parameter and type shape, imports, resolved calls, references, ownership position, body summaries, and source topology. Names and paths may contribute weak context, but the signature must retain the provenance and strength of every fact so a consumer can distinguish checked identity from syntax-only or project-declared context. Unsupported resolution must remain unknown; similarity does not establish semantic equivalence or a forbidden dependency. Authored membership and boundary declarations belong in checked project or declaration metadata selected by the applicable authority. Cached or inferred observations belong in tool state and must not redefine authored intent.
 
 An experimental baseline may compare a changed owner with its peer group and report a review candidate only when it explains the comparison: the selected peers, observed differences, relevant source locations, baseline version, and known counterexamples. For example:
 
@@ -359,7 +363,7 @@ Risk rules may consume optional process facts such as git churn, ownership, co-c
 
 Local suppression of catalog findings is defined by RFC 127: `@allow("rule", reason="...")` on declarations and in module position, plus `[incan.lints.per-file-allow]` for paths.
 
-The command should support project baselines so existing findings can be recorded and new findings can fail CI or be highlighted separately. Baseline storage is unresolved by this draft.
+The command should support project baselines so existing findings can be recorded and new findings can fail CI or be highlighted separately. Accepted baselines must be separate versioned, reviewable artifacts, not entries in oven.lock or hidden mutable cache state. The artifact path must be configured through typed project tooling metadata. Entries must bind rule and rule-configuration identity, applicable project authority, source/graph evidence identity and relevant schema/compiler versions, plus dispositions, accepted scope, rationale and retirement record. A scan must not accept or rewrite its own baseline. Changed evidence must make an entry stale rather than suppress an unrelated finding.
 
 Suppressions and baselines must preserve qualified rule name and evidence identity; catalog-backed records also preserve their stable diagnostic code. A future change that moves or changes the evidence should not silently suppress an unrelated finding.
 
@@ -465,22 +469,24 @@ Experimental peer-baseline analysis is a later consumer of the same fact and que
 - **CLI / Project tooling**: `incan architect` needs direct-source and Oven-selected scope handling, profiles, stable text/JSON output, suppression support, and baseline support. Future peer-baseline tooling needs opt-in invocation and schema-, compiler-, Oven-plan-, and graph-versioned snapshots.
 - **Documentation**: The CLI reference must document direct-source versus Loaf-selected behavior, Incan/Rust/mixed coverage, source-role provenance, profiles, categories, priorities, confidence, suppressions, peer-context provenance, and examples.
 
+## Design Decisions
+
+- The default includes all stable supported rules, with explicit category/profile/priority filtering. Experimental rules remain opt-in. Missing required frontend capabilities are visible coverage gaps.
+- Clippy information and capabilities may support Rust analysis through the selected frontend path, preserving tool/source provenance, configuration and honest coverage. This neither duplicates local lint ownership nor introduces Cargo mode.
+- Accepted baselines are separate versioned review artifacts carrying scope, source/graph identity, reasons and retirement records. Ordinary scans never approve or rewrite them. Authored peer intent belongs in checked metadata; observations and caches do not redefine it.
+- Peer signatures expose versioned components with explicit evidence tiers. Checked declaration/type/call/body/ownership facts, declared roles and weak naming/path hints remain distinguishable; unknown resolution and similarity do not become semantic authority.
+- Rule applicability names required languages and frontend fact capabilities. Missing required facts disable the affected evaluation with a coverage diagnostic rather than a low-confidence guess.
+- RFC 118's no-Cargo boundary applies. Direct-source analysis and the Oven-selected Loaf graph remain the supported authorities; no separate Cargo project discovery mode is introduced.
+- Selecting and calibrating concrete risk rules is implementation work. The evidence and coverage requirements remain binding; missing inputs are not zero risk.
+- Rule registration for 0.7 is repository/catalog-owned. External rule-package loading requires a separately reviewed capability/versioning contract; typed rule interfaces remain extensible.
+
 ## Unresolved questions
 
-- What is the default profile for `incan architect .`: architecture-only, architecture plus safety, or all stable rules?
-- Should baselines live in a typed `loaf.toml` table, a separate versioned baseline artifact, or generated project-tooling state? They must not be folded into `oven.lock` merely because a project uses Oven.
-- Where should peer-group metadata live, and which membership or boundary declarations belong in source, package metadata, or local tooling state?
-- Which peer-signature facts are stable and useful enough to expose without turning names, paths, or aggregate similarity into semantic authority?
-- How should a project review, accept, version, and retire an experimental baseline or intentional outlier without allowing a scan to rewrite its own comparison set?
 - Which finding fields are stable enough to commit as v0.7 JSON output, and which should remain experimental?
 - Which maintainability rules belong in the first stable profile, and which should remain experimental until enough corpus evidence exists?
 - Should a Loaf-selected project scan include every test, example, benchmark, and tool role by default, or should Oven environments and target roles determine the default analysis closure?
 - Should `incan architect path/to/file.rs` support standalone Rust outside a Loaf, or should first-class Rust analysis require an Oven-selected project graph?
-- Should explicit Cargo-compatibility mode expose Architect analysis, and if so, which project-authority and provenance guarantees can it honestly provide without a Loaf?
-- How should rules declare partial frontend capability when a normalized fact exists for one language but not yet for the other?
 - How should architect distinguish trusted-constant fail-fast calls from caller-input fail-fast calls in a deterministic, maintainable way?
-- Which risk findings should ship first, and which local inputs are required before a risk profile can produce useful results?
-- Should third-party rule packages be considered after v0.7, or should v0.7 explicitly restrict rule authoring to the Incan repository?
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved.
      An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
