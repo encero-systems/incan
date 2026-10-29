@@ -16,7 +16,7 @@ from rust::incan_semantics_core::body_ir import (
 from pub::incan_mir_plan import Operand, PlanType, Place, Projection, RvalueKind, SourceSpan
 from pub::incan_mir_plan import assign as plan_assign, place as plan_place
 from frame import Builder, place_type, temporary, appended_field
-from models import field_projection
+from models import field_steps
 from lists import require_list_shape, list_element, is_list
 from collections import (
     is_collection,
@@ -209,7 +209,7 @@ pub def mutable_element_prefix(
 def projected_field(mut builder: Builder, place: Place, projection: &PlaceElem, span: SourceSpan) -> Result[Place, str]:
     """Project a checked model or constant tuple field through its retained element reference."""
     owner = dereferenced(builder, place)
-    field = field_projection(
+    steps = field_steps(
         builder.constructors,
         builder.nominals,
         place_type(builder.locals, owner),
@@ -218,7 +218,10 @@ def projected_field(mut builder: Builder, place: Place, projection: &PlaceElem, 
         builder.unions,
         builder.intrinsics,
     )?
-    return appended_field(owner, field, span)
+    mut projected = owner
+    for step in steps:
+        projected = appended_field(projected, step, span)?
+    return Ok(projected)
 
 
 pub def borrow_element_mut(

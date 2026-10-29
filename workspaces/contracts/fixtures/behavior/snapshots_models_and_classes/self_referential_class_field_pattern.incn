@@ -1,0 +1,19 @@
+# behavior: a self-referential class is matched by its constructor pattern, binding and nesting its Option link (#2475)
+# expect-stdout:
+#   1 then 2
+#   single 7
+
+class Node:
+    pub value: int
+    pub next: Option[Node]
+
+
+def show(node: Node) -> None:
+    match node:
+        Node(value=v, next=Some(Node(value=w, next=_))) => println(f"{v} then {w}")
+        Node(value=v, next=None) => println(f"single {v}")
+
+
+def main() -> None:
+    show(Node(value=1, next=Some(Node(value=2, next=None))))
+    show(Node(value=7, next=None))

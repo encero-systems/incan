@@ -1,0 +1,26 @@
+# behavior: a self-referential class lends its Option link to a function by reference and reads through a method on self (#2475)
+# expect-stdout:
+#   linked
+#   linked
+#   end
+
+class Node:
+    pub value: int
+    pub next: Option[Node]
+
+    def describe(self) -> str:
+        return describe_link(self.next)
+
+
+def describe_link(link: &Option[Node]) -> str:
+    match link:
+        Some(_n) => return "linked"
+        None => return "end"
+
+
+def main() -> None:
+    head = Node(value=1, next=Some(Node(value=2, next=None)))
+    println(describe_link(head.next))
+    println(head.describe())
+    tail = Node(value=3, next=None)
+    println(tail.describe())

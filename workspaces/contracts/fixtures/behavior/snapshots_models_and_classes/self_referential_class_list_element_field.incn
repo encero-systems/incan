@@ -1,0 +1,27 @@
+# behavior: a list of self-referential nodes reads, borrows and replaces the Option link of an element (#2475)
+# expect-stdout:
+#   2
+#   linked
+#   4
+
+class Node:
+    pub value: int
+    pub next: Option[Node]
+
+
+def describe_link(link: &Option[Node]) -> str:
+    match link:
+        Some(_n) => return "linked"
+        None => return "end"
+
+
+def main() -> None:
+    mut nodes = [Node(value=1, next=Some(Node(value=2, next=None))), Node(value=3, next=None)]
+    match nodes[0].next:
+        Some(n) => println(n.value)
+        None => println("none")
+    println(describe_link(nodes[0].next))
+    nodes[1].next = Some(Node(value=4, next=None))
+    match nodes[1].next:
+        Some(n) => println(n.value)
+        None => println("none")

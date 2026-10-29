@@ -21,7 +21,8 @@ from pub::incan_mir_plan import assign as plan_assign
 from frame import Builder, temporary, place_type, read_place, literal, external_call, drop_owned, appended_field
 from tuples import tuple_fields, is_tuple_type
 from text_plan import owned_literal
-from layout_types import native_source_type as retained_type
+from layout_types import native_source_type as retained_type, stored_field_type
+from models import stored_steps
 from enums import pattern_variant
 from unions import union_pattern_slot
 from options import intrinsic_pattern, variant_condition
@@ -275,15 +276,19 @@ pub def nominal_field(
                 return Err("invalid Body IR nominal pattern target")
             for slot in range(len(declaration.fields)):
                 if declaration.fields[slot] == name:
-                    ty = retained_type(
+                    ty = stored_field_type(
                         builder.constructors,
                         builder.nominals,
                         builder.enums,
                         builder.unions,
-                        declaration.field_types[slot],
+                        declaration,
+                        slot,
                         builder.intrinsics,
                     )?
-                    return appended_field(source, FieldProjection(slot=slot, ty=ty), span)
+                    mut field = source
+                    for step in stored_steps(FieldProjection(slot=slot, ty=ty)):
+                        field = appended_field(field, step, span)?
+                    return Ok(field)
             return Err("invalid Body IR nominal pattern field")
         _ => return Err("invalid Body IR nominal pattern carrier")
 
