@@ -5640,17 +5640,13 @@ impl TypeChecker {
         self.type_info
             .declarations
             .decorated_function_bindings_by_span
-            .insert(span, binding.clone());
+            .insert(span, binding);
 
         if let Some(symbol_id) = self.symbols.lookup(&func.name)
             && let Some(symbol) = self.symbols.get_mut(symbol_id)
         {
             match &mut symbol.kind {
                 SymbolKind::Function(_) => {
-                    self.type_info
-                        .declarations
-                        .decorated_function_bindings
-                        .insert(func.name.clone(), binding);
                     symbol.kind = SymbolKind::Variable(VariableInfo {
                         ty: binding_ty,
                         is_mutable: false,

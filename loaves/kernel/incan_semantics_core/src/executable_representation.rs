@@ -314,7 +314,7 @@ pub enum ExecutableDeclaration {
         /// Checked replacement storage and computation under the same canonical source identity.
         storage: Box<crate::body_ir::StaticDeclaration>,
     },
-    /// The generic wrapper evaluates its checked decorator chain per invocation and retains its source original.
+    /// Retired serialized discriminant; identity validation refuses the former per-call decorator fragment.
     InvocationDecoratedBody {
         /// Ordinary calls select this wrapper using the call site's checked type arguments.
         body: Box<Body>,
@@ -336,6 +336,15 @@ pub enum ExecutableDeclaration {
         /// Producer-selected native callees used by retained default computations.
         callables: Vec<crate::body_ir::LoafCallable>,
     },
+    /// A generic wrapper, original and initializer template close together and use the checked per-instance policy.
+    GenericDecoratedBody {
+        /// Ordinary calls select this wrapper with their checked type arguments.
+        body: Box<Body>,
+        /// The original and initializer retain the same canonical declaration and exact type parameters.
+        binding: Box<crate::body_ir::DecoratedBinding>,
+        /// Producer-selected native callees required by any of the three retained frames.
+        callables: Vec<crate::body_ir::LoafCallable>,
+    },
 }
 
 impl ExecutableDeclaration {
@@ -352,21 +361,16 @@ impl ExecutableDeclaration {
                 && crate::body_ir::LoafCallable::from_body(frame).is_some())
             .then_some(frame.canonical.as_ref())
             .flatten(),
-            Self::InvocationDecoratedBody { body, binding } => {
+            Self::InvocationDecoratedBody { .. } => None,
+            Self::GenericDecoratedBody {
+                body,
+                binding,
+                callables,
+            } => {
                 let identity = body.canonical.as_ref()?;
-                (binding.initialization == crate::body_ir::DecoratedInitialization::PerInvocation
-                    && binding.initializer.is_none()
-                    && identity.kind == crate::SemanticSourceTargetKind::Function
-                    && !body.type_parameters.is_empty()
-                    && !body.is_async
-                    && !binding.original_body.is_async
-                    && binding.original_body.canonical.as_ref() == Some(identity)
-                    && binding.original_body.direct_call_id == body.direct_call_id
-                    && binding.original_body.decl_id == body.decl_id
-                    && binding.original_body.type_parameters == body.type_parameters
-                    && binding.original_body.params == body.params
-                    && binding.original_body.return_type == body.return_type)
-                    .then_some(identity)
+                let mut module = BodyIrModule::declarations_only(crate::canonical_module_identity(identity)?);
+                module.bodies.push(body.as_ref().clone());
+                (valid_native_calls(callables) && module.is_well_formed_decorated_binding(binding)).then_some(identity)
             }
             Self::DecoratedBody { body, binding, storage } => {
                 let identity = body.canonical.as_ref()?;
@@ -977,6 +981,7 @@ fn record_type_context_members(
             | ExecutableDeclaration::CompiledCallableFrame { .. }
             | ExecutableDeclaration::DecoratedBody { .. }
             | ExecutableDeclaration::InvocationDecoratedBody { .. }
+            | ExecutableDeclaration::GenericDecoratedBody { .. }
             | ExecutableDeclaration::Trait(_)
             | ExecutableDeclaration::Constant(_) => Vec::new(),
             ExecutableDeclaration::TypeAlias(_) | ExecutableDeclaration::Static(_) => Vec::new(),
@@ -1271,6 +1276,7 @@ impl<'bytes> SurfaceReader<'bytes> {
             ExecutableDeclaration::Body(body)
             | ExecutableDeclaration::NativeBody { body, .. }
             | ExecutableDeclaration::DecoratedBody { body, .. }
+            | ExecutableDeclaration::GenericDecoratedBody { body, .. }
             | ExecutableDeclaration::InvocationDecoratedBody { body, .. } => Ok(*body),
             _ => Err(malformed(
                 "selected declaration is type context, not an executable body",
@@ -1706,6 +1712,7 @@ mod tests {
         Ok(())
     }
 
+    /// Public indexes and generic decorator frames refuse overlapping addresses and substituted callable identities.
     #[test]
     fn index_refuses_overlaps_and_payload_identity_substitution() -> Result<(), Box<dyn std::error::Error>> {
         let public = BTreeSet::from([identity("alpha", 1), identity("beta", 2)]);
@@ -1726,6 +1733,36 @@ mod tests {
                 .decode_declaration(&identity("alpha", 1), &wrong)
                 .is_err()
         );
+
+        let wrapper = body("cached", 3);
+        let mut initializer = wrapper.clone();
+        initializer.return_type = IncanType::Function {
+            params: Vec::new(),
+            return_type: Box::new(wrapper.return_type.clone()),
+        };
+        let mut generic = module(vec![wrapper.clone()]);
+        generic.decorated_bindings.push(crate::body_ir::DecoratedBinding {
+            original_body: wrapper,
+            initializer: Some(Box::new(initializer)),
+            initialization: crate::body_ir::DecoratedInitialization::PerInstantiation,
+        });
+        let generic_public = BTreeSet::from([identity("cached", 3)]);
+        let generic_bytes = publish(&generic, &generic_public)?;
+        let generic_reader = SurfaceReader::open(&generic_bytes)?;
+        let fragment = generic_reader.fragment(&identity("cached", 3))?;
+        assert_eq!(fragment.identity(), Some(&identity("cached", 3)));
+        let mut substituted = fragment.clone();
+        let ExecutableDeclaration::GenericDecoratedBody { body, .. } = &mut substituted else {
+            return Err("generic decorator fragment missing".into());
+        };
+        body.direct_call_id = CompilerNodeId::declaration_span("foreign", 300, 399);
+        assert!(substituted.identity().is_none());
+        let mut asynchronous = fragment;
+        let ExecutableDeclaration::GenericDecoratedBody { body, .. } = &mut asynchronous else {
+            return Err("generic decorator fragment missing".into());
+        };
+        body.is_async = true;
+        assert!(asynchronous.identity().is_none());
         Ok(())
     }
     /// A public scalar union alias retains its expanded semantic type without introducing a runtime body.

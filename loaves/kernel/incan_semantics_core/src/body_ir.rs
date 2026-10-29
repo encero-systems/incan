@@ -215,53 +215,29 @@ pub struct StaticDeclaration {
 ///
 /// The original and the visible wrapper share a source declaration, but are different runtime items. Only the
 /// replacement evaluation's explicit original-callable read may select this body; ordinary calls select the visible
-/// wrapper. Nongeneric replacements initialize in module declaration order. A closed generic replacement retains
-/// its checked initializer template for one initialization per closed instantiation. A replacement signature using
-/// its declaration's type parameters evaluates in the visible wrapper on every invocation.
+/// wrapper. Nongeneric replacements initialize in module declaration order. Every generic replacement retains its
+/// checked initializer template for one initialization per closed instantiation, including signatures using binders.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DecoratedBinding {
     /// Executable source body and original signature, before applying user-defined decorators.
     pub original_body: Body,
-    /// Source-owned template required only by PerInstantiation; module storage and per-invocation wrappers retain
-    /// None. The template has the original's exact binders and declaration identity; consumers must close it
-    /// before use.
+    /// Source-owned template required by PerInstantiation; module storage retains None. The template has the
+    /// original's exact binders and declaration identity; consumers must close it before use.
     #[serde(default)]
     pub initializer: Option<Box<Body>>,
     /// Checked evaluation policy; consumers must not infer generic cache behavior from a storage lookup.
     pub initialization: DecoratedInitialization,
 }
 
-/// Checked lifetime of a decorator replacement, preserving legacy's observable factory evaluation.
+/// Checked lifetime of a decorator replacement, with once-only initialization for each declaration instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DecoratedInitialization {
     /// A callable without type parameters initializes its replacement once in module declaration order.
     ModuleStorage,
     /// A closed generic replacement initializes once for each checked instantiation, using its retained template.
     PerInstantiation,
-    /// A replacement signature using declared type parameters evaluates its chain on every call.
+    /// Retired serialized discriminant. Validation refuses the former per-call initialization policy.
     PerInvocation,
-}
-
-/// Whether a checked replacement signature uses one of its own declaration's type parameters.
-/// A closed generic signature requires the independent per-instantiation cache policy rather than invocation admission.
-pub fn decorated_signature_uses_parameters(ty: &IncanType, parameters: &[String]) -> bool {
-    match ty {
-        IncanType::TypeVar(name) => parameters.contains(name),
-        IncanType::Function { params, return_type } => {
-            params
-                .iter()
-                .any(|parameter| decorated_signature_uses_parameters(&parameter.ty, parameters))
-                || decorated_signature_uses_parameters(return_type, parameters)
-        }
-        IncanType::Generic { args, .. } | IncanType::Tuple(args) => args
-            .iter()
-            .any(|argument| decorated_signature_uses_parameters(argument, parameters)),
-        IncanType::Ref(inner)
-        | IncanType::RefMut(inner)
-        | IncanType::TypeToken(inner)
-        | IncanType::NativeArray { element: inner, .. } => decorated_signature_uses_parameters(inner, parameters),
-        _ => false,
-    }
 }
 
 /// Checked storage initialization, independent of its eventual native representation.
