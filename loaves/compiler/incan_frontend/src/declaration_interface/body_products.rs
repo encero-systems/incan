@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use super::callable_module::{CheckedCallableModule, CheckedCallableRead};
 use super::{CheckedCallableInterface, CheckedDeclarationFingerprints, decode_record, encode_record, invalid};
 use crate::ast::{
-    CallArg, Declaration, Expr, FunctionDecl, Literal, ParamKind, Program, Span, Spanned, Statement, Type,
+    BindingKind, CallArg, Declaration, Expr, FunctionDecl, Literal, ParamKind, Program, Span, Spanned, Statement, Type,
 };
 use crate::library_manifest::LibraryManifestError;
 use crate::typechecker::TypeChecker;
@@ -431,10 +431,10 @@ fn admitted_functions(program: &Program) -> Result<(), LibraryManifestError> {
     Ok(())
 }
 
-/// Enumerate every nonlocal read of one scalar expression. Unsupported scope creation still ends the reusable
-/// prefix, so skipped functions preserve the ordinary checker's physical function-scope numbering.
+/// Enumerate a straight-line scalar body's reads, admitting an initial literal docstring and distinct immutable
+/// locals. No admitted statement creates a nested scope, so skipped functions preserve physical scope numbering.
 fn admitted_reads(function: &FunctionDecl, names: &BTreeSet<String>) -> Option<BTreeSet<String>> {
-    let [statement] = function.body.as_slice() else {
+    let Some((statement, prefix)) = function.body.split_last() else {
         return None;
     };
     if !scalar_signature(function) || is_synthetic_span(statement.span) {
@@ -444,7 +444,38 @@ fn admitted_reads(function: &FunctionDecl, names: &BTreeSet<String>) -> Option<B
         return None;
     };
     let mut reads = BTreeSet::new();
-    parameter_expression(value, function, names, &mut reads).then_some(reads)
+    let mut bindings: BTreeSet<String> = function
+        .params
+        .iter()
+        .map(|parameter| parameter.node.name.clone())
+        .collect();
+    for (index, statement) in prefix.iter().enumerate() {
+        if is_synthetic_span(statement.span) {
+            return None;
+        }
+        if index == 0
+            && matches!(&statement.node, Statement::Expr(value)
+            if !is_synthetic_span(value.span) && matches!(value.node, Expr::Literal(Literal::String(_))))
+        {
+            continue;
+        }
+        let Statement::Assignment(assignment) = &statement.node else {
+            return None;
+        };
+        if !matches!(assignment.binding, BindingKind::Inferred | BindingKind::Let)
+            || is_synthetic_span(assignment.name_span)
+            || bindings.contains(&assignment.name)
+            || assignment
+                .ty
+                .as_ref()
+                .is_some_and(|ty| is_synthetic_span(ty.span) || !scalar_type(&ty.node))
+            || !parameter_expression(&assignment.value, &bindings, names, &mut reads)
+        {
+            return None;
+        }
+        bindings.insert(assignment.name.clone());
+    }
+    parameter_expression(value, &bindings, names, &mut reads).then_some(reads)
 }
 
 /// Keep declaration collection independent of body reuse. A scalar prefix may precede an ordinary checked caller;
@@ -493,7 +524,7 @@ fn scalar_type(ty: &Type) -> bool {
 /// Enumerate the admitted expression grammar instead of assuming that an absent call edge proves no dependency.
 fn parameter_expression(
     expression: &Spanned<Expr>,
-    function: &FunctionDecl,
+    bindings: &BTreeSet<String>,
     names: &BTreeSet<String>,
     reads: &mut BTreeSet<String>,
 ) -> bool {
@@ -501,22 +532,22 @@ fn parameter_expression(
         return false;
     }
     match &expression.node {
-        Expr::Ident(name) => function.params.iter().any(|parameter| parameter.node.name == *name),
+        Expr::Ident(name) => bindings.contains(name),
         Expr::Literal(Literal::Int(_) | Literal::Float(_) | Literal::Bool(_)) => true,
         Expr::Binary(left, _, right) => {
-            parameter_expression(left, function, names, reads) && parameter_expression(right, function, names, reads)
+            parameter_expression(left, bindings, names, reads) && parameter_expression(right, bindings, names, reads)
         }
-        Expr::Unary(_, operand) | Expr::Paren(operand) => parameter_expression(operand, function, names, reads),
+        Expr::Unary(_, operand) | Expr::Paren(operand) => parameter_expression(operand, bindings, names, reads),
         Expr::Call(callee, arguments, values) if arguments.is_empty() && !is_synthetic_span(callee.span) => {
             let Expr::Ident(name) = &callee.node else {
                 return false;
             };
-            if !names.contains(name) || function.params.iter().any(|parameter| parameter.node.name == *name) {
+            if !names.contains(name) || bindings.contains(name) {
                 return false;
             }
             if !values.iter().all(|value| {
                 matches!(value, CallArg::Positional(value)
-                if parameter_expression(value, function, names, reads))
+                if parameter_expression(value, bindings, names, reads))
             }) {
                 return false;
             }

@@ -5,13 +5,13 @@ from rust::serde_json import to_string, from_str, Error as JsonError
 from rust::incan_semantics_core::semantic_digest import semantic_digest
 from rust::std::process import id as process_id
 from std.fs import Path
-from pub::incan_mir_plan import Function, SourceSpan
-from scalar_products import encode_scalar, decode_scalar
+from pub::incan_mir_plan import ExternalFunction, Function, SourceSpan
+from scalar_products import encode_product, decode_product
 
 
 @derive(Serialize, Deserialize)
 model ScalarRecord:
-    """Authenticate the exact producer inputs and complete native function text in a private product."""
+    """Authenticate the exact producer inputs, function and dependency requirements in a private product."""
 
     schema: int
     inputs: list[str]
@@ -22,7 +22,7 @@ model ScalarRecord:
 pub def scalar_inputs(body: str, name: str, span: SourceSpan, overflow_checks: bool, reads: str) -> list[str]:
     """Bind a native product to its checked body, consumed signatures, physical frame and diagnostic provenance."""
     return [
-        "incan.scalar-function/2",
+        "incan.scalar-function/3",
         body,
         name,
         str(span.file),
@@ -33,7 +33,7 @@ pub def scalar_inputs(body: str, name: str, span: SourceSpan, overflow_checks: b
     ]
 
 
-pub def retained_scalar(directory: str, inputs: list[str]) -> Option[Function]:
+pub def retained_scalar(directory: str, inputs: list[str]) -> Option[tuple[Function, list[ExternalFunction]]]:
     """
     Read a complete native function whose full producer inputs still match.
 
@@ -50,7 +50,7 @@ pub def retained_scalar(directory: str, inputs: list[str]) -> Option[Function]:
                 Ok(text) => return restore_record(text, inputs)
 
 
-pub def retain_scalar(directory: str, inputs: list[str], function: &Function) -> None:
+pub def retain_scalar(directory: str, inputs: list[str], function: &Function, runtime: &list[ExternalFunction]) -> None:
     """
     Publish a loss-checked scalar native function without changing compilation's verdict.
 
@@ -58,35 +58,35 @@ pub def retain_scalar(directory: str, inputs: list[str], function: &Function) ->
     2. Write a complete temporary record and atomically replace its destination.
     """
     # 1. An unsupported native shape refuses this cache, retaining ordinary lowering.
-    match encoded_record(inputs, function):
+    match encoded_record(inputs, function, runtime):
         Err(_) => return
         Ok(text) =>
             # 2. Publication is independent of the successful compilation's verdict.
             _ = publish_record(directory, inputs, text)
 
 
-def encoded_record(inputs: list[str], function: &Function) -> Result[str, str]:
+def encoded_record(inputs: list[str], function: &Function, runtime: &list[ExternalFunction]) -> Result[str, str]:
     """Authenticate the entire native payload after the codec proves an exact structural round trip."""
-    payload = encode_scalar(function)?
+    payload = encode_product(function, runtime)?
     digest = fingerprint([payload])?
-    record = ScalarRecord(schema=1, inputs=inputs, function=payload, digest=digest)
+    record = ScalarRecord(schema=2, inputs=inputs, function=payload, digest=digest)
     return to_string(record).map_err((error) => str(error))
 
 
-def restore_record(text: str, inputs: list[str]) -> Option[Function]:
+def restore_record(text: str, inputs: list[str]) -> Option[tuple[Function, list[ExternalFunction]]]:
     """Treat invalid schema, changed inputs and altered native bytes as cache misses before decoding a function."""
     match decode_record(text):
         Err(_) => return None
         Ok(record) =>
-            if record.schema != 1 or record.inputs != inputs:
+            if record.schema != 2 or record.inputs != inputs:
                 return None
             match fingerprint([record.function]):
                 Err(_) => return None
                 Ok(digest) =>
                     if record.digest != digest:
                         return None
-            match decode_scalar(record.function):
-                Ok(function) => return Some(function)
+            match decode_product(record.function):
+                Ok(product) => return Some(product)
                 Err(_) => return None
 
 
