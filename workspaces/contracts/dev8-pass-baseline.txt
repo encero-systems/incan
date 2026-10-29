@@ -1142,3 +1142,5 @@ testing/outcomes/test_option_payloads
 testing/outcomes/test_unexpected_pass
 testing/std/test_bytes_io
 testing/std/test_file_lock
+project/units/bakery_concurrent_builds_bake_once
+project/units/bakery_shared_dependency_compiles_once
